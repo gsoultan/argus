@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/agent"
 	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 var version = "dev"
@@ -77,6 +79,9 @@ func runDaemon(args []string) int {
 	stateDir := fs.String("state", "/var/lib/argus", "where posture and heartbeat are written")
 	controlURL := fs.String("control-url", "", "argus-control base URL; empty runs standalone")
 	controlToken := fs.String("control-token", "", "reporter token")
+	controlCA := fs.String("control-ca", "", "CA that signed the control plane's certificate")
+	controlCert := fs.String("control-cert", "", "client certificate presented to the control plane")
+	controlKey := fs.String("control-key", "", "key for --control-cert")
 	_ = fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -84,7 +89,23 @@ func runDaemon(args []string) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rep := reporter.New(*controlURL, *controlToken, *stateDir+"/report-spool.jsonl", log)
+	var clientTLS *tls.Config
+	if *controlCA != "" || *controlCert != "" {
+		var terr error
+		clientTLS, terr = tlsconfig.Client(tlsconfig.ClientOptions{
+			CAFile: *controlCA, CertFile: *controlCert, KeyFile: *controlKey,
+		})
+		if terr != nil {
+			log.Error("TLS configuration failed", "error", terr)
+			return 1
+		}
+	}
+	rep := reporter.NewWithTLS(*controlURL, *controlToken,
+		*stateDir+"/report-spool.jsonl", clientTLS, log)
+	if strings.HasPrefix(*controlURL, "http://") {
+		log.Warn("control plane URL is plaintext http://",
+			"detail", "captured session records cross this link in the clear")
+	}
 	if rep.Enabled() {
 		rep.Drain(ctx)
 		rep.StartDrainLoop(ctx, 30*time.Second)

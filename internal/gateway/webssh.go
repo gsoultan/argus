@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,11 @@ type WebConfig struct {
 	// Disabled entirely once ticket verification is available, so a leftover
 	// dev token cannot become a way in.
 	Tokens map[string]string
+	// TLSConfig serves the terminal over HTTPS, which makes the WebSocket wss://.
+	// Without it the session stream — every keystroke and every byte of output —
+	// crosses the network in the clear.
+	TLSConfig *tls.Config
+
 	// AllowedOrigins are the browser origins permitted to open a terminal.
 	//
 	// Empty means same-origin only. This is a real control, not boilerplate: a
@@ -79,6 +85,7 @@ func (s *Server) ServeWeb(ctx context.Context, cfg WebConfig) error {
 		Addr:              querySafe(cfg.Listen),
 		Handler:           withCORS(mux, cfg.AllowedOrigins),
 		ReadHeaderTimeout: 10 * time.Second,
+		TLSConfig:         cfg.TLSConfig,
 	}
 
 	go func() {
@@ -88,6 +95,17 @@ func (s *Server) ServeWeb(ctx context.Context, cfg WebConfig) error {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
+	if cfg.TLSConfig != nil {
+		s.log.Info("browser terminal listening (TLS)", "addr", cfg.Listen)
+		if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+
+	s.log.Warn("browser terminal is serving PLAINTEXT HTTP",
+		"detail", "every keystroke and every byte of session output crosses the "+
+			"network in the clear; configure `web.tls`")
 	s.log.Info("browser terminal listening", "addr", cfg.Listen)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

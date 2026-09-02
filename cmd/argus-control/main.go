@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
 	"github.com/gsoultan/argus/internal/storage"
+	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 var version = "dev"
@@ -46,12 +48,27 @@ type config struct {
 	OIDC            *auth.OIDCConfig `yaml:"oidc"`
 	// SigningSecret signs session cookies and terminal tickets. Shared with the
 	// gateway so it can verify tickets without calling back.
-	SigningSecret string        `yaml:"signing_secret"`
-	ConsoleURL    string        `yaml:"console_url"`
-	SecureCookies bool          `yaml:"secure_cookies"`
-	SessionTTL    time.Duration `yaml:"session_ttl"`
-	TicketTTL     time.Duration `yaml:"ticket_ttl"`
-	LogLevel      string        `yaml:"log_level"`
+	SigningSecret string `yaml:"signing_secret"`
+	ConsoleURL    string `yaml:"console_url"`
+	// TLS serves the API over HTTPS. Strongly recommended: session cookies,
+	// recordings and the audit log all cross this listener.
+	TLS *tlsConfig `yaml:"tls"`
+	// BehindTLSProxy marks that something in front terminates TLS. Cookies must
+	// still be Secure in that case, even though this process speaks plain HTTP.
+	BehindTLSProxy bool          `yaml:"behind_tls_proxy"`
+	SecureCookies  *bool         `yaml:"secure_cookies"`
+	SessionTTL     time.Duration `yaml:"session_ttl"`
+	TicketTTL      time.Duration `yaml:"ticket_ttl"`
+	LogLevel       string        `yaml:"log_level"`
+}
+
+type tlsConfig struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	// ClientCAFile enables mutual TLS on the reporter endpoints, so a gateway
+	// or agent proves which host it is rather than only that it holds a token
+	// identical on every host.
+	ClientCAFile string `yaml:"client_ca_file"`
 }
 
 func main() {
@@ -139,7 +156,19 @@ func run() error {
 
 	api := control.NewAPI(store, log)
 	api.SetStorage(storageClient)
-	api.SetAuth(provider, signer, cfg.ConsoleURL, cfg.SecureCookies)
+	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
+	// which includes the case where a proxy terminates TLS and this process
+	// only ever sees plain HTTP.
+	secureCookies := cfg.TLS != nil || cfg.BehindTLSProxy
+	if cfg.SecureCookies != nil {
+		secureCookies = *cfg.SecureCookies
+	}
+	if !secureCookies {
+		log.Warn("session cookies are NOT marked Secure",
+			"detail", "they will be sent over plain HTTP and can be captured in "+
+				"transit; acceptable for local development only")
+	}
+	api.SetAuth(provider, signer, cfg.ConsoleURL, secureCookies)
 	api.SessionTTL = cfg.SessionTTL
 	api.TicketTTL = cfg.TicketTTL
 	api.UserTokens = cfg.UserTokens
@@ -185,6 +214,21 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	if cfg.TLS != nil {
+		srv.TLSConfig, err = tlsconfig.Server(tlsconfig.ServerOptions{
+			CertFile:     cfg.TLS.CertFile,
+			KeyFile:      cfg.TLS.KeyFile,
+			ClientCAFile: cfg.TLS.ClientCAFile,
+			// Not required: the same listener serves browsers, which have no
+			// client certificate. Reporter routes check for one separately.
+			RequireClientCert: false,
+		})
+		if err != nil {
+			return err
+		}
+		api.RequirePeerCert = cfg.TLS.ClientCAFile != ""
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -196,6 +240,19 @@ func run() error {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
+	if cfg.TLS != nil {
+		log.Info("argus-control listening (TLS)",
+			"version", version, "addr", cfg.Listen,
+			"mtls", cfg.TLS.ClientCAFile != "")
+		if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+
+	log.Warn("argus-control is serving PLAINTEXT HTTP",
+		"detail", "session cookies, recordings and the audit log cross this "+
+			"listener in the clear; configure `tls` or terminate TLS in front of it")
 	log.Info("argus-control listening", "version", version, "addr", cfg.Listen)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -218,6 +275,17 @@ func loadConfig(path string) (config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
+	// Resolve relative paths against the config file so the binary can be
+	// started from any working directory.
+	base := filepath.Dir(path)
+	if cfg.TLS != nil {
+		for _, f := range []*string{&cfg.TLS.CertFile, &cfg.TLS.KeyFile, &cfg.TLS.ClientCAFile} {
+			if *f != "" && !filepath.IsAbs(*f) {
+				*f = filepath.Join(base, *f)
+			}
+		}
+	}
+
 	if cfg.ReporterToken == "" {
 		// Without this any host that can reach the API could write fabricated
 		// sessions into the audit record.

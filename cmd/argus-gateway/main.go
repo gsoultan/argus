@@ -14,12 +14,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
+	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 var version = "dev"
@@ -82,6 +85,14 @@ type controlConfig struct {
 	URL   string `yaml:"url"`
 	Token string `yaml:"token"`
 	Spool string `yaml:"spool"`
+	// CAFile verifies the control plane's certificate. Empty uses system roots,
+	// which is right for a public CA and wrong for an internal one.
+	CAFile string `yaml:"ca_file"`
+	// CertFile and KeyFile present a client certificate, so the control plane
+	// can attribute a report to this gateway rather than to whoever holds the
+	// shared token.
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 type webConfig struct {
@@ -91,6 +102,14 @@ type webConfig struct {
 	// here without a callback on every connection.
 	SigningSecret string            `yaml:"signing_secret"`
 	Tokens        map[string]string `yaml:"tokens"`
+	// TLS serves the browser terminal over HTTPS, which makes the WebSocket
+	// wss://. Without it the whole session stream is in the clear.
+	TLS *gatewayTLS `yaml:"tls"`
+}
+
+type gatewayTLS struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 func main() {
@@ -147,8 +166,27 @@ func run() error {
 		if spool == "" {
 			spool = "data/report-spool.jsonl"
 		}
-		rep = reporter.New(cfg.Control.URL, cfg.Control.Token, spool, log)
-		log.Info("reporting to control plane", "url", cfg.Control.URL)
+		var clientTLS *tls.Config
+		if cfg.Control.CAFile != "" || cfg.Control.CertFile != "" {
+			clientTLS, err = tlsconfig.Client(tlsconfig.ClientOptions{
+				CAFile:   cfg.Control.CAFile,
+				CertFile: cfg.Control.CertFile,
+				KeyFile:  cfg.Control.KeyFile,
+			})
+			if err != nil {
+				return err
+			}
+		}
+		rep = reporter.NewWithTLS(cfg.Control.URL, cfg.Control.Token, spool, clientTLS, log)
+		log.Info("reporting to control plane",
+			"url", cfg.Control.URL,
+			"verifies_certificate", clientTLS != nil || strings.HasPrefix(cfg.Control.URL, "https://"),
+			"client_certificate", cfg.Control.CertFile != "")
+		if strings.HasPrefix(cfg.Control.URL, "http://") {
+			log.Warn("control plane URL is plaintext http://",
+				"detail", "session records and audit events cross this link in the "+
+					"clear and can be forged or suppressed in transit")
+		}
 	}
 
 	// Share replay protection and host-key pins through the control plane.
@@ -242,12 +280,23 @@ func run() error {
 						"single-use degrades to single-use-per-instance")
 			}
 		}
+		var webTLS *tls.Config
+		if cfg.Web.TLS != nil {
+			webTLS, err = tlsconfig.Server(tlsconfig.ServerOptions{
+				CertFile: cfg.Web.TLS.CertFile,
+				KeyFile:  cfg.Web.TLS.KeyFile,
+			})
+			if err != nil {
+				return err
+			}
+		}
 		go func() {
 			err := srv.ServeWeb(ctx, gateway.WebConfig{
 				Listen:         cfg.Web.Listen,
 				Signer:         ticketSigner,
 				Tokens:         cfg.Web.Tokens,
 				AllowedOrigins: cfg.Web.AllowedOrigins,
+				TLSConfig:      webTLS,
 			})
 			if err != nil {
 				log.Error("browser terminal failed", "error", err)
@@ -317,6 +366,12 @@ func loadConfig(path string) (config, error) {
 	relative := []*string{
 		&cfg.HostKey, &cfg.AuthorizedKeys, &cfg.Inventory,
 		&cfg.HostKeyStore, &cfg.RecordingDir,
+	}
+	if cfg.Web != nil && cfg.Web.TLS != nil {
+		relative = append(relative, &cfg.Web.TLS.CertFile, &cfg.Web.TLS.KeyFile)
+	}
+	if cfg.Control != nil {
+		relative = append(relative, &cfg.Control.CAFile, &cfg.Control.CertFile, &cfg.Control.KeyFile)
 	}
 	if cfg.CA != nil {
 		relative = append(relative, &cfg.CA.KeyPath)
