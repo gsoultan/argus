@@ -27,6 +27,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/gsoultan/argus/internal/secrets"
+
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
 	"github.com/gsoultan/argus/internal/storage"
@@ -272,6 +274,13 @@ func loadConfig(path string) (config, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("read config %s: %w", path, err)
 	}
+	// Resolve ${VAR} and ${file:/path} references before parsing, so the file
+	// on disk never has to contain a live credential.
+	data, err = secrets.Expand(data)
+	if err != nil {
+		return cfg, fmt.Errorf("config %s: %w", path, err)
+	}
+
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
