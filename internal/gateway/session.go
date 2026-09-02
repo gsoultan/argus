@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/gsoultan/argus/internal/recorder"
+	"github.com/gsoultan/argus/internal/sftp"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
 )
@@ -41,7 +42,10 @@ type Session struct {
 	client *ssh.Client
 	log    *slog.Logger
 
-	mu       sync.Mutex
+	mu sync.Mutex
+	// sftpMon decodes the SFTP subsystem when one is requested, so a transfer
+	// becomes "downloaded /path, 4.2 GB" instead of a stream of opaque bytes.
+	sftpMon  *sftp.Monitor
 	rec      *recorder.Recorder
 	recFile  *os.File
 	chainEnd string
@@ -345,6 +349,86 @@ func (s *Session) handleSessionChannel(newChan ssh.NewChannel) {
 	s.log.Info("session closed", "exit", exitCode, "duration", time.Since(s.StartedAt).String())
 }
 
+// startSFTPMonitor begins decoding an SFTP session.
+func (s *Session) startSFTPMonitor() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sftpMon != nil {
+		return
+	}
+	s.sftpMon = sftp.New(func(e sftp.Event) {
+		s.log.Info("file transfer",
+			"op", string(e.Op), "path", e.Path, "new_path", e.NewPath,
+			"bytes", e.Bytes, "failed", e.Failed)
+		s.reportFileEvent(e)
+	})
+	s.log.Info("sftp subsystem requested, decoding file operations")
+}
+
+// observeSFTP feeds a copy of the stream to the decoder.
+//
+// Deliberately after the bytes have already been forwarded and recorded, so
+// nothing here can stall or corrupt the session it is observing.
+func (s *Session) observeSFTP(stream recorder.Stream, p []byte) {
+	s.mu.Lock()
+	mon := s.sftpMon
+	s.mu.Unlock()
+	if mon == nil {
+		return
+	}
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	if stream == recorder.Input {
+		mon.ClientToServer(buf)
+	} else {
+		mon.ServerToClient(buf)
+	}
+}
+
+// reportFileEvent publishes a file operation to the control plane.
+//
+// File exfiltration is the question a PAM buyer asks, so these go to the audit
+// chain rather than only the session recording — the audit log is what an
+// auditor reads and the one that is tamper-evident.
+func (s *Session) reportFileEvent(e sftp.Event) {
+	if s.srv.cfg.Reporter == nil || !s.srv.cfg.Reporter.Enabled() {
+		return
+	}
+	action := "file.download"
+	severity := "notice"
+	switch e.Op {
+	case sftp.OpUpload:
+		action = "file.upload"
+	case sftp.OpDelete, sftp.OpRmdir:
+		action = "file.delete"
+		// Deleting on a host reached through a bastion is worth a closer look
+		// than reading.
+		severity = "warning"
+	case sftp.OpRename:
+		action = "file.rename"
+	case sftp.OpChmod:
+		action = "file.chmod"
+	case sftp.OpMkdir, sftp.OpSymlink, sftp.OpList:
+		action = "file." + string(e.Op)
+		severity = "info"
+	}
+	if e.Failed {
+		severity = "warning"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	go func() {
+		defer cancel()
+		s.srv.cfg.Reporter.Audit(ctx, map[string]any{
+			"action":     action,
+			"severity":   severity,
+			"actorEmail": s.User,
+			"target":     s.Target.Hostname,
+			"detail":     e.Describe(),
+		})
+	}()
+}
+
 // relay copies src to dst while teeing to the recording.
 //
 // A recording write failure kills the session on purpose: continuing would
@@ -363,6 +447,7 @@ func (s *Session) relay(src io.Reader, dst io.Writer, stream recorder.Stream) {
 			if _, writeErr := dst.Write(chunk); writeErr != nil {
 				return
 			}
+			s.observeSFTP(stream, chunk)
 		}
 		if readErr != nil {
 			return
@@ -450,9 +535,12 @@ func (s *Session) pumpRequests(reqs <-chan *ssh.Request, target *ssh.Session, cl
 				s.replyReq(req, false)
 				continue
 			}
-			// SFTP works, but the spike relays it as an opaque stream. Decoding
-			// the subsystem into per-file audit events is the next step; until
-			// then the recording is bytes, not evidence.
+			if name == "sftp" {
+				// Decode the subsystem so transfers become per-file audit
+				// events. The monitor only ever observes a copy: a fault in it
+				// must degrade the audit trail, never the session.
+				s.startSFTPMonitor()
+			}
 			s.log.Info("subsystem", "name", name)
 			if err := target.RequestSubsystem(name); err != nil {
 				s.replyReq(req, false)
@@ -491,6 +579,11 @@ func (s *Session) Close() (chainHead string, err error) {
 	}
 	s.closed = true
 
+	// Flush any transfer still open: a session dropped mid-download is exactly
+	// the one worth recording.
+	if s.sftpMon != nil {
+		s.sftpMon.Close()
+	}
 	if s.rec != nil {
 		s.chainEnd, err = s.rec.Close()
 	}

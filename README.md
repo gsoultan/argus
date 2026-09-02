@@ -156,6 +156,28 @@ cosign verify-blob checksums.txt \
 sha256sum -c checksums.txt --ignore-missing
 ```
 
+## Connecting
+
+The target is encoded in the SSH username, so ordinary tooling works unchanged:
+
+```sh
+ssh  ops:pay-01@argus.example.com
+sftp ops+pay-01@argus.example.com          # note the +
+scp  report.csv ops+pay-01@argus.example.com:/tmp/
+```
+
+`sftp` and `scp` need `+` rather than `:`, because their own syntax is
+`host:path` — they would read `ops:pay-01@gateway` as a path on a host called
+`ops`. `/` works too.
+
+SFTP sessions are decoded rather than relayed as opaque bytes, so a transfer
+becomes an audit event naming the file and the volume moved:
+
+```
+notice   file.download   download /var/lib/payments/dump.sql (195.3 KB)
+warning  file.delete     delete /tmp/uploaded-back.dat
+```
+
 ## Layout
 
 ```
