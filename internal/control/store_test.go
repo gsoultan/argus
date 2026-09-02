@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -444,5 +445,122 @@ func TestConcurrentAuditAppendsStayChained(t *testing.T) {
 			t.Fatalf("two events claim seq %d as their predecessor", older.Seq)
 		}
 		seenPrev[newer.PrevHash] = true
+	}
+}
+
+/* ── Audit chain verification ────────────────────────────────────────────── */
+
+func TestVerifyAuditChainAcceptsAnIntactLog(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		if _, err := s.AppendAudit(ctx, AuditEvent{
+			Action: "verify.test", ActorEmail: "u@x.id", Detail: unique("d"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v, err := s.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatalf("VerifyAuditChain: %v", err)
+	}
+	if !v.OK {
+		t.Errorf("an intact chain failed verification at seq %d: %s", v.BrokenAt, v.Detail)
+	}
+	if v.Checked == 0 {
+		t.Error("verified zero events")
+	}
+}
+
+// Editing a record in place is the tampering this exists to catch.
+func TestVerifyAuditChainDetectsAnEditedRecord(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	e, err := s.AppendAudit(ctx, AuditEvent{
+		Action: "verify.tamper", ActorEmail: "u@x.id", Detail: "original detail",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Append after it, so the break is mid-chain rather than at the tail.
+	if _, err := s.AppendAudit(ctx, AuditEvent{Action: "verify.after", ActorEmail: "u@x.id"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE audit_events SET detail = 'quietly rewritten' WHERE seq = $1`, e.Seq); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(),
+			`UPDATE audit_events SET detail = $2 WHERE seq = $1`, e.Seq, "original detail")
+	})
+
+	v, err := s.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatalf("VerifyAuditChain: %v", err)
+	}
+	if v.OK {
+		t.Fatal("an edited record passed verification")
+	}
+	if v.BrokenAt != e.Seq {
+		t.Errorf("BrokenAt = %d, want %d", v.BrokenAt, e.Seq)
+	}
+	// The message has to tell an operator what happened, not just that
+	// something did.
+	if !strings.Contains(v.Detail, "modified after it was written") {
+		t.Errorf("detail does not explain the failure: %q", v.Detail)
+	}
+}
+
+// A removed row breaks the links even though every remaining row is internally
+// consistent — a distinct failure from an edit, and worth reporting as such.
+func TestVerifyAuditChainDetectsARemovedRecord(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	var seqs []int64
+	for i := 0; i < 3; i++ {
+		e, err := s.AppendAudit(ctx, AuditEvent{
+			Action: "verify.removal", ActorEmail: "u@x.id", Detail: unique("d"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seqs = append(seqs, e.Seq)
+	}
+
+	// Delete the middle one.
+	var saved AuditEvent
+	if err := s.pool.QueryRow(ctx, `
+		SELECT seq, at, action, severity, actor_email, target, detail, prev_hash, hash
+		FROM audit_events WHERE seq = $1`, seqs[1]).
+		Scan(&saved.Seq, &saved.At, &saved.Action, &saved.Severity, &saved.ActorEmail,
+			&saved.Target, &saved.Detail, &saved.PrevHash, &saved.Hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM audit_events WHERE seq = $1`, seqs[1]); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(), `
+			INSERT INTO audit_events (seq, at, action, severity, actor_email, target, detail, prev_hash, hash)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+			saved.Seq, saved.At, saved.Action, saved.Severity, saved.ActorEmail,
+			saved.Target, saved.Detail, saved.PrevHash, saved.Hash)
+	})
+
+	v, err := s.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatalf("VerifyAuditChain: %v", err)
+	}
+	if v.OK {
+		t.Fatal("a removed record passed verification")
+	}
+	if !strings.Contains(v.Detail, "removed, inserted or reordered") {
+		t.Errorf("detail does not identify a structural break: %q", v.Detail)
 	}
 }
