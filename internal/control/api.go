@@ -80,6 +80,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
 	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
+	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
+	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
 	mux.HandleFunc("GET /api/v1/requests", a.user(a.getRequests))
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)

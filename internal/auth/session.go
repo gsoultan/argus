@@ -51,11 +51,41 @@ type Session struct {
 
 // Ticket authorises exactly one terminal session.
 type Ticket struct {
-	ID        string    `json:"jti"`
-	Email     string    `json:"email"`
-	Target    string    `json:"target"`
-	Principal string    `json:"principal"`
+	ID    string `json:"jti"`
+	Email string `json:"email"`
+	// Scope is what the ticket permits. Empty means ScopeSession, so tickets
+	// minted before scopes existed keep working as terminal tickets and cannot
+	// be silently promoted into shadow or terminate rights.
+	Scope     string `json:"scope,omitempty"`
+	Target    string `json:"target"`
+	Principal string `json:"principal"`
+	// SessionID binds a shadow or terminate ticket to one live session. Empty
+	// for terminal tickets, which are bound by target and principal instead.
+	SessionID string    `json:"sid,omitempty"`
 	ExpiresAt time.Time `json:"exp"`
+}
+
+// Ticket scopes.
+//
+// Watching someone else's privileged session and killing it are both more
+// serious than opening your own, and they are separate from each other: a
+// security analyst may need to observe without the power to disconnect. Giving
+// each its own scope means a ticket for one can never be spent as another, so a
+// bug in whoever mints them cannot quietly widen a permission.
+const (
+	// ScopeSession opens a terminal as a principal on a target.
+	ScopeSession = "session"
+	// ScopeShadow attaches a read-only viewer to a session already running.
+	ScopeShadow = "shadow"
+	// ScopeTerminate ends a session already running.
+	ScopeTerminate = "terminate"
+)
+
+func scopeOf(t Ticket) string {
+	if t.Scope == "" {
+		return ScopeSession
+	}
+	return t.Scope
 }
 
 // Redeemer records which tickets have been used.
@@ -161,10 +191,59 @@ func (s *Signer) IssueTicket(email, target, principal string, ttl time.Duration)
 	return s.sign(Ticket{
 		ID:        id,
 		Email:     email,
+		Scope:     ScopeSession,
 		Target:    target,
 		Principal: principal,
 		ExpiresAt: time.Now().UTC().Add(ttl),
 	})
+}
+
+// IssueSessionScopedTicket mints a single-use ticket for one live session.
+//
+// Used for ScopeShadow and ScopeTerminate, which act on a session that already
+// exists rather than on a target the holder is entitled to open.
+func (s *Signer) IssueSessionScopedTicket(email, scope, sessionID string, ttl time.Duration) (string, error) {
+	switch scope {
+	case ScopeShadow, ScopeTerminate:
+	default:
+		return "", fmt.Errorf("%w: scope %q is not session-scoped", ErrInvalid, scope)
+	}
+	if sessionID == "" {
+		return "", fmt.Errorf("%w: no session id", ErrInvalid)
+	}
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	return s.sign(Ticket{
+		ID:        id,
+		Email:     email,
+		Scope:     scope,
+		SessionID: sessionID,
+		ExpiresAt: time.Now().UTC().Add(ttl),
+	})
+}
+
+// RedeemSessionScoped verifies and burns a shadow or terminate ticket.
+//
+// Mirrors RedeemTicket, but binds to the session id instead of the target and
+// principal: a ticket to watch one session must not be spendable on another.
+func (s *Signer) RedeemSessionScoped(ctx context.Context, token, scope, sessionID string) (Ticket, error) {
+	var t Ticket
+	if err := s.verify(token, &t); err != nil {
+		return Ticket{}, err
+	}
+	if time.Now().After(t.ExpiresAt) {
+		return Ticket{}, ErrExpired
+	}
+	if scopeOf(t) != scope {
+		return Ticket{}, fmt.Errorf("%w: ticket is scoped %q, not %q",
+			ErrInvalid, scopeOf(t), scope)
+	}
+	if subtle.ConstantTimeCompare([]byte(t.SessionID), []byte(sessionID)) != 1 {
+		return Ticket{}, fmt.Errorf("%w: ticket is for a different session", ErrInvalid)
+	}
+	return t, s.burn(ctx, t)
 }
 
 // RedeemTicket verifies and burns a ticket.
@@ -181,35 +260,47 @@ func (s *Signer) RedeemTicket(ctx context.Context, token, target, principal stri
 	}
 
 	// A valid signature is not enough: the ticket must be for what is actually
-	// being opened.
+	// being opened, and must be the kind of ticket that opens anything at all.
+	if scopeOf(t) != ScopeSession {
+		return Ticket{}, fmt.Errorf("%w: ticket is scoped %q and cannot open a terminal",
+			ErrInvalid, scopeOf(t))
+	}
 	if subtle.ConstantTimeCompare([]byte(t.Target), []byte(target)) != 1 ||
 		subtle.ConstantTimeCompare([]byte(t.Principal), []byte(principal)) != 1 {
 		return Ticket{}, fmt.Errorf("%w: ticket is for %s@%s, not %s@%s",
 			ErrInvalid, t.Principal, t.Target, principal, target)
 	}
 
+	return t, s.burn(ctx, t)
+}
+
+// burn marks a ticket used, or reports why it cannot be spent.
+//
+// One implementation for every scope on purpose. Single-use is the property
+// that makes it acceptable to pass a ticket in a query string, and a second
+// copy of this logic would be a second place for that property to be lost.
+func (s *Signer) burn(ctx context.Context, t Ticket) error {
 	if s.redeemer != nil {
 		used, err := s.redeemer.Redeem(ctx, t)
 		if err != nil {
 			// Cannot determine whether this was already used. Refusing is the
 			// only safe answer: assuming "fresh" would make every gateway
 			// accept replays the moment the shared store is unreachable.
-			return Ticket{}, fmt.Errorf("cannot verify ticket has not been used: %w", err)
+			return fmt.Errorf("cannot verify ticket has not been used: %w", err)
 		}
 		if used {
-			return Ticket{}, ErrUsed
+			return ErrUsed
 		}
-		return t, nil
+		return nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, seen := s.redeemed[t.ID]; seen {
-		return Ticket{}, ErrUsed
+		return ErrUsed
 	}
 	s.redeemed[t.ID] = t.ExpiresAt
-
-	return t, nil
+	return nil
 }
 
 /* ── Signing ─────────────────────────────────────────────────────────────── */

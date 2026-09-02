@@ -6,19 +6,20 @@ import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconArrowLeft, IconDownload, IconInfoCircle, IconLink,
+  IconAlertTriangle, IconArrowLeft, IconDownload, IconEye, IconInfoCircle, IconLink,
   IconPlayerStop, IconShieldCheck,
 } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { ButtonLink } from '~/components/links'
 import { Replay } from '~/components/Replay'
+import { ShadowTerminal } from '~/components/ShadowTerminal'
 import {
   Digest, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes, duration,
 } from '~/components/primitives'
 import { buildCast } from '~/lib/cast'
 import { extractCommands } from '~/lib/ansi'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
-import { live } from '~/lib/live'
+import { GATEWAY_URL, live, shadowTicket } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 
 export const Route = createFileRoute('/sessions/$sessionId')({
@@ -43,6 +44,8 @@ function SessionDetail() {
   const { data: session } = useQuery(sessionQuery(sessionId))
   const terminate = useTerminateSession()
   const [confirmOpen, confirm] = useDisclosure(false)
+  const [shadowOpen, shadow] = useDisclosure(false)
+  const [shadowError, setShadowError] = useState<string>()
   const [note, setNote] = useState('')
   const [cursor, setCursor] = useState(0)
 
@@ -107,14 +110,31 @@ function SessionDetail() {
   }
 
   const onTerminate = async () => {
-    await terminate.mutateAsync(session.id)
+    try {
+      await terminate.mutateAsync({ id: session.id, reason: note })
+    } catch (err) {
+      // Never close the dialog on failure. Dismissing it would leave the
+      // operator believing they stopped a session that is still running.
+      notifications.show({
+        color: 'rose',
+        title: 'Session not terminated',
+        message: err instanceof Error ? err.message : 'the gateway refused',
+      })
+      return
+    }
     confirm.close()
+    setNote('')
     notifications.show({
       color: 'rose',
       title: 'Session terminated',
       message: `Connection to ${session.assetHostname} was closed and the reason recorded in the audit log.`,
     })
   }
+
+  // Watching is offered only while there is something to watch. A shadow button
+  // on a finished session would open a stream that immediately ends, which
+  // reads as a fault rather than as "this session is over".
+  const canShadow = session.state === 'active'
 
   return (
     <Box>
@@ -135,6 +155,17 @@ function SessionDetail() {
             <Button size="xs" variant="default" leftSection={<IconDownload size={14} />}>
               Export .cast
             </Button>
+            {canShadow && (
+              <Button
+                size="xs"
+                color="amber"
+                variant="light"
+                leftSection={<IconEye size={14} />}
+                onClick={shadow.open}
+              >
+                Watch live
+              </Button>
+            )}
             {session.state === 'active' && (
               <Button
                 size="xs"
@@ -306,6 +337,44 @@ function SessionDetail() {
           </Grid.Col>
         </Grid>
       </Box>
+
+      <Modal
+        opened={shadowOpen}
+        onClose={shadow.close}
+        title={`Watching ${session.userEmail} · ${session.principal}@${session.assetHostname}`}
+        size="90%"
+      >
+        <Alert color="amber" variant="light" icon={<IconEye size={16} />} mb="md">
+          <Text size="xs">
+            Read-only. Keystrokes are not shown — the host echoes what the user types, so the
+            output below already contains it. Your attaching to this session has been written to
+            the audit log against your account.
+          </Text>
+        </Alert>
+        {shadowError && (
+          <Alert color="rose" variant="light" mb="md">
+            <Text size="xs">{shadowError}</Text>
+          </Alert>
+        )}
+        {/* Keyed on open state so closing the modal disposes the terminal and
+            drops the subscription, rather than leaving a socket streaming a
+            privileged session into a hidden component. */}
+        {shadowOpen && (
+          <ShadowTerminal
+            gatewayUrl={GATEWAY_URL}
+            sessionId={session.id}
+            getTicket={async () => {
+              const res = await shadowTicket(session.id)
+              if ('error' in res) {
+                setShadowError(res.error)
+                return null
+              }
+              setShadowError(undefined)
+              return res.ticket
+            }}
+          />
+        )}
+      </Modal>
 
       <Modal opened={confirmOpen} onClose={confirm.close} title="Terminate session" size="md">
         <Alert color="rose" variant="light" icon={<IconAlertTriangle size={16} />} mb="md">

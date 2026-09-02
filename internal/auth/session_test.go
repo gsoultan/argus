@@ -275,3 +275,76 @@ func TestConcurrentRedemptionAdmitsOne(t *testing.T) {
 		t.Errorf("%d concurrent redemptions succeeded, want exactly 1", successes)
 	}
 }
+
+/* ── Scoped tickets ──────────────────────────────────────────────────────── */
+
+// The property that makes separate scopes worth having: holding a ticket for
+// one capability must never confer another. Without this, a user entitled to
+// open their own terminal could spend that ticket to watch or kill somebody
+// else's session.
+func TestTicketScopesDoNotInterchange(t *testing.T) {
+	s := newSigner(t)
+	ctx := context.Background()
+
+	terminal, _ := s.IssueTicket("dewi.p@northwind.id", "pay-01", "ops", time.Minute)
+	shadow, _ := s.IssueSessionScopedTicket("aud@northwind.id", ScopeShadow, "sess-1", time.Minute)
+	kill, _ := s.IssueSessionScopedTicket("adm@northwind.id", ScopeTerminate, "sess-1", time.Minute)
+
+	if _, err := s.RedeemSessionScoped(ctx, terminal, ScopeShadow, "sess-1"); err == nil {
+		t.Error("a terminal ticket was accepted as a shadow ticket")
+	}
+	if _, err := s.RedeemSessionScoped(ctx, terminal, ScopeTerminate, "sess-1"); err == nil {
+		t.Error("a terminal ticket was accepted as a terminate ticket")
+	}
+	if _, err := s.RedeemTicket(ctx, shadow, "pay-01", "ops"); err == nil {
+		t.Error("a shadow ticket was accepted as a terminal ticket")
+	}
+	if _, err := s.RedeemSessionScoped(ctx, shadow, ScopeTerminate, "sess-1"); err == nil {
+		t.Error("a shadow ticket was accepted as a terminate ticket — watching became killing")
+	}
+	if _, err := s.RedeemSessionScoped(ctx, kill, ScopeShadow, "sess-1"); err == nil {
+		t.Error("a terminate ticket was accepted as a shadow ticket")
+	}
+}
+
+func TestScopedTicketIsBoundToOneSession(t *testing.T) {
+	s := newSigner(t)
+	ctx := context.Background()
+
+	token, err := s.IssueSessionScopedTicket("aud@northwind.id", ScopeShadow, "sess-1", time.Minute)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if _, err := s.RedeemSessionScoped(ctx, token, ScopeShadow, "sess-2"); err == nil {
+		t.Fatal("a ticket for sess-1 was spent on sess-2")
+	}
+	if _, err := s.RedeemSessionScoped(ctx, token, ScopeShadow, "sess-1"); err != nil {
+		t.Fatalf("the ticket did not work on its own session: %v", err)
+	}
+}
+
+func TestScopedTicketIsSingleUse(t *testing.T) {
+	s := newSigner(t)
+	ctx := context.Background()
+	token, _ := s.IssueSessionScopedTicket("adm@northwind.id", ScopeTerminate, "sess-1", time.Minute)
+
+	if _, err := s.RedeemSessionScoped(ctx, token, ScopeTerminate, "sess-1"); err != nil {
+		t.Fatalf("first redemption failed: %v", err)
+	}
+	if _, err := s.RedeemSessionScoped(ctx, token, ScopeTerminate, "sess-1"); !errors.Is(err, ErrUsed) {
+		t.Errorf("second redemption err = %v, want ErrUsed", err)
+	}
+}
+
+func TestSessionScopeCannotBeIssuedAsSessionScoped(t *testing.T) {
+	s := newSigner(t)
+	// ScopeSession is bound by target and principal, not by session id. Minting
+	// one here would produce a ticket with neither binding — valid signature,
+	// nothing to check it against.
+	if _, err := s.IssueSessionScopedTicket("u@northwind.id", ScopeSession, "sess-1", time.Minute); err == nil {
+		t.Error("IssueSessionScopedTicket accepted ScopeSession")
+	}
+	if _, err := s.IssueSessionScopedTicket("u@northwind.id", ScopeShadow, "", time.Minute); err == nil {
+		t.Error("IssueSessionScopedTicket accepted an empty session id")
+	}
+}

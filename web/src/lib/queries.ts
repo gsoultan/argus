@@ -74,7 +74,10 @@ export function useRotateCredential() {
 export function useTerminateSession() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: api.terminateSession,
+    // The reason is part of the call, not an afterthought: the gateway refuses
+    // a termination without one, because a session cut short and unexplained is
+    // a gap in the record rather than an entry in it.
+    mutationFn: (v: { id: string; reason: string }) => api.terminateSession(v.id, v.reason),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['sessions'] })
       void qc.invalidateQueries({ queryKey: ['session'] })

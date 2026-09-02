@@ -59,6 +59,24 @@ type Recorder struct {
 	lines   int
 	bytes   int64
 	closed  bool
+	tap     func(line []byte)
+}
+
+// SetTap registers a function called with every line as it is committed.
+//
+// Live shadowing hangs off this rather than off the session's relay loop, so a
+// viewer sees exactly the bytes that entered the hash chain. Anything else
+// would let the live view and the recording disagree, and an operator deciding
+// whether to kill a session must not be looking at a different session from the
+// one the auditor will replay.
+//
+// The tap is invoked with the recorder's lock held, which is what orders frames
+// for viewers. It must therefore not block and must not call back into the
+// Recorder. A nil tap removes any previous one.
+func (r *Recorder) SetTap(fn func(line []byte)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tap = fn
 }
 
 // New writes the header and returns a Recorder positioned at t=0.
@@ -112,6 +130,15 @@ func (r *Recorder) emitLocked(line []byte) error {
 	}
 	r.lines++
 	r.bytes += int64(len(line)) + 1
+
+	// After the write, never before: a frame that failed to record must not be
+	// shown to a viewer as though it had been. The copy is required because the
+	// append above may write into line's spare capacity.
+	if r.tap != nil {
+		frame := make([]byte, len(line))
+		copy(frame, line)
+		r.tap(frame)
+	}
 	return nil
 }
 

@@ -17,6 +17,17 @@ const RAW_BASE = import.meta.env.VITE_CONTROL_URL ?? ''
 const BASE = RAW_BASE === '/' ? '' : RAW_BASE.replace(/\/$/, '')
 const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
 
+/**
+ * Where the gateway serves its browser endpoints.
+ *
+ * The terminal, the shadow stream and termination all go straight to the
+ * gateway rather than through the control plane: the gateway is the only place
+ * that holds the live connection, and proxying the byte stream through the
+ * control plane would put a second service on the path of every keystroke.
+ */
+export const GATEWAY_URL: string =
+  import.meta.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8081'
+
 export function isConfigured(): boolean {
   return RAW_BASE !== ''
 }
@@ -116,6 +127,110 @@ let reachable: boolean | null = null
 
 export function isLive(): boolean {
   return isConfigured() && reachable === true
+}
+
+/**
+ * Requests a single-use ticket to watch a session already in flight.
+ *
+ * The refusal here is the authoritative one — the gateway only checks the
+ * signature — so its message is shown verbatim. "You need the auditor role"
+ * is useful; "request failed" is not.
+ */
+export async function shadowTicket(
+  sessionId: string,
+): Promise<{ ticket: string } | { error: string }> {
+  return scopedTicket(`/api/v1/sessions/${sessionId}/shadow/ticket`, {})
+}
+
+/** Requests a single-use ticket to end a session, with the reason recorded. */
+export async function terminateTicket(
+  sessionId: string,
+  reason: string,
+): Promise<{ ticket: string } | { error: string }> {
+  return scopedTicket(`/api/v1/sessions/${sessionId}/terminate/ticket`, { reason })
+}
+
+async function scopedTicket(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<{ ticket: string } | { error: string }> {
+  if (!isConfigured()) return { error: 'the control plane is not configured' }
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  const parsed = (await res.json()) as { ticket?: string; error?: string }
+  if (!res.ok || !parsed.ticket) {
+    return { error: parsed.error ?? `request failed (${res.status})` }
+  }
+  return { ticket: parsed.ticket }
+}
+
+/**
+ * Ends a session on the gateway.
+ *
+ * Two steps on purpose: the control plane authorises and records the intent,
+ * then the gateway acts. An attempt that the gateway refuses is still in the
+ * audit log, which is the version of events an investigator needs — "tried to
+ * stop it and could not" is more urgent than "stopped it".
+ */
+export async function terminateSession(
+  gatewayUrl: string,
+  sessionId: string,
+  reason: string,
+): Promise<{ ok: true } | { error: string }> {
+  const minted = await terminateTicket(sessionId, reason)
+  if ('error' in minted) return minted
+
+  try {
+    const res = await fetch(
+      `${gatewayUrl.replace(/\/$/, '')}/api/v1/sessions/${sessionId}/terminate`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${minted.ticket}`,
+        },
+        body: JSON.stringify({ reason }),
+      },
+    )
+    if (!res.ok) return { error: (await res.text()).trim() || `gateway refused (${res.status})` }
+    return { ok: true }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'the gateway is unreachable' }
+  }
+}
+
+/** Sessions the gateway currently has open, as opposed to what it last reported. */
+export interface LiveSession {
+  id: string
+  userEmail: string
+  principal: string
+  assetHostname: string
+  clientIp: string
+  startedAt: string
+  viewers: number
+  riskFlags: string[]
+  certSerial?: number
+}
+
+export async function liveSessions(gatewayUrl: string): Promise<LiveSession[]> {
+  try {
+    const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/v1/sessions/live`, {
+      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    })
+    if (!res.ok) return []
+    return (await res.json()) as LiveSession[]
+  } catch {
+    // A gateway that cannot be reached has no live sessions to show. Surfacing
+    // an error here would break the dashboard for a panel that is advisory.
+    return []
+  }
 }
 
 async function get<T>(path: string): Promise<T> {
