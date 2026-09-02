@@ -31,8 +31,8 @@ cd "$ARGUS_ROOT"
 
 SERVICES=(
   "web|5273|$MAGENTA|web|web/package.json|bun run dev"
-  "control|8080|$BLUE|.|cmd/argus-control|go run ./cmd/argus-control --dev"
-  "gateway|2222|$GREEN|.|cmd/argus-gateway|go run ./cmd/argus-gateway --dev"
+  "control|8080|$BLUE|.|cmd/argus-control|go run ./cmd/argus-control -config dev/control.yaml"
+  "gateway|2222|$GREEN|.|cmd/argus-gateway|go run ./cmd/argus-gateway -config dev/argus.yaml"
 )
 
 svc_field() { printf '%s' "$1" | cut -d'|' -f"$2"; }
