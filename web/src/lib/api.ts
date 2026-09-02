@@ -2,7 +2,14 @@ import {
   EPOCH, accessRequests, assets, buildAuditSkeleton, currentUser, groups,
   sessions, users,
 } from '~/lib/seed'
-import { createRequest, decideRequest, isConfigured, live } from '~/lib/live'
+import {
+  createRequest,
+  decideRequest,
+  GATEWAY_URL,
+  isConfigured,
+  live,
+  terminateSession as terminateOnGateway,
+} from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetGroup, AuditEvent, FleetStats, Session, User,
 } from '~/types/domain'
@@ -147,13 +154,31 @@ export const api = {
     )
   },
 
-  async terminateSession(id: string): Promise<Session> {
-    await latency(400)
+  /**
+   * Ends a live session.
+   *
+   * Against a configured deployment this reaches the gateway, which is the only
+   * process holding the connection. It previously only marked the row
+   * terminated, which meant an operator got a success message while the session
+   * they were trying to stop carried on — the worst possible failure for this
+   * particular button.
+   */
+  async terminateSession(id: string, reason: string): Promise<Session> {
     const s = db.sessions.find((x) => x.id === id)
-    if (!s) throw new Error('session not found')
-    s.state = 'terminated'
-    s.endedAt = new Date().toISOString()
-    return s
+
+    if (isConfigured()) {
+      const res = await terminateOnGateway(GATEWAY_URL, id, reason)
+      if ('error' in res) throw new Error(res.error)
+      // The gateway reports the closure to the control plane itself; refetching
+      // is what makes the row authoritative rather than optimistic.
+      return (await this.session(id)) ?? mustFind(s)
+    }
+
+    await latency(400)
+    const found = mustFind(s)
+    found.state = 'terminated'
+    found.endedAt = new Date().toISOString()
+    return found
   },
 
   async requests(state?: AccessRequest['state']): Promise<AccessRequest[]> {
@@ -227,4 +252,9 @@ export const api = {
       return buildAuditSkeleton()
     })
   },
+}
+
+function mustFind(s: Session | undefined): Session {
+  if (!s) throw new Error('session not found')
+  return s
 }

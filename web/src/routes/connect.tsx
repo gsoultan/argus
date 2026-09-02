@@ -8,7 +8,7 @@ import { IconInfoCircle, IconPlugConnected, IconTerminal2, IconX } from '@tabler
 import { PageHeader } from '~/components/Shell'
 import { LiveTerminal, type TerminalState } from '~/components/LiveTerminal'
 import { assetsQuery } from '~/lib/queries'
-import { terminalTicket } from '~/lib/live'
+import { GATEWAY_URL, terminalTicket } from '~/lib/live'
 import { Mono } from '~/components/primitives'
 
 export const Route = createFileRoute('/connect')({ component: Connect })
@@ -20,7 +20,7 @@ export const Route = createFileRoute('/connect')({ component: Connect })
  * the control plane that would issue them does not exist yet. Once it does, the
  * console holds a session cookie and this form collapses to picking a host.
  */
-const DEFAULT_GATEWAY = 'http://127.0.0.1:8081'
+const DEFAULT_GATEWAY = GATEWAY_URL
 
 function Connect() {
   const { data: assets } = useQuery(assetsQuery({}))

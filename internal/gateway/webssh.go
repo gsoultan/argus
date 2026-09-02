@@ -80,6 +80,12 @@ func (s *Server) ServeWeb(ctx context.Context, cfg WebConfig) error {
 	})
 	mux.HandleFunc("/api/v1/assets", s.handleAssets(cfg))
 	mux.HandleFunc("/ws/session", s.handleWebSession(cfg))
+	mux.HandleFunc("/ws/shadow", s.handleShadow(cfg))
+	mux.HandleFunc("GET /api/v1/sessions/live", s.handleLiveSessions(cfg))
+	// Method and shape in the pattern, so nothing but a POST to exactly this
+	// path can reach the terminate handler. Trimming the id out of a prefix
+	// match would have let /api/v1/sessions/{id} kill a session by itself.
+	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate", s.handleTerminate(cfg))
 
 	srv := &http.Server{
 		Addr:              querySafe(cfg.Listen),

@@ -3,6 +3,7 @@ package recorder
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -166,4 +167,72 @@ func TestWriteAfterCloseFails(t *testing.T) {
 	if err := r.Write(Output, []byte("late")); err == nil {
 		t.Error("write after close succeeded, want error")
 	}
+}
+
+// The tap is what live shadowing reads. If it could ever differ from what was
+// written, an operator watching a session and an auditor replaying it would be
+// looking at two different sessions.
+func TestTapSeesExactlyWhatIsRecorded(t *testing.T) {
+	var buf bytes.Buffer
+	rec, err := New(&buf, Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tapped [][]byte
+	rec.SetTap(func(line []byte) {
+		tapped = append(tapped, append([]byte(nil), line...))
+	})
+
+	if err := rec.Write(Output, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Write(Input, []byte("ls\r")); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Resize(120, 40); err != nil {
+		t.Fatal(err)
+	}
+
+	// Everything after the header line, which the tap does not carry.
+	written := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")[1:]
+	if len(tapped) != len(written) {
+		t.Fatalf("tap saw %d frames, recording holds %d", len(tapped), len(written))
+	}
+	for i := range written {
+		if string(tapped[i]) != written[i] {
+			t.Errorf("frame %d: tap %q, recording %q", i, tapped[i], written[i])
+		}
+	}
+}
+
+// The tap must never be handed a frame the recording failed to accept.
+func TestTapIsSilentWhenTheWriteFails(t *testing.T) {
+	rec, err := New(&failingWriter{allow: 1}, Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tapped int
+	rec.SetTap(func([]byte) { tapped++ })
+
+	if err := rec.Write(Output, []byte("this write fails")); err == nil {
+		t.Fatal("expected the write to fail")
+	}
+	if tapped != 0 {
+		t.Errorf("tap fired %d times for a frame that was never recorded", tapped)
+	}
+}
+
+// failingWriter accepts allow writes — enough for the header — then refuses.
+type failingWriter struct {
+	allow int
+	n     int
+}
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	w.n++
+	if w.n > w.allow {
+		return 0, errors.New("disk full")
+	}
+	return len(p), nil
 }

@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/gsoultan/argus/internal/live"
 	"github.com/gsoultan/argus/internal/recorder"
 	"github.com/gsoultan/argus/internal/sftp"
 	"github.com/gsoultan/argus/internal/sshca"
@@ -50,6 +51,18 @@ type Session struct {
 	recFile  *os.File
 	chainEnd string
 	closed   bool
+
+	// hub fans this session's frames out to shadow viewers. Always present, so
+	// any session can be watched without having been opened in a special way —
+	// the session an operator most wants to watch is not one that announced
+	// itself in advance.
+	hub *live.Hub
+	// killedBy and killReason record an administrative termination, so the
+	// session's final report says who ended it rather than leaving it
+	// indistinguishable from a dropped connection.
+	killedBy     string
+	killReason   string
+	terminatedAt time.Time
 }
 
 // newSession authorises an SSH-transport request and dials the target.
@@ -89,6 +102,7 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 		RemoteIP:  remoteAddr,
 		StartedAt: time.Now().UTC(),
 		srv:       s,
+		hub:       live.NewHub(),
 	}
 	sess.log = s.log.With("session", sess.ID, "user", user,
 		"target", asset.Hostname, "principal", principal)
@@ -181,6 +195,10 @@ func (s *Session) report(chainHead, state string) {
 		"reportedBy":    "gateway",
 		"riskFlags":     s.riskFlags(),
 	}
+	if by, reason, killed := s.Killed(); killed {
+		rec["terminatedBy"] = by
+		rec["terminationReason"] = reason
+	}
 	if key != "" {
 		rec["recordingPath"] = key
 	}
@@ -238,6 +256,11 @@ func (s *Session) riskFlags() []string {
 	if h := s.StartedAt.Hour(); h < 7 || h > 20 {
 		flags = append(flags, "off-hours")
 	}
+	// A session someone had to cut short is the first thing an auditor should
+	// be able to filter for.
+	if _, _, killed := s.Killed(); killed {
+		flags = append(flags, "terminated")
+	}
 	return flags
 }
 
@@ -251,6 +274,8 @@ func (s *Session) openRecording(dir string) error {
 		return err
 	}
 
+	// The header is not broadcast: a viewer attaching mid-session gets the
+	// backlog of frames, and xterm needs no asciicast header to render them.
 	rec, err := recorder.New(f, recorder.Header{
 		Width:     80,
 		Height:    24,
@@ -268,7 +293,58 @@ func (s *Session) openRecording(dir string) error {
 
 	s.recFile = f
 	s.rec = rec
+	rec.SetTap(s.hub.Broadcast)
 	return nil
+}
+
+// Terminate ends the session on an administrator's instruction.
+//
+// The reason is written into the recording before the connection drops. Without
+// it a replay simply stops, which is indistinguishable from a network failure —
+// and "the session ended" is a much weaker finding for an investigator than
+// "an administrator ended it, at this point, for this reason".
+//
+// Returns false if the session had already finished, so the caller can say so
+// rather than report a kill that did not happen.
+func (s *Session) Terminate(by, reason string) bool {
+	s.mu.Lock()
+	if s.closed || s.killedBy != "" {
+		s.mu.Unlock()
+		return false
+	}
+	if reason == "" {
+		reason = "no reason given"
+	}
+	s.killedBy, s.killReason = by, reason
+	s.terminatedAt = time.Now().UTC()
+	rec, client := s.rec, s.client
+	s.mu.Unlock()
+
+	notice := fmt.Sprintf("\r\n\x1b[1;31margus: session terminated by %s (%s)\x1b[0m\r\n", by, reason)
+	if rec != nil {
+		// Into the chain, so the notice is as tamper-evident as the session it
+		// ends, and visible to anyone shadowing at the moment it happens.
+		_ = rec.Write(recorder.Output, []byte(notice))
+	}
+
+	// Closing the client connection is what actually ends it. The user's own
+	// connection collapses with it, since every channel is multiplexed over
+	// this one transport.
+	if client != nil {
+		_ = client.Close()
+	}
+	s.log.Warn("session terminated", "session", s.ID, "by", by, "reason", reason)
+	return true
+}
+
+// Hub exposes the session's broadcast hub to shadow viewers.
+func (s *Session) Hub() *live.Hub { return s.hub }
+
+// Killed reports the administrative termination, if there was one.
+func (s *Session) Killed() (by, reason string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.killedBy, s.killReason, s.killedBy != ""
 }
 
 // handleSessionChannel proxies one "session" channel end to end.
@@ -587,6 +663,11 @@ func (s *Session) Close() (chainHead string, err error) {
 	if s.rec != nil {
 		s.chainEnd, err = s.rec.Close()
 	}
+	// Ends every shadow subscription. A viewer left hanging on a finished
+	// session cannot tell it from one that has gone quiet.
+	if s.hub != nil {
+		s.hub.Close()
+	}
 	if s.recFile != nil {
 		_ = s.recFile.Close()
 	}
@@ -620,4 +701,11 @@ func sendExitStatus(ch ssh.Channel, code int) {
 	payload := make([]byte, 4)
 	binary.BigEndian.PutUint32(payload, uint32(code))
 	_, _ = ch.SendRequest("exit-status", false, payload)
+}
+
+// Live reports whether the session is still connected.
+func (s *Session) Live() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.closed
 }

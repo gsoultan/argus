@@ -196,6 +196,14 @@ func (s *Server) ActiveSessions() []*Session {
 	return out
 }
 
+// Session looks up one live session by id.
+func (s *Server) Session(id string) (*Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	return sess, ok
+}
+
 func (s *Server) handleConn(nConn net.Conn) {
 	defer nConn.Close()
 
