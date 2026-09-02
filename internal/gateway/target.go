@@ -24,9 +24,16 @@ type Request struct {
 	Target string
 }
 
-// Separators accepted between principal and target. `:` is the primary form;
-// `+` and `/` exist because some tooling mangles colons in usernames, and
-// accepting all three costs nothing.
+// Separators accepted between principal and target.
+//
+// `:` is the primary form and reads best for ssh(1). It cannot be used with
+// sftp or scp, whose own syntax is host:path — those clients read
+// `ops:pay-01@gateway` as a path on host `ops` and fail to resolve it. Use `+`
+// or `/` there:
+//
+//	ssh  ops:pay-01@gateway
+//	sftp ops+pay-01@gateway
+//	scp  file ops+pay-01@gateway:/tmp/
 const separators = ":+/"
 
 // ParseUsername splits an SSH username into a connection request.
