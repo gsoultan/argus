@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp.*
+
+# Build output
+dist/
+bin/
+*.tsbuildinfo
+
+# Vite / TanStack Router
+.vite/
+web/dev-dist/
+
+# Local config — never commit real credentials or CA material
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+!**/testdata/*.key
+
+# Argus local state
+.argus/
+recordings/
+
+# Tooling
+.gstack/
+.serena/cache/
+graphify-out/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Gateway dev material — keys and recordings must never be committed
+dev/keys/
+dev/data/
+
+# Local configuration carries real secrets; commit the .example templates only.
+dev/*.yaml
+!dev/*.yaml.example
+dev/dex/config.yaml
