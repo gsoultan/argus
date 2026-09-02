@@ -127,3 +127,22 @@ runtime_start_hint() {
     *)         echo "brew install --cask container" ;;
   esac
 }
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+
+# Loads development secrets into the environment.
+#
+# Config files hold only ${VAR} references, so the values have to come from
+# somewhere. Locally that is dev/secrets.env, which is gitignored; production
+# supplies the same variables from a secret manager or mounted files.
+load_secrets() {
+  local env_file="$ARGUS_ROOT/dev/secrets.env"
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+    return 0
+  fi
+  return 1
+}

@@ -50,3 +50,7 @@ dev/data/
 dev/*.yaml
 !dev/*.yaml.example
 dev/dex/config.yaml
+dev/certs/
+dev/secrets.env
+!dev/secrets.env.example
+dist/

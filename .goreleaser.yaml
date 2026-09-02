@@ -1,0 +1,265 @@
+# GoReleaser builds Argus for Linux and packages it for deb, rpm and apk.
+#
+# Linux only, deliberately. The gateway and control plane are servers, and the
+# agent has to read another user's authorized_keys and own recordings the
+# recorded user cannot touch — none of which means anything off Linux.
+#
+# Packages are split rather than shipped as one bundle: the agent goes on every
+# managed host, potentially thousands, while the gateway and control plane go on
+# a handful of servers. Installing a gateway on every host to get the agent
+# would be a large and pointless increase in attack surface.
+#
+#   goreleaser check          validate this file
+#   goreleaser release --snapshot --clean    build locally without publishing
+
+version: 2
+
+project_name: argus
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - id: argus-gateway
+    main: ./cmd/argus-gateway
+    binary: argus-gateway
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    # -trimpath keeps build-machine paths out of the binary; -s -w drop the
+    # symbol table and DWARF, which are of no use in production and of some use
+    # to someone reverse engineering it.
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: argus-control
+    main: ./cmd/argus-control
+    binary: argus-control
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: argus-agent
+    main: ./cmd/argus-agent
+    binary: argus-agent
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+  - id: argus-verify
+    main: ./cmd/argus-verify
+    binary: argus-verify
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    ids: [argus-gateway, argus-control, argus-agent, argus-verify]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - src: packaging/systemd/*.service
+        dst: systemd
+      - src: packaging/config/*
+        dst: config
+
+nfpms:
+  # ── Agent: installed on every managed host ─────────────────────────────────
+  - id: argus-agent
+    package_name: argus-agent
+    ids: [argus-agent]
+    vendor: Argus
+    homepage: https://github.com/gsoultan/argus
+    maintainer: Argus Maintainers <noreply@example.com>
+    description: |
+      Argus host agent.
+      Records privileged sessions on this host, including sessions that connect
+      straight to sshd without passing through the Argus gateway, and reports
+      how reachable the host is without Argus.
+    license: Proprietary
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/argus-agent.service
+        dst: /lib/systemd/system/argus-agent.service
+      - src: packaging/config/agent.env
+        dst: /etc/argus/agent.env
+        type: config|noreplace
+        file_info: {mode: 0600}
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+    # openssh-server is a hard requirement: without sshd there is no session to
+    # record and the ForceCommand hook has nothing to hook into.
+    dependencies:
+      - openssh-server
+    overrides:
+      apk:
+        dependencies: [openssh]
+
+  # ── Gateway ────────────────────────────────────────────────────────────────
+  - id: argus-gateway
+    package_name: argus-gateway
+    ids: [argus-gateway, argus-verify]
+    vendor: Argus
+    homepage: https://github.com/gsoultan/argus
+    maintainer: Argus Maintainers <noreply@example.com>
+    description: |
+      Argus SSH gateway.
+      Brokers, records and authorises privileged SSH sessions. Includes
+      argus-verify for checking a recording's hash chain independently.
+    license: Proprietary
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/argus-gateway.service
+        dst: /lib/systemd/system/argus-gateway.service
+      - src: packaging/config/gateway.yaml
+        dst: /etc/argus/gateway.yaml
+        type: config|noreplace
+        file_info: {mode: 0640}
+      - src: packaging/config/gateway.env
+        dst: /etc/argus/gateway.env
+        type: config|noreplace
+        file_info: {mode: 0600}
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+
+  # ── Control plane ──────────────────────────────────────────────────────────
+  - id: argus-control
+    package_name: argus-control
+    ids: [argus-control, argus-verify]
+    vendor: Argus
+    homepage: https://github.com/gsoultan/argus
+    maintainer: Argus Maintainers <noreply@example.com>
+    description: |
+      Argus control plane.
+      System of record for sessions, assets, agent liveness and the
+      hash-chained audit log. Includes argus-verify.
+    license: Proprietary
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/argus-control.service
+        dst: /lib/systemd/system/argus-control.service
+      - src: packaging/config/control.yaml
+        dst: /etc/argus/control.yaml
+        type: config|noreplace
+        file_info: {mode: 0640}
+      - src: packaging/config/control.env
+        dst: /etc/argus/control.env
+        type: config|noreplace
+        file_info: {mode: 0600}
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+
+# Checksums let an operator confirm they installed what was published, which is
+# the least an access-management tool should offer.
+checksum:
+  name_template: "checksums.txt"
+
+# Signing is on for real releases. A privileged-access product distributed
+# without a way to verify provenance is asking to become a supply-chain vector.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "--yes"
+      - "${artifact}"
+    artifacts: checksum
+    # Only in CI, where cosign keyless signing has an OIDC identity to bind to.
+    ids: [default]
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Security
+      regexp: '^.*?(sec|security|fix\(sec\))[:\(].*$'
+      order: 0
+    - title: Features
+      regexp: '^.*?feat[:\(].*$'
+      order: 1
+    - title: Fixes
+      regexp: '^.*?fix[:\(].*$'
+      order: 2
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: gsoultan
+    name: argus
+  draft: true
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    # Debian / Ubuntu
+    sudo dpkg -i argus-agent_{{ .Version }}_linux_amd64.deb
+
+    # RHEL / Rocky / Alma
+    sudo rpm -i argus-agent-{{ .Version }}.linux-amd64.rpm
+
+    # Alpine
+    sudo apk add --allow-untrusted argus-agent_{{ .Version }}_linux_amd64.apk
+    ```
+
+    Nothing starts on install. These services need certificates, secrets and an
+    inventory first, and a package that starts a half-configured privileged
+    access gateway is one that fails in the worst possible place.
+
+    Verify what you downloaded:
+
+    ```sh
+    cosign verify-blob checksums.txt \
+      --signature checksums.txt.sig \
+      --certificate checksums.txt.pem \
+      --certificate-identity-regexp 'https://github.com/gsoultan/argus/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    sha256sum -c checksums.txt --ignore-missing
+    ```

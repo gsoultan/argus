@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    services:
+      # The control-plane tests exercise real database behaviour — atomic ticket
+      # redemption, the row lock that admits one approver, the advisory lock
+      # serialising the audit chain. They skip without a database, so CI
+      # provides one rather than quietly running a smaller suite.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: argus
+          POSTGRES_PASSWORD: argus
+          POSTGRES_DB: argus
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U argus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        env:
+          ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
+        # -race is the point of running these in CI: the concurrency tests
+        # around ticket redemption and audit chaining are exactly where a data
+        # race would hide.
+        run: go test -race -timeout 5m ./...
+
+      - name: Confirm the database tests actually ran
+        env:
+          ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
+        # A skipped suite passes. Without this check, losing the database
+        # service would silently shrink coverage instead of failing.
+        run: |
+          out=$(go test -run TestRedeemTicketIsAtomic -v ./internal/control/ 2>&1)
+          echo "$out"
+          if echo "$out" | grep -q -- "--- SKIP"; then
+            echo "::error::control-plane tests skipped; the database was not reachable"
+            exit 1
+          fi
+
+      - name: Fuzz the SSH request parsers
+        # These read bytes from the network before any policy runs. A panic
+        # there takes down every session on the gateway, so a short fuzz run on
+        # every change is cheap insurance.
+        run: go test -run=Fuzz -fuzz=FuzzParsePTYRequest -fuzztime=60s ./internal/gateway/
+
+  web:
+    name: Console
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: web }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bunx vite build
+
+  packaging:
+    name: Packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
+
+      # Build the packages on every change rather than discovering at release
+      # time that packaging broke three commits ago.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,sbom,publish
+
+      - name: Install the agent package and exercise it
+        # A package that builds is not a package that installs. This catches
+        # postinstall bugs, wrong file modes and missing dependencies.
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server
+          deb=$(ls dist/argus-agent*linux_amd64.deb)
+          sudo dpkg -i "$deb"
+
+          argus-agent version
+          getent passwd argus
+
+          test -f /lib/systemd/system/argus-agent.service
+          # The recorded user must not be able to reach their own recording.
+          [ "$(stat -c '%a %U:%G' /var/lib/argus/recordings)" = "700 root:root" ]
+          # Secrets are not world readable.
+          [ "$(stat -c '%a' /etc/argus/agent.env)" = "600" ]
+
+          sudo systemd-analyze verify /lib/systemd/system/argus-agent.service
+          argus-agent scan --shim /usr/bin/argus-agent || true
+
+      - name: Confirm the units are hardened
+        run: |
+          set -euo pipefail
+          for unit in packaging/systemd/*.service; do
+            echo "checking $unit"
+            grep -q '^NoNewPrivileges=yes' "$unit"
+            grep -q '^ProtectSystem=strict' "$unit"
+            grep -q '^SystemCallArchitectures=native' "$unit"
+            # notify types would hang: none of these implement sd_notify.
+            grep -q '^Type=exec' "$unit"
+          done

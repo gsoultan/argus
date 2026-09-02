@@ -18,7 +18,6 @@ storage:
 
 signing_secret: "${ARGUS_SIGNING_SECRET}"
 console_url: ""
-secure_cookies: false
 session_ttl: 8h
 ticket_ttl: 60s
 
@@ -33,3 +32,15 @@ oidc:
     argus-admins: "admin"
     engineering: "operator"
     authors: "operator"
+
+tls:
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
+  # Reporter endpoints additionally require a client certificate signed by this
+  # CA, so a leaked reporter token is not sufficient on its own.
+  client_ca_file: "certs/ca.crt"
+
+rate_limit:
+  login_per_minute: 6
+  failures_per_hour: 4
+  tickets_per_minute: 10

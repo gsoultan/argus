@@ -14,23 +14,29 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/gsoultan/argus/internal/secrets"
+
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/gateway"
 	"github.com/gsoultan/argus/internal/hostkey"
+	"github.com/gsoultan/argus/internal/ratelimit"
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
+	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 var version = "dev"
@@ -52,6 +58,9 @@ type config struct {
 	// brokers and records, it is simply not visible in the console.
 	Control *controlConfig `yaml:"control"`
 
+	// RateLimit bounds connection attempts per client address.
+	RateLimit *gatewayRateLimit `yaml:"rate_limit"`
+
 	// CA enables certificate auth for assets configured for it.
 	CA *caConfig `yaml:"ca"`
 
@@ -62,6 +71,13 @@ type config struct {
 	// with ssh(1) alone, and a deployment that does not want a web-reachable
 	// shell simply omits this block.
 	Web *webConfig `yaml:"web"`
+}
+
+type gatewayRateLimit struct {
+	// ConnectionsPerMinute per client address. Generous enough that an
+	// operator with a script never notices, tight enough that a scanner does.
+	ConnectionsPerMinute int `yaml:"connections_per_minute"`
+	Burst                int `yaml:"burst"`
 }
 
 type caConfig struct {
@@ -82,6 +98,14 @@ type controlConfig struct {
 	URL   string `yaml:"url"`
 	Token string `yaml:"token"`
 	Spool string `yaml:"spool"`
+	// CAFile verifies the control plane's certificate. Empty uses system roots,
+	// which is right for a public CA and wrong for an internal one.
+	CAFile string `yaml:"ca_file"`
+	// CertFile and KeyFile present a client certificate, so the control plane
+	// can attribute a report to this gateway rather than to whoever holds the
+	// shared token.
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 type webConfig struct {
@@ -91,6 +115,14 @@ type webConfig struct {
 	// here without a callback on every connection.
 	SigningSecret string            `yaml:"signing_secret"`
 	Tokens        map[string]string `yaml:"tokens"`
+	// TLS serves the browser terminal over HTTPS, which makes the WebSocket
+	// wss://. Without it the whole session stream is in the clear.
+	TLS *gatewayTLS `yaml:"tls"`
+}
+
+type gatewayTLS struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 func main() {
@@ -135,6 +167,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
 	if cfg.TrustOnFirstUse {
 		log.Warn("trust-on-first-use is enabled",
 			"detail", "unknown host keys are pinned automatically; the first connection to a host is unprotected")
@@ -146,8 +179,42 @@ func run() error {
 		if spool == "" {
 			spool = "data/report-spool.jsonl"
 		}
-		rep = reporter.New(cfg.Control.URL, cfg.Control.Token, spool, log)
-		log.Info("reporting to control plane", "url", cfg.Control.URL)
+		var clientTLS *tls.Config
+		if cfg.Control.CAFile != "" || cfg.Control.CertFile != "" {
+			clientTLS, err = tlsconfig.Client(tlsconfig.ClientOptions{
+				CAFile:   cfg.Control.CAFile,
+				CertFile: cfg.Control.CertFile,
+				KeyFile:  cfg.Control.KeyFile,
+			})
+			if err != nil {
+				return err
+			}
+		}
+		rep = reporter.NewWithTLS(cfg.Control.URL, cfg.Control.Token, spool, clientTLS, log)
+		log.Info("reporting to control plane",
+			"url", cfg.Control.URL,
+			"verifies_certificate", clientTLS != nil || strings.HasPrefix(cfg.Control.URL, "https://"),
+			"client_certificate", cfg.Control.CertFile != "")
+		if strings.HasPrefix(cfg.Control.URL, "http://") {
+			log.Warn("control plane URL is plaintext http://",
+				"detail", "session records and audit events cross this link in the "+
+					"clear and can be forged or suppressed in transit")
+		}
+	}
+
+	// Share replay protection and host-key pins through the control plane.
+	//
+	// Both are per-instance sets otherwise, and the failure mode is silent: a
+	// second gateway accepts replayed tickets and starts with no pins at all,
+	// so under trust-on-first-use it accepts a host the first would refuse.
+	if rep != nil {
+		keys.UseRemote(gateway.NewControlPlanePins(rep))
+		log.Info("host key pins shared via the control plane")
+	} else {
+		log.Warn("host key pins are LOCAL to this gateway",
+			"detail", "a second gateway would start with no pins and could silently "+
+				"accept a host this one refuses; configure `control` before running "+
+				"more than one instance")
 	}
 
 	var store *storage.Client
@@ -179,6 +246,24 @@ func run() error {
 			"validity", ca.Validity.String())
 	}
 
+	rlRate, rlBurst := 30, 10
+	if cfg.RateLimit != nil {
+		if cfg.RateLimit.ConnectionsPerMinute > 0 {
+			rlRate = cfg.RateLimit.ConnectionsPerMinute
+		}
+		if cfg.RateLimit.Burst > 0 {
+			rlBurst = cfg.RateLimit.Burst
+		}
+	}
+	authLimiter := ratelimit.New(ratelimit.Limit{
+		Rate: rlRate, Window: time.Minute, Burst: rlBurst,
+	}, ratelimit.DefaultMaxKeys)
+	limiterStop := make(chan struct{})
+	defer close(limiterStop)
+	authLimiter.StartSweeper(5*time.Minute, limiterStop)
+	log.Info("connection rate limit active",
+		"per_minute", rlRate, "burst", rlBurst)
+
 	srv, err := gateway.NewServer(gateway.Config{
 		Listen:             cfg.Listen,
 		HostKeyPath:        cfg.HostKey,
@@ -188,6 +273,7 @@ func run() error {
 		HostKeys:           keys,
 		Log:                log,
 		CA:                 ca,
+		AuthLimiter:        authLimiter,
 		Reporter:           rep,
 		Storage:            store,
 	})
@@ -216,12 +302,33 @@ func run() error {
 			log.Warn("no web.signing_secret — browser terminal falls back to static tokens",
 				"detail", "tickets are single-use and short-lived; static tokens are neither")
 		}
+		if ticketSigner != nil {
+			if rep != nil {
+				ticketSigner.SetRedeemer(gateway.NewControlPlaneRedeemer(rep))
+				log.Info("terminal ticket replay protection shared via the control plane")
+			} else {
+				log.Warn("terminal ticket replay protection is LOCAL to this gateway",
+					"detail", "a ticket burned here stays valid on any other gateway; "+
+						"single-use degrades to single-use-per-instance")
+			}
+		}
+		var webTLS *tls.Config
+		if cfg.Web.TLS != nil {
+			webTLS, err = tlsconfig.Server(tlsconfig.ServerOptions{
+				CertFile: cfg.Web.TLS.CertFile,
+				KeyFile:  cfg.Web.TLS.KeyFile,
+			})
+			if err != nil {
+				return err
+			}
+		}
 		go func() {
 			err := srv.ServeWeb(ctx, gateway.WebConfig{
 				Listen:         cfg.Web.Listen,
 				Signer:         ticketSigner,
 				Tokens:         cfg.Web.Tokens,
 				AllowedOrigins: cfg.Web.AllowedOrigins,
+				TLSConfig:      webTLS,
 			})
 			if err != nil {
 				log.Error("browser terminal failed", "error", err)
@@ -281,6 +388,13 @@ func loadConfig(path string) (config, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("read config %s: %w", path, err)
 	}
+	// Resolve ${VAR} and ${file:/path} references before parsing, so the file
+	// on disk never has to contain a live credential.
+	data, err = secrets.Expand(data)
+	if err != nil {
+		return cfg, fmt.Errorf("config %s: %w", path, err)
+	}
+
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
@@ -291,6 +405,12 @@ func loadConfig(path string) (config, error) {
 	relative := []*string{
 		&cfg.HostKey, &cfg.AuthorizedKeys, &cfg.Inventory,
 		&cfg.HostKeyStore, &cfg.RecordingDir,
+	}
+	if cfg.Web != nil && cfg.Web.TLS != nil {
+		relative = append(relative, &cfg.Web.TLS.CertFile, &cfg.Web.TLS.KeyFile)
+	}
+	if cfg.Control != nil {
+		relative = append(relative, &cfg.Control.CAFile, &cfg.Control.CertFile, &cfg.Control.KeyFile)
 	}
 	if cfg.CA != nil {
 		relative = append(relative, &cfg.CA.KeyPath)

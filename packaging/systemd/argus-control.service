@@ -1,0 +1,53 @@
+[Unit]
+Description=Argus control plane
+Documentation=https://github.com/gsoultan/argus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=argus
+Group=argus
+ExecStart=/usr/bin/argus-control --config /etc/argus/control.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Secrets come from the environment; the config file holds only ${VAR}
+# references. 0600 root:argus so the unit can read it and nobody else can.
+EnvironmentFile=-/etc/argus/control.env
+
+# ── Hardening ────────────────────────────────────────────────────────────────
+# The control plane is the system of record for who accessed what. A compromise
+# here is a compromise of the evidence, so it gets no more of the host than it
+# needs.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+# It talks to Postgres, object storage and browsers. Nothing else.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# No capabilities at all: it binds ports above 1024 and owns no devices.
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+SystemCallArchitectures=native
+
+ReadWritePaths=/var/lib/argus
+
+[Install]
+WantedBy=multi-user.target

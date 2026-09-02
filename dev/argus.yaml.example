@@ -9,12 +9,19 @@ recording_dir: "data/recordings"
 trust_on_first_use: true
 log_level: "debug"
 
+rate_limit:
+  connections_per_minute: 6
+  burst: 3
+
 ca:
   key_path: "keys/argus_ca"
   validity: 2m
 
 control:
-  url: "http://127.0.0.1:8080"
+  url: "https://localhost:8080"
+  ca_file: "certs/ca.crt"
+  cert_file: "certs/client.crt"
+  key_file: "certs/client.key"
   token: "reporter-secret"
   spool: "data/report-spool.jsonl"
 
@@ -24,6 +31,9 @@ web:
     - "localhost:5273"
     - "127.0.0.1:5273"
   signing_secret: "${ARGUS_SIGNING_SECRET}"
+  tls:
+    cert_file: "certs/server.crt"
+    key_file: "certs/server.key"
 
 storage:
   endpoint: "127.0.0.1:9000"

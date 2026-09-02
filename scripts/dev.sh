@@ -224,6 +224,13 @@ printf '\n%s  ARGUS%s %s· local development%s\n\n' "$BOLD$GREEN" "$RESET" "$DIM
 
 preflight
 
+if load_secrets; then
+  ok "Loaded dev/secrets.env"
+else
+  warn "dev/secrets.env not found — services reading \${VAR} references will refuse to start"
+  warn "Copy dev/secrets.env.example and fill it in, or export the variables yourself."
+fi
+
 if (( CLEAN )); then
   info "Reinstalling web dependencies"
   rm -rf web/node_modules

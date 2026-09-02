@@ -41,6 +41,16 @@ fi
 if [[ "$TARGET" == all || "$TARGET" == go ]]; then
   if has_backend; then
     step "Go"
+    # Control-plane tests exercise real database behaviour — atomic ticket
+    # redemption, the row lock on approvals, the advisory lock serialising the
+    # audit chain. Without a database they skip rather than fail, so a missing
+    # Postgres silently shrinks the suite.
+    if [[ -z "${ARGUS_TEST_DATABASE_URL:-}" ]]; then
+      export ARGUS_TEST_DATABASE_URL="postgres://argus:argus@localhost:5433/argus?sslmode=disable"
+    fi
+    if ! (exec 3<>/dev/tcp/localhost/5433) 2>/dev/null; then
+      warn "Postgres is not reachable — control-plane tests will SKIP (run: ./scripts/deps.sh up)"
+    fi
     run_check "vet" go vet ./...
     run_check "test" go test ./...
     # gofmt exits 0 even when files need formatting, so check for output instead.

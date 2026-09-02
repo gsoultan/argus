@@ -1,0 +1,71 @@
+[Unit]
+Description=Argus host agent (session recording collector)
+Documentation=https://github.com/gsoultan/argus
+# sshd invokes the recorder shim for every session, and the shim refuses the
+# connection when the collector is unreachable. Starting before sshd means a
+# reboot never leaves a window where sessions are refused for the wrong reason.
+Before=sshd.service ssh.service
+After=network.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/argus-agent daemon \
+    --shim /usr/bin/argus-agent \
+    --socket /run/argus/collector.sock \
+    --recordings /var/lib/argus/recordings \
+    --state /var/lib/argus
+Restart=always
+RestartSec=2s
+
+EnvironmentFile=-/etc/argus/agent.env
+
+# ── Runs as root, deliberately ───────────────────────────────────────────────
+# The shim runs as whoever connected. If the daemon were not root, the recorded
+# user could read or edit the record of their own session and the whole thing
+# would be theatre. Root ownership of the recording is the security argument for
+# splitting the agent in two.
+#
+# So instead of dropping privilege, it drops everything root does not need.
+User=root
+Group=root
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+# NOT ProtectHome=yes: the posture scan reads /home/*/.ssh/authorized_keys to
+# find standing credentials that could bypass the gateway. Read-only is exactly
+# the access it needs and no more.
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=no
+
+# Reporting to the control plane, plus the local unix socket the shim uses.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Reading another user's authorized_keys needs DAC_READ_SEARCH. Nothing else is
+# required, so nothing else is retained.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+
+SystemCallFilter=@system-service
+SystemCallFilter=~@swap @reboot @obsolete
+SystemCallArchitectures=native
+
+RuntimeDirectory=argus
+RuntimeDirectoryMode=0755
+StateDirectory=argus
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/argus /run/argus
+
+[Install]
+WantedBy=multi-user.target

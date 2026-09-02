@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the release and upload artifacts
+  id-token: write   # cosign keyless signing binds to this OIDC identity
+  packages: read
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: argus
+          POSTGRES_PASSWORD: argus
+          POSTGRES_DB: argus
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U argus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GoReleaser needs full history for the changelog, and the tag needs
+          # its annotation for the version to be derived correctly.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A release that ships untested code is worse than no release. The full
+      # suite runs again here rather than trusting that CI passed on the commit
+      # the tag happens to point at.
+      - name: Test
+        env:
+          ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
+        run: go test -race -timeout 5m ./...
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft
+        # For the SBOM. A privileged-access product should be able to answer
+        # "what is in this binary" without the customer reverse engineering it.
+        uses: anchore/sbom-action/download-syft@v0
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summarise
+        run: |
+          {
+            echo "## Released \`${GITHUB_REF_NAME}\`"
+            echo
+            echo "The release is a **draft** — review the notes, confirm the"
+            echo "artifacts, then publish."
+            echo
+            echo "| Package | Goes on |"
+            echo "|---|---|"
+            echo "| \`argus-agent\` | every managed host |"
+            echo "| \`argus-gateway\` | the bastion servers |"
+            echo "| \`argus-control\` | the control plane servers |"
+          } >> "$GITHUB_STEP_SUMMARY"

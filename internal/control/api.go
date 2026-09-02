@@ -1,6 +1,8 @@
 package control
 
 import (
+	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/storage"
+	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 // API serves the console and receives reports from gateways and agents.
@@ -31,6 +34,18 @@ type API struct {
 	// AllowedOrigins for browser CORS.
 	AllowedOrigins []string
 
+	// throttles bounds the authentication surface. Nil disables throttling.
+	throttles *Throttles
+
+	// RequirePeerCert makes the reporter routes demand a verified client
+	// certificate in addition to the token.
+	//
+	// Only the reporter routes: the same listener serves browsers, which have
+	// no client certificate. Splitting it this way means a leaked reporter
+	// token is not enough on its own — an attacker also needs a key signed by
+	// the internal CA.
+	RequirePeerCert bool
+
 	storage *storage.Client
 
 	oidc          *auth.OIDC
@@ -42,6 +57,9 @@ type API struct {
 	SessionTTL time.Duration
 	TicketTTL  time.Duration
 }
+
+// SetThrottles enables per-client rate limiting.
+func (a *API) SetThrottles(t *Throttles) { a.throttles = t }
 
 // NewAPI builds the HTTP surface.
 func NewAPI(store *Store, log *slog.Logger) *API {
@@ -55,11 +73,13 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /auth/login", a.handleLogin)
-	mux.HandleFunc("GET /auth/callback", a.handleCallback)
+	// Authentication endpoints are throttled per client. The callback matters
+	// most: it burns an IdP round trip on every call.
+	mux.HandleFunc("GET /auth/login", a.limitLogin(a.handleLogin))
+	mux.HandleFunc("GET /auth/callback", a.limitLogin(a.handleCallback))
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
-	mux.HandleFunc("POST /api/v1/terminal/ticket", a.handleTicket)
+	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
 	mux.HandleFunc("GET /api/v1/requests", a.user(a.getRequests))
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
@@ -84,10 +104,41 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/audit", a.reporter(a.postAudit))
 
-	return a.cors(mux)
+	// Shared state, so replay protection and host-key pins hold across every
+	// gateway rather than per instance.
+	mux.HandleFunc("POST /api/v1/terminal/redeem", a.reporter(a.postRedeem))
+	mux.HandleFunc("GET /api/v1/hostkeys/pin", a.reporter(a.getHostKeyPin))
+	mux.HandleFunc("POST /api/v1/hostkeys/pin", a.reporter(a.postHostKeyPin))
+
+	return a.securityHeaders(a.cors(mux))
+}
+
+// securityHeaders sets the response headers a browser needs to protect the
+// console, on every response including errors.
+func (a *API) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS != nil {
+			// Only over TLS: sending HSTS on a plaintext response is
+			// meaningless, and setting it during a local HTTP session would
+			// pin the browser to HTTPS for a host that cannot serve it.
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		// The API serves JSON, never markup, so nothing needs to execute.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 /* ── Auth ────────────────────────────────────────────────────────────────── */
+
+// ctxKey namespaces values Argus puts on a request context.
+type ctxKey string
+
+// peerKey carries the client-certificate identity of a reporter call.
+const peerKey ctxKey = "argus.peer"
 
 func bearer(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
@@ -114,12 +165,34 @@ func (a *API) user(next func(http.ResponseWriter, *http.Request, string)) http.H
 // token must not let anyone write fabricated sessions into the audit record.
 func (a *API) reporter(next func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if a.ReporterToken == "" || bearer(r) != a.ReporterToken {
+		if a.ReporterToken == "" || subtle.ConstantTimeCompare(
+			[]byte(bearer(r)), []byte(a.ReporterToken)) != 1 {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		if a.RequirePeerCert {
+			peer := tlsconfig.PeerIdentity(r.TLS)
+			if peer == "" {
+				a.log.Warn("reporter call without a client certificate",
+					"remote", r.RemoteAddr, "path", r.URL.Path)
+				writeErr(w, http.StatusUnauthorized,
+					"a client certificate is required for reporter endpoints")
+				return
+			}
+			// Attribute the call to a host rather than to "whoever holds the
+			// token", which is what makes a reported session traceable.
+			r = r.WithContext(context.WithValue(r.Context(), peerKey, peer))
+		}
 		next(w, r)
 	}
+}
+
+// PeerName returns the client-certificate identity of a reporter call, if any.
+func PeerName(r *http.Request) string {
+	if v, ok := r.Context().Value(peerKey).(string); ok {
+		return v
+	}
+	return ""
 }
 
 func (a *API) cors(next http.Handler) http.Handler {

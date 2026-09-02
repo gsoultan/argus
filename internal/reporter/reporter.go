@@ -9,6 +9,7 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -35,8 +36,22 @@ type Client struct {
 // New builds a reporter. An empty baseURL disables reporting entirely, which is
 // how the gateway runs standalone.
 func New(baseURL, token, spoolPath string, log *slog.Logger) *Client {
+	return NewWithTLS(baseURL, token, spoolPath, nil, log)
+}
+
+// NewWithTLS builds a reporter that verifies the control plane's certificate,
+// and optionally presents a client certificate of its own.
+//
+// This link carries session records and audit events. Without verification an
+// attacker who can intercept it can forge or suppress the evidence of their own
+// session, which is the one thing the product exists to prevent.
+func NewWithTLS(baseURL, token, spoolPath string, tlsCfg *tls.Config, log *slog.Logger) *Client {
 	if log == nil {
 		log = slog.Default()
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if tlsCfg != nil {
+		transport.TLSClientConfig = tlsCfg
 	}
 	return &Client{
 		baseURL:   baseURL,
@@ -45,7 +60,8 @@ func New(baseURL, token, spoolPath string, log *slog.Logger) *Client {
 		log:       log,
 		http: &http.Client{
 			// Short: a slow control plane must not hold a session's cleanup.
-			Timeout: 5 * time.Second,
+			Timeout:   5 * time.Second,
+			Transport: transport,
 		},
 	}
 }

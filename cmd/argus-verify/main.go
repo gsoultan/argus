@@ -20,7 +20,11 @@ import (
 	"github.com/gsoultan/argus/internal/recorder"
 )
 
+// Stamped by the release build.
+var version = "dev"
+
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	headOnly := flag.Bool("head", false, "print the computed chain head and exit")
 	quiet := flag.Bool("quiet", false, "suppress output; rely on exit status")
 	flag.Usage = func() {
@@ -28,6 +32,11 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("argus-verify %s\n", version)
+		return
+	}
 
 	if flag.NArg() < 1 {
 		flag.Usage()

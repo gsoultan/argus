@@ -1,0 +1,55 @@
+# Argus control plane.
+#
+# Secrets are references, never literals — this file is world-readable in far
+# too many workflows. Supply the values in /etc/argus/control.env, or from a
+# mounted file with ${file:/run/secrets/name}.
+
+listen: "0.0.0.0:8080"
+database_url: "${ARGUS_DATABASE_URL}"
+console_url: ""
+
+tls:
+  cert_file: "/etc/argus/tls/server.crt"
+  key_file: "/etc/argus/tls/server.key"
+  # Reporter endpoints additionally require a client certificate signed by this
+  # CA, so a leaked reporter token is not sufficient on its own.
+  client_ca_file: "/etc/argus/tls/ca.crt"
+
+signing_secret: "${ARGUS_SIGNING_SECRET}"
+reporter_token: "${ARGUS_REPORTER_TOKEN}"
+
+# Per-client limits on the authentication surface. The defaults are already
+# appropriate; a person never reaches them and a script always does.
+rate_limit:
+  login_per_minute: 20
+  # Failures are counted far more tightly than attempts: a client producing
+  # them at a rate a real user never reaches is doing something a real user
+  # never does.
+  failures_per_hour: 20
+  tickets_per_minute: 30
+  # Only set this when a load balancer terminates connections in front of
+  # Argus. Trusting a forwarding header otherwise lets a client both evade its
+  # own limit and throttle someone else.
+  # trusted_proxies: ["10.0.0.0/8"]
+
+session_ttl: 8h
+ticket_ttl: 60s
+agent_stale_after: 90s
+log_level: "info"
+
+# Uncomment and complete to enable SSO. Until then the console has no way in,
+# which is the correct default for a system of record.
+#
+# oidc:
+#   issuer: "https://idp.example.com"
+#   client_id: "argus-console"
+#   client_secret: "${ARGUS_OIDC_CLIENT_SECRET}"
+#   redirect_url: "https://argus.example.com/auth/callback"
+#   role_claim: "groups"
+#   # An unmapped user gets this. Keep it least-privileged so a broken mapping
+#   # fails closed.
+#   default_role: "auditor"
+#   role_map:
+#     argus-admins: "admin"
+#     argus-approvers: "approver"
+#     engineering: "operator"
