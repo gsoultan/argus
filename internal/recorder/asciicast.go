@@ -40,6 +40,9 @@ const (
 	// Input is what the user typed. Capturing it is what lets the console
 	// reconstruct a command timeline without guessing from echoed output.
 	Input Stream = "i"
+	// Kernel is an execution the kernel observed, carrying JSON rather than
+	// terminal bytes. Players that predate it ignore the line.
+	Kernel Stream = "x"
 )
 
 // Recorder serialises a session to asciicast v2 while maintaining a
@@ -154,6 +157,26 @@ func (r *Recorder) Write(s Stream, p []byte) error {
 	line, err := json.Marshal([]any{round3(elapsed), string(s), string(p)})
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
+	}
+	return r.emit(line)
+}
+
+// Exec records a kernel-observed execution.
+//
+// Deliberately inside the recording, and therefore inside the hash chain. The
+// value of this evidence is that it cannot be edited after the fact; kept in a
+// separate stream it would be exactly as forgeable as the shell history it
+// exists to replace, and a chain that covered the terminal output but not the
+// command list would guarantee the wrong half.
+func (r *Recorder) Exec(v any) error {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal exec event: %w", err)
+	}
+	elapsed := time.Since(r.started).Seconds()
+	line, err := json.Marshal([]any{round3(elapsed), string(Kernel), string(payload)})
+	if err != nil {
+		return fmt.Errorf("marshal exec frame: %w", err)
 	}
 	return r.emit(line)
 }

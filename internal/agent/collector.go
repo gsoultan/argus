@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gsoultan/argus/internal/execlog"
 	"github.com/gsoultan/argus/internal/recorder"
 )
 
@@ -35,6 +36,12 @@ type Collector struct {
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
 	OnSession func(SessionRecord)
+
+	// Exec attributes kernel-observed executions to sessions. Nil, or holding
+	// no probe, on hosts without kernel support — the collector behaves
+	// identically apart from the fidelity it reports, so there is one path
+	// rather than a condition at every call site.
+	Exec *execlog.Context
 }
 
 // SessionRecord is what the control plane is told about a finished session.
@@ -51,6 +58,13 @@ type SessionRecord struct {
 	ChainHead  string    `json:"chain_head"`
 	Bytes      int64     `json:"bytes"`
 	Path       string    `json:"path"`
+	// Fidelity is what this recording can actually evidence, decided per
+	// session rather than per host: a session recorded while the probe was
+	// unavailable must not claim kernel evidence it does not contain.
+	Fidelity string `json:"fidelity"`
+	// Commands counts kernel-observed executions, and is zero for a PTY-only
+	// recording rather than a guess derived from terminal output.
+	Commands int `json:"commands"`
 }
 
 type activeSession struct {
@@ -59,6 +73,13 @@ type activeSession struct {
 	rec   *recorder.Recorder
 	file  *os.File
 	path  string
+
+	mu    sync.Mutex
+	execs int
+	// ptyOnly records that kernel tracing was not attached to this session in
+	// particular, so its fidelity is reported honestly even when the host as a
+	// whole supports it.
+	ptyOnly bool
 }
 
 // NewCollector builds a collector writing recordings into dir.
@@ -246,6 +267,31 @@ func (c *Collector) open(m SessionStart) (*activeSession, error) {
 
 	sess := &activeSession{id: id, start: m, rec: rec, file: f, path: path}
 
+	// The shim's PID is the session leader; everything the user runs descends
+	// from it. Attached before the shell is exec'd, so the first command is
+	// caught rather than being the one that gets away.
+	if m.PID > 0 {
+		if err := c.Exec.Attach(id, m.PID, func(e execlog.Exec) {
+			if err := sess.rec.Exec(e); err != nil {
+				c.log.Error("recording a kernel execution failed",
+					"session", id, "command", e.CommandLine(), "error", err)
+				return
+			}
+			sess.mu.Lock()
+			sess.execs++
+			sess.mu.Unlock()
+		}); err != nil {
+			// Loudly: a session that believes it has kernel evidence and does
+			// not is worse than one that never claimed to.
+			c.log.Error("kernel execution tracing unavailable for this session",
+				"session", id, "pid", m.PID, "error", err,
+				"detail", "the recording will be terminal output only")
+			sess.ptyOnly = true
+		}
+	} else {
+		sess.ptyOnly = true
+	}
+
 	c.mu.Lock()
 	c.active[id] = sess
 	c.mu.Unlock()
@@ -273,6 +319,8 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 	delete(c.active, sess.id)
 	c.mu.Unlock()
 
+	c.Exec.Detach(sess.id, sess.start.PID)
+
 	head, err := sess.rec.Close()
 	if err != nil {
 		c.log.Error("sealing recording failed", "session", sess.id, "error", err)
@@ -294,6 +342,8 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 		ChainHead:  head,
 		Bytes:      bytes,
 		Path:       sess.path,
+		Fidelity:   sess.fidelity(c.Exec),
+		Commands:   sess.commandCount(),
 	}
 
 	c.log.Info("recording sealed",
@@ -316,4 +366,20 @@ func newID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// fidelity reports what this recording can evidence.
+func (s *activeSession) fidelity(c *execlog.Context) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ptyOnly {
+		return execlog.FidelityPTY
+	}
+	return c.Fidelity()
+}
+
+func (s *activeSession) commandCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.execs
 }
