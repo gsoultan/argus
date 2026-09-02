@@ -1,0 +1,72 @@
+/* ---------------------------------------------------------------------------
+   Cascade order is load-bearing.
+
+   Mantine v9 ships its styles wrapped in a `mantine` layer (styles.layer.css).
+   Declaring the layer order up front puts Tailwind's `utilities` last, so a
+   `className="..."` utility always beats a Mantine component style without
+   needing `!important` anywhere. Tailwind's preflight goes in `base`, BEFORE
+   the mantine layer, so it normalises the document without stomping Mantine's
+   own resets.
+
+   Do not reorder these two blocks.
+   --------------------------------------------------------------------------- */
+@layer theme, base, mantine, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@import '@mantine/core/styles.layer.css';
+@import '@mantine/notifications/styles.layer.css';
+
+@theme {
+  --color-void: #0a0e14;
+  --color-surface: #10151d;
+  --color-raised: #161d27;
+  --color-line: #212b38;
+
+  --color-verified: #2dd4a7;
+  --color-pending: #f0b429;
+  --color-denied: #f4576b;
+  --color-live: #38bdf8;
+
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-void);
+  overscroll-behavior: none;
+}
+
+/* Terminal replay surface — tuned for legibility of dense scrollback. */
+.argus-term {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-variant-ligatures: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 8;
+}
+
+/* Hash chains, host keys, session IDs — anything that must be compared by eye. */
+.argus-digest {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #2f3d4f; }

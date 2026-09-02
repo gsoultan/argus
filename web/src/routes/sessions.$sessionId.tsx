@@ -1,0 +1,344 @@
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Alert, Badge, Box, Button, Card, Grid, Group, Modal, ScrollArea, Stack, Text, Textarea, ThemeIcon, } from '@mantine/core'
+import { useDisclosure } from '@mantine/hooks'
+import { notifications } from '@mantine/notifications'
+import { useQuery } from '@tanstack/react-query'
+import { createFileRoute } from '@tanstack/react-router'
+import {
+  IconAlertTriangle, IconArrowLeft, IconDownload, IconInfoCircle, IconLink,
+  IconPlayerStop, IconShieldCheck,
+} from '@tabler/icons-react'
+import { PageHeader } from '~/components/Shell'
+import { ButtonLink } from '~/components/links'
+import { Replay } from '~/components/Replay'
+import {
+  Digest, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes, duration,
+} from '~/components/primitives'
+import { buildCast } from '~/lib/cast'
+import { extractCommands } from '~/lib/ansi'
+import { sessionQuery, useTerminateSession } from '~/lib/queries'
+import { live } from '~/lib/live'
+import { useCastDecoder } from '~/lib/useWorkers'
+
+export const Route = createFileRoute('/sessions/$sessionId')({
+  component: SessionDetail,
+  loader: ({ context, params }) =>
+    context.queryClient.ensureQueryData(sessionQuery(params.sessionId)),
+})
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Box>
+      <Text size="10px" c="dimmed" fw={600} style={{ letterSpacing: '0.05em' }}>
+        {label.toUpperCase()}
+      </Text>
+      <Box mt={2}>{children}</Box>
+    </Box>
+  )
+}
+
+function SessionDetail() {
+  const { sessionId } = Route.useParams()
+  const { data: session } = useQuery(sessionQuery(sessionId))
+  const terminate = useTerminateSession()
+  const [confirmOpen, confirm] = useDisclosure(false)
+  const [note, setNote] = useState('')
+  const [cursor, setCursor] = useState(0)
+
+  // Recording source. In production this is a signed URL to object storage.
+  //
+  // ?cast=<url> loads a real recording instead of the generated fixture, which
+  // is how gateway output is checked against the production decoder.
+  const [realCast, setRealCast] = useState<string | undefined>()
+  const [verified, setVerified] = useState<string | null>(null)
+  const [fetched, setFetched] = useState(false)
+  const castUrl = new URLSearchParams(window.location.search).get('cast')
+
+  useEffect(() => {
+    let cancelled = false
+    if (castUrl) {
+      void fetch(castUrl)
+        .then((r) => r.text())
+        .then((t) => { if (!cancelled) { setRealCast(t); setFetched(true) } })
+        .catch(() => { if (!cancelled) setFetched(true) })
+      return () => { cancelled = true }
+    }
+    if (!session) return
+    void live
+      .recording(session.id)
+      .then((r) => {
+        if (cancelled) return
+        if (r) { setRealCast(r.cast); setVerified(r.verified) }
+        setFetched(true)
+      })
+      .catch(() => { if (!cancelled) setFetched(true) })
+    return () => { cancelled = true }
+  }, [castUrl, session])
+
+  const cast = useMemo(() => {
+    if (realCast) return realCast
+    // Only fall back to a generated cast once the real fetch has been tried and
+    // failed, or the console would briefly replay a fixture and then swap it
+    // for the real thing — which looks like the recording changed.
+    if (!fetched) return undefined
+    return session ? buildCast(session.assetHostname, session.principal, session.startedAt) : undefined
+  }, [realCast, fetched, session])
+
+  const decoded = useCastDecoder(cast)
+
+  /**
+   * Command timeline.
+   *
+   * For eBPF-fidelity sessions the control plane supplies kernel-observed
+   * execve events. Without an agent we reconstruct the timeline from the
+   * recording itself — stdin frames when present, prompt scraping otherwise.
+   * The UI labels which one it is rather than presenting both as equivalent
+   * evidence.
+   */
+  const commands = useMemo(() => extractCommands(decoded.frames), [decoded.frames])
+
+  if (!session) {
+    return (
+      <Box p="lg">
+        <Text size="sm" c="dimmed">Session not found.</Text>
+      </Box>
+    )
+  }
+
+  const onTerminate = async () => {
+    await terminate.mutateAsync(session.id)
+    confirm.close()
+    notifications.show({
+      color: 'rose',
+      title: 'Session terminated',
+      message: `Connection to ${session.assetHostname} was closed and the reason recorded in the audit log.`,
+    })
+  }
+
+  return (
+    <Box>
+      <PageHeader
+        title={`${session.principal}@${session.assetHostname.split('.')[0]}`}
+        description={`Opened by ${session.userEmail} from ${session.clientIp} · ${absTime(session.startedAt)}`}
+        actions={
+          <>
+            <ButtonLink
+              size="xs"
+              variant="subtle"
+              color="slate"
+              to="/sessions"
+              leftSection={<IconArrowLeft size={14} />}
+            >
+              Back
+            </ButtonLink>
+            <Button size="xs" variant="default" leftSection={<IconDownload size={14} />}>
+              Export .cast
+            </Button>
+            {session.state === 'active' && (
+              <Button
+                size="xs"
+                color="rose"
+                leftSection={<IconPlayerStop size={14} />}
+                onClick={confirm.open}
+              >
+                Terminate
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <Box p="lg">
+        {session.fidelity === 'pty' && (
+          <Alert
+            color="amber"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            mb="md"
+            title="PTY-only recording"
+          >
+            <Text size="xs">
+              This session was captured at the gateway as a terminal stream. It faithfully shows
+              what crossed the wire, but a user can obscure intent — base64-encoded commands, or
+              a script whose body never appears on screen. Treat the command timeline below as an
+              audit aid, not proof. Enable the eBPF agent on this host for kernel-observed
+              execve evidence.
+            </Text>
+          </Alert>
+        )}
+
+        <Grid gap="sm">
+          <Grid.Col span={{ base: 12, xl: 8 }}>
+            <Card padding={0} style={{ overflow: 'hidden' }}>
+              <Replay decoded={decoded} onTimeChange={setCursor} />
+            </Card>
+          </Grid.Col>
+
+          <Grid.Col span={{ base: 12, xl: 4 }}>
+            <Stack gap="sm">
+              <Card padding="md">
+                <Group justify="space-between" mb="sm">
+                  <Text fw={600} size="sm">Session</Text>
+                  <SessionStateBadge state={session.state} />
+                </Group>
+                <Stack gap={10}>
+                  <Field label="Target">
+                    <Group gap={6}>
+                      <Mono>{session.assetHostname}</Mono>
+                      <ButtonLink
+                        size="compact-xs"
+                        variant="subtle"
+                        color="slate"
+                        to="/assets/$assetId"
+                        params={{ assetId: session.assetId }}
+                        leftSection={<IconLink size={11} />}
+                      >
+                        asset
+                      </ButtonLink>
+                    </Group>
+                  </Field>
+                  <Group grow>
+                    <Field label="Principal"><Mono c="teal.4">{session.principal}</Mono></Field>
+                    <Field label="Protocol"><Mono>{session.protocol}</Mono></Field>
+                  </Group>
+                  <Group grow>
+                    <Field label="Duration">
+                      <Text size="xs">{duration(session.startedAt, session.endedAt)}</Text>
+                    </Field>
+                    <Field label="Size">
+                      <Text size="xs">{bytes(session.recordingBytes)}</Text>
+                    </Field>
+                  </Group>
+                  <Field label="Recording fidelity">
+                    <FidelityBadge fidelity={session.fidelity} />
+                  </Field>
+                  <Field label="Risk flags"><RiskFlags flags={session.riskFlags} /></Field>
+                </Stack>
+              </Card>
+
+              <Card padding="md">
+                <Group gap={7} mb={6}>
+                  <ThemeIcon variant="light" color="teal" size={22} radius="sm">
+                    <IconShieldCheck size={13} />
+                  </ThemeIcon>
+                  <Text fw={600} size="sm">Recording integrity</Text>
+                </Group>
+                <Text size="10px" c="dimmed" mb="sm" lh={1.45}>
+                  Each recording chunk is hashed into a chain rooted at the session start, so any
+                  edit to the stored artefact invalidates every subsequent link.
+                </Text>
+                <Field label="Chain head">
+                  {session.chainHead ? <Digest value={session.chainHead} chars={32} /> : '—'}
+                </Field>
+                {verified && (
+                  <Field label="Server verification">
+                    <Badge
+                      size="sm"
+                      color={verified === 'intact' ? 'teal' : verified === 'tampered' ? 'rose' : 'slate'}
+                      variant={verified === 'tampered' ? 'filled' : 'light'}
+                    >
+                      {verified === 'intact' ? 'chain intact' : verified}
+                    </Badge>
+                  </Field>
+                )}
+                <ButtonLink
+                  size="compact-xs"
+                  variant="light"
+                  color="teal"
+                  mt="sm"
+                  fullWidth
+                  to="/audit"
+                >
+                  Verify in audit log
+                </ButtonLink>
+              </Card>
+
+              <Card padding={0}>
+                <Group justify="space-between" p="md" pb="xs">
+                  <Text fw={600} size="sm">Command timeline</Text>
+                  <Badge
+                    size="xs"
+                    color={session.fidelity === 'ebpf' ? 'teal' : 'amber'}
+                    variant="light"
+                  >
+                    {session.fidelity === 'ebpf' ? 'kernel-observed' : 'heuristic'}
+                  </Badge>
+                </Group>
+                <ScrollArea.Autosize mah={300}>
+                  <Stack gap={0}>
+                    {commands.map((c, i) => {
+                      const active =
+                        cursor >= c.t && (i === commands.length - 1 || cursor < commands[i + 1]!.t)
+                      return (
+                        <Box
+                          key={`${c.t}-${i}`}
+                          px="md"
+                          py={6}
+                          style={{
+                            borderTop: '1px solid var(--color-line)',
+                            background: active ? 'rgba(45,212,167,0.07)' : undefined,
+                            borderLeft: active
+                              ? '2px solid var(--color-verified)'
+                              : '2px solid transparent',
+                          }}
+                        >
+                          <Group gap={8} wrap="nowrap" align="flex-start">
+                            <Text size="10px" c="dimmed" ff="monospace" w={38} style={{ flexShrink: 0 }}>
+                              {`${String(Math.floor(c.t / 60)).padStart(2, '0')}:${String(Math.floor(c.t % 60)).padStart(2, '0')}`}
+                            </Text>
+                            <Text size="xs" ff="monospace" c={active ? 'teal.3' : 'slate.2'} style={{ wordBreak: 'break-all' }}>
+                              {c.cmd}
+                            </Text>
+                          </Group>
+                        </Box>
+                      )
+                    })}
+                    {commands.length === 0 && (
+                      <Text size="xs" c="dimmed" ta="center" py="lg">
+                        No commands detected.
+                      </Text>
+                    )}
+                  </Stack>
+                </ScrollArea.Autosize>
+              </Card>
+            </Stack>
+          </Grid.Col>
+        </Grid>
+      </Box>
+
+      <Modal opened={confirmOpen} onClose={confirm.close} title="Terminate session" size="md">
+        <Alert color="rose" variant="light" icon={<IconAlertTriangle size={16} />} mb="md">
+          <Text size="xs">
+            The connection to <Mono>{session.assetHostname}</Mono> will be closed immediately.
+            Any in-flight command keeps running on the host — terminating the session stops
+            further input, it does not roll anything back.
+          </Text>
+        </Alert>
+        <Textarea
+          label="Reason"
+          description="Recorded in the audit log against your account."
+          placeholder="e.g. Session opened outside the approved window for INC-4471."
+          minRows={3}
+          autosize
+          value={note}
+          onChange={(e) => setNote(e.currentTarget.value)}
+        />
+        <Group justify="flex-end" mt="md">
+          <Button variant="subtle" color="slate" size="xs" onClick={confirm.close}>
+            Cancel
+          </Button>
+          <Button
+            color="rose"
+            size="xs"
+            loading={terminate.isPending}
+            disabled={note.trim().length < 8}
+            onClick={onTerminate}
+          >
+            Terminate session
+          </Button>
+        </Group>
+      </Modal>
+    </Box>
+  )
+}
