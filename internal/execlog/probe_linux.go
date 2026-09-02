@@ -72,6 +72,23 @@ func Open(ctx context.Context, log *slog.Logger) (Probe, error) {
 				"a distribution kernel with CONFIG_DEBUG_INFO_BTF=y is required")
 	}
 
+	// The kernel reports PIDs from the initial namespace, and the map is keyed
+	// by what userspace was told to track. In a PID namespace those are
+	// different numbers, so every lookup misses and the probe attaches
+	// successfully and then reports nothing at all — the worst possible
+	// outcome, because the session still gets recorded and simply contains no
+	// commands. Refusing is the only honest answer.
+	//
+	// Argus runs the agent as a systemd unit on the host, where this never
+	// arises. The override exists for the package's own kernel tests, which
+	// have no way to leave the namespace they run in.
+	if inPIDNamespace() && os.Getenv("ARGUS_EXECLOG_ALLOW_PIDNS") == "" {
+		return nil, Unsupported(
+			"the agent is running in a private PID namespace, where kernel-reported " +
+				"process ids do not match the ones it tracks; run the agent in the " +
+				"host PID namespace")
+	}
+
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(bpfObject))
 	if err != nil {
 		return nil, fmt.Errorf("parse probe object: %w", err)
@@ -234,4 +251,26 @@ func (p *linuxProbe) Close() error {
 		p.closeResources()
 	})
 	return nil
+}
+
+// initialPIDNamespace is the inode of the kernel's first PID namespace.
+//
+// Fixed by the kernel (PROC_PID_INIT_INO) and stable across versions, which is
+// what makes this checkable from inside a namespace at all. Comparing against
+// /proc/1 does not work: in a container, init is namespaced too and both links
+// point at the same private namespace.
+const initialPIDNamespace = "pid:[4026531836]"
+
+// inPIDNamespace reports whether this process is isolated from the initial PID
+// namespace, and so will see process ids the kernel does not report.
+//
+// An unreadable /proc is treated as not namespaced: losing the tier over a
+// missing file on a hardened host would be a worse trade than the check, and a
+// genuine mismatch still shows up as a session recording no commands.
+func inPIDNamespace() bool {
+	ns, err := os.Readlink("/proc/self/ns/pid")
+	if err != nil {
+		return false
+	}
+	return ns != initialPIDNamespace
 }

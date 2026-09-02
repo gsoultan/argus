@@ -74,8 +74,14 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
     __u32 child  = (__u32)ctx->child_pid;
 
     struct session_key *sk = bpf_map_lookup_elem(&tracked, &parent);
-    if (!sk)
-        return 0;
+    if (!sk) {
+        // A thread of a tracked process forking: the tracepoint reports the
+        // creating thread, whose tid is not the tgid the map is keyed by.
+        __u32 tgid = (__u32)(bpf_get_current_pid_tgid() >> 32);
+        sk = bpf_map_lookup_elem(&tracked, &tgid);
+        if (!sk)
+            return 0;
+    }
 
     bpf_map_update_elem(&tracked, &child, sk, BPF_ANY);
     return 0;
@@ -143,7 +149,19 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 SEC("tracepoint/sched/sched_process_exit")
 int handle_exit(struct trace_event_raw_sched_process_template *ctx)
 {
-    __u32 pid = (__u32)(bpf_get_current_pid_tgid() >> 32);
-    bpf_map_delete_elem(&tracked, &pid);
+    __u64 id = bpf_get_current_pid_tgid();
+    __u32 tgid = (__u32)(id >> 32);
+    __u32 tid  = (__u32)id;
+
+    // Only when the whole thread group is going, not when one of its threads
+    // is. This tracepoint fires per thread, and the map is keyed by thread
+    // group: deleting on any thread exit removes a live session the moment its
+    // process happens to retire a worker thread. A Go or Java shell helper does
+    // that constantly, so the effect is that tracking silently stops almost
+    // immediately and nothing is ever reported.
+    if (tgid != tid)
+        return 0;
+
+    bpf_map_delete_elem(&tracked, &tgid);
     return 0;
 }
