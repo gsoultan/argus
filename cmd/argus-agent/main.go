@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent"
+	"github.com/gsoultan/argus/internal/execlog"
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/tlsconfig"
 )
@@ -48,6 +49,8 @@ func main() {
 		os.Exit(runShim(os.Args[2:]))
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
+	case "probe":
+		os.Exit(runProbe())
 	case "install":
 		os.Exit(runInstall(os.Args[2:]))
 	case "--version", "version":
@@ -64,6 +67,7 @@ func usage() {
   argus-agent daemon    own recordings, scan posture, heartbeat (run as root)
   argus-agent shim      wrap one session (invoked by sshd ForceCommand)
   argus-agent scan      report how reachable this host is without Argus
+  argus-agent probe     report whether this kernel can observe command execution
   argus-agent install   print the sshd_config required to enable recording
 
 `)
@@ -129,7 +133,8 @@ func runDaemon(args []string) int {
 			"startedAt":      rec.StartedAt,
 			"endedAt":        rec.EndedAt,
 			"clientIp":       rec.ClientAddr,
-			"fidelity":       "pty",
+			"fidelity":       rec.Fidelity,
+			"commandCount":   rec.Commands,
 			"recordingBytes": rec.Bytes,
 			"exitCode":       rec.ExitCode,
 			"chainHead":      rec.ChainHead,
@@ -137,6 +142,24 @@ func runDaemon(args []string) int {
 			"riskFlags":      agentRiskFlags(rec),
 		})
 	}
+
+	// Kernel execution tracing, when the host can support it. A failure here is
+	// a supported configuration, not a fatal one: the agent still records
+	// terminal output, and the reason is carried on every session so an auditor
+	// can see why a recording is PTY-only instead of guessing.
+	execCtx := execlog.Start(ctx, func(c context.Context) (execlog.Probe, error) {
+		return execlog.Open(c, log)
+	})
+	if execCtx.Tracer == nil {
+		log.Warn("kernel execution tracing is off; recordings will be terminal output only",
+			"reason", execCtx.Reason,
+			"detail", "a user can obscure what they ran — base64, a sourced script, "+
+				"a shell spawned from an editor — and none of it is distinguishable "+
+				"in terminal output alone")
+	} else {
+		defer execCtx.Tracer.Close()
+	}
+	col.Exec = execCtx
 
 	// Posture scanning and heartbeat run alongside the collector. The heartbeat
 	// is what makes killing the agent detectable: a user with root can stop it,
@@ -190,6 +213,8 @@ func runDaemon(args []string) int {
 			"version":         version,
 			"active_sessions": col.ActiveCount(),
 			"posture":         posture,
+			"exec_tracing":    execCtx.Tracer != nil,
+			"exec_reason":     execCtx.Reason,
 		})
 	})
 
@@ -419,4 +444,35 @@ func yesNo(ok bool, yes, no string) string {
 		return yes
 	}
 	return no
+}
+
+// runProbe answers "can this host produce kernel evidence?" without starting
+// the agent.
+//
+// Worth a command of its own because the answer decides what a recording from
+// this host is worth in an audit, and an operator needs it before a session
+// happens rather than after. It also exits non-zero when the answer is no, so a
+// fleet check is one loop rather than log-scraping.
+func runProbe() int {
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	p, err := execlog.Open(context.Background(), log)
+	if err != nil {
+		fmt.Printf("kernel execution tracing: UNAVAILABLE\n")
+		fmt.Printf("  fidelity  %s\n", execlog.FidelityPTY)
+		fmt.Printf("  reason    %s\n", err)
+		fmt.Println()
+		fmt.Println("  Sessions on this host are recorded as terminal output only.")
+		fmt.Println("  A user can obscure what they ran — base64, a sourced script, a")
+		fmt.Println("  shell spawned from an editor — and none of it is distinguishable")
+		fmt.Println("  from terminal output alone.")
+		return 1
+	}
+	defer p.Close()
+
+	fmt.Printf("kernel execution tracing: AVAILABLE\n")
+	fmt.Printf("  fidelity  %s\n", execlog.FidelityEBPF)
+	fmt.Println("  Commands are observed at execve, so a recording shows what ran")
+	fmt.Println("  rather than what the terminal displayed.")
+	return 0
 }

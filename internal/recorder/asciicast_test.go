@@ -236,3 +236,77 @@ func (w *failingWriter) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// Kernel evidence must sit inside the hash chain. Outside it, the command list
+// would be exactly as forgeable as the shell history it replaces — and a chain
+// covering the terminal output but not the commands guarantees the wrong half.
+func TestExecFramesAreChained(t *testing.T) {
+	var buf bytes.Buffer
+	rec, err := New(&buf, Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := rec.Head()
+	if err := rec.Exec(map[string]any{"pid": 42, "cmd": "rm -rf /var/log"}); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if rec.Head() == before {
+		t.Fatal("an exec event did not advance the chain, so it is not covered by it")
+	}
+
+	line := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")[1]
+	var frame []any
+	if err := json.Unmarshal([]byte(line), &frame); err != nil {
+		t.Fatalf("exec frame is not valid asciicast JSON: %v", err)
+	}
+	if len(frame) != 3 {
+		t.Fatalf("frame has %d elements, want 3", len(frame))
+	}
+	if frame[1] != "x" {
+		t.Errorf("stream = %v, want x", frame[1])
+	}
+	// The payload is JSON carried as the frame's data string, so a player that
+	// predates this stream renders nothing rather than breaking.
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(frame[2].(string)), &payload); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if payload["cmd"] != "rm -rf /var/log" {
+		t.Errorf("payload = %v", payload)
+	}
+}
+
+// Tampering with a recorded command must break verification, or the evidence
+// is decorative.
+func TestEditingAnExecFrameBreaksTheChain(t *testing.T) {
+	var buf bytes.Buffer
+	rec, err := New(&buf, Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rec.Write(Output, []byte("$ "))
+	_ = rec.Exec(map[string]any{"cmd": "rm -rf /var/log/audit"})
+	_ = rec.Write(Output, []byte("done\r\n"))
+	head, err := rec.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := Verify(strings.NewReader(buf.String()), head)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !v.OK {
+		t.Fatalf("an untouched recording failed to verify at line %d", v.BrokenAt)
+	}
+
+	edited := strings.Replace(buf.String(), "rm -rf /var/log/audit", "ls -la /var/log", 1)
+	v, err = Verify(strings.NewReader(edited), head)
+	if err != nil {
+		t.Fatalf("Verify on the edited recording: %v", err)
+	}
+	if v.OK {
+		t.Fatal("editing a recorded command still verified; the evidence is forgeable")
+	}
+}

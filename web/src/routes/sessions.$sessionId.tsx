@@ -18,6 +18,7 @@ import {
 } from '~/components/primitives'
 import { buildCast } from '~/lib/cast'
 import { extractCommands } from '~/lib/ansi'
+import type { KernelExec } from '~/workers/replay.worker'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
 import { GATEWAY_URL, live, shadowTicket } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
@@ -99,7 +100,21 @@ function SessionDetail() {
    * The UI labels which one it is rather than presenting both as equivalent
    * evidence.
    */
-  const commands = useMemo(() => extractCommands(decoded.frames), [decoded.frames])
+  // Kernel evidence wins when it exists. extractCommands infers commands from
+  // what the terminal echoed, which is a reasonable guess and nothing more; the
+  // kernel saw what actually ran. Showing the guess alongside real evidence
+  // would invite reading them as equally reliable.
+  const commands = useMemo(() => {
+    if (decoded.execs.length > 0) {
+      return decoded.execs.map((e) => ({
+        t: e.t,
+        cmd: renderExec(e),
+      }))
+    }
+    return extractCommands(decoded.frames)
+  }, [decoded.execs, decoded.frames])
+
+  const kernelObserved = decoded.execs.length > 0
 
   if (!session) {
     return (
@@ -181,7 +196,7 @@ function SessionDetail() {
       />
 
       <Box p="lg">
-        {session.fidelity === 'pty' && (
+        {session.fidelity === 'pty' && !kernelObserved && (
           <Alert
             color="amber"
             variant="light"
@@ -290,10 +305,10 @@ function SessionDetail() {
                   <Text fw={600} size="sm">Command timeline</Text>
                   <Badge
                     size="xs"
-                    color={session.fidelity === 'ebpf' ? 'teal' : 'amber'}
+                    color={kernelObserved ? 'teal' : 'amber'}
                     variant="light"
                   >
-                    {session.fidelity === 'ebpf' ? 'kernel-observed' : 'heuristic'}
+                    {kernelObserved ? 'kernel-observed' : 'heuristic'}
                   </Badge>
                 </Group>
                 <ScrollArea.Autosize mah={300}>
@@ -410,4 +425,19 @@ function SessionDetail() {
       </Modal>
     </Box>
   )
+}
+
+/**
+ * Renders one kernel-observed execution.
+ *
+ * Quoting matters: unquoted, `sh -c "rm -rf /"` reads as three harmless words,
+ * which misrepresents what ran — and being able to trust this line is the whole
+ * reason the kernel tier exists.
+ */
+function renderExec(e: KernelExec): string {
+  const args = e.args.length > 0 ? e.args : [e.filename]
+  const rendered = args
+    .map((a) => (a === '' ? "''" : /[\s'"\\$`]/.test(a) ? `'${a.replaceAll("'", `'\\''`)}'` : a))
+    .join(' ')
+  return e.truncated ? `${rendered} …[truncated]` : rendered
 }

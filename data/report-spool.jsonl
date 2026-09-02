@@ -1,2 +1,0 @@
-{"path":"/api/v1/report/asset","body":{"address":"127.0.0.1","credentialMode":"injected-key","health":"reachable","hostKeyState":"unpinned","hostname":"pay-01.payments.northwind.id","port":2022,"principals":["ops","deploy","root"]},"at":"2026-09-02T08:25:33.671924Z"}
-{"path":"/api/v1/report/asset","body":{"address":"127.0.0.1","credentialMode":"ca-certificate","health":"reachable","hostKeyState":"unpinned","hostname":"ca-01.payments.northwind.id","port":2032,"principals":["ops"]},"at":"2026-09-02T08:25:33.672435Z"}

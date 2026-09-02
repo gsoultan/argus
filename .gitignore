@@ -45,6 +45,8 @@ npm-debug.log*
 # Gateway dev material — keys and recordings must never be committed
 dev/keys/
 dev/data/
+# Spools and recordings written when a service is run from the repo root.
+data/
 
 # Local configuration carries real secrets; commit the .example templates only.
 dev/*.yaml

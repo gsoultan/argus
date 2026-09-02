@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChainInput, ChainLink, ChainResponse } from '~/workers/chain.worker'
-import type { CastFrame, CastHeader, Keyframe, ReplayResponse } from '~/workers/replay.worker'
+import type {
+  CastFrame,
+  CastHeader,
+  KernelExec,
+  Keyframe,
+  ReplayResponse,
+} from '~/workers/replay.worker'
 
 /* ── Audit chain ─────────────────────────────────────────────────────────── */
 
@@ -68,6 +74,8 @@ export interface ReplayState {
   status: 'idle' | 'decoding' | 'ready' | 'failed'
   header: CastHeader | null
   frames: CastFrame[]
+  /** Kernel-observed executions; empty for a PTY-only recording. */
+  execs: KernelExec[]
   keyframes: Keyframe[]
   duration: number
   outputBytes: number
@@ -77,7 +85,7 @@ export interface ReplayState {
 }
 
 const REPLAY_IDLE: ReplayState = {
-  status: 'idle', header: null, frames: [], keyframes: [], duration: 0,
+  status: 'idle', header: null, frames: [], execs: [], keyframes: [], duration: 0,
   outputBytes: 0, progress: 0, ms: null, error: null,
 }
 
@@ -103,6 +111,7 @@ export function useCastDecoder(source: string | undefined) {
           status: 'ready',
           header: m.header,
           frames: m.frames,
+          execs: m.execs,
           keyframes: m.keyframes,
           duration: m.duration,
           outputBytes: m.outputBytes,

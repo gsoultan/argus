@@ -22,6 +22,23 @@ export interface CastHeader {
   env?: Record<string, string>
 }
 
+/**
+ * One execution the kernel observed, carried in the recording's `x` stream.
+ *
+ * Inside the hash chain like every other frame, so the command list is exactly
+ * as tamper-evident as the terminal output beside it.
+ */
+export interface KernelExec {
+  t: number
+  pid: number
+  ppid: number
+  uid: number
+  comm: string
+  filename: string
+  args: string[]
+  truncated?: boolean
+}
+
 export interface CastFrame {
   t: number
   kind: 'o' | 'i'
@@ -41,6 +58,7 @@ export type ReplayResponse =
   | { type: 'progress'; done: number; total: number }
   | {
       type: 'decoded'
+      execs: KernelExec[]
       header: CastHeader
       frames: CastFrame[]
       keyframes: Keyframe[]
@@ -67,6 +85,7 @@ self.onmessage = (ev: MessageEvent<ReplayRequest>) => {
     }
 
     const frames: CastFrame[] = []
+    const execs: KernelExec[] = []
     const keyframes: Keyframe[] = []
     let acc = ''
     let outputBytes = 0
@@ -81,6 +100,20 @@ self.onmessage = (ev: MessageEvent<ReplayRequest>) => {
         continue // tolerate a truncated tail — recordings can be cut mid-write
       }
       const [t, kind, data] = parsed
+
+      if (kind === 'x') {
+        // Kernel evidence: what actually ran, as opposed to what the terminal
+        // displayed. Rendered as its own lane rather than mixed into the
+        // output, because the two are different kinds of claim.
+        try {
+          const e = JSON.parse(data) as Omit<KernelExec, 't'>
+          execs.push({ ...e, t })
+        } catch {
+          // A frame this build cannot read is skipped rather than failing the
+          // whole replay: an unreadable command must not cost the recording.
+        }
+        continue
+      }
       if (kind !== 'o' && kind !== 'i') continue
 
       frames.push({ t, kind, data })
@@ -100,6 +133,7 @@ self.onmessage = (ev: MessageEvent<ReplayRequest>) => {
     const last = frames.at(-1)
     post({
       type: 'decoded',
+      execs,
       header,
       frames,
       keyframes,
