@@ -39,3 +39,8 @@ tls:
   # Reporter endpoints additionally require a client certificate signed by this
   # CA, so a leaked reporter token is not sufficient on its own.
   client_ca_file: "certs/ca.crt"
+
+rate_limit:
+  login_per_minute: 6
+  failures_per_hour: 4
+  tickets_per_minute: 10

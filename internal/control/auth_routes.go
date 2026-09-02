@@ -75,12 +75,14 @@ func (a *API) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if e := r.URL.Query().Get("error"); e != "" {
 		a.log.Warn("identity provider refused login",
 			"error", e, "description", r.URL.Query().Get("error_description"))
+		a.RecordAuthFailure(r)
 		a.redirectWithError(w, r, e)
 		return
 	}
 
 	stateCookie, err := r.Cookie(auth.StateCookieName)
 	if err != nil {
+		a.RecordAuthFailure(r)
 		a.redirectWithError(w, r, "login_expired")
 		return
 	}
@@ -89,7 +91,10 @@ func (a *API) handleCallback(w http.ResponseWriter, r *http.Request) {
 	sess, returnTo, err := a.oidc.Exchange(r.Context(), a.signer,
 		r.URL.Query().Get("code"), r.URL.Query().Get("state"), stateCookie.Value)
 	if err != nil {
+		// State mismatch, a bad nonce or a failed code exchange. Each is a
+		// forgery attempt or a broken client, and both are worth counting.
 		a.log.Warn("login failed", "error", err)
+		a.RecordAuthFailure(r)
 		a.redirectWithError(w, r, "login_failed")
 		return
 	}
@@ -111,6 +116,9 @@ func (a *API) handleCallback(w http.ResponseWriter, r *http.Request) {
 		a.log.Error("audit append failed", "error", aerr)
 	}
 
+	// A completed sign-in clears the failure budget, so someone who fumbled a
+	// login once is not throttled for the rest of the hour.
+	a.RecordAuthSuccess(r)
 	a.log.Info("user signed in", "email", sess.Email, "role", sess.Role)
 	http.Redirect(w, r, a.consoleURL+returnTo, http.StatusFound)
 }

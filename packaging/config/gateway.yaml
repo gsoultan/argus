@@ -12,6 +12,12 @@ recording_dir: "/var/lib/argus/recordings"
 # presents the first time it is reached.
 trust_on_first_use: false
 
+# The SSH listener is internet-facing and gets scanned continuously. This
+# bounds connection attempts per client address, before the handshake.
+rate_limit:
+  connections_per_minute: 30
+  burst: 10
+
 log_level: "info"
 
 # Certificate authority. With this configured and an asset set to

@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/gsoultan/argus/internal/hostkey"
+	"github.com/gsoultan/argus/internal/ratelimit"
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
@@ -32,6 +33,13 @@ type Config struct {
 	Inventory *Inventory
 	HostKeys  *hostkey.Store
 	Log       *slog.Logger
+
+	// AuthLimiter bounds connection attempts per client address.
+	//
+	// The SSH listener is the internet-facing surface and gets scanned
+	// continuously. Without this, an attacker can offer keys as fast as the
+	// gateway can hash them.
+	AuthLimiter *ratelimit.Limiter
 
 	// CA mints short-lived certificates for assets on certificate auth. Nil
 	// means every asset falls back to injected keys.
@@ -105,6 +113,12 @@ func NewServer(cfg Config) (*Server, error) {
 			if err != nil {
 				return nil, err
 			}
+			// A completed authentication returns the budget, so an operator
+			// reconnecting repeatedly is never throttled while a scanner
+			// offering keys still is.
+			if s.cfg.AuthLimiter != nil {
+				s.cfg.AuthLimiter.Reset(ratelimit.PeerIP(c.RemoteAddr().String()))
+			}
 			return &ssh.Permissions{
 				Extensions: map[string]string{
 					"argus-user":      user,
@@ -116,6 +130,9 @@ func NewServer(cfg Config) (*Server, error) {
 		},
 
 		ServerVersion: "SSH-2.0-Argus",
+		// A client may offer every key it holds. Without a cap, one connection
+		// becomes an unlimited number of guesses.
+		MaxAuthTries: 6,
 	}
 	s.sshCfg.AddHostKey(signer)
 
@@ -181,6 +198,20 @@ func (s *Server) ActiveSessions() []*Session {
 
 func (s *Server) handleConn(nConn net.Conn) {
 	defer nConn.Close()
+
+	// Throttle before the handshake, so a refused client costs a TCP accept
+	// rather than a full key exchange and several signature verifications.
+	if s.cfg.AuthLimiter != nil {
+		client := ratelimit.PeerIP(nConn.RemoteAddr().String())
+		if ok, retry := s.cfg.AuthLimiter.Allow(client); !ok {
+			s.log.Warn("connection throttled",
+				"client", client,
+				"retry_after", retry.Round(time.Second).String())
+			// Say nothing on the wire. A distinguishable response would tell a
+			// scanner it had found something worth continuing against.
+			return
+		}
+	}
 
 	// A handshake that never completes must not hold a slot forever.
 	_ = nConn.SetDeadline(time.Now().Add(30 * time.Second))

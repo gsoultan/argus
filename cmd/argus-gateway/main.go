@@ -32,6 +32,7 @@ import (
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/gateway"
 	"github.com/gsoultan/argus/internal/hostkey"
+	"github.com/gsoultan/argus/internal/ratelimit"
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
@@ -57,6 +58,9 @@ type config struct {
 	// brokers and records, it is simply not visible in the console.
 	Control *controlConfig `yaml:"control"`
 
+	// RateLimit bounds connection attempts per client address.
+	RateLimit *gatewayRateLimit `yaml:"rate_limit"`
+
 	// CA enables certificate auth for assets configured for it.
 	CA *caConfig `yaml:"ca"`
 
@@ -67,6 +71,13 @@ type config struct {
 	// with ssh(1) alone, and a deployment that does not want a web-reachable
 	// shell simply omits this block.
 	Web *webConfig `yaml:"web"`
+}
+
+type gatewayRateLimit struct {
+	// ConnectionsPerMinute per client address. Generous enough that an
+	// operator with a script never notices, tight enough that a scanner does.
+	ConnectionsPerMinute int `yaml:"connections_per_minute"`
+	Burst                int `yaml:"burst"`
 }
 
 type caConfig struct {
@@ -235,6 +246,24 @@ func run() error {
 			"validity", ca.Validity.String())
 	}
 
+	rlRate, rlBurst := 30, 10
+	if cfg.RateLimit != nil {
+		if cfg.RateLimit.ConnectionsPerMinute > 0 {
+			rlRate = cfg.RateLimit.ConnectionsPerMinute
+		}
+		if cfg.RateLimit.Burst > 0 {
+			rlBurst = cfg.RateLimit.Burst
+		}
+	}
+	authLimiter := ratelimit.New(ratelimit.Limit{
+		Rate: rlRate, Window: time.Minute, Burst: rlBurst,
+	}, ratelimit.DefaultMaxKeys)
+	limiterStop := make(chan struct{})
+	defer close(limiterStop)
+	authLimiter.StartSweeper(5*time.Minute, limiterStop)
+	log.Info("connection rate limit active",
+		"per_minute", rlRate, "burst", rlBurst)
+
 	srv, err := gateway.NewServer(gateway.Config{
 		Listen:             cfg.Listen,
 		HostKeyPath:        cfg.HostKey,
@@ -244,6 +273,7 @@ func run() error {
 		HostKeys:           keys,
 		Log:                log,
 		CA:                 ca,
+		AuthLimiter:        authLimiter,
 		Reporter:           rep,
 		Storage:            store,
 	})

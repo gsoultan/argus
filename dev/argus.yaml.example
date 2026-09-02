@@ -9,6 +9,10 @@ recording_dir: "data/recordings"
 trust_on_first_use: true
 log_level: "debug"
 
+rate_limit:
+  connections_per_minute: 6
+  burst: 3
+
 ca:
   key_path: "keys/argus_ca"
   validity: 2m

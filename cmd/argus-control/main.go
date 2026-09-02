@@ -57,11 +57,24 @@ type config struct {
 	TLS *tlsConfig `yaml:"tls"`
 	// BehindTLSProxy marks that something in front terminates TLS. Cookies must
 	// still be Secure in that case, even though this process speaks plain HTTP.
-	BehindTLSProxy bool          `yaml:"behind_tls_proxy"`
-	SecureCookies  *bool         `yaml:"secure_cookies"`
-	SessionTTL     time.Duration `yaml:"session_ttl"`
-	TicketTTL      time.Duration `yaml:"ticket_ttl"`
-	LogLevel       string        `yaml:"log_level"`
+	BehindTLSProxy bool  `yaml:"behind_tls_proxy"`
+	SecureCookies  *bool `yaml:"secure_cookies"`
+	// RateLimit bounds the authentication surface. Omit for defaults, which
+	// are already appropriate — a person never reaches them, a script does.
+	RateLimit  *rateLimitConfig `yaml:"rate_limit"`
+	SessionTTL time.Duration    `yaml:"session_ttl"`
+	TicketTTL  time.Duration    `yaml:"ticket_ttl"`
+	LogLevel   string           `yaml:"log_level"`
+}
+
+type rateLimitConfig struct {
+	// TrustedProxies are networks whose X-Forwarded-For is believed. Leave
+	// empty when reached directly: trusting a header the client sets lets an
+	// attacker both evade their own limit and throttle somebody else.
+	TrustedProxies   []string `yaml:"trusted_proxies"`
+	LoginPerMinute   int      `yaml:"login_per_minute"`
+	FailuresPerHour  int      `yaml:"failures_per_hour"`
+	TicketsPerMinute int      `yaml:"tickets_per_minute"`
 }
 
 type tlsConfig struct {
@@ -156,7 +169,28 @@ func run() error {
 				"attributed, but anyone holding the token is that person")
 	}
 
+	rl := control.ThrottleConfig{}
+	if cfg.RateLimit != nil {
+		rl = control.ThrottleConfig{
+			TrustedProxies:   cfg.RateLimit.TrustedProxies,
+			LoginPerMinute:   cfg.RateLimit.LoginPerMinute,
+			FailuresPerHour:  cfg.RateLimit.FailuresPerHour,
+			TicketsPerMinute: cfg.RateLimit.TicketsPerMinute,
+		}
+	}
+	throttles, err := control.NewThrottles(rl)
+	if err != nil {
+		return fmt.Errorf("rate limit configuration: %w", err)
+	}
+	defer throttles.Close()
+	if len(rl.TrustedProxies) == 0 {
+		log.Info("rate limiting keyed on the peer address",
+			"detail", "forwarding headers are ignored; set rate_limit.trusted_proxies "+
+				"if a load balancer terminates connections in front of this")
+	}
+
 	api := control.NewAPI(store, log)
+	api.SetThrottles(throttles)
 	api.SetStorage(storageClient)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process

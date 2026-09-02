@@ -34,6 +34,9 @@ type API struct {
 	// AllowedOrigins for browser CORS.
 	AllowedOrigins []string
 
+	// throttles bounds the authentication surface. Nil disables throttling.
+	throttles *Throttles
+
 	// RequirePeerCert makes the reporter routes demand a verified client
 	// certificate in addition to the token.
 	//
@@ -55,6 +58,9 @@ type API struct {
 	TicketTTL  time.Duration
 }
 
+// SetThrottles enables per-client rate limiting.
+func (a *API) SetThrottles(t *Throttles) { a.throttles = t }
+
 // NewAPI builds the HTTP surface.
 func NewAPI(store *Store, log *slog.Logger) *API {
 	if log == nil {
@@ -67,11 +73,13 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /auth/login", a.handleLogin)
-	mux.HandleFunc("GET /auth/callback", a.handleCallback)
+	// Authentication endpoints are throttled per client. The callback matters
+	// most: it burns an IdP round trip on every call.
+	mux.HandleFunc("GET /auth/login", a.limitLogin(a.handleLogin))
+	mux.HandleFunc("GET /auth/callback", a.limitLogin(a.handleCallback))
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
-	mux.HandleFunc("POST /api/v1/terminal/ticket", a.handleTicket)
+	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
 	mux.HandleFunc("GET /api/v1/requests", a.user(a.getRequests))
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
