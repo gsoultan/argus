@@ -12,20 +12,23 @@ import {
 } from '@tabler/icons-react'
 import { useEffect, useState } from 'react'
 import { Button, Center, Loader, Paper } from '@mantine/core'
-import { meQuery, statsQuery } from '~/lib/queries'
+import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { isConfigured, loginURL, logout, whoami, type Identity } from '~/lib/live'
 
 const NAV: {
   to: string
   label: string
   icon: typeof IconActivity
-  badge?: (s: { requestsPending: number; sessionsActive: number }) => number
+  badge?: (s: { requestsPending: number; sessionsActive: number; coverageGaps: number }) => number
 }[] = [
   { to: '/', label: 'Overview', icon: IconActivity },
   { to: '/connect', label: 'Connect', icon: IconPlugConnected },
   { to: '/sessions', label: 'Sessions', icon: IconTerminal2, badge: (s) => s.sessionsActive },
   { to: '/requests', label: 'Access requests', icon: IconClipboardCheck, badge: (s) => s.requestsPending },
   { to: '/assets', label: 'Assets', icon: IconServer2 },
+  // Badged on the unreviewed count: a coverage gap nobody is told about is one
+  // nobody closes.
+  { to: '/coverage', label: 'Coverage', icon: IconShieldLock, badge: (s) => s.coverageGaps },
   { to: '/audit', label: 'Audit log', icon: IconFileDescription },
   { to: '/users', label: 'Users & roles', icon: IconUsers },
   { to: '/settings', label: 'Settings', icon: IconSettings },
@@ -132,6 +135,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [opened, { toggle }] = useDisclosure()
   const { data: me } = useQuery(meQuery())
   const { data: stats } = useQuery(statsQuery())
+  const { data: cov } = useQuery(coverageQuery())
+
+  // Both directions count as a gap: an unmanaged host and a managed host with
+  // no agent are each somewhere a privileged session goes unrecorded.
+  const navStats = {
+    requestsPending: stats?.requestsPending ?? 0,
+    sessionsActive: stats?.sessionsActive ?? 0,
+    coverageGaps: cov ? cov.unreviewedHosts + cov.assetsUnmonitored : 0,
+  }
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
   return (
@@ -230,7 +242,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           <Stack gap={2}>
             {NAV.map((item) => {
               const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)
-              const count = stats && item.badge ? item.badge(stats) : 0
+              const count = item.badge ? item.badge(navStats) : 0
               return (
                 <MantineNavLink
                   key={item.to}

@@ -97,6 +97,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions", a.user(a.getSessions))
 	mux.HandleFunc("GET /api/v1/sessions/{id}", a.user(a.getSession))
 	mux.HandleFunc("GET /api/v1/audit", a.user(a.getAudit))
+	mux.HandleFunc("GET /api/v1/coverage", a.user(a.getCoverage))
+	mux.HandleFunc("GET /api/v1/discovered", a.user(a.getDiscovered))
+	mux.HandleFunc("POST /api/v1/discovered/{hostname}/enrol", a.postEnrol)
+	mux.HandleFunc("POST /api/v1/discovered/{hostname}/ignore", a.postIgnoreHost)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording", a.user(a.getRecording))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording/link", a.user(a.presignRecording))
 
@@ -104,6 +108,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/report/session", a.reporter(a.postSession))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.reporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
+	mux.HandleFunc("POST /api/v1/report/facts", a.reporter(a.postFacts))
 	mux.HandleFunc("POST /api/v1/report/audit", a.reporter(a.postAudit))
 
 	// Shared state, so replay protection and host-key pins hold across every

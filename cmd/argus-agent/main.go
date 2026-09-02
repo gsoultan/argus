@@ -193,6 +193,35 @@ func runDaemon(args []string) int {
 		})
 	})
 
+	// Host facts on their own, slower loop. The inventory is hand-written, so
+	// "Argus covers all privileged access" is only checkable if hosts say what
+	// they are — the machine nobody remembered to add is the one that matters.
+	//
+	// An hour is deliberate: an OS or an sshd port changes on a reboot, and
+	// folding this into the heartbeat would rewrite six columns a minute to
+	// report that nothing had changed.
+	go loop(time.Hour, stop, func() {
+		f := agent.Discover(agent.DefaultDiscoverConfig())
+		writeJSON(*stateDir+"/facts.json", f, log)
+
+		if len(f.SSHPorts) > 1 {
+			// A port the inventory does not know about is a documented,
+			// unmonitored way in.
+			log.Info("sshd listens on more than one port",
+				"ports", f.SSHPorts,
+				"detail", "confirm every port is covered by the inventory")
+		}
+		rep.Facts(ctx, map[string]any{
+			"hostname":   f.Hostname,
+			"fqdn":       f.FQDN,
+			"machine_id": f.MachineID,
+			"os":         f.OS,
+			"addresses":  f.Addresses,
+			"ssh_ports":  f.SSHPorts,
+			"accounts":   f.Accounts,
+		})
+	})
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {

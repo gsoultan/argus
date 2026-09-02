@@ -202,6 +202,9 @@ export type AuditAction =
   | 'credential.rotate'
   | 'hostkey.pin'
   | 'hostkey.mismatch'
+  | 'session.shadow'
+  | 'asset.enrolled'
+  | 'asset.dismissed'
   | 'session.direct_detected'
   | 'agent.went_silent'
   | 'sshd_config.drift'
@@ -251,4 +254,47 @@ export interface FleetStats {
   assetsUnmonitored: number
   /** Agents that have stopped reporting. */
   agentsStale: number
+}
+
+/**
+ * A host running an agent that the inventory has no entry for.
+ *
+ * The inventory is hand-written, which makes "Argus covers all privileged
+ * access" a claim rather than something anyone can check. A host reporting from
+ * outside it is a privileged machine Argus is not managing, and the whole point
+ * of surfacing it is that nobody had to remember it existed.
+ */
+export interface DiscoveredHost {
+  hostname: string
+  fqdn?: string
+  machineId?: string
+  os?: string
+  addresses: string[]
+  /** More than one is worth reading: a port the inventory misses is an unmonitored way in. */
+  sshPorts: number[]
+  /** Candidate principals. Discovery reports which accounts exist; it grants nothing. */
+  accounts: string[]
+  version: string
+  firstSeenAt: ISOTime
+  lastSeenAt: ISOTime
+  state: 'unreviewed' | 'enrolled' | 'ignored'
+  reviewNote?: string
+  reviewedBy?: string
+  reviewedAt?: ISOTime
+}
+
+/**
+ * Both directions of the coverage question, which are separate gaps.
+ *
+ * An asset with no agent is a host where a direct connection to port 22 leaves
+ * no trace. An agent with no asset is a host Argus is not managing at all.
+ * Reporting only the first would look complete while missing whole machines.
+ */
+export interface Coverage {
+  assets: number
+  assetsWithAgent: number
+  assetsAgentStale: number
+  assetsUnmonitored: number
+  unreviewedHosts: number
+  ignoredHosts: number
 }
