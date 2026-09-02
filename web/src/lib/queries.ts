@@ -1,5 +1,11 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type AssetQuery } from '~/lib/api'
+import {
+  coverage as fetchCoverage,
+  discoveredHosts,
+  enrolHost,
+  ignoreHost,
+} from '~/lib/live'
 import type { AccessRequest, Session } from '~/types/domain'
 
 export const qk = {
@@ -83,6 +89,47 @@ export function useTerminateSession() {
       void qc.invalidateQueries({ queryKey: ['session'] })
       void qc.invalidateQueries({ queryKey: qk.stats })
     },
+  })
+}
+
+export function coverageQuery() {
+  return queryOptions({
+    queryKey: ['coverage'],
+    queryFn: () => fetchCoverage(),
+    // Coverage is what someone checks when they want to know whether the fleet
+    // is watched, so a stale answer is worse than a slow one.
+    refetchInterval: 30_000,
+  })
+}
+
+export function discoveredQuery(state: 'unreviewed' | 'enrolled' | 'ignored' | '') {
+  return queryOptions({
+    queryKey: ['discovered', state],
+    queryFn: () => discoveredHosts(state),
+    refetchInterval: 30_000,
+  })
+}
+
+function invalidateCoverage(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ['coverage'] })
+  void qc.invalidateQueries({ queryKey: ['discovered'] })
+  void qc.invalidateQueries({ queryKey: ['assets'] })
+  void qc.invalidateQueries({ queryKey: qk.stats })
+}
+
+export function useEnrolHost() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (hostname: string) => enrolHost(hostname),
+    onSuccess: () => invalidateCoverage(qc),
+  })
+}
+
+export function useIgnoreHost() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { hostname: string; note: string }) => ignoreHost(v.hostname, v.note),
+    onSuccess: () => invalidateCoverage(qc),
   })
 }
 

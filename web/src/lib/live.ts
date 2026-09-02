@@ -1,4 +1,12 @@
-import type { AccessRequest, Asset, AuditEvent, FleetStats, Session } from '~/types/domain'
+import type {
+  AccessRequest,
+  Asset,
+  AuditEvent,
+  Coverage,
+  DiscoveredHost,
+  FleetStats,
+  Session,
+} from '~/types/domain'
 
 /**
  * Live control-plane client.
@@ -231,6 +239,33 @@ export async function liveSessions(gatewayUrl: string): Promise<LiveSession[]> {
     // an error here would break the dashboard for a panel that is advisory.
     return []
   }
+}
+
+/** Hosts running an agent that the inventory has no entry for. */
+export async function discoveredHosts(
+  state: 'unreviewed' | 'enrolled' | 'ignored' | '' = 'unreviewed',
+): Promise<DiscoveredHost[]> {
+  if (!isConfigured()) return []
+  const q = state ? `?state=${state}` : ''
+  return get<DiscoveredHost[]>(`/api/v1/discovered${q}`)
+}
+
+export async function coverage(): Promise<Coverage | null> {
+  if (!isConfigured()) return null
+  return get<Coverage>('/api/v1/coverage')
+}
+
+/** Promotes a discovered host into a managed asset. Grants no principals. */
+export async function enrolHost(hostname: string): Promise<{ assetId: string }> {
+  return post<{ assetId: string }>(
+    `/api/v1/discovered/${encodeURIComponent(hostname)}/enrol`,
+    {},
+  )
+}
+
+/** Records a deliberate decision not to manage a host. The note is required. */
+export async function ignoreHost(hostname: string, note: string): Promise<void> {
+  await post(`/api/v1/discovered/${encodeURIComponent(hostname)}/ignore`, { note })
 }
 
 async function get<T>(path: string): Promise<T> {

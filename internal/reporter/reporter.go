@@ -79,6 +79,13 @@ func (c *Client) Heartbeat(ctx context.Context, v any) {
 	c.post(ctx, "/api/v1/report/heartbeat", v)
 }
 
+// Facts reports what a host is: its OS, addresses, SSH ports and login
+// accounts. Sent on a slower cadence than the heartbeat because these change on
+// a reboot, not every thirty seconds.
+func (c *Client) Facts(ctx context.Context, v any) {
+	c.post(ctx, "/api/v1/report/facts", v)
+}
+
 // Asset registers or updates an asset.
 func (c *Client) Asset(ctx context.Context, v any) {
 	c.post(ctx, "/api/v1/report/asset", v)
