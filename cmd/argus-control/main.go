@@ -105,6 +105,12 @@ func run() error {
 		return nil
 	}
 
+	// `argus-control audit verify` recomputes the stored chain. Used by the
+	// restore drill and by whatever schedules integrity checks.
+	if flag.NArg() >= 2 && flag.Arg(0) == "audit" && flag.Arg(1) == "verify" {
+		return runAuditVerify(configPath)
+	}
+
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
@@ -348,4 +354,44 @@ func parseLevel(s string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// runAuditVerify recomputes the audit chain and reports the result.
+//
+// Exits non-zero when the chain is broken, so it drops straight into a restore
+// drill or a monitoring check without parsing output.
+func runAuditVerify(configPath string) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	store, err := control.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer store.Close()
+
+	v, err := store.VerifyAuditChain(ctx)
+	if err != nil {
+		return fmt.Errorf("verify: %w", err)
+	}
+
+	if v.OK {
+		fmt.Printf("INTACT   %d events\n", v.Checked)
+		fmt.Printf("  head   %s\n", v.Head)
+		fmt.Printf("  took   %s\n", v.Took.Round(time.Millisecond))
+		return nil
+	}
+
+	fmt.Printf("BROKEN   at sequence %d, after %d intact events\n", v.BrokenAt, v.Checked)
+	fmt.Printf("  %s\n\n", v.Detail)
+	fmt.Println("  Everything from that sequence onward is unverifiable. Preserve the")
+	fmt.Println("  current database, restore from a backup whose chain verifies, and")
+	fmt.Println("  treat this as an incident.")
+	os.Exit(1)
+	return nil
 }

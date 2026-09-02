@@ -54,3 +54,4 @@ dev/certs/
 dev/secrets.env
 !dev/secrets.env.example
 dist/
+backups/

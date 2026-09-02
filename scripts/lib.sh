@@ -146,3 +146,28 @@ load_secrets() {
   fi
   return 1
 }
+
+# ── Container addressing ─────────────────────────────────────────────────────
+
+# Resolves a container's IP.
+#
+# Apple container runs no DNS for user-defined networks, so containers cannot
+# reach each other by name. Addressing by IP works there and on Docker alike.
+container_ip() {
+  local name=$1 runtime
+  runtime=$(command -v container || command -v docker) || return 1
+  case "$(basename "$runtime")" in
+    container)
+      "$runtime" inspect "$name" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    nets = json.load(sys.stdin)[0].get("status", {}).get("networks", [])
+    print(nets[0]["ipv4Address"].split("/")[0] if nets else "")
+except Exception:
+    print("")' 2>/dev/null
+      ;;
+    docker)
+      "$runtime" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$name" 2>/dev/null
+      ;;
+  esac
+}
