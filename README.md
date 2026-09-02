@@ -99,6 +99,63 @@ name | port | colour | working dir | detect path | command
 The `detect path` is what must exist for the service to be considered present,
 so a half-built backend never breaks `make dev` for someone working on the UI.
 
+## Installing
+
+Linux only — the gateway and control plane are servers, and the agent has to
+read another user's `authorized_keys` and own recordings the recorded user
+cannot touch. None of that means anything elsewhere.
+
+Releases publish `.deb`, `.rpm` and `.apk` for amd64 and arm64, built by
+GoReleaser in CI. Three packages, because the agent goes on every managed host
+while the gateway and control plane go on a handful of servers:
+
+| Package | Installed on |
+|---|---|
+| `argus-agent` | every managed host |
+| `argus-gateway` | the bastion servers |
+| `argus-control` | the control plane servers |
+
+```sh
+sudo dpkg -i argus-agent_<version>_linux_amd64.deb    # Debian / Ubuntu
+sudo rpm -i  argus-agent-<version>.linux-amd64.rpm    # RHEL / Rocky / Alma
+sudo apk add --allow-untrusted argus-agent_<version>_linux_amd64.apk
+```
+
+**Nothing starts on install.** These services need certificates, secrets and an
+inventory first, and a package that starts a half-configured privileged-access
+gateway fails in the worst possible place. Configure, then:
+
+```sh
+sudo systemctl enable --now argus-agent
+```
+
+Uninstalling leaves `/var/lib/argus` in place. Removing the software must never
+destroy the evidence it produced — that is precisely what someone covering
+their tracks would reach for.
+
+### What the packages set up
+
+A system account `argus` with `nologin`, used by the gateway and control plane.
+The **agent runs as root**, deliberately: the shim runs as whoever connected, so
+if the daemon were not root the recorded user could edit the record of their own
+session. Recordings are `0700 root:root` for that reason.
+
+The systemd units are hardened rather than merely present — `ProtectSystem=strict`,
+an empty `CapabilityBoundingSet` for the two that need none, and a syscall
+filter. The agent keeps exactly one capability, `CAP_DAC_READ_SEARCH`, because
+its posture scan reads other users' `authorized_keys`; it uses
+`ProtectHome=read-only` rather than `yes` for the same reason.
+
+### Verifying a download
+
+```sh
+cosign verify-blob checksums.txt \
+  --signature checksums.txt.sig --certificate checksums.txt.pem \
+  --certificate-identity-regexp 'https://github.com/gsoultan/argus/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum -c checksums.txt --ignore-missing
+```
+
 ## Layout
 
 ```

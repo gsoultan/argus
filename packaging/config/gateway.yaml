@@ -1,0 +1,46 @@
+# Argus SSH gateway.
+
+listen: "0.0.0.0:2222"
+host_key: "/etc/argus/ssh/gateway_host_key"
+authorized_keys: "/etc/argus/ssh/authorized_keys"
+inventory: "/etc/argus/inventory.json"
+host_key_store: "/var/lib/argus/hostkeys.json"
+recording_dir: "/var/lib/argus/recordings"
+
+# Pin target host keys out of band and leave this off, so even the first
+# connection to a host is protected. Turning it on accepts whatever a host
+# presents the first time it is reached.
+trust_on_first_use: false
+
+log_level: "info"
+
+# Certificate authority. With this configured and an asset set to
+# credential_mode: ca-certificate, the gateway mints a short-lived certificate
+# per session and the host needs no authorized_keys entry at all.
+#
+# Generate with: argus-gateway ca init /etc/argus/ssh/argus_ca
+ca:
+  key_path: "/etc/argus/ssh/argus_ca"
+  validity: 2m
+
+control:
+  url: "https://argus-control.example.com:8080"
+  token: "${ARGUS_REPORTER_TOKEN}"
+  spool: "/var/lib/argus/report-spool.jsonl"
+  ca_file: "/etc/argus/tls/ca.crt"
+  # Presenting a client certificate is what lets the control plane attribute a
+  # report to this gateway rather than to whoever holds the shared token.
+  cert_file: "/etc/argus/tls/client.crt"
+  key_file: "/etc/argus/tls/client.key"
+
+# Browser terminal. Remove this block to serve SSH only.
+web:
+  listen: "0.0.0.0:8081"
+  allowed_origins:
+    - "https://argus.example.com"
+  # Must match the control plane's, so tickets it mints verify here without a
+  # callback on every connection.
+  signing_secret: "${ARGUS_SIGNING_SECRET}"
+  tls:
+    cert_file: "/etc/argus/tls/server.crt"
+    key_file: "/etc/argus/tls/server.key"
