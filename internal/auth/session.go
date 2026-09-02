@@ -16,6 +16,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -57,7 +58,20 @@ type Ticket struct {
 	ExpiresAt time.Time `json:"exp"`
 }
 
-// Signer mints and verifies both.
+// Redeemer records which tickets have been used.
+//
+// An interface because the answer has to be the same on every gateway. The
+// in-memory implementation is correct for exactly one instance and quietly
+// wrong for two: a ticket burned on gateway A stays valid on gateway B, so
+// "single use" silently becomes "single use per gateway".
+//
+// Redeem returns alreadyUsed. An error means "cannot tell", and callers must
+// refuse rather than assume the ticket is fresh.
+type Redeemer interface {
+	Redeem(ctx context.Context, t Ticket) (alreadyUsed bool, err error)
+}
+
+// Signer mints and verifies sessions and tickets.
 //
 // HMAC rather than asymmetric signing: the control plane issues and the gateway
 // verifies, and both are operated by the same party, so a shared secret is
@@ -66,12 +80,22 @@ type Ticket struct {
 type Signer struct {
 	key []byte
 
-	// Redeemed tickets, so a ticket cannot be replayed. Bounded by expiry
-	// sweeping rather than growing forever — an unbounded map keyed by
-	// attacker-supplied input is its own vulnerability.
+	// redeemer is shared state when configured. Nil falls back to the
+	// in-memory set below, which the gateway warns about at startup.
+	redeemer Redeemer
+
+	// Local redemption set. Bounded by expiry sweeping rather than growing
+	// forever — an unbounded map keyed by attacker-supplied input is its own
+	// vulnerability.
 	mu       sync.Mutex
 	redeemed map[string]time.Time
 }
+
+// SetRedeemer switches to shared redemption.
+func (s *Signer) SetRedeemer(r Redeemer) { s.redeemer = r }
+
+// SharedRedemption reports whether replay protection spans instances.
+func (s *Signer) SharedRedemption() bool { return s.redeemer != nil }
 
 // NewSigner builds a signer from a secret.
 func NewSigner(secret string) (*Signer, error) {
@@ -147,7 +171,7 @@ func (s *Signer) IssueTicket(email, target, principal string, ttl time.Duration)
 //
 // Verifying and redeeming are one operation on purpose: separating them invites
 // a check-then-use gap where two concurrent connections both pass the check.
-func (s *Signer) RedeemTicket(token, target, principal string) (Ticket, error) {
+func (s *Signer) RedeemTicket(ctx context.Context, token, target, principal string) (Ticket, error) {
 	var t Ticket
 	if err := s.verify(token, &t); err != nil {
 		return Ticket{}, err
@@ -162,6 +186,20 @@ func (s *Signer) RedeemTicket(token, target, principal string) (Ticket, error) {
 		subtle.ConstantTimeCompare([]byte(t.Principal), []byte(principal)) != 1 {
 		return Ticket{}, fmt.Errorf("%w: ticket is for %s@%s, not %s@%s",
 			ErrInvalid, t.Principal, t.Target, principal, target)
+	}
+
+	if s.redeemer != nil {
+		used, err := s.redeemer.Redeem(ctx, t)
+		if err != nil {
+			// Cannot determine whether this was already used. Refusing is the
+			// only safe answer: assuming "fresh" would make every gateway
+			// accept replays the moment the shared store is unreachable.
+			return Ticket{}, fmt.Errorf("cannot verify ticket has not been used: %w", err)
+		}
+		if used {
+			return Ticket{}, ErrUsed
+		}
+		return t, nil
 	}
 
 	s.mu.Lock()

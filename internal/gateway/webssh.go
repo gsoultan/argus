@@ -110,6 +110,7 @@ func querySafe(addr string) string {
 // attacker nothing. A session cookie in the same position would be a serious
 // leak, which is precisely why tickets exist.
 func (cfg WebConfig) authorize(r *http.Request, target, principal string) (string, error) {
+	ctx := r.Context()
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if token == "" {
 		token = r.URL.Query().Get("ticket")
@@ -124,7 +125,7 @@ func (cfg WebConfig) authorize(r *http.Request, target, principal string) (strin
 	if cfg.Signer != nil {
 		// Verify and burn in one step. Checking first and redeeming later
 		// would let two concurrent connections both pass.
-		t, err := cfg.Signer.RedeemTicket(token, target, principal)
+		t, err := cfg.Signer.RedeemTicket(ctx, token, target, principal)
 		if err != nil {
 			return "", err
 		}

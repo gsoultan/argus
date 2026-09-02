@@ -135,6 +135,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
 	if cfg.TrustOnFirstUse {
 		log.Warn("trust-on-first-use is enabled",
 			"detail", "unknown host keys are pinned automatically; the first connection to a host is unprotected")
@@ -148,6 +149,21 @@ func run() error {
 		}
 		rep = reporter.New(cfg.Control.URL, cfg.Control.Token, spool, log)
 		log.Info("reporting to control plane", "url", cfg.Control.URL)
+	}
+
+	// Share replay protection and host-key pins through the control plane.
+	//
+	// Both are per-instance sets otherwise, and the failure mode is silent: a
+	// second gateway accepts replayed tickets and starts with no pins at all,
+	// so under trust-on-first-use it accepts a host the first would refuse.
+	if rep != nil {
+		keys.UseRemote(gateway.NewControlPlanePins(rep))
+		log.Info("host key pins shared via the control plane")
+	} else {
+		log.Warn("host key pins are LOCAL to this gateway",
+			"detail", "a second gateway would start with no pins and could silently "+
+				"accept a host this one refuses; configure `control` before running "+
+				"more than one instance")
 	}
 
 	var store *storage.Client
@@ -215,6 +231,16 @@ func run() error {
 		} else {
 			log.Warn("no web.signing_secret — browser terminal falls back to static tokens",
 				"detail", "tickets are single-use and short-lived; static tokens are neither")
+		}
+		if ticketSigner != nil {
+			if rep != nil {
+				ticketSigner.SetRedeemer(gateway.NewControlPlaneRedeemer(rep))
+				log.Info("terminal ticket replay protection shared via the control plane")
+			} else {
+				log.Warn("terminal ticket replay protection is LOCAL to this gateway",
+					"detail", "a ticket burned here stays valid on any other gateway; "+
+						"single-use degrades to single-use-per-instance")
+			}
 		}
 		go func() {
 			err := srv.ServeWeb(ctx, gateway.WebConfig{

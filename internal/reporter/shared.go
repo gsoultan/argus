@@ -1,0 +1,119 @@
+package reporter
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+// Shared state that must be consistent across every gateway.
+//
+// These calls are synchronous and blocking, unlike the fire-and-forget
+// reporting in this package. That difference is deliberate: reporting a session
+// late is a cosmetic problem, whereas guessing at whether a ticket was already
+// used is an authentication decision. If the control plane cannot answer, the
+// caller must refuse rather than assume.
+
+// RedeemTicket burns a ticket centrally and reports whether it was already
+// used. An error means "cannot tell", which callers must treat as a refusal.
+func (c *Client) RedeemTicket(ctx context.Context, id, email, target, principal string,
+	expiresAt time.Time) (alreadyUsed bool, err error) {
+
+	if !c.Enabled() {
+		return false, fmt.Errorf("no control plane configured")
+	}
+	var out struct {
+		AlreadyUsed bool `json:"alreadyUsed"`
+	}
+	if err := c.call(ctx, http.MethodPost, "/api/v1/terminal/redeem", map[string]any{
+		"id": id, "email": email, "target": target,
+		"principal": principal, "expiresAt": expiresAt,
+	}, &out); err != nil {
+		return false, err
+	}
+	return out.AlreadyUsed, nil
+}
+
+// HostKeyPin is a target's recorded identity.
+type HostKeyPin struct {
+	Host        string    `json:"host"`
+	Fingerprint string    `json:"fingerprint"`
+	KeyType     string    `json:"keyType"`
+	PinnedAt    time.Time `json:"pinnedAt"`
+	PinnedBy    string    `json:"pinnedBy"`
+}
+
+// HostKeyPin fetches the pin for host. A nil pin with no error means the host
+// has never been pinned.
+func (c *Client) HostKeyPin(ctx context.Context, host string) (*HostKeyPin, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("no control plane configured")
+	}
+	var out struct {
+		Pinned bool        `json:"pinned"`
+		Pin    *HostKeyPin `json:"pin"`
+	}
+	if err := c.call(ctx, http.MethodGet,
+		"/api/v1/hostkeys/pin?host="+host, nil, &out); err != nil {
+		return nil, err
+	}
+	if !out.Pinned {
+		return nil, nil
+	}
+	return out.Pin, nil
+}
+
+// PinHostKey records a first-contact pin. A conflict means another gateway
+// already pinned a different key, which is a mismatch and not something to
+// resolve automatically.
+func (c *Client) PinHostKey(ctx context.Context, p HostKeyPin) error {
+	if !c.Enabled() {
+		return fmt.Errorf("no control plane configured")
+	}
+	return c.call(ctx, http.MethodPost, "/api/v1/hostkeys/pin", p, nil)
+}
+
+// call performs a synchronous request against the control plane.
+func (c *Client) call(ctx context.Context, method, path string, body, out any) error {
+	var reader *bytes.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(data)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		return ErrConflict
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("control plane returned %d for %s", resp.StatusCode, path)
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}
+
+// ErrConflict means the control plane refused because the state already exists
+// and differs — a host key that does not match its pin, for example.
+var ErrConflict = fmt.Errorf("conflicts with recorded state")

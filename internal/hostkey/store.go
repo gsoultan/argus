@@ -13,6 +13,7 @@
 package hostkey
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +48,21 @@ type Pin struct {
 	PinnedBy string `json:"pinned_by"`
 }
 
+// Remote is shared pin storage, so every gateway verifies a target against the
+// same recorded identity.
+//
+// Without it each gateway keeps its own file: a second gateway starts with no
+// pins, and under trust-on-first-use it silently accepts a host the first would
+// refuse. The strongest control in the product degrades to nothing on the
+// second node, with no error to notice.
+type Remote interface {
+	// Pin returns the recorded pin, or nil when the host has never been pinned.
+	Pin(ctx context.Context, host string) (*Pin, error)
+	// Record stores a first-contact pin. It must refuse rather than overwrite
+	// when a different fingerprint is already recorded.
+	Record(ctx context.Context, p Pin) error
+}
+
 // Store is a persistent set of host key pins.
 //
 // The zero value is not usable; call Open.
@@ -61,7 +77,17 @@ type Store struct {
 	// It does NOT protect the first one, so production fleets should pin out
 	// of band and run with TOFU off.
 	TOFU bool
+
+	// remote, when set, is authoritative. The local file becomes a cache that
+	// is never consulted for a trust decision.
+	remote Remote
 }
+
+// UseRemote switches verification to shared storage.
+func (s *Store) UseRemote(r Remote) { s.remote = r }
+
+// Shared reports whether pins span gateway instances.
+func (s *Store) Shared() bool { return s.remote != nil }
 
 // Open loads pins from path, creating an empty store if the file is absent.
 func Open(path string, tofu bool) (*Store, error) {
@@ -120,6 +146,10 @@ func (s *Store) Callback(host string) ssh.HostKeyCallback {
 func (s *Store) Verify(host string, key ssh.PublicKey) error {
 	presented := ssh.FingerprintSHA256(key)
 
+	if s.remote != nil {
+		return s.verifyRemote(host, key, presented)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -138,6 +168,47 @@ func (s *Store) Verify(host string, key ssh.PublicKey) error {
 		s.pins[host] = pin
 		if err := s.saveLocked(); err != nil {
 			return fmt.Errorf("persist pin for %s: %w", host, err)
+		}
+		return nil
+	}
+
+	if pin.Fingerprint != presented {
+		return fmt.Errorf("%w: %s pinned %s but presented %s",
+			ErrMismatch, host, pin.Fingerprint, presented)
+	}
+	return nil
+}
+
+// verifyRemote checks against shared storage.
+//
+// A failure to reach it is fatal for the connection. Falling back to the local
+// file would mean a network blip downgrades the check to whatever this gateway
+// happens to remember, which is how a mismatch goes unnoticed.
+func (s *Store) verifyRemote(host string, key ssh.PublicKey, presented string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pin, err := s.remote.Pin(ctx, host)
+	if err != nil {
+		return fmt.Errorf("cannot check host key for %s: %w", host, err)
+	}
+
+	if pin == nil {
+		if !s.TOFU {
+			return fmt.Errorf("%w: %s presented %s", ErrUnpinned, host, presented)
+		}
+		rerr := s.remote.Record(ctx, Pin{
+			Host:        host,
+			Fingerprint: presented,
+			KeyType:     key.Type(),
+			PinnedAt:    time.Now().UTC(),
+			PinnedBy:    "tofu",
+		})
+		if rerr != nil {
+			// A refusal here means another gateway recorded a different key
+			// first, which is a mismatch by any other name.
+			return fmt.Errorf("%w: %s presented %s but the pin could not be recorded: %v",
+				ErrMismatch, host, presented, rerr)
 		}
 		return nil
 	}

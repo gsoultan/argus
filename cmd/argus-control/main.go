@@ -159,6 +159,9 @@ func run() error {
 					log.Error("stale agent sweep failed", "error", err)
 					continue
 				}
+				if _, serr := store.SweepTickets(ctx); serr != nil {
+					log.Error("ticket sweep failed", "error", serr)
+				}
 				if expired, eerr := store.ExpireGrants(ctx); eerr != nil {
 					log.Error("grant expiry sweep failed", "error", eerr)
 				} else if expired > 0 {

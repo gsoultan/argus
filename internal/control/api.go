@@ -84,6 +84,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/audit", a.reporter(a.postAudit))
 
+	// Shared state, so replay protection and host-key pins hold across every
+	// gateway rather than per instance.
+	mux.HandleFunc("POST /api/v1/terminal/redeem", a.reporter(a.postRedeem))
+	mux.HandleFunc("GET /api/v1/hostkeys/pin", a.reporter(a.getHostKeyPin))
+	mux.HandleFunc("POST /api/v1/hostkeys/pin", a.reporter(a.postHostKeyPin))
+
 	return a.cors(mux)
 }
 
