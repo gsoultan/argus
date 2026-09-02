@@ -1,0 +1,22 @@
+[
+  {
+    "hostname": "pay-01.payments.northwind.id",
+    "address": "127.0.0.1",
+    "port": 2022,
+    "principals": [
+      "ops",
+      "deploy",
+      "root"
+    ],
+    "key_path": "keys/injected"
+  },
+  {
+    "hostname": "ca-01.payments.northwind.id",
+    "address": "127.0.0.1",
+    "port": 2032,
+    "principals": [
+      "ops"
+    ],
+    "credential_mode": "ca-certificate"
+  }
+]
