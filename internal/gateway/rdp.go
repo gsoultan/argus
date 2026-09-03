@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gsoultan/argus/internal/credssp"
 	"github.com/gsoultan/argus/internal/hostkey"
 	"github.com/gsoultan/argus/internal/rdp"
 )
@@ -175,8 +176,36 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 	// A client that receives a confirm starts a TLS handshake immediately, so
 	// confirming first would leave the user waiting on a connection that may
 	// never come.
-	target, err := rdp.DialTarget(asset.Addr(), asset.Hostname, protocol,
-		s.srv.cfg.HostKeys, s.cfg.DialTimeout)
+	// A credential is looked up only for protocols that can carry one. Failing
+	// to find one is not fatal: the session still opens, the user meets the
+	// host's own logon screen, and the session record says the credential was
+	// not injected — which is a coverage gap an operator can see and close,
+	// rather than a connection that mysteriously does not work.
+	var auth *credssp.Authenticator
+	if protocol == rdp.ProtocolHybrid || protocol == rdp.ProtocolHybridEx {
+		password, cerr := credentialFor(asset, req.Principal)
+		switch {
+		case cerr == nil:
+			auth = &credssp.Authenticator{Credentials: credssp.Credentials{
+				Domain:      asset.Domain,
+				User:        req.Principal,
+				Password:    password,
+				Workstation: "ARGUS",
+			}}
+		case errors.Is(cerr, ErrNoCredential):
+			log.Warn("no vaulted credential; the user will be asked to authenticate",
+				"principal", req.Principal, "target", asset.Hostname)
+		default:
+			// A credential that exists but cannot be used safely — the wrong
+			// file mode, say — must not be silently skipped.
+			log.Error("credential unusable", "error", cerr)
+			rdp.Refuse(conn, rdp.FailInconsistentFlags)
+			return
+		}
+	}
+
+	target, authResult, err := rdp.DialTargetWithAuth(asset.Addr(), asset.Hostname,
+		protocol, s.srv.cfg.HostKeys, s.cfg.DialTimeout, auth)
 	if err != nil {
 		log.Error("rdp target unreachable or unverified", "error", err)
 		// The protocol has no code for "the gateway could not reach the
@@ -214,9 +243,17 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 		return
 	}
 
+	sess.Injected = auth != nil
+	if authResult != nil {
+		sess.LegacyBinding = authResult.LegacyBinding
+	}
+
 	s.track(sess)
 	s.report(sess, "", "active")
-	log.Info("rdp session opened", "protocol", rdp.ProtocolName(protocol))
+	log.Info("rdp session opened",
+		"protocol", rdp.ProtocolName(protocol),
+		"credential_injected", sess.Injected,
+		"legacy_binding", sess.LegacyBinding)
 
 	// The handshake deadline must not survive into the session itself.
 	_ = conn.SetDeadline(time.Time{})
@@ -315,6 +352,16 @@ func (s *RDPServer) riskFlags(sess *rdp.Session) []string {
 	}
 	if h := sess.StartedAt.Hour(); h < 7 || h > 20 {
 		flags = append(flags, "off-hours")
+	}
+	// A session where the user supplied their own password is one where a
+	// standing credential still exists on the target.
+	if !sess.Injected {
+		flags = append(flags, "no-credential-injection")
+	}
+	// The pre-version-5 binding is not nonce-bound, so a captured exchange can
+	// be replayed against another channel. Worth telling an auditor apart.
+	if sess.LegacyBinding {
+		flags = append(flags, "legacy-credssp-binding")
 	}
 	// TLS without CredSSP means the user meets a Windows logon screen through
 	// the tunnel, unauthenticated until they type something.
