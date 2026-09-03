@@ -37,12 +37,13 @@ const MaxPixels = 1 << 24
 
 // maxRLEExpansion is the most pixels one byte of compressed input can produce.
 //
-// An order byte carries a five-bit length, escaping to a following byte plus
-// thirty-two, so 287 is the ceiling. Checking the claimed size against the
-// input this way makes the allocation proportional to what was actually sent
-// rather than to what the sender asserted — which is the difference between a
-// decoder and a way to spend a gateway's memory from across the network.
-const maxRLEExpansion = 287
+// A mega order is three bytes carrying a sixteen-bit run length, so one byte
+// buys at most 65535/3 pixels. An earlier version assumed the regular form's
+// ceiling of 287 and rejected every real screen xrdp sent, because a blank row
+// arrives as a single mega background run. Checking the claimed size against
+// the input still bounds the allocation to what was actually sent rather than
+// what the sender asserted.
+const maxRLEExpansion = 65535 / 3
 
 var (
 	// ErrNotBitmapUpdate reports a PDU that is not a bitmap update.
@@ -199,20 +200,117 @@ func readPixel(p []byte, bpx int) (r, g, b byte) {
 
 /* ── Interleaved RLE ─────────────────────────────────────────────────────── */
 
-// Regular interleaved RLE order codes (MS-RDPEGDI 2.2.2.5.1).
+// Interleaved RLE order codes (MS-RDPEGDI 2.2.2.5.1).
 //
-// The code occupies the top three bits of the order byte, so only these five
-// values are representable in the regular form. The lite and mega forms use
-// different encodings and are refused rather than guessed at — a
-// mis-decoded order paints the wrong pixels, which in a session recording is
-// worse than a visible failure.
+// Three encodings share one byte stream and are told apart by its high bits.
+// Regular orders put a three-bit code in the top bits and a five-bit length
+// below; lite orders use four and four; mega orders are a whole byte of code
+// followed by a sixteen-bit length. A decoder that implements only the regular
+// form works on hand-built test data and fails on the first real screen, which
+// is exactly how this was found: xrdp encodes a blank row as one mega
+// background run and six bytes then legitimately describe eight thousand
+// pixels.
 const (
-	codeBackgroundRun = 0x0
-	codeForegroundRun = 0x1
-	codeFgBgImage     = 0x2
-	codeColourRun     = 0x3
-	codeColourImage   = 0x4
+	regularBGRun       = 0x00
+	regularFGRun       = 0x01
+	regularFGBGImage   = 0x02
+	regularColourRun   = 0x03
+	regularColourImage = 0x04
+
+	liteSetFGFGRun     = 0x0C
+	liteSetFGFGBGImage = 0x0D
+	liteDitheredRun    = 0x0E
+
+	megaBGRun        = 0xF0
+	megaFGRun        = 0xF1
+	megaFGBGImage    = 0xF2
+	megaColourRun    = 0xF3
+	megaColourImage  = 0xF4
+	megaSetFGRun     = 0xF6
+	megaSetFGBGImage = 0xF7
+	megaDitheredRun  = 0xF8
+	specialFGBG1     = 0xF9
+	specialFGBG2     = 0xFA
+	specialWhite     = 0xFD
+	specialBlack     = 0xFE
 )
+
+// orderCode extracts the code, which is scaled differently per form.
+func orderCode(b byte) int {
+	switch {
+	case b&0xC0 != 0xC0:
+		return int(b >> 5) // regular
+	case b&0xF0 == 0xF0:
+		return int(b) // mega and special
+	default:
+		return int(b >> 4) // lite
+	}
+}
+
+// orderRunLength reads the length for an order, returning how many header bytes
+// it consumed.
+func orderRunLength(code int, in []byte) (runLength, advance int, err error) {
+	if len(in) == 0 {
+		return 0, 0, fmt.Errorf("%w: truncated order", ErrBadBitmap)
+	}
+	b := in[0]
+
+	switch code {
+	case regularFGBGImage:
+		// Image orders count in groups of eight, which is why the multiplier
+		// appears here and not in the run orders.
+		n := int(b & 0x1F)
+		if n == 0 {
+			if len(in) < 2 {
+				return 0, 0, fmt.Errorf("%w: truncated extended order", ErrBadBitmap)
+			}
+			return int(in[1]) + 1, 2, nil
+		}
+		return n * 8, 1, nil
+
+	case liteSetFGFGBGImage:
+		n := int(b & 0x0F)
+		if n == 0 {
+			if len(in) < 2 {
+				return 0, 0, fmt.Errorf("%w: truncated extended order", ErrBadBitmap)
+			}
+			return int(in[1]) + 1, 2, nil
+		}
+		return n * 8, 1, nil
+
+	case regularBGRun, regularFGRun, regularColourRun, regularColourImage:
+		n := int(b & 0x1F)
+		if n == 0 {
+			if len(in) < 2 {
+				return 0, 0, fmt.Errorf("%w: truncated extended order", ErrBadBitmap)
+			}
+			return int(in[1]) + 32, 2, nil
+		}
+		return n, 1, nil
+
+	case liteSetFGFGRun, liteDitheredRun:
+		n := int(b & 0x0F)
+		if n == 0 {
+			if len(in) < 2 {
+				return 0, 0, fmt.Errorf("%w: truncated extended order", ErrBadBitmap)
+			}
+			return int(in[1]) + 16, 2, nil
+		}
+		return n, 1, nil
+
+	case megaBGRun, megaFGRun, megaFGBGImage, megaColourRun, megaColourImage,
+		megaSetFGRun, megaSetFGBGImage, megaDitheredRun:
+		if len(in) < 3 {
+			return 0, 0, fmt.Errorf("%w: truncated mega order", ErrBadBitmap)
+		}
+		return int(in[1]) | int(in[2])<<8, 3, nil
+
+	case specialFGBG1, specialFGBG2, specialWhite, specialBlack:
+		// Fixed-size orders with no length field.
+		return 0, 1, nil
+	}
+	return 0, 0, fmt.Errorf("%w: unsupported order code 0x%02x", ErrBadBitmap, code)
+}
 
 // decodeInterleavedRLE expands RDP's run-length encoding.
 //
@@ -228,15 +326,14 @@ func decodeInterleavedRLE(body []byte, width, height, bpp int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Refused before allocating: a one-byte body claiming a megapixel is not a
-	// bitmap, and finding that out after reserving the buffer is how a
-	// compromised target turns a header field into memory pressure.
+	// Refused before allocating: a body far too small to encode the claimed
+	// size is not a bitmap, and finding that out after reserving the buffer is
+	// how a compromised target turns a header field into memory pressure.
 	if width*height > len(body)*maxRLEExpansion {
 		return nil, fmt.Errorf("%w: %d bytes cannot encode %dx%d",
 			ErrBadBitmap, len(body), width, height)
 	}
 
-	// Decoded into a top-down buffer of source-format pixels, then converted.
 	scan := make([]byte, width*height*bpx)
 	if err := rleExpand(body, scan, width, bpx); err != nil {
 		return nil, err
@@ -259,11 +356,10 @@ func decodeInterleavedRLE(body []byte, width, height, bpp int) ([]byte, error) {
 // rleExpand runs the decompressor into scan.
 func rleExpand(in, scan []byte, width, bpx int) error {
 	rowBytes := width * bpx
-	var out int // write cursor, in bytes
+	var out int
 
-	// The foreground colour persists across runs, and the previous scanline is
-	// the implicit background.
 	fg := whitePixel(bpx)
+	black := make([]byte, bpx)
 
 	put := func(px []byte) error {
 		if out+bpx > len(scan) {
@@ -273,36 +369,62 @@ func rleExpand(in, scan []byte, width, bpx int) error {
 		out += bpx
 		return nil
 	}
-	// above returns the pixel directly above the cursor, which is the background
-	// for the first scanline's purposes as well.
 	above := func() []byte {
 		if out < rowBytes {
-			return make([]byte, bpx)
+			return black
 		}
 		return scan[out-rowBytes : out-rowBytes+bpx]
 	}
+	// fgbgImage paints from a bitmask: a set bit takes the foreground, a clear
+	// bit copies the row above. This is how RDP encodes text.
+	fgbg := func(mask byte, n int, colour []byte) error {
+		for bit := range n {
+			var err error
+			if mask&(1<<bit) != 0 {
+				err = put(colour)
+			} else {
+				err = put(above())
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 
 	for i := 0; i < len(in); {
-		code, runLength, adv, err := readOrder(in[i:])
+		code := orderCode(in[i])
+		runLength, adv, err := orderRunLength(code, in[i:])
 		if err != nil {
 			return err
 		}
 		i += adv
 
 		switch code {
-		case codeBackgroundRun:
+		case regularBGRun, megaBGRun:
 			for range runLength {
 				if err := put(above()); err != nil {
 					return err
 				}
 			}
-		case codeForegroundRun:
+		case regularFGRun, megaFGRun:
 			for range runLength {
 				if err := put(fg); err != nil {
 					return err
 				}
 			}
-		case codeColourRun:
+		case liteSetFGFGRun, megaSetFGRun:
+			if i+bpx > len(in) {
+				return fmt.Errorf("%w: set-foreground run has no colour", ErrBadBitmap)
+			}
+			fg = append([]byte(nil), in[i:i+bpx]...)
+			i += bpx
+			for range runLength {
+				if err := put(fg); err != nil {
+					return err
+				}
+			}
+		case regularColourRun, megaColourRun:
 			if i+bpx > len(in) {
 				return fmt.Errorf("%w: colour run has no colour", ErrBadBitmap)
 			}
@@ -313,7 +435,7 @@ func rleExpand(in, scan []byte, width, bpx int) error {
 					return err
 				}
 			}
-		case codeColourImage:
+		case regularColourImage, megaColourImage:
 			need := runLength * bpx
 			if i+need > len(in) {
 				return fmt.Errorf("%w: colour image wants %d bytes, %d remain",
@@ -325,58 +447,72 @@ func rleExpand(in, scan []byte, width, bpx int) error {
 				}
 			}
 			i += need
-		case codeFgBgImage:
-			// One bitmask byte per eight pixels: a set bit takes the current
-			// foreground, a clear bit copies the row above. This is how RDP
-			// encodes text, so getting it wrong is immediately visible.
+		case regularFGBGImage, megaFGBGImage:
 			remaining := runLength
 			for remaining > 0 {
 				if i >= len(in) {
 					return fmt.Errorf("%w: fgbg image ran out of bitmask", ErrBadBitmap)
 				}
-				mask := in[i]
-				i++
 				n := min(remaining, 8)
-				for bit := range n {
-					if mask&(1<<bit) != 0 {
-						err = put(fg)
-					} else {
-						err = put(above())
-					}
-					if err != nil {
-						return err
-					}
+				if err := fgbg(in[i], n, fg); err != nil {
+					return err
 				}
+				i++
 				remaining -= n
 			}
+		case liteSetFGFGBGImage, megaSetFGBGImage:
+			if i+bpx > len(in) {
+				return fmt.Errorf("%w: set-fgbg image has no colour", ErrBadBitmap)
+			}
+			fg = append([]byte(nil), in[i:i+bpx]...)
+			i += bpx
+			remaining := runLength
+			for remaining > 0 {
+				if i >= len(in) {
+					return fmt.Errorf("%w: fgbg image ran out of bitmask", ErrBadBitmap)
+				}
+				n := min(remaining, 8)
+				if err := fgbg(in[i], n, fg); err != nil {
+					return err
+				}
+				i++
+				remaining -= n
+			}
+		case liteDitheredRun, megaDitheredRun:
+			if i+2*bpx > len(in) {
+				return fmt.Errorf("%w: dithered run has no colours", ErrBadBitmap)
+			}
+			a, b := in[i:i+bpx], in[i+bpx:i+2*bpx]
+			i += 2 * bpx
+			for range runLength {
+				if err := put(a); err != nil {
+					return err
+				}
+				if err := put(b); err != nil {
+					return err
+				}
+			}
+		case specialFGBG1:
+			if err := fgbg(0x03, 8, fg); err != nil {
+				return err
+			}
+		case specialFGBG2:
+			if err := fgbg(0x05, 8, fg); err != nil {
+				return err
+			}
+		case specialWhite:
+			if err := put(whitePixel(bpx)); err != nil {
+				return err
+			}
+		case specialBlack:
+			if err := put(black); err != nil {
+				return err
+			}
 		default:
-			return fmt.Errorf("%w: unsupported order code 0x%x", ErrBadBitmap, code)
+			return fmt.Errorf("%w: unsupported order code 0x%02x", ErrBadBitmap, code)
 		}
 	}
 	return nil
-}
-
-// readOrder decodes one order header.
-//
-// The encoding packs a short run length into the low bits of the first byte and
-// escapes to a longer form when it does not fit.
-func readOrder(in []byte) (code, runLength, advance int, err error) {
-	if len(in) == 0 {
-		return 0, 0, 0, fmt.Errorf("%w: truncated order", ErrBadBitmap)
-	}
-	b := in[0]
-
-	// Regular orders: three-bit code, five-bit length.
-	code = int(b >> 5)
-	runLength = int(b & 0x1F)
-	if runLength != 0 {
-		return code, runLength, 1, nil
-	}
-	// A zero length escapes to the next byte plus the implicit 32.
-	if len(in) < 2 {
-		return 0, 0, 0, fmt.Errorf("%w: truncated extended order", ErrBadBitmap)
-	}
-	return code, int(in[1]) + 32, 2, nil
 }
 
 // whitePixel is the initial foreground colour.

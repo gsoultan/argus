@@ -89,10 +89,10 @@ func TestRLEColourImageAndRun(t *testing.T) {
 	//  - a colour image of two pixels
 	//  - a colour run of two pixels
 	var body []byte
-	body = append(body, byte(codeColourImage<<5)|2, // colour image, run 2
+	body = append(body, byte(regularColourImage<<5)|2, // colour image, run 2
 		0x11, 0x22, 0x33,
 		0x44, 0x55, 0x66)
-	body = append(body, byte(codeColourRun<<5)|2, // colour run, run 2
+	body = append(body, byte(regularColourRun<<5)|2, // colour run, run 2
 		0x77, 0x88, 0x99)
 
 	rects, err := ParseBitmapUpdate(bitmapUpdate(bitmapRect(t, 0, 0, 4, 1, 24, true, body)))
@@ -116,9 +116,9 @@ func TestRLEColourImageAndRun(t *testing.T) {
 func TestRLEBackgroundRunCopiesTheRowAbove(t *testing.T) {
 	var body []byte
 	// Row 0: two pixels of a colour image.
-	body = append(body, byte(codeColourImage<<5)|2, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF)
+	body = append(body, byte(regularColourImage<<5)|2, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF)
 	// Row 1: two pixels of background, copying above.
-	body = append(body, byte(codeBackgroundRun<<5)|2)
+	body = append(body, byte(regularBGRun<<5)|2)
 
 	rects, err := ParseBitmapUpdate(bitmapUpdate(bitmapRect(t, 0, 0, 2, 2, 24, true, body)))
 	if err != nil {
@@ -138,7 +138,7 @@ func TestRLEBackgroundRunCopiesTheRowAbove(t *testing.T) {
 // heap overflow reachable from a compromised host.
 func TestRLERunsCannotOverflowTheBitmap(t *testing.T) {
 	// One pixel of space, a run claiming 200.
-	body := []byte{byte(codeColourRun<<5) | 0, 200, 0x11, 0x22, 0x33}
+	body := []byte{byte(regularColourRun<<5) | 0, 200, 0x11, 0x22, 0x33}
 	_, err := ParseBitmapUpdate(bitmapUpdate(bitmapRect(t, 0, 0, 1, 1, 24, true, body)))
 	if !errors.Is(err, ErrBadBitmap) {
 		t.Errorf("err = %v, want ErrBadBitmap", err)
