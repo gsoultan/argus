@@ -21,8 +21,8 @@
   },
   {
     "hostname": "win-01.corp.northwind.id",
-    "address": "192.168.64.84",
-    "port": 3389,
+    "address": "127.0.0.1",
+    "port": 13389,
     "protocol": "rdp",
     "principals": [
       "ops",
