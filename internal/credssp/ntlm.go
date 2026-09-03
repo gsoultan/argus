@@ -244,9 +244,9 @@ type Credentials struct {
 	Workstation string
 }
 
-// Authenticate builds the third NTLM message and returns the exported session
-// key, which every later CredSSP step encrypts under.
-func Authenticate(c Challenge, creds Credentials, clientChallenge []byte,
+// BuildAuthenticate builds the third NTLM message and returns the exported
+// session key, which every later CredSSP step encrypts under.
+func BuildAuthenticate(c Challenge, creds Credentials, clientChallenge []byte,
 	timestamp uint64) (msg, exportedSessionKey []byte, err error) {
 
 	if len(clientChallenge) != 8 {
