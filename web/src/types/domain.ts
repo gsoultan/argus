@@ -65,7 +65,12 @@ export type AgentState = 'healthy' | 'stale' | 'absent'
  */
 export type BypassPosture = 'enforced' | 'monitored' | 'open'
 
+/** Which protocol reaches an asset. Absent means SSH. */
+export type AssetProtocol = 'ssh' | 'rdp'
+
 export interface Asset {
+  /** Absent means SSH, matching the gateway's own default. */
+  protocol?: AssetProtocol
   id: UUID
   hostname: string
   address: string
