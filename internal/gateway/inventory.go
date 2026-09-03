@@ -33,6 +33,29 @@ type Asset struct {
 	// nothing behind: no authorized_keys entry, no secret to rotate, nothing
 	// that outlives the session.
 	CredentialMode string `json:"credential_mode"`
+
+	// Protocol is "ssh" (default) or "rdp".
+	//
+	// One inventory for both, rather than a second file. An asset is a machine
+	// someone has privileged access to; which protocol reaches it is a property
+	// of the machine, not a reason to track it twice — and a host that appears
+	// in one inventory but not the other is exactly the coverage gap discovery
+	// exists to surface.
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// Protocol names.
+const (
+	ProtocolSSH = "ssh"
+	ProtocolRDP = "rdp"
+)
+
+// Proto returns the asset's protocol, defaulting to SSH.
+func (a Asset) Proto() string {
+	if a.Protocol == "" {
+		return ProtocolSSH
+	}
+	return a.Protocol
 }
 
 // UsesCertificate reports whether this asset is on certificate auth.
@@ -42,7 +65,13 @@ func (a Asset) UsesCertificate() bool { return a.CredentialMode == "ca-certifica
 func (a Asset) Addr() string {
 	port := a.Port
 	if port == 0 {
+		// The default follows the protocol. Defaulting everything to 22 would
+		// send an RDP session to a host's SSH port, where it fails with a
+		// protocol error that says nothing about the real mistake.
 		port = 22
+		if a.Proto() == ProtocolRDP {
+			port = 3389
+		}
 	}
 	return fmt.Sprintf("%s:%d", a.Address, port)
 }

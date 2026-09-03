@@ -97,6 +97,28 @@ type Session struct {
 	chainEnd string
 }
 
+// Refuse sends a negotiation failure and closes the connection cleanly.
+//
+// Closing a socket that still has unread data queued makes the kernel send RST
+// and discard whatever was pending, so a refusal written immediately before
+// Close reaches the client as a connection reset — the user sees "the
+// connection was lost" instead of the reason. Half-closing and then draining
+// gives the peer the chance to read what was sent before the socket goes away.
+func Refuse(conn net.Conn, code uint32) {
+	_, _ = conn.Write(BuildNegotiationFailure(code))
+
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	// FIN rather than RST: the client sees an orderly end after the refusal.
+	_ = tcp.CloseWrite()
+	// Draining is what actually clears the receive queue. Bounded, because a
+	// client that keeps talking must not hold the connection open.
+	_ = tcp.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _ = io.Copy(io.Discard, io.LimitReader(tcp, 64<<10))
+}
+
 // Handshake performs the RDP negotiation with a client and refuses anything
 // Argus will not broker.
 //
@@ -120,7 +142,7 @@ func Handshake(client net.Conn, log *slog.Logger) (Request, uint32, error) {
 			// Saying why, in the protocol's own vocabulary, is the difference
 			// between a user who reconfigures their client and one who files a
 			// ticket.
-			_, _ = client.Write(BuildNegotiationFailure(FailSSLRequiredByServer))
+			Refuse(client, FailSSLRequiredByServer)
 			return Request{}, 0, errors.New(
 				"client offered only standard RDP security, which Argus will not broker")
 		}
@@ -129,7 +151,7 @@ func Handshake(client net.Conn, log *slog.Logger) (Request, uint32, error) {
 
 	protocol, ok := SelectProtocol(info.RequestedProtocols)
 	if !ok {
-		_, _ = client.Write(BuildNegotiationFailure(FailSSLRequiredByServer))
+		Refuse(client, FailSSLRequiredByServer)
 		return Request{}, 0, fmt.Errorf(
 			"client offered no acceptable security protocol (requested %#08x)",
 			info.RequestedProtocols)
@@ -139,7 +161,7 @@ func Handshake(client net.Conn, log *slog.Logger) (Request, uint32, error) {
 	if err != nil {
 		// The connection is well-formed but says nothing about where it wants
 		// to go. Answering with a failure lets the client show the reason.
-		_, _ = client.Write(BuildNegotiationFailure(FailInconsistentFlags))
+		Refuse(client, FailInconsistentFlags)
 		return Request{}, 0, err
 	}
 
