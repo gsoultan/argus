@@ -18,5 +18,15 @@
       "ops"
     ],
     "credential_mode": "ca-certificate"
+  },
+  {
+    "hostname": "win-01.corp.northwind.id",
+    "address": "127.0.0.1",
+    "port": 13389,
+    "protocol": "rdp",
+    "principals": [
+      "ops",
+      "Administrator"
+    ]
   }
 ]

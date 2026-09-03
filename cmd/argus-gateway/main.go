@@ -71,6 +71,24 @@ type config struct {
 	// with ssh(1) alone, and a deployment that does not want a web-reachable
 	// shell simply omits this block.
 	Web *webConfig `yaml:"web"`
+
+	// RDP enables the Remote Desktop listener. Absent means off: a port that
+	// speaks a privileged protocol should be opened deliberately, not acquired
+	// by upgrading.
+	RDP *rdpConfig `yaml:"rdp"`
+}
+
+type rdpConfig struct {
+	Listen string `yaml:"listen"`
+	// TLS is the certificate Argus presents to RDP clients.
+	//
+	// Required rather than optional. Argus terminates TLS in order to record
+	// the session at all, so it must have an identity of its own; without one
+	// there is nothing for a client to verify, which is the situation this
+	// product exists to remove.
+	TLS *gatewayTLS `yaml:"tls"`
+	// DialTimeout bounds the connection to a target. Zero uses the default.
+	DialTimeout time.Duration `yaml:"dial_timeout"`
 }
 
 type gatewayRateLimit struct {
@@ -336,6 +354,38 @@ func run() error {
 		}()
 	}
 
+	var rdpSrv *gateway.RDPServer
+	if cfg.RDP != nil && cfg.RDP.Listen != "" {
+		if cfg.RDP.TLS == nil {
+			return fmt.Errorf("rdp.tls is required: Argus terminates TLS to record " +
+				"the session, so it must present a certificate of its own")
+		}
+		rdpTLS, err := tlsconfig.Server(tlsconfig.ServerOptions{
+			CertFile: cfg.RDP.TLS.CertFile,
+			KeyFile:  cfg.RDP.TLS.KeyFile,
+		})
+		if err != nil {
+			return fmt.Errorf("rdp tls: %w", err)
+		}
+
+		rdpSrv, err = gateway.NewRDPServer(srv, gateway.RDPConfig{
+			Listen:       cfg.RDP.Listen,
+			TLS:          rdpTLS,
+			RecordingDir: cfg.RecordingDir,
+			DialTimeout:  cfg.RDP.DialTimeout,
+		})
+		if err != nil {
+			return fmt.Errorf("rdp: %w", err)
+		}
+		go func() {
+			// A failure here is fatal to RDP but not to SSH: brokered Linux
+			// access should not stop because a Windows listener could not bind.
+			if err := rdpSrv.Listen(); err != nil {
+				log.Error("rdp gateway failed", "error", err)
+			}
+		}()
+	}
+
 	// Drain in-flight sessions on signal rather than cutting them mid-command.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -343,6 +393,9 @@ func run() error {
 		<-stop
 		log.Info("shutting down, waiting for sessions to finish")
 		cancelWeb()
+		if rdpSrv != nil {
+			_ = rdpSrv.Close()
+		}
 		_ = srv.Close()
 	}()
 
@@ -408,6 +461,9 @@ func loadConfig(path string) (config, error) {
 	}
 	if cfg.Web != nil && cfg.Web.TLS != nil {
 		relative = append(relative, &cfg.Web.TLS.CertFile, &cfg.Web.TLS.KeyFile)
+	}
+	if cfg.RDP != nil && cfg.RDP.TLS != nil {
+		relative = append(relative, &cfg.RDP.TLS.CertFile, &cfg.RDP.TLS.KeyFile)
 	}
 	if cfg.Control != nil {
 		relative = append(relative, &cfg.Control.CAFile, &cfg.Control.CertFile, &cfg.Control.KeyFile)
