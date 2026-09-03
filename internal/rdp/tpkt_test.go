@@ -74,6 +74,11 @@ func TestReadPDUReadsFramesBackToBack(t *testing.T) {
 
 // The RDP listener is internet-facing and gets scanned continuously. Whatever
 // arrives must be rejected without allocating on the peer's say-so.
+//
+// Note that Fast-Path framing is inherently permissive — almost any two bytes
+// are a well-formed header — so junk is not rejected here but by Handshake,
+// which requires a Connection Request before anything else. See
+// TestHandshakeRejectsANonRDPClient.
 func TestReadPDURejectsJunk(t *testing.T) {
 	cases := []struct {
 		name string
@@ -81,7 +86,6 @@ func TestReadPDURejectsJunk(t *testing.T) {
 		want error
 	}{
 		{"an HTTP request", []byte("GET / HTTP/1.1\r\n\r\n"), ErrNotTPKT},
-		{"a TLS ClientHello", []byte{0x16, 0x03, 0x01, 0x00, 0x05}, ErrNotTPKT},
 		{"zero bytes of header", []byte{0x03, 0x00, 0x00, 0x00}, ErrShortPDU},
 		{"length below the header", []byte{0x03, 0x00, 0x00, 0x03}, ErrShortPDU},
 	}
@@ -115,7 +119,8 @@ func TestClassify(t *testing.T) {
 		{"data", tpkt([]byte{0x02, tpduData, 0x80}), Data},
 		{"unknown code", tpkt([]byte{0x02, 0x10, 0x00}), Unknown},
 		{"too short to classify", tpkt([]byte{0x00}), Unknown},
-		{"not a frame at all", []byte{0x00}, Unknown},
+		{"a fast-path output pdu", []byte{0x00, 0x08, 1, 2, 3, 4, 5, 6}, FastPath},
+		{"too short to be either framing", []byte{0x00}, Unknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,4 +193,63 @@ func connectionRequestRaw(prefix string, protocols uint32) []byte {
 	x[1] = tpduConnectionRequest
 	copy(x[7:], v.Bytes())
 	return tpkt(x)
+}
+
+// Fast-Path is what the session actually runs on, and a reader that only knows
+// TPKT completes every handshake and then drops the connection the moment the
+// desktop appears. Found by running a real FreeRDP client against a real xrdp
+// server through the gateway; no hand-written fake exercises it, because a fake
+// only ever sends what its author already understood.
+func TestReadPDUReadsFastPath(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+	}{
+		// One-byte length: the seven low bits are the whole size, header included.
+		{"short output pdu", []byte{0x00, 0x06, 0xAA, 0xBB, 0xCC, 0xDD}},
+		// Two-byte length: the top bit sets, fifteen bits big-endian.
+		{"long output pdu", append([]byte{0x00, 0x81, 0x04}, make([]byte, 0x104-3)...)},
+		// Input PDUs carry an event count in the upper nibble.
+		{"input pdu with events", []byte{0x44, 0x08, 1, 2, 3, 4, 5, 6}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ReadPDU(bytes.NewReader(tc.in))
+			if err != nil {
+				t.Fatalf("ReadPDU: %v", err)
+			}
+			if !bytes.Equal(got, tc.in) {
+				t.Errorf("frame was altered:\n got %x\nwant %x", got, tc.in)
+			}
+			if k := Classify(got); k != FastPath {
+				t.Errorf("Classify = %q, want fast-path", k)
+			}
+		})
+	}
+}
+
+// A real session interleaves both framings on one connection.
+func TestReadPDUHandlesMixedFraming(t *testing.T) {
+	tpktFrame := tpkt([]byte{0x02, tpduData, 0x80, 'x'})
+	fast := []byte{0x00, 0x05, 1, 2, 3}
+	r := bytes.NewReader(append(append([]byte{}, tpktFrame...), fast...))
+
+	first, err := ReadPDU(r)
+	if err != nil || !bytes.Equal(first, tpktFrame) {
+		t.Fatalf("tpkt frame: %x err=%v", first, err)
+	}
+	second, err := ReadPDU(r)
+	if err != nil || !bytes.Equal(second, fast) {
+		t.Fatalf("fast-path frame: %x err=%v", second, err)
+	}
+}
+
+func TestReadPDURejectsAnImpossibleFastPathLength(t *testing.T) {
+	// A length smaller than the header it describes.
+	if _, err := ReadPDU(bytes.NewReader([]byte{0x00, 0x01})); !errors.Is(err, ErrShortPDU) {
+		t.Errorf("err = %v, want ErrShortPDU", err)
+	}
+	if _, err := ReadPDU(bytes.NewReader([]byte{0x00, 0x80, 0x02})); !errors.Is(err, ErrShortPDU) {
+		t.Errorf("two-byte length err = %v, want ErrShortPDU", err)
+	}
 }
