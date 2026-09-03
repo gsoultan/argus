@@ -8,18 +8,17 @@
 package recorder
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"sync"
 	"time"
+
+	"github.com/gsoultan/argus/internal/hashchain"
 )
 
 // Genesis is the chain root. Every recording starts from the same value so a
 // verifier needs nothing but the file to check it.
-const Genesis = "0000000000000000000000000000000000000000000000000000000000000000"
+const Genesis = hashchain.Genesis
 
 // Header is the first line of an asciicast v2 document.
 type Header struct {
@@ -45,24 +44,18 @@ const (
 	Kernel Stream = "x"
 )
 
-// Recorder serialises a session to asciicast v2 while maintaining a
-// tamper-evident hash chain over the emitted lines.
+// Recorder serialises a session to asciicast v2 under a tamper-evident hash
+// chain.
 //
-// Each link is SHA-256(prevHash || line). Editing any line invalidates every
-// subsequent link, so an auditor can detect tampering with nothing but the
-// recording and the published chain head.
+// The chain itself lives in internal/hashchain, shared with the RDP recorder.
+// One implementation rather than two: this is the property the product is sold
+// on, and a second copy would be a second place for it to be quietly wrong.
 //
 // Safe for concurrent use: a proxied session writes stdout from one goroutine
 // and stdin from another.
 type Recorder struct {
-	mu      sync.Mutex
-	w       io.Writer
+	chain   *hashchain.Chain
 	started time.Time
-	head    string
-	lines   int
-	bytes   int64
-	closed  bool
-	tap     func(line []byte)
 }
 
 // SetTap registers a function called with every line as it is committed.
@@ -73,14 +66,8 @@ type Recorder struct {
 // whether to kill a session must not be looking at a different session from the
 // one the auditor will replay.
 //
-// The tap is invoked with the recorder's lock held, which is what orders frames
-// for viewers. It must therefore not block and must not call back into the
-// Recorder. A nil tap removes any previous one.
-func (r *Recorder) SetTap(fn func(line []byte)) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.tap = fn
-}
+// The tap must not block and must not call back into the Recorder.
+func (r *Recorder) SetTap(fn func(line []byte)) { r.chain.SetTap(fn) }
 
 // New writes the header and returns a Recorder positioned at t=0.
 func New(w io.Writer, h Header) (*Recorder, error) {
@@ -95,55 +82,19 @@ func New(w io.Writer, h Header) (*Recorder, error) {
 		h.Timestamp = time.Now().Unix()
 	}
 
-	r := &Recorder{w: w, started: time.Now(), head: Genesis}
+	r := &Recorder{chain: hashchain.New(w), started: time.Now()}
 
 	line, err := json.Marshal(h)
 	if err != nil {
 		return nil, fmt.Errorf("marshal header: %w", err)
 	}
-	if err := r.emit(line); err != nil {
+	if err := r.chain.Emit(line); err != nil {
 		return nil, err
 	}
 	return r, nil
 }
 
-// emit writes one line and advances the chain. Caller must not hold the lock.
-func (r *Recorder) emit(line []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.emitLocked(line)
-}
-
-func (r *Recorder) emitLocked(line []byte) error {
-	if r.closed {
-		return fmt.Errorf("recorder is closed")
-	}
-
-	sum := sha256.New()
-	sum.Write([]byte(r.head))
-	sum.Write(line)
-	r.head = hex.EncodeToString(sum.Sum(nil))
-
-	if _, err := r.w.Write(append(line, '\n')); err != nil {
-		// Recording failures are fatal by design: the caller is expected to
-		// terminate the session rather than let it continue unrecorded. An
-		// auditor asking "are all privileged sessions recorded?" needs that to
-		// be true without an asterisk.
-		return fmt.Errorf("write recording: %w", err)
-	}
-	r.lines++
-	r.bytes += int64(len(line)) + 1
-
-	// After the write, never before: a frame that failed to record must not be
-	// shown to a viewer as though it had been. The copy is required because the
-	// append above may write into line's spare capacity.
-	if r.tap != nil {
-		frame := make([]byte, len(line))
-		copy(frame, line)
-		r.tap(frame)
-	}
-	return nil
-}
+func (r *Recorder) emit(line []byte) error { return r.chain.Emit(line) }
 
 // Write records a chunk on the given stream, timestamped relative to New.
 func (r *Recorder) Write(s Stream, p []byte) error {
@@ -194,31 +145,15 @@ func (r *Recorder) Resize(cols, rows int) error {
 
 // Close finalises the recording and returns the chain head, which the control
 // plane stores alongside the session so the artefact can be verified later.
-func (r *Recorder) Close() (head string, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return r.head, nil
-	}
-	r.closed = true
-	if c, ok := r.w.(io.Closer); ok {
-		err = c.Close()
-	}
-	return r.head, err
-}
+func (r *Recorder) Close() (string, error) { return r.chain.Close() }
 
 // Head returns the current chain head without closing.
-func (r *Recorder) Head() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.head
-}
+func (r *Recorder) Head() string { return r.chain.Head() }
 
 // Stats reports progress, for the session record the control plane keeps.
 func (r *Recorder) Stats() (lines int, bytes int64, duration time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.lines, r.bytes, time.Since(r.started)
+	lines, bytes = r.chain.Stats()
+	return lines, bytes, time.Since(r.started)
 }
 
 // round3 matches the precision asciinema itself writes. Without it the JSON
