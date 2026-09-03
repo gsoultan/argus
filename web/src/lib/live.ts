@@ -42,6 +42,15 @@ export function isConfigured(): boolean {
 
 export interface Identity {
   authenticated: boolean
+  /**
+   * Set when the control plane could not be reached at all.
+   *
+   * Distinct from "not signed in": the two look identical to a user and need
+   * opposite responses. Reporting an outage as a configuration problem is how
+   * someone spends an afternoon on their identity provider because a proxy
+   * line pointed at the wrong scheme.
+   */
+  unreachable?: boolean
   email?: string
   displayName?: string
   role?: string
@@ -57,9 +66,10 @@ export async function whoami(): Promise<Identity> {
       credentials: 'include',
       headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
     })
+    if (!res.ok) return { authenticated: false, unreachable: true }
     return (await res.json()) as Identity
   } catch {
-    return { authenticated: false }
+    return { authenticated: false, unreachable: true }
   }
 }
 
