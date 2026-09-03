@@ -7,6 +7,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { IconInfoCircle, IconPlugConnected, IconTerminal2, IconX } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { LiveTerminal, type TerminalState } from '~/components/LiveTerminal'
+import { RDPScreen } from '~/components/RDPScreen'
 import { assetsQuery } from '~/lib/queries'
 import { GATEWAY_URL, terminalTicket } from '~/lib/live'
 import { Mono } from '~/components/primitives'
@@ -30,7 +31,9 @@ function Connect() {
   const [denied, setDenied] = useState<string>()
   const [target, setTarget] = useState<string | null>(null)
   const [principal, setPrincipal] = useState('ops')
-  const [session, setSession] = useState<{ target: string; principal: string } | null>(null)
+  const [session, setSession] = useState<
+    { target: string; principal: string; protocol: 'ssh' | 'rdp' } | null
+  >(null)
   const [state, setState] = useState<TerminalState>('connecting')
   const [detail, setDetail] = useState<string>()
 
@@ -38,11 +41,16 @@ function Connect() {
   const principals = selected?.principals ?? ['ops', 'deploy']
 
   if (session) {
+    const isRDP = session.protocol === 'rdp'
     return (
       <Box h="calc(100vh - 52px)" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
-          title="Terminal"
-          description="Brokered through the gateway — same policy, host-key verification and recording as ssh(1)."
+          title={isRDP ? 'Remote Desktop' : 'Terminal'}
+          description={
+            isRDP
+              ? 'Brokered through the gateway — same policy, certificate pinning and recording as a desktop client.'
+              : 'Brokered through the gateway — same policy, host-key verification and recording as ssh(1).'
+          }
           actions={
             <Button
               size="xs"
@@ -55,7 +63,26 @@ function Connect() {
             </Button>
           }
         />
-        <Box style={{ flex: 1, minHeight: 0 }}>
+        <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} p={isRDP ? 'md' : undefined}>
+          {isRDP ? (
+            <RDPScreen
+              gatewayUrl={gateway}
+              target={session.target}
+              principal={session.principal}
+              getTicket={async () => {
+                const res = await terminalTicket(session.target, session.principal)
+                if ('error' in res) {
+                  setDenied(res.error)
+                  return null
+                }
+                return res.ticket
+              }}
+              onStateChange={(s, d) => {
+                setState(s === 'live' ? 'live' : s === 'error' ? 'error' : 'closed')
+                setDetail(d)
+              }}
+            />
+          ) : (
           <LiveTerminal
             gatewayUrl={gateway}
             getTicket={async () => {
@@ -70,6 +97,7 @@ function Connect() {
             principal={session.principal}
             onStateChange={(s, d) => { setState(s); setDetail(d) }}
           />
+          )}
         </Box>
       </Box>
     )
@@ -178,7 +206,7 @@ function Connect() {
                   setDenied(res.error)
                   return
                 }
-                setSession({ target, principal })
+                setSession({ target, principal, protocol: selected?.protocol ?? 'ssh' })
               }}
             >
               Open terminal
