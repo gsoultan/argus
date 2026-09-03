@@ -105,14 +105,20 @@ function LoginGate({ children }: { children: React.ReactNode }) {
             Every action in Argus is attributed to a person, so there is no anonymous
             access — not even read-only.
           </Text>
-          {identity.oidcEnabled ? (
+          {identity.unreachable ? (
+            <Text size="xs" c="amber.4">
+              The control plane could not be reached. It may not be running, or the
+              console may be pointed at the wrong address or scheme — it serves HTTPS
+              when a certificate is configured.
+            </Text>
+          ) : identity.oidcEnabled ? (
             <Button fullWidth component="a" href={loginURL()}
               leftSection={<IconShieldLock size={15} />}>
               Sign in with SSO
             </Button>
           ) : (
             <Text size="xs" c="amber.4">
-              The control plane has no identity provider configured.
+              The control plane is running but has no identity provider configured.
             </Text>
           )}
         </Paper>

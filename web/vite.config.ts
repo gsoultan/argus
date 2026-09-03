@@ -51,8 +51,16 @@ export default defineConfig({
     // than papering over it with SameSite=None, which would weaken the cookie
     // everywhere to fix a local-only problem.
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false },
-      '/auth': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      // The control plane serves HTTPS whenever a certificate is configured,
+      // which the dev config does. Proxying to http:// fails every request,
+      // and because whoami() falls back silently the console then reports
+      // "no identity provider configured" — which sends you to check Dex
+      // instead of the one line that is actually wrong.
+      //
+      // secure:false accepts the dev certificate. It applies only to the dev
+      // server's own proxy, never to anything shipped.
+      '/api': { target: 'https://127.0.0.1:8080', changeOrigin: false, secure: false },
+      '/auth': { target: 'https://127.0.0.1:8080', changeOrigin: false, secure: false },
     },
   },
 })
