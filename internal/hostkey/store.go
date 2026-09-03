@@ -142,12 +142,24 @@ func (s *Store) Callback(host string) ssh.HostKeyCallback {
 	}
 }
 
-// Verify checks a presented key against the pin for host.
+// Verify checks a presented SSH key against the pin for host.
 func (s *Store) Verify(host string, key ssh.PublicKey) error {
-	presented := ssh.FingerprintSHA256(key)
+	return s.VerifyFingerprint(host, ssh.FingerprintSHA256(key), key.Type())
+}
 
+// VerifyFingerprint checks an already-computed fingerprint against the pin.
+//
+// Exists so RDP can pin a target's X.509 certificate through the same trust
+// store as SSH. The identity being pinned differs; everything that matters —
+// trust on first use, refusing a changed key, strict mode, and the shared pins
+// that stop two gateways disagreeing — is identical, and a second copy of it
+// would be a second place for a target to quietly become unverified.
+//
+// keyType is recorded for whoever reads the store later; it takes no part in
+// the comparison.
+func (s *Store) VerifyFingerprint(host, presented, keyType string) error {
 	if s.remote != nil {
-		return s.verifyRemote(host, key, presented)
+		return s.verifyRemote(host, presented, keyType)
 	}
 
 	s.mu.Lock()
@@ -161,7 +173,7 @@ func (s *Store) Verify(host string, key ssh.PublicKey) error {
 		pin = Pin{
 			Host:        host,
 			Fingerprint: presented,
-			KeyType:     key.Type(),
+			KeyType:     keyType,
 			PinnedAt:    time.Now().UTC(),
 			PinnedBy:    "tofu",
 		}
@@ -184,7 +196,7 @@ func (s *Store) Verify(host string, key ssh.PublicKey) error {
 // A failure to reach it is fatal for the connection. Falling back to the local
 // file would mean a network blip downgrades the check to whatever this gateway
 // happens to remember, which is how a mismatch goes unnoticed.
-func (s *Store) verifyRemote(host string, key ssh.PublicKey, presented string) error {
+func (s *Store) verifyRemote(host, presented, keyType string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -200,7 +212,7 @@ func (s *Store) verifyRemote(host string, key ssh.PublicKey, presented string) e
 		rerr := s.remote.Record(ctx, Pin{
 			Host:        host,
 			Fingerprint: presented,
-			KeyType:     key.Type(),
+			KeyType:     keyType,
 			PinnedAt:    time.Now().UTC(),
 			PinnedBy:    "tofu",
 		})
