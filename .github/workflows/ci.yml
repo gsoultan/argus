@@ -79,6 +79,84 @@ jobs:
         # every change is cheap insurance.
         run: go test -run=Fuzz -fuzz=FuzzParsePTYRequest -fuzztime=60s ./internal/gateway/
 
+  ebpf:
+    name: Kernel probe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Confirm this runner can actually load a probe
+        # Stated up front so a runner image change that removes BTF or
+        # tracepoint support fails here, naming the reason, rather than turning
+        # every kernel test into a skip that nobody notices.
+        run: |
+          set -euo pipefail
+          test -r /sys/kernel/btf/vmlinux || {
+            echo "::error::runner kernel has no BTF; CO-RE relocations cannot resolve"
+            exit 1
+          }
+          test -d /sys/kernel/tracing/events/sched/sched_process_exec ||
+            sudo mount -t tracefs nodev /sys/kernel/tracing
+          test -d /sys/kernel/tracing/events/sched/sched_process_exec || {
+            echo "::error::sched tracepoints are unavailable on this runner"
+            exit 1
+          }
+          echo "kernel $(uname -r), BTF $(stat -c %s /sys/kernel/btf/vmlinux) bytes"
+
+      - name: Check the committed probe object matches its source
+        # The object is committed so `go build` works without an LLVM that
+        # targets BPF. That makes drift invisible: editing exec.bpf.c and
+        # forgetting to rebuild leaves CI testing the old program while the
+        # source claims something else. The build is byte-reproducible for a
+        # given toolchain, so comparing hashes catches it.
+        run: |
+          set -euo pipefail
+          cp internal/execlog/bpf/exec.bpf.o /tmp/committed.o
+          ./scripts/build-bpf.sh --runtime docker
+          if ! cmp -s /tmp/committed.o internal/execlog/bpf/exec.bpf.o; then
+            echo "::error::internal/execlog/bpf/exec.bpf.o is stale. Run scripts/build-bpf.sh and commit the result."
+            exit 1
+          fi
+          echo "probe object is current"
+
+      - name: Run the kernel-side tests
+        # Compiled first and run under sudo, rather than `sudo go test`, so the
+        # toolchain and module cache stay in the normal user's environment.
+        #
+        # ARGUS_EXECLOG_ALLOW_PIDNS is deliberately not set: a GitHub runner is
+        # in the host PID namespace, so this exercises the same path an agent
+        # takes on a real host.
+        run: |
+          set -euo pipefail
+          go test -c -o /tmp/execlog.test ./internal/execlog/
+          sudo /tmp/execlog.test -test.v -test.timeout 5m 2>&1 | tee /tmp/kernel.log
+
+      - name: Confirm the kernel tests were not skipped
+        # A skipped suite passes. Every kernel-side test skips without a capable
+        # kernel or without root, so without this a broken runner would quietly
+        # reduce this job to compiling the tests.
+        run: |
+          set -euo pipefail
+          if grep -q -- "--- SKIP: TestProbe" /tmp/kernel.log; then
+            echo "::error::kernel probe tests skipped; the probe never loaded"
+            grep -- "--- SKIP" /tmp/kernel.log
+            exit 1
+          fi
+          # `grep -c` prints its count and still exits 1 when that count is
+          # zero, so `|| echo 0` would append a second line and make the
+          # comparison below fail open — the check would report success on a run
+          # where nothing passed.
+          n=$(grep -c -- "--- PASS: TestProbe" /tmp/kernel.log || true)
+          if [ "$n" -lt 6 ]; then
+            echo "::error::only $n kernel probe tests ran; expected at least 6"
+            exit 1
+          fi
+          echo "$n kernel-side tests passed against $(uname -r)"
+
   web:
     name: Console
     runs-on: ubuntu-latest
