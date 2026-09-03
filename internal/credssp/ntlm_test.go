@@ -236,7 +236,7 @@ func TestAuthenticateProducesAParseableMessage(t *testing.T) {
 	creds := Credentials{Domain: mslabDomain, User: mslabUser,
 		Password: mslabPassword, Workstation: "COMPUTER"}
 
-	msg, sessionKey, err := Authenticate(c, creds, mustHex(t, "aaaaaaaaaaaaaaaa"), 0)
+	msg, sessionKey, err := BuildAuthenticate(c, creds, mustHex(t, "aaaaaaaaaaaaaaaa"), 0)
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestAuthenticateSendsNoLMResponse(t *testing.T) {
 		Flags:           NegotiateUnicode | NegotiateNTLM,
 		ServerChallenge: mustHex(t, "0123456789abcdef"),
 	}
-	msg, _, err := Authenticate(c, Credentials{User: "u", Password: "p"},
+	msg, _, err := BuildAuthenticate(c, Credentials{User: "u", Password: "p"},
 		mustHex(t, "aaaaaaaaaaaaaaaa"), 0)
 	if err != nil {
 		t.Fatal(err)
@@ -296,11 +296,11 @@ func TestAuthenticateSendsNoLMResponse(t *testing.T) {
 
 func TestAuthenticateRejectsBadChallenges(t *testing.T) {
 	good := Challenge{ServerChallenge: mustHex(t, "0123456789abcdef")}
-	if _, _, err := Authenticate(good, Credentials{}, []byte{1, 2, 3}, 0); err == nil {
+	if _, _, err := BuildAuthenticate(good, Credentials{}, []byte{1, 2, 3}, 0); err == nil {
 		t.Error("a short client challenge was accepted")
 	}
 	short := Challenge{ServerChallenge: []byte{1, 2}}
-	if _, _, err := Authenticate(short, Credentials{},
+	if _, _, err := BuildAuthenticate(short, Credentials{},
 		mustHex(t, "aaaaaaaaaaaaaaaa"), 0); err == nil {
 		t.Error("a short server challenge was accepted")
 	}
@@ -330,7 +330,7 @@ func TestSessionKeysAreNotPredictable(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for range 16 {
-		_, key, err := Authenticate(c, Credentials{User: "u", Password: "p"},
+		_, key, err := BuildAuthenticate(c, Credentials{User: "u", Password: "p"},
 			mustHex(t, "aaaaaaaaaaaaaaaa"), 0)
 		if err != nil {
 			t.Fatal(err)

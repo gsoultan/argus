@@ -167,3 +167,11 @@ func (s *Sealer) mac(signKey []byte, seq uint32, message []byte, seal *rc4.Ciphe
 	}
 	return checksum
 }
+
+// hmacMD5 is exported within the package for the server-side half of tests,
+// which must recompute what a real target would.
+func hmacMD5(key, data []byte) []byte {
+	h := hmac.New(md5.New, key)
+	h.Write(data)
+	return h.Sum(nil)
+}
