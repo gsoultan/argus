@@ -114,8 +114,8 @@ func findBlock(t *testing.T, req []byte, want uint16) []byte {
 /* ── MCS domain PDUs ─────────────────────────────────────────────────────── */
 
 func TestAttachUserConfirmReadsTheUserID(t *testing.T) {
-	// Tag 11 with result 0, then the user id.
-	body := []byte{mcsAttachUserConfirm << 2, 0x00, 0x00, 0x07}
+	// choice byte with the initiator-present flag, result 0, then the user id.
+	body := []byte{mcsAttachUserConfirm<<2 | 0x02, 0x00, 0x00, 0x07}
 	frame := x224Data(body)
 
 	got, err := ParseAttachUserConfirm(frame)
@@ -130,7 +130,7 @@ func TestAttachUserConfirmReadsTheUserID(t *testing.T) {
 // Continuing past a refusal would join channels as a user that does not exist,
 // and the failure would surface much later as silence.
 func TestAttachUserConfirmRefusalIsAnError(t *testing.T) {
-	body := []byte{mcsAttachUserConfirm<<2 | 0x01, 0x00, 0x00, 0x07}
+	body := []byte{mcsAttachUserConfirm<<2 | 0x02, 0x02, 0x00, 0x07}
 	if _, err := ParseAttachUserConfirm(x224Data(body)); !errors.Is(err, ErrMCS) {
 		t.Errorf("err = %v, want ErrMCS", err)
 	}

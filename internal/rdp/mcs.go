@@ -136,14 +136,34 @@ func ParseConnectResponse(frame []byte) ([]byte, error) {
 	}
 	body := payload[3:]
 
-	// The GCC Conference Create Response begins with this object identifier
-	// prefix in every implementation.
-	marker := []byte{0x00, 0x05, 0x00, 0x14, 0x7C, 0x00, 0x01}
-	idx := indexOf(body, marker)
+	// Anchored on the server's H.221 key rather than the T.124 identifier.
+	// The identifier is followed by a variable run of GCC conference fields
+	// before the data blocks begin, so skipping a fixed distance past it lands
+	// in the middle of them — which parses as a block claiming thousands of
+	// bytes and fails much later with a confusing message. "McDn" sits
+	// immediately before the length that covers the blocks themselves.
+	idx := indexOf(body, []byte("McDn"))
 	if idx < 0 {
-		return nil, fmt.Errorf("%w: no GCC response found", ErrMCS)
+		return nil, fmt.Errorf("%w: no GCC conference response found", ErrMCS)
 	}
-	return body[idx+len(marker):], nil
+	at := idx + 4
+
+	if at >= len(body) {
+		return nil, fmt.Errorf("%w: GCC response carries no user data", ErrMCS)
+	}
+	// A PER length determinant: one byte, or two with the top bit set.
+	if body[at]&0x80 != 0 {
+		if at+2 > len(body) {
+			return nil, fmt.Errorf("%w: truncated GCC length", ErrMCS)
+		}
+		at += 2
+	} else {
+		at++
+	}
+	if at > len(body) {
+		return nil, fmt.Errorf("%w: GCC user data starts past the response", ErrMCS)
+	}
+	return body[at:], nil
 }
 
 func indexOf(haystack, needle []byte) int {
@@ -191,13 +211,19 @@ func ParseAttachUserConfirm(frame []byte) (uint16, error) {
 	if len(b) < 2 || b[0]>>2 != mcsAttachUserConfirm {
 		return 0, fmt.Errorf("%w: not an attach user confirm", ErrMCS)
 	}
-	// The low two bits of the tag byte carry the result; anything but zero is a
-	// refusal, and continuing would join channels as a user that does not exist.
-	if result := (b[0] & 0x03) | (b[1] >> 4); result != 0 {
+	// The layout is a PER choice byte, then the result as its own enumerated
+	// byte, then the user id. Packing the result into the choice byte's spare
+	// bits looks plausible and is wrong; the value read is then whatever
+	// happened to be in the initiator field.
+	if result := b[1]; result != 0 {
 		return 0, fmt.Errorf("%w: server refused to attach a user (result %d)", ErrMCS, result)
 	}
-	if len(b) < 4 {
+	// The initiator is optional and its presence is flagged in the choice byte.
+	if b[0]&0x02 == 0 {
 		return 0, fmt.Errorf("%w: attach user confirm carries no user id", ErrMCS)
+	}
+	if len(b) < 4 {
+		return 0, fmt.Errorf("%w: attach user confirm is truncated", ErrMCS)
 	}
 	return binary.BigEndian.Uint16(b[2:4]) + userChannelBase, nil
 }
@@ -224,10 +250,13 @@ func ParseChannelJoinConfirm(frame []byte) (uint16, error) {
 	if len(b) < 8 || b[0]>>2 != mcsChannelJoinConfirm {
 		return 0, fmt.Errorf("%w: not a channel join confirm", ErrMCS)
 	}
-	if result := b[0] & 0x03; result != 0 {
+	// choice(1) result(1) initiator(2) requested(2) channelId(2). The result is
+	// its own byte here too, and the channel that was actually joined is the
+	// last field — not the "requested" one, which merely echoes the ask.
+	if result := b[1]; result != 0 {
 		return 0, fmt.Errorf("%w: channel join refused (result %d)", ErrMCS, result)
 	}
-	return binary.BigEndian.Uint16(b[5:7]), nil
+	return binary.BigEndian.Uint16(b[6:8]), nil
 }
 
 // SendDataRequest wraps application data for a channel.

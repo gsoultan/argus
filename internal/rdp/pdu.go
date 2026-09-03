@@ -238,9 +238,16 @@ func generalCaps() []byte {
 	binary.LittleEndian.PutUint16(b[0:2], 1) // osMajorType: Windows
 	binary.LittleEndian.PutUint16(b[2:4], 3) // osMinorType: Windows NT
 	binary.LittleEndian.PutUint16(b[4:6], 0x0200)
-	// extraFlags: NO_BITMAP_COMPRESSION_HDR tells the server to omit an eight
-	// byte header the decoder would otherwise have to skip on every rectangle.
-	binary.LittleEndian.PutUint16(b[10:12], 0x0400)
+	// FASTPATH_OUTPUT_SUPPORTED must be claimed or the server sends every
+	// screen update wrapped in MCS and share-control headers instead. The
+	// session still works and the decoder sees nothing, because it is watching
+	// the fast path — a silent failure that looks exactly like a server with
+	// nothing to draw.
+	//
+	// NO_BITMAP_COMPRESSION_HDR drops eight bytes of header per rectangle.
+	const fastPathOutput = 0x0001
+	const noBitmapCompressionHdr = 0x0400
+	binary.LittleEndian.PutUint16(b[10:12], fastPathOutput|noBitmapCompressionHdr)
 	return capSet(capGeneral, b)
 }
 
