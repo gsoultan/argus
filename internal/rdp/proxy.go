@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gsoultan/argus/internal/credssp"
 )
 
 // Separators accepted between principal and target in the mstshash cookie.
@@ -90,6 +92,12 @@ type Session struct {
 	StartedAt time.Time
 	// Protocol is the security protocol the session was brokered over.
 	Protocol uint32
+	// Injected records that Argus authenticated on the user's behalf rather
+	// than passing them through to a logon screen.
+	Injected bool
+	// LegacyBinding records a target that used the pre-version-5 public key
+	// binding, which is not bound to a nonce.
+	LegacyBinding bool
 
 	mu       sync.Mutex
 	rec      *Recorder
@@ -195,35 +203,48 @@ func ConfirmProtocol(client net.Conn, protocol uint32) error {
 // prove reached the right machine.
 func DialTarget(address, hostname string, protocol uint32, pins Pinner,
 	timeout time.Duration) (net.Conn, error) {
+	conn, _, err := DialTargetWithAuth(address, hostname, protocol, pins, timeout, nil)
+	return conn, err
+}
+
+// DialTargetWithAuth dials a target and, when auth is supplied and the
+// negotiated protocol calls for it, authenticates on the user's behalf.
+//
+// This is what gives RDP the property SSH already has: the credential reaching
+// the host is one Argus holds, not one the user knows. Without it a user still
+// needs a password of their own on every machine, which is the standing access
+// the product exists to remove.
+func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
+	timeout time.Duration, auth *credssp.Authenticator) (net.Conn, *credssp.Result, error) {
 
 	raw, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", address, err)
+		return nil, nil, fmt.Errorf("dial %s: %w", address, err)
 	}
 
 	// The target gets the same negotiation the client asked for, so the session
 	// is no weaker end to end than it is on the near side.
 	if _, err := raw.Write(buildConnectionRequest(protocol)); err != nil {
 		raw.Close()
-		return nil, fmt.Errorf("send connection request: %w", err)
+		return nil, nil, fmt.Errorf("send connection request: %w", err)
 	}
 	frame, err := ReadPDU(raw)
 	if err != nil {
 		raw.Close()
-		return nil, fmt.Errorf("read connection confirm: %w", err)
+		return nil, nil, fmt.Errorf("read connection confirm: %w", err)
 	}
 	selected, failure, err := ParseConnectionConfirm(frame)
 	if err != nil {
 		raw.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	if failure != 0 {
 		raw.Close()
-		return nil, fmt.Errorf("target refused: %s", FailureName(failure))
+		return nil, nil, fmt.Errorf("target refused: %s", FailureName(failure))
 	}
 	if selected == ProtocolRDP {
 		raw.Close()
-		return nil, errors.New(
+		return nil, nil, errors.New(
 			"target selected standard RDP security, which Argus will not broker")
 	}
 
@@ -239,22 +260,38 @@ func DialTarget(address, hostname string, protocol uint32, pins Pinner,
 	})
 	if err := conn.Handshake(); err != nil {
 		raw.Close()
-		return nil, fmt.Errorf("tls handshake with %s: %w", address, err)
+		return nil, nil, fmt.Errorf("tls handshake with %s: %w", address, err)
 	}
 
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		conn.Close()
-		return nil, errors.New("target presented no certificate")
+		return nil, nil, errors.New("target presented no certificate")
 	}
 	presented := CertFingerprint(certs[0].Raw)
 	if pins != nil {
 		if err := pins.VerifyFingerprint(hostname, presented, "x509"); err != nil {
 			conn.Close()
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return conn, nil
+
+	// Authentication happens after pinning, never before. Delegating a
+	// credential to a host whose certificate does not match its pin would hand
+	// the password to whoever is actually answering.
+	if auth == nil || (selected != ProtocolHybrid && selected != ProtocolHybridEx) {
+		return conn, nil, nil
+	}
+
+	// The binding covers the SubjectPublicKeyInfo of the certificate on this
+	// connection, which is what ties the authentication to this channel.
+	auth.PublicKey = certs[0].RawSubjectPublicKeyInfo
+	result, err := auth.Authenticate(conn)
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("authenticate to %s: %w", hostname, err)
+	}
+	return conn, &result, nil
 }
 
 // buildConnectionRequest builds the client-side opening PDU Argus sends to a

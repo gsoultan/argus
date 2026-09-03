@@ -34,6 +34,21 @@ type Asset struct {
 	// that outlives the session.
 	CredentialMode string `json:"credential_mode"`
 
+	// Domain is the Windows domain for an RDP asset. Empty means the account is
+	// local to the host, which changes the NTLM hash — so an empty domain and
+	// the host's own name are not interchangeable.
+	Domain string `json:"domain,omitempty"`
+
+	// CredentialDir holds one file per principal, named for it, containing the
+	// password Argus delegates.
+	//
+	// A directory rather than a field in this file: the inventory is read by
+	// anything that can read the gateway's config, and a password in it would
+	// be a standing secret sitting in the one place everybody looks. Read at
+	// connect time rather than at load, so rotating a credential takes effect
+	// without restarting the gateway.
+	CredentialDir string `json:"credential_dir,omitempty"`
+
 	// Protocol is "ssh" (default) or "rdp".
 	//
 	// One inventory for both, rather than a second file. An asset is a machine
