@@ -17,7 +17,10 @@ web/dev-dist/
 .env.*.local
 *.pem
 *.key
-!**/testdata/*.key
+!**/testdata/
+# Vaulted credentials. The whole point is that these never sit in a file
+# everybody reads, and a repository is the widest-read file there is.
+dev/vault/*.key
 
 # Argus local state
 .argus/
@@ -45,8 +48,14 @@ npm-debug.log*
 # Gateway dev material — keys and recordings must never be committed
 dev/keys/
 dev/data/
+# Vaulted credentials. The whole point is that these never sit in a file
+# everybody reads, and a repository is the widest-read file there is.
+dev/vault/
 # Spools and recordings written when a service is run from the repo root.
 data/
+# Vaulted credentials. The whole point is that these never sit in a file
+# everybody reads, and a repository is the widest-read file there is.
+dev/vault/
 
 # Local configuration carries real secrets; commit the .example templates only.
 dev/*.yaml
