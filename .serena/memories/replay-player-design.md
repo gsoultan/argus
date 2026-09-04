@@ -50,3 +50,14 @@ full linear scan on every request, contradicting the comment above it.
 
 Both players share `PlayerControls.tsx`. They had diverged: terminal replay had
 five speeds, skips and shortcuts; desktop replay had none and ran at 1x only.
+
+
+## Measured
+
+A 35 MB asciicast — 213,000 frames, 75 minutes — decoded and played in the real
+browser: the main-thread JS heap held flat at ~104 MB across decode, playback at
+8x, and seven shift-seeks. It does not grow with the recording, because the
+frames stay in the worker and the terminal's own buffer is capped
+(`scrollback: 5_000`, ~34 visible rows). This is the property the rewrite
+exists to guarantee; measure it again with `public/big.cast` if the worker
+boundary is ever touched.

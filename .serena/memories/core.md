@@ -24,5 +24,8 @@ Read this file first, then only the memory a task actually needs.
   failure mode this product cannot have.
 - **Every mutation reports both outcomes.** `run()` / `notifyError()` in
   `web/src/lib/notify.ts` exist so the guarded form is the shortest to write.
+- **Private keys are mode-checked at load.** `secrets.CheckPrivate` refuses any
+  key readable by group or other; every loader uses it. The CA key is the
+  crown jewel — whoever reads it mints any certificate.
 - **Heuristic evidence is labelled as heuristic.** Commands scraped from a PTY
   stream are never presented next to kernel-observed execve events as equals.
