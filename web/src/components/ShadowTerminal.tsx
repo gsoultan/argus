@@ -55,7 +55,7 @@ export function ShadowTerminal({
     }
 
     const term = new Terminal({
-      fontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono'),
       fontSize: 12,
       lineHeight: 1.35,
       // No cursor blink: nothing here is waiting for this viewer to type, and a
@@ -168,7 +168,7 @@ export function ShadowTerminal({
           {state === 'connecting' && <Loader size="xs" />}
           <Badge
             color={
-              state === 'watching' ? 'yellow' : state === 'error' ? 'red' : 'gray'
+              state === 'watching' ? 'amber' : state === 'error' ? 'rose' : 'slate'
             }
             variant="light"
           >

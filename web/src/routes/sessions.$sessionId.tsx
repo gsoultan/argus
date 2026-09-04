@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import {
   Alert, Badge, Box, Button, Card, Grid, Group, Modal, ScrollArea, Stack, Text, Textarea, ThemeIcon, } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -11,16 +11,38 @@ import {
 } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { ButtonLink } from '~/components/links'
-import { Replay } from '~/components/Replay'
-import { RDPReplay } from '~/components/RDPReplay'
-import { RDPScreen } from '~/components/RDPScreen'
-import { ShadowTerminal } from '~/components/ShadowTerminal'
+import { PlayerFallback } from '~/components/PlayerFallback'
+
+/**
+ * Split per branch, not merely per route.
+ *
+ * The terminal emulator and the desktop canvas are around 85 kB and 12 kB
+ * gzipped respectively, and no session needs both: an SSH replay never draws a
+ * desktop, an RDP replay never loads xterm, and the live-watch components are
+ * reachable only from a modal on an active session. Importing all four at
+ * module scope meant every visit paid for all of them.
+ */
+const Replay = lazy(() =>
+  import('~/components/Replay').then((m) => ({ default: m.Replay })),
+)
+const RDPReplay = lazy(() =>
+  import('~/components/RDPReplay').then((m) => ({ default: m.RDPReplay })),
+)
+const RDPScreen = lazy(() =>
+  import('~/components/RDPScreen').then((m) => ({ default: m.RDPScreen })),
+)
+const ShadowTerminal = lazy(() =>
+  import('~/components/ShadowTerminal').then((m) => ({ default: m.ShadowTerminal })),
+)
 import {
-  Digest, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes, duration,
+  Digest, Field, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes,
+  duration,
 } from '~/components/primitives'
+import { FS } from '~/theme'
 import { buildCast } from '~/lib/cast'
-import { extractCommands } from '~/lib/ansi'
-import type { KernelExec } from '~/workers/replay.worker'
+import { downloadText, stamp } from '~/lib/download'
+import { notifyOk } from '~/lib/notify'
+import type { KernelExec } from '~/lib/castDecode'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
 import { GATEWAY_URL, live, rdpReplay, shadowTicket } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
@@ -30,17 +52,6 @@ export const Route = createFileRoute('/sessions/$sessionId')({
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(sessionQuery(params.sessionId)),
 })
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <Box>
-      <Text size="10px" c="dimmed" fw={600} style={{ letterSpacing: '0.05em' }}>
-        {label.toUpperCase()}
-      </Text>
-      <Box mt={2}>{children}</Box>
-    </Box>
-  )
-}
 
 function SessionDetail() {
   const { sessionId } = Route.useParams()
@@ -143,8 +154,9 @@ function SessionDetail() {
         cmd: renderExec(e),
       }))
     }
-    return extractCommands(decoded.frames)
-  }, [decoded.execs, decoded.frames])
+    // Computed in the worker, which is where the frames now live.
+    return decoded.heuristicCommands
+  }, [decoded.execs, decoded.heuristicCommands])
 
   const kernelObserved = decoded.execs.length > 0
 
@@ -153,6 +165,24 @@ function SessionDetail() {
       <Box p="lg">
         <Text size="sm" c="dimmed">Session not found.</Text>
       </Box>
+    )
+  }
+
+  /**
+   * Exports the recording exactly as decoded — the asciicast bytes themselves,
+   * not a re-serialisation of the player's state. `asciinema play` and any
+   * other v2 reader consume it unchanged, and its hash still matches the chain.
+   */
+  const onExportCast = () => {
+    if (!cast) return
+    downloadText(
+      cast,
+      `argus-${session.assetHostname.split('.')[0]}-${session.principal}-${stamp(new Date(session.startedAt))}.cast`,
+      'application/x-asciicast',
+    )
+    notifyOk(
+      'Recording exported',
+      'asciicast v2. Play it with `asciinema play`, or re-hash it to check it against the chain head.',
     )
   }
 
@@ -200,7 +230,13 @@ function SessionDetail() {
             >
               Back
             </ButtonLink>
-            <Button size="xs" variant="default" leftSection={<IconDownload size={14} />}>
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconDownload size={14} />}
+              disabled={!cast}
+              onClick={onExportCast}
+            >
               Export .cast
             </Button>
             {canShadow && (
@@ -253,12 +289,14 @@ function SessionDetail() {
               {isRDP ? (
                 rdpFrames ? (
                   <Box p="sm">
+                    <Suspense fallback={<PlayerFallback label="Loading desktop replay…" />}>
                     <RDPReplay
                       buffer={rdpFrames.buffer}
                       width={rdpFrames.width}
                       height={rdpFrames.height}
                       verified={rdpFrames.verified}
                     />
+                    </Suspense>
                   </Box>
                 ) : (
                   <Box p="lg">
@@ -268,7 +306,9 @@ function SessionDetail() {
                   </Box>
                 )
               ) : (
-                <Replay decoded={decoded} onTimeChange={setCursor} />
+                <Suspense fallback={<PlayerFallback label="Loading player…" />}>
+                  <Replay decoded={decoded} onTimeChange={setCursor} />
+                </Suspense>
               )}
             </Card>
           </Grid.Col>
@@ -316,13 +356,13 @@ function SessionDetail() {
               </Card>
 
               <Card padding="md">
-                <Group gap={7} mb={6}>
+                <Group gap={8} mb={6}>
                   <ThemeIcon variant="light" color="teal" size={22} radius="sm">
                     <IconShieldCheck size={13} />
                   </ThemeIcon>
                   <Text fw={600} size="sm">Recording integrity</Text>
                 </Group>
-                <Text size="10px" c="dimmed" mb="sm" lh={1.45}>
+                <Text size={FS.micro} c="dimmed" mb="sm" lh={1.45}>
                   Each recording chunk is hashed into a chain rooted at the session start, so any
                   edit to the stored artefact invalidates every subsequent link.
                 </Text>
@@ -382,7 +422,7 @@ function SessionDetail() {
                           }}
                         >
                           <Group gap={8} wrap="nowrap" align="flex-start">
-                            <Text size="10px" c="dimmed" ff="monospace" w={38} style={{ flexShrink: 0 }}>
+                            <Text size={FS.micro} c="dimmed" ff="monospace" w={38} style={{ flexShrink: 0 }}>
                               {`${String(Math.floor(c.t / 60)).padStart(2, '0')}:${String(Math.floor(c.t % 60)).padStart(2, '0')}`}
                             </Text>
                             <Text size="xs" ff="monospace" c={active ? 'teal.3' : 'slate.2'} style={{ wordBreak: 'break-all' }}>
@@ -427,6 +467,7 @@ function SessionDetail() {
             drops the subscription, rather than leaving a socket streaming a
             privileged session into a hidden component. */}
         {shadowOpen && isRDP && (
+          <Suspense fallback={<PlayerFallback label="Loading desktop view…" />}>
           <RDPScreen
             gatewayUrl={GATEWAY_URL}
             target={session.assetHostname}
@@ -443,8 +484,10 @@ function SessionDetail() {
               return res.ticket
             }}
           />
+          </Suspense>
         )}
         {shadowOpen && !isRDP && (
+          <Suspense fallback={<PlayerFallback label="Loading terminal…" />}>
           <ShadowTerminal
             gatewayUrl={GATEWAY_URL}
             sessionId={session.id}
@@ -458,6 +501,7 @@ function SessionDetail() {
               return res.ticket
             }}
           />
+          </Suspense>
         )}
       </Modal>
 

@@ -25,12 +25,31 @@ export interface ReplayRect {
 
 export type ReplayRequest =
   | { type: 'load'; buffer: ArrayBuffer }
-  | { type: 'window'; fromMs: number; toMs: number }
+  | { type: 'window'; id: number; fromMs: number; toMs: number }
 
 export type ReplayResponse =
   | { type: 'loaded'; frames: number; durationMs: number }
-  | { type: 'rects'; rects: ReplayRect[]; toMs: number }
+  | { type: 'rects'; id: number; rects: ReplayRect[]; toMs: number }
   | { type: 'error'; message: string }
+
+/**
+ * First index whose timestamp is >= `ms`.
+ *
+ * The window handler used to walk the whole index on every request, which the
+ * player issued once per animation frame — so scrubbing a long recording cost
+ * O(frames) sixty times a second, and the comment above claiming this was "a
+ * slice not a scan" described an intention rather than the code.
+ */
+function lowerBound(entries: Array<{ at: number; ms: number }>, ms: number): number {
+  let lo = 0
+  let hi = entries.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (entries[mid]!.ms < ms) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
 
 let buffer: ArrayBuffer | null = null
 /** Byte offset and timestamp of every frame, so a window is a slice not a scan. */
@@ -73,8 +92,9 @@ self.onmessage = async (ev: MessageEvent<ReplayRequest>) => {
     const transfer: Transferable[] = []
 
     try {
-      for (const entry of index) {
-        if (entry.ms < msg.fromMs || entry.ms > msg.toMs) continue
+      for (let i = lowerBound(index, msg.fromMs); i < index.length; i++) {
+        const entry = index[i]!
+        if (entry.ms > msg.toMs) break
         const base = entry.at + REPLAY_HEADER
         const x = view.getUint16(base + 2, true)
         const y = view.getUint16(base + 4, true)
@@ -89,7 +109,7 @@ self.onmessage = async (ev: MessageEvent<ReplayRequest>) => {
       post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
       return
     }
-    post({ type: 'rects', rects, toMs: msg.toMs }, transfer)
+    post({ type: 'rects', id: msg.id, rects, toMs: msg.toMs }, transfer)
   }
 }
 

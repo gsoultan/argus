@@ -260,7 +260,7 @@ export function RDPScreen({
           {state === 'connecting' && <Loader size="xs" />}
           <Badge
             variant="light"
-            color={state === 'live' ? (readOnly ? 'yellow' : 'teal') : state === 'error' ? 'red' : 'gray'}
+            color={state === 'live' ? (readOnly ? 'amber' : 'teal') : state === 'error' ? 'rose' : 'slate'}
           >
             {state === 'live' && readOnly ? 'read only · live' : state}
           </Badge>

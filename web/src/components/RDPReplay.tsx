@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActionIcon, Badge, Box, Group, Loader, Slider, Stack, Text } from '@mantine/core'
-import { IconPlayerPause, IconPlayerPlay, IconPlayerSkipBack } from '@tabler/icons-react'
+import { Badge, Box, Group, Loader, Text } from '@mantine/core'
+import { PlayerControls } from '~/components/PlayerControls'
 import type { ReplayResponse } from '~/workers/rdpreplay.worker'
 
 export interface RDPReplayProps {
@@ -34,11 +34,23 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
   const [durationMs, setDurationMs] = useState(0)
   const [cursor, setCursor] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [speed, setSpeed] = useState('1')
   const [error, setError] = useState<string>()
 
   // The last position drawn, so ordinary playback asks only for the new slice
   // rather than replaying from the beginning on every tick.
   const drawnTo = useRef(0)
+  /**
+   * One request in flight at a time.
+   *
+   * This player used to post a window request on every animation frame — sixty
+   * a second — and the worker answered each by scanning its whole frame index.
+   * Now a request is issued only once the previous one has been drawn, so
+   * scrubbing costs what the worker can decode rather than what the screen
+   * refreshes at.
+   */
+  const inFlight = useRef(false)
+  const gen = useRef(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -65,7 +77,15 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
           setDurationMs(m.durationMs)
           setReady(true)
           break
-        case 'rects':
+        case 'rects': {
+          inFlight.current = false
+          // A window answered from before the last backward seek describes a
+          // screen the viewer has already moved away from. Its bitmaps are
+          // closed rather than painted over the current one.
+          if (m.id !== gen.current) {
+            for (const r of m.rects) r.bitmap.close()
+            break
+          }
           for (const r of m.rects) {
             ctx.drawImage(r.bitmap, r.x, r.y)
             // Closed immediately rather than left to the collector, so a long
@@ -74,7 +94,9 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
           }
           drawnTo.current = m.toMs
           break
+        }
         case 'error':
+          inFlight.current = false
           setError(m.message)
           break
       }
@@ -86,36 +108,51 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
     return () => {
       worker.terminate()
       workerRef.current = null
+      inFlight.current = false
     }
   }, [buffer])
 
-  // seek asks for the slice needed to reach t.
-  //
-  // Rectangles are incremental, so moving backwards means clearing and
-  // replaying from the start. There is no way to jump into the middle of a
-  // stream of deltas without having drawn what came before.
-  const seek = useCallback((t: number) => {
-    const worker = workerRef.current
-    const ctx = ctxRef.current
-    if (!worker || !ctx) return
+  /**
+   * Asks for the slice needed to reach `t`.
+   *
+   * Rectangles are incremental, so moving backwards means clearing and
+   * replaying from the start. There is no way to jump into the middle of a
+   * stream of deltas without having drawn what came before.
+   */
+  const request = useCallback(
+    (t: number) => {
+      const worker = workerRef.current
+      const ctx = ctxRef.current
+      if (!worker || !ctx || inFlight.current) return
 
-    let from = drawnTo.current
-    if (t < drawnTo.current) {
-      ctx.fillStyle = '#05080c'
-      ctx.fillRect(0, 0, width, height)
-      from = 0
-      drawnTo.current = 0
-    }
-    worker.postMessage({ type: 'window', fromMs: from, toMs: t })
-  }, [width, height])
+      let from = drawnTo.current
+      if (t < drawnTo.current) {
+        ctx.fillStyle = '#05080c'
+        ctx.fillRect(0, 0, width, height)
+        from = 0
+        drawnTo.current = 0
+      }
+      if (t <= from && t !== 0) return
 
+      inFlight.current = true
+      worker.postMessage({ type: 'window', id: ++gen.current, fromMs: from, toMs: t })
+    },
+    [width, height],
+  )
+
+  useEffect(() => {
+    if (ready) request(cursor)
+  }, [cursor, ready, request])
+
+  // rAF drives the clock; `request` decides when the worker is asked for pixels.
   useEffect(() => {
     if (!playing || !ready) return
     let raf = 0
     let last = performance.now()
+    const rate = Number(speed)
 
     const tick = (now: number) => {
-      const advanced = now - last
+      const advanced = (now - last) * rate
       last = now
       setCursor((c) => {
         const next = c + advanced
@@ -129,26 +166,24 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [playing, ready, durationMs])
+  }, [playing, ready, durationMs, speed])
 
-  useEffect(() => {
-    if (ready) seek(cursor)
-  }, [cursor, ready, seek])
-
-  const time = (ms: number) => {
-    const s = Math.floor(ms / 1000)
-    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-  }
+  // The shared transport works in seconds; the display stream is timestamped in
+  // milliseconds, so the conversion lives here rather than in both players.
+  const seekSeconds = useCallback(
+    (secs: number) => setCursor(Math.min(Math.max(0, secs * 1000), durationMs)),
+    [durationMs],
+  )
 
   return (
-    <Stack gap="xs">
-      <Group justify="space-between">
+    <Box>
+      <Group justify="space-between" mb="xs">
         <Group gap="xs">
           {!ready && !error && <Loader size="xs" />}
           <Badge
             size="sm"
-            variant="light"
-            color={verified === 'intact' ? 'teal' : verified === 'tampered' ? 'red' : 'slate'}
+            variant={verified === 'tampered' ? 'filled' : 'light'}
+            color={verified === 'intact' ? 'teal' : verified === 'tampered' ? 'rose' : 'slate'}
           >
             {verified === 'intact'
               ? 'chain verified'
@@ -184,49 +219,25 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
         />
       </Box>
 
-      <Group gap="xs" wrap="nowrap">
-        <ActionIcon
-          variant="light"
-          size="sm"
-          disabled={!ready}
-          onClick={() => setPlaying((p) => !p)}
-          aria-label={playing ? 'Pause' : 'Play'}
-        >
-          {playing ? <IconPlayerPause size={14} /> : <IconPlayerPlay size={14} />}
-        </ActionIcon>
-        <ActionIcon
-          variant="subtle"
-          color="slate"
-          size="sm"
-          disabled={!ready}
-          onClick={() => {
-            setPlaying(false)
-            setCursor(0)
-          }}
-          aria-label="Back to start"
-        >
-          <IconPlayerSkipBack size={14} />
-        </ActionIcon>
-        <Text size="xs" c="dimmed" ff="monospace" w={44}>
-          {time(cursor)}
-        </Text>
-        <Slider
-          flex={1}
-          size="sm"
-          min={0}
-          max={Math.max(durationMs, 1)}
-          value={cursor}
-          disabled={!ready}
-          label={null}
-          onChange={(v) => {
-            setPlaying(false)
-            setCursor(v)
-          }}
-        />
-        <Text size="xs" c="dimmed" ff="monospace" w={44}>
-          {time(durationMs)}
-        </Text>
-      </Group>
-    </Stack>
+      <PlayerControls
+        time={cursor / 1000}
+        total={durationMs / 1000}
+        playing={playing}
+        speed={speed}
+        disabled={!ready}
+        onSpeed={setSpeed}
+        onSeek={seekSeconds}
+        onPlayPause={() =>
+          cursor >= durationMs ? (setCursor(0), setPlaying(true)) : setPlaying((p) => !p)
+        }
+      >
+        <Badge size="xs" variant="outline" color="slate" className="argus-digest">
+          display stream
+        </Badge>
+        <Badge size="xs" variant="outline" color="slate" className="argus-digest">
+          {width}x{height}
+        </Badge>
+      </PlayerControls>
+    </Box>
   )
 }
