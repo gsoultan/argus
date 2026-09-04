@@ -146,6 +146,16 @@ func run() error {
 			storageClient = sc
 		}
 	}
+	if storageClient == nil {
+		// Said once, loudly, at startup. Without object storage every recording
+		// and the audit chain exist only in this database, on this host --
+		// which means whoever compromises the host can delete the record of
+		// having done so. The threat model in the console tells operators to
+		// replicate the audit log somewhere the gateway cannot write; this is
+		// the binary noticing that they have not.
+		log.Warn("no object storage configured: recordings and the audit archive have no copy outside this database",
+			"fix", "set storage: in the config to an S3-compatible bucket the control plane can write but not delete from")
+	}
 
 	var signer *auth.Signer
 	if cfg.SigningSecret != "" {

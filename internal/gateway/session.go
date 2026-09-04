@@ -18,6 +18,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/live"
 	"github.com/gsoultan/argus/internal/recorder"
+	"github.com/gsoultan/argus/internal/secrets"
 	"github.com/gsoultan/argus/internal/sftp"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
@@ -764,7 +765,9 @@ func (s *Session) Close() (chainHead string, err error) {
 
 // loadInjectedKey reads the credential the gateway presents to the target.
 func loadInjectedKey(path string) (ssh.Signer, error) {
-	data, err := os.ReadFile(path)
+	// Mode-checked: an injected key that every local account can read is not
+	// a vaulted credential, whatever the inventory calls it.
+	data, err := secrets.ReadPrivate(path)
 	if err != nil {
 		return nil, fmt.Errorf("read key %s: %w", path, err)
 	}

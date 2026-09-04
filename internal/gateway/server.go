@@ -16,6 +16,7 @@ import (
 	"github.com/gsoultan/argus/internal/ratelimit"
 	"github.com/gsoultan/argus/internal/rdp"
 	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/secrets"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
 )
@@ -449,7 +450,9 @@ func (s *Server) untrackSession(sess *Session) {
 
 // loadHostKey reads the gateway's own identity.
 func loadHostKey(path string) (ssh.Signer, error) {
-	data, err := os.ReadFile(path)
+	// Mode-checked: the host key is what clients pin. Anyone who can read it
+	// can impersonate this gateway to every operator.
+	data, err := secrets.ReadPrivate(path)
 	if err != nil {
 		return nil, fmt.Errorf("read gateway host key %s: %w", path, err)
 	}
