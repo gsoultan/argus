@@ -169,7 +169,24 @@ jobs:
           bun-version: "1.4.0"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # The suite, not just the type check. Every defect found in the console
+      # rewrite was invisible to tsc; the route tests render the real route
+      # tree and the chain test asserts the WASM digest still matches WebCrypto.
+      - run: bun run test
+      # Built against the fixture so the output is the one the route tests
+      # exercised, and so a build that only works with a control plane
+      # configured fails here rather than on first deploy.
       - run: bunx vite build
+        env:
+          VITE_CONTROL_URL: ""
+      - name: Confirm the service worker still denies the auth path
+        # The rule that broke SSO for every returning visitor. It is one regex
+        # in vite.config.ts and nothing else would notice it going missing.
+        run: |
+          grep -q 'auth' dist/sw.js || {
+            echo "::error::generated service worker does not denylist /auth/ — SSO will loop"
+            exit 1
+          }
 
   packaging:
     name: Packaging
