@@ -64,7 +64,7 @@ func main() {
 				at += 12
 			}
 		}
-		if rects > 0 && msgs > 2 {
+		if rects > 0 && msgs > 2 && os.Getenv("WSPROBE_HOLD") == "" {
 			break
 		}
 	}

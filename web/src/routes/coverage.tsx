@@ -102,8 +102,8 @@ function CoverageView() {
         <Grid gap="sm" mb="md">
           <Grid.Col span={{ base: 12, sm: 4 }}>
             <Stat
-              label="Managed assets with an agent"
-              value={`${cov?.assetsWithAgent ?? 0} / ${cov?.assets ?? 0}`}
+              label="Linux assets with an agent"
+              value={`${cov?.assetsWithAgent ?? 0} / ${cov?.sshAssets ?? 0}`}
               tone={cov && cov.assetsUnmonitored > 0 ? 'warn' : 'ok'}
               hint="An asset with no agent records nothing when someone connects to port 22 directly."
             />
@@ -125,6 +125,23 @@ function CoverageView() {
             />
           </Grid.Col>
         </Grid>
+
+        {cov && cov.rdpAwaitingAgent > 0 && (
+          <Alert
+            color="slate"
+            variant="light"
+            icon={<IconShieldCheck size={16} />}
+            mb="md"
+            title={`${cov.rdpAwaitingAgent} Remote Desktop ${cov.rdpAwaitingAgent === 1 ? 'host has' : 'hosts have'} no agent available`}
+          >
+            <Text size="xs">
+              Sessions brokered through Argus are recorded. A connection made straight to
+              port 3389 is not, and no Windows agent exists yet to close that — so this is a
+              limit of the product rather than something to fix here. It is listed
+              separately from the gaps you can act on.
+            </Text>
+          </Alert>
+        )}
 
         {cov && cov.assetsUnmonitored > 0 && (
           <Alert
