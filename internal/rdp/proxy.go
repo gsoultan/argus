@@ -106,6 +106,14 @@ type Session struct {
 	// hub fans display frames out to shadow viewers. Always present, so any
 	// session can be watched without having been opened in a special way.
 	hub *live.Hub
+	// rea decodes relayed updates, but only while someone is watching.
+	rea *Reassembler
+	// shareID and userID are learned by watching the connection sequence go
+	// past. A proxied session is relayed opaquely, so these are the only two
+	// values Argus reads out of it — and they are read because without them it
+	// cannot ask the target to redraw for a viewer who arrives late.
+	shareID uint32
+	userID  uint16
 	// killedBy and killReason record an administrative termination, so the
 	// session's record says who ended it rather than leaving it
 	// indistinguishable from a dropped connection.
@@ -364,6 +372,10 @@ func (s *Session) Relay(client, target net.Conn, log *slog.Logger) error {
 				errs <- err
 				return
 			}
+			if stream == ServerOutput {
+				s.observe(frame)
+				s.shadow(frame)
+			}
 			if _, err := dst.Write(frame); err != nil {
 				return
 			}
@@ -382,6 +394,88 @@ func (s *Session) Relay(client, target net.Conn, log *slog.Logger) error {
 		}
 	}
 	return nil
+}
+
+// observe learns the share and user ids from the relayed stream.
+//
+// Nothing else is interpreted. A proxy that parsed the whole session would be
+// a second RDP implementation running against traffic it does not need to
+// understand, and every field it read would be a field it could be wrong about.
+func (s *Session) observe(frame []byte) {
+	s.mu.Lock()
+	known := s.shareID != 0 && s.userID != 0
+	s.mu.Unlock()
+	if known || len(frame) == 0 || frame[0]&actionMask != actionX224 {
+		return
+	}
+
+	if id, err := ParseAttachUserConfirm(frame); err == nil {
+		s.mu.Lock()
+		s.userID = id
+		s.mu.Unlock()
+		return
+	}
+	_, payload, err := ParseSendDataIndication(frame)
+	if err != nil {
+		return
+	}
+	sc, err := ParseShareControl(payload)
+	if err != nil || sc.Type != pduTypeDemandActive {
+		return
+	}
+	if demand, derr := ParseDemandActive(sc.Body); derr == nil {
+		s.mu.Lock()
+		s.shareID = demand.ShareID
+		s.mu.Unlock()
+	}
+}
+
+// shadow decodes a frame and broadcasts it, but only while someone is watching.
+//
+// Decoding every update of every proxied session whether or not anyone is
+// looking would spend the gateway's CPU on pixels nobody sees, and a privileged
+// access gateway should not get slower because a feature exists.
+func (s *Session) shadow(frame []byte) {
+	s.mu.Lock()
+	hub := s.hub
+	s.mu.Unlock()
+	if hub == nil || hub.Viewers() == 0 {
+		return
+	}
+
+	s.mu.Lock()
+	if s.rea == nil {
+		s.rea = NewReassembler()
+	}
+	rea := s.rea
+	s.mu.Unlock()
+
+	rects, err := DecodePDU(rea, frame)
+	if err != nil || len(rects) == 0 {
+		return
+	}
+	batch := make([]byte, 0, 4096)
+	for _, r := range rects {
+		batch = append(batch, EncodeRect(r)...)
+	}
+	hub.Broadcast(batch)
+}
+
+// RefreshFor asks the target to redraw, for a viewer that arrived mid-session.
+//
+// Injected into the stream the real client is using. A redraw is idempotent, so
+// the operator sees nothing unusual — their screen is simply repainted with
+// what was already on it.
+func (s *Session) RefreshFor(target io.Writer) error {
+	s.mu.Lock()
+	shareID, userID := s.shareID, s.userID
+	s.mu.Unlock()
+	if shareID == 0 || userID == 0 {
+		return errors.New("the connection sequence has not been observed yet")
+	}
+	pdu := RefreshRectPDU(shareID, userID, s.Width, s.Height)
+	_, err := target.Write(SendDataRequest(userID, ChannelGlobal, pdu))
+	return err
 }
 
 func (s *Session) record(stream Stream, frame []byte) error {

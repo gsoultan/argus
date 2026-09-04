@@ -68,10 +68,22 @@ func (s *Server) runRDPShadow(ctx context.Context, conn *websocket.Conn, sess *r
 		rdp.FrameReady, sess.Width, sess.Height)); err != nil {
 		return
 	}
+	// Ask the target to redraw so the viewer sees the screen as it stands.
+	// Which mechanism depends on whether Argus is the client or a proxy; both
+	// end in the same place.
 	if client := s.rdpClientFor(sess.ID); client != nil {
 		if err := client.Refresh(); err != nil {
 			s.log.Warn("could not request a redraw for a shadow viewer",
 				"session", sess.ID, "error", err)
+		}
+	} else if proxy := s.rdpProxyServer(); proxy != nil {
+		if err := proxy.refresh(sess.ID); err != nil {
+			// Not fatal: the viewer still sees everything from now on, which is
+			// worse but not wrong, and saying so beats a blank canvas with no
+			// explanation.
+			s.log.Warn("could not request a redraw on a proxied session",
+				"session", sess.ID, "error", err,
+				"detail", "the viewer will see updates from this point rather than the current screen")
 		}
 	}
 
@@ -138,9 +150,11 @@ func (s *Server) handleRDPTerminate(cfg WebConfig) http.HandlerFunc {
 			return
 		}
 		// Closing the connection to the target is what actually ends it; the
-		// frame pump then unwinds and seals the recording.
+		// relay or frame pump then unwinds and seals the recording.
 		if client := s.rdpClientFor(id); client != nil {
 			_ = client.Close()
+		} else if proxy := s.rdpProxyServer(); proxy != nil {
+			proxy.disconnect(id)
 		}
 
 		s.log.Warn("rdp session terminated", "session", id, "by", actor, "reason", reason)
@@ -152,11 +166,22 @@ func (s *Server) handleRDPTerminate(cfg WebConfig) http.HandlerFunc {
 }
 
 // RDPSession looks up one live Remote Desktop session.
+//
+// Searches both kinds: sessions Argus drives for a browser, and sessions it
+// proxies for a native client. An operator watching or stopping a session
+// should not have to know which door the user came in by.
 func (s *Server) RDPSession(id string) (*rdp.Session, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	sess, ok := s.rdpWeb[id]
-	return sess, ok
+	proxy := s.rdpProxy
+	s.mu.Unlock()
+	if ok {
+		return sess, true
+	}
+	if proxy == nil {
+		return nil, false
+	}
+	return proxy.session(id)
 }
 
 // rdpClientFor returns the RDP client driving a session, or nil.
@@ -190,4 +215,10 @@ func (s *Server) ActiveRDPSessions() []*rdp.Session {
 		out = append(out, sess)
 	}
 	return out
+}
+
+func (s *Server) rdpProxyServer() *RDPServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rdpProxy
 }

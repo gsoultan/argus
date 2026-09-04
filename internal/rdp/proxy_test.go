@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"errors"
 	"io"
 	"log/slog"
@@ -388,4 +389,120 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return string(b.buf)
+}
+
+/* ── Shadowing a proxied session ─────────────────────────────────────────── */
+
+// Decoding every update of every proxied session whether or not anyone is
+// looking would spend the gateway's CPU on pixels nobody sees. A privileged
+// access gateway must not get slower because a feature exists.
+func TestProxiedSessionDoesNotDecodeWithoutViewers(t *testing.T) {
+	sess := &Session{ID: "s1"}
+	// The hub exists — a session always has one — but nobody has subscribed.
+	// Testing with no hub at all would pass whether or not the viewer count is
+	// checked, which is a test that cannot fail for the reason it claims.
+	hub := sess.Hub()
+	if hub.Viewers() != 0 {
+		t.Fatal("a fresh hub already has viewers")
+	}
+
+	update := bitmapUpdateData(bitmapRect(t, 0, 0, 2, 1, 24, false,
+		[]byte{1, 2, 3, 4, 5, 6}))
+	sess.shadow(fastPathUpdate(t, fastPathUpdateBitmap, fragSingle, update))
+
+	sess.mu.Lock()
+	rea := sess.rea
+	sess.mu.Unlock()
+	if rea != nil {
+		t.Error("an update was decoded with nobody watching")
+	}
+}
+
+func TestProxiedSessionBroadcastsToViewers(t *testing.T) {
+	sess := &Session{ID: "s1"}
+	_, frames, cancel := sess.Hub().Subscribe()
+	defer cancel()
+
+	update := bitmapUpdateData(bitmapRect(t, 4, 8, 2, 1, 24, false,
+		[]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}))
+	sess.shadow(fastPathUpdate(t, fastPathUpdateBitmap, fragSingle, update))
+
+	select {
+	case got := <-frames:
+		if len(got) < FrameHeaderSize {
+			t.Fatalf("broadcast %d bytes", len(got))
+		}
+		if got[0] != FrameBitmap {
+			t.Errorf("frame type = %d", got[0])
+		}
+		if x := int(got[2]) | int(got[3])<<8; x != 4 {
+			t.Errorf("x = %d, want 4", x)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a viewer received nothing")
+	}
+}
+
+// The share and user ids are the only two values Argus reads out of a proxied
+// session, and it reads them because without them it cannot ask the target to
+// redraw for a viewer who arrives after the screen was last painted.
+func TestProxiedSessionObservesTheConnectionSequence(t *testing.T) {
+	sess := &Session{ID: "s1", Width: 1024, Height: 768}
+
+	// Attach user confirm carries the user id.
+	sess.observe(x224Data([]byte{mcsAttachUserConfirm<<2 | 0x02, 0x00, 0x00, 0x07}))
+
+	// Demand active carries the share id.
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint32(body[0:4], 0xDEADBEEF)
+	inner := make([]byte, 6, 6+len(body))
+	binary.LittleEndian.PutUint16(inner[0:2], uint16(6+len(body)))
+	binary.LittleEndian.PutUint16(inner[2:4], pduTypeDemandActive|pduVersion<<4)
+	inner = append(inner, body...)
+	sess.observe(x224Data(sendDataIndication(1004, ChannelGlobal, inner)))
+
+	sess.mu.Lock()
+	shareID, userID := sess.shareID, sess.userID
+	sess.mu.Unlock()
+
+	if userID != 7+userChannelBase {
+		t.Errorf("user id = %d", userID)
+	}
+	if shareID != 0xDEADBEEF {
+		t.Errorf("share id = %#x", shareID)
+	}
+
+	// With both known, a redraw can be requested.
+	var out syncBuffer
+	if err := sess.RefreshFor(&out); err != nil {
+		t.Fatalf("RefreshFor: %v", err)
+	}
+	if out.String() == "" {
+		t.Error("no refresh request was written")
+	}
+}
+
+// Without the sequence observed there is nothing to address the request to, and
+// guessing would send a PDU the server rejects mid-session.
+func TestRefreshRequiresTheObservedIDs(t *testing.T) {
+	sess := &Session{ID: "s1"}
+	var out syncBuffer
+	if err := sess.RefreshFor(&out); err == nil {
+		t.Error("a refresh was sent before the connection sequence was seen")
+	}
+}
+
+// sendDataIndication builds the MCS wrapper a server uses.
+func sendDataIndication(userID, channel uint16, data []byte) []byte {
+	head := make([]byte, 0, 8+len(data))
+	head = append(head, mcsSendDataIndication<<2)
+	head = binary.BigEndian.AppendUint16(head, userID-userChannelBase)
+	head = binary.BigEndian.AppendUint16(head, channel)
+	head = append(head, 0x70)
+	if len(data) < 0x80 {
+		head = append(head, byte(len(data)))
+	} else {
+		head = append(head, byte(0x80|len(data)>>8), byte(len(data)))
+	}
+	return append(head, data...)
 }

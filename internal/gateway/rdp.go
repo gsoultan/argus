@@ -52,8 +52,11 @@ type RDPServer struct {
 	mu       sync.Mutex
 	listener net.Listener
 	sessions map[string]*rdp.Session
-	closing  bool
-	wg       sync.WaitGroup
+	// targets holds each session's connection to the host, so an administrator
+	// can end a session that Argus is only relaying.
+	targets map[string]net.Conn
+	closing bool
+	wg      sync.WaitGroup
 }
 
 // NewRDPServer builds the RDP listener from an existing gateway.
@@ -71,12 +74,16 @@ func NewRDPServer(srv *Server, cfg RDPConfig) (*RDPServer, error) {
 	if cfg.DialTimeout == 0 {
 		cfg.DialTimeout = 15 * time.Second
 	}
-	return &RDPServer{
+	rs := &RDPServer{
 		srv:      srv,
 		cfg:      cfg,
 		log:      srv.log.With("protocol", "rdp"),
 		sessions: map[string]*rdp.Session{},
-	}, nil
+	}
+	srv.mu.Lock()
+	srv.rdpProxy = rs
+	srv.mu.Unlock()
+	return rs, nil
 }
 
 // Listen accepts RDP connections until Close.
@@ -169,6 +176,13 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 		RemoteIP:  remote,
 		StartedAt: time.Now().UTC(),
 		Protocol:  protocol,
+		// A proxied session's desktop size is negotiated between the real
+		// client and the target, and Argus does not parse the capability sets
+		// that carry it. A refresh request larger than the screen is clipped by
+		// the server, so asking generously is correct rather than a guess that
+		// could be wrong.
+		Width:  4096,
+		Height: 4096,
 	}
 	log := s.log.With("session", sess.ID,
 		"principal", sess.Principal, "target", sess.Target)
@@ -221,6 +235,8 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 		return
 	}
 	defer target.Close()
+	s.setTarget(sess.ID, target)
+	defer s.clearTarget(sess.ID)
 
 	if err := rdp.ConfirmProtocol(conn, protocol); err != nil {
 		log.Error("rdp confirm failed", "error", err)
@@ -447,4 +463,50 @@ func (s *RDPServer) uploadRDPRecording(sess *rdp.Session, chainHead string) stri
 	}
 	s.log.Info("rdp recording uploaded", "session", sess.ID, "key", key)
 	return key
+}
+
+// session looks up one proxied session.
+func (s *RDPServer) session(id string) (*rdp.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	return sess, ok
+}
+
+// refresh asks a proxied session's target to redraw.
+func (s *RDPServer) refresh(id string) error {
+	s.mu.Lock()
+	sess, ok := s.sessions[id]
+	target := s.targets[id]
+	s.mu.Unlock()
+	if !ok || target == nil {
+		return fmt.Errorf("no such proxied session")
+	}
+	return sess.RefreshFor(target)
+}
+
+// disconnect closes a proxied session's connection to the target, which ends
+// the relay and seals the recording.
+func (s *RDPServer) disconnect(id string) {
+	s.mu.Lock()
+	target := s.targets[id]
+	s.mu.Unlock()
+	if target != nil {
+		_ = target.Close()
+	}
+}
+
+func (s *RDPServer) setTarget(id string, conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.targets == nil {
+		s.targets = map[string]net.Conn{}
+	}
+	s.targets[id] = conn
+}
+
+func (s *RDPServer) clearTarget(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.targets, id)
 }

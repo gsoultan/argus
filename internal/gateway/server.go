@@ -72,8 +72,12 @@ type Server struct {
 	// rdpClients holds the driver for each browser session, so a terminate can
 	// close the connection to the target and a shadow can ask for a redraw.
 	rdpClients map[string]*rdp.Client
-	wg         sync.WaitGroup
-	closing    bool
+	// rdpProxy is the Remote Desktop listener, when one is configured. Held so
+	// the shadow and terminate handlers can reach sessions opened with a native
+	// client, not only those Argus drives for a browser.
+	rdpProxy *RDPServer
+	wg       sync.WaitGroup
+	closing  bool
 }
 
 // NewServer builds a gateway from cfg.
