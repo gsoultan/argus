@@ -52,11 +52,25 @@ type Coverage struct {
 	Assets           int `json:"assets"`
 	AssetsWithAgent  int `json:"assetsWithAgent"`
 	AssetsAgentStale int `json:"assetsAgentStale"`
-	// AssetsUnmonitored are managed hosts where nothing is watching port 22.
+	// AssetsUnmonitored are hosts where a direct connection leaves no trace and
+	// an agent could close the gap.
+	//
+	// Counts SSH assets only. A Windows host has no agent available yet, so
+	// listing it here would be a gap nobody can act on — and reporting those
+	// trains people to ignore the ones they can.
 	AssetsUnmonitored int `json:"assetsUnmonitored"`
 	// UnreviewedHosts are agents reporting from outside the inventory.
 	UnreviewedHosts int `json:"unreviewedHosts"`
 	IgnoredHosts    int `json:"ignoredHosts"`
+
+	// SSHAssets and RDPAssets break the fleet down by how it is reached.
+	SSHAssets int `json:"sshAssets"`
+	RDPAssets int `json:"rdpAssets"`
+	// RDPAwaitingAgent is the number of Remote Desktop assets that cannot be
+	// covered yet because no Windows agent exists. Stated rather than hidden:
+	// it is a known limit of the product, not a deployment mistake, and an
+	// operator reading a coverage figure deserves to know which it is.
+	RDPAwaitingAgent int `json:"rdpAwaitingAgent"`
 }
 
 // RecordFacts stores what an agent reports about its host.
@@ -218,11 +232,15 @@ func (s *Store) Coverage(ctx context.Context) (Coverage, error) {
 		  (SELECT count(*) FROM assets),
 		  (SELECT count(*) FROM assets WHERE agent_state = 'healthy'),
 		  (SELECT count(*) FROM assets WHERE agent_state = 'stale'),
-		  (SELECT count(*) FROM assets WHERE agent_state <> 'healthy'),
+		  (SELECT count(*) FROM assets WHERE agent_state <> 'healthy' AND protocol = 'ssh'),
 		  (SELECT count(*) FROM agents WHERE matched_asset = false AND enrollment_state = 'unreviewed'),
-		  (SELECT count(*) FROM agents WHERE matched_asset = false AND enrollment_state = 'ignored')`).
+		  (SELECT count(*) FROM agents WHERE matched_asset = false AND enrollment_state = 'ignored'),
+		  (SELECT count(*) FROM assets WHERE protocol = 'ssh'),
+		  (SELECT count(*) FROM assets WHERE protocol = 'rdp'),
+		  (SELECT count(*) FROM assets WHERE protocol = 'rdp' AND agent_state <> 'healthy')`).
 		Scan(&c.Assets, &c.AssetsWithAgent, &c.AssetsAgentStale,
-			&c.AssetsUnmonitored, &c.UnreviewedHosts, &c.IgnoredHosts)
+			&c.AssetsUnmonitored, &c.UnreviewedHosts, &c.IgnoredHosts,
+			&c.SSHAssets, &c.RDPAssets, &c.RDPAwaitingAgent)
 	return c, err
 }
 

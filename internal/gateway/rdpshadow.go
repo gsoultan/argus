@@ -1,0 +1,193 @@
+package gateway
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/coder/websocket"
+
+	"github.com/gsoultan/argus/internal/auth"
+	"github.com/gsoultan/argus/internal/rdp"
+)
+
+// handleRDPShadow attaches a read-only viewer to a Remote Desktop session.
+//
+// Read-only is a property of this handler never reading from the socket, not a
+// flag the client is trusted to honour: a shadower has no path to the target's
+// input at all.
+func (s *Server) handleRDPShadow(cfg WebConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("session")
+		if id == "" {
+			http.Error(w, "session is required", http.StatusBadRequest)
+			return
+		}
+
+		viewer, err := cfg.authorizeSession(r, auth.ScopeShadow, id)
+		if err != nil {
+			s.log.Warn("rdp shadow refused", "session", id, "error", err)
+			http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		sess, ok := s.RDPSession(id)
+		if !ok {
+			// The same answer whether the session never existed or has already
+			// finished, so a ticket cannot be used to probe which ids are live.
+			http.Error(w, "no such live session", http.StatusNotFound)
+			return
+		}
+
+		conn, wsErr := websocket.Accept(w, r, &websocket.AcceptOptions{
+			OriginPatterns: cfg.AllowedOrigins,
+		})
+		if wsErr != nil {
+			return
+		}
+		defer conn.CloseNow()
+
+		s.log.Info("rdp shadow attached",
+			"session", id, "viewer", viewer, "subject", sess.User,
+			"target", sess.Target, "principal", sess.Principal)
+		s.runRDPShadow(r.Context(), conn, sess)
+		s.log.Info("rdp shadow detached", "session", id, "viewer", viewer)
+	}
+}
+
+func (s *Server) runRDPShadow(ctx context.Context, conn *websocket.Conn, sess *rdp.Session) {
+	_, frames, cancel := sess.Hub().Subscribe()
+	defer cancel()
+
+	// The backlog is deliberately discarded. Screen updates are deltas, so
+	// replaying whatever happened to be buffered would paint fragments of the
+	// recent past over a blank canvas. Asking the target to redraw gives the
+	// viewer what is actually on screen now.
+	if err := writeBinary(ctx, conn, rdp.EncodeControl(
+		rdp.FrameReady, sess.Width, sess.Height)); err != nil {
+		return
+	}
+	if client := s.rdpClientFor(sess.ID); client != nil {
+		if err := client.Refresh(); err != nil {
+			s.log.Warn("could not request a redraw for a shadow viewer",
+				"session", sess.ID, "error", err)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case frame, open := <-frames:
+			if !open {
+				reason := "session ended"
+				if by, why, killed := sess.Killed(); killed {
+					reason = "session terminated by " + by + " (" + why + ")"
+				} else if sess.Live() {
+					reason = "the shadow stream fell behind and was dropped; reconnect to resume"
+				}
+				s.log.Info("rdp shadow ended", "session", sess.ID, "reason", reason)
+				_ = writeBinary(ctx, conn, rdp.EncodeControl(rdp.FrameClosed, 0, 0))
+				return
+			}
+			if err := writeBinary(ctx, conn, frame); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// handleRDPTerminate ends a Remote Desktop session.
+func (s *Server) handleRDPTerminate(cfg WebConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "session id is required", http.StatusBadRequest)
+			return
+		}
+
+		actor, err := cfg.authorizeSession(r, auth.ScopeTerminate, id)
+		if err != nil {
+			s.log.Warn("rdp terminate refused", "session", id, "error", err)
+			http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body)
+		reason := strings.TrimSpace(body.Reason)
+		if reason == "" {
+			// A session cut short with no explanation is a gap in the record
+			// rather than an entry in it.
+			http.Error(w, "a reason is required", http.StatusBadRequest)
+			return
+		}
+
+		sess, ok := s.RDPSession(id)
+		if !ok {
+			http.Error(w, "no such live session", http.StatusNotFound)
+			return
+		}
+		if !sess.Terminate(actor, reason) {
+			// Reporting success would tell an operator they stopped something
+			// that had in fact run to completion.
+			http.Error(w, "session had already ended", http.StatusConflict)
+			return
+		}
+		// Closing the connection to the target is what actually ends it; the
+		// frame pump then unwinds and seals the recording.
+		if client := s.rdpClientFor(id); client != nil {
+			_ = client.Close()
+		}
+
+		s.log.Warn("rdp session terminated", "session", id, "by", actor, "reason", reason)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session": id, "terminated": true, "by": actor, "reason": reason,
+		})
+	}
+}
+
+// RDPSession looks up one live Remote Desktop session.
+func (s *Server) RDPSession(id string) (*rdp.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.rdpWeb[id]
+	return sess, ok
+}
+
+// rdpClientFor returns the RDP client driving a session, or nil.
+func (s *Server) rdpClientFor(id string) *rdp.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rdpClients[id]
+}
+
+func (s *Server) setRDPClient(id string, c *rdp.Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.rdpClients == nil {
+		s.rdpClients = map[string]*rdp.Client{}
+	}
+	s.rdpClients[id] = c
+}
+
+func (s *Server) clearRDPClient(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.rdpClients, id)
+}
+
+// ActiveRDPSessions returns a snapshot for the console.
+func (s *Server) ActiveRDPSessions() []*rdp.Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*rdp.Session, 0, len(s.rdpWeb))
+	for _, sess := range s.rdpWeb {
+		out = append(out, sess)
+	}
+	return out
+}

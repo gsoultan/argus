@@ -21,6 +21,7 @@ const (
 	pduType2Synchronize = 31
 	pduType2FontList    = 39
 	pduType2FontMap     = 40
+	pduType2RefreshRect = 33
 	pduType2ErrorInfo   = 47
 )
 
@@ -183,4 +184,27 @@ func ParseLicensing(payload []byte) (LicenseResult, error) {
 	} else {
 		return LicenseContinue, fmt.Errorf("the server refused the license (0x%08x)", code)
 	}
+}
+
+// RefreshRectPDU asks the server to resend a region of the screen.
+//
+// This is what lets someone attach to a session already in progress. Screen
+// updates are deltas, so a viewer joining midway would otherwise see only what
+// changed after they arrived — a mostly blank canvas that fills in slowly and
+// misrepresents what the operator is looking at.
+//
+// The alternative is keeping a framebuffer per session on the gateway, which
+// costs width by height by four bytes for every live session whether anyone is
+// watching or not. Asking the server to redraw costs nothing until someone
+// does.
+func RefreshRectPDU(shareID uint32, userID uint16, width, height int) []byte {
+	b := make([]byte, 0, 12)
+	b = append(b, 1, 0, 0, 0) // one rectangle, then three bytes of padding
+	b = binary.LittleEndian.AppendUint16(b, 0)
+	b = binary.LittleEndian.AppendUint16(b, 0)
+	// The rectangle is inclusive of its right and bottom edges, so a full
+	// screen ends one pixel short of the dimensions.
+	b = binary.LittleEndian.AppendUint16(b, uint16(width-1))
+	b = binary.LittleEndian.AppendUint16(b, uint16(height-1))
+	return shareDataPDU(shareID, userID, pduType2RefreshRect, b)
 }

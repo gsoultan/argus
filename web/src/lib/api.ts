@@ -8,6 +8,7 @@ import {
   GATEWAY_URL,
   isConfigured,
   live,
+  terminateRDPSession as terminateRDPOnGateway,
   terminateSession as terminateOnGateway,
 } from '~/lib/live'
 import type {
@@ -167,7 +168,12 @@ export const api = {
     const s = db.sessions.find((x) => x.id === id)
 
     if (isConfigured()) {
-      const res = await terminateOnGateway(GATEWAY_URL, id, reason)
+      // An SSH session is proxied and an RDP one is driven by Argus as the
+      // client, so they end on different endpoints. Picking by protocol here
+      // keeps that out of every caller.
+      const res = s?.protocol === 'rdp'
+        ? await terminateRDPOnGateway(GATEWAY_URL, id, reason)
+        : await terminateOnGateway(GATEWAY_URL, id, reason)
       if ('error' in res) throw new Error(res.error)
       // The gateway reports the closure to the control plane itself; refetching
       // is what makes the row authoritative rather than optimistic.

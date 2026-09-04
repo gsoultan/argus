@@ -68,9 +68,12 @@ type Server struct {
 	sessions map[string]*Session
 	// rdpWeb holds Remote Desktop sessions Argus opened on a browser's behalf,
 	// where it is the RDP client rather than a proxy between two.
-	rdpWeb  map[string]*rdp.Session
-	wg      sync.WaitGroup
-	closing bool
+	rdpWeb map[string]*rdp.Session
+	// rdpClients holds the driver for each browser session, so a terminate can
+	// close the connection to the target and a shadow can ask for a redraw.
+	rdpClients map[string]*rdp.Client
+	wg         sync.WaitGroup
+	closing    bool
 }
 
 // NewServer builds a gateway from cfg.

@@ -200,3 +200,72 @@ func TestRecordFactsRequiresHostname(t *testing.T) {
 		t.Error("RecordFacts accepted an empty hostname")
 	}
 }
+
+// A Windows host has no agent available yet, so counting it as an unmonitored
+// gap would report something nobody can act on — and reporting those trains
+// people to ignore the gaps they can close.
+func TestCoverageDoesNotBlameRDPAssetsForHavingNoAgent(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	before, err := s.Coverage(ctx)
+	if err != nil {
+		t.Fatalf("Coverage: %v", err)
+	}
+
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO assets (hostname, address, protocol, agent_state)
+		VALUES ('cov-win-01', '10.0.0.9', 'rdp', 'absent')
+		ON CONFLICT (hostname) DO NOTHING`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(),
+			`DELETE FROM assets WHERE hostname = 'cov-win-01'`)
+	})
+
+	after, err := s.Coverage(ctx)
+	if err != nil {
+		t.Fatalf("Coverage: %v", err)
+	}
+
+	if after.RDPAssets != before.RDPAssets+1 {
+		t.Errorf("RDPAssets %d → %d, want +1", before.RDPAssets, after.RDPAssets)
+	}
+	if after.AssetsUnmonitored != before.AssetsUnmonitored {
+		t.Errorf("an RDP asset was counted as an unmonitored gap: %d → %d",
+			before.AssetsUnmonitored, after.AssetsUnmonitored)
+	}
+	// It is still surfaced, just honestly: as awaiting an agent that does not
+	// exist rather than as a deployment mistake.
+	if after.RDPAwaitingAgent != before.RDPAwaitingAgent+1 {
+		t.Errorf("RDPAwaitingAgent %d → %d, want +1",
+			before.RDPAwaitingAgent, after.RDPAwaitingAgent)
+	}
+}
+
+// An SSH asset with no agent is a real gap and must still be counted.
+func TestCoverageStillCountsSSHAssetsWithoutAgents(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	before, _ := s.Coverage(ctx)
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO assets (hostname, address, protocol, agent_state)
+		VALUES ('cov-lin-01', '10.0.0.10', 'ssh', 'absent')
+		ON CONFLICT (hostname) DO NOTHING`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(),
+			`DELETE FROM assets WHERE hostname = 'cov-lin-01'`)
+	})
+
+	after, _ := s.Coverage(ctx)
+	if after.AssetsUnmonitored != before.AssetsUnmonitored+1 {
+		t.Errorf("an SSH asset with no agent was not counted: %d → %d",
+			before.AssetsUnmonitored, after.AssetsUnmonitored)
+	}
+}

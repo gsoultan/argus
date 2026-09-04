@@ -309,4 +309,13 @@ export interface Coverage {
   assetsUnmonitored: number
   unreviewedHosts: number
   ignoredHosts: number
+  sshAssets: number
+  rdpAssets: number
+  /**
+   * Remote Desktop assets that cannot be covered yet because no Windows agent
+   * exists. A known limit of the product rather than a deployment mistake, and
+   * shown as such — a gap nobody can act on teaches people to ignore the ones
+   * they can.
+   */
+  rdpAwaitingAgent: number
 }

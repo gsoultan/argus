@@ -13,6 +13,7 @@ import { PageHeader } from '~/components/Shell'
 import { ButtonLink } from '~/components/links'
 import { Replay } from '~/components/Replay'
 import { RDPReplay } from '~/components/RDPReplay'
+import { RDPScreen } from '~/components/RDPScreen'
 import { ShadowTerminal } from '~/components/ShadowTerminal'
 import {
   Digest, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes, duration,
@@ -425,7 +426,25 @@ function SessionDetail() {
         {/* Keyed on open state so closing the modal disposes the terminal and
             drops the subscription, rather than leaving a socket streaming a
             privileged session into a hidden component. */}
-        {shadowOpen && (
+        {shadowOpen && isRDP && (
+          <RDPScreen
+            gatewayUrl={GATEWAY_URL}
+            target={session.assetHostname}
+            principal={session.principal}
+            readOnly
+            shadowSessionId={session.id}
+            getTicket={async () => {
+              const res = await shadowTicket(session.id)
+              if ('error' in res) {
+                setShadowError(res.error)
+                return null
+              }
+              setShadowError(undefined)
+              return res.ticket
+            }}
+          />
+        )}
+        {shadowOpen && !isRDP && (
           <ShadowTerminal
             gatewayUrl={GATEWAY_URL}
             sessionId={session.id}

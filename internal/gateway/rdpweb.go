@@ -14,6 +14,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/credssp"
 	"github.com/gsoultan/argus/internal/hostkey"
+	"github.com/gsoultan/argus/internal/live"
 	"github.com/gsoultan/argus/internal/rdp"
 	"github.com/gsoultan/argus/internal/storage"
 )
@@ -117,9 +118,12 @@ func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
 		return
 	}
 
+	width, height := client.Size()
+	sess.Width, sess.Height = width, height
+	s.setRDPClient(sess.ID, client)
+	defer s.clearRDPClient(sess.ID)
 	s.trackRDPWeb(sess)
 	s.reportRDPWeb(sess, "", "active")
-	width, height := client.Size()
 	log.Info("rdp browser session opened",
 		"protocol", rdp.ProtocolName(protocol), "size", [2]int{width, height})
 
@@ -136,13 +140,17 @@ func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
 		s.pumpRDPInput(ctx, conn, client, log)
 	}()
 
-	err = s.pumpRDPFrames(ctx, conn, client)
+	err = s.pumpRDPFrames(ctx, conn, client, sess.Hub())
 
 	head, closeErr := sess.Close()
 	s.untrackRDPWeb(sess)
 	s.reportRDPWeb(sess, head, "closed")
 	_ = client.Close()
 	<-inputDone
+
+	if by, reason, killed := sess.Killed(); killed {
+		log.Warn("rdp session terminated", "by", by, "reason", reason)
+	}
 
 	if err != nil {
 		log.Info("rdp browser session ended", "reason", err)
@@ -256,7 +264,8 @@ func (s *Server) openRDPWebRecording(sess *rdp.Session, asset Asset, client *rdp
 }
 
 // pumpRDPFrames reads screen updates and writes them to the browser.
-func (s *Server) pumpRDPFrames(ctx context.Context, conn *websocket.Conn, client *rdp.Client) error {
+func (s *Server) pumpRDPFrames(ctx context.Context, conn *websocket.Conn,
+	client *rdp.Client, hub *live.Hub) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -284,6 +293,9 @@ func (s *Server) pumpRDPFrames(ctx context.Context, conn *websocket.Conn, client
 			batch = append(batch, frame...)
 		}
 		if len(batch) > 0 {
+			// Shadow viewers get the same bytes the operator does, so the two
+			// cannot be looking at different sessions.
+			hub.Broadcast(append([]byte(nil), batch...))
 			if werr := writeBinary(ctx, conn, batch); werr != nil {
 				return werr
 			}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/credssp"
+	"github.com/gsoultan/argus/internal/live"
 )
 
 // Separators accepted between principal and target in the mstshash cookie.
@@ -98,6 +99,18 @@ type Session struct {
 	// LegacyBinding records a target that used the pre-version-5 public key
 	// binding, which is not bound to a nonce.
 	LegacyBinding bool
+	// Width and Height are the desktop dimensions, needed by a viewer
+	// attaching to a session already running.
+	Width, Height int
+
+	// hub fans display frames out to shadow viewers. Always present, so any
+	// session can be watched without having been opened in a special way.
+	hub *live.Hub
+	// killedBy and killReason record an administrative termination, so the
+	// session's record says who ended it rather than leaving it
+	// indistinguishable from a dropped connection.
+	killedBy   string
+	killReason string
 
 	mu       sync.Mutex
 	rec      *Recorder
@@ -380,6 +393,51 @@ func (s *Session) record(stream Stream, frame []byte) error {
 	return s.rec.Write(stream, frame)
 }
 
+// Hub returns the session's broadcast hub, creating it on first use.
+func (s *Session) Hub() *live.Hub {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hub == nil {
+		s.hub = live.NewHub()
+	}
+	return s.hub
+}
+
+// Terminate ends the session on an administrator's instruction.
+//
+// Returns false if it had already finished, so a caller can say so rather than
+// report a kill that did not happen.
+func (s *Session) Terminate(by, reason string) bool {
+	s.mu.Lock()
+	if s.closed || s.killedBy != "" {
+		s.mu.Unlock()
+		return false
+	}
+	if reason == "" {
+		reason = "no reason given"
+	}
+	s.killedBy, s.killReason = by, reason
+	s.mu.Unlock()
+	// The caller closes the connection; there is no equivalent of a terminal
+	// notice to write into a desktop, so the record carries the explanation
+	// instead.
+	return true
+}
+
+// Killed reports the administrative termination, if there was one.
+func (s *Session) Killed() (by, reason string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.killedBy, s.killReason, s.killedBy != ""
+}
+
+// Live reports whether the session is still running.
+func (s *Session) Live() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.closed
+}
+
 // SetRecorder attaches a recording to the session.
 func (s *Session) SetRecorder(r *Recorder) {
 	s.mu.Lock()
@@ -402,6 +460,11 @@ func (s *Session) Close() (string, error) {
 		return s.chainEnd, nil
 	}
 	s.closed = true
+	// Ends every shadow subscription. A viewer left hanging on a finished
+	// session cannot tell it from one that has gone quiet.
+	if s.hub != nil {
+		s.hub.Close()
+	}
 	if s.rec == nil {
 		return "", nil
 	}

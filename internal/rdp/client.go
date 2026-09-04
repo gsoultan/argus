@@ -389,3 +389,16 @@ func (c *Client) Size() (width, height int) { return c.width, c.height }
 
 // Close ends the session.
 func (c *Client) Close() error { return c.conn.Close() }
+
+// Refresh asks the target to resend the whole screen.
+//
+// Used when a viewer attaches to a session already running: updates are deltas,
+// and without a redraw the newcomer sees only what changes from that moment on.
+func (c *Client) Refresh() error {
+	if c.shareID == 0 {
+		return errors.New("session is not active")
+	}
+	pdu := RefreshRectPDU(c.shareID, c.userID, c.width, c.height)
+	_, err := c.conn.Write(SendDataRequest(c.userID, c.channel, pdu))
+	return err
+}

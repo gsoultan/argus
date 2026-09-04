@@ -224,6 +224,39 @@ export async function terminateSession(
   }
 }
 
+/**
+ * Ends a Remote Desktop session on the gateway.
+ *
+ * Separate from terminateSession because the two run on different endpoints:
+ * an SSH session is proxied and an RDP one is driven by Argus as the client,
+ * so there is no single connection to close for both.
+ */
+export async function terminateRDPSession(
+  gatewayUrl: string,
+  sessionId: string,
+  reason: string,
+): Promise<{ ok: true } | { error: string }> {
+  const minted = await terminateTicket(sessionId, reason)
+  if ('error' in minted) return minted
+  try {
+    const res = await fetch(
+      `${gatewayUrl.replace(/\/$/, '')}/api/v1/rdp/${sessionId}/terminate`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${minted.ticket}`,
+        },
+        body: JSON.stringify({ reason }),
+      },
+    )
+    if (!res.ok) return { error: (await res.text()).trim() || `gateway refused (${res.status})` }
+    return { ok: true }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'the gateway is unreachable' }
+  }
+}
+
 /** Sessions the gateway currently has open, as opposed to what it last reported. */
 export interface LiveSession {
   id: string

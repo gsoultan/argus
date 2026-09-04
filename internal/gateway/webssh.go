@@ -82,6 +82,8 @@ func (s *Server) ServeWeb(ctx context.Context, cfg WebConfig) error {
 	mux.HandleFunc("/ws/session", s.handleWebSession(cfg))
 	mux.HandleFunc("/ws/shadow", s.handleShadow(cfg))
 	mux.HandleFunc("/ws/rdp", s.handleRDPWeb(cfg))
+	mux.HandleFunc("/ws/rdp/shadow", s.handleRDPShadow(cfg))
+	mux.HandleFunc("POST /api/v1/rdp/{id}/terminate", s.handleRDPTerminate(cfg))
 	mux.HandleFunc("GET /api/v1/sessions/live", s.handleLiveSessions(cfg))
 	// Method and shape in the pattern, so nothing but a POST to exactly this
 	// path can reach the terminate handler. Trimming the id out of a prefix

@@ -12,6 +12,15 @@ export interface RDPScreenProps {
   getTicket: () => Promise<string | null>
   /** Read-only disables input, for shadowing someone else's session. */
   readOnly?: boolean
+  /**
+   * When set, attaches to an existing session instead of opening one.
+   *
+   * Shadowing uses a different endpoint because the gateway must not treat a
+   * viewer as a second operator: there is no input path at all, and the target
+   * is asked to redraw so the newcomer sees the screen as it stands rather than
+   * only what changes from now on.
+   */
+  shadowSessionId?: string
   onStateChange?: (state: RDPState, detail?: string) => void
 }
 
@@ -33,6 +42,7 @@ export function RDPScreen({
   principal,
   getTicket,
   readOnly = false,
+  shadowSessionId,
   onStateChange,
 }: RDPScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -126,10 +136,14 @@ export function RDPScreen({
         return
       }
 
-      const url = new URL('/ws/rdp', gatewayUrl)
+      const url = new URL(shadowSessionId ? '/ws/rdp/shadow' : '/ws/rdp', gatewayUrl)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      url.searchParams.set('target', target)
-      url.searchParams.set('principal', principal)
+      if (shadowSessionId) {
+        url.searchParams.set('session', shadowSessionId)
+      } else {
+        url.searchParams.set('target', target)
+        url.searchParams.set('principal', principal)
+      }
       url.searchParams.set('ticket', ticket)
 
       const ws = new WebSocket(url.toString())
@@ -161,7 +175,7 @@ export function RDPScreen({
     }
     // size is state this effect sets; including it would reconnect on resize.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gatewayUrl, target, principal])
+  }, [gatewayUrl, target, principal, shadowSessionId])
 
   /* ── Input ─────────────────────────────────────────────────────────────── */
 
