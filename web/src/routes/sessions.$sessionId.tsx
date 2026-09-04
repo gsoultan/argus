@@ -129,7 +129,10 @@ function SessionDetail() {
     // failed, or the console would briefly replay a fixture and then swap it
     // for the real thing — which looks like the recording changed.
     if (!fetched) return undefined
-    return session ? buildCast(session.assetHostname, session.principal, session.startedAt) : undefined
+    return session
+      ? buildCast(session.assetHostname, session.principal, session.startedAt,
+          session.fidelity === 'ebpf' ? 'ebpf' : 'pty')
+      : undefined
   }, [realCast, fetched, session])
 
   const decoded = useCastDecoder(cast)
@@ -265,6 +268,23 @@ function SessionDetail() {
       />
 
       <Box p="lg">
+        {session.fidelity === 'ebpf' && decoded.status === 'ready' && !kernelObserved && (
+          <Alert
+            color="rose"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            mb="md"
+            title="Recorded as eBPF, but the recording carries no kernel events"
+          >
+            <Text size="xs">
+              The session was reported at eBPF fidelity, yet this artefact contains no
+              kernel-observed executions. Either the agent's probe stopped mid-session or the
+              recording was altered after the fact. The command timeline below falls back to
+              PTY heuristics and must not be presented as kernel evidence until this is
+              explained.
+            </Text>
+          </Alert>
+        )}
         {session.fidelity === 'pty' && !kernelObserved && (
           <Alert
             color="amber"

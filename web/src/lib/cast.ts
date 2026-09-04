@@ -87,8 +87,20 @@ function script(host: string): Step[] {
   ]
 }
 
-/** Builds a newline-delimited asciicast v2 document. */
-export function buildCast(host: string, principal: string, startedAt: string): string {
+/**
+ * Builds a newline-delimited asciicast v2 document.
+ *
+ * `fidelity` decides whether the recording carries the Argus `x` stream --
+ * kernel-observed executions. An eBPF session gets one exec frame per command
+ * so the fixture is internally consistent with its own badge; a PTY session
+ * gets none, which is what a host without an agent actually produces.
+ */
+export function buildCast(
+  host: string,
+  principal: string,
+  startedAt: string,
+  fidelity: 'pty' | 'ebpf' = 'pty',
+): string {
   const rows: string[] = []
   rows.push(
     JSON.stringify({
@@ -106,6 +118,19 @@ export function buildCast(host: string, principal: string, startedAt: string): s
   const typed = (data: string) => rows.push(JSON.stringify([Number(t.toFixed(3)), 'i', data]))
 
   const prompt = `${green(`${principal}@${host.split('.')[0]}`)}:${cyan('~')}$ `
+  let pid = 4100
+  // The kernel sees the command the shell actually ran. For `sudo -n redis-cli`
+  // that is sudo; the argv is what the recording's `x` stream carries, quoted
+  // by the console so `sh -c "rm -rf /"` is never rendered as three words.
+  const exec = (cmd: string) => {
+    if (fidelity !== 'ebpf') return
+    const args = cmd.split(/\s+/)
+    const comm = args[0]!.replace(/^.*\//, '').slice(0, 15)
+    rows.push(JSON.stringify([Number(t.toFixed(3)), 'x', JSON.stringify({
+      pid: pid++, ppid: 2214, uid: principal === 'root' ? 0 : 1000,
+      comm, filename: args[0]!.startsWith('/') ? args[0] : `/usr/bin/${args[0]}`, args,
+    })]))
+  }
 
   emit(`Last login: Thu Aug 28 09:12:41 2026 from 10.0.0.9 ${dim('(brokered by argus-gw-01)')}\r\n`)
   t += 0.4
@@ -127,6 +152,10 @@ export function buildCast(host: string, principal: string, startedAt: string): s
     // session as one unbroken command.
     typed('\r')
     emit('\r\n')
+    // The execve lands after Enter and before the first byte of output, which
+    // is when the kernel observes it.
+    t += 0.004
+    exec(step.cmd)
     t += (step.think ?? 300) / 1000
 
     for (const line of step.out) {
