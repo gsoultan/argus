@@ -104,6 +104,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording", a.user(a.getRecording))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/rdp-replay", a.user(a.getRDPReplay))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording/link", a.user(a.presignRecording))
+	mux.HandleFunc("GET /api/v1/policy", a.user(a.getPolicy))
+	mux.HandleFunc("POST /api/v1/policy", a.postPolicy)
 
 	// Reporter surface. Machine token only.
 	mux.HandleFunc("POST /api/v1/report/session", a.reporter(a.postSession))
@@ -116,6 +118,8 @@ func (a *API) Handler() http.Handler {
 	// gateway rather than per instance.
 	mux.HandleFunc("POST /api/v1/terminal/redeem", a.reporter(a.postRedeem))
 	mux.HandleFunc("GET /api/v1/hostkeys/pin", a.reporter(a.getHostKeyPin))
+	// Gateways read policy through the machine credential, never the console's.
+	mux.HandleFunc("GET /api/v1/gateway/policy", a.reporter(a.getGatewayPolicy))
 	mux.HandleFunc("POST /api/v1/hostkeys/pin", a.reporter(a.postHostKeyPin))
 
 	return a.securityHeaders(a.cors(mux))
