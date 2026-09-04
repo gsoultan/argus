@@ -1,61 +1,26 @@
 import {
   Alert, Badge, Box, Card, Grid, Group, Progress, ScrollArea, Stack, Table,
-  Text, ThemeIcon, Tooltip,
+  Text, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconArrowRight, IconCertificate, IconClipboardCheck,
-  IconDoorExit, IconServer2, IconShieldOff, IconTerminal2,
+  IconDoorExit, IconShieldOff, IconTerminal2,
 } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { ButtonLink } from '~/components/links'
 import {
-  Digest, FidelityBadge, HealthDot, Mono, OriginBadge, RiskFlags, duration, relTime,
+  Digest, FidelityBadge, HealthDot, Mono, OriginBadge, RiskFlags, Stat, duration,
+  relTime, rowNav,
 } from '~/components/primitives'
+import { FS } from '~/theme'
 import { assetsQuery, requestsQuery, sessionsQuery, statsQuery } from '~/lib/queries'
 
 export const Route = createFileRoute('/')({
   component: Overview,
   loader: ({ context }) => context.queryClient.ensureQueryData(statsQuery()),
 })
-
-function Stat({
-  label, value, sub, icon, color, onClick, alarm,
-}: {
-  label: string
-  value: string | number
-  sub?: string
-  icon: typeof IconServer2
-  color: string
-  onClick?: () => void
-  alarm?: boolean
-}) {
-  const Icon = icon
-  return (
-    <Card
-      padding="md"
-      onClick={onClick}
-      className={`transition-colors hover:border-slate-600 ${onClick ? 'cursor-pointer' : ''}`}
-      style={alarm ? { borderColor: 'var(--color-pending)' } : undefined}
-    >
-      <Group justify="space-between" wrap="nowrap" align="flex-start">
-        <Box>
-          <Text size="10px" c="dimmed" fw={600} style={{ letterSpacing: '0.06em' }}>
-            {label.toUpperCase()}
-          </Text>
-          <Text size="27px" fw={600} lh={1.2} mt={4} c={alarm ? 'amber.4' : undefined}>
-            {value}
-          </Text>
-          {sub && <Text size="10px" c="dimmed" mt={2}>{sub}</Text>}
-        </Box>
-        <ThemeIcon variant="light" color={color} size={32} radius="md">
-          <Icon size={17} stroke={1.7} />
-        </ThemeIcon>
-      </Group>
-    </Card>
-  )
-}
 
 function Overview() {
   const navigate = useNavigate()
@@ -172,7 +137,7 @@ function Overview() {
               icon={IconClipboardCheck}
               color="amber"
               onClick={() => navigate({ to: '/requests' })}
-              alarm={(stats?.requestsPending ?? 0) > 0}
+              tone={(stats?.requestsPending ?? 0) > 0 ? 'warn' : 'ok'}
             />
           </Grid.Col>
           <Grid.Col span={{ base: 6, md: 3 }}>
@@ -183,7 +148,7 @@ function Overview() {
               icon={IconShieldOff}
               color="rose"
               onClick={() => navigate({ to: '/assets' })}
-              alarm={(stats?.hostKeysUnpinned ?? 0) > 0}
+              tone={(stats?.hostKeysUnpinned ?? 0) > 0 ? 'warn' : 'ok'}
             />
           </Grid.Col>
           <Grid.Col span={{ base: 6, md: 3 }}>
@@ -194,7 +159,7 @@ function Overview() {
               icon={IconDoorExit}
               color="rose"
               onClick={() => navigate({ to: '/sessions' })}
-              alarm={(stats?.sessionsDirectToday ?? 0) > 0}
+              tone={(stats?.sessionsDirectToday ?? 0) > 0 ? 'warn' : 'ok'}
             />
           </Grid.Col>
         </Grid>
@@ -221,7 +186,8 @@ function Overview() {
               </Group>
 
               <ScrollArea.Autosize mah={330}>
-                <Table verticalSpacing={7} horizontalSpacing="md" highlightOnHover>
+                <Table.ScrollContainer minWidth={760} type="native">
+            <Table verticalSpacing={7} horizontalSpacing="md" highlightOnHover>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>User</Table.Th>
@@ -235,10 +201,11 @@ function Overview() {
                   <Table.Tbody>
                     {live?.map((s) => (
                       <Table.Tr
-                  key={s.id}
-                  onClick={() => navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } })}
-                  className="cursor-pointer"
-                >
+                        key={s.id}
+                        {...rowNav(() =>
+                          navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
+                        )}
+                      >
                         <Table.Td>
                           <Text size="xs">{s.userEmail.split('@')[0]}</Text>
                         </Table.Td>
@@ -268,6 +235,7 @@ function Overview() {
                     )}
                   </Table.Tbody>
                 </Table>
+            </Table.ScrollContainer>
               </ScrollArea.Autosize>
             </Card>
           </Grid.Col>
@@ -275,7 +243,7 @@ function Overview() {
           <Grid.Col span={{ base: 12, lg: 4 }}>
             <Stack gap="sm">
               <Card padding="md">
-                <Group gap={7} mb={3}>
+                <Group gap={8} mb={4}>
                   <IconCertificate size={15} className="text-teal-400" />
                   <Text fw={600} size="sm">Zero standing privilege</Text>
                 </Group>
@@ -283,14 +251,14 @@ function Overview() {
                   Assets where Argus mints a short-lived certificate per session, so no
                   reusable credential exists to steal.
                 </Text>
-                <Group justify="space-between" mb={5}>
+                <Group justify="space-between" mb={6}>
                   <Text size="xl" fw={600} lh={1}>{caCoverage}%</Text>
                   <Text size="xs" c="dimmed">
                     {stats ? stats.assetsTotal - stats.standingCredentialAssets : 0} / {stats?.assetsTotal ?? 0}
                   </Text>
                 </Group>
                 <Progress value={caCoverage} color="teal" size="sm" radius="xl" />
-                <Text size="10px" c="dimmed" mt={7} lh={1.4}>
+                <Text size={FS.micro} c="dimmed" mt={8} lh={1.4}>
                   The remaining {stats?.standingCredentialAssets ?? 0} use vaulted keys injected
                   by the gateway. Users never see them, but they are standing credentials —
                   move hosts to certificate auth where you can.
@@ -315,24 +283,24 @@ function Overview() {
                     <Box
                       key={r.id}
                       px="md"
-                      py={9}
+                      py={10}
                       style={{ borderTop: '1px solid var(--color-line)' }}
                     >
-                      <Group justify="space-between" wrap="nowrap" mb={3}>
+                      <Group justify="space-between" wrap="nowrap" mb={4}>
                         <Text size="xs" fw={500} truncate>
                           {r.requesterEmail.split('@')[0]}
                         </Text>
-                        <Group gap={5} wrap="nowrap">
+                        <Group gap={6} wrap="nowrap">
                           {r.breakGlass && (
                             <Tooltip label="Break-glass path — separate approval chain">
                               <Badge size="xs" color="rose">break-glass</Badge>
                             </Tooltip>
                           )}
-                          <Text size="10px" c="dimmed">{relTime(r.createdAt)}</Text>
+                          <Text size={FS.micro} c="dimmed">{relTime(r.createdAt)}</Text>
                         </Group>
                       </Group>
-                      <Text size="10px" c="dimmed" lineClamp={2}>{r.justification}</Text>
-                      <Group gap={5} mt={5}>
+                      <Text size={FS.micro} c="dimmed" lineClamp={2}>{r.justification}</Text>
+                      <Group gap={6} mt={6}>
                         <Badge size="xs" variant="outline" color="slate">
                           {r.assetHostnames.length} host{r.assetHostnames.length > 1 ? 's' : ''}
                         </Badge>
@@ -368,6 +336,7 @@ function Overview() {
             </ButtonLink>
           </Group>
           <ScrollArea.Autosize mah={260}>
+            <Table.ScrollContainer minWidth={760} type="native">
             <Table verticalSpacing={6} horizontalSpacing="md" highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -385,7 +354,7 @@ function Overview() {
                   .map((a) => (
                     <Table.Tr key={a.id}>
                       <Table.Td>
-                        <Group gap={7} wrap="nowrap">
+                        <Group gap={8} wrap="nowrap">
                           <HealthDot health={a.health} />
                           <Mono>{a.hostname.split('.')[0]}</Mono>
                         </Group>
@@ -404,6 +373,7 @@ function Overview() {
                   ))}
               </Table.Tbody>
             </Table>
+            </Table.ScrollContainer>
           </ScrollArea.Autosize>
         </Card>
       </Box>

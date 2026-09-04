@@ -10,6 +10,9 @@ import {
 } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { Digest, Mono, absTime, relTime } from '~/components/primitives'
+import { FS } from '~/theme'
+import { downloadJSON, stamp } from '~/lib/download'
+import { notifyOk, notifyWarn } from '~/lib/notify'
 import { auditQuery } from '~/lib/queries'
 import { useAuditChain } from '~/lib/useWorkers'
 import type { AuditSeverity } from '~/types/domain'
@@ -46,6 +49,48 @@ function Audit() {
 
   const verified = chain.verified
 
+  /**
+   * Writes the whole chain out, not the filtered view.
+   *
+   * An evidence pack containing only the rows someone had searched for would be
+   * unverifiable by definition — the chain is only checkable end to end. The
+   * filter is a reading aid; the export is the record.
+   */
+  const onExport = () => {
+    if (chain.links.length === 0) return
+    if (!verified) {
+      notifyWarn(
+        'Exporting an unverified chain',
+        'Run "Verify chain" first so the pack records a verdict rather than an absence of one.',
+      )
+    }
+    downloadJSON(
+      {
+        exportedAt: new Date().toISOString(),
+        // Named so a reader knows this was recomputed here rather than asserted
+        // by the server that served the log.
+        verification: verified
+          ? {
+              performedBy: 'argus-console (browser, Web Worker)',
+              ok: verified.ok,
+              linksChecked: verified.checked,
+              brokenAtSequence: verified.brokenAt,
+              durationMs: verified.ms,
+            }
+          : { performedBy: null, ok: null, note: 'chain was not verified before export' },
+        algorithm: 'SHA-256(prevHash || canonicalJSON(event))',
+        chainHead: chain.head,
+        eventCount: chain.links.length,
+        events: chain.links,
+      },
+      `argus-evidence-${stamp()}.json`,
+    )
+    notifyOk(
+      'Evidence pack exported',
+      `${chain.links.length.toLocaleString()} events with their hashes and the chain head.`,
+    )
+  }
+
   return (
     <Box>
       <PageHeader
@@ -53,7 +98,13 @@ function Audit() {
         description="Every privileged action, hash-chained so tampering is detectable rather than merely discouraged."
         actions={
           <>
-            <Button size="xs" variant="default" leftSection={<IconDownload size={14} />}>
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconDownload size={14} />}
+              disabled={chain.links.length === 0}
+              onClick={onExport}
+            >
               Export evidence pack
             </Button>
             <Button
@@ -108,7 +159,7 @@ function Audit() {
                   result does not depend on trusting the server that served the log.
                 </Text>
                 {verified && (
-                  <Group gap="xs" mt={7}>
+                  <Group gap="xs" mt={8}>
                     <Badge size="xs" color={verified.ok ? 'teal' : 'rose'} variant="light">
                       {verified.checked.toLocaleString()} links checked
                     </Badge>
@@ -121,14 +172,14 @@ function Audit() {
             </Group>
 
             <Box ta="right" style={{ flexShrink: 0 }}>
-              <Text size="10px" c="dimmed" fw={600} style={{ letterSpacing: '0.05em' }}>
+              <Text size={FS.micro} c="dimmed" fw={600} style={{ letterSpacing: '0.05em' }}>
                 CHAIN HEAD
               </Text>
-              <Box mt={3}>
+              <Box mt={4}>
                 {chain.head ? <Digest value={chain.head} chars={24} /> : <Loader size="xs" />}
               </Box>
               {chain.ms !== null && (
-                <Text size="10px" c="dimmed" mt={3}>built in {chain.ms}ms</Text>
+                <Text size={FS.micro} c="dimmed" mt={4}>built in {chain.ms}ms</Text>
               )}
             </Box>
           </Group>
@@ -175,7 +226,8 @@ function Audit() {
         </Group>
 
         <Card padding={0}>
-          <Table verticalSpacing={6} horizontalSpacing="md" highlightOnHover striped="even">
+          <Table.ScrollContainer minWidth={900} type="native">
+            <Table verticalSpacing={6} horizontalSpacing="md" highlightOnHover striped="even">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th w={60}>Seq</Table.Th>
@@ -218,6 +270,7 @@ function Audit() {
               ))}
             </Table.Tbody>
           </Table>
+            </Table.ScrollContainer>
           {chain.status === 'working' && rows.length === 0 && (
             <Stack align="center" py="xl" gap="xs">
               <Loader size="sm" color="teal" />
@@ -229,7 +282,7 @@ function Audit() {
           )}
         </Card>
 
-        <Text size="10px" c="dimmed" mt="xs">
+        <Text size={FS.micro} c="dimmed" mt="xs">
           Showing {rows.length} of {chain.links.length.toLocaleString()} events.
         </Text>
       </Box>

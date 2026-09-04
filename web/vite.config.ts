@@ -10,16 +10,60 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt', not 'autoUpdate': this console is used while watching a live
+      // session. Swapping the running app out from under someone mid-stream
+      // drops their socket with no explanation. Ask instead — see PWAUpdate.
+      registerType: 'prompt',
       injectRegister: 'auto',
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,woff2}'],
-        // Session recordings and audit data are privileged — never cache them.
-        navigateFallbackDenylist: [/^\/api\//],
+        // Only the shell is precached. Route chunks are fetched on demand and
+        // kept by runtimeCaching below; precaching all of them meant a first
+        // visit downloaded xterm.js and every route the user never opened.
+        //
+        // Fonts ship as per-script subsets, so only the Latin ones are listed:
+        // the rest exist for names this console may never render, and pulling
+        // Cyrillic, Greek and Vietnamese up front costs a quarter of a megabyte
+        // to no effect. They are still cached if a name ever needs them.
+        globPatterns: [
+          'index.html',
+          'assets/index-*.js',
+          'assets/*.css',
+          'assets/*latin*.woff2',
+          '**/*.svg',
+        ],
+        // Anything the control plane serves must reach the control plane.
+        //
+        // /auth/ is load-bearing and was missing: loginURL() navigates to
+        // /auth/login, which is same-origin, so the navigation fallback served
+        // cached index.html instead. Sign-in silently looped forever — and only
+        // once the worker had installed, so the first visit always worked and
+        // every visit after it did not.
+        navigateFallbackDenylist: [/^\/api\//, /^\/auth\//],
         runtimeCaching: [
+          // Session recordings and audit data are privileged — never cache them.
           {
             urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
             handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/auth/'),
+            handler: 'NetworkOnly',
+          },
+          // Fonts are immutable and content-hashed; a subset fetched once for
+          // one operator's name should not be fetched again.
+          {
+            urlPattern: ({ url }) => url.pathname.endsWith('.woff2'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'argus-fonts',
+              expiration: { maxEntries: 16, maxAgeSeconds: 60 * 60 * 24 * 365 },
+            },
+          },
+          // Route chunks are content-hashed, so a cache hit is always correct.
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/assets/'),
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'argus-assets' },
           },
         ],
       },

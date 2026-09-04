@@ -1,4 +1,4 @@
-import { Badge, Box, CopyButton, Group, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { Badge, Box, Card, CopyButton, Group, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core'
 import {
   IconAlertTriangle, IconCertificate, IconCheck, IconCopy, IconDoorExit, IconKey,
   IconLock, IconPlayerRecordFilled, IconPlugConnected, IconPlugConnectedX,
@@ -8,6 +8,7 @@ import type {
   AgentState, AssetHealth, BypassPosture, CredentialMode, HostKeyState,
   RecordingFidelity, RequestState, RiskFlag, SessionOrigin, SessionState,
 } from '~/types/domain'
+import { FS } from '~/theme'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
 
@@ -338,4 +339,108 @@ export function Mono({ children, c }: { children: React.ReactNode; c?: string })
       {children}
     </Text>
   )
+}
+
+/* ── Layout primitives ───────────────────────────────────────────────────── */
+
+/**
+ * Labelled value in a detail panel.
+ *
+ * Previously defined twice — once in the session detail and once in the asset
+ * detail — which had already drifted by a pixel of top margin, so the same
+ * construct sat differently on two pages a user moves between constantly.
+ */
+export function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Box>
+      <Text size={FS.micro} c="dimmed" fw={600} style={{ letterSpacing: '0.05em' }}>
+        {label.toUpperCase()}
+      </Text>
+      <Box mt={2}>{children}</Box>
+    </Box>
+  )
+}
+
+/**
+ * Headline number on a dashboard card.
+ *
+ * Also previously duplicated, in two visibly different forms: the overview's
+ * had an icon, uppercase label and a 27px figure; coverage's had none of those
+ * and a 28px one. Two cards that mean the same thing now look the same, and
+ * `tone` decides emphasis rather than each caller inventing it.
+ */
+export function Stat({
+  label, value, sub, icon, color = 'slate', tone = 'ok', onClick,
+}: {
+  label: string
+  value: string | number
+  sub?: string
+  icon?: typeof IconShieldCheck
+  color?: string
+  tone?: 'ok' | 'warn'
+  onClick?: () => void
+}) {
+  const Icon = icon
+  const interactive = Boolean(onClick)
+  return (
+    <Card
+      padding="md"
+      h="100%"
+      onClick={onClick}
+      {...(interactive
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onClick?.()
+              }
+            },
+          }
+        : {})}
+      className={`transition-colors hover:border-slate-600 ${interactive ? 'cursor-pointer' : ''}`}
+      style={tone === 'warn' ? { borderColor: 'var(--color-pending)' } : undefined}
+    >
+      <Group justify="space-between" wrap="nowrap" align="flex-start">
+        <Box>
+          <Text size={FS.micro} c="dimmed" fw={600} style={{ letterSpacing: '0.06em' }}>
+            {label.toUpperCase()}
+          </Text>
+          <Text size={FS.figure} fw={600} lh={1.2} mt={4} c={tone === 'warn' ? 'amber.4' : undefined}>
+            {value}
+          </Text>
+          {sub && <Text size={FS.micro} c="dimmed" mt={2}>{sub}</Text>}
+        </Box>
+        {Icon && (
+          <ThemeIcon variant="light" color={color} size={32} radius="md">
+            <Icon size={17} stroke={1.7} />
+          </ThemeIcon>
+        )}
+      </Group>
+    </Card>
+  )
+}
+
+/**
+ * Props that make a table row behave like the link it already looks like.
+ *
+ * Three tables navigated on click while being unreachable by keyboard and
+ * announcing nothing to a screen reader; a fourth told the user to click rows
+ * that had no handler at all. Spreading this onto a `Table.Tr` fixes both, and
+ * makes it obvious when a row is *not* navigable.
+ */
+export function rowNav(onActivate: () => void) {
+  return {
+    onClick: onActivate,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        onActivate()
+      }
+    },
+    tabIndex: 0,
+    role: 'link',
+    className: 'cursor-pointer argus-row',
+  } as const
 }

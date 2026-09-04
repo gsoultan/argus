@@ -1,18 +1,19 @@
 import {
   Alert, Badge, Box, Button, Card, Code, Grid, Group, Stack, Table, Text, ThemeIcon,
 } from '@mantine/core'
-import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconArrowLeft, IconCertificate, IconRefresh, IconShieldCheck,
 } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
+import { run } from '~/lib/notify'
 import { ButtonLink } from '~/components/links'
 import {
-  CredentialBadge, Digest, FidelityBadge, HealthDot, HostKeyBadge, Mono,
-  SessionStateBadge, absTime, duration, relTime,
+  CredentialBadge, Digest, Field, FidelityBadge, HealthDot, HostKeyBadge, Mono,
+  SessionStateBadge, absTime, duration, relTime, rowNav,
 } from '~/components/primitives'
+import { FS } from '~/theme'
 import {
   assetQuery, sessionsQuery, usePinHostKey, useRotateCredential,
 } from '~/lib/queries'
@@ -22,17 +23,6 @@ export const Route = createFileRoute('/assets/$assetId')({
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(assetQuery(params.assetId)),
 })
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <Box>
-      <Text size="10px" c="dimmed" fw={600} style={{ letterSpacing: '0.05em' }}>
-        {label.toUpperCase()}
-      </Text>
-      <Box mt={3}>{children}</Box>
-    </Box>
-  )
-}
 
 function AssetDetail() {
   const navigate = useNavigate()
@@ -49,31 +39,26 @@ function AssetDetail() {
   const history = (allSessions ?? []).filter((s) => s.assetId === asset.id).slice(0, 12)
   const isCa = asset.credentialMode === 'ca-certificate'
 
-  const onPin = async () => {
-    await pin.mutateAsync(asset.id)
-    notifications.show({
-      color: 'teal',
-      title: 'Host key pinned',
-      message: 'Argus will now refuse any connection where the presented key differs.',
+  // Guarded. Pinning is the control an admin reaches for when they suspect
+  // interception, so a refusal that looked like success would be the worst
+  // possible moment to leave someone guessing.
+  const onPin = () =>
+    run(() => pin.mutateAsync(asset.id), {
+      failure: 'Host key not pinned',
+      success: [
+        'Host key pinned',
+        'Argus will now refuse any connection where the presented key differs.',
+      ],
     })
-  }
 
-  const onRotate = async () => {
-    try {
-      await rotate.mutateAsync(asset.id)
-      notifications.show({
-        color: 'teal',
-        title: 'Credential rotated',
-        message: 'A new key was generated, installed and the old one revoked.',
-      })
-    } catch (err) {
-      notifications.show({
-        color: 'rose',
-        title: 'Rotation not applicable',
-        message: err instanceof Error ? err.message : 'Unknown error',
-      })
-    }
-  }
+  const onRotate = () =>
+    run(() => rotate.mutateAsync(asset.id), {
+      failure: 'Credential not rotated',
+      success: [
+        'Credential rotated',
+        'A new key was generated, installed and the old one revoked.',
+      ],
+    })
 
   return (
     <Box>
@@ -157,12 +142,12 @@ function AssetDetail() {
                     <Text size="xs" c="dimmed" tt="capitalize">{asset.health}</Text>
                   </Group>
                 </Group>
-                <Stack gap={11}>
+                <Stack gap={12}>
                   <Field label="Host key">
-                    <Group gap={7}>
+                    <Group gap={8}>
                       <HostKeyBadge state={asset.hostKeyState} />
                       {asset.hostKeyPinnedAt && (
-                        <Text size="10px" c="dimmed">
+                        <Text size={FS.micro} c="dimmed">
                           pinned {relTime(asset.hostKeyPinnedAt)}
                         </Text>
                       )}
@@ -187,7 +172,7 @@ function AssetDetail() {
               </Card>
 
               <Card padding="md">
-                <Group gap={7} mb={7}>
+                <Group gap={8} mb={8}>
                   <ThemeIcon
                     variant="light"
                     color={isCa ? 'teal' : 'slate'}
@@ -198,25 +183,25 @@ function AssetDetail() {
                   </ThemeIcon>
                   <Text fw={600} size="sm">Authentication to target</Text>
                 </Group>
-                <Stack gap={11}>
+                <Stack gap={12}>
                   <Field label="Mode"><CredentialBadge mode={asset.credentialMode} /></Field>
 
                   {isCa ? (
                     <>
-                      <Text size="10px" c="dimmed" lh={1.45}>
+                      <Text size={FS.micro} c="dimmed" lh={1.45}>
                         Argus mints a short-lived certificate for each session. No reusable
                         credential exists on the gateway or the host, so there is nothing to
                         rotate and nothing to steal from the vault.
                       </Text>
                       <Field label="Required on host">
-                        <Code block fz={10}>
+                        <Code block fz={FS.micro}>
                           TrustedUserCAKeys /etc/ssh/argus_ca.pub
                         </Code>
                       </Field>
                     </>
                   ) : (
                     <>
-                      <Text size="10px" c="dimmed" lh={1.45}>
+                      <Text size={FS.micro} c="dimmed" lh={1.45}>
                         A vaulted secret is injected by the gateway — the user never sees it. It
                         is still a standing credential. Moving this host to certificate auth
                         removes that exposure entirely.
@@ -233,7 +218,7 @@ function AssetDetail() {
                   )}
 
                   <Field label="Available principals">
-                    <Group gap={5}>
+                    <Group gap={6}>
                       {asset.principals.map((p) => (
                         <Badge
                           key={p}
@@ -250,13 +235,13 @@ function AssetDetail() {
               </Card>
 
               <Card padding="md">
-                <Text fw={600} size="sm" mb={7}>Connect</Text>
-                <Text size="10px" c="dimmed" mb={7} lh={1.45}>
+                <Text fw={600} size="sm" mb={8}>Connect</Text>
+                <Text size={FS.micro} c="dimmed" mb={8} lh={1.45}>
                   No client install and no wrapper script — the target is encoded in the
                   username, so ordinary <Mono>ssh</Mono>, <Mono>scp</Mono>, <Mono>sftp</Mono> and
                   Ansible all work unchanged.
                 </Text>
-                <Code block fz={11}>
+                <Code block fz={FS.digest}>
                   {`ssh ${asset.principals[0]}:${asset.hostname.split('.')[0]}@argus.northwind.id`}
                 </Code>
               </Card>
@@ -269,7 +254,8 @@ function AssetDetail() {
                 <Text fw={600} size="sm">Recent sessions</Text>
                 <Badge size="xs" variant="light" color="slate">{history.length}</Badge>
               </Group>
-              <Table verticalSpacing={7} horizontalSpacing="md" highlightOnHover>
+              <Table.ScrollContainer minWidth={640} type="native">
+            <Table verticalSpacing={7} horizontalSpacing="md" highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>State</Table.Th>
@@ -283,10 +269,11 @@ function AssetDetail() {
                 <Table.Tbody>
                   {history.map((s) => (
                     <Table.Tr
-                  key={s.id}
-                  onClick={() => navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } })}
-                  className="cursor-pointer"
-                >
+                      key={s.id}
+                      {...rowNav(() =>
+                        navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
+                      )}
+                    >
                       <Table.Td><SessionStateBadge state={s.state} /></Table.Td>
                       <Table.Td>
                         <Text size="xs">{s.userEmail.split('@')[0]}</Text>
@@ -314,6 +301,7 @@ function AssetDetail() {
                   )}
                 </Table.Tbody>
               </Table>
+            </Table.ScrollContainer>
             </Card>
           </Grid.Col>
         </Grid>

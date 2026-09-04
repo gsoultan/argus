@@ -8,8 +8,9 @@ import { IconSearch } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import {
   AgentBadge, BypassBadge, CredentialBadge, HealthDot, HostKeyBadge, Mono,
-  relTime,
+  relTime, rowNav,
 } from '~/components/primitives'
+import { FS } from '~/theme'
 import { assetsQuery, groupsQuery } from '~/lib/queries'
 import type { Asset } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
@@ -83,7 +84,8 @@ function Assets() {
         </Group>
 
         <Card padding={0}>
-          <Table verticalSpacing={8} horizontalSpacing="md" highlightOnHover striped="even">
+          <Table.ScrollContainer minWidth={980} type="native">
+            <Table verticalSpacing={8} horizontalSpacing="md" highlightOnHover striped="even">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Host</Table.Th>
@@ -100,15 +102,14 @@ function Assets() {
               {assets?.map((a) => (
                 <Table.Tr
                   key={a.id}
-                  onClick={() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } })}
-                  className="cursor-pointer"
+                  {...rowNav(() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }))}
                 >
                   <Table.Td>
-                    <Group gap={7} wrap="nowrap">
+                    <Group gap={8} wrap="nowrap">
                       <HealthDot health={a.health} />
                       <Box>
                         <Mono>{a.hostname.split('.')[0]}</Mono>
-                        <Text size="10px" c="dimmed">
+                        <Text size={FS.micro} c="dimmed">
                           {a.hostname.split('.').slice(1).join('.')}
                         </Text>
                       </Box>
@@ -140,12 +141,13 @@ function Assets() {
               ))}
             </Table.Tbody>
           </Table>
+            </Table.ScrollContainer>
           {assets?.length === 0 && (
             <Text size="xs" c="dimmed" ta="center" py="xl">No assets match.</Text>
           )}
         </Card>
 
-        <Text size="10px" c="dimmed" mt="xs">{assets?.length ?? 0} assets.</Text>
+        <Text size={FS.micro} c="dimmed" mt="xs">{assets?.length ?? 0} assets.</Text>
       </Box>
     </Box>
   )

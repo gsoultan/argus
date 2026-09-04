@@ -10,7 +10,7 @@ import {
   IconAlertTriangle, IconEyeOff, IconPlus, IconShieldCheck, IconShieldOff,
 } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
-import { Mono, relTime } from '~/components/primitives'
+import { Mono, Stat, relTime } from '~/components/primitives'
 import { coverageQuery, discoveredQuery, useEnrolHost, useIgnoreHost } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import type { DiscoveredHost } from '~/types/domain'
@@ -105,7 +105,7 @@ function CoverageView() {
               label="Linux assets with an agent"
               value={`${cov?.assetsWithAgent ?? 0} / ${cov?.sshAssets ?? 0}`}
               tone={cov && cov.assetsUnmonitored > 0 ? 'warn' : 'ok'}
-              hint="An asset with no agent records nothing when someone connects to port 22 directly."
+              sub="An asset with no agent records nothing when someone connects to port 22 directly."
             />
           </Grid.Col>
           <Grid.Col span={{ base: 12, sm: 4 }}>
@@ -113,7 +113,7 @@ function CoverageView() {
               label="Hosts outside the inventory"
               value={String(cov?.unreviewedHosts ?? 0)}
               tone={cov && cov.unreviewedHosts > 0 ? 'warn' : 'ok'}
-              hint="Agents reporting from machines Argus is not managing."
+              sub="Agents reporting from machines Argus is not managing."
             />
           </Grid.Col>
           <Grid.Col span={{ base: 12, sm: 4 }}>
@@ -121,7 +121,7 @@ function CoverageView() {
               label="Agents gone quiet"
               value={String(cov?.assetsAgentStale ?? 0)}
               tone={cov && cov.assetsAgentStale > 0 ? 'warn' : 'ok'}
-              hint="An agent can be killed by root on the host. The silence is what gives it away."
+              sub="An agent can be killed by root on the host. The silence is what gives it away."
             />
           </Grid.Col>
         </Grid>
@@ -182,6 +182,7 @@ function CoverageView() {
               </Text>
             </Box>
           ) : (
+            <Table.ScrollContainer minWidth={860} type="native">
             <Table highlightOnHover verticalSpacing="xs" fz="xs">
               <Table.Thead>
                 <Table.Tr>
@@ -267,6 +268,7 @@ function CoverageView() {
                 ))}
               </Table.Tbody>
             </Table>
+            </Table.ScrollContainer>
           )}
         </Card>
 
@@ -332,28 +334,3 @@ function CoverageView() {
   )
 }
 
-function Stat({
-  label,
-  value,
-  tone,
-  hint,
-}: {
-  label: string
-  value: string
-  tone: 'ok' | 'warn'
-  hint: string
-}) {
-  return (
-    <Card padding="md">
-      <Text size="xs" c="dimmed">
-        {label}
-      </Text>
-      <Text fz={28} fw={600} c={tone === 'warn' ? 'amber.4' : undefined} lh={1.2} my={4}>
-        {value}
-      </Text>
-      <Text size="xs" c="dimmed">
-        {hint}
-      </Text>
-    </Card>
-  )
-}

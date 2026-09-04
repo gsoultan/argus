@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react'
 import { Button, Center, Loader, Paper } from '@mantine/core'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { isConfigured, loginURL, logout, whoami, type Identity } from '~/lib/live'
+import { FS } from '~/theme'
 
 const NAV: {
   to: string
@@ -36,7 +37,7 @@ const NAV: {
 
 function Logo() {
   return (
-    <Group gap={9} wrap="nowrap">
+    <Group gap={10} wrap="nowrap">
       <Box
         w={26}
         h={26}
@@ -53,7 +54,7 @@ function Logo() {
         <Text fw={700} size="sm" lh={1.1} c="slate.0" style={{ letterSpacing: '0.02em' }}>
           ARGUS
         </Text>
-        <Text size="9px" c="dimmed" lh={1.1} style={{ letterSpacing: '0.09em' }}>
+        <Text size={FS.micro} c="dimmed" lh={1.1} style={{ letterSpacing: '0.09em' }}>
           PRIVILEGED ACCESS
         </Text>
       </Box>
@@ -86,7 +87,7 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     return (
       <Center h="100vh">
         <Paper p="xl" withBorder maw={380}>
-          <Group gap={9} mb="md">
+          <Group gap={10} mb="md">
             <Box
               w={26}
               h={26}
@@ -166,7 +167,13 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group gap="md" wrap="nowrap">
-            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
+            <Burger
+              opened={opened}
+              onClick={toggle}
+              hiddenFrom="sm"
+              size="sm"
+              aria-label={opened ? 'Close navigation' : 'Open navigation'}
+            />
             <Box hiddenFrom="sm"><Logo /></Box>
             <Badge
               variant="outline"
@@ -199,20 +206,26 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               color="amber"
               offset={5}
             >
-              <ActionIcon variant="subtle" color="slate" component={Link} to="/requests">
+              <ActionIcon
+                aria-label={`Access requests${stats?.requestsPending ? ` — ${stats.requestsPending} pending` : ''}`}
+                variant="subtle"
+                color="slate"
+                component={Link}
+                to="/requests"
+              >
                 <IconBell size={17} />
               </ActionIcon>
             </Indicator>
 
             <Menu position="bottom-end" width={210} withArrow>
               <Menu.Target>
-                <Group gap={7} className="cursor-pointer select-none" wrap="nowrap">
+                <Group gap={8} className="cursor-pointer select-none" wrap="nowrap">
                   <Avatar size={27} radius="sm" color="teal" variant="light">
                     {me?.displayName.slice(0, 2).toUpperCase() ?? '··'}
                   </Avatar>
                   <Box visibleFrom="sm">
                     <Text size="xs" fw={600} lh={1.15}>{me?.displayName}</Text>
-                    <Text size="10px" c="dimmed" lh={1.15} tt="capitalize">{me?.role}</Text>
+                    <Text size={FS.micro} c="dimmed" lh={1.15} tt="capitalize">{me?.role}</Text>
                   </Box>
                   <IconChevronDown size={13} opacity={0.5} />
                 </Group>
@@ -284,11 +297,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           >
             <Group gap={6} mb={4} wrap="nowrap">
               <IconShieldLock size={13} className="text-teal-400" />
-              <Text size="10px" fw={600} c="slate.2" style={{ letterSpacing: '0.05em' }}>
+              <Text size={FS.micro} fw={600} c="slate.2" style={{ letterSpacing: '0.05em' }}>
                 ZERO STANDING PRIVILEGE
               </Text>
             </Group>
-            <Text size="10px" c="dimmed" lh={1.4}>
+            <Text size={FS.micro} c="dimmed" lh={1.4}>
               {stats
                 ? `${stats.assetsTotal - stats.standingCredentialAssets} of ${stats.assetsTotal} assets on certificate auth`
                 : '—'}
@@ -322,9 +335,9 @@ export function PageHeader({
       style={{ borderBottom: '1px solid var(--color-line)' }}
     >
       <Box>
-        <Text component="h1" fw={600} size="19px" lh={1.3}>{title}</Text>
+        <Text component="h1" fw={600} size={FS.title} lh={1.3}>{title}</Text>
         {description && (
-          <Text size="xs" c="dimmed" mt={3} maw={640}>{description}</Text>
+          <Text size="xs" c="dimmed" mt={4} maw={640}>{description}</Text>
         )}
       </Box>
       {actions && <Group gap="xs" wrap="nowrap">{actions}</Group>}
