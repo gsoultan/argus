@@ -15,6 +15,7 @@ import (
 	"github.com/gsoultan/argus/internal/credssp"
 	"github.com/gsoultan/argus/internal/hostkey"
 	"github.com/gsoultan/argus/internal/rdp"
+	"github.com/gsoultan/argus/internal/storage"
 )
 
 // maxBatchBytes bounds one WebSocket message of screen rectangles.
@@ -383,6 +384,9 @@ func (s *Server) reportRDPWeb(sess *rdp.Session, chainHead, state string) {
 	if chainHead != "" {
 		rec["chainHead"] = chainHead
 		rec["endedAt"] = time.Now().UTC()
+		if key := s.uploadRDPWebRecording(sess, chainHead); key != "" {
+			rec["recordingPath"] = key
+		}
 		if r := sess.Recorder(); r != nil {
 			_, bytes, _ := r.Stats()
 			rec["recordingBytes"] = bytes
@@ -393,4 +397,24 @@ func (s *Server) reportRDPWeb(sess *rdp.Session, chainHead, state string) {
 		defer cancel()
 		s.cfg.Reporter.Session(ctx, rec)
 	}()
+}
+
+// uploadRDPWebRecording moves a sealed browser-session recording off the host.
+func (s *Server) uploadRDPWebRecording(sess *rdp.Session, chainHead string) string {
+	if chainHead == "" || s.cfg.Storage == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	key, err := s.cfg.Storage.Upload(ctx,
+		storage.LocalPathExt(s.cfg.RecordingDir, sess.ID, rdp.Extension),
+		sess.ID, chainHead, sess.StartedAt)
+	if err != nil {
+		s.log.Error("rdp recording upload failed, artefact remains local only",
+			"session", sess.ID, "error", err)
+		return ""
+	}
+	s.log.Info("rdp recording uploaded", "session", sess.ID, "key", key)
+	return key
 }

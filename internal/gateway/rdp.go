@@ -17,6 +17,7 @@ import (
 	"github.com/gsoultan/argus/internal/credssp"
 	"github.com/gsoultan/argus/internal/hostkey"
 	"github.com/gsoultan/argus/internal/rdp"
+	"github.com/gsoultan/argus/internal/storage"
 )
 
 // RDPConfig configures the Remote Desktop listener.
@@ -327,6 +328,9 @@ func (s *RDPServer) report(sess *rdp.Session, chainHead, state string) {
 	if chainHead != "" {
 		rec["chainHead"] = chainHead
 		rec["endedAt"] = time.Now().UTC()
+		if key := s.uploadRDPRecording(sess, chainHead); key != "" {
+			rec["recordingPath"] = key
+		}
 		if r := sess.Recorder(); r != nil {
 			_, bytes, _ := r.Stats()
 			rec["recordingBytes"] = bytes
@@ -418,4 +422,29 @@ func newRDPSessionID() string {
 		panic("rdp: no entropy for a session id: " + err.Error())
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// uploadRDPRecording moves a sealed recording off the gateway.
+//
+// Without this the evidence lives only where it was produced, which means
+// whoever compromises the gateway can delete the record of having done so. It
+// is also what lets the control plane serve a replay at all.
+func (s *RDPServer) uploadRDPRecording(sess *rdp.Session, chainHead string) string {
+	if chainHead == "" || s.srv.cfg.Storage == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	key, err := s.srv.cfg.Storage.Upload(ctx,
+		storage.LocalPathExt(s.cfg.RecordingDir, sess.ID, rdp.Extension),
+		sess.ID, chainHead, sess.StartedAt)
+	if err != nil {
+		s.log.Error("rdp recording upload failed, artefact remains local only",
+			"session", sess.ID, "error", err,
+			"detail", "evidence is stored only on the host that produced it")
+		return ""
+	}
+	s.log.Info("rdp recording uploaded", "session", sess.ID, "key", key)
+	return key
 }

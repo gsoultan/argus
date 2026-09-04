@@ -12,6 +12,7 @@ import {
 import { PageHeader } from '~/components/Shell'
 import { ButtonLink } from '~/components/links'
 import { Replay } from '~/components/Replay'
+import { RDPReplay } from '~/components/RDPReplay'
 import { ShadowTerminal } from '~/components/ShadowTerminal'
 import {
   Digest, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes, duration,
@@ -20,7 +21,7 @@ import { buildCast } from '~/lib/cast'
 import { extractCommands } from '~/lib/ansi'
 import type { KernelExec } from '~/workers/replay.worker'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
-import { GATEWAY_URL, live, shadowTicket } from '~/lib/live'
+import { GATEWAY_URL, live, rdpReplay, shadowTicket } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 
 export const Route = createFileRoute('/sessions/$sessionId')({
@@ -54,10 +55,40 @@ function SessionDetail() {
   //
   // ?cast=<url> loads a real recording instead of the generated fixture, which
   // is how gateway output is checked against the production decoder.
+  const [rdpFrames, setRdpFrames] = useState<{
+    buffer: ArrayBuffer
+    width: number
+    height: number
+    verified: string
+  } | null>(null)
+  const [rdpError, setRdpError] = useState<string>()
   const [realCast, setRealCast] = useState<string | undefined>()
   const [verified, setVerified] = useState<string | null>(null)
   const [fetched, setFetched] = useState(false)
   const castUrl = new URLSearchParams(window.location.search).get('cast')
+
+  useEffect(() => {
+    if (session?.protocol !== 'rdp' || rdpFrames) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const got = await rdpReplay(session.id)
+        if (cancelled) return
+        if (!got) {
+          setRdpError('This recording is not available for replay.')
+          return
+        }
+        setRdpFrames(got)
+      } catch (err) {
+        if (!cancelled) {
+          setRdpError(err instanceof Error ? err.message : 'Replay failed.')
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [session?.id, session?.protocol, rdpFrames])
 
   useEffect(() => {
     let cancelled = false
@@ -150,6 +181,7 @@ function SessionDetail() {
   // on a finished session would open a stream that immediately ends, which
   // reads as a fault rather than as "this session is over".
   const canShadow = session.state === 'active'
+  const isRDP = session.protocol === 'rdp'
 
   return (
     <Box>
@@ -217,7 +249,26 @@ function SessionDetail() {
         <Grid gap="sm">
           <Grid.Col span={{ base: 12, xl: 8 }}>
             <Card padding={0} style={{ overflow: 'hidden' }}>
-              <Replay decoded={decoded} onTimeChange={setCursor} />
+              {isRDP ? (
+                rdpFrames ? (
+                  <Box p="sm">
+                    <RDPReplay
+                      buffer={rdpFrames.buffer}
+                      width={rdpFrames.width}
+                      height={rdpFrames.height}
+                      verified={rdpFrames.verified}
+                    />
+                  </Box>
+                ) : (
+                  <Box p="lg">
+                    <Text size="xs" c="dimmed">
+                      {rdpError ?? 'Decoding the recording…'}
+                    </Text>
+                  </Box>
+                )
+              ) : (
+                <Replay decoded={decoded} onTimeChange={setCursor} />
+              )}
             </Card>
           </Grid.Col>
 
