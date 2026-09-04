@@ -1,8 +1,8 @@
 [
   {
     "hostname": "pay-01.payments.northwind.id",
-    "address": "127.0.0.1",
-    "port": 2022,
+    "address": "192.168.65.60",
+    "port": 22,
     "principals": [
       "ops",
       "deploy",
@@ -12,8 +12,8 @@
   },
   {
     "hostname": "ca-01.payments.northwind.id",
-    "address": "127.0.0.1",
-    "port": 2032,
+    "address": "192.168.65.61",
+    "port": 22,
     "principals": [
       "ops"
     ],
@@ -21,12 +21,13 @@
   },
   {
     "hostname": "win-01.corp.northwind.id",
-    "address": "127.0.0.1",
-    "port": 13389,
+    "address": "192.168.64.88",
+    "port": 3389,
     "protocol": "rdp",
     "principals": [
-      "ops",
-      "Administrator"
-    ]
+      "rdptest",
+      "ops"
+    ],
+    "credential_dir": "/Users/gsoultan/projects/argus/dev/vault/win-01"
   }
 ]

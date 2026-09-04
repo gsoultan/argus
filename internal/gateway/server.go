@@ -13,6 +13,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/hostkey"
 	"github.com/gsoultan/argus/internal/ratelimit"
+	"github.com/gsoultan/argus/internal/rdp"
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/sshca"
 	"github.com/gsoultan/argus/internal/storage"
@@ -65,8 +66,11 @@ type Server struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Session
-	wg       sync.WaitGroup
-	closing  bool
+	// rdpWeb holds Remote Desktop sessions Argus opened on a browser's behalf,
+	// where it is the RDP client rather than a proxy between two.
+	rdpWeb  map[string]*rdp.Session
+	wg      sync.WaitGroup
+	closing bool
 }
 
 // NewServer builds a gateway from cfg.
