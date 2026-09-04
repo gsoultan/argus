@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -43,6 +44,27 @@ type Session struct {
 	client *ssh.Client
 	log    *slog.Logger
 
+	// userConn is the connection the operator is on, needed to open channels
+	// back towards them — forwarded-tcpip, agent and X11 all originate at the
+	// target and have to reach the client. Nil for a browser session, which has
+	// no SSH connection and therefore no forwarding.
+	userConn ssh.Conn
+	// remote holds listeners opened on the target by -R, so they close with the
+	// session rather than outliving the authorisation that created them.
+	remote remoteForwards
+	// localForwards counts open -L channels, bounded by MaxLocalForwards.
+	localForwards atomic.Int32
+
+	// pol is the policy in force for this session, captured once when it opened.
+	//
+	// Captured rather than read live, and captured *here* rather than at each
+	// decision point, because the two were inconsistent: channel opens used a
+	// connection-scoped copy while agent and X11 requests re-read the current
+	// policy. A session could therefore be told it could open a channel and
+	// then refused a related request a minute later, for no reason visible to
+	// the person using it.
+	pol Policy
+
 	mu sync.Mutex
 	// sftpMon decodes the SFTP subsystem when one is requested, so a transfer
 	// becomes "downloaded /path, 4.2 GB" instead of a stream of opaque bytes.
@@ -67,8 +89,17 @@ type Session struct {
 
 // newSession authorises an SSH-transport request and dials the target.
 func (s *Server) newSession(conn ssh.Conn, ext map[string]string) (*Session, error) {
-	return s.Dial(ext["argus-user"], ext["argus-principal"], ext["argus-target"],
+	sess, err := s.Dial(ext["argus-user"], ext["argus-principal"], ext["argus-target"],
 		conn.RemoteAddr().String())
+	if err != nil {
+		return nil, err
+	}
+	// Only the SSH transport has one. The browser terminal reaches Dial with no
+	// connection to forward to, which is why forwarding is unavailable there
+	// rather than failing halfway through opening a channel.
+	sess.userConn = conn
+	sess.watchTargetChannels()
+	return sess, nil
 }
 
 // Dial authorises a connection request and opens the session to the target.
@@ -103,6 +134,7 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 		StartedAt: time.Now().UTC(),
 		srv:       s,
 		hub:       live.NewHub(),
+		pol:       s.policy(),
 	}
 	sess.log = s.log.With("session", sess.ID, "user", user,
 		"target", asset.Hostname, "principal", principal)
@@ -611,11 +643,17 @@ func (s *Session) pumpRequests(reqs <-chan *ssh.Request, target *ssh.Session, cl
 				s.replyReq(req, false)
 				continue
 			}
-			if name == "sftp" {
+			if name == "sftp" && s.policy().ProxySftpSubsystem {
 				// Decode the subsystem so transfers become per-file audit
 				// events. The monitor only ever observes a copy: a fault in it
 				// must degrade the audit trail, never the session.
 				s.startSFTPMonitor()
+			} else if name == "sftp" {
+				// Policy allows raw SFTP. The transfer still happens and is
+				// still recorded as bytes; what is lost is the per-file detail,
+				// so the log says which of the two an auditor is looking at.
+				s.log.Warn("sftp proxied without decoding — no per-file audit events",
+					"session", s.ID, "user", s.User)
 			}
 			s.log.Info("subsystem", "name", name)
 			if err := target.RequestSubsystem(name); err != nil {
@@ -633,11 +671,55 @@ func (s *Session) pumpRequests(reqs <-chan *ssh.Request, target *ssh.Session, cl
 			s.replyReq(req, false)
 
 		default:
+			// Agent and X11 forwarding arrive here. Both are governed by
+			// policy, and both are refused unless an owner has deliberately
+			// opened them — agent forwarding in particular hands anyone with
+			// root on this gateway the ability to sign challenges with the
+			// user's keys for as long as the session lasts.
+			if governed, allowed := s.policy().channelRequestAllowed(req.Type); governed {
+				if !allowed {
+					s.log.Info("forwarding request refused by policy",
+						"type", req.Type, "session", s.ID, "user", s.User)
+					s.replyReq(req, false)
+					continue
+				}
+				if s.userConn == nil {
+					// A browser session has nowhere to forward to. Saying so is
+					// better than accepting and then failing to open the
+					// channel the target will go on to request.
+					s.replyReq(req, false)
+					continue
+				}
+				// Passed through verbatim. The target answers, and its answer is
+				// the one the client gets — the gateway does not invent a
+				// success the far end did not give.
+				ok, err := target.SendRequest(req.Type, true, req.Payload)
+				if err != nil {
+					s.log.Warn("forwarding request failed on the target",
+						"type", req.Type, "error", err)
+					s.replyReq(req, false)
+					continue
+				}
+				s.log.Info("forwarding request permitted", "type", req.Type, "accepted", ok)
+				s.replyReq(req, ok)
+				continue
+			}
 			s.log.Debug("unhandled request", "type", req.Type)
 			s.replyReq(req, false)
 		}
 	}
 	_ = clientCh.CloseWrite()
+}
+
+// policy is the configuration this session runs under.
+//
+// The value captured when the session opened, not the current one. Tightening
+// policy must not revoke a channel a user was already told they could have —
+// terminating the session is how you stop one in progress, and that is a
+// deliberate act with its own audit entry. Loosening mid-session is equally
+// not applied, so the policy a session ran under is the one recorded against it.
+func (s *Session) policy() Policy {
+	return s.pol
 }
 
 func (s *Session) replyReq(req *ssh.Request, ok bool) {
@@ -671,6 +753,9 @@ func (s *Session) Close() (chainHead string, err error) {
 	if s.recFile != nil {
 		_ = s.recFile.Close()
 	}
+	// Ports opened on the target by -R must not outlive the session that
+	// authorised them.
+	s.remote.closeAll()
 	if s.client != nil {
 		_ = s.client.Close()
 	}
@@ -708,4 +793,32 @@ func (s *Session) Live() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return !s.closed
+}
+
+// watchTargetChannels routes channels the target opens back to the client.
+//
+// Registered once, at session start, because x/crypto/ssh requires a handler to
+// exist before the peer opens the channel — a target that requests agent
+// forwarding does so immediately, and a handler installed lazily would miss it.
+//
+// Only agent and X11 are claimed. Anything else the target tries to open falls
+// through to x/crypto/ssh's own refusal, which is the correct answer for a
+// bastion: a target is not supposed to be initiating connections into the
+// operator's machine.
+func (s *Session) watchTargetChannels() {
+	client := s.targetClient()
+	if client == nil || s.userConn == nil {
+		return
+	}
+	for _, kind := range []string{"auth-agent@openssh.com", "x11"} {
+		chans := client.HandleChannelOpen(kind)
+		if chans == nil {
+			continue // already claimed
+		}
+		go func() {
+			for newChan := range chans {
+				go s.handleTargetChannel(newChan)
+			}
+		}()
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -55,6 +56,11 @@ type Config struct {
 	// the evidence lives only where it was produced — which means whoever
 	// compromises the gateway can delete the record of having done so.
 	Storage *storage.Client
+
+	// Policy is what a brokered session may do. Nil means the closed
+	// configuration, which is what this gateway enforced before policy was
+	// configurable — so leaving it unset changes nothing.
+	Policy *PolicyHolder
 }
 
 // Server is the Argus SSH gateway.
@@ -276,24 +282,125 @@ func (s *Server) handleConn(nConn net.Conn) {
 		sess.report(head, "closed")
 	}()
 
-	go ssh.DiscardRequests(reqs)
+	// The session captured its policy when it opened; every decision on this
+	// connection reads that same value. See Session.policy.
+	policy := sess.policy()
+
+	go s.handleGlobalRequests(reqs, policy, sess)
 
 	for newChan := range chans {
-		switch newChan.ChannelType() {
-		case "session":
+		kind := newChan.ChannelType()
+		if kind == "session" {
 			go sess.handleSessionChannel(newChan)
-		default:
-			// direct-tcpip is port forwarding. Denied by default: an
-			// unrestricted bastion is an open tunnel into the private network,
-			// which is precisely what it exists to prevent.
+			continue
+		}
+		// Everything else is forwarding of some kind, and stays closed unless
+		// an owner has deliberately opened it. An unrestricted bastion is an
+		// open tunnel into the private network, which is precisely what it
+		// exists to prevent.
+		if !policy.channelAllowed(kind) {
 			s.log.Info("channel refused",
-				"type", newChan.ChannelType(),
+				"type", kind,
 				"user", sess.User,
 				"target", sess.Target.Hostname)
 			_ = newChan.Reject(ssh.Prohibited,
-				fmt.Sprintf("%s is not permitted by policy", newChan.ChannelType()))
+				fmt.Sprintf("%s is not permitted by policy", kind))
+			continue
+		}
+		switch kind {
+		case "direct-tcpip":
+			go sess.handleDirectTCPIP(newChan)
+		default:
+			// Permitted by policy but with no implementation behind it. Saying
+			// so is better than accepting a channel that would then do nothing.
+			s.log.Warn("forwarding channel permitted but unimplemented",
+				"type", kind, "user", sess.User, "target", sess.Target.Hostname)
+			_ = newChan.Reject(ssh.ConnectionFailed,
+				fmt.Sprintf("%s is permitted by policy but this gateway does not implement it", kind))
 		}
 	}
+}
+
+// handleGlobalRequests answers connection-level requests.
+//
+// These were discarded, which silently refuses them — OpenSSH's `-R` then hangs
+// until it times out rather than reporting that it was denied. Replying false
+// says no immediately, and an operator who has been told "no" goes and reads the
+// policy instead of debugging their network.
+func (s *Server) handleGlobalRequests(reqs <-chan *ssh.Request, policy Policy, sess *Session) {
+	for req := range reqs {
+		if !policy.globalRequestAllowed(req.Type) {
+			if req.Type != "keepalive@openssh.com" && req.Type != "no-more-sessions@openssh.com" {
+				s.log.Info("global request refused", "type", req.Type, "user", sess.User)
+			}
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+			continue
+		}
+
+		switch req.Type {
+		case "tcpip-forward":
+			var in tcpipForward
+			if err := ssh.Unmarshal(req.Payload, &in); err != nil {
+				if req.WantReply {
+					_ = req.Reply(false, nil)
+				}
+				continue
+			}
+			bound, err := sess.startRemoteForward(in)
+			if err != nil {
+				s.log.Warn("remote forward refused by target",
+					"addr", in.BindAddr, "port", in.BindPort, "error", err)
+				if req.WantReply {
+					_ = req.Reply(false, nil)
+				}
+				continue
+			}
+			if req.WantReply {
+				// A client that asked for port 0 needs to be told which port it
+				// actually got, and the reply is the only place to say it.
+				var payload []byte
+				if in.BindPort == 0 {
+					payload = ssh.Marshal(struct{ Port uint32 }{bound})
+				}
+				_ = req.Reply(true, payload)
+			}
+
+		case "cancel-tcpip-forward":
+			var in tcpipForward
+			if err := ssh.Unmarshal(req.Payload, &in); err != nil {
+				if req.WantReply {
+					_ = req.Reply(false, nil)
+				}
+				continue
+			}
+			key := net.JoinHostPort(in.BindAddr, strconv.FormatUint(uint64(in.BindPort), 10))
+			ln := sess.remote.take(key)
+			if ln != nil {
+				_ = ln.Close()
+				s.log.Info("remote forward cancelled", "addr", key, "user", sess.User)
+			}
+			if req.WantReply {
+				_ = req.Reply(ln != nil, nil)
+			}
+
+		default:
+			s.log.Warn("global request permitted but unimplemented",
+				"type", req.Type, "user", sess.User)
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}
+}
+
+// policy returns the policy in force, closed if none is configured.
+func (s *Server) policy() Policy {
+	if s.cfg.Policy == nil {
+		return DefaultPolicy()
+	}
+	return s.cfg.Policy.Get()
 }
 
 // rejectAll tells the user why their session was refused.
