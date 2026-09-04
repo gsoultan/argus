@@ -5,14 +5,16 @@ import {
 import {
   createRequest,
   decideRequest,
+  gatewayPolicy,
   GATEWAY_URL,
   isConfigured,
   live,
+  saveGatewayPolicy,
   terminateRDPSession as terminateRDPOnGateway,
   terminateSession as terminateOnGateway,
 } from '~/lib/live'
 import type {
-  AccessRequest, Asset, AssetGroup, AuditEvent, FleetStats, Session, User,
+  AccessRequest, Asset, AssetGroup, AuditEvent, FleetStats, GatewayPolicy, Session, User,
 } from '~/types/domain'
 
 /**
@@ -22,11 +24,31 @@ import type {
 
 const latency = (ms = 120) => new Promise((r) => setTimeout(r, ms + Math.random() * 90))
 
+/**
+ * Gateway policy defaults.
+ *
+ * These are the safe positions, which is also what the Settings page claims:
+ * every forwarding channel off, every recording guarantee on. The fixture holds
+ * them so the page is honest without a control plane — it saves, it reads back
+ * what it saved, and it says which store it is talking to.
+ */
+const DEFAULT_POLICY: GatewayPolicy = {
+  allowLocalForward: false,
+  allowRemoteForward: false,
+  allowAgentForward: false,
+  allowX11Forward: false,
+  proxySftpSubsystem: true,
+  failClosedOnRecordingLoss: true,
+  requireEbpfForRoot: true,
+  encryptRecordingsSeparateKey: true,
+}
+
 // Mutable copies — mutations in the UI need somewhere to land.
 const db = {
   assets: [...assets],
   requests: [...accessRequests],
   sessions: [...sessions],
+  policy: { ...DEFAULT_POLICY },
 }
 
 export interface AssetQuery {
@@ -185,6 +207,23 @@ export const api = {
     found.state = 'terminated'
     found.endedAt = new Date().toISOString()
     return found
+  },
+
+  async policy(): Promise<GatewayPolicy> {
+    return live.orFallback(
+      async () => (await gatewayPolicy()) ?? db.policy,
+      async () => {
+        await latency(80)
+        return db.policy
+      },
+    )
+  },
+
+  async savePolicy(next: GatewayPolicy): Promise<GatewayPolicy> {
+    if (isConfigured()) return saveGatewayPolicy(next)
+    await latency(400)
+    db.policy = { ...next }
+    return db.policy
   },
 
   async requests(state?: AccessRequest['state']): Promise<AccessRequest[]> {
