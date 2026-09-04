@@ -16,8 +16,77 @@
 @import 'tailwindcss/preflight.css' layer(base);
 @import 'tailwindcss/utilities.css' layer(utilities);
 
-@import '@mantine/core/styles.layer.css';
-@import '@mantine/notifications/styles.layer.css';
+/* Mantine baseline: resets, CSS variables and global rules. Must precede every
+   component stylesheet. */
+@import '@mantine/core/styles/baseline.layer.css';
+@import '@mantine/core/styles/default-css-variables.layer.css';
+@import '@mantine/core/styles/global.layer.css';
+
+/* Per component, rather than the 267 kB monolith.
+
+   Mantine ships one stylesheet per component and one that concatenates all 98.
+   This console renders 40, so the monolith shipped roughly 13 kB gzipped of
+   rules for components it never uses, on every first load.
+
+   THE ORDER BELOW IS LOAD-BEARING and is Mantine's own, not alphabetical.
+   Several components are built on others at the same specificity — Card on
+   Paper, NavLink on UnstyledButton — so the base has to come first or the
+   component layered over it loses the cascade. Sorted by name instead, a Card
+   computes `display: block` rather than `flex`: a broken layout that compiles,
+   type-checks and passes every test that does not measure rendered geometry.
+
+   Entries after the ones we import directly are internals: Select and
+   MultiSelect are built from Combobox, Input, Pill and Popover. If you add a
+   Mantine component, add its stylesheet here and keep this order — regenerate
+   with the offsets in @mantine/core/styles.layer.css rather than by hand. */
+
+@import '@mantine/core/styles/ScrollArea.layer.css';
+@import '@mantine/core/styles/UnstyledButton.layer.css';
+@import '@mantine/core/styles/VisuallyHidden.layer.css';
+@import '@mantine/core/styles/Paper.layer.css';
+@import '@mantine/core/styles/Overlay.layer.css';
+@import '@mantine/core/styles/Popover.layer.css';
+@import '@mantine/core/styles/Loader.layer.css';
+@import '@mantine/core/styles/ActionIcon.layer.css';
+@import '@mantine/core/styles/CloseButton.layer.css';
+@import '@mantine/core/styles/Group.layer.css';
+@import '@mantine/core/styles/ModalBase.layer.css';
+@import '@mantine/core/styles/Input.layer.css';
+@import '@mantine/core/styles/Flex.layer.css';
+@import '@mantine/core/styles/FloatingIndicator.layer.css';
+@import '@mantine/core/styles/Alert.layer.css';
+@import '@mantine/core/styles/Text.layer.css';
+@import '@mantine/core/styles/AppShell.layer.css';
+@import '@mantine/core/styles/Combobox.layer.css';
+@import '@mantine/core/styles/InlineInput.layer.css';
+@import '@mantine/core/styles/Checkbox.layer.css';
+@import '@mantine/core/styles/Avatar.layer.css';
+@import '@mantine/core/styles/Badge.layer.css';
+@import '@mantine/core/styles/Burger.layer.css';
+@import '@mantine/core/styles/Button.layer.css';
+@import '@mantine/core/styles/Card.layer.css';
+@import '@mantine/core/styles/Center.layer.css';
+@import '@mantine/core/styles/Code.layer.css';
+@import '@mantine/core/styles/Divider.layer.css';
+@import '@mantine/core/styles/Grid.layer.css';
+@import '@mantine/core/styles/Indicator.layer.css';
+@import '@mantine/core/styles/List.layer.css';
+@import '@mantine/core/styles/Menu.layer.css';
+@import '@mantine/core/styles/Modal.layer.css';
+@import '@mantine/core/styles/Pill.layer.css';
+@import '@mantine/core/styles/PillsInput.layer.css';
+@import '@mantine/core/styles/NavLink.layer.css';
+@import '@mantine/core/styles/Notification.layer.css';
+@import '@mantine/core/styles/Progress.layer.css';
+@import '@mantine/core/styles/Radio.layer.css';
+@import '@mantine/core/styles/Tooltip.layer.css';
+@import '@mantine/core/styles/SegmentedControl.layer.css';
+@import '@mantine/core/styles/Skeleton.layer.css';
+@import '@mantine/core/styles/Slider.layer.css';
+@import '@mantine/core/styles/Stack.layer.css';
+@import '@mantine/core/styles/Switch.layer.css';
+@import '@mantine/core/styles/Table.layer.css';
+@import '@mantine/core/styles/ThemeIcon.layer.css';
 
 @theme {
   --color-void: #0a0e14;
@@ -30,7 +99,9 @@
   --color-denied: #f4576b;
   --color-live: #38bdf8;
 
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 :root {
@@ -70,3 +141,27 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: #2f3d4f; }
+
+/* Rows that navigate. They looked clickable and behaved so on click, but had no
+   focus affordance because they were not reachable by keyboard at all. */
+.argus-row:focus-visible {
+  outline: 2px solid var(--color-live);
+  outline-offset: -2px;
+}
+
+/* Anything interactive gets a visible focus ring. Mantine supplies its own for
+   its components; this covers the elements we make interactive ourselves. */
+:where(a, button, [role='button'], [role='link'], [tabindex]):focus-visible {
+  outline: 2px solid var(--color-live);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

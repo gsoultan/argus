@@ -5,7 +5,6 @@ import {
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { useForm } from '@tanstack/react-form'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
@@ -13,6 +12,8 @@ import {
 } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { Mono, RequestStateBadge, absTime, relTime } from '~/components/primitives'
+import { FS } from '~/theme'
+import { notifyError, notifyWarn } from '~/lib/notify'
 import {
   assetsQuery, requestsQuery, useCreateRequest, useDecideRequest,
 } from '~/lib/queries'
@@ -26,11 +27,28 @@ export const Route = createFileRoute('/requests')({
 /** Policy caps. The Go control plane enforces these; the form mirrors them. */
 const MAX_DURATION_MINUTES = 240
 const MIN_JUSTIFICATION = 20
+const MIN_DENIAL_NOTE = 5
 
-const validateAssetIds = ({ value }: { value: string[] }) =>
+interface RequestDraft {
+  assetHostnames: string[]
+  principal: string
+  durationMinutes: number
+  justification: string
+  breakGlass: boolean
+}
+
+const EMPTY_REQUEST: RequestDraft = {
+  assetHostnames: [],
+  principal: 'ops',
+  durationMinutes: 60,
+  justification: '',
+  breakGlass: false,
+}
+
+const validateAssetIds = (value: string[]) =>
   value.length === 0 ? 'Select at least one host.' : undefined
 
-const validateJustification = ({ value }: { value: string }) =>
+const validateJustification = (value: string) =>
   value.trim().length < MIN_JUSTIFICATION
     ? `Give an approver something to act on — at least ${MIN_JUSTIFICATION} characters.`
     : undefined
@@ -87,16 +105,23 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
   const [expanded, setExpanded] = useState(false)
 
   const onDecide = async (decision: 'approved' | 'denied') => {
-    if (decision === 'denied' && note.trim().length < 5) {
+    if (decision === 'denied' && note.trim().length < MIN_DENIAL_NOTE) {
       setExpanded(true)
-      notifications.show({
-        color: 'amber',
-        title: 'Reason required',
-        message: 'A denial must say why, so the requester can act on it.',
-      })
+      notifyWarn('Reason required', 'A denial must say why, so the requester can act on it.')
       return
     }
-    await decide.mutateAsync({ id: r.id, decision, note })
+    // Guarded: an approval that the control plane refused must not look like one
+    // that succeeded. Without this the button simply stops spinning and the
+    // approver walks away believing they granted access.
+    try {
+      await decide.mutateAsync({ id: r.id, decision, note })
+    } catch (err) {
+      notifyError(
+        decision === 'approved' ? 'Access not granted' : 'Request not denied',
+        err,
+      )
+      return
+    }
     notifications.show({
       color: decision === 'approved' ? 'teal' : 'rose',
       title: decision === 'approved' ? 'Access granted' : 'Request denied',
@@ -116,7 +141,7 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
     >
       <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm">
         <Box style={{ minWidth: 0 }}>
-          <Group gap={7} mb={3}>
+          <Group gap={8} mb={4}>
             <Text fw={600} size="sm">{r.requesterEmail}</Text>
             <RequestStateBadge state={r.state} />
             {r.breakGlass && (
@@ -128,7 +153,7 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
             )}
           </Group>
           <Text size="xs" c="dimmed" mb="xs">{r.justification}</Text>
-          <Group gap={5} wrap="wrap">
+          <Group gap={6} wrap="wrap">
             <Badge size="xs" variant="outline" color="slate">as {r.principal}</Badge>
             <Badge size="xs" variant="outline" color="slate">{r.durationMinutes / 60}h window</Badge>
             {r.assetHostnames.slice(0, 3).map((h) => (
@@ -145,11 +170,11 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
         </Box>
 
         <Box ta="right" style={{ flexShrink: 0 }}>
-          <Text size="10px" c="dimmed">{relTime(r.createdAt)}</Text>
+          <Text size={FS.micro} c="dimmed">{relTime(r.createdAt)}</Text>
           {r.expiresAt && r.state === 'approved' && (
-            <Group gap={4} justify="flex-end" mt={3}>
+            <Group gap={4} justify="flex-end" mt={4}>
               <IconClockHour4 size={11} className="text-amber-400" />
-              <Text size="10px" c="amber.4">expires {relTime(r.expiresAt)}</Text>
+              <Text size={FS.micro} c="amber.4">expires {relTime(r.expiresAt)}</Text>
             </Group>
           )}
         </Box>
@@ -157,7 +182,7 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
 
       {!pending && (
         <Box pt="xs" style={{ borderTop: '1px solid var(--color-line)' }}>
-          <Text size="10px" c="dimmed">
+          <Text size={FS.micro} c="dimmed">
             {r.state} by <Mono>{r.decidedByEmail}</Mono> · {absTime(r.decidedAt)}
             {r.decisionNote && ` — ${r.decisionNote}`}
           </Text>
@@ -214,29 +239,58 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
   )
 }
 
+/**
+ * Five fields and two rules.
+ *
+ * This was the only consumer of @tanstack/react-form in the application, and it
+ * cost 25 kB gzipped — more than the route it lived on. Plain state does the
+ * same job here; the validation is two pure predicates that the submit button
+ * and the field errors both read, so there is one definition of "valid" rather
+ * than a library's copy and ours.
+ */
 function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const { data: assets } = useQuery(assetsQuery({}))
   const create = useCreateRequest()
 
-  const form = useForm({
-    defaultValues: {
-      assetHostnames: [] as string[],
-      principal: 'ops',
-      durationMinutes: 60,
-      justification: '',
-      breakGlass: false,
-    },
-    onSubmit: async ({ value }) => {
+  const [value, setValue] = useState(EMPTY_REQUEST)
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
+
+  const set = <K extends keyof RequestDraft>(k: K, v: RequestDraft[K]) =>
+    setValue((prev) => ({ ...prev, [k]: v }))
+
+  const errors = {
+    assetHostnames: validateAssetIds(value.assetHostnames),
+    justification: validateJustification(value.justification),
+  }
+  const canSubmit = !errors.assetHostnames && !errors.justification
+
+  const close = () => {
+    setValue(EMPTY_REQUEST)
+    setTouched({})
+    onClose()
+  }
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    // Marking everything touched first means a submit attempt reveals whichever
+    // field is blocking it, rather than leaving a disabled button unexplained.
+    setTouched({ assetHostnames: true, justification: true })
+    if (!canSubmit) return
+    try {
       await create.mutateAsync(value)
-      notifications.show({
-        color: 'teal',
-        title: 'Request submitted',
-        message: 'Approvers have been notified. You will get access the moment it is granted.',
-      })
-      form.reset()
-      onClose()
-    },
-  })
+    } catch (err) {
+      // Kept open on failure. Closing would discard a justification the user
+      // just wrote for a request that was never filed.
+      notifyError('Request not submitted', err)
+      return
+    }
+    notifications.show({
+      color: 'teal',
+      title: 'Request submitted',
+      message: 'Approvers have been notified. You will get access the moment it is granted.',
+    })
+    close()
+  }
 
   const assetOptions =
     assets?.map((a) => ({
@@ -245,138 +299,103 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
     })) ?? []
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Request privileged access" size="lg">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          void form.handleSubmit()
-        }}
-      >
+    <Modal opened={opened} onClose={close} title="Request privileged access" size="lg">
+      <form onSubmit={onSubmit}>
         <Stack gap="md">
-          <form.Field
-            name="assetHostnames"
-            validators={{ onMount: validateAssetIds, onChange: validateAssetIds }}
+          <MultiSelect
+            label="Target hosts"
+            description="Request only what the task needs — broad scope gets denied."
+            placeholder="Search hosts"
+            searchable
+            clearable
+            maxDropdownHeight={240}
+            data={assetOptions}
+            value={value.assetHostnames}
+            onChange={(v) => set('assetHostnames', v)}
+            onBlur={() => setTouched((t) => ({ ...t, assetHostnames: true }))}
+            error={touched.assetHostnames ? errors.assetHostnames : undefined}
+          />
+
+          <Radio.Group
+            label="Connect as"
+            value={value.principal}
+            onChange={(v) => set('principal', v)}
           >
-            {(field) => (
-              <MultiSelect
-                label="Target hosts"
-                description="Request only what the task needs — broad scope gets denied."
-                placeholder="Search hosts"
-                searchable
-                clearable
-                maxDropdownHeight={240}
-                data={assetOptions}
-                value={field.state.value}
-                onChange={field.handleChange}
-                onBlur={field.handleBlur}
-                error={field.state.meta.errors[0]}
+            <Group gap="lg" mt={6}>
+              <Radio value="deploy" label="deploy" size="xs" />
+              <Radio value="ops" label="ops" size="xs" />
+              <Radio
+                value="root"
+                size="xs"
+                label={
+                  <Group gap={6}>
+                    <Text size="sm">root</Text>
+                    <Badge size="xs" color="rose">elevated</Badge>
+                  </Group>
+                }
               />
-            )}
-          </form.Field>
+            </Group>
+          </Radio.Group>
 
-          <form.Field name="principal">
-            {(field) => (
-              <Radio.Group
-                label="Connect as"
-                value={field.state.value}
-                onChange={field.handleChange}
-              >
-                <Group gap="lg" mt={6}>
-                  <Radio value="deploy" label="deploy" size="xs" />
-                  <Radio value="ops" label="ops" size="xs" />
-                  <Radio
-                    value="root"
-                    size="xs"
-                    label={
-                      <Group gap={5}>
-                        <Text size="sm">root</Text>
-                        <Badge size="xs" color="rose">elevated</Badge>
-                      </Group>
-                    }
-                  />
-                </Group>
-              </Radio.Group>
-            )}
-          </form.Field>
+          <Box>
+            <Text size="sm" fw={500} mb={6}>Window</Text>
+            <SegmentedControl
+              fullWidth
+              size="xs"
+              value={String(value.durationMinutes)}
+              onChange={(v) => set('durationMinutes', Number(v))}
+              data={[
+                { label: '30 min', value: '30' },
+                { label: '1 hour', value: '60' },
+                { label: '2 hours', value: '120' },
+                { label: '4 hours', value: '240' },
+              ]}
+            />
+            <Text size={FS.micro} c="dimmed" mt={6}>
+              Policy caps operator grants at {MAX_DURATION_MINUTES / 60} hours. Access
+              revokes itself when the window closes — no cleanup task to forget.
+            </Text>
+          </Box>
 
-          <form.Field name="durationMinutes">
-            {(field) => (
-              <Box>
-                <Text size="sm" fw={500} mb={6}>Window</Text>
-                <SegmentedControl
-                  fullWidth
-                  size="xs"
-                  value={String(field.state.value)}
-                  onChange={(v) => field.handleChange(Number(v))}
-                  data={[
-                    { label: '30 min', value: '30' },
-                    { label: '1 hour', value: '60' },
-                    { label: '2 hours', value: '120' },
-                    { label: '4 hours', value: '240' },
-                  ]}
-                />
-                <Text size="10px" c="dimmed" mt={5}>
-                  Policy caps operator grants at {MAX_DURATION_MINUTES / 60} hours. Access
-                  revokes itself when the window closes — no cleanup task to forget.
+          <Textarea
+            label="Justification"
+            description="Reference the incident or change ticket. This is what the approver sees and what the audit log keeps."
+            placeholder="INC-4471 — settlement worker stuck in retry loop, need to inspect queue depth on the primary."
+            minRows={3}
+            autosize
+            value={value.justification}
+            onChange={(e) => set('justification', e.currentTarget.value)}
+            onBlur={() => setTouched((t) => ({ ...t, justification: true }))}
+            error={touched.justification ? errors.justification : undefined}
+          />
+
+          <Box>
+            <Checkbox
+              size="xs"
+              color="rose"
+              label="Break-glass — production is down and no approver is reachable"
+              checked={value.breakGlass}
+              onChange={(e) => set('breakGlass', e.currentTarget.checked)}
+            />
+            {value.breakGlass && (
+              <Alert color="rose" variant="light" mt="xs" icon={<IconAlertTriangle size={15} />}>
+                <Text size="xs">
+                  Break-glass grants access immediately and notifies every admin plus the
+                  security channel. The credential is revoked and regenerated when the window
+                  closes, and the session is reviewed. Use it when the alternative is a longer
+                  outage — not to skip the queue.
                 </Text>
-              </Box>
+              </Alert>
             )}
-          </form.Field>
-
-          <form.Field
-            name="justification"
-            validators={{ onMount: validateJustification, onChange: validateJustification }}
-          >
-            {(field) => (
-              <Textarea
-                label="Justification"
-                description="Reference the incident or change ticket. This is what the approver sees and what the audit log keeps."
-                placeholder="INC-4471 — settlement worker stuck in retry loop, need to inspect queue depth on the primary."
-                minRows={3}
-                autosize
-                value={field.state.value}
-                onChange={(e) => field.handleChange(e.currentTarget.value)}
-                onBlur={field.handleBlur}
-                error={field.state.meta.isTouched ? field.state.meta.errors[0] : undefined}
-              />
-            )}
-          </form.Field>
-
-          <form.Field name="breakGlass">
-            {(field) => (
-              <Box>
-                <Checkbox
-                  size="xs"
-                  color="rose"
-                  label="Break-glass — production is down and no approver is reachable"
-                  checked={field.state.value}
-                  onChange={(e) => field.handleChange(e.currentTarget.checked)}
-                />
-                {field.state.value && (
-                  <Alert color="rose" variant="light" mt="xs" icon={<IconAlertTriangle size={15} />}>
-                    <Text size="xs">
-                      Break-glass grants access immediately and notifies every admin plus the
-                      security channel. The credential is revoked and regenerated when the window
-                      closes, and the session is reviewed. Use it when the alternative is a longer
-                      outage — not to skip the queue.
-                    </Text>
-                  </Alert>
-                )}
-              </Box>
-            )}
-          </form.Field>
+          </Box>
 
           <Group justify="flex-end" mt="xs">
-            <Button variant="subtle" color="slate" size="xs" onClick={onClose}>
+            <Button variant="subtle" color="slate" size="xs" onClick={close}>
               Cancel
             </Button>
-            <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting] as const}>
-              {([canSubmit, isSubmitting]) => (
-                <Button type="submit" size="xs" disabled={!canSubmit} loading={isSubmitting}>
-                  Submit request
-                </Button>
-              )}
-            </form.Subscribe>
+            <Button type="submit" size="xs" disabled={!canSubmit} loading={create.isPending}>
+              Submit request
+            </Button>
           </Group>
         </Stack>
       </form>
