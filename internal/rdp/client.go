@@ -311,9 +311,26 @@ func (c *Client) Next() ([]Rect, error) {
 	if c.tap != nil {
 		c.tap(frame)
 	}
+	return DecodePDU(c.rea, frame)
+}
 
-	// Fast-Path carries the updates; anything TPKT-framed at this point is a
-	// share-control PDU, which may be an error the operator needs to see.
+// DecodePDU turns one PDU into screen rectangles.
+//
+// Shared by the live path and by replay, which is the whole reason a recording
+// can be trusted to show what the operator saw. Replay once had its own version
+// that handled only the fast path; the live session drew through the slow one,
+// so every recording decoded to an empty screen while reporting success.
+//
+// Returns no rectangles and no error for traffic that is not a screen update,
+// so a caller loops on it without having to know what else a server sends.
+func DecodePDU(rea *Reassembler, frame []byte) ([]Rect, error) {
+	if len(frame) == 0 {
+		return nil, nil
+	}
+
+	// Fast-Path carries most updates; anything TPKT-framed at this point is a
+	// share-control PDU, which may be a slow-path update or an error the
+	// operator needs to see.
 	if frame[0]&actionMask == actionX224 {
 		_, payload, perr := ParseSendDataIndication(frame)
 		if perr != nil {
@@ -335,9 +352,7 @@ func (c *Client) Next() ([]Rect, error) {
 			return nil, fmt.Errorf("session ended: %s", ErrorInfo(sd.Body))
 		case pduType2Update:
 			// The slow path. Servers use it when fast-path output was not
-			// negotiated, and some send a first update this way regardless, so
-			// handling both is what makes the client work rather than work
-			// most of the time.
+			// negotiated, and some send updates this way regardless.
 			if len(sd.Body) < 2 {
 				return nil, nil
 			}
@@ -349,7 +364,7 @@ func (c *Client) Next() ([]Rect, error) {
 		return nil, nil
 	}
 
-	return c.rea.Feed(frame)
+	return rea.Feed(frame)
 }
 
 // Send delivers one input event to the target.

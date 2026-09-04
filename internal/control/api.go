@@ -102,6 +102,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/discovered/{hostname}/enrol", a.postEnrol)
 	mux.HandleFunc("POST /api/v1/discovered/{hostname}/ignore", a.postIgnoreHost)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording", a.user(a.getRecording))
+	mux.HandleFunc("GET /api/v1/sessions/{id}/rdp-replay", a.user(a.getRDPReplay))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording/link", a.user(a.presignRecording))
 
 	// Reporter surface. Machine token only.

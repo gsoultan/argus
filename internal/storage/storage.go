@@ -94,7 +94,19 @@ func (c *Client) EnsureBucket(ctx context.Context) error {
 // Date-prefixed so a bucket lifecycle rule can expire by retention period
 // without listing every object, and so a day's recordings are contiguous.
 func ObjectKey(startedAt time.Time, sessionID string) string {
-	return fmt.Sprintf("%s/%s.cast", startedAt.UTC().Format("2006/01/02"), sessionID)
+	return ObjectKeyExt(startedAt, sessionID, ".cast")
+}
+
+// ObjectKeyExt is ObjectKey for recordings that are not terminal captures.
+//
+// The extension carries which format the object is, and getting it wrong is not
+// cosmetic: the backup drill selects recordings by extension, and an operator
+// fetching a .cast expects something a terminal player can open. A Remote
+// Desktop recording stored under that name verifies — the chain is
+// format-agnostic — and then cannot be played by anything that trusted the
+// name.
+func ObjectKeyExt(startedAt time.Time, sessionID, ext string) string {
+	return fmt.Sprintf("%s/%s%s", startedAt.UTC().Format("2006/01/02"), sessionID, ext)
 }
 
 // Upload stores a recording and returns its object key.
@@ -113,6 +125,12 @@ func (c *Client) Upload(ctx context.Context, path, sessionID, chainHead string,
 	if err != nil {
 		return "", fmt.Errorf("open recording: %w", err)
 	}
+	// The object keeps the extension the artefact has on disk, so the two
+	// cannot disagree about what format it is.
+	ext := filepath.Ext(path)
+	if ext == "" {
+		ext = ".cast"
+	}
 	defer f.Close()
 
 	info, err := f.Stat()
@@ -120,7 +138,7 @@ func (c *Client) Upload(ctx context.Context, path, sessionID, chainHead string,
 		return "", err
 	}
 
-	key := ObjectKey(startedAt, sessionID)
+	key := ObjectKeyExt(startedAt, sessionID, ext)
 	_, err = c.mc.PutObject(ctx, c.bucket, key, f, info.Size(), minio.PutObjectOptions{
 		ContentType: "application/x-asciicast",
 		UserMetadata: map[string]string{
@@ -185,5 +203,14 @@ func (c *Client) PresignedURL(ctx context.Context, key string, ttl time.Duration
 
 // LocalPath is where a recording lives before upload.
 func LocalPath(dir, sessionID string) string {
-	return filepath.Join(dir, sessionID+".cast")
+	return LocalPathExt(dir, sessionID, ".cast")
+}
+
+// LocalPathExt is LocalPath for recordings that are not terminal captures.
+//
+// The extension is part of the artefact's identity, not decoration: a
+// Remote Desktop recording and a terminal one are different formats, and a
+// verifier handed the wrong one reports tampering rather than a mismatch.
+func LocalPathExt(dir, sessionID, ext string) string {
+	return filepath.Join(dir, sessionID+ext)
 }

@@ -108,7 +108,7 @@ export interface AssetGroup {
 /* ── Sessions ────────────────────────────────────────────────────────────── */
 
 export type SessionState = 'active' | 'closed' | 'terminated' | 'rejected'
-export type SessionProtocol = 'ssh' | 'sftp'
+export type SessionProtocol = 'ssh' | 'sftp' | 'rdp'
 
 /**
  * How the session reached the host.
@@ -132,7 +132,14 @@ export type SessionOrigin = 'brokered' | 'direct'
  * on screen. `ebpf` additionally carries kernel-observed execve/connect events
  * and is the tier that survives an adversarial auditor.
  */
-export type RecordingFidelity = 'pty' | 'ebpf' | 'none'
+/**
+ * How much of a session the recording can actually evidence.
+ *
+ * 'rdp' is its own value rather than folded into 'pty': a desktop recording
+ * shows what was on screen and carries no command list at all, so treating it
+ * as a terminal capture would promise a timeline that does not exist.
+ */
+export type RecordingFidelity = 'pty' | 'ebpf' | 'rdp' | 'none'
 
 export interface Session {
   id: UUID

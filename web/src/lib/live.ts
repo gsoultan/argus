@@ -278,6 +278,38 @@ export async function ignoreHost(hostname: string, note: string): Promise<void> 
   await post(`/api/v1/discovered/${encodeURIComponent(hostname)}/ignore`, { note })
 }
 
+/**
+ * Fetches a Remote Desktop recording, decoded to display frames.
+ *
+ * The control plane decodes and verifies before returning anything, so the
+ * verdict arrives with the frames rather than after them — a viewer must not
+ * form an impression of a session and only then be told it was altered.
+ */
+export async function rdpReplay(
+  sessionId: string,
+): Promise<{ buffer: ArrayBuffer; width: number; height: number; verified: string } | null> {
+  if (!isConfigured()) return null
+  const res = await fetch(`${BASE}/api/v1/sessions/${sessionId}/rdp-replay`, {
+    credentials: 'include',
+    headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+  })
+  if (!res.ok) return null
+
+  let info: { width?: number; height?: number } = {}
+  try {
+    info = JSON.parse(res.headers.get('X-Argus-Replay-Info') ?? '{}')
+  } catch {
+    // A missing or malformed header should not lose the frames; the canvas
+    // falls back to a sensible size.
+  }
+  return {
+    buffer: await res.arrayBuffer(),
+    width: info.width ?? 1024,
+    height: info.height ?? 768,
+    verified: res.headers.get('X-Argus-Chain-Verified') ?? 'unverified',
+  }
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     // Session cookie is the real credential; the bearer token is a development
