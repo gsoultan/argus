@@ -66,3 +66,20 @@ dev/secrets.env
 !dev/secrets.env.example
 dist/
 backups/
+
+# Binaries built in the repo root.
+#
+# `go build ./cmd/...` drops its output beside the source unless told otherwise,
+# and two of these were committed by accident — 20 MB of build artefact that
+# every clone since has been paying for. Builds belong in bin/, which is already
+# ignored; these patterns are anchored to the root so a source directory of the
+# same name is unaffected.
+/argus-agent
+/argus-control
+/argus-gateway
+/argus-verify
+/mintticket
+/gencerts
+/rdpclient
+/rdpprobe
+/wsprobe
