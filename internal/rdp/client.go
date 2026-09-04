@@ -26,6 +26,15 @@ type Client struct {
 
 	width, height, depth int
 
+	// tap receives every PDU read from the target.
+	//
+	// Recording happens here rather than on the decoded rectangles so both
+	// paths — a native client proxied through Argus, and a browser driven by
+	// Argus as the client — produce the same artefact. A recording that
+	// depended on which door the user came in by would be two formats wearing
+	// one extension.
+	tap func([]byte)
+
 	// readTimeout bounds a single read from the target.
 	//
 	// Without one, a server that stops sending pins a goroutine and a socket
@@ -299,6 +308,9 @@ func (c *Client) Next() ([]Rect, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.tap != nil {
+		c.tap(frame)
+	}
 
 	// Fast-Path carries the updates; anything TPKT-framed at this point is a
 	// share-control PDU, which may be an error the operator needs to see.
@@ -349,6 +361,13 @@ func (c *Client) Send(e InputEvent) error {
 	_, err = c.conn.Write(pdu)
 	return err
 }
+
+// SetTap registers a function called with every PDU read from the target.
+//
+// Called before decoding, so the recording holds what arrived rather than what
+// this build could make of it — a later version that understands more of the
+// protocol can replay an older recording in more detail.
+func (c *Client) SetTap(fn func([]byte)) { c.tap = fn }
 
 // Size reports the desktop dimensions.
 func (c *Client) Size() (width, height int) { return c.width, c.height }
