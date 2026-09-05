@@ -88,3 +88,7 @@ public/big.cast
 # Playwright output
 web/test-results/
 web/playwright-report/
+
+# Playwright writes here if run from the wrong directory
+test-results/
+playwright-report/
