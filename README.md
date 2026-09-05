@@ -201,3 +201,47 @@ PTY-derived command detection is an audit aid, not a security boundary — a use
 can obscure intent with base64 or a script whose body never reaches the screen.
 The eBPF agent tier provides kernel-observed `execve` evidence. The UI labels
 which one produced any given timeline and never presents them as equivalent.
+
+## Controls an operator should know exist
+
+The console explains each of these where it appears; this is the list.
+
+- **Gateway policy** is held by the control plane and enforced by the gateway.
+  Every SSH forwarding channel is closed by default and every recording
+  guarantee is on. Only an owner or admin can change it, every change is
+  audited with what moved and why it matters, and a session keeps the policy it
+  started under — tightening policy does not stop a session in progress;
+  terminating it does. A gateway that cannot reach the control plane keeps the
+  policy it has, in either direction.
+- **Port, agent and X11 forwarding** are implemented, not merely permitted.
+  Local forwards dial from the *target*, so `-L` reaches what the target can
+  reach and nothing more. A tunnel's contents are not recorded; its endpoints,
+  duration and bytes each way go to the audit chain. Both are bounded per
+  session (32 local, 8 remote).
+- **Private keys must be mode 0600.** The gateway host key, the CA key, injected
+  credentials and every TLS key are refused at load if group or others can
+  read them. The process will not start; the message says `chmod 600`.
+- **Failed logins are budgeted separately from logins.** `failures_per_hour`
+  is charged only by actual failures and refused before any work is done. A
+  429 says nothing about whether anything supplied was valid.
+- **Browser terminal tickets** are single-use, bound to one target and
+  principal, and expire in about a minute — which is what makes a credential
+  in a WebSocket query string acceptable.
+- **Recording fidelity is checked against the artefact.** A session reported
+  as eBPF whose recording carries no kernel events is flagged in the console;
+  the badge alone reads the claim, not the bytes.
+- **No object storage** is warned about loudly at startup: without it the
+  audit chain and every recording exist only in one database on one host.
+
+### Verifying it yourself
+
+```bash
+./scripts/deps.sh up
+ARGUS_TEST_DATABASE_URL="postgres://argus:argus@localhost:5433/argus?sslmode=disable" go test ./...
+cd web && bun run test && bun run e2e     # unit, then a real browser
+```
+
+The browser suite builds the console, serves it as deployed, and asserts on
+every route with zero console errors, the fonts actually loading, the audit
+chain verifying in WASM, and — the reason it exists — that replaying a large
+terminal or desktop recording leaves the main-thread heap flat.

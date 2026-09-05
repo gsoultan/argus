@@ -14,6 +14,7 @@ Read this file first, then only the memory a task actually needs.
 | [design-system](design-system.md) | Any visual or component change |
 | [pwa-and-service-worker](pwa-and-service-worker.md) | Caching, offline, auth redirects, releases |
 | [gateway-policy](gateway-policy.md) | SSH channel policy, forwarding, recording guarantees |
+| [browser-checks](browser-checks.md) | Playwright suite, memory ceilings, how to measure |
 
 ## Standing rules for this repo
 

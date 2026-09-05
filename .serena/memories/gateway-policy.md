@@ -109,3 +109,28 @@ Refusals name the limit, so someone who genuinely needs more asks rather than
 diagnosing a phantom fault. The limit is on what is *held*, so closing a forward
 returns budget, and re-binding an address already held replaces its listener
 rather than consuming another slot.
+
+## The failure budget that never refused anyone
+
+`limitLogin` checked "is this client over its failed-authentication budget" by
+calling `Allow` and then `Reset` to hand the token back. `Reset` refills the
+whole bucket. So every login attempt restored the client's entire failure
+budget, and `failures_per_hour` — configured, unit-tested, documented — never
+once refused a request. Found by the first test that drove repeated requests at
+the real handler and asserted a 429.
+
+Fixed with `Limiter.Exhausted(key)`: a peek that computes refill but writes
+nothing back. Only `RecordAuthFailure` charges the budget. Burst is
+`min(5, failures_per_hour)`, so a tight configuration is honoured rather than
+letting five through before anything is refused.
+
+Rule: a limiter check that has to *spend* to *ask* is wrong. Peek, then charge
+on the outcome.
+
+## The browser terminal handshake
+
+`/ws/session` takes the ticket in the query string because a browser cannot set
+headers on a WebSocket upgrade. Tolerable only because the ticket is single-use,
+bound to one target and principal, and expires in ~1 minute — the three
+properties `webssh_test.go` asserts on the real endpoint through a real target,
+plus that a shadow-scoped ticket cannot open a terminal.
