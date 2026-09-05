@@ -564,3 +564,39 @@ func TestVerifyAuditChainDetectsARemovedRecord(t *testing.T) {
 		t.Errorf("detail does not identify a structural break: %q", v.Detail)
 	}
 }
+
+// The audit chain must verify for a timestamp with nanosecond precision.
+//
+// chainHash formats with RFC3339Nano but TIMESTAMPTZ stores microseconds, so a
+// hash computed over the in-memory value could never be recomputed from the
+// stored row. Go's clock is microsecond-granular on macOS and nanosecond-
+// granular on Linux, so this was invisible on a developer's machine and broke
+// verification for nearly every event in production. The timestamp here is
+// explicit rather than time.Now(), so the test fails on any platform.
+func TestAuditChainVerifiesWithNanosecondTimestamps(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	for i := range 3 {
+		at := time.Date(2026, 9, 6, 12, 0, i, 123456789, time.UTC)
+		e, err := s.AppendAudit(ctx, AuditEvent{
+			At: at, Action: "verify.nanos", ActorEmail: "u@x.id", Detail: unique("d"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// What was hashed must be what can be read back.
+		if e.At.Nanosecond()%1000 != 0 {
+			t.Errorf("stored timestamp keeps sub-microsecond digits: %d ns", e.At.Nanosecond())
+		}
+	}
+
+	v, err := s.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatalf("VerifyAuditChain: %v", err)
+	}
+	if !v.OK {
+		t.Fatalf("a chain written with nanosecond timestamps failed to verify at seq %d: %s",
+			v.BrokenAt, v.Detail)
+	}
+}
