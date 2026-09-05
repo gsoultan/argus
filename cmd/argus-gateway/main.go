@@ -325,6 +325,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
+			defer ticketSigner.Close()
 		} else {
 			log.Warn("no web.signing_secret — browser terminal falls back to static tokens",
 				"detail", "tickets are single-use and short-lived; static tokens are neither")

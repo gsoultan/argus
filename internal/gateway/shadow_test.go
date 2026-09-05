@@ -124,6 +124,10 @@ func newTestSigner(t *testing.T) *auth.Signer {
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
+	// A Signer runs a sweeper for its lifetime. Closing it is what the
+	// production callers do, and without it every test that builds one leaks
+	// a goroutine -- which is precisely what the package's leak check reports.
+	t.Cleanup(s.Close)
 	return s
 }
 

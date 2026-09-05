@@ -163,6 +163,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		defer signer.Close()
 	}
 
 	var provider *auth.OIDC

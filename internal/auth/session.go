@@ -119,6 +119,12 @@ type Signer struct {
 	// vulnerability.
 	mu       sync.Mutex
 	redeemed map[string]time.Time
+
+	// stop ends the sweeper. Without it the goroutine ran for the life of the
+	// process holding a reference to this Signer, so neither could ever be
+	// collected -- and any test or caller that built a Signer leaked one.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // SetRedeemer switches to shared redemption.
@@ -128,30 +134,99 @@ func (s *Signer) SetRedeemer(r Redeemer) { s.redeemer = r }
 func (s *Signer) SharedRedemption() bool { return s.redeemer != nil }
 
 // NewSigner builds a signer from a secret.
+// placeholderSecrets are values that ship in example configs and documentation.
+//
+// Length alone does not make a secret. Every one of these is public, so a
+// deployment using one is signing every session cookie and every terminal
+// ticket with a string an attacker can read off GitHub -- which means forging
+// either is arithmetic, not an attack. Compared case-insensitively and after
+// trimming, because a copied placeholder often arrives with different casing
+// or a stray newline.
+var placeholderSecrets = []string{
+	"change-me",
+	"changeme",
+	"change-me-please",
+	"replace-me",
+	"secret",
+	"password",
+	"argus-dev-signing-secret-at-least-32-chars-long",
+	"insert-a-long-random-string-here",
+	"your-signing-secret-here",
+}
+
+// ErrPlaceholderSecret reports a signing secret that is public knowledge.
+var ErrPlaceholderSecret = errors.New("signing secret is a known placeholder")
+
 func NewSigner(secret string) (*Signer, error) {
 	if len(secret) < 32 {
 		// Short secrets make offline brute force practical against a signature
 		// an attacker can capture from any request.
 		return nil, fmt.Errorf("signing secret must be at least 32 characters")
 	}
-	s := &Signer{key: []byte(secret), redeemed: map[string]time.Time{}}
+	// Checked after the length rule so the more basic mistake is reported
+	// first, and refused rather than warned about: a warning at startup is how
+	// a placeholder survives into production.
+	norm := strings.ToLower(strings.TrimSpace(secret))
+	for _, bad := range placeholderSecrets {
+		// Prefix, not equality: hitting the 32-character rule and padding the
+		// placeholder out to satisfy it is the common response to it, and the
+		// result is no less public than the original.
+		if strings.HasPrefix(norm, bad) {
+			return nil, fmt.Errorf("%w: %q ships in example configuration and is public. "+
+				"Generate one with: openssl rand -base64 48", ErrPlaceholderSecret, secret)
+		}
+	}
+	// A secret made only of one repeated character has no more entropy than
+	// that character, whatever its length.
+	if distinctRunes(norm) < 8 {
+		return nil, fmt.Errorf("signing secret has too little variety to be random; " +
+			"generate one with: openssl rand -base64 48")
+	}
+	s := &Signer{
+		key:      []byte(secret),
+		redeemed: map[string]time.Time{},
+		stop:     make(chan struct{}),
+	}
 	go s.sweep()
 	return s, nil
+}
+
+// distinctRunes counts unique characters, as a cheap entropy floor.
+func distinctRunes(s string) int {
+	seen := map[rune]struct{}{}
+	for _, r := range s {
+		seen[r] = struct{}{}
+	}
+	return len(seen)
+}
+
+// Close stops the sweeper. Safe to call more than once, and safe on a nil
+// Signer so a caller need not decide whether one was ever configured.
+func (s *Signer) Close() {
+	if s == nil {
+		return
+	}
+	s.stopOnce.Do(func() { close(s.stop) })
 }
 
 // sweep drops expired ticket ids so the replay set stays bounded.
 func (s *Signer) sweep() {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
-	for range t.C {
-		now := time.Now()
-		s.mu.Lock()
-		for id, exp := range s.redeemed {
-			if now.After(exp) {
-				delete(s.redeemed, id)
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-t.C:
+			now := time.Now()
+			s.mu.Lock()
+			for id, exp := range s.redeemed {
+				if now.After(exp) {
+					delete(s.redeemed, id)
+				}
 			}
+			s.mu.Unlock()
 		}
-		s.mu.Unlock()
 	}
 }
 
