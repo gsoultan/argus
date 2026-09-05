@@ -163,7 +163,20 @@ func (s *Server) Listen() error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.cfg.Listen, err)
 	}
+
+	// Published under the lock that Close reads it under. Unsynchronised, a
+	// Close racing a start could read a nil listener and return having stopped
+	// nothing, leaving the accept loop running and the port held.
+	s.mu.Lock()
+	if s.closing {
+		// Close already ran. Do not install a listener it will never see.
+		s.mu.Unlock()
+		_ = ln.Close()
+		return nil
+	}
 	s.listener = ln
+	s.mu.Unlock()
+
 	s.log.Info("gateway listening",
 		"addr", ln.Addr().String(),
 		"assets", s.cfg.Inventory.Count())
@@ -194,13 +207,28 @@ func (s *Server) Listen() error {
 func (s *Server) Close() error {
 	s.mu.Lock()
 	s.closing = true
+	ln := s.listener
 	s.mu.Unlock()
 
-	if s.listener != nil {
-		_ = s.listener.Close()
+	if ln != nil {
+		_ = ln.Close()
 	}
 	s.wg.Wait()
 	return nil
+}
+
+// Addr reports the address the gateway is accepting on, or nil before it is.
+//
+// Exists because Listen binds cfg.Listen itself and blocks, so a caller that
+// asked for port 0 has no other way to learn what it got -- and reaching into
+// the field instead is the unsynchronised read this type just stopped having.
+func (s *Server) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
 }
 
 // ActiveSessions returns a snapshot for the control plane.

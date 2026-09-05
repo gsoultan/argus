@@ -349,11 +349,8 @@ func startGateway(t *testing.T, policy *PolicyHolder) (addr string, clientSigner
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		srv.mu.Lock()
-		ln := srv.listener
-		srv.mu.Unlock()
-		if ln != nil {
-			return ln.Addr().String(), signerFromFile(t, userKeyPath)
+		if addr := srv.Addr(); addr != nil {
+			return addr.String(), signerFromFile(t, userKeyPath)
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("gateway never bound a listener")
