@@ -84,3 +84,7 @@ backups/
 /rdpprobe
 /wsprobe
 public/big.cast
+
+# Playwright output
+web/test-results/
+web/playwright-report/

@@ -79,11 +79,32 @@ function SessionDetail() {
   const [fetched, setFetched] = useState(false)
   const castUrl = new URLSearchParams(window.location.search).get('cast')
 
+  // ?rdp=<url> loads a display stream straight from a URL, the way ?cast= does
+  // for terminal recordings: it is how gateway output is checked against the
+  // production decoder, and how the desktop player is measured under a large
+  // recording without a control plane in the loop. Dimensions come from ?w=
+  // and ?h= because the stream carries none.
+  const rdpUrl = new URLSearchParams(window.location.search).get('rdp')
+
   useEffect(() => {
     if (session?.protocol !== 'rdp' || rdpFrames) return
     let cancelled = false
     void (async () => {
       try {
+        if (rdpUrl) {
+          const q = new URLSearchParams(window.location.search)
+          const res = await fetch(rdpUrl)
+          if (!res.ok) throw new Error(`${rdpUrl} → ${res.status}`)
+          const buffer = await res.arrayBuffer()
+          if (cancelled) return
+          setRdpFrames({
+            buffer,
+            width: Number(q.get('w')) || 1024,
+            height: Number(q.get('h')) || 768,
+            verified: 'unverified',
+          })
+          return
+        }
         const got = await rdpReplay(session.id)
         if (cancelled) return
         if (!got) {
@@ -100,7 +121,7 @@ function SessionDetail() {
     return () => {
       cancelled = true
     }
-  }, [session?.id, session?.protocol, rdpFrames])
+  }, [session?.id, session?.protocol, rdpFrames, rdpUrl])
 
   useEffect(() => {
     let cancelled = false

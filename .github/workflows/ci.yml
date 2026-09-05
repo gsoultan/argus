@@ -188,6 +188,32 @@ jobs:
             exit 1
           }
 
+  console-e2e:
+    name: Console in a browser
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: web }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      # Every route with zero console errors, the fonts actually loading, the
+      # audit chain verifying in WASM, and -- the reason this job exists --
+      # the replay heap staying flat on an 8 MB recording. These were all
+      # measured by hand once; this is what keeps them true.
+      - run: bun run e2e
+        env:
+          CI: "true"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: web/test-results/
+          retention-days: 7
+
   packaging:
     name: Packaging
     runs-on: ubuntu-latest
