@@ -134,3 +134,29 @@ headers on a WebSocket upgrade. Tolerable only because the ticket is single-use,
 bound to one target and principal, and expires in ~1 minute — the three
 properties `webssh_test.go` asserts on the real endpoint through a real target,
 plus that a shadow-scoped ticket cannot open a terminal.
+
+## The audit chain did not verify on Linux
+
+`chainHash` formats `At` with `RFC3339Nano`; the column is `TIMESTAMPTZ`, which
+stores microseconds. The hash written at insert covered a value Postgres
+immediately rounded, so recomputing it from the stored row gave a different
+digest -- reported as "the record was modified after it was written".
+
+Invisible on macOS, where Go's clock is microsecond-granular and the nanosecond
+digits are usually zero. On Linux they are not, so verification failed for very
+nearly every event ever written. Found by the first CI run on a Linux runner,
+which was also this repository's first CI run at all.
+
+Rule: **hash what you store, at the precision you store it.** `AppendAudit`
+truncates to microseconds where `At` is normalised, so the value hashed is the
+value stored. The regression test states a nanosecond timestamp explicitly
+rather than calling `time.Now()`, so it fails on any platform.
+
+Two neighbours found the same way:
+- `Server.listener` was written by `Listen` and read by `Close` unsynchronised,
+  on a struct that already had a mutex. A `Close` during startup could read nil
+  and return having stopped nothing. Use `Server.Addr()`, never the field.
+- `auth.NewSigner` started a sweeper with no stop channel, so the goroutine and
+  the Signer could never be collected. It has `Close()` now; the gateway package
+  fails on any goroutine that outlives its tests (`goleak` in `leak_test.go`),
+  which is what surfaced it.

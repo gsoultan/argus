@@ -25,6 +25,11 @@ Read this file first, then only the memory a task actually needs.
   failure mode this product cannot have.
 - **Every mutation reports both outcomes.** `run()` / `notifyError()` in
   `web/src/lib/notify.ts` exist so the guarded form is the shortest to write.
+- **Hash what you store, at the precision you store it.** `chainHash` formatted
+  the audit timestamp with nanoseconds while TIMESTAMPTZ keeps microseconds, so
+  the chain could not verify on Linux at all -- the product's core claim, broken
+  on every real deployment, invisible on macOS where the clock is already
+  microsecond-granular. See [gateway-policy](gateway-policy.md).
 - **Private keys are mode-checked at load.** `secrets.CheckPrivate` refuses any
   key readable by group or other; every loader uses it. The CA key is the
   crown jewel — whoever reads it mints any certificate.
