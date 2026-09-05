@@ -251,10 +251,26 @@ jobs:
           getent passwd argus
 
           test -f /lib/systemd/system/argus-agent.service
+
+          # These need sudo precisely because the property under test holds:
+          # /var/lib/argus is 0700 argus and /etc/argus is 0750 root:argus, so
+          # an ordinary account cannot traverse either. Running stat unprivileged
+          # failed with "permission denied" -- which was the package behaving
+          # correctly and the check misreading it as a fault.
+          #
           # The recorded user must not be able to reach their own recording.
-          [ "$(stat -c '%a %U:%G' /var/lib/argus/recordings)" = "700 root:root" ]
+          [ "$(sudo stat -c '%a %U:%G' /var/lib/argus/recordings)" = "700 root:root" ]
+          [ "$(sudo stat -c '%a %U:%G' /var/lib/argus)" = "700 argus:argus" ]
           # Secrets are not world readable.
-          [ "$(stat -c '%a' /etc/argus/agent.env)" = "600" ]
+          [ "$(sudo stat -c '%a %U:%G' /etc/argus/agent.env)" = "600 root:argus" ]
+          [ "$(sudo stat -c '%a %U:%G' /etc/argus)" = "750 root:argus" ]
+
+          # And state it from the other side: an unprivileged account is
+          # genuinely refused, rather than the directory merely being labelled.
+          if sudo -u nobody test -r /var/lib/argus/recordings; then
+            echo "::error::an unprivileged account can read the recordings directory"
+            exit 1
+          fi
 
           sudo systemd-analyze verify /lib/systemd/system/argus-agent.service
           argus-agent scan --shim /usr/bin/argus-agent || true
