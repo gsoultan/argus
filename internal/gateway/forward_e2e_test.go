@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -133,11 +136,40 @@ func targetSSHServer(t *testing.T, authorizedFP string) string {
 	return ln.Addr().String()
 }
 
+// targetConnCh carries each connection the test target accepts.
+//
+// Agent and X11 forwarding are the two modes where the *target* opens the
+// channel, so a test has to be able to act as one. Buffered and non-blocking
+// so a test that never reads it cannot wedge the target's accept loop.
+var targetConnCh = make(chan ssh.Conn, 8)
+
+// targetConns returns connections the test target has accepted.
+func targetConns(t *testing.T) <-chan ssh.Conn {
+	t.Helper()
+	return targetConnCh
+}
+
+// drainTargetConns discards connections left by earlier tests, so a test reads
+// its own target rather than a previous one's.
+func drainTargetConns() {
+	for {
+		select {
+		case <-targetConnCh:
+		default:
+			return
+		}
+	}
+}
+
 func serveTarget(raw net.Conn, cfg *ssh.ServerConfig) {
 	conn, chans, reqs, err := ssh.NewServerConn(raw, cfg)
 	if err != nil {
 		_ = raw.Close()
 		return
+	}
+	select {
+	case targetConnCh <- conn:
+	default: // nobody is watching; the connection is still served normally
 	}
 	defer conn.Close()
 	go serveTargetGlobalRequests(conn, reqs)
@@ -300,6 +332,7 @@ func serveTargetGlobalRequests(conn ssh.Conn, reqs <-chan *ssh.Request) {
 // startGateway builds a real gateway in front of a real target.
 func startGateway(t *testing.T, policy *PolicyHolder) (addr string, clientSigner ssh.Signer) {
 	t.Helper()
+	drainTargetConns()
 	dir := t.TempDir()
 
 	// The gateway's own host key, and the key it injects to reach the target.
@@ -764,5 +797,193 @@ func TestLooseningDoesNotReachSessionsAlreadyOpen(t *testing.T) {
 		t.Errorf("a session opened after the loosening should be permitted: %v", err)
 	} else {
 		_ = c.Close()
+	}
+}
+
+/* ── Agent forwarding end to end ─────────────────────────────────────────── */
+
+// agentServer is a minimal SSH agent that answers only "list identities".
+//
+// Enough to prove the channel carries the protocol both ways: the target asks
+// what keys the operator holds, and the answer that comes back is the
+// operator's, relayed through the gateway without the gateway parsing it.
+func agentServer(t *testing.T, pub ssh.PublicKey, comment string) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("agent listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	// SSH_AGENTC_REQUEST_IDENTITIES = 11, SSH_AGENT_IDENTITIES_ANSWER = 12.
+	body := func() []byte {
+		var out []byte
+		out = append(out, 12)
+		out = binary.BigEndian.AppendUint32(out, 1) // one identity
+		blob := pub.Marshal()
+		out = binary.BigEndian.AppendUint32(out, uint32(len(blob)))
+		out = append(out, blob...)
+		out = binary.BigEndian.AppendUint32(out, uint32(len(comment)))
+		out = append(out, comment...)
+		return out
+	}()
+
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				for {
+					var hdr [4]byte
+					if _, err := io.ReadFull(c, hdr[:]); err != nil {
+						return
+					}
+					msg := make([]byte, binary.BigEndian.Uint32(hdr[:]))
+					if _, err := io.ReadFull(c, msg); err != nil {
+						return
+					}
+					if len(msg) == 0 || msg[0] != 11 {
+						return
+					}
+					reply := binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+					if _, err := c.Write(append(reply, body...)); err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return ln
+}
+
+// The operator's agent reaches the target, through the gateway, and the key it
+// reports is the operator's own.
+//
+// This is the forwarding mode with the strongest argument against it -- for the
+// life of the channel, anyone with root on the gateway or the target can sign
+// with these keys -- so it is the one whose behaviour should be pinned rather
+// than assumed.
+func TestAgentForwardingCarriesTheOperatorsKey(t *testing.T) {
+	policy := NewPolicyHolder()
+	policy.Set(Policy{AllowAgentForward: true})
+	addr, signer := startGateway(t, policy)
+
+	agentLn := agentServer(t, signer.PublicKey(), "operator@laptop")
+	cli := dialGateway(t, addr, signer)
+
+	sess, err := cli.NewSession()
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	defer sess.Close()
+
+	// The client answers auth-agent@openssh.com channels the target opens by
+	// joining them to the local agent -- which is what a real ssh -A does.
+	agentChans := cli.HandleChannelOpen("auth-agent@openssh.com")
+	if agentChans == nil {
+		t.Fatal("another handler already claimed auth-agent@openssh.com")
+	}
+	served := make(chan error, 1)
+	go func() {
+		newChan, ok := <-agentChans
+		if !ok {
+			served <- errors.New("the gateway never opened an agent channel to the client")
+			return
+		}
+		ch, reqs, err := newChan.Accept()
+		if err != nil {
+			served <- err
+			return
+		}
+		go ssh.DiscardRequests(reqs)
+		defer ch.Close()
+		conn, err := net.Dial("tcp", agentLn.Addr().String())
+		if err != nil {
+			served <- err
+			return
+		}
+		// Each direction closes the far side when its source ends. Without
+		// that, the copy reading from the agent socket waits forever on a
+		// connection nothing will write to again, and the relay never returns.
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = io.Copy(conn, ch); _ = conn.Close() }()
+		go func() { defer wg.Done(); _, _ = io.Copy(ch, conn); _ = ch.Close() }()
+		wg.Wait()
+		served <- nil
+	}()
+
+	ok, err := sess.SendRequest("auth-agent-req@openssh.com", true, nil)
+	if err != nil {
+		t.Fatalf("agent request: %v", err)
+	}
+	if !ok {
+		t.Fatal("policy permits agent forwarding but the request was refused")
+	}
+
+	// Now act as the target: open the agent channel back and ask for keys.
+	target := <-targetConns(t)
+	agentCh, agentReqs, err := target.OpenChannel("auth-agent@openssh.com", nil)
+	if err != nil {
+		t.Fatalf("target could not open an agent channel: %v", err)
+	}
+	go ssh.DiscardRequests(agentReqs)
+
+	req := binary.BigEndian.AppendUint32(nil, 1)
+	req = append(req, 11) // request identities
+	if _, err := agentCh.Write(req); err != nil {
+		t.Fatalf("write agent request: %v", err)
+	}
+	var hdr [4]byte
+	if _, err := io.ReadFull(agentCh, hdr[:]); err != nil {
+		t.Fatalf("read agent reply: %v", err)
+	}
+	reply := make([]byte, binary.BigEndian.Uint32(hdr[:]))
+	if _, err := io.ReadFull(agentCh, reply); err != nil {
+		t.Fatalf("read agent reply body: %v", err)
+	}
+	if len(reply) == 0 || reply[0] != 12 {
+		t.Fatalf("expected an identities answer, got type %d", reply[0])
+	}
+	if !bytes.Contains(reply, signer.PublicKey().Marshal()) {
+		t.Error("the key the target received is not the operator's")
+	}
+	if !bytes.Contains(reply, []byte("operator@laptop")) {
+		t.Error("the identity comment did not survive the relay")
+	}
+
+	// Close the channel and wait for the relay to finish, rather than leaving
+	// it copying into a torn-down fixture. The package fails on a leaked
+	// goroutine, and a test that leaks one of its own is indistinguishable
+	// from the product leaking one.
+	_ = agentCh.Close()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Errorf("client side of the agent relay: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("the agent relay did not finish after the channel closed")
+	}
+}
+
+func TestAgentForwardingIsRefusedByDefault(t *testing.T) {
+	addr, signer := startGateway(t, NewPolicyHolder()) // closed
+	cli := dialGateway(t, addr, signer)
+	sess, err := cli.NewSession()
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	defer sess.Close()
+
+	ok, err := sess.SendRequest("auth-agent-req@openssh.com", true, nil)
+	if err != nil {
+		t.Fatalf("agent request: %v", err)
+	}
+	if ok {
+		t.Fatal("a closed policy must refuse agent forwarding")
 	}
 }
