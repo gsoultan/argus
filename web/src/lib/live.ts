@@ -67,9 +67,25 @@ export async function whoami(): Promise<Identity> {
       credentials: 'include',
       headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
     })
-    if (!res.ok) return { authenticated: false, unreachable: true }
-    return (await res.json()) as Identity
+    // 401 is the expected answer for a browser that has not signed in yet, and
+    // its body carries loginUrl and oidcEnabled -- everything the sign-in
+    // screen needs. Treating it as an outage is what hid the sign-in button
+    // entirely: LoginGate checks `unreachable` before `oidcEnabled`, so a
+    // healthy control plane correctly saying "you are not signed in" rendered
+    // as "could not be reached", with nothing to click. Sign-in was impossible
+    // by construction, which is exactly the confusion the flag exists to stop.
+    if (res.ok || res.status === 401) {
+      return (await res.json()) as Identity
+    }
+    // A gateway error means something in front of the control plane could not
+    // reach it. Any other status means it answered, and answering is the thing
+    // "unreachable" is about.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      return { authenticated: false, unreachable: true }
+    }
+    return { authenticated: false }
   } catch {
+    // No response at all: wrong address, wrong scheme, or nothing listening.
     return { authenticated: false, unreachable: true }
   }
 }
@@ -139,6 +155,33 @@ export async function terminalTicket(
   const body = (await res.json()) as { ticket?: string; error?: string }
   if (!res.ok || !body.ticket) return { error: body.error ?? `request failed (${res.status})` }
   return { ticket: body.ticket }
+}
+
+/**
+ * The control plane answered a request with a status it chose.
+ *
+ * Distinct from a transport failure: a refusal is a fact about one request,
+ * not about whether the control plane exists. Conflating them is how a 403 on
+ * a single endpoint used to mark the whole deployment unreachable.
+ */
+export class ControlPlaneError extends Error {
+  // Declared and assigned rather than as constructor parameter properties:
+  // the build runs with erasableSyntaxOnly, so type-only syntax that emits
+  // runtime code is refused.
+  readonly status: number
+  readonly path: string
+
+  constructor(status: number, path: string) {
+    super(`${path} → ${status}`)
+    this.name = 'ControlPlaneError'
+    this.status = status
+    this.path = path
+  }
+
+  /** True when the caller is signed in but not permitted to do this. */
+  get refused(): boolean {
+    return this.status === 401 || this.status === 403
+  }
 }
 
 /** Set once the first request succeeds, so the UI can label its data source. */
@@ -345,26 +388,49 @@ export async function rdpReplay(
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    // Session cookie is the real credential; the bearer token is a development
-    // fallback the control plane ignores once OIDC is configured.
-    credentials: 'include',
-    headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
-  })
-  if (!res.ok) {
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      // Session cookie is the real credential; the bearer token is a development
+      // fallback the control plane ignores once OIDC is configured.
+      credentials: 'include',
+      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    })
+  } catch (err) {
+    // Nothing answered. This is the only thing "unreachable" should mean.
     reachable = false
-    throw new Error(`${path} → ${res.status}`)
+    throw err
   }
-  reachable = true
+
+  // It answered. That it refused this particular request says nothing about
+  // whether the control plane is there -- and marking it unreachable on any
+  // non-OK status meant a single 403 flipped isLive() false everywhere, which
+  // made orFallback serve fixture data in place of a real deployment's.
+  if (res.status !== 502 && res.status !== 503 && res.status !== 504) {
+    reachable = true
+  } else {
+    reachable = false
+  }
+
+  if (!res.ok) throw new ControlPlaneError(res.status, path)
   return (await res.json()) as T
 }
 
-/** Wraps a live call so a control-plane outage falls back instead of erroring. */
+/**
+ * Wraps a live call so a control-plane outage falls back instead of erroring.
+ *
+ * An outage only. A request the control plane refused is propagated, because
+ * quietly answering it with the demo fixture would put invented hosts and
+ * sessions on screen in a real deployment and label them as real -- the one
+ * thing this console must never do. An error the operator can see beats a
+ * fiction they cannot.
+ */
 async function orFallback<T>(live: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
   if (!isConfigured()) return fallback()
   try {
     return await live()
-  } catch {
+  } catch (err) {
+    if (err instanceof ControlPlaneError) throw err
     return fallback()
   }
 }
