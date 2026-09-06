@@ -15,6 +15,7 @@ Read this file first, then only the memory a task actually needs.
 | [pwa-and-service-worker](pwa-and-service-worker.md) | Caching, offline, auth redirects, releases |
 | [gateway-policy](gateway-policy.md) | SSH channel policy, forwarding, recording guarantees |
 | [browser-checks](browser-checks.md) | Playwright suite, memory ceilings, how to measure |
+| [local-authentication](local-authentication.md) | Passwords, TOTP, recovery codes, first-run |
 
 ## Standing rules for this repo
 
