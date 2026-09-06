@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/gsoultan/argus/internal/secrets"
 )
 
 // CA signs user certificates.
@@ -47,7 +49,10 @@ type CA struct {
 
 // Load reads a CA private key from disk.
 func Load(path string, validity time.Duration) (*CA, error) {
-	data, err := os.ReadFile(path)
+	// Mode-checked before anything else. This is the single most sensitive
+	// file in the deployment: whoever reads it mints a certificate for any
+	// principal on any target, and no host-key pin or policy will stop them.
+	data, err := secrets.ReadPrivate(path)
 	if err != nil {
 		return nil, fmt.Errorf("read CA key %s: %w", path, err)
 	}

@@ -70,8 +70,10 @@ func NewThrottles(cfg ThrottleConfig) (*Throttles, error) {
 		}, ratelimit.DefaultMaxKeys),
 		failures: ratelimit.New(ratelimit.Limit{
 			Rate: cfg.FailuresPerHour, Window: time.Hour,
-			// Small: a person mistypes a few times, not fifty.
-			Burst: 5,
+			// Small: a person mistypes a few times, not fifty. Never more than
+			// the configured rate, or an operator who set failures_per_hour: 3
+			// would find five getting through before anything was refused.
+			Burst: min(5, cfg.FailuresPerHour),
 		}, ratelimit.DefaultMaxKeys),
 		tickets: ratelimit.New(ratelimit.Limit{
 			Rate: cfg.TicketsPerMinute, Window: time.Minute,
@@ -103,13 +105,15 @@ func (a *API) limitLogin(next http.HandlerFunc) http.HandlerFunc {
 
 		// A client already over the failure budget is refused before the work
 		// is done, so a brute force costs them a request and us nothing.
-		if ok, retry := a.throttles.failures.Allow(key); !ok {
+		//
+		// A peek, not a spend. Only RecordAuthFailure charges this budget --
+		// checking it here with Allow and handing the token back with Reset
+		// refilled the whole bucket on every attempt, which meant the budget
+		// could never be exceeded and the limit never refused anyone.
+		if exhausted, retry := a.throttles.failures.Exhausted(key); exhausted {
 			a.refuse(w, r, key, retry, "too many failed authentication attempts")
 			return
 		}
-		// The failure budget is only spent by actual failures; give it back
-		// immediately and re-charge it in RecordAuthFailure.
-		a.throttles.failures.Reset(key)
 
 		if ok, retry := a.throttles.login.Allow(key); !ok {
 			a.refuse(w, r, key, retry, "too many authentication attempts")

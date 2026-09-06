@@ -107,6 +107,34 @@ func (l *Limiter) Allow(key string) (ok bool, retryAfter time.Duration) {
 	return true, 0
 }
 
+// Exhausted reports whether key has no budget left, spending none of it.
+//
+// The login path needs to ask "is this client already over its failure
+// budget?" before doing any work, and that question must not itself cost a
+// token or refill one. It used to be asked with Allow followed by Reset -- and
+// Reset refills the bucket, so every login attempt handed the client its whole
+// failure budget back. The limit was configured, tested in isolation, and never
+// once refused anyone.
+//
+// Refill is computed but not written back: lastSeen is left alone so the next
+// Allow accounts for the same elapsed time, and a peek cannot drift the bucket.
+func (l *Limiter) Exhausted(key string) (exhausted bool, retryAfter time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e, ok := l.buckets[key]
+	if !ok {
+		return false, 0
+	}
+	refill := l.now().Sub(e.lastSeen).Seconds() *
+		(float64(l.limit.Rate) / l.limit.Window.Seconds())
+	tokens := minFloat(e.tokens+refill, float64(l.limit.Burst))
+	if tokens >= 1 {
+		return false, 0
+	}
+	perToken := l.limit.Window.Seconds() / float64(l.limit.Rate)
+	return true, time.Duration((1 - tokens) * perToken * float64(time.Second))
+}
+
 // Reset clears a key's history, used after a successful authentication so a
 // user who mistyped once is not throttled for the rest of the window.
 func (l *Limiter) Reset(key string) {

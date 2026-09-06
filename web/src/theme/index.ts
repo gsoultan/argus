@@ -31,14 +31,39 @@ const sky: MantineColorsTuple = [
   '#1aa5e6', '#0b83bb', '#046492', '#00476b', '#002b42',
 ]
 
+/**
+ * The type scale below Mantine's `xs`.
+ *
+ * Argus is a dense console, and a large share of its text is secondary: field
+ * labels, timestamps, hints, hash digests. Those were written as inline
+ * `size="10px"` in 36 places, alongside one-off 9, 11, 19, 27, 28 and 42px
+ * values — a scale that existed only in aggregate and could not be adjusted.
+ * Naming the steps makes it one decision instead of thirty-six.
+ */
+export const FS = {
+  /** Dense secondary text: field labels, timestamps, card hints. */
+  micro: rem(10),
+  /** Hash digests and other glyph-compared strings. */
+  digest: rem(11),
+  /** Headline figure on a dashboard stat card. */
+  figure: rem(27),
+  /** Page title in PageHeader — matches headings.h2. */
+  title: rem(19),
+  /** The 404 numeral, and nothing else. */
+  display: rem(42),
+} as const
+
 export const theme = createTheme({
   primaryColor: 'teal',
   primaryShade: { light: 6, dark: 5 },
   colors: { slate, teal, amber, rose, sky, dark: slate },
 
-  fontFamily:
-    'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  fontFamilyMonospace: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
+  // "Inter Variable" is the family @fontsource-variable/inter registers. The
+  // theme previously asked for "Inter", which no stylesheet ever defined, so
+  // every surface silently fell back to the system font and the designed
+  // typography never rendered anywhere.
+  fontFamily: 'var(--font-sans)',
+  fontFamilyMonospace: 'var(--font-mono)',
 
   headings: {
     fontWeight: '600',
@@ -81,7 +106,19 @@ export const theme = createTheme({
         },
       },
     },
-    Badge: { defaultProps: { radius: 'sm', variant: 'light' } },
+    Badge: {
+      defaultProps: { radius: 'sm', variant: 'light' },
+      styles: {
+        // Mantine truncates a Badge label when its column is squeezed. Every
+        // badge in this console is a status word, and a truncated one is worse
+        // than no badge at all: "brokered" and "bypassed" both render as
+        // "BROKE…", which is the single distinction the Origin column exists
+        // to make. Wide tables already sit in a Table.ScrollContainer, so the
+        // cost of not truncating is a horizontal scrollbar — not a lost signal.
+        label: { overflow: 'visible', textOverflow: 'clip' },
+        root: { whiteSpace: 'nowrap' },
+      },
+    },
     Tooltip: { defaultProps: { withArrow: true, openDelay: 300, radius: 'sm' } },
     Code: { styles: { root: { backgroundColor: 'var(--color-raised)' } } },
   },

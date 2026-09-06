@@ -282,6 +282,11 @@ func run() error {
 	log.Info("connection rate limit active",
 		"per_minute", rlRate, "burst", rlBurst)
 
+	// Starts closed. Every session opened before the first successful fetch
+	// runs under the safe configuration, so a control plane that is slow or
+	// absent at boot can never be the reason a channel was permitted.
+	policy := gateway.NewPolicyHolder()
+
 	srv, err := gateway.NewServer(gateway.Config{
 		Listen:             cfg.Listen,
 		HostKeyPath:        cfg.HostKey,
@@ -294,6 +299,7 @@ func run() error {
 		AuthLimiter:        authLimiter,
 		Reporter:           rep,
 		Storage:            store,
+		Policy:             policy,
 	})
 	if err != nil {
 		return err
@@ -307,6 +313,9 @@ func run() error {
 	if rep != nil {
 		rep.Drain(ctx)
 		rep.StartDrainLoop(ctx, 30*time.Second)
+		// Policy is owned by the control plane; without one this gateway keeps
+		// the closed defaults, which is what it enforced before policy existed.
+		go gateway.SyncPolicy(ctx, policy, rep, log)
 	}
 
 	if cfg.Web != nil {
@@ -316,6 +325,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
+			defer ticketSigner.Close()
 		} else {
 			log.Warn("no web.signing_secret — browser terminal falls back to static tokens",
 				"detail", "tickets are single-use and short-lived; static tokens are neither")

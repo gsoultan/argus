@@ -1,146 +1,115 @@
 /// <reference lib="webworker" />
 /**
- * asciicast v2 decoding + indexing worker.
+ * asciicast decoding and playback service.
  *
- * asciicast v2 is newline-delimited JSON: a header object, then one array per
- * event — `[time, type, data]` where type is "o" (stdout) or "i" (stdin).
- * See https://docs.asciinema.org/manual/asciicast/v2/
+ * The decoded recording stays *here*. It used to be posted to the main thread —
+ * every frame as its own `{t, kind, data}` object, plus a keyframe holding an
+ * accumulated copy of all output every five seconds — and then held in React
+ * state. A recording emits roughly one frame per keystroke, so an hour-long
+ * session put hundreds of thousands of objects and a chain of ever-larger
+ * strings on the main thread's heap, where they stayed for as long as the page
+ * was open.
  *
- * Scrubbing a terminal recording is not like scrubbing video: to know what the
- * screen looks like at t=90s you must have applied every byte before it. So we
- * decode once here and build periodic *keyframes* — snapshots of accumulated
- * output — letting the player seek to the nearest keyframe and replay only the
- * remainder. Doing this on the main thread stalls the UI on long sessions.
+ * Now the main thread receives metadata and asks for text: `screen` for a seek,
+ * `advance` for ordinary playback. Both answers are bounded — one by the
+ * keyframe interval, the other by how far the cursor moved — so the cost of
+ * drawing a frame no longer grows with how much of the recording is behind it.
  */
 
-export interface CastHeader {
-  version: number
-  width: number
-  height: number
-  timestamp?: number
-  title?: string
-  env?: Record<string, string>
-}
+import {
+  decodeCast,
+  deltaBetween,
+  screenAt,
+  type CastHeader,
+  type Decoded,
+  type KernelExec,
+} from '~/lib/castDecode'
+import { extractCommands, type TimedCommand } from '~/lib/ansi'
 
-/**
- * One execution the kernel observed, carried in the recording's `x` stream.
- *
- * Inside the hash chain like every other frame, so the command list is exactly
- * as tamper-evident as the terminal output beside it.
- */
-export interface KernelExec {
-  t: number
-  pid: number
-  ppid: number
-  uid: number
-  comm: string
-  filename: string
-  args: string[]
-  truncated?: boolean
-}
+export type { CastHeader, KernelExec } from '~/lib/castDecode'
 
-export interface CastFrame {
-  t: number
-  kind: 'o' | 'i'
-  data: string
-}
-
-/** Accumulated output at a checkpoint, so seeking doesn't replay from zero. */
-export interface Keyframe {
-  t: number
-  frameIndex: number
-  text: string
-}
-
-export type ReplayRequest = { type: 'decode'; source: string; keyframeIntervalMs?: number }
+export type ReplayRequest =
+  | { type: 'decode'; source: string; keyframeIntervalMs?: number }
+  /** Full screen contents at `t` — for seeking, and for the initial paint. */
+  | { type: 'screen'; id: number; t: number }
+  /** Output emitted in `(from, to]` — for ordinary forward playback. */
+  | { type: 'advance'; id: number; from: number; to: number }
 
 export type ReplayResponse =
   | { type: 'progress'; done: number; total: number }
   | {
       type: 'decoded'
-      execs: KernelExec[]
       header: CastHeader
-      frames: CastFrame[]
-      keyframes: Keyframe[]
+      /** Kernel-observed executions; empty for a PTY-only recording. */
+      execs: KernelExec[]
+      /**
+       * Commands inferred from the PTY stream.
+       *
+       * Computed here because it needs every frame, and the frames no longer
+       * leave this worker. Only populated when there is no kernel evidence —
+       * a guess presented next to real evidence invites reading them as equals.
+       */
+      heuristicCommands: TimedCommand[]
+      frameCount: number
       duration: number
       /** Byte total of stdout, for the "recording size" readout. */
       outputBytes: number
       ms: number
     }
+  | { type: 'screen'; id: number; text: string; t: number }
+  | { type: 'advance'; id: number; text: string; to: number }
   | { type: 'error'; message: string }
 
 const post = (m: ReplayResponse) => (self as unknown as Worker).postMessage(m)
 
+let decoded: Decoded | null = null
+
 self.onmessage = (ev: MessageEvent<ReplayRequest>) => {
-  const started = performance.now()
-  const { source, keyframeIntervalMs = 5_000 } = ev.data
+  const msg = ev.data
 
   try {
-    const lines = source.split('\n').filter((l) => l.trim().length > 0)
-    if (lines.length === 0) throw new Error('empty recording')
-
-    const header = JSON.parse(lines[0]!) as CastHeader
-    if (header.version !== 2) {
-      throw new Error(`unsupported asciicast version ${header.version}, expected 2`)
+    if (msg.type === 'decode') {
+      const started = performance.now()
+      decoded = decodeCast(msg.source, msg.keyframeIntervalMs, (done, total) =>
+        post({ type: 'progress', done, total }),
+      )
+      post({
+        type: 'decoded',
+        header: decoded.header,
+        execs: decoded.execs,
+        heuristicCommands:
+          decoded.execs.length > 0 ? [] : extractCommands(decoded.frames),
+        frameCount: decoded.frames.length,
+        duration: decoded.duration,
+        outputBytes: decoded.outputBytes,
+        ms: Math.round(performance.now() - started),
+      })
+      return
     }
 
-    const frames: CastFrame[] = []
-    const execs: KernelExec[] = []
-    const keyframes: Keyframe[] = []
-    let acc = ''
-    let outputBytes = 0
-    let nextKeyframeAt = 0
-
-    for (let i = 1; i < lines.length; i++) {
-      const raw = lines[i]!
-      let parsed: [number, string, string]
-      try {
-        parsed = JSON.parse(raw) as [number, string, string]
-      } catch {
-        continue // tolerate a truncated tail — recordings can be cut mid-write
-      }
-      const [t, kind, data] = parsed
-
-      if (kind === 'x') {
-        // Kernel evidence: what actually ran, as opposed to what the terminal
-        // displayed. Rendered as its own lane rather than mixed into the
-        // output, because the two are different kinds of claim.
-        try {
-          const e = JSON.parse(data) as Omit<KernelExec, 't'>
-          execs.push({ ...e, t })
-        } catch {
-          // A frame this build cannot read is skipped rather than failing the
-          // whole replay: an unreadable command must not cost the recording.
-        }
-        continue
-      }
-      if (kind !== 'o' && kind !== 'i') continue
-
-      frames.push({ t, kind, data })
-      if (kind === 'o') {
-        acc += data
-        outputBytes += data.length
-      }
-
-      if (t * 1000 >= nextKeyframeAt) {
-        keyframes.push({ t, frameIndex: frames.length - 1, text: acc })
-        nextKeyframeAt = t * 1000 + keyframeIntervalMs
-      }
-
-      if (i % 500 === 0) post({ type: 'progress', done: i, total: lines.length })
+    if (!decoded) {
+      post({ type: 'error', message: 'no recording decoded' })
+      return
     }
 
-    const last = frames.at(-1)
-    post({
-      type: 'decoded',
-      execs,
-      header,
-      frames,
-      keyframes,
-      duration: last ? last.t : 0,
-      outputBytes,
-      ms: Math.round(performance.now() - started),
-    })
+    if (msg.type === 'screen') {
+      post({
+        type: 'screen',
+        id: msg.id,
+        text: screenAt(decoded.frames, decoded.keyframes, msg.t),
+        t: msg.t,
+      })
+      return
+    }
+
+    if (msg.type === 'advance') {
+      post({
+        type: 'advance',
+        id: msg.id,
+        text: deltaBetween(decoded.frames, msg.from, msg.to),
+        to: msg.to,
+      })
+    }
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
   }

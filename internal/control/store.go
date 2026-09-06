@@ -504,9 +504,22 @@ func (s *Store) AppendAudit(ctx context.Context, e AuditEvent) (AuditEvent, erro
 		return e, err
 	}
 
+	// Truncated to what the column can hold, before anything is hashed.
+	//
+	// TIMESTAMPTZ stores microseconds; Go's time.Time carries nanoseconds, and
+	// chainHash formats with RFC3339Nano. So a hash computed over the in-memory
+	// value could never be recomputed from the stored row -- verification read
+	// back a timestamp Postgres had already rounded and declared the record
+	// modified. It survived review because Go's clock on macOS is microsecond
+	// granular, so the nanosecond digits were usually zero; on Linux they are
+	// not, and the chain failed to verify for very nearly every event written.
+	//
+	// Truncating here rather than in chainHash keeps the rule in one place: the
+	// value that is hashed is the value that is stored.
 	if e.At.IsZero() {
-		e.At = time.Now().UTC()
+		e.At = time.Now()
 	}
+	e.At = e.At.UTC().Truncate(time.Microsecond)
 	if e.Severity == "" {
 		e.Severity = "info"
 	}
@@ -558,6 +571,12 @@ func (s *Store) AuditEvents(ctx context.Context, limit int) ([]AuditEvent, error
 			&e.ActorEmail, &e.Target, &e.Detail, &e.PrevHash, &e.Hash); err != nil {
 			return nil, err
 		}
+		// UTC, because chainHash hashes the UTC rendering and this value is
+		// about to be marshalled to JSON for a console that recomputes the
+		// same digest. pgx returns the driver's session timezone, so without
+		// this the browser would be handed "…+07:00" and asked to reproduce a
+		// hash taken over "…Z".
+		e.At = e.At.UTC()
 		out = append(out, e)
 	}
 	return out, rows.Err()

@@ -5,6 +5,7 @@ import type {
   Coverage,
   DiscoveredHost,
   FleetStats,
+  GatewayPolicy,
   Session,
 } from '~/types/domain'
 
@@ -366,6 +367,23 @@ async function orFallback<T>(live: () => Promise<T>, fallback: () => Promise<T>)
   } catch {
     return fallback()
   }
+}
+
+/** Gateway policy as the control plane currently holds it. */
+export async function gatewayPolicy(): Promise<GatewayPolicy | null> {
+  if (!isConfigured()) return null
+  return get<GatewayPolicy>('/api/v1/policy')
+}
+
+/**
+ * Replaces the whole policy, not a field.
+ *
+ * Sending the complete document means two admins editing at once cannot
+ * interleave into a combination neither of them chose — the second write loses
+ * cleanly and visibly rather than silently merging.
+ */
+export async function saveGatewayPolicy(policy: GatewayPolicy): Promise<GatewayPolicy> {
+  return post<GatewayPolicy>('/api/v1/policy', policy)
 }
 
 export const live = {

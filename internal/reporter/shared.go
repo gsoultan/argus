@@ -117,3 +117,34 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 // ErrConflict means the control plane refused because the state already exists
 // and differs — a host key that does not match its pin, for example.
 var ErrConflict = fmt.Errorf("conflicts with recorded state")
+
+// GatewayPolicy is what a brokered session may do, as the control plane holds
+// it. Field names match internal/gateway.Policy and the console's own type.
+type GatewayPolicy struct {
+	AllowLocalForward  bool `json:"allowLocalForward"`
+	AllowRemoteForward bool `json:"allowRemoteForward"`
+	AllowAgentForward  bool `json:"allowAgentForward"`
+	AllowX11Forward    bool `json:"allowX11Forward"`
+
+	ProxySftpSubsystem           bool `json:"proxySftpSubsystem"`
+	FailClosedOnRecordingLoss    bool `json:"failClosedOnRecordingLoss"`
+	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
+	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
+}
+
+// GatewayPolicy fetches the policy in force.
+//
+// An error is returned rather than a default, and the caller keeps whatever it
+// already had. That is the safe direction: handing back a zero-valued policy on
+// a network blip would switch off SFTP decoding and fail-closed recording — a
+// transient failure would quietly reduce what gets recorded.
+func (c *Client) GatewayPolicy(ctx context.Context) (*GatewayPolicy, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("no control plane configured")
+	}
+	var out GatewayPolicy
+	if err := c.call(ctx, http.MethodGet, "/api/v1/gateway/policy", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

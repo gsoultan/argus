@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { FS } from '~/theme'
 import { Badge, Box, Group, Loader, Stack, Text } from '@mantine/core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -81,7 +82,7 @@ export function LiveTerminal({
     let ws: WebSocket | null = null
 
     const term = new Terminal({
-      fontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono'),
       fontSize: 13,
       lineHeight: 1.35,
       cursorBlink: true,
@@ -232,10 +233,10 @@ export function LiveTerminal({
             <Text span c="dimmed" inherit>@</Text>
             {target}
           </Text>
-          {detail && <Text size="10px" c="dimmed">{detail}</Text>}
+          {detail && <Text size={FS.micro} c="dimmed">{detail}</Text>}
         </Group>
         {sessionId && (
-          <Text size="10px" c="dimmed" ff="monospace">
+          <Text size={FS.micro} c="dimmed" ff="monospace">
             recording {sessionId.slice(0, 12)}…
           </Text>
         )}
@@ -251,7 +252,7 @@ export function LiveTerminal({
 function StatusBadge({ state }: { state: TerminalState }) {
   if (state === 'connecting') {
     return (
-      <Badge size="xs" color="slate" leftSection={<Loader size={8} color="gray" />}>
+      <Badge size="xs" color="slate" leftSection={<Loader size={8} color="slate" />}>
         connecting
       </Badge>
     )

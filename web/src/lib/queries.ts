@@ -48,6 +48,9 @@ export const sessionQuery = (id: string) =>
 export const requestsQuery = (state?: AccessRequest['state']) =>
   queryOptions({ queryKey: qk.requests(state), queryFn: () => api.requests(state) })
 
+export const policyQuery = () =>
+  queryOptions({ queryKey: ['policy'], queryFn: api.policy })
+
 export const auditQuery = () =>
   queryOptions({ queryKey: qk.audit, queryFn: api.auditSkeleton, staleTime: 5 * 60_000 })
 
@@ -130,6 +133,17 @@ export function useIgnoreHost() {
   return useMutation({
     mutationFn: (v: { hostname: string; note: string }) => ignoreHost(v.hostname, v.note),
     onSuccess: () => invalidateCoverage(qc),
+  })
+}
+
+export function useSavePolicy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.savePolicy,
+    // Replaced with the server's answer rather than the draft, so a field the
+    // control plane refused to change is visible immediately instead of looking
+    // saved until the next reload.
+    onSuccess: (saved) => qc.setQueryData(['policy'], saved),
   })
 }
 

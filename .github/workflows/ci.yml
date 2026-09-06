@@ -169,7 +169,50 @@ jobs:
           bun-version: "1.4.0"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # The suite, not just the type check. Every defect found in the console
+      # rewrite was invisible to tsc; the route tests render the real route
+      # tree and the chain test asserts the WASM digest still matches WebCrypto.
+      - run: bun run test
+      # Built against the fixture so the output is the one the route tests
+      # exercised, and so a build that only works with a control plane
+      # configured fails here rather than on first deploy.
       - run: bunx vite build
+        env:
+          VITE_CONTROL_URL: ""
+      - name: Confirm the service worker still denies the auth path
+        # The rule that broke SSO for every returning visitor. It is one regex
+        # in vite.config.ts and nothing else would notice it going missing.
+        run: |
+          grep -q 'auth' dist/sw.js || {
+            echo "::error::generated service worker does not denylist /auth/ — SSO will loop"
+            exit 1
+          }
+
+  console-e2e:
+    name: Console in a browser
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: web }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      # Every route with zero console errors, the fonts actually loading, the
+      # audit chain verifying in WASM, and -- the reason this job exists --
+      # the replay heap staying flat on an 8 MB recording. These were all
+      # measured by hand once; this is what keeps them true.
+      - run: bun run e2e
+        env:
+          CI: "true"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: web/test-results/
+          retention-days: 7
 
   packaging:
     name: Packaging
@@ -208,10 +251,26 @@ jobs:
           getent passwd argus
 
           test -f /lib/systemd/system/argus-agent.service
+
+          # These need sudo precisely because the property under test holds:
+          # /var/lib/argus is 0700 argus and /etc/argus is 0750 root:argus, so
+          # an ordinary account cannot traverse either. Running stat unprivileged
+          # failed with "permission denied" -- which was the package behaving
+          # correctly and the check misreading it as a fault.
+          #
           # The recorded user must not be able to reach their own recording.
-          [ "$(stat -c '%a %U:%G' /var/lib/argus/recordings)" = "700 root:root" ]
+          [ "$(sudo stat -c '%a %U:%G' /var/lib/argus/recordings)" = "700 root:root" ]
+          [ "$(sudo stat -c '%a %U:%G' /var/lib/argus)" = "700 argus:argus" ]
           # Secrets are not world readable.
-          [ "$(stat -c '%a' /etc/argus/agent.env)" = "600" ]
+          [ "$(sudo stat -c '%a %U:%G' /etc/argus/agent.env)" = "600 root:argus" ]
+          [ "$(sudo stat -c '%a %U:%G' /etc/argus)" = "750 root:argus" ]
+
+          # And state it from the other side: an unprivileged account is
+          # genuinely refused, rather than the directory merely being labelled.
+          if sudo -u nobody test -r /var/lib/argus/recordings; then
+            echo "::error::an unprivileged account can read the recordings directory"
+            exit 1
+          fi
 
           sudo systemd-analyze verify /lib/systemd/system/argus-agent.service
           argus-agent scan --shim /usr/bin/argus-agent || true

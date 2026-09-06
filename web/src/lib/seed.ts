@@ -120,7 +120,38 @@ function makeAssets(): Asset[] {
   }
   return out
 }
-export const assets = makeAssets()
+const generatedAssets = makeAssets()
+
+/**
+ * One Remote Desktop host, so the fixture exercises the desktop player.
+ *
+ * Cloned from a generated asset rather than written from scratch, so a field
+ * added to Asset later is populated here without anyone remembering to. The
+ * console's RDP paths -- the canvas replay, its memory ceiling, the connect
+ * page's "Open desktop" branch -- had nothing to run against until this.
+ */
+const win01: Asset = {
+  ...generatedAssets[0]!,
+  id: uuid(),
+  hostname: 'win-01.corp.northwind.id',
+  address: '10.44.7.12',
+  port: 3389,
+  os: 'Windows Server 2022',
+  tags: ['windows', 'corp', 'jump'],
+  protocol: 'rdp',
+  credentialMode: 'injected-password',
+  principals: ['Administrator', 'ops'],
+  // No Windows agent exists yet; the coverage page says so rather than
+  // counting this as a gap an operator could close.
+  agentState: 'absent',
+  agentLastSeenAt: null,
+  bypassPosture: 'monitored',
+  unmanagedKeyCount: 0,
+  credentialRotatedAt: ago(4_000),
+  rotationIntervalDays: 30,
+}
+
+export const assets: Asset[] = [...generatedAssets, win01]
 
 /* ── Sessions ────────────────────────────────────────────────────────────── */
 
@@ -129,7 +160,7 @@ function makeSessions(): Session[] {
   const operators = users.filter((u) => u.role === 'operator' || u.role === 'admin')
 
   const push = (state: Session['state'], startMinsAgo: number, durMins: number | null) => {
-    const asset = pick(assets)
+    const asset = pick(assets.filter((a) => a.protocol !== 'rdp'))
     const user = pick(operators)
     const principal = pick(asset.principals)
     // A direct session is only possible where the host isn't locked down.
@@ -179,7 +210,29 @@ function makeSessions(): Session[] {
   }
   return out.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
 }
-export const sessions = makeSessions()
+const generatedSessions = makeSessions()
+
+/** A finished desktop session on win-01, so replay has an RDP artefact to load. */
+const rdpSession: Session = {
+  ...generatedSessions[0]!,
+  id: uuid(),
+  assetId: win01.id,
+  assetHostname: win01.hostname,
+  principal: 'ops',
+  protocol: 'rdp',
+  origin: 'brokered',
+  state: 'closed',
+  startedAt: ago(310),
+  endedAt: ago(262),
+  fidelity: 'rdp',
+  recordingBytes: 38_500_000,
+  commandCount: null,
+  riskFlags: [],
+}
+
+export const sessions: Session[] = [...generatedSessions, rdpSession].sort(
+  (a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt),
+)
 
 /* ── Access requests ─────────────────────────────────────────────────────── */
 

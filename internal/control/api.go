@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -104,6 +105,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording", a.user(a.getRecording))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/rdp-replay", a.user(a.getRDPReplay))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording/link", a.user(a.presignRecording))
+	mux.HandleFunc("GET /api/v1/policy", a.user(a.getPolicy))
+	mux.HandleFunc("POST /api/v1/policy", a.postPolicy)
 
 	// Reporter surface. Machine token only.
 	mux.HandleFunc("POST /api/v1/report/session", a.reporter(a.postSession))
@@ -116,6 +119,8 @@ func (a *API) Handler() http.Handler {
 	// gateway rather than per instance.
 	mux.HandleFunc("POST /api/v1/terminal/redeem", a.reporter(a.postRedeem))
 	mux.HandleFunc("GET /api/v1/hostkeys/pin", a.reporter(a.getHostKeyPin))
+	// Gateways read policy through the machine credential, never the console's.
+	mux.HandleFunc("GET /api/v1/gateway/policy", a.reporter(a.getGatewayPolicy))
 	mux.HandleFunc("POST /api/v1/hostkeys/pin", a.reporter(a.postHostKeyPin))
 
 	return a.securityHeaders(a.cors(mux))
@@ -307,6 +312,35 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A recording that cannot support the fidelity it claims.
+	//
+	// eBPF fidelity means kernel-observed execve events were captured. A
+	// finished session that produced real output and reported not one command
+	// is a contradiction: either the probe stopped part-way and the agent kept
+	// claiming the higher tier, or the report was altered in flight. Neither is
+	// something to discover months later when an auditor asks what ran.
+	//
+	// The reported value is stored as sent rather than quietly downgraded --
+	// rewriting what an agent said would itself put a fiction in the record.
+	// What goes in the chain is that the claim and the evidence disagree.
+	if fidelityUnsupported(in) {
+		a.log.Warn("session claims kernel evidence it did not report",
+			"session", in.ID, "host", in.AssetHostname, "bytes", in.RecordingBytes)
+		if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+			Action:     "session.fidelity_unsupported",
+			Severity:   "warning",
+			ActorEmail: in.UserEmail,
+			Target:     in.AssetHostname,
+			Detail: fmt.Sprintf(
+				"Session %s reported eBPF fidelity but recorded %d bytes of output "+
+					"with no kernel-observed commands. Its command timeline is not "+
+					"kernel evidence; treat it as PTY capture until the agent on this "+
+					"host is shown to be working.", in.ID, in.RecordingBytes),
+		}); err != nil {
+			a.log.Error("audit append failed", "error", err)
+		}
+	}
+
 	// A bypass is the event the whole agent exists to catch, so it goes into
 	// the audit chain rather than only the session table — the audit log is
 	// what an auditor reads, and it is the tamper-evident one.
@@ -396,6 +430,31 @@ func (a *API) postAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
+
+// minOutputForCommandEvidence is how much output a session must have produced
+// before reporting no commands is treated as a contradiction.
+//
+// A login that fails, or a session closed before the shell drew a prompt,
+// legitimately runs nothing. A few kilobytes of output did not happen without
+// something executing.
+const minOutputForCommandEvidence = 4096
+
+// fidelityUnsupported reports a finished session whose evidence cannot support
+// the fidelity it claims.
+func fidelityUnsupported(s Session) bool {
+	if s.Fidelity != "ebpf" {
+		return false
+	}
+	// Only once it is over. A session still in flight has legitimately observed
+	// nothing yet, and flagging every start would train people to ignore this.
+	if s.State == "active" || s.EndedAt == nil {
+		return false
+	}
+	if s.RecordingBytes < minOutputForCommandEvidence {
+		return false
+	}
+	return s.CommandCount == nil || *s.CommandCount == 0
+}
 
 func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))

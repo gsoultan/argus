@@ -3,14 +3,15 @@ import {
   Badge, Box, Card, Group, SegmentedControl, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconPlayerPlay, IconSearch } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { ButtonLink } from '~/components/links'
 import {
   FidelityBadge, Mono, OriginBadge, RiskFlags, SessionStateBadge, absTime, bytes,
-  duration, relTime,
+  duration, relTime, rowNav,
 } from '~/components/primitives'
+import { FS } from '~/theme'
 import { sessionsQuery } from '~/lib/queries'
 import type { Session } from '~/types/domain'
 
@@ -22,6 +23,7 @@ export const Route = createFileRoute('/sessions/')({
 type Filter = 'all' | 'active' | 'direct' | 'flagged'
 
 function Sessions() {
+  const navigate = useNavigate()
   const { data: sessions } = useQuery(sessionsQuery())
   const [filter, setFilter] = useState<Filter>('all')
   const [search, setSearch] = useState('')
@@ -78,7 +80,8 @@ function Sessions() {
         />
 
         <Card padding={0}>
-          <Table verticalSpacing={8} horizontalSpacing="md" highlightOnHover striped="even">
+          <Table.ScrollContainer minWidth={1000} type="native">
+            <Table verticalSpacing={8} horizontalSpacing="md" highlightOnHover striped="even">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>State</Table.Th>
@@ -94,7 +97,12 @@ function Sessions() {
             </Table.Thead>
             <Table.Tbody>
               {rows.map((s) => (
-                <Table.Tr key={s.id}>
+                <Table.Tr
+                  key={s.id}
+                  {...rowNav(() =>
+                    navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
+                  )}
+                >
                   <Table.Td><SessionStateBadge state={s.state} /></Table.Td>
                   <Table.Td>
                     <Text size="xs">{s.userEmail.split('@')[0]}</Text>
@@ -122,11 +130,13 @@ function Sessions() {
                   <Table.Td>
                     <Group gap={6} wrap="nowrap">
                       <FidelityBadge fidelity={s.fidelity} />
-                      <Text size="10px" c="dimmed">{bytes(s.recordingBytes)}</Text>
+                      <Text size={FS.micro} c="dimmed">{bytes(s.recordingBytes)}</Text>
                     </Group>
                   </Table.Td>
                   <Table.Td><RiskFlags flags={s.riskFlags} /></Table.Td>
-                  <Table.Td>
+                  {/* The row navigates too; the button stays as an explicit
+                      affordance, so its click must not also bubble up. */}
+                  <Table.Td onClick={(e) => e.stopPropagation()}>
                     <ButtonLink
                       size="compact-xs"
                       variant="light"
@@ -142,12 +152,13 @@ function Sessions() {
               ))}
             </Table.Tbody>
           </Table>
+            </Table.ScrollContainer>
           {rows.length === 0 && (
             <Text size="xs" c="dimmed" ta="center" py="xl">No sessions match.</Text>
           )}
         </Card>
 
-        <Text size="10px" c="dimmed" mt="xs">
+        <Text size={FS.micro} c="dimmed" mt="xs">
           Showing {rows.length} of {sessions?.length ?? 0} sessions.
         </Text>
       </Box>

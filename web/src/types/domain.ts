@@ -319,3 +319,23 @@ export interface Coverage {
    */
   rdpAwaitingAgent: number
 }
+
+/**
+ * Gateway policy, as the control plane holds it.
+ *
+ * Every field loosens or tightens what a brokered session may do, so the shape
+ * is flat and boolean on purpose: a policy an operator cannot read off the
+ * screen in one pass is one they will get wrong.
+ */
+export interface GatewayPolicy {
+  allowLocalForward: boolean
+  allowRemoteForward: boolean
+  allowAgentForward: boolean
+  allowX11Forward: boolean
+  proxySftpSubsystem: boolean
+  failClosedOnRecordingLoss: boolean
+  requireEbpfForRoot: boolean
+  encryptRecordingsSeparateKey: boolean
+}
+
+export type PolicyKey = keyof GatewayPolicy

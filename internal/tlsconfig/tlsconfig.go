@@ -12,6 +12,8 @@
 package tlsconfig
 
 import (
+	"github.com/gsoultan/argus/internal/secrets"
+
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -182,6 +184,12 @@ func (r *reloader) get() (*tls.Certificate, error) {
 		return r.cert, nil
 	}
 
+	// The TLS key is checked on every reload, not just at startup: a rotation
+	// that drops a world-readable key into place is exactly the case a
+	// startup-only check would miss.
+	if err := secrets.CheckPrivate(r.keyFile); err != nil {
+		return nil, err
+	}
 	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
 	if err != nil {
 		if r.cert != nil {
