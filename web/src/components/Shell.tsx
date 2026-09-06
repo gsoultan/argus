@@ -10,10 +10,11 @@ import {
   IconLogout, IconPlugConnected, IconServer2, IconSettings, IconShieldLock,
   IconTerminal2, IconUsers,
 } from '@tabler/icons-react'
-import { useEffect, useState } from 'react'
-import { Button, Center, Loader, Paper } from '@mantine/core'
+import { useCallback, useEffect, useState } from 'react'
+import { Center, Loader } from '@mantine/core'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
-import { isConfigured, loginURL, logout, whoami, type Identity } from '~/lib/live'
+import { SignIn } from '~/components/SignIn'
+import { isConfigured, logout, whoami, type Identity } from '~/lib/live'
 import { FS } from '~/theme'
 
 const NAV: {
@@ -71,7 +72,7 @@ function Logo() {
 function LoginGate({ children }: { children: React.ReactNode }) {
   const [identity, setIdentity] = useState<Identity | null>(null)
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     if (!isConfigured()) {
       setIdentity({ authenticated: true })
       return
@@ -79,52 +80,14 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     void whoami().then(setIdentity)
   }, [])
 
+  useEffect(refresh, [refresh])
+
   if (!identity) {
     return <Center h="100vh"><Loader size="sm" color="teal" /></Center>
   }
 
   if (!identity.authenticated) {
-    return (
-      <Center h="100vh">
-        <Paper p="xl" withBorder maw={380}>
-          <Group gap={10} mb="md">
-            <Box
-              w={26}
-              h={26}
-              className="grid place-items-center shrink-0"
-              style={{
-                borderRadius: 7,
-                background: 'linear-gradient(140deg, var(--color-verified), #0f766e)',
-              }}
-            >
-              <IconShieldLock size={15} color="#04140f" stroke={2.4} />
-            </Box>
-            <Text fw={700} size="sm" style={{ letterSpacing: '0.02em' }}>ARGUS</Text>
-          </Group>
-          <Text size="sm" fw={600} mb={4}>Sign in required</Text>
-          <Text size="xs" c="dimmed" mb="lg">
-            Every action in Argus is attributed to a person, so there is no anonymous
-            access — not even read-only.
-          </Text>
-          {identity.unreachable ? (
-            <Text size="xs" c="amber.4">
-              The control plane could not be reached. It may not be running, or the
-              console may be pointed at the wrong address or scheme — it serves HTTPS
-              when a certificate is configured.
-            </Text>
-          ) : identity.oidcEnabled ? (
-            <Button fullWidth component="a" href={loginURL()}
-              leftSection={<IconShieldLock size={15} />}>
-              Sign in with SSO
-            </Button>
-          ) : (
-            <Text size="xs" c="amber.4">
-              The control plane is running but has no identity provider configured.
-            </Text>
-          )}
-        </Paper>
-      </Center>
-    )
+    return <SignIn identity={identity} onSignedIn={refresh} />
   }
 
   return <>{children}</>

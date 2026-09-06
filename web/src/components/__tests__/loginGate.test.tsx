@@ -41,7 +41,21 @@ afterEach(() => {
 })
 
 describe('LoginGate', () => {
-  it('offers a way to sign in when the control plane says "not signed in"', async () => {
+  it('offers a password form when the control plane holds its own accounts', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      json(401, { authenticated: false, passwordEnabled: true, oidcEnabled: false }),
+    ))
+    await renderGate()
+
+    expect(await screen.findByLabelText(/^email$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^sign in$/i })).toBeInTheDocument()
+    // No identity provider is configured, so nothing should suggest one.
+    expect(screen.queryByRole('link', { name: /sso/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument()
+  })
+
+  it('offers SSO when an identity provider is configured', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       json(401, { authenticated: false, loginUrl: '/auth/login', oidcEnabled: true }),
     ))
@@ -49,9 +63,17 @@ describe('LoginGate', () => {
 
     const link = await screen.findByRole('link', { name: /sign in with sso/i })
     expect(link).toHaveAttribute('href', expect.stringContaining('/auth/login'))
-    // And does not tell the operator the control plane is down, which is what
-    // sent people to debug an identity provider that was working.
     expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument()
+  })
+
+  // Both doors, when both exist.
+  it('offers both when both are available', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      json(401, { authenticated: false, passwordEnabled: true, oidcEnabled: true }),
+    ))
+    await renderGate()
+    expect(await screen.findByLabelText(/^email$/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /sign in with sso/i })).toBeInTheDocument()
   })
 
   it('reports an outage when nothing answers, and offers no button', async () => {
@@ -62,13 +84,16 @@ describe('LoginGate', () => {
     expect(screen.queryByRole('link', { name: /sign in with sso/i })).not.toBeInTheDocument()
   })
 
-  it('says so when the control plane has no identity provider', async () => {
+  // Neither door. Better to say so, and say how to fix it, than to render an
+  // empty card someone stares at.
+  it('says so when there is no way to sign in at all, and how to fix it', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, { authenticated: false, oidcEnabled: false }),
+      json(401, { authenticated: false, oidcEnabled: false, passwordEnabled: false }),
     ))
     await renderGate()
 
-    expect(await screen.findByText(/no identity provider configured/i)).toBeInTheDocument()
+    expect(await screen.findByText(/no way to sign anyone in/i)).toBeInTheDocument()
+    expect(screen.getByText(/argus-control users add/)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /sign in with sso/i })).not.toBeInTheDocument()
   })
 

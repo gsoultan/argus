@@ -57,6 +57,56 @@ export interface Identity {
   role?: string
   loginUrl?: string
   oidcEnabled?: boolean
+  /** True when this control plane holds accounts of its own. */
+  passwordEnabled?: boolean
+  /** Whether the signed-in account has a second factor. */
+  mfaEnrolled?: boolean
+}
+
+/** What a password sign-in returns: a session, or a demand for a second factor. */
+export interface PasswordLoginResult {
+  mfaRequired?: boolean
+  challenge?: string
+  authenticated?: boolean
+  role?: string
+}
+
+/**
+ * Signs in with an email and password.
+ *
+ * The refusal is deliberately the same whatever went wrong, and it is shown
+ * verbatim: the control plane is the authority on why, and inventing a friendlier
+ * message here would either leak which addresses exist or mislead.
+ */
+export async function passwordLogin(
+  email: string,
+  password: string,
+): Promise<PasswordLoginResult> {
+  return post<PasswordLoginResult>('/auth/password', { email, password })
+}
+
+/** Completes a sign-in that owed a second factor. */
+export async function verifyMFA(
+  challenge: string,
+  code: string,
+  recovery = false,
+): Promise<PasswordLoginResult> {
+  return post<PasswordLoginResult>('/auth/mfa', { challenge, code, recovery })
+}
+
+/** Starts enrolment, returning the secret and the URI an app scans. */
+export async function beginMFAEnrolment(): Promise<{ secret: string; uri: string }> {
+  return post<{ secret: string; uri: string }>('/auth/mfa/enrol', {})
+}
+
+/** Confirms enrolment and returns the recovery codes, shown exactly once. */
+export async function confirmMFAEnrolment(code: string): Promise<{ recoveryCodes: string[] }> {
+  return post<{ recoveryCodes: string[] }>('/auth/mfa/confirm', { code })
+}
+
+/** Replaces the signed-in account's own password. */
+export async function changePassword(current: string, next: string): Promise<void> {
+  await post('/auth/password/change', { current, new: next })
 }
 
 /** Who am I, and if nobody, where do I go to sign in. */
