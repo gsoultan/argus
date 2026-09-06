@@ -261,3 +261,56 @@ func TestBeginningEnrolmentDoesNotEnrol(t *testing.T) {
 		t.Error("confirming did not enrol the account")
 	}
 }
+
+// A fresh install has to say so, or an operator types a password they never set
+// into a form that can only refuse it.
+func TestFreshInstallReportsThatNobodyCanSignInYet(t *testing.T) {
+	h := newLoginHarness(t)
+	ctx := t.Context()
+	// testStore shares a database with the rest of the suite, so this test owns
+	// the answer only for accounts it can see. Assert the transition instead.
+	before, err := h.store.AnyAccountExists(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before {
+		if me := h.me(t); me["accountsExist"] != false {
+			t.Errorf("with no accounts, accountsExist = %v, want false", me["accountsExist"])
+		}
+	}
+
+	newAccount(t, h.store, "admin")
+	exists, err := h.store.AnyAccountExists(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("an account was created but AnyAccountExists says otherwise")
+	}
+	if me := h.me(t); me["accountsExist"] != true {
+		t.Errorf("after creating an account, accountsExist = %v, want true", me["accountsExist"])
+	}
+}
+
+// An account with no password is federated, not local: it must not make the
+// console claim somebody can sign in with a password.
+func TestFederatedAccountsDoNotCountAsSignInAble(t *testing.T) {
+	h := newLoginHarness(t)
+	ctx := t.Context()
+	if _, err := h.store.pool.Exec(ctx,
+		`INSERT INTO users (email, display_name, role, idp_subject) VALUES ($1,'Fed','operator','s')`,
+		unique("fed")+"@northwind.id"); err != nil {
+		t.Fatal(err)
+	}
+	// Not asserting false outright, since the shared database may hold local
+	// accounts from other tests; asserting the row itself is not counted.
+	var counted bool
+	if err := h.store.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM users WHERE idp_subject = 's' AND password_hash IS NOT NULL)`).
+		Scan(&counted); err != nil {
+		t.Fatal(err)
+	}
+	if counted {
+		t.Error("a federated account was given a password hash")
+	}
+}

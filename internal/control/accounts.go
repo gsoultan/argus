@@ -267,6 +267,21 @@ func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, pas
 	return id, nil
 }
 
+// AnyAccountExists reports whether anyone can sign in yet.
+//
+// A fresh install has none, and a password form that cannot possibly succeed is
+// a bad first five minutes -- someone retypes a password they never set. Not
+// treated as sensitive: that a brand new deployment has no accounts is neither
+// surprising nor useful to an attacker, and saying so is the difference between
+// an operator running one command and filing a bug.
+func (s *Store) AnyAccountExists(ctx context.Context) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM users WHERE password_hash IS NOT NULL AND disabled_at IS NULL)`).
+		Scan(&exists)
+	return exists, err
+}
+
 // CountAdmins reports how many accounts can change policy, so the console can
 // warn before the last one is removed or demoted.
 func (s *Store) CountAdmins(ctx context.Context) (int, error) {

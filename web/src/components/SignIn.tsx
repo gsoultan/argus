@@ -124,7 +124,21 @@ export function SignIn({ identity, onSignedIn }: {
           </form>
         ) : (
           <>
-            {identity.passwordEnabled && (
+            {/* A fresh install. The form below would take a password and
+                refuse it, which reads as a bug rather than as "nobody has
+                been created yet". */}
+            {identity.passwordEnabled && identity.accountsExist === false && (
+              <Alert color="sky" variant="light" icon={<IconKey size={16} />} mb="md">
+                <Text size="xs">
+                  No accounts exist yet. Create the first one on the host running the
+                  control plane:
+                </Text>
+                <Text size={FS.digest} ff="monospace" mt={6} c="slate.2">
+                  argus-control users add you@example.com --role admin
+                </Text>
+              </Alert>
+            )}
+            {identity.passwordEnabled && identity.accountsExist !== false && (
               <form onSubmit={submitPassword}>
                 {error && <ErrorNote>{error}</ErrorNote>}
                 <Stack gap="sm">

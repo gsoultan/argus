@@ -147,11 +147,19 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		// passwordEnabled is what makes a local sign-in form appear; without
 		// it a deployment with no identity provider shows no way in at all,
 		// which is the state this product spent its whole life in.
+		// accountsExist distinguishes "sign in" from "nobody can yet". On a
+		// fresh install the form cannot succeed, and saying so beats letting
+		// someone retype a password they never set.
+		accounts := false
+		if a.signer != nil {
+			accounts, _ = a.store.AnyAccountExists(r.Context())
+		}
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
 			"authenticated":   false,
 			"loginUrl":        a.loginPath(),
 			"oidcEnabled":     a.oidc != nil,
 			"passwordEnabled": a.signer != nil,
+			"accountsExist":   accounts,
 		})
 		return
 	}

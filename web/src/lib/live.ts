@@ -59,6 +59,8 @@ export interface Identity {
   oidcEnabled?: boolean
   /** True when this control plane holds accounts of its own. */
   passwordEnabled?: boolean
+  /** False on a fresh install, where nobody can sign in yet. */
+  accountsExist?: boolean
   /** Whether the signed-in account has a second factor. */
   mfaEnrolled?: boolean
 }

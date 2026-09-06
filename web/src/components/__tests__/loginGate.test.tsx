@@ -43,7 +43,10 @@ afterEach(() => {
 describe('LoginGate', () => {
   it('offers a password form when the control plane holds its own accounts', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, { authenticated: false, passwordEnabled: true, oidcEnabled: false }),
+      json(401, {
+        authenticated: false, passwordEnabled: true,
+        oidcEnabled: false, accountsExist: true,
+      }),
     ))
     await renderGate()
 
@@ -69,7 +72,10 @@ describe('LoginGate', () => {
   // Both doors, when both exist.
   it('offers both when both are available', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, { authenticated: false, passwordEnabled: true, oidcEnabled: true }),
+      json(401, {
+        authenticated: false, passwordEnabled: true,
+        oidcEnabled: true, accountsExist: true,
+      }),
     ))
     await renderGate()
     expect(await screen.findByLabelText(/^email$/i)).toBeInTheDocument()
@@ -82,6 +88,22 @@ describe('LoginGate', () => {
 
     expect(await screen.findByText(/could not be reached/i)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /sign in with sso/i })).not.toBeInTheDocument()
+  })
+
+  // A brand new deployment. A form that can only ever refuse reads as a bug,
+  // so the screen says what to run instead of taking a password nobody set.
+  it('tells a fresh install how to create the first account', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      json(401, {
+        authenticated: false, passwordEnabled: true,
+        oidcEnabled: false, accountsExist: false,
+      }),
+    ))
+    await renderGate()
+
+    expect(await screen.findByText(/no accounts exist yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/argus-control users add/)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
   })
 
   // Neither door. Better to say so, and say how to fix it, than to render an
