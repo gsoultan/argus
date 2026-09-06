@@ -154,9 +154,12 @@ function Audit() {
                       : 'Chain built — not yet verified'}
                 </Text>
                 <Text size="xs" c="dimmed" mt={2} maw={620}>
-                  Each entry is <Mono>SHA-256(prevHash ‖ canonical(event))</Mono>. Verification
-                  recomputes the whole chain in your browser, in a Web Worker — so an intact
-                  result does not depend on trusting the server that served the log.
+                  Each entry is <Mono>SHA-256(prevHash ‖ canonical(event))</Mono>, over the
+                  same six fields the control plane hashes. Verification runs in your browser,
+                  in a Web Worker.{' '}
+                  {chain.againstServer
+                    ? 'It checks the hashes the control plane stored against the contents it served, so an intact result does not depend on trusting it.'
+                    : 'These events carry no server hashes, so the console is confirming its own arithmetic — there is no served record to check against.'}
                 </Text>
                 {verified && (
                   <Group gap="xs" mt={8}>
@@ -165,6 +168,15 @@ function Audit() {
                     </Badge>
                     <Badge size="xs" variant="outline" color="slate">
                       {verified.ms}ms off main thread
+                    </Badge>
+                    {/* Which claim the verdict supports. An operator must not
+                        read "intact" as stronger than it is. */}
+                    <Badge
+                      size="xs"
+                      variant="outline"
+                      color={chain.againstServer ? 'teal' : 'amber'}
+                    >
+                      {chain.againstServer ? 'against the served record' : 'self-computed'}
                     </Badge>
                   </Group>
                 )}

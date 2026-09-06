@@ -12,11 +12,18 @@ export interface ChainState {
   progress: number
   ms: number | null
   error: string | null
+  /**
+   * True when the chain was built from hashes the control plane supplied, so
+   * verifying it checks the served record rather than the console's own
+   * arithmetic. False against the fixture, which has no server to distrust.
+   */
+  againstServer: boolean
   verified: { ok: boolean; checked: number; brokenAt: number | null; ms: number } | null
 }
 
 const IDLE: ChainState = {
-  status: 'idle', links: [], head: null, progress: 0, ms: null, error: null, verified: null,
+  status: 'idle', links: [], head: null, progress: 0, ms: null, error: null,
+  againstServer: false, verified: null,
 }
 
 export function useAuditChain(events: ChainInput[] | undefined) {
@@ -35,7 +42,7 @@ export function useAuditChain(events: ChainInput[] | undefined) {
       } else if (m.type === 'built') {
         setState({
           status: 'ready', links: m.links, head: m.head, progress: 1, ms: m.ms,
-          error: null, verified: null,
+          error: null, againstServer: m.againstServer, verified: null,
         })
       } else if (m.type === 'verified') {
         setState((s) => ({

@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -598,5 +599,56 @@ func TestAuditChainVerifiesWithNanosecondTimestamps(t *testing.T) {
 	if !v.OK {
 		t.Fatalf("a chain written with nanosecond timestamps failed to verify at seq %d: %s",
 			v.BrokenAt, v.Detail)
+	}
+}
+
+// The console recomputes these digests from the JSON this API serves, so the
+// timestamp it receives has to be the exact string chainHash hashed.
+//
+// pgx returns the driver's session timezone, and json.Marshal renders whatever
+// location the value carries. Without normalising to UTC on read, the console
+// would be handed "…+07:00" and asked to reproduce a hash taken over "…Z" --
+// and would report every served log as tampered.
+func TestServedAuditTimestampIsTheStringThatWasHashed(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	written, err := s.AppendAudit(ctx, AuditEvent{
+		Action: "verify.tz", ActorEmail: "u@x.id", Detail: unique("d"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := s.AuditEvents(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var served *AuditEvent
+	for i := range events {
+		if events[i].Seq == written.Seq {
+			served = &events[i]
+			break
+		}
+	}
+	if served == nil {
+		t.Fatal("the event just written was not served back")
+	}
+
+	if served.At.Location() != time.UTC {
+		t.Errorf("served timestamp is in %v, not UTC", served.At.Location())
+	}
+	// What JSON carries must equal what the digest was taken over.
+	marshalled, err := json.Marshal(served.At)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON := `"` + served.At.UTC().Format(time.RFC3339Nano) + `"`
+	if string(marshalled) != wantJSON {
+		t.Errorf("JSON timestamp %s does not match the hashed rendering %s", marshalled, wantJSON)
+	}
+	// And the digest still reproduces from the served row.
+	if chainHash(served.PrevHash, *served) != served.Hash {
+		t.Error("the served event does not reproduce its own stored hash")
 	}
 }

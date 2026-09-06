@@ -38,6 +38,13 @@ export interface ChainInput {
   actorEmail: string
   target: string
   detail: string
+  /**
+   * What the control plane recorded, when it served a real log.
+   *
+   * Absent for the in-memory fixture, which has no server to distrust.
+   */
+  prevHash?: string
+  hash?: string
 }
 
 export interface ChainLink extends ChainInput {
@@ -51,16 +58,43 @@ export type ChainRequest =
 
 export type ChainResponse =
   | { type: 'progress'; done: number; total: number }
-  | { type: 'built'; links: ChainLink[]; head: string; ms: number }
+  | {
+      type: 'built'
+      links: ChainLink[]
+      head: string
+      ms: number
+      /**
+       * True when the events carried the control plane's own hashes, so
+       * verification checks the served record rather than this worker's
+       * arithmetic. False for the fixture, and the console says which.
+       */
+      againstServer: boolean
+    }
   | { type: 'verified'; ok: boolean; checked: number; brokenAt: number | null; ms: number }
   | { type: 'error'; message: string }
 
 export const GENESIS = '0'.repeat(64)
 
+/**
+ * The exact bytes the Go control plane hashes.
+ *
+ * `chainHash` in internal/control/store.go marshals this array, in this order,
+ * and hashes prevHash concatenated with it. Six fields: seq and id are
+ * deliberately absent, because they are assigned by the database and are not
+ * part of what the event asserts.
+ *
+ * This used to include seq and id, which meant the console could never
+ * reproduce a digest the server had written -- so it silently recomputed the
+ * whole chain from content instead of checking anything, and reported "intact"
+ * for a log it had not actually verified. `chainCanonicalMatchesGo` in
+ * lib/__tests__/chain.test.ts pins this against digests produced by Go.
+ *
+ * `at` is used verbatim. The control plane normalises it to UTC before
+ * serialising precisely so the string here is the string it hashed.
+ */
 export function canonical(e: ChainInput): string {
-  // Explicit key order — do not rely on object literal insertion order.
   return JSON.stringify([
-    e.action, e.actorEmail, e.at, e.detail, e.id, e.seq, e.severity, e.target,
+    e.action, e.actorEmail, e.at, e.detail, e.severity, e.target,
   ])
 }
 
@@ -74,6 +108,41 @@ const hasher = createSHA256()
 
 /** Yield to the event loop periodically so progress messages actually flush. */
 const CHUNK = 2_000
+
+/** Digest of one link, given the hasher and its predecessor. */
+export type Hasher = { init(): Hasher; update(s: string): Hasher; digest(t: 'hex'): string }
+
+export function linkHash(sha: Hasher, prevHash: string, e: ChainInput): string {
+  return sha.init().update(prevHash + canonical(e)).digest('hex')
+}
+
+/**
+ * Walks a chain oldest-first and reports the first divergence.
+ *
+ * Exported and pure so it can be tested against a log that carries a control
+ * plane's hashes -- the case the console exists for, and the one it silently
+ * failed to check when its canonical form did not match the server's.
+ *
+ * Mirrors VerifyAuditChain in internal/control/audit_verify.go, including the
+ * distinction between the two failures: a wrong prevHash means a record was
+ * removed, inserted or reordered; a wrong hash means one was edited in place.
+ */
+export function verifyChain(
+  sha: Hasher,
+  links: ChainLink[],
+): { ok: boolean; checked: number; brokenAt: number | null } {
+  const ordered = [...links].sort((a, b) => a.seq - b.seq)
+  let prev = GENESIS
+  let checked = 0
+  for (const l of ordered) {
+    if (l.prevHash !== prev || l.hash !== linkHash(sha, l.prevHash, l)) {
+      return { ok: false, checked, brokenAt: l.seq }
+    }
+    prev = l.hash
+    checked++
+  }
+  return { ok: true, checked, brokenAt: null }
+}
 
 const post = (m: ChainResponse) => (self as unknown as Worker).postMessage(m)
 
@@ -102,13 +171,24 @@ self.onmessage = async (ev: MessageEvent<ChainRequest>) => {
     // Events arrive newest-first; the chain is built oldest-first.
     const ordered = [...msg.events].sort((a, b) => a.seq - b.seq)
     const links: ChainLink[] = []
+    // A served log carries the control plane's hashes; the fixture does not.
+    const againstServer = ordered.some((e) => Boolean(e.hash))
     let prev = GENESIS
 
     for (let i = 0; i < ordered.length; i++) {
       const e = ordered[i]!
-      const hash = link(prev, e)
-      links.push({ ...e, prevHash: prev, hash })
-      prev = hash
+      const computed = link(e.prevHash ?? prev, e)
+      // The server's values are kept when it supplied them, so `verify` checks
+      // the record that was served rather than this worker's own arithmetic --
+      // recomputing both sides of a comparison proves nothing about the log.
+      // Keeping them also means one edited row is reported where it happened
+      // instead of every row after it reading as broken.
+      links.push({
+        ...e,
+        prevHash: e.prevHash ?? prev,
+        hash: e.hash ?? computed,
+      })
+      prev = e.hash ?? computed
       if (i > 0 && i % CHUNK === 0) {
         post({ type: 'progress', done: i, total: ordered.length })
         await breathe()
@@ -119,35 +199,19 @@ self.onmessage = async (ev: MessageEvent<ChainRequest>) => {
       type: 'built',
       links: links.reverse(), // back to newest-first for display
       head: prev,
+      againstServer,
       ms: Math.round(performance.now() - started),
     })
     return
   }
 
   if (msg.type === 'verify') {
-    const ordered = [...msg.links].sort((a, b) => a.seq - b.seq)
-    let prev = GENESIS
-    let brokenAt: number | null = null
-
-    for (let i = 0; i < ordered.length; i++) {
-      const l = ordered[i]!
-      const expected = link(prev, l)
-      if (l.prevHash !== prev || l.hash !== expected) {
-        brokenAt = l.seq
-        break
-      }
-      prev = l.hash
-      if (i > 0 && i % CHUNK === 0) {
-        post({ type: 'progress', done: i, total: ordered.length })
-        await breathe()
-      }
-    }
-
+    const r = verifyChain(sha256 as unknown as Hasher, msg.links)
     post({
       type: 'verified',
-      ok: brokenAt === null,
-      checked: ordered.length,
-      brokenAt,
+      ok: r.ok,
+      checked: r.ok ? r.checked : msg.links.length,
+      brokenAt: r.brokenAt,
       ms: Math.round(performance.now() - started),
     })
   }

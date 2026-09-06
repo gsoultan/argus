@@ -571,6 +571,12 @@ func (s *Store) AuditEvents(ctx context.Context, limit int) ([]AuditEvent, error
 			&e.ActorEmail, &e.Target, &e.Detail, &e.PrevHash, &e.Hash); err != nil {
 			return nil, err
 		}
+		// UTC, because chainHash hashes the UTC rendering and this value is
+		// about to be marshalled to JSON for a console that recomputes the
+		// same digest. pgx returns the driver's session timezone, so without
+		// this the browser would be handed "…+07:00" and asked to reproduce a
+		// hash taken over "…Z".
+		e.At = e.At.UTC()
 		out = append(out, e)
 	}
 	return out, rows.Err()
