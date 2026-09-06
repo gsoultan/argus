@@ -160,3 +160,28 @@ Two neighbours found the same way:
   the Signer could never be collected. It has `Close()` now; the gateway package
   fails on any goroutine that outlives its tests (`goleak` in `leak_test.go`),
   which is what surfaced it.
+
+## The console verified its own arithmetic, not the log
+
+The audit page claims an intact verdict does not depend on trusting the server.
+It did. The browser's `canonical()` hashed eight fields where Go's `chainHash`
+hashes six (`seq` and `id` are assigned by the database and are not part of
+what an event asserts), so the console could never reproduce a served digest.
+Instead of failing it discarded the served hashes, recomputed the chain from
+the contents it was given, compared that to itself and said "intact" -- so a
+record edited in flight, which hashes consistently with itself, passed.
+
+Two contracts hold this together now, and both have tests that fail loudly if
+either side drifts:
+
+1. **The canonical form is six fields, in Go's order.** Pinned in
+   `web/src/lib/__tests__/chain.test.ts` against digests printed by
+   `internal/control.chainHash`. Regenerate them from Go, never by hand.
+2. **`at` is served in UTC.** `AuditEvents` normalises it, because pgx returns
+   the driver's session timezone and the console would otherwise be handed
+   `…+07:00` and asked to reproduce a hash taken over `…Z`.
+
+`verifyChain` is exported from the worker precisely so tamper detection is
+testable against a chain carrying a server's hashes -- an end-to-end browser
+test cannot reach this path, because `VITE_CONTROL_URL` is baked at build time
+and the e2e bundle runs against the fixture.
