@@ -9,6 +9,7 @@ import {
   GATEWAY_URL,
   isConfigured,
   live,
+  whoami,
   saveGatewayPolicy,
   terminateRDPSession as terminateRDPOnGateway,
   terminateSession as terminateOnGateway,
@@ -87,7 +88,34 @@ function computeStats(): FleetStats {
 }
 
 export const api = {
+  /**
+   * Who is signed in.
+   *
+   * The session, when there is one. This used to return the fixture
+   * unconditionally, so the console showed the demo operator's name and role
+   * however you had actually authenticated -- an auditor signed in as an
+   * auditor was shown as an admin, and the Settings page, which gates its
+   * switches on this role, offered eight controls the control plane would
+   * refuse. The server enforced correctly; the console simply advertised
+   * something it could not do.
+   */
   async me(): Promise<User> {
+    if (isConfigured()) {
+      const id = await whoami()
+      if (id.authenticated) {
+        return {
+          id: id.email ?? 'session',
+          email: id.email ?? '',
+          displayName: id.displayName || (id.email ?? '').split('@')[0] || 'signed in',
+          role: (id.role ?? 'auditor') as User['role'],
+          // Identity lives in the provider, so the console reports what the
+          // session carries rather than inventing the rest.
+          idpSubject: null,
+          mfaEnrolled: false,
+          lastSeenAt: new Date().toISOString(),
+        }
+      }
+    }
     await latency(60)
     return currentUser
   },

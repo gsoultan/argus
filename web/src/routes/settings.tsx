@@ -14,7 +14,7 @@ import { PageHeader } from '~/components/Shell'
 import { Mono } from '~/components/primitives'
 import { meQuery, policyQuery, useSavePolicy } from '~/lib/queries'
 import { notifyError, notifyOk } from '~/lib/notify'
-import { isLive } from '~/lib/live'
+import { isConfigured } from '~/lib/live'
 import { FS } from '~/theme'
 import type { GatewayPolicy, PolicyKey } from '~/types/domain'
 
@@ -196,7 +196,14 @@ function Settings() {
           </Alert>
         )}
 
-        {!isLive() && (
+        {/* Keyed on whether a control plane is configured, because that is
+            exactly the condition under which savePolicy writes to the fixture
+            instead of the control plane. It used to be keyed on isLive(),
+            which any single refused request turned false -- so an admin could
+            be told their changes reached no gateway while the save was
+            reaching the gateway, and open a forwarding channel believing it
+            was a local sandbox. */}
+        {!isConfigured() && (
           <Alert
             color="amber"
             variant="light"
