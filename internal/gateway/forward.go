@@ -487,7 +487,9 @@ func (s *Session) auditForward(action, severity, detail string) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.srv.reports.Add(1)
 	go func() {
+		defer s.srv.reports.Done()
 		defer cancel()
 		s.srv.cfg.Reporter.Audit(ctx, map[string]any{
 			"action":     action,

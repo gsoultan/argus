@@ -265,8 +265,12 @@ func (s *Session) report(chainHead, state string) {
 		}
 	}
 
+	// Off the session's path but not off the server's books: shutdown waits for
+	// these, or the last thing a session ever says about itself is lost.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.srv.reports.Add(1)
 	go func() {
+		defer s.srv.reports.Done()
 		defer cancel()
 		s.srv.cfg.Reporter.Session(ctx, rec)
 	}()
@@ -387,7 +391,7 @@ func (s *Session) Terminate(by, reason string) bool {
 	}
 	s.killedBy, s.killReason = by, reason
 	s.terminatedAt = time.Now().UTC()
-	rec, client := s.rec, s.client
+	rec, client, user := s.rec, s.client, s.userConn
 	s.mu.Unlock()
 
 	notice := fmt.Sprintf("\r\n\x1b[1;31margus: session terminated by %s (%s)\x1b[0m\r\n", by, reason)
@@ -397,11 +401,22 @@ func (s *Session) Terminate(by, reason string) bool {
 		_ = rec.Write(recorder.Output, []byte(notice))
 	}
 
-	// Closing the client connection is what actually ends it. The user's own
-	// connection collapses with it, since every channel is multiplexed over
-	// this one transport.
+	// Both ends, because they are two different transports.
+	//
+	// `client` is the connection to the target; closing it ends the shell.
+	// `userConn` is the operator's own connection, and it does NOT collapse
+	// with the target's -- the comment here used to claim it did. So a
+	// terminated session left the operator connected to a gateway with a dead
+	// shell, and left handleConn blocked on a socket nobody was going to close.
+	//
+	// That is a leak on an ordinary terminate, and on shutdown it was worse:
+	// the drain waited for handleConn, handleConn waited for the operator, and
+	// the recording was never sealed because the deferred Close never ran.
 	if client != nil {
 		_ = client.Close()
+	}
+	if user != nil {
+		_ = user.Close()
 	}
 	s.log.Warn("session terminated", "session", s.ID, "by", by, "reason", reason)
 	return true

@@ -84,7 +84,13 @@ type Server struct {
 	// client, not only those Argus drives for a browser.
 	rdpProxy *RDPServer
 	wg       sync.WaitGroup
-	closing  bool
+	// reports tracks the fire-and-forget calls to the control plane. They are
+	// deliberately off the request path -- a slow control plane must not stall
+	// a session -- but nothing waited for them either, so at shutdown the final
+	// report of every session in flight was lost to the exit. The recording was
+	// sealed and uploaded and the row still said `active` with no chain head.
+	reports sync.WaitGroup
+	closing bool
 
 	// startedAt backs the uptime this gateway reports about itself. Set once in
 	// NewServer, so it is never zero on the stats path.
@@ -208,8 +214,40 @@ func (s *Server) Listen() error {
 	}
 }
 
-// Close stops accepting and waits for in-flight sessions to finish.
-func (s *Server) Close() error {
+// DefaultDrain bounds how long a shutdown waits for sessions to end by
+// themselves before ending them deliberately.
+//
+// Chosen to sit inside a typical systemd DefaultTimeoutStopSec of 90s with room
+// for the seals to finish. The unit file sets TimeoutStopSec explicitly so the
+// two cannot drift.
+const DefaultDrain = 30 * time.Second
+
+// sealGrace is how long terminated sessions get to finish writing.
+//
+// Terminate closes the client connection; the relay goroutines then unwind and
+// Session.Close seals the recording and computes the chain head. That is fast
+// -- a flush and a hash -- but it is not instant, and being killed during it is
+// the exact thing this whole path exists to avoid.
+const sealGrace = 10 * time.Second
+
+// Close stops accepting and drains in-flight sessions.
+func (s *Server) Close() error { return s.CloseWithin(DefaultDrain) }
+
+// CloseWithin stops accepting, waits up to d for sessions to end on their own,
+// and then ends the rest deliberately.
+//
+// The unbounded version of this was a compliance hole opened by `systemctl
+// restart`. It waited forever, so one operator with an idle shell held the
+// shutdown open until systemd lost patience and sent SIGKILL -- and a SIGKILL
+// means Session.Close never runs. The recordings for every session still open
+// were left on disk with no chain head, never uploaded, and their rows stayed
+// `active` forever: present, but unverifiable, which for evidence is the same
+// as absent.
+//
+// Terminating a session is not a nice thing to do to someone mid-command. It is
+// however what a restart does anyway; the difference is whether the recording
+// survives it.
+func (s *Server) CloseWithin(d time.Duration) error {
 	s.mu.Lock()
 	s.closing = true
 	ln := s.listener
@@ -218,8 +256,62 @@ func (s *Server) Close() error {
 	if ln != nil {
 		_ = ln.Close()
 	}
-	s.wg.Wait()
+
+	if !s.waitFor(d) {
+		live := s.ActiveSessions()
+		s.log.Warn("sessions still open at the end of the drain window; "+
+			"terminating them so their recordings are sealed",
+			"sessions", len(live), "drain", d)
+		for _, sess := range live {
+			sess.Terminate("argus", "the gateway is shutting down")
+		}
+		if !s.waitFor(sealGrace) {
+			// Say so rather than hang: an operator watching a restart needs to
+			// know some evidence may be incomplete, and hanging here is what
+			// invites the SIGKILL this method exists to prevent.
+			s.log.Error("sessions did not finish sealing within the grace period",
+				"remaining", len(s.ActiveSessions()), "grace", sealGrace,
+				"detail", "their recordings may have no chain head and cannot be verified")
+		}
+	}
+
+	// Sealing is only half of it. The chain head reaches the control plane in a
+	// detached goroutine, and exiting before it lands leaves a session that is
+	// recorded, uploaded, and still marked active with nothing to verify it
+	// against.
+	if !waitGroup(&s.reports, reportGrace) {
+		s.log.Error("session reports did not reach the control plane before shutdown",
+			"grace", reportGrace,
+			"detail", "those sessions will still read as active until the gateway "+
+				"reports them again or an operator reconciles them")
+	}
 	return nil
+}
+
+// reportGrace is how long shutdown waits for outstanding reports to land.
+//
+// Each carries its own 5s timeout, so this only has to cover a few of them
+// overlapping. Kept inside the unit's TimeoutStopSec alongside the drain.
+const reportGrace = 10 * time.Second
+
+// waitFor reports whether every tracked session goroutine finished within d.
+func (s *Server) waitFor(d time.Duration) bool { return waitGroup(&s.wg, d) }
+
+// waitGroup waits on wg for at most d, reporting whether it drained.
+func waitGroup(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
 }
 
 // Addr reports the address the gateway is accepting on, or nil before it is.
@@ -313,7 +405,14 @@ func (s *Server) handleConn(nConn net.Conn) {
 			"chain_head", head,
 			"file", sess.ID+".cast",
 			"duration", time.Since(sess.StartedAt).String())
-		sess.report(head, "closed")
+		// A session someone stopped is not one that finished, and the console
+		// has always had a distinct state for it. Reporting both as "closed"
+		// made a terminate indistinguishable from a logout in the record.
+		state := "closed"
+		if _, _, killed := sess.Killed(); killed {
+			state = "terminated"
+		}
+		sess.report(head, state)
 	}()
 
 	// The session captured its policy when it opened; every decision on this

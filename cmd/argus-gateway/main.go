@@ -399,17 +399,14 @@ func run() error {
 	}
 
 	// Drain in-flight sessions on signal rather than cutting them mid-command.
+	//
+	// Handled below rather than in a goroutine. Closing the listener is the
+	// first thing a shutdown does, so Listen returns immediately -- and when
+	// main returned on that, the process exited through the middle of its own
+	// drain. Every session still open lost its recording to the exit, which is
+	// precisely what the drain exists to prevent.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-stop
-		log.Info("shutting down, waiting for sessions to finish")
-		cancelWeb()
-		if rdpSrv != nil {
-			_ = rdpSrv.Close()
-		}
-		_ = srv.Close()
-	}()
 
 	// Publish the inventory so the console's credential-mode counts reflect
 	// what the gateway actually does, rather than a field nobody sets.
@@ -438,7 +435,30 @@ func run() error {
 		"listen", cfg.Listen,
 		"recordings", cfg.RecordingDir)
 
-	return srv.Listen()
+	// Listen in the background so a signal and a listener failure can be told
+	// apart. Waiting on Listen alone cannot distinguish "we are shutting down"
+	// from "we could not bind".
+	listenErr := make(chan error, 1)
+	go func() { listenErr <- srv.Listen() }()
+
+	select {
+	case err := <-listenErr:
+		// Failed on its own; no shutdown is in flight.
+		return err
+	case <-stop:
+		log.Info("shutting down, waiting for sessions to finish")
+		cancelWeb()
+		if rdpSrv != nil {
+			_ = rdpSrv.Close()
+		}
+		// Blocking, and on this goroutine. Close drains, then terminates
+		// whatever is left so its recording is sealed; returning before it
+		// finishes is how the recordings were being lost.
+		_ = srv.Close()
+		<-listenErr
+		log.Info("shutdown complete")
+		return nil
+	}
 }
 
 func loadConfig(path string) (config, error) {

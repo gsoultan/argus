@@ -161,6 +161,13 @@ type Session struct {
 	ChainHead      *string    `json:"chainHead"`
 	RiskFlags      []string   `json:"riskFlags"`
 	ReportedBy     string     `json:"reportedBy,omitempty"`
+
+	// TerminatedBy and TerminationReason record an ended session that someone
+	// or something stopped, rather than one that finished. The gateway sent
+	// both long before there was anywhere to keep them, and decode() rejects
+	// unknown fields, so every terminated session's report was refused whole.
+	TerminatedBy      *string `json:"terminatedBy,omitempty"`
+	TerminationReason *string `json:"terminationReason,omitempty"`
 	// RecordingKey is the object-storage key. Empty means the artefact never
 	// left the host that produced it.
 	RecordingKey *string `json:"recordingKey,omitempty"`
@@ -194,8 +201,9 @@ func (s *Store) UpsertSession(ctx context.Context, in Session) error {
 			id, user_email, asset_id, asset_hostname, principal, protocol,
 			origin, origin_reason, state, started_at, ended_at, client_ip,
 			fidelity, recording_bytes, command_count, exit_code, chain_head,
-			risk_flags, reported_by, recording_key
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+			risk_flags, reported_by, recording_key, terminated_by,
+			termination_reason
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		ON CONFLICT (id) DO UPDATE SET
 			state           = EXCLUDED.state,
 			ended_at        = COALESCE(EXCLUDED.ended_at, sessions.ended_at),
@@ -204,11 +212,16 @@ func (s *Store) UpsertSession(ctx context.Context, in Session) error {
 			exit_code       = COALESCE(EXCLUDED.exit_code, sessions.exit_code),
 			chain_head      = COALESCE(EXCLUDED.chain_head, sessions.chain_head),
 			risk_flags      = EXCLUDED.risk_flags,
-			recording_key   = COALESCE(EXCLUDED.recording_key, sessions.recording_key)`,
+			recording_key   = COALESCE(EXCLUDED.recording_key, sessions.recording_key),
+			-- COALESCE, not EXCLUDED: a later report that omits the reason must
+			-- not erase why a session was stopped.
+			terminated_by      = COALESCE(EXCLUDED.terminated_by, sessions.terminated_by),
+			termination_reason = COALESCE(EXCLUDED.termination_reason, sessions.termination_reason)`,
 		in.ID, in.UserEmail, assetID, in.AssetHostname, in.Principal, in.Protocol,
 		in.Origin, in.OriginReason, in.State, in.StartedAt, in.EndedAt, in.ClientIP,
 		in.Fidelity, in.RecordingBytes, in.CommandCount, in.ExitCode, in.ChainHead,
-		in.RiskFlags, in.ReportedBy, nullIfEmpty(in.RecordingPath))
+		in.RiskFlags, in.ReportedBy, nullIfEmpty(in.RecordingPath),
+		in.TerminatedBy, in.TerminationReason)
 	if err != nil {
 		return fmt.Errorf("upsert session: %w", err)
 	}
@@ -233,7 +246,8 @@ func (s *Store) Sessions(ctx context.Context, f SessionFilter) ([]Session, error
 		SELECT id::text, user_email, asset_id::text, asset_hostname, principal,
 		       protocol, origin, origin_reason, state, started_at, ended_at,
 		       client_ip, fidelity, recording_bytes, command_count, exit_code,
-		       chain_head, risk_flags, reported_by, recording_key
+		       chain_head, risk_flags, reported_by, recording_key,
+		       terminated_by, termination_reason
 		FROM sessions
 		WHERE ($1 = '' OR state = $1)
 		  AND ($2 = '' OR origin = $2)
@@ -251,7 +265,7 @@ func (s *Store) Sessions(ctx context.Context, f SessionFilter) ([]Session, error
 			&v.Principal, &v.Protocol, &v.Origin, &v.OriginReason, &v.State,
 			&v.StartedAt, &v.EndedAt, &v.ClientIP, &v.Fidelity, &v.RecordingBytes,
 			&v.CommandCount, &v.ExitCode, &v.ChainHead, &v.RiskFlags, &v.ReportedBy,
-			&v.RecordingKey); err != nil {
+			&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -266,13 +280,14 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 		SELECT id::text, user_email, asset_id::text, asset_hostname, principal,
 		       protocol, origin, origin_reason, state, started_at, ended_at,
 		       client_ip, fidelity, recording_bytes, command_count, exit_code,
-		       chain_head, risk_flags, reported_by, recording_key
+		       chain_head, risk_flags, reported_by, recording_key,
+		       terminated_by, termination_reason
 		FROM sessions WHERE id = $1`, id).Scan(
 		&v.ID, &v.UserEmail, &v.AssetID, &v.AssetHostname, &v.Principal,
 		&v.Protocol, &v.Origin, &v.OriginReason, &v.State, &v.StartedAt,
 		&v.EndedAt, &v.ClientIP, &v.Fidelity, &v.RecordingBytes,
 		&v.CommandCount, &v.ExitCode, &v.ChainHead, &v.RiskFlags, &v.ReportedBy,
-		&v.RecordingKey)
+		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}

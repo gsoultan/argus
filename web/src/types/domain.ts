@@ -164,6 +164,12 @@ export interface Session {
   /** Head of the recording's hash chain, hex SHA-256. */
   chainHead: string | null
   riskFlags: RiskFlag[]
+  /** Who stopped this session, when state is 'terminated'. */
+  terminatedBy?: string | null
+  /** Why it was stopped. An auditor reading a terminated session asks this
+   *  first, and the answer has to come from the record rather than from
+   *  whoever remembers. */
+  terminationReason?: string | null
 }
 
 export type RiskFlag =

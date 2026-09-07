@@ -393,6 +393,19 @@ function SessionDetail() {
                     <FidelityBadge fidelity={session.fidelity} />
                   </Field>
                   <Field label="Risk flags"><RiskFlags flags={session.riskFlags} /></Field>
+                  {/* Shown only when there is something to say. A session that
+                      ended normally has no reason, and an empty "Ended by"
+                      field reads as missing data rather than as "nobody did". */}
+                  {session.terminatedBy && (
+                    <Field label="Ended by">
+                      <Text size="xs">
+                        {session.terminatedBy}
+                        {session.terminationReason
+                          ? <Text span size="xs" c="dimmed"> — {session.terminationReason}</Text>
+                          : null}
+                      </Text>
+                    </Field>
+                  )}
                 </Stack>
               </Card>
 
