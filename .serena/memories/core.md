@@ -17,6 +17,7 @@ Read this file first, then only the memory a task actually needs.
 | [browser-checks](browser-checks.md) | Playwright suite, memory ceilings, how to measure |
 | [local-authentication](local-authentication.md) | Passwords, TOTP, recovery codes, first-run |
 | [capacity-and-drills](capacity-and-drills.md) | Load testing, published limits, backup restore drills |
+| [upgrades-and-bootstrap-auth](upgrades-and-bootstrap-auth.md) | Migrations, account identity, static tokens, multi-gateway |
 
 ## Standing rules for this repo
 
