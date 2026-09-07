@@ -48,8 +48,17 @@ if [[ "$TARGET" == all || "$TARGET" == go ]]; then
     if [[ -z "${ARGUS_TEST_DATABASE_URL:-}" ]]; then
       export ARGUS_TEST_DATABASE_URL="postgres://argus:argus@localhost:5433/argus?sslmode=disable"
     fi
-    if ! (exec 3<>/dev/tcp/localhost/5433) 2>/dev/null; then
-      warn "Postgres is not reachable — control-plane tests will SKIP (run: ./scripts/deps.sh up)"
+    # Probe the database this actually runs against, not a hardcoded one. The
+    # storm check below gates on reachability rather than only warning, so a
+    # DSN pointing anywhere else printed SKIPPED while looking like it ran.
+    db_hostport=${ARGUS_TEST_DATABASE_URL#*://}
+    db_hostport=${db_hostport#*@}
+    db_hostport=${db_hostport%%/*}
+    db_host=${db_hostport%%:*}
+    db_port=${db_hostport#*:}
+    [[ "$db_port" == "$db_host" ]] && db_port=5432
+    if ! (exec 3<>"/dev/tcp/$db_host/$db_port") 2>/dev/null; then
+      warn "Postgres is not reachable at $db_host:$db_port — control-plane tests will SKIP (run: ./scripts/deps.sh up)"
     fi
     # Not ./... — Go does not skip node_modules, so an npm dependency that
     # ships Go source (flatted does) joins the build. Compiling third-party
@@ -60,6 +69,25 @@ if [[ "$TARGET" == all || "$TARGET" == go ]]; then
     run_check "test" go test $packages
     # gofmt exits 0 even when files need formatting, so check for output instead.
     run_check "gofmt" bash -c '[[ -z "$(gofmt -l .)" ]] || { gofmt -l .; exit 1; }'
+    # The storm model in internal/control/rmodel is a PROJECTION of this
+    # schema; migrations/ is its source of truth and storm never applies DDL.
+    # Nothing keeps the two aligned except this: `verify` fails when the
+    # database has a column, index or constraint the model does not, or the
+    # other way round. Without it the generated readers drift silently from
+    # the tables they read, which is the one failure mode adopting a
+    # code generator introduces.
+    #
+    # Two directions, because they fail differently. `verify` compares the
+    # model to the database and needs one; `verify -stale` compares the
+    # committed rgen packages to the model and needs nothing, so it runs
+    # wherever this does. Without the second, 28k lines of generated reader can
+    # drift from the model that is supposed to describe them.
+    run_check "storm stale" go run ./cmd/stormgen verify -stale internal/control/rgen
+    if (exec 3<>"/dev/tcp/$db_host/$db_port") 2>/dev/null; then
+      run_check "storm verify" go run ./cmd/stormgen verify -dsn "$ARGUS_TEST_DATABASE_URL"
+    else
+      warn "Postgres is not reachable at $db_host:$db_port — storm verify SKIPPED"
+    fi
   elif [[ "$TARGET" == go ]]; then
     die "No go.mod — there is no Go code to check yet."
   fi

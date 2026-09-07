@@ -1,0 +1,19 @@
+-- Index the foreign key sessions.asset_id.
+--
+-- sessions.asset_id REFERENCES assets(id) ON DELETE SET NULL, and PostgreSQL
+-- does not index a referencing column for you. Every DELETE FROM assets
+-- therefore has to find the sessions pointing at that asset, and with no index
+-- that is a sequential scan of the whole table -- per deleted row:
+--
+--   EXPLAIN ANALYZE SELECT 1 FROM sessions WHERE asset_id = '...'::uuid;
+--   Seq Scan on sessions (actual time=1.757..1.757 rows=0)
+--     Rows Removed by Filter: 1865
+--
+-- 1.8 ms against 1,865 rows is nothing; the shape is the problem, because it
+-- is linear in the session history and session history is the one table here
+-- that only grows. The same index also serves any join from an asset to its
+-- sessions, which the console does on the asset detail view.
+--
+-- Found by modelling this schema in storm, which indexes every foreign key
+-- nothing already covers and reported this one as missing.
+CREATE INDEX IF NOT EXISTS sessions_asset_id_idx ON sessions (asset_id);
