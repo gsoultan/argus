@@ -80,6 +80,10 @@ type activeSession struct {
 	// particular, so its fidelity is reported honestly even when the host as a
 	// whole supports it.
 	ptyOnly bool
+	// execLost records that a kernel execution was observed but could not be
+	// written. The claim eBPF fidelity makes is "every execve is here", and one
+	// dropped event makes that false for the whole recording.
+	execLost bool
 }
 
 // NewCollector builds a collector writing recordings into dir.
@@ -272,14 +276,7 @@ func (c *Collector) open(m SessionStart) (*activeSession, error) {
 	// caught rather than being the one that gets away.
 	if m.PID > 0 {
 		if err := c.Exec.Attach(id, m.PID, func(e execlog.Exec) {
-			if err := sess.rec.Exec(e); err != nil {
-				c.log.Error("recording a kernel execution failed",
-					"session", id, "command", e.CommandLine(), "error", err)
-				return
-			}
-			sess.mu.Lock()
-			sess.execs++
-			sess.mu.Unlock()
+			sess.recordExec(e, c.log)
 		}); err != nil {
 			// Loudly: a session that believes it has kernel evidence and does
 			// not is worse than one that never claimed to.
@@ -368,11 +365,42 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
+// recordExec writes one kernel-observed execution into the recording.
+//
+// A failure here is not logged and dropped. eBPF fidelity claims the recording
+// contains every execution; a command the kernel saw and the file did not makes
+// that a false statement about the artefact, and the artefact is the evidence.
+// The session keeps recording -- the terminal output is still complete and
+// still chained -- but it stops claiming to be a full list of what ran.
+func (s *activeSession) recordExec(e execlog.Exec, log *slog.Logger) {
+	if err := s.rec.Exec(e); err != nil {
+		s.mu.Lock()
+		first := !s.execLost
+		s.execLost = true
+		s.mu.Unlock()
+		// Once per session. A full disk fails every subsequent execution too,
+		// and a line per command buries the one that matters.
+		if first && log != nil {
+			log.Error("recording a kernel execution failed",
+				"session", s.id, "command", e.CommandLine(), "error", err,
+				"detail", "this recording no longer evidences every execution "+
+					"and will be reported at reduced fidelity")
+		}
+		return
+	}
+	s.mu.Lock()
+	s.execs++
+	s.mu.Unlock()
+}
+
 // fidelity reports what this recording can evidence.
 func (s *activeSession) fidelity(c *execlog.Context) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.ptyOnly {
+	if s.ptyOnly || s.execLost {
+		// Degraded rather than absent: the terminal output in this recording is
+		// still complete and still chained. What it cannot do is stand as a
+		// list of everything that ran.
 		return execlog.FidelityPTY
 	}
 	return c.Fidelity()

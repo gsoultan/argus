@@ -3,8 +3,15 @@ database_url: "postgres://argus:argus@localhost:5433/argus?sslmode=disable"
 allowed_origins:
   - "http://localhost:5273"
   - "http://127.0.0.1:5273"
-user_tokens:
-  dev-token: "dewi.p@northwind.id"
+# Static console tokens: a bootstrap hatch for a deployment with no other way
+# in. The control plane refuses to start if these are set once an identity
+# provider is configured or any local account exists, because a string in a
+# config file must not stand in for a password and a second factor.
+#
+# Create a real account instead:  argus-control users add you@example.com --role admin
+#
+# user_tokens:
+#   dev-token: "dewi.p@northwind.id"
 reporter_token: "${ARGUS_REPORTER_TOKEN}"
 agent_stale_after: 90s
 log_level: "info"

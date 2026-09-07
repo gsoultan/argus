@@ -1,0 +1,108 @@
+package agent
+
+import (
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
+	"testing"
+
+	"github.com/gsoultan/argus/internal/execlog"
+	"github.com/gsoultan/argus/internal/recorder"
+)
+
+/*
+What an eBPF recording is allowed to claim.
+
+"eBPF fidelity" is the strongest statement this product makes about an
+artefact: every execve is in the file. Anything that can drop an execution
+while leaving the claim standing turns the badge into decoration, and an
+auditor reading a command list that silently omits one command is worse off
+than one who was told the recording is terminal output only.
+*/
+
+// brokenWriter accepts the header and then behaves like a full disk.
+type brokenWriter struct{ broken bool }
+
+func (b *brokenWriter) Write(p []byte) (int, error) {
+	if b.broken {
+		return 0, errors.New("no space left on device")
+	}
+	return len(p), nil
+}
+
+func sessionOn(t *testing.T, w io.Writer) *activeSession {
+	t.Helper()
+	rec, err := recorder.New(w, recorder.Header{Width: 80, Height: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &activeSession{id: "sess-1", rec: rec}
+}
+
+func anExec(cmd string) execlog.Exec {
+	return execlog.Exec{
+		SessionID: "sess-1", PID: 4242, PPID: 1, UID: 0,
+		Comm: cmd, Filename: "/usr/bin/" + cmd, Args: []string{cmd},
+	}
+}
+
+// The healthy case: executions are counted and the claim stands.
+func TestKernelExecutionsAreCountedAndKeepEBPFFidelity(t *testing.T) {
+	var out strings.Builder
+	s := sessionOn(t, &out)
+	ebpf := &execlog.Context{Tracer: &execlog.Tracer{}}
+
+	for _, c := range []string{"whoami", "id", "cat"} {
+		s.recordExec(anExec(c), nil)
+	}
+	if got := s.commandCount(); got != 3 {
+		t.Errorf("counted %d executions, want 3", got)
+	}
+	if got := s.fidelity(ebpf); got != execlog.FidelityEBPF {
+		t.Errorf("fidelity = %q, want %q", got, execlog.FidelityEBPF)
+	}
+	if !strings.Contains(out.String(), "whoami") {
+		t.Error("the recording does not contain the executions it counted")
+	}
+}
+
+// One dropped execution ends the claim for the whole recording.
+func TestADroppedKernelExecutionEndsTheEBPFClaim(t *testing.T) {
+	w := &brokenWriter{}
+	s := sessionOn(t, w)
+	ebpf := &execlog.Context{Tracer: &execlog.Tracer{}}
+
+	s.recordExec(anExec("whoami"), nil)
+	if s.fidelity(ebpf) != execlog.FidelityEBPF {
+		t.Fatal("precondition: a healthy session claims eBPF fidelity")
+	}
+
+	w.broken = true
+	s.recordExec(anExec("curl"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if got := s.fidelity(ebpf); got != execlog.FidelityPTY {
+		t.Errorf("fidelity = %q after a dropped execution, want %q -- the "+
+			"recording no longer lists everything that ran", got, execlog.FidelityPTY)
+	}
+	if got := s.commandCount(); got != 1 {
+		t.Errorf("counted %d executions, want 1: the dropped one must not be counted", got)
+	}
+}
+
+// A session the probe never attached to says so, whatever the host supports.
+func TestAnUnattachedSessionDoesNotClaimTheHostsFidelity(t *testing.T) {
+	s := sessionOn(t, &strings.Builder{})
+	s.ptyOnly = true
+	if got := s.fidelity(&execlog.Context{Tracer: &execlog.Tracer{}}); got != execlog.FidelityPTY {
+		t.Errorf("fidelity = %q, want %q", got, execlog.FidelityPTY)
+	}
+}
+
+// A host with no probe at all reports PTY, and nothing here changes that.
+func TestNoProbeMeansPTY(t *testing.T) {
+	s := sessionOn(t, &strings.Builder{})
+	if got := s.fidelity(nil); got != execlog.FidelityPTY {
+		t.Errorf("fidelity = %q with no tracer, want %q", got, execlog.FidelityPTY)
+	}
+}

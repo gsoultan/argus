@@ -188,9 +188,8 @@ func run() error {
 		}
 	}
 	if provider == nil {
-		log.Warn("OIDC is not configured — falling back to static console tokens",
-			"detail", "acceptable for development only; every action is still "+
-				"attributed, but anyone holding the token is that person")
+		log.Info("no identity provider configured; sign-in uses local accounts",
+			"detail", "create the first one with `argus-control users add`")
 	}
 
 	rl := control.ThrottleConfig{}
@@ -232,6 +231,40 @@ func run() error {
 	api.SessionTTL = cfg.SessionTTL
 	api.TicketTTL = cfg.TicketTTL
 	api.UserTokens = cfg.UserTokens
+
+	// Static tokens are a bootstrap convenience and nothing more. The moment a
+	// deployment has a real way in -- an identity provider, or one local
+	// account -- honouring them would mean a string in a config file walking
+	// past the password and second factor that account was given.
+	//
+	// Refused, not ignored. A deployment that thinks its dev token still works
+	// will use it, and finding out at the wrong moment is the whole problem.
+	if len(cfg.UserTokens) > 0 {
+		accounts, err := store.AnyAccountExists(ctx)
+		if err != nil {
+			log.Error("cannot tell whether local accounts exist", "error", err)
+			os.Exit(1)
+		}
+		switch {
+		case provider != nil:
+			fmt.Fprintln(os.Stderr, "argus-control: user_tokens is set alongside an "+
+				"identity provider.\nRemove user_tokens: it would be a way into this "+
+				"deployment that single sign-on cannot see.")
+			os.Exit(1)
+		case accounts:
+			fmt.Fprintln(os.Stderr, "argus-control: user_tokens is set and local "+
+				"accounts exist.\nRemove user_tokens: a bearer token in a config file "+
+				"must not stand in for a password and a second factor.")
+			os.Exit(1)
+		default:
+			log.Warn("static console tokens are active",
+				"detail", "no identity provider and no local accounts yet, so these are "+
+					"the only way in; create an account with `argus-control users add` "+
+					"and remove user_tokens before this is used for anything real")
+		}
+	} else {
+		api.StaticTokensDisabled = true
+	}
 	api.ReporterToken = cfg.ReporterToken
 	api.AllowedOrigins = cfg.AllowedOrigins
 

@@ -21,9 +21,16 @@ func (a *API) SetAuth(o *auth.OIDC, signer *auth.Signer, consoleURL string, secu
 // authenticate resolves the caller.
 //
 // Order matters: a session cookie is the real credential, and static tokens are
-// a development fallback that must never shadow it. When OIDC is configured the
-// static path is disabled entirely, so a leftover dev token in a config file
-// cannot become a permanent backdoor into a production deployment.
+// a development fallback that must never shadow it.
+//
+// The static path used to be disabled only when OIDC was configured. Once Argus
+// grew its own accounts that was the wrong test: a deployment signing people in
+// with a password and a second factor still honoured a bearer token from the
+// config file, and handed it admin regardless of whose address it named. Every
+// control the login page enforces was one header away from being skipped.
+//
+// StaticTokensDisabled is decided at start-up, where the deployment can be
+// refused outright rather than quietly downgraded.
 func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 	if a.signer != nil {
 		if c, err := r.Cookie(auth.SessionCookieName); err == nil {
@@ -32,13 +39,21 @@ func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 			}
 		}
 	}
-	if a.oidc != nil {
+	if a.oidc != nil || a.StaticTokensDisabled {
 		return auth.Session{}, false
 	}
-	if email, ok := a.UserTokens[bearer(r)]; ok {
-		return auth.Session{Email: email, Name: email, Role: "admin"}, true
+	email, ok := a.UserTokens[bearer(r)]
+	if !ok {
+		return auth.Session{}, false
 	}
-	return auth.Session{}, false
+	// The role comes from the account, not from the fact that a token was
+	// presented. Minting admin for whoever holds a string made the token more
+	// powerful than any account it could name.
+	role := "viewer"
+	if acct, err := a.store.Account(r.Context(), email); err == nil && acct.Role != "" {
+		role = acct.Role
+	}
+	return auth.Session{Email: email, Name: email, Role: role}, true
 }
 
 /* ── Login ───────────────────────────────────────────────────────────────── */

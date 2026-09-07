@@ -27,9 +27,13 @@ type API struct {
 	store *Store
 	log   *slog.Logger
 
-	// UserTokens maps a console token to a user email. Stands in for the OIDC
-	// session the control plane will issue.
+	// UserTokens maps a console token to a user email. A development stand-in
+	// for a real sign-in, and never a substitute for one.
 	UserTokens map[string]string
+	// StaticTokensDisabled turns UserTokens off. Set when the deployment has a
+	// real way to sign in, so a leftover dev token in a config file cannot walk
+	// past a password and a second factor.
+	StaticTokensDisabled bool
 	// ReporterToken authenticates gateways and agents.
 	ReporterToken string
 	// AllowedOrigins for browser CORS.

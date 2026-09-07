@@ -1,0 +1,66 @@
+# A second gateway, for running two at once.
+#
+# Everything that must not collide is moved aside: the SSH and browser-terminal
+# listeners, the RDP listener, the recording directory and the report spool.
+# Everything that must be shared is not: both point at the same control plane,
+# and that is what makes host-key pins and terminal-ticket replay protection
+# span instances rather than being per-process sets.
+#
+# The host key store path differs on purpose. A second gateway starting with an
+# empty local pin file is exactly the case worth testing -- it has to get its
+# pins from the control plane, or trust-on-first-use would let it accept a host
+# the first gateway would refuse.
+#
+#   ./bin/argus-gateway --config dev/argus.yaml
+#   ./bin/argus-gateway --config dev/argus2.yaml
+
+listen: "127.0.0.1:2223"
+host_key: "keys/gateway_host"
+authorized_keys: "authorized_keys"
+inventory: "inventory.json"
+host_key_store: "data/gw2/hostkeys.json"
+recording_dir: "data/gw2/recordings"
+# Development only: the target was just built, so nothing has pinned its key
+# yet. Production pins out of band and leaves this off.
+trust_on_first_use: true
+log_level: "debug"
+
+rate_limit:
+  connections_per_minute: 6
+  burst: 3
+
+ca:
+  key_path: "keys/argus_ca"
+  validity: 2m
+
+control:
+  url: "https://localhost:8080"
+  ca_file: "certs/ca.crt"
+  cert_file: "certs/client.crt"
+  key_file: "certs/client.key"
+  token: "reporter-secret"
+  spool: "data/gw2/report-spool.jsonl"
+
+web:
+  listen: "127.0.0.1:8082"
+  allowed_origins:
+    - "localhost:5273"
+    - "127.0.0.1:5273"
+  signing_secret: "${ARGUS_SIGNING_SECRET}"
+  tls:
+    cert_file: "certs/server.crt"
+    key_file: "certs/server.key"
+
+storage:
+  endpoint: "127.0.0.1:9000"
+  access_key: "${ARGUS_S3_ACCESS_KEY}"
+  secret_key: "${ARGUS_S3_SECRET_KEY}"
+  bucket: "argus-recordings"
+  use_ssl: false
+
+# Remote Desktop. Absent means off.
+rdp:
+  listen: "0.0.0.0:3391"
+  tls:
+    cert_file: "certs/server.crt"
+    key_file: "certs/server.key"

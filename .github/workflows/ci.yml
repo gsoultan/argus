@@ -50,7 +50,9 @@ jobs:
           fi
 
       - name: Vet
-        run: go vet ./...
+        # Not ./...: Go does not skip node_modules, and flatted ships Go
+        # source, so ./... pulls a JavaScript dependency into the Go build.
+        run: go vet $(go list ./... | grep -v '/node_modules/')
 
       - name: Test
         env:
@@ -58,7 +60,7 @@ jobs:
         # -race is the point of running these in CI: the concurrency tests
         # around ticket redemption and audit chaining are exactly where a data
         # race would hide.
-        run: go test -race -timeout 5m ./...
+        run: go test -race -timeout 5m $(go list ./... | grep -v '/node_modules/')
 
       - name: Confirm the database tests actually ran
         env:
