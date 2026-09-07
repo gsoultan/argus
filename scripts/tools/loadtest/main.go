@@ -29,8 +29,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -157,18 +159,55 @@ func one(addr string, cfg *ssh.ClientConfig, command string, hold time.Duration)
 	}
 	defer sess.Close()
 
+	// The pipe is attached before the PTY request, because setting Stdout only
+	// wires anything up inside Start -- which never runs when the request is
+	// what fails.
+	//
+	// A gateway that refuses a session accepts the channel, writes the reason
+	// onto it, and closes. Without this the explanation was discarded and the
+	// tool reported "pty: EOF", an error that reads like a protocol fault.
+	// It hid a target the gateway could not reach, and cost two wrong
+	// diagnoses before anyone noticed.
+	pipe, err := sess.StdoutPipe()
+	if err != nil {
+		r.err = fmt.Errorf("stdout: %w", err)
+		return r
+	}
+	// Stderr as well, and it is the one that matters here: a refusal is written
+	// to the channel's extended data stream, not stdout. Reading only stdout is
+	// why this tool saw an empty buffer and reported "pty: EOF" -- ssh(1) shows
+	// the message because it prints stderr, and the difference between the two
+	// clients was the whole mystery.
+	errPipe, err := sess.StderrPipe()
+	if err != nil {
+		r.err = fmt.Errorf("stderr: %w", err)
+		return r
+	}
+
 	if err := sess.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{
 		ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400,
 	}); err != nil {
+		// The channel is closed by now, so these return whatever the gateway
+		// managed to say before closing it.
+		said, _ := io.ReadAll(errPipe)
+		if len(bytes.TrimSpace(said)) == 0 {
+			said, _ = io.ReadAll(pipe)
+		}
+		if msg := strings.TrimSpace(string(said)); msg != "" {
+			r.err = errors.New("refused: " + trim(msg))
+			return r
+		}
 		r.err = fmt.Errorf("pty: %w", err)
 		return r
 	}
 	r.session = time.Since(t1)
 
-	t2 := time.Now()
 	var out syncBuffer
-	sess.Stdout = &out
-	sess.Stderr = &out
+	drained := make(chan struct{})
+	go func() { defer close(drained); _, _ = io.Copy(&out, pipe) }()
+	go func() { _, _ = io.Copy(&out, errPipe) }()
+
+	t2 := time.Now()
 	if err := sess.Start(command); err != nil {
 		r.err = fmt.Errorf("start: %w", err)
 		return r
@@ -177,6 +216,7 @@ func one(addr string, cfg *ssh.ClientConfig, command string, hold time.Duration)
 		r.err = fmt.Errorf("wait: %w", err)
 		return r
 	}
+	<-drained
 	r.firstByte = time.Since(t2)
 
 	// The output has to be right. A session that connects and returns nothing
@@ -244,6 +284,9 @@ func classify(err error) string {
 	for _, marker := range []string{
 		"rate limit", "too many", "connection refused", "connection reset",
 		"i/o timeout", "EOF", "handshake failed", "no route", "broken pipe",
+		// What the gateway itself said. Grouped so a hundred identical
+		// refusals read as one line with the reason on it.
+		"unknown target", "not permitted", "cannot open session",
 	} {
 		if strings.Contains(strings.ToLower(s), marker) {
 			return marker
