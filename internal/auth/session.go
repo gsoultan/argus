@@ -423,3 +423,55 @@ func randomID() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
+
+/* ── Second-factor challenge ─────────────────────────────────────────────── */
+
+// mfaChallenge is the state carried between "your password was right" and
+// "here is my code".
+//
+// Signed and short-lived rather than stored: a half-finished sign-in should
+// cost the server nothing to remember and should expire whether or not the
+// browser ever comes back. It is deliberately not a session -- it authenticates
+// nothing on its own, and naming the type separately keeps it from being handed
+// to something expecting one.
+type mfaChallenge struct {
+	Email     string    `json:"email"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	// Purpose pins what this token may be redeemed for, so a challenge cannot
+	// be presented anywhere a session or a ticket is expected.
+	Purpose string `json:"purpose"`
+}
+
+const mfaChallengePurpose = "mfa-challenge"
+
+// IssueMFAChallenge returns a token proving a password was accepted.
+func (s *Signer) IssueMFAChallenge(email string, ttl time.Duration) (string, error) {
+	return s.sign(mfaChallenge{
+		Email:     email,
+		ExpiresAt: time.Now().Add(ttl),
+		Purpose:   mfaChallengePurpose,
+	})
+}
+
+// RedeemMFAChallenge returns the address a challenge was issued for.
+//
+// Not single-use: it is spent by the code that follows it, and the code is what
+// carries the security. Making the challenge one-shot would mean a mistyped
+// code sent the user back to the password screen, which teaches people to
+// choose shorter passwords.
+func (s *Signer) RedeemMFAChallenge(token string) (string, error) {
+	var c mfaChallenge
+	if err := s.verify(token, &c); err != nil {
+		return "", err
+	}
+	if c.Purpose != mfaChallengePurpose {
+		return "", fmt.Errorf("%w: token is not a second-factor challenge", ErrInvalid)
+	}
+	if time.Now().After(c.ExpiresAt) {
+		return "", ErrExpired
+	}
+	if c.Email == "" {
+		return "", fmt.Errorf("%w: challenge carries no account", ErrInvalid)
+	}
+	return c.Email, nil
+}

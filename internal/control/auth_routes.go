@@ -143,12 +143,32 @@ func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.authenticate(r)
 	if !ok {
+		// The console needs to know which doors exist before it can draw one.
+		// passwordEnabled is what makes a local sign-in form appear; without
+		// it a deployment with no identity provider shows no way in at all,
+		// which is the state this product spent its whole life in.
+		// accountsExist distinguishes "sign in" from "nobody can yet". On a
+		// fresh install the form cannot succeed, and saying so beats letting
+		// someone retype a password they never set.
+		accounts := false
+		if a.signer != nil {
+			accounts, _ = a.store.AnyAccountExists(r.Context())
+		}
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"authenticated": false,
-			"loginUrl":      a.loginPath(),
-			"oidcEnabled":   a.oidc != nil,
+			"authenticated":   false,
+			"loginUrl":        a.loginPath(),
+			"oidcEnabled":     a.oidc != nil,
+			"passwordEnabled": a.signer != nil,
+			"accountsExist":   accounts,
 		})
 		return
+	}
+	// mfaEnrolled drives the console's prompt to set one up. Looked up rather
+	// than carried in the session, so enrolling takes effect immediately
+	// instead of at the next sign-in.
+	mfa := false
+	if acct, err := a.store.Account(r.Context(), sess.Email); err == nil {
+		mfa = acct.MFAEnrolled
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
@@ -156,6 +176,7 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		"displayName":   sess.Name,
 		"role":          sess.Role,
 		"expiresAt":     sess.ExpiresAt,
+		"mfaEnrolled":   mfa,
 	})
 }
 

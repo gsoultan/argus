@@ -21,17 +21,24 @@ console_url: ""
 session_ttl: 8h
 ticket_ttl: 60s
 
-oidc:
-  issuer: "http://127.0.0.1:5556/dex"
-  client_id: "argus-console"
-  client_secret: "${ARGUS_OIDC_CLIENT_SECRET}"
-  redirect_url: "http://localhost:5273/auth/callback"
-  role_claim: "groups"
-  default_role: "auditor"
-  role_map:
-    argus-admins: "admin"
-    engineering: "operator"
-    authors: "operator"
+# Single sign-on, optional.
+#
+# Argus holds its own accounts, so nothing here is needed to sign in -- create
+# the first one with `argus-control users add you@example.com --role admin` and
+# use the console's password form. Uncomment this only to federate with an
+# identity provider you already run; the sign-in screen then offers both.
+#
+# oidc:
+#   issuer: "https://id.example.com"
+#   client_id: "argus-console"
+#   client_secret: "${ARGUS_OIDC_CLIENT_SECRET}"
+#   redirect_url: "https://argus.example.com/auth/callback"
+#   role_claim: "groups"
+#   # The least privileged role, so an unmapped group fails closed.
+#   default_role: "auditor"
+#   role_map:
+#     argus-admins: "admin"
+#     engineering: "operator"
 
 tls:
   cert_file: "certs/server.crt"

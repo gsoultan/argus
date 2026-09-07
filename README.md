@@ -65,9 +65,7 @@ Each takes `--help`. Common flags:
 
 ### Local dependencies
 
-`scripts/deps.sh` owns Postgres and MinIO. There is deliberately **no compose
-file**: Apple's `container` has no `compose` subcommand, and maintaining a
-second definition of the same infrastructure only invites drift.
+`scripts/deps.sh` owns Postgres and MinIO.
 
 ```bash
 ./scripts/deps.sh up       # create, start, wait until ready, ensure buckets
@@ -201,6 +199,28 @@ PTY-derived command detection is an audit aid, not a security boundary — a use
 can obscure intent with base64 or a script whose body never reaches the screen.
 The eBPF agent tier provides kernel-observed `execve` evidence. The UI labels
 which one produced any given timeline and never presents them as equivalent.
+
+## Signing in
+
+Argus holds its own accounts. There is no identity provider to stand up and
+nothing external to configure -- create the first one on the host and sign in:
+
+```bash
+argus-control users add you@example.com --role admin
+```
+
+The password is read from the terminal without echo, so it does not reach shell
+history or a process list. Nothing is seeded: a product that ships a default
+administrator with a known password has shipped a backdoor.
+
+Then open the console, sign in, and enrol a second factor. Any authenticator app
+works -- the codes are ordinary TOTP. Enrolment issues ten single-use recovery
+codes, shown once and stored only as digests, for the phone that ends up in a
+river.
+
+SSO remains available for deployments that want it. Set `oidc:` in the control
+plane's config and the sign-in screen offers both; leave it out and it offers
+the password form alone. Neither requires the other.
 
 ## Controls an operator should know exist
 

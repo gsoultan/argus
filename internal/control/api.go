@@ -79,6 +79,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /auth/login", a.limitLogin(a.handleLogin))
 	mux.HandleFunc("GET /auth/callback", a.limitLogin(a.handleCallback))
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)
+	// Local accounts. Throttled like the OIDC flow, because this is now the
+	// surface a password-guessing attempt actually reaches.
+	mux.HandleFunc("POST /auth/password", a.limitLogin(a.handlePasswordLogin))
+	mux.HandleFunc("POST /auth/mfa", a.limitLogin(a.handleMFAVerify))
+	mux.HandleFunc("POST /auth/mfa/enrol", a.handleMFABegin)
+	mux.HandleFunc("POST /auth/mfa/confirm", a.handleMFAConfirm)
+	mux.HandleFunc("POST /auth/password/change", a.handleChangePassword)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
 	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
