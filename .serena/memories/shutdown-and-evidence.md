@@ -81,3 +81,30 @@ goroutines, live heap, heap objects, session count, DB pool. Deliberately not
 `net/http/pprof` -- the gateway holds session plaintext, so a heap dump of it is
 a transcript of everyone's privileged work including typed passwords. A test
 asserts every field stays a number so it cannot grow one that carries content.
+
+
+## Controls that were claimed but not enforced
+
+Two found 2026-09-07 by testing the claim rather than reading the code. Both had
+the same shape: **the control existed on one path and not on the one customers
+use.**
+
+**Elevated principals needed no approval over SSH.** `handleTicket` enforced it
+for browser terminals; the SSH gateway checked authorized_keys and the asset's
+principal list, then dialled the target as root. It looked like a refusal on the
+dev fleet only because pay-01 has no root key installed -- Argus never declined.
+The gateway now asks the control plane (`GET /api/v1/report/authorize`, reporter
+mTLS) and fails closed. The elevated list ships with the policy sync so the two
+services cannot disagree; an absent list falls back to the default, never to
+empty.
+
+**Installing the agent broke SFTP on the host.** sshd applies ForceCommand to
+subsystem requests, handing the shim `SSH_ORIGINAL_COMMAND=internal-sftp`, which
+is compiled into sshd and is not a program. Every SFTP and SCP transfer to a
+managed host failed silently. The file-transfer auditing had only ever been
+demonstrated on ca-01, which has no agent -- the one configuration that could
+still perform a transfer.
+
+**The lesson worth keeping:** when a feature is demonstrated, check which host
+configuration it was demonstrated on. Both bugs survived because the demo used
+the path that still worked.
