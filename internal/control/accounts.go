@@ -115,6 +115,14 @@ func (s *Store) SetPassword(ctx context.Context, email, password string) error {
 	if tag.RowsAffected() == 0 {
 		return ErrNoAccount
 	}
+	// Impossible once 008_email_case.sql has run, and worth saying out loud if
+	// it ever becomes possible again: this statement writes a credential, and
+	// one address matching two rows means one password opening two roles.
+	if tag.RowsAffected() > 1 {
+		return fmt.Errorf(
+			"%q matches %d accounts; refusing to set one password on all of them",
+			email, tag.RowsAffected())
+	}
 	return nil
 }
 
@@ -243,12 +251,22 @@ func (s *Store) RemainingRecoveryCodes(ctx context.Context, userID string) (int,
 	return n, err
 }
 
+// normaliseEmail is the one form an address is stored and compared in.
+//
+// Sign-in matches on lower(email); storing anything else means the uniqueness
+// constraint guards a different string than the lookup reads, which is how
+// Alice@corp.com became a second account answering to alice@corp.com's login.
+func normaliseEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 // CreateAccount adds a local user. Used to bootstrap the first administrator.
 func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, password string) (string, error) {
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return "", err
 	}
+	email = normaliseEmail(email)
 	if displayName == "" {
 		displayName = strings.SplitN(email, "@", 2)[0]
 	}

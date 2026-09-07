@@ -68,9 +68,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("create migrations table: %w", err)
 	}
 
-	entries, err := migrationFS.ReadDir("migrations")
+	names, err := migrationNames()
 	if err != nil {
 		return err
+	}
+	return s.applyMigrations(ctx, names)
+}
+
+// migrationNames lists every embedded migration in the order it must run.
+//
+// Ordering is by full filename, not by the numeric prefix, which is why two
+// files may share a prefix without ambiguity -- 003_recording_path sorts before
+// 003_shared_state and both are tracked separately. The prefix is a label for
+// humans; the filename is the identity.
+func migrationNames() ([]string, error) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		return nil, err
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -79,7 +93,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	sort.Strings(names)
+	return names, nil
+}
 
+// applyMigrations runs the named migrations that have not already been applied.
+//
+// Split out from migrate so the upgrade path can be tested the way it is
+// actually taken: some migrations applied, real data written, then the rest.
+// Running the whole set against an empty database -- which is all CI did --
+// exercises the one case no customer is ever in.
+func (s *Store) applyMigrations(ctx context.Context, names []string) error {
 	for _, name := range names {
 		var applied bool
 		err := s.pool.QueryRow(ctx,
