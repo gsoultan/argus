@@ -56,6 +56,11 @@ type Session struct {
 	// localForwards counts open -L channels, bounded by MaxLocalForwards.
 	localForwards atomic.Int32
 
+	// recordingBroken marks a session whose recorder stopped working, so the
+	// two relay directions do not both report it and so the final report can
+	// say the artefact is incomplete.
+	recordingBroken bool
+
 	// pol is the policy in force for this session, captured once when it opened.
 	//
 	// Captured rather than read live, and captured *here* rather than at each
@@ -192,10 +197,22 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 	sess.client = client
 
 	if err := sess.openRecording(s.cfg.RecordingDir); err != nil {
-		_ = client.Close()
-		// Fail closed. A session that cannot be recorded must not proceed, or
-		// "all privileged sessions are recorded" stops being true.
-		return nil, fmt.Errorf("start recording: %w", err)
+		// Fail closed by default: a session that cannot be recorded must not
+		// proceed, or "all privileged sessions are recorded" stops being true.
+		//
+		// Policy can choose otherwise -- some fleets would rather keep access
+		// working than cut it -- but that is a decision with a name against it,
+		// and the session is then reported as carrying no usable recording
+		// rather than as an ordinary one.
+		if sess.policy().FailClosedOnRecordingLoss {
+			_ = client.Close()
+			return nil, fmt.Errorf("start recording: %w", err)
+		}
+		sess.log.Error("starting the recording failed; policy allows the session to proceed unrecorded",
+			"session", sess.ID, "user", user, "target", asset.Hostname, "error", err)
+		sess.mu.Lock()
+		sess.recordingBroken = true
+		sess.mu.Unlock()
 	}
 
 	sess.log.Info("session opened", "remote", sess.RemoteIP, "addr", asset.Addr())
@@ -224,9 +241,12 @@ func (s *Session) report(chainHead, state string) {
 		"state":         state,
 		"startedAt":     s.StartedAt,
 		"clientIp":      s.RemoteIP,
-		"fidelity":      "pty",
-		"reportedBy":    "gateway",
-		"riskFlags":     s.riskFlags(),
+		// A session whose recorder stopped has no usable replay, and calling
+		// that "pty" would put an artefact in the console that cannot show
+		// what happened while claiming it can.
+		"fidelity":   s.reportedFidelity(),
+		"reportedBy": "gateway",
+		"riskFlags":  s.riskFlags(),
 	}
 	if by, reason, killed := s.Killed(); killed {
 		rec["terminatedBy"] = by
@@ -294,7 +314,24 @@ func (s *Session) riskFlags() []string {
 	if _, _, killed := s.Killed(); killed {
 		flags = append(flags, "terminated")
 	}
+	if s.recordingIsBroken() {
+		flags = append(flags, "recording-incomplete")
+	}
 	return flags
+}
+
+// reportedFidelity is what this session's artefact can actually evidence.
+func (s *Session) reportedFidelity() string {
+	if s.recordingIsBroken() {
+		return "none"
+	}
+	return "pty"
+}
+
+func (s *Session) recordingIsBroken() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recordingBroken
 }
 
 func (s *Session) openRecording(dir string) error {
@@ -550,7 +587,11 @@ func (s *Session) relay(src io.Reader, dst io.Writer, stream recorder.Stream) {
 		if n > 0 {
 			chunk := buf[:n]
 			if err := s.record(stream, chunk); err != nil {
-				s.log.Error("recording failed, terminating session", "error", err)
+				// Returning here would only stop this one direction. The
+				// session would carry on, unrecorded, with the user none the
+				// wiser -- which is the exact outcome "all privileged sessions
+				// are recorded" is supposed to rule out.
+				s.recordingLost(err)
 				return
 			}
 			if _, writeErr := dst.Write(chunk); writeErr != nil {
@@ -561,6 +602,47 @@ func (s *Session) relay(src io.Reader, dst io.Writer, stream recorder.Stream) {
 		if readErr != nil {
 			return
 		}
+	}
+}
+
+// recordingLost handles a recording that stopped working mid-session.
+//
+// The recorder failing is not a detail of one copy loop: the disk filled, the
+// volume went read-only, or something removed the file. Whatever the cause,
+// every byte from here on is unrecorded, so the only question is whether the
+// session is allowed to continue producing them.
+//
+// Policy decides, and defaults to no. An operator can deliberately choose
+// availability over evidence -- some fleets would rather keep a session alive
+// during an incident than cut it -- but that is a decision someone makes with
+// their name on it, and the session is marked so nobody later mistakes its
+// recording for a complete one.
+func (s *Session) recordingLost(err error) {
+	s.mu.Lock()
+	if s.recordingBroken {
+		s.mu.Unlock()
+		return // already handled; both relay directions can arrive here
+	}
+	s.recordingBroken = true
+	s.mu.Unlock()
+
+	failClosed := s.policy().FailClosedOnRecordingLoss
+	s.log.Error("recording failed mid-session",
+		"session", s.ID, "user", s.User, "target", s.Target.Hostname,
+		"fail_closed", failClosed, "error", err)
+
+	// Into the audit chain either way. A session whose recording stopped is a
+	// gap in the evidence, and the gap itself has to be evidence.
+	s.auditForward("session.recording_lost", "critical",
+		fmt.Sprintf("Recording stopped part-way through this session: %v. "+
+			"Everything after that point is unrecorded. %s", err,
+			map[bool]string{
+				true:  "The session was terminated because policy fails closed on recording loss.",
+				false: "The session was allowed to continue: policy does not fail closed on recording loss.",
+			}[failClosed]))
+
+	if failClosed {
+		s.Terminate("argus", "recording failed and policy requires every session to be recorded")
 	}
 }
 

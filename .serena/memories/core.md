@@ -16,6 +16,7 @@ Read this file first, then only the memory a task actually needs.
 | [gateway-policy](gateway-policy.md) | SSH channel policy, forwarding, recording guarantees |
 | [browser-checks](browser-checks.md) | Playwright suite, memory ceilings, how to measure |
 | [local-authentication](local-authentication.md) | Passwords, TOTP, recovery codes, first-run |
+| [capacity-and-drills](capacity-and-drills.md) | Load testing, published limits, backup restore drills |
 
 ## Standing rules for this repo
 

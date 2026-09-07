@@ -125,7 +125,15 @@ step "6. Verifying every backed-up recording"
 # Verify all of them, not a sample. Sampling one file out of fifteen turns the
 # check into a one-in-fifteen chance of noticing corruption, which is worse than
 # no check because it reads as a pass.
-n=$(find "$WORK/recordings" -type f -name '*.cast' 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+# Both formats. Counting only .cast quietly excluded every RDP recording from
+# a check whose whole claim is "every backed-up recording".
+#
+# The list goes to a file rather than an array: this script has to run under
+# the bash 3.2 that ships with macOS, which has no mapfile.
+RECORDING_LIST=$(mktemp)
+find "$WORK/recordings" -type f \
+  \( -name '*.cast' -o -name '*.argusrdp' \) 2>/dev/null | sort > "$RECORDING_LIST"
+n=$(wc -l < "$RECORDING_LIST" | tr -d ' ')
 if (( n == 0 )); then
   warn "No recordings were backed up — this drill did NOT exercise recording recovery"
   warn "Confirm the object store is reachable before relying on this backup."
@@ -133,10 +141,17 @@ else
   checked=0
   failed=0
   unknown=0
-  while IFS= read -r cast; do
-    id=$(basename "$cast" .cast)
+  # Read on fd 3, not stdin. `container exec -i` reads stdin, and when this
+  # loop was fed through stdin it consumed the remaining filenames: the drill
+  # checked the first recording, printed "1 recording(s) verified", and passed
+  # -- the sampling failure the comment above says it must never do.
+  while IFS= read -r cast <&3; do
+    id=$(basename "$cast"); id=${id%.cast}; id=${id%.argusrdp}
+    # </dev/null as well as fd 3, so this stays correct if the loop is ever
+    # rewritten to read from stdin again.
     head=$("$runtime" exec -i argus-postgres psql -U argus -d argus -tAc \
-      "SELECT COALESCE(chain_head,'') FROM sessions WHERE id = '$id'" 2>/dev/null | tr -d ' \r')
+      "SELECT COALESCE(chain_head,'') FROM sessions WHERE id = '$id'" \
+      </dev/null 2>/dev/null | tr -d ' \r')
     if [[ -z "$head" ]]; then
       # A recording with no stored head cannot be verified. Counted and
       # reported rather than silently skipped, since a backup made entirely of
@@ -150,7 +165,17 @@ else
       failed=$((failed + 1))
       fail "  $id does not verify against its stored chain head"
     fi
-  done < <(find "$WORK/recordings" -type f -name '*.cast' 2>/dev/null)
+  done 3< "$RECORDING_LIST"
+  rm -f "$RECORDING_LIST"
+
+  # The loop must have accounted for every file. If it did not, something ate
+  # the iteration and the counts below describe a subset -- which is the one
+  # way this check can lie while looking like it passed.
+  if (( checked + failed + unknown != n )); then
+    fail "The recording check only reached $(( checked + failed + unknown )) of $n file(s)."
+    fail "Its result describes a sample, not the backup. Treat this drill as failed."
+    exit 1
+  fi
 
   if (( failed > 0 )); then
     fail "$failed of $n recording(s) are corrupt — this backup is not usable as evidence."

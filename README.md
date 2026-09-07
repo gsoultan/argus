@@ -187,6 +187,34 @@ scripts/              setup · dev · deps · check · build (plain shell, no ta
 Makefile              Optional thin wrapper over scripts/
 ```
 
+## Measured capacity
+
+One gateway, one target, one host. Every session in these runs did the whole
+thing: TCP, handshake, publickey auth, PTY request, a command whose output was
+checked, then a hold and a clean close. Reproduce with
+`go run ./scripts/tools/loadtest` — read its header first, because the target's
+own sshd will otherwise be the thing you measure.
+
+| concurrent | succeeded | connect+auth p95 | session+PTY p95 | gateway RSS peak |
+| ---------- | --------- | ---------------- | --------------- | ---------------- |
+| 50         | 100%      | 19 ms            | 195 ms          | 30 MB            |
+| 100        | 100%      | 20 ms            | 371 ms          | 40 MB            |
+| 200        | 100%      | 36 ms            | 703 ms          | 50 MB            |
+| 400        | 52%       | 31 ms            | 1274 ms         | 65 MB            |
+
+200 concurrent sessions is the number to plan against. The 400-session row is
+included because it is where the wheels come off, and because the wheels are
+not the gateway's: the failures were the target refusing TCP connections, and
+the gateway reported each one with the reason rather than hanging.
+
+Across 1232 sessions the gateway sealed and uploaded 1232 recordings, panicked
+zero times, and did not trend upward in memory over repeated 200-session runs.
+Steady state is ~24 MB idle.
+
+These figures are from a development environment on one machine. They are a
+floor to plan against, not a datasheet, and nobody has yet run two gateways at
+once or measured a fleet of targets.
+
 ## Security posture
 
 Argus terminates SSH, which means the gateway holds session plaintext in memory.

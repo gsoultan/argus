@@ -115,6 +115,15 @@ func Open(path string, tofu bool) (*Store, error) {
 
 // Lookup returns the pin for host, if any.
 func (s *Store) Lookup(host string) (Pin, bool) {
+	// A nil store means nobody has pinned anything, which is the answer the
+	// callers want: the gateway flags the session as unpinned-host-key. It is
+	// also the only safe answer, since the alternative is worse than a crash --
+	// RLock on a nil receiver does not panic here, it wedges the thread in a
+	// spin with no stack, which reads as a hung session rather than a bug.
+	// New() already refuses a nil store, so this only covers hand-built ones.
+	if s == nil {
+		return Pin{}, false
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.pins[host]
