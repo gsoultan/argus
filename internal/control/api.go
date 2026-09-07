@@ -39,6 +39,9 @@ type API struct {
 	// AllowedOrigins for browser CORS.
 	AllowedOrigins []string
 
+	// startedAt backs the uptime this process reports about itself.
+	startedAt time.Time
+
 	// throttles bounds the authentication surface. Nil disables throttling.
 	throttles *Throttles
 
@@ -71,7 +74,8 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{store: store, log: log, UserTokens: map[string]string{}}
+	return &API{store: store, log: log, UserTokens: map[string]string{},
+		startedAt: time.Now()}
 }
 
 // Handler returns the router.
@@ -105,6 +109,8 @@ func (a *API) Handler() http.Handler {
 
 	// Console read surface. Paths match what web/src/lib/api.ts already calls.
 	mux.HandleFunc("GET /api/v1/stats", a.user(a.getStats))
+	// The process, not the fleet. Loopback only; see process_stats.go.
+	mux.HandleFunc("GET /stats", a.handleProcessStats)
 	mux.HandleFunc("GET /api/v1/assets", a.user(a.getAssets))
 	mux.HandleFunc("GET /api/v1/sessions", a.user(a.getSessions))
 	mux.HandleFunc("GET /api/v1/sessions/{id}", a.user(a.getSession))

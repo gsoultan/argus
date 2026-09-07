@@ -78,6 +78,8 @@ func (s *Server) ServeWeb(ctx context.Context, cfg WebConfig) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Loopback only; see stats.go for why this reports counts and not profiles.
+	mux.HandleFunc("GET /stats", s.handleStats())
 	mux.HandleFunc("/api/v1/assets", s.handleAssets(cfg))
 	mux.HandleFunc("/ws/session", s.handleWebSession(cfg))
 	mux.HandleFunc("/ws/shadow", s.handleShadow(cfg))

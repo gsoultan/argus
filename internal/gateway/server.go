@@ -85,6 +85,10 @@ type Server struct {
 	rdpProxy *RDPServer
 	wg       sync.WaitGroup
 	closing  bool
+
+	// startedAt backs the uptime this gateway reports about itself. Set once in
+	// NewServer, so it is never zero on the stats path.
+	startedAt time.Time
 }
 
 // NewServer builds a gateway from cfg.
@@ -108,7 +112,8 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	s := &Server{cfg: cfg, log: cfg.Log, sessions: map[string]*Session{}}
+	s := &Server{cfg: cfg, log: cfg.Log, sessions: map[string]*Session{},
+		startedAt: time.Now()}
 
 	s.sshCfg = &ssh.ServerConfig{
 		// Public key only. Passwords on a bastion are a credential to phish,

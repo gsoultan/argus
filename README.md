@@ -228,6 +228,28 @@ These figures are from a development environment on one machine. They are a
 floor to plan against, not a datasheet, and nobody has yet measured a fleet of
 targets or a gateway under sustained multi-hour load.
 
+### Checking a running process
+
+Both servers report on themselves at `GET /stats`, over loopback only:
+
+```sh
+curl -sk https://127.0.0.1:8081/stats   # gateway
+curl -sk https://127.0.0.1:8080/stats   # control plane
+```
+
+Goroutines, live heap, heap objects, session count, uptime — and for the control
+plane, database pool size. A goroutine count that climbs while the session count
+does not is a leak, stated directly; it is the failure that looks fine for a
+week and then does not.
+
+Counts only, and deliberately not `net/http/pprof`. The gateway holds session
+plaintext — every keystroke and every byte of output for every live session — so
+a heap dump of it is a transcript of everyone's privileged work, including
+anything typed that was a password. That is not a debugging endpoint. Loopback
+is enforced in the handler rather than by the listen address, and a caller from
+anywhere else gets 404 rather than 403, so the endpoint is not advertised to
+someone who may not use it.
+
 ## Security posture
 
 Argus terminates SSH, which means the gateway holds session plaintext in memory.
