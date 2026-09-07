@@ -345,6 +345,7 @@ func run() error {
 			webTLS, err = tlsconfig.Server(tlsconfig.ServerOptions{
 				CertFile: cfg.Web.TLS.CertFile,
 				KeyFile:  cfg.Web.TLS.KeyFile,
+				Log:      log,
 			})
 			if err != nil {
 				return err
@@ -373,6 +374,7 @@ func run() error {
 		rdpTLS, err := tlsconfig.Server(tlsconfig.ServerOptions{
 			CertFile: cfg.RDP.TLS.CertFile,
 			KeyFile:  cfg.RDP.TLS.KeyFile,
+			Log:      log,
 		})
 		if err != nil {
 			return fmt.Errorf("rdp tls: %w", err)

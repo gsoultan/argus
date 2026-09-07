@@ -13,6 +13,7 @@ package tlsconfig
 
 import (
 	"github.com/gsoultan/argus/internal/secrets"
+	"log/slog"
 
 	"crypto/tls"
 	"crypto/x509"
@@ -35,6 +36,11 @@ type ServerOptions struct {
 	// RequireClientCert makes mTLS mandatory rather than optional. Leave false
 	// when the same listener also serves browsers, which have no client cert.
 	RequireClientCert bool
+
+	// Log receives rotation failures. Without it a refused rotation is visible
+	// only as a per-connection handshake error, which is the quietest possible
+	// way to report that the certificate on disk is being ignored.
+	Log *slog.Logger
 }
 
 // Server builds a *tls.Config for an inbound listener.
@@ -43,7 +49,11 @@ func Server(opts ServerOptions) (*tls.Config, error) {
 		return nil, fmt.Errorf("cert_file and key_file are both required")
 	}
 
-	r := &reloader{certFile: opts.CertFile, keyFile: opts.KeyFile}
+	log := opts.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	r := &reloader{certFile: opts.CertFile, keyFile: opts.KeyFile, log: log}
 	// Load once up front so a bad path or an unreadable key fails at startup
 	// rather than on the first connection, when nobody is watching.
 	if _, err := r.get(); err != nil {
@@ -150,11 +160,17 @@ type reloader struct {
 	certFile string
 	keyFile  string
 
+	log *slog.Logger
+
 	mu       sync.RWMutex
 	cert     *tls.Certificate
 	certMod  time.Time
 	keyMod   time.Time
 	loadedAt time.Time
+	// refusedKeyMod is the modification time of the key this reloader has
+	// already complained about, so a rotation that stays broken produces one
+	// line rather than one per connection.
+	refusedKeyMod time.Time
 }
 
 func (r *reloader) get() (*tls.Certificate, error) {
@@ -188,6 +204,25 @@ func (r *reloader) get() (*tls.Certificate, error) {
 	// that drops a world-readable key into place is exactly the case a
 	// startup-only check would miss.
 	if err := secrets.CheckPrivate(r.keyFile); err != nil {
+		// Keep serving the certificate already loaded. The key in memory is
+		// the previous one, and nothing about the new file's permissions makes
+		// it any less safe -- whereas refusing to serve turns a renewal script
+		// that forgot chmod into a total outage of the thing operators use to
+		// reach production. The other two failure paths above already work
+		// this way; this one taking the listener down was the odd one out, and
+		// it is the failure most likely to actually happen.
+		if r.cert != nil {
+			if !keyMod.Equal(r.refusedKeyMod) {
+				r.refusedKeyMod = keyMod
+				r.log.Error("refusing to load a rotated TLS key; still serving the previous certificate",
+					"key", r.keyFile, "error", err,
+					"detail", "fix the permissions and the next connection picks up the new "+
+						"certificate; until then this listener is serving one that may expire")
+			}
+			return r.cert, nil
+		}
+		// Nothing loaded yet, so there is nothing to fall back to. Startup
+		// must fail here rather than serve with an exposed key.
 		return nil, err
 	}
 	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)

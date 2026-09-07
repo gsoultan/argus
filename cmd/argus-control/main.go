@@ -315,6 +315,7 @@ func run() error {
 			// Not required: the same listener serves browsers, which have no
 			// client certificate. Reporter routes check for one separately.
 			RequireClientCert: false,
+			Log:               log,
 		})
 		if err != nil {
 			return err

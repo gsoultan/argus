@@ -2,8 +2,16 @@ package tlsconfig
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
+	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -257,5 +265,156 @@ func TestClientCertAndKeyMustBeGivenTogether(t *testing.T) {
 	dir := devPKI(t)
 	if _, err := Client(ClientOptions{CertFile: p(dir, "client.crt")}); err == nil {
 		t.Error("accepted a client certificate with no key")
+	}
+}
+
+/*
+A refused rotation must not become an outage.
+
+Three things can go wrong while a certificate is being replaced: the files
+vanish mid-rename, the certificate is half-written, or the new key lands with
+the wrong permissions. The first two already fell back to the certificate
+already in memory. The third -- the one a renewal script actually causes, by
+forgetting chmod -- took the listener down instead, so every operator lost the
+browser terminal because a file was 0644.
+*/
+
+// writePair puts a self-signed cert and key at the given paths.
+func writeTestPair(t *testing.T, certFile, keyFile string, mode os.FileMode) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "argus-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		DNSNames:     []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(certFile, certPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kb, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb})
+	if err := os.WriteFile(keyFile, keyPEM, mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(keyFile, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func serialOf(t *testing.T, c *tls.Certificate) string {
+	t.Helper()
+	leaf, err := x509.ParseCertificate(c.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return leaf.SerialNumber.String()
+}
+
+// A good rotation is picked up without a restart.
+func TestRotationIsPickedUpWithoutARestart(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "s.crt"), filepath.Join(dir, "s.key")
+	writeTestPair(t, certFile, keyFile, 0o600)
+
+	cfg, err := Server(ServerOptions{CertFile: certFile, KeyFile: keyFile,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatalf("Server: %v", err)
+	}
+	first, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+
+	// A different modification time is what triggers a reload.
+	time.Sleep(10 * time.Millisecond)
+	writeTestPair(t, certFile, keyFile, 0o600)
+
+	second, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
+	if err != nil {
+		t.Fatalf("after rotation: %v", err)
+	}
+	if serialOf(t, first) == serialOf(t, second) {
+		t.Error("the rotated certificate was not picked up")
+	}
+}
+
+// A rotation whose key is world-readable is refused, and the previous
+// certificate keeps serving.
+func TestARefusedRotationKeepsServingThePreviousCertificate(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "s.crt"), filepath.Join(dir, "s.key")
+	writeTestPair(t, certFile, keyFile, 0o600)
+
+	cfg, err := Server(ServerOptions{CertFile: certFile, KeyFile: keyFile,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatalf("Server: %v", err)
+	}
+	good, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	writeTestPair(t, certFile, keyFile, 0o644) // the renewal that forgot chmod
+
+	after, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
+	if err != nil {
+		t.Fatalf("a bad rotation took the listener down: %v", err)
+	}
+	if serialOf(t, after) != serialOf(t, good) {
+		t.Error("a world-readable key was loaded; the exposed key must be refused")
+	}
+}
+
+// With nothing loaded yet there is nothing to fall back to, so start-up must
+// still refuse rather than serve with an exposed key.
+func TestStartupStillRefusesAnExposedKey(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "s.crt"), filepath.Join(dir, "s.key")
+	writeTestPair(t, certFile, keyFile, 0o644)
+
+	if _, err := Server(ServerOptions{CertFile: certFile, KeyFile: keyFile,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))}); err == nil {
+		t.Error("start-up accepted a world-readable private key")
+	}
+}
+
+// A certificate that vanishes mid-rename must not break live connections.
+func TestAMissingFileFallsBackToTheLoadedCertificate(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "s.crt"), filepath.Join(dir, "s.key")
+	writeTestPair(t, certFile, keyFile, 0o600)
+
+	cfg, err := Server(ServerOptions{CertFile: certFile, KeyFile: keyFile,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatalf("Server: %v", err)
+	}
+	good, _ := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
+
+	if err := os.Remove(certFile); err != nil {
+		t.Fatal(err)
+	}
+	after, err := cfg.GetCertificate(&tls.ClientHelloInfo{ServerName: "localhost"})
+	if err != nil {
+		t.Fatalf("a missing file took the listener down: %v", err)
+	}
+	if serialOf(t, after) != serialOf(t, good) {
+		t.Error("expected the previously loaded certificate")
 	}
 }
