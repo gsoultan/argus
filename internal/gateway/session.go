@@ -93,6 +93,60 @@ type Session struct {
 	terminatedAt time.Time
 }
 
+// authorizeElevated refuses an elevated principal without an approval on file.
+//
+// The console has always said elevated access needs an approved request, and
+// the browser terminal has always enforced it. This path -- the one a product
+// that leads with "Linux SSH first" is actually used through -- enforced
+// nothing: it checked authorized_keys and the asset's principal list, then
+// dialled the target as root. Where a key is injected for root, which is the
+// entire point of credential injection, that session opened.
+//
+// Refusals here are fail-closed by design. A control plane that cannot be
+// reached is exactly the moment someone would like root with no approval on
+// file, so an unanswerable question is not a yes. Ordinary principals are
+// unaffected either way: they need no approval, so an outage does not stop
+// anyone doing their job.
+func (s *Server) authorizeElevated(user, principal, hostname string) error {
+	if !s.policy().IsElevated(principal) {
+		return nil
+	}
+
+	rep := s.cfg.Reporter
+	if rep == nil || !rep.Enabled() {
+		// Standalone. Say so loudly rather than silently allowing it: a gateway
+		// with no control plane has no approvals to consult, and pretending
+		// otherwise is how this control went missing in the first place.
+		s.log.Error("refusing an elevated session: no control plane to ask",
+			"user", user, "principal", principal, "target", hostname,
+			"detail", "configure `control` so approvals can be checked")
+		return fmt.Errorf("opening a session as %s needs an approved access request, "+
+			"and this gateway has no control plane to check one against", principal)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	auth, err := rep.Authorize(ctx, user, hostname, principal)
+	if err != nil {
+		s.log.Error("refusing an elevated session: the control plane could not be asked",
+			"user", user, "principal", principal, "target", hostname, "error", err)
+		return fmt.Errorf("opening a session as %s needs an approved access request, "+
+			"and the control plane could not be reached to check", principal)
+	}
+	if !auth.Allowed {
+		reason := auth.Reason
+		if reason == "" {
+			reason = "opening a session as " + principal + " needs an approved access request"
+		}
+		s.log.Warn("elevated session refused",
+			"user", user, "principal", principal, "target", hostname, "reason", reason)
+		return fmt.Errorf("%s", reason)
+	}
+	s.log.Info("elevated session authorised",
+		"user", user, "principal", principal, "target", hostname, "expires", auth.ExpiresAt)
+	return nil
+}
+
 // newSession authorises an SSH-transport request and dials the target.
 func (s *Server) newSession(conn ssh.Conn, ext map[string]string) (*Session, error) {
 	sess, err := s.Dial(ext["argus-user"], ext["argus-principal"], ext["argus-target"],
@@ -129,6 +183,13 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 	// own account list. A credential that happens to work is not authorisation.
 	if !asset.AllowsPrincipal(principal) {
 		return nil, fmt.Errorf("principal %q is not permitted on %s", principal, asset.Hostname)
+	}
+
+	// Being listed is permission to ask, not permission to have. An elevated
+	// principal needs an approved access request behind it, which only the
+	// control plane can answer.
+	if err := s.authorizeElevated(user, principal, asset.Hostname); err != nil {
+		return nil, err
 	}
 
 	sess := &Session{

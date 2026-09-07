@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -70,7 +71,7 @@ func TestSaveGatewayPolicyRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GatewayPolicy: %v", err)
 	}
-	if reread != saved {
+	if !reflect.DeepEqual(reread, saved) {
 		t.Errorf("re-read differs from the save response:\n saved  %+v\n reread %+v", saved, reread)
 	}
 }

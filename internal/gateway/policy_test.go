@@ -70,7 +70,7 @@ func TestChannelRequestGoverning(t *testing.T) {
 // rather than panic or return a zero Policy.
 func TestNilHolderReadsClosed(t *testing.T) {
 	var h *PolicyHolder
-	if h.Get() != DefaultPolicy() {
+	if !h.Get().Equal(DefaultPolicy()) {
 		t.Error("a nil holder must read as the default closed policy")
 	}
 	h.Set(Policy{AllowLocalForward: true}) // must not panic

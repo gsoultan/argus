@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -130,6 +131,12 @@ type GatewayPolicy struct {
 	FailClosedOnRecordingLoss    bool `json:"failClosedOnRecordingLoss"`
 	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
 	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
+
+	// ElevatedPrincipals need an approved access request. Defined by the
+	// control plane so the two services cannot disagree about what "elevated"
+	// means; an older gateway that does not know the field falls back to its
+	// own default rather than to an empty list.
+	ElevatedPrincipals []string `json:"elevatedPrincipals"`
 }
 
 // GatewayPolicy fetches the policy in force.
@@ -144,6 +151,33 @@ func (c *Client) GatewayPolicy(ctx context.Context) (*GatewayPolicy, error) {
 	}
 	var out GatewayPolicy
 	if err := c.call(ctx, http.MethodGet, "/api/v1/gateway/policy", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Authorization is the control plane's answer about one session.
+type Authorization struct {
+	Allowed   bool       `json:"allowed"`
+	Reason    string     `json:"reason,omitempty"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+// Authorize asks whether a person may open a session as a principal on a host.
+//
+// An error means the question could not be answered, which is not the same as
+// "no" and must not be treated as "yes" either. The gateway refuses elevated
+// sessions on an error, because a control plane that cannot be reached is
+// exactly when someone would like root without an approval on file.
+func (c *Client) Authorize(ctx context.Context, email, target, principal string) (*Authorization, error) {
+	q := url.Values{}
+	q.Set("email", email)
+	q.Set("target", target)
+	q.Set("principal", principal)
+
+	var out Authorization
+	if err := c.call(ctx, http.MethodGet,
+		"/api/v1/report/authorize?"+q.Encode(), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -127,6 +127,9 @@ func (a *API) Handler() http.Handler {
 
 	// Reporter surface. Machine token only.
 	mux.HandleFunc("POST /api/v1/report/session", a.reporter(a.postSession))
+	// Asked by a gateway before it opens an elevated session. See
+	// authorize_routes.go for why the decision lives here and not there.
+	mux.HandleFunc("GET /api/v1/report/authorize", a.reporter(a.handleAuthorize))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.reporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/facts", a.reporter(a.postFacts))

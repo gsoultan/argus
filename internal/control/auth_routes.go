@@ -281,10 +281,21 @@ func (a *API) handleTicket(w http.ResponseWriter, r *http.Request) {
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
 // isElevated lists principals that never come for free.
+// ElevatedPrincipals is the one definition of "needs an approval first".
+//
+// Shipped to gateways with the policy rather than compiled into each of them,
+// so the SSH path and the browser path cannot come to different conclusions
+// about the same principal. A gateway with a narrower list than this would hand
+// out root unchecked.
+func ElevatedPrincipals() []string {
+	return []string{"root", "admin", "administrator"}
+}
+
 func isElevated(principal string) bool {
-	switch principal {
-	case "root", "admin", "administrator":
-		return true
+	for _, e := range ElevatedPrincipals() {
+		if strings.EqualFold(e, principal) {
+			return true
+		}
 	}
 	return false
 }

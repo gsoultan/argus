@@ -26,6 +26,13 @@ type GatewayPolicy struct {
 	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
 	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
 
+	// ElevatedPrincipals is served, never stored. It is what this control plane
+	// enforces, sent so a gateway does not have to hold its own copy and drift.
+	// Read-only from the console's point of view: a deployment that could edit
+	// which principals are "elevated" could remove the approval requirement
+	// from root by typing in a text box.
+	ElevatedPrincipals []string `json:"elevatedPrincipals,omitempty"`
+
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	UpdatedBy string `json:"updatedBy,omitempty"`
 }

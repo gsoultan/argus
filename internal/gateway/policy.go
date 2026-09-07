@@ -1,5 +1,12 @@
 package gateway
 
+import (
+	"slices"
+	"strings"
+
+	"github.com/gsoultan/argus/internal/reporter"
+)
+
 import "sync/atomic"
 
 // Policy is what a brokered session may do, as the control plane holds it.
@@ -36,6 +43,13 @@ type Policy struct {
 	FailClosedOnRecordingLoss    bool `json:"failClosedOnRecordingLoss"`
 	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
 	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
+
+	// ElevatedPrincipals need an approved access request before a session may
+	// open as one. The list comes from the control plane with the rest of the
+	// policy rather than being compiled in here, so there is one definition of
+	// "elevated" and it cannot drift between the two services. A gateway whose
+	// list was narrower than the control plane's would hand out root unchecked.
+	ElevatedPrincipals []string `json:"elevatedPrincipals"`
 }
 
 // DefaultPolicy is the closed configuration.
@@ -50,7 +64,31 @@ func DefaultPolicy() Policy {
 		FailClosedOnRecordingLoss:    true,
 		RequireEbpfForRoot:           true,
 		EncryptRecordingsSeparateKey: true,
+		ElevatedPrincipals:           DefaultElevatedPrincipals(),
 	}
+}
+
+// DefaultElevatedPrincipals is what a gateway assumes before it has heard from
+// the control plane, and what the control plane sends unless told otherwise.
+//
+// Matching control.isElevated. A default that omitted one of these would be a
+// window, on start-up, in which that principal needed no approval.
+func DefaultElevatedPrincipals() []string {
+	return []string{"root", "admin", "administrator"}
+}
+
+// IsElevated reports whether opening a session as principal needs an approval.
+//
+// Case-insensitive: "Administrator" and "administrator" are the same account on
+// Windows, and a check that told them apart would be one spelling away from
+// nothing at all.
+func (p Policy) IsElevated(principal string) bool {
+	for _, e := range p.ElevatedPrincipals {
+		if strings.EqualFold(e, principal) {
+			return true
+		}
+	}
+	return false
 }
 
 // PolicyHolder carries the current policy across a refresh.
@@ -141,4 +179,50 @@ func (p Policy) channelRequestAllowed(kind string) (governed, allowed bool) {
 	default:
 		return false, false
 	}
+}
+
+// policyFromWire maps the control plane's policy onto this one.
+//
+// Written out rather than converted with Policy(*got). A struct conversion
+// compiles only while both definitions keep identical field order, and it fails
+// silently in the worst way if someone reorders one of them -- a boolean
+// meaning "allow agent forwarding" landing in the field meaning "fail closed on
+// recording loss" is not a mistake worth leaving available.
+func policyFromWire(w reporter.GatewayPolicy) Policy {
+	p := Policy{
+		AllowLocalForward:            w.AllowLocalForward,
+		AllowRemoteForward:           w.AllowRemoteForward,
+		AllowAgentForward:            w.AllowAgentForward,
+		AllowX11Forward:              w.AllowX11Forward,
+		ProxySftpSubsystem:           w.ProxySftpSubsystem,
+		FailClosedOnRecordingLoss:    w.FailClosedOnRecordingLoss,
+		RequireEbpfForRoot:           w.RequireEbpfForRoot,
+		EncryptRecordingsSeparateKey: w.EncryptRecordingsSeparateKey,
+		ElevatedPrincipals:           w.ElevatedPrincipals,
+	}
+	// A control plane too old to send the list is not a control plane that
+	// thinks nothing is elevated. Treating an absent field as an empty list
+	// would quietly remove the approval requirement during an upgrade.
+	if len(p.ElevatedPrincipals) == 0 {
+		p.ElevatedPrincipals = DefaultElevatedPrincipals()
+	}
+	return p
+}
+
+// Equal reports whether two policies say the same thing.
+//
+// Needed because Policy carries a slice and is therefore not comparable with
+// ==, which is what the sync used to decide whether anything had changed.
+func (p Policy) Equal(o Policy) bool {
+	if p.AllowLocalForward != o.AllowLocalForward ||
+		p.AllowRemoteForward != o.AllowRemoteForward ||
+		p.AllowAgentForward != o.AllowAgentForward ||
+		p.AllowX11Forward != o.AllowX11Forward ||
+		p.ProxySftpSubsystem != o.ProxySftpSubsystem ||
+		p.FailClosedOnRecordingLoss != o.FailClosedOnRecordingLoss ||
+		p.RequireEbpfForRoot != o.RequireEbpfForRoot ||
+		p.EncryptRecordingsSeparateKey != o.EncryptRecordingsSeparateKey {
+		return false
+	}
+	return slices.Equal(p.ElevatedPrincipals, o.ElevatedPrincipals)
 }

@@ -43,8 +43,8 @@ func SyncPolicy(
 				"error", err)
 			return
 		}
-		next := Policy(*got)
-		if next == h.Get() {
+		next := policyFromWire(*got)
+		if next.Equal(h.Get()) {
 			return
 		}
 		// Logged at warn because a policy change is exactly the event someone
