@@ -463,6 +463,12 @@ func run() error {
 		draining.Add(1)
 		go func() { defer draining.Done(); _ = srv.Close() }()
 		draining.Wait()
+
+		// After both, not inside either. Each listener queues its sessions'
+		// reports as they unwind, so a wait inside one drain catches only what
+		// the other had already queued -- and an RDP session sealing a
+		// millisecond later had its report spawned and abandoned.
+		srv.DrainReports(gateway.ReportGrace)
 		<-listenErr
 		log.Info("shutdown complete")
 		return nil

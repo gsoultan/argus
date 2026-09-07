@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"github.com/gsoultan/argus/internal/rdp"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,8 +47,8 @@ func TestStatsReportsWhatTheProcessIsDoing(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", res.Code)
 	}
-	if got.Sessions != 2 {
-		t.Errorf("sessions = %d, want 2", got.Sessions)
+	if got.Sessions != 2 || got.SSH != 2 {
+		t.Errorf("sessions = %d (ssh %d), want 2", got.Sessions, got.SSH)
 	}
 	if got.Goroutines < 1 {
 		t.Errorf("goroutines = %d, want at least 1", got.Goroutines)
@@ -123,5 +124,44 @@ func TestStatsCarriesNoProfileData(t *testing.T) {
 			t.Errorf("field %q is %T; this endpoint reports counts only, and "+
 				"anything else risks carrying session content off the host", k, v)
 		}
+	}
+}
+
+// A gateway brokering desktops is not idle.
+//
+// Sessions counted only the SSH map, so a gateway with desktops open reported
+// zero -- the wrong answer for the number an operator uses to decide whether a
+// restart will interrupt anyone.
+func TestStatsCountsDesktopsToo(t *testing.T) {
+	s := statsServer(t)
+	s.sessions["ssh-1"] = &Session{ID: "ssh-1"}
+	s.rdpWeb = map[string]*rdp.Session{
+		"rdp-web-1": {ID: "rdp-web-1"},
+	}
+	s.rdpProxy = &RDPServer{
+		srv:      s,
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sessions: map[string]*rdp.Session{"rdp-native-1": {ID: "rdp-native-1"}},
+	}
+
+	_, got, _ := getStats(t, s, "127.0.0.1:1")
+	if got.SSH != 1 {
+		t.Errorf("ssh = %d, want 1", got.SSH)
+	}
+	if got.RDP != 2 {
+		t.Errorf("rdp = %d, want 2 (one browser, one native)", got.RDP)
+	}
+	if got.Sessions != 3 {
+		t.Errorf("sessions = %d, want 3 -- the total is what says whether a "+
+			"restart interrupts anyone", got.Sessions)
+	}
+}
+
+// A gateway with no RDP listener configured must not panic on the way past it.
+func TestStatsWithoutAnRDPListener(t *testing.T) {
+	s := statsServer(t)
+	_, got, _ := getStats(t, s, "127.0.0.1:1")
+	if got.RDP != 0 || got.Sessions != 0 {
+		t.Errorf("expected zero sessions, got %d (rdp %d)", got.Sessions, got.RDP)
 	}
 }

@@ -275,18 +275,37 @@ func (s *Server) CloseWithin(d time.Duration) error {
 		}
 	}
 
-	// Sealing is only half of it. The chain head reaches the control plane in a
-	// detached goroutine, and exiting before it lands leaves a session that is
-	// recorded, uploaded, and still marked active with nothing to verify it
-	// against.
-	if !waitGroup(&s.reports, reportGrace) {
-		s.log.Error("session reports did not reach the control plane before shutdown",
-			"grace", reportGrace,
-			"detail", "those sessions will still read as active until the gateway "+
-				"reports them again or an operator reconciles them")
-	}
+	// Reports are NOT waited for here.
+	//
+	// The RDP listener drains concurrently with this one and queues its own
+	// reports as its sessions unwind. Waiting here caught only what had been
+	// queued by this moment, and an RDP session sealing a millisecond later had
+	// its report spawned and abandoned -- recorded, uploaded, and still marked
+	// active with no chain head. The wait belongs after every drain has
+	// finished, which is DrainReports, called once from main.
 	return nil
 }
+
+// DrainReports waits for the outstanding control-plane reports from every
+// protocol, and reports whether they all landed.
+//
+// Called once, after every listener has drained. A session's chain head goes
+// out in a detached goroutine, so exiting before it lands leaves a session that
+// is recorded, uploaded, and still reads as running with nothing to verify it
+// against.
+func (s *Server) DrainReports(d time.Duration) bool {
+	if waitGroup(&s.reports, d) {
+		return true
+	}
+	s.log.Error("session reports did not reach the control plane before shutdown",
+		"grace", d,
+		"detail", "those sessions will still read as active until the gateway "+
+			"reports them again or an operator reconciles them")
+	return false
+}
+
+// ReportGrace is how long a shutdown should wait for outstanding reports.
+const ReportGrace = reportGrace
 
 // reportGrace is how long shutdown waits for outstanding reports to land.
 //

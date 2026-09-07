@@ -28,6 +28,8 @@ func main() {
 	height := flag.Int("height", 768, "desktop height")
 	depth := flag.Int("depth", 16, "colour depth")
 	frames := flag.Int("frames", 20, "how many update PDUs to read")
+	cookie := flag.String("cookie", "", "mstshash routing cookie, e.g. ops:win-01 — "+
+		"required when connecting through the Argus gateway rather than to a target")
 	flag.Parse()
 
 	if *addr == "" {
@@ -43,7 +45,7 @@ func main() {
 	defer raw.Close()
 
 	// Negotiation.
-	if _, err := raw.Write(negotiationRequest()); err != nil {
+	if _, err := raw.Write(negotiationRequest(*cookie)); err != nil {
 		die("send negotiation", err)
 	}
 	frame, err := rdp.ReadPDU(raw)
@@ -108,12 +110,27 @@ func main() {
 }
 
 // negotiationRequest builds a Connection Request asking for TLS.
-func negotiationRequest() []byte {
+// negotiationRequest builds the X.224 connection request.
+//
+// The cookie is what routes through the gateway: Argus reads the target and
+// principal out of "Cookie: mstshash=principal:host", the same shape the SSH
+// side takes as a username. Without one the gateway has nowhere to send the
+// connection and refuses it. Empty means "connect straight to a target", which
+// is what this tool did before.
+func negotiationRequest(cookie string) []byte {
 	neg := []byte{0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00}
-	x := make([]byte, 7+len(neg))
+
+	// Cookie first, CRLF-terminated, then the negotiation structure.
+	var variable []byte
+	if cookie != "" {
+		variable = append(variable, []byte("Cookie: mstshash="+cookie+"\r\n")...)
+	}
+	variable = append(variable, neg...)
+
+	x := make([]byte, 7+len(variable))
 	x[0] = byte(len(x) - 1)
 	x[1] = 0xE0
-	copy(x[7:], neg)
+	copy(x[7:], variable)
 	out := make([]byte, 4+len(x))
 	out[0] = 3
 	out[2] = byte(len(out) >> 8)

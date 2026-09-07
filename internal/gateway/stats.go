@@ -36,7 +36,16 @@ type Stats struct {
 	// down leaves two per session, so this rising while Sessions does not is
 	// the leak, stated directly.
 	Goroutines int `json:"goroutines"`
-	Sessions   int `json:"sessions"`
+
+	// Sessions counts every live session this gateway is brokering, across
+	// protocols. Reporting only the SSH map made a gateway with desktops open
+	// read as idle -- which is exactly the wrong answer for the number an
+	// operator uses to decide whether a restart is safe.
+	Sessions int `json:"sessions"`
+	SSH      int `json:"sshSessions"`
+	// RDP counts native desktop sessions and browser ones together; both hold
+	// a recording open and both have to be drained before a restart.
+	RDP int `json:"rdpSessions"`
 
 	// HeapInUseBytes is live heap, not the process RSS. Go returns memory to
 	// the OS lazily, so RSS lags and reads as a leak that is not there.
@@ -54,13 +63,25 @@ func (s *Server) stats() Stats {
 	runtime.ReadMemStats(&m)
 
 	s.mu.Lock()
-	sessions := len(s.sessions)
+	ssh := len(s.sessions)
+	rdpWeb := len(s.rdpWeb)
+	proxy := s.rdpProxy
 	s.mu.Unlock()
+
+	// Asked outside the lock: RDPServer takes its own, and holding both in one
+	// order here and the other order there is how a deadlock gets written.
+	native := 0
+	if proxy != nil {
+		native = len(proxy.ActiveSessions())
+	}
+	rdpCount := rdpWeb + native
 
 	return Stats{
 		UptimeSeconds:  int64(time.Since(s.startedAt).Seconds()),
 		Goroutines:     runtime.NumGoroutine(),
-		Sessions:       sessions,
+		Sessions:       ssh + rdpCount,
+		SSH:            ssh,
+		RDP:            rdpCount,
 		HeapInUseBytes: m.HeapInuse,
 		HeapObjects:    m.HeapObjects,
 		StackInUse:     m.StackInuse,
