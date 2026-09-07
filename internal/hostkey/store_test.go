@@ -301,3 +301,26 @@ func indexOf(h, n string) int {
 	}
 	return -1
 }
+
+// A nil store answers "not pinned" rather than wedging the caller.
+//
+// This is not hypothetical tidiness. RLock on a nil receiver does not panic on
+// every platform: on darwin/arm64 it spins with no recoverable stack, so a
+// gateway built without a store would present as a hung session rather than a
+// crash. "Unknown" is also the safe answer -- it makes the session carry the
+// unpinned-host-key risk flag instead of silently looking verified.
+func TestNilStoreLooksUnpinnedInsteadOfHanging(t *testing.T) {
+	var s *Store
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if pin, ok := s.Lookup("db-01"); ok || pin.Fingerprint != "" {
+			t.Errorf("a nil store reported a pin: %+v", pin)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Lookup on a nil store did not return")
+	}
+}
