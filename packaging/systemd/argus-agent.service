@@ -17,6 +17,14 @@ ExecStart=/usr/bin/argus-agent daemon \
 Restart=always
 RestartSec=2s
 
+# Longer than the collector's own drain (30s) plus its seal grace (10s), so
+# systemd never SIGKILLs it part-way through shutting down.
+#
+# The agent seals recordings on exit. A SIGKILL here leaves every recording
+# that was still open with no chain head, unverifiable -- and on a fleet an
+# upgrade would do that to every host with someone logged in.
+TimeoutStopSec=75s
+
 EnvironmentFile=-/etc/argus/agent.env
 
 # ── Runs as root, deliberately ───────────────────────────────────────────────

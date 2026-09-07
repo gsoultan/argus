@@ -249,20 +249,33 @@ func runDaemon(args []string) int {
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sig
+
+	log.Info("argus-agent starting", "version", version, "socket", *socket)
+	listenErr := make(chan error, 1)
+	go func() { listenErr <- col.Listen(*socket) }()
+
+	select {
+	case err := <-listenErr:
+		// Failed on its own; no shutdown is in flight.
+		if err != nil {
+			log.Error("collector failed", "error", err)
+			return 1
+		}
+		return 0
+	case <-sig:
+		// Handled here rather than in a goroutine. Close shuts the socket
+		// first, so Listen returns immediately -- and returning on that exited
+		// the agent through the middle of its own drain, losing the seal on
+		// every recording still open. On a fleet an upgrade did that to every
+		// host with someone logged in.
 		log.Info("shutting down, sealing in-flight recordings")
 		close(stop)
 		cancel()
 		_ = col.Close()
-	}()
-
-	log.Info("argus-agent starting", "version", version, "socket", *socket)
-	if err := col.Listen(*socket); err != nil {
-		log.Error("collector failed", "error", err)
-		return 1
+		<-listenErr
+		log.Info("shutdown complete")
+		return 0
 	}
-	return 0
 }
 
 // agentRiskFlags marks what the console highlights about a session the agent saw.

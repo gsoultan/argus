@@ -325,33 +325,53 @@ func run() error {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Shutdown runs where it can be waited for, not in a goroutine.
+	//
+	// Shutdown closes the listener first, so ListenAndServe returns
+	// ErrServerClosed straight away -- and returning on that exited the process
+	// while Shutdown was still draining. A gateway posting a session report, or
+	// an agent posting an audit event, had its connection cut mid-request by a
+	// shutdown that called itself graceful. Those are spooled and retried, so
+	// nothing was lost permanently, but the restart was dropping work it had
+	// promised to finish.
+	served := make(chan error, 1)
 	go func() {
-		<-stop
-		log.Info("shutting down")
-		cancel()
-		shutdownCtx, c := context.WithTimeout(context.Background(), 10*time.Second)
-		defer c()
-		_ = srv.Shutdown(shutdownCtx)
+		if cfg.TLS != nil {
+			log.Info("argus-control listening (TLS)",
+				"version", version, "addr", cfg.Listen,
+				"mtls", cfg.TLS.ClientCAFile != "")
+			served <- srv.ListenAndServeTLS("", "")
+			return
+		}
+		log.Warn("argus-control is serving PLAINTEXT HTTP",
+			"detail", "session cookies, recordings and the audit log cross this "+
+				"listener in the clear; configure `tls` or terminate TLS in front of it")
+		log.Info("argus-control listening", "version", version, "addr", cfg.Listen)
+		served <- srv.ListenAndServe()
 	}()
 
-	if cfg.TLS != nil {
-		log.Info("argus-control listening (TLS)",
-			"version", version, "addr", cfg.Listen,
-			"mtls", cfg.TLS.ClientCAFile != "")
-		if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	select {
+	case err := <-served:
+		// Failed on its own; no shutdown is in flight.
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		return nil
+	case <-stop:
+		log.Info("shutting down, finishing requests in flight")
+		shutdownCtx, c := context.WithTimeout(context.Background(), 10*time.Second)
+		defer c()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Error("some requests did not finish before the deadline", "error", err)
+		}
+		// The sweeper stops only once nothing is being served, so a request
+		// already in a handler is not cut off by its own background context.
+		cancel()
+		<-served
+		log.Info("shutdown complete")
+		return nil
 	}
-
-	log.Warn("argus-control is serving PLAINTEXT HTTP",
-		"detail", "session cookies, recordings and the audit log cross this "+
-			"listener in the clear; configure `tls` or terminate TLS in front of it")
-	log.Info("argus-control listening", "version", version, "addr", cfg.Listen)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
 }
 
 func loadConfig(path string) (config, error) {
