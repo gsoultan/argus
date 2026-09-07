@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -448,13 +449,20 @@ func run() error {
 	case <-stop:
 		log.Info("shutting down, waiting for sessions to finish")
 		cancelWeb()
+
+		// Both listeners drain at once. Sequentially they would add up -- two
+		// bounded drains of 30s plus their seal grace is 80s, past the unit's
+		// TimeoutStopSec, so the SIGKILL this whole path exists to avoid would
+		// arrive during the second one. They are independent; there is no
+		// reason to make SSH wait for a desktop.
+		var draining sync.WaitGroup
 		if rdpSrv != nil {
-			_ = rdpSrv.Close()
+			draining.Add(1)
+			go func() { defer draining.Done(); _ = rdpSrv.Close() }()
 		}
-		// Blocking, and on this goroutine. Close drains, then terminates
-		// whatever is left so its recording is sealed; returning before it
-		// finishes is how the recordings were being lost.
-		_ = srv.Close()
+		draining.Add(1)
+		go func() { defer draining.Done(); _ = srv.Close() }()
+		draining.Wait()
 		<-listenErr
 		log.Info("shutdown complete")
 		return nil

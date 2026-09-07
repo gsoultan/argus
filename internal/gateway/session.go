@@ -577,8 +577,13 @@ func (s *Session) reportFileEvent(e sftp.Event) {
 		severity = "warning"
 	}
 
+	// Tracked like the rest. A file transfer is the evidence an investigation
+	// reaches for first, and losing its audit line to the exit is exactly the
+	// wrong record to drop.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.srv.reports.Add(1)
 	go func() {
+		defer s.srv.reports.Done()
 		defer cancel()
 		s.srv.cfg.Reporter.Audit(ctx, map[string]any{
 			"action":     action,

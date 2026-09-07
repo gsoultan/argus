@@ -144,7 +144,11 @@ func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
 
 	head, closeErr := sess.Close()
 	s.untrackRDPWeb(sess)
-	s.reportRDPWeb(sess, head, "closed")
+	state := "closed"
+	if _, _, killed := sess.Killed(); killed {
+		state = "terminated"
+	}
+	s.reportRDPWeb(sess, head, state)
 	_ = client.Close()
 	<-inputDone
 
@@ -404,8 +408,16 @@ func (s *Server) reportRDPWeb(sess *rdp.Session, chainHead, state string) {
 			rec["recordingBytes"] = bytes
 		}
 	}
+	// Who ended it and why, when someone did.
+	if by, reason, killed := sess.Killed(); killed {
+		rec["terminatedBy"] = by
+		rec["terminationReason"] = reason
+	}
+	// Tracked, so shutdown waits for it rather than exiting through it.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.reports.Add(1)
 	go func() {
+		defer s.reports.Done()
 		defer cancel()
 		s.cfg.Reporter.Session(ctx, rec)
 	}()
