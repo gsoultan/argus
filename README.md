@@ -211,9 +211,22 @@ Across 1232 sessions the gateway sealed and uploaded 1232 recordings, panicked
 zero times, and did not trend upward in memory over repeated 200-session runs.
 Steady state is ~24 MB idle.
 
+### Two gateways at once
+
+Two instances sharing one control plane, 100 concurrent sessions driven through
+each at the same time: 200 of 200 succeeded, 200 session rows landed, every id
+distinct, and the audit chain verified intact afterwards across both writers.
+
+The state that has to be shared is shared. The second gateway starts with an
+empty local pin file and gets its host-key pins from the control plane, so
+trust-on-first-use cannot let it accept a host the first would refuse. A
+terminal ticket redeemed on one gateway is refused by the other with 401.
+
+Reproduce with `dev/argus2.yaml.example`.
+
 These figures are from a development environment on one machine. They are a
-floor to plan against, not a datasheet, and nobody has yet run two gateways at
-once or measured a fleet of targets.
+floor to plan against, not a datasheet, and nobody has yet measured a fleet of
+targets or a gateway under sustained multi-hour load.
 
 ## Security posture
 
