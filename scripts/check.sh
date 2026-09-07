@@ -51,8 +51,13 @@ if [[ "$TARGET" == all || "$TARGET" == go ]]; then
     if ! (exec 3<>/dev/tcp/localhost/5433) 2>/dev/null; then
       warn "Postgres is not reachable — control-plane tests will SKIP (run: ./scripts/deps.sh up)"
     fi
-    run_check "vet" go vet ./...
-    run_check "test" go test ./...
+    # Not ./... — Go does not skip node_modules, so an npm dependency that
+    # ships Go source (flatted does) joins the build. Compiling third-party
+    # code that arrived through a JavaScript lockfile is not something this
+    # product should do by accident.
+    packages=$(go list ./... | grep -v '/node_modules/')
+    run_check "vet" go vet $packages
+    run_check "test" go test $packages
     # gofmt exits 0 even when files need formatting, so check for output instead.
     run_check "gofmt" bash -c '[[ -z "$(gofmt -l .)" ]] || { gofmt -l .; exit 1; }'
   elif [[ "$TARGET" == go ]]; then

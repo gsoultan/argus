@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,26 +46,37 @@ func scratchDB(t *testing.T, name string) string {
 	t.Helper()
 	admin, prefix := adminDSN(t)
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, admin)
-	if err != nil {
-		t.Skipf("cannot reach the maintenance database: %v", err)
+
+	// Each admin statement gets its own connection rather than sharing a pool.
+	//
+	// The pooled version closed the pool when this function returned and then
+	// used it again from t.Cleanup, where the error was discarded -- so every
+	// scratch database survived the run. Sixty-nine of them accumulated before
+	// CREATE DATABASE started blocking long enough to time tests out.
+	onAdmin := func(sql string, args ...any) error {
+		conn, err := pgx.Connect(ctx, admin)
+		if err != nil {
+			return err
+		}
+		defer conn.Close(ctx)
+		_, err = conn.Exec(ctx, sql, args...)
+		return err
 	}
-	defer pool.Close()
-	// pgxpool connects lazily, so without this the skip above never fires and
-	// an unreachable database surfaces as a confusing CREATE DATABASE failure.
-	if err := pool.Ping(ctx); err != nil {
+	if err := onAdmin("SELECT 1"); err != nil {
 		t.Skipf("cannot reach the maintenance database: %v", err)
 	}
 
 	drop := func() {
-		// Terminate stragglers first: a pool that has not finished closing
-		// keeps the database alive and turns cleanup into a flake.
-		_, _ = pool.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		                       WHERE datname = $1 AND pid <> pg_backend_pid()`, name)
-		_, _ = pool.Exec(ctx, "DROP DATABASE IF EXISTS "+name)
+		// Terminate stragglers first: a connection that has not finished
+		// closing keeps the database alive and turns cleanup into a flake.
+		_ = onAdmin(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+		             WHERE datname = $1 AND pid <> pg_backend_pid()`, name)
+		if err := onAdmin("DROP DATABASE IF EXISTS " + name); err != nil {
+			t.Errorf("could not drop scratch database %s: %v", name, err)
+		}
 	}
 	drop()
-	if _, err := pool.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+	if err := onAdmin("CREATE DATABASE " + name); err != nil {
 		// Not skipped. These tests are the only cover the upgrade path has,
 		// and a run that quietly declines to check it reads as a pass.
 		t.Fatalf("create scratch database %s: %v\n"+
