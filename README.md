@@ -208,8 +208,26 @@ not the gateway's: the failures were the target refusing TCP connections, and
 the gateway reported each one with the reason rather than hanging.
 
 Across 1232 sessions the gateway sealed and uploaded 1232 recordings, panicked
-zero times, and did not trend upward in memory over repeated 200-session runs.
-Steady state is ~24 MB idle.
+zero times. Steady state is ~24 MB idle.
+
+### Soak
+
+5300 sessions in waves through one gateway over 90 minutes, with the numbers
+read from `/stats` at idle between waves — after every session has torn down,
+which is the only moment a leak is visible.
+
+| | first half | second half |
+| --- | --- | --- |
+| goroutines at idle | 38.1 | 34.3 |
+| heap in use at idle | 7.31 MB | 6.91 MB |
+
+Both went **down**. A goroutine leaked per session would have shown +5300.
+
+13 of 212 waves failed, every one because the gateway could not reach the
+target over the development container network (`dial tcp: i/o timeout`). It
+refused each session with that reason rather than hanging, which is the
+behaviour worth having. Run this on a laptop and expect the same: the limit
+you hit first is the environment.
 
 ### Two gateways at once
 
