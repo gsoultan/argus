@@ -413,6 +413,10 @@ func (s *RDPServer) riskFlags(sess *rdp.Session) []string {
 	if sess.Protocol == rdp.ProtocolSSL {
 		flags = append(flags, "no-network-level-auth")
 	}
+	// A replay that cuts off part-way is not a session that ended there.
+	if sess.RecordingBroken() {
+		flags = append(flags, "recording-incomplete")
+	}
 	return flags
 }
 
