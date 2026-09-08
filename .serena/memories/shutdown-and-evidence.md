@@ -108,3 +108,49 @@ still perform a transfer.
 **The lesson worth keeping:** when a feature is demonstrated, check which host
 configuration it was demonstrated on. Both bugs survived because the demo used
 the path that still worked.
+
+
+## The strict decoder killed three features
+
+`decode()` used `DisallowUnknownFields`, and reporters are deployed separately
+from the control plane. A newer sender lost **the whole message**, not the
+field. Invisible from both ends: the sender spools and retries forever, the
+receiver logs one bad request among many.
+
+- `terminatedBy` on session reports → every administrative terminate unrecorded
+- `exec_tracing` on heartbeats → every agent stale for seven days, taking
+  session counts, posture and drift with it
+- and so the probe state `RequireEbpfForRoot` needs could never arrive, which is
+  why that switch was unenforceable
+
+`decodeReport` (internal/control/decode_report.go) keeps what it understands and
+names what it does not, once per endpoint+field-set. **The console keeps the
+strict decoder** — it ships with this build, so an unknown field there is a typo,
+not skew.
+
+**If you add a field to any reporter payload, add it to the receiver too.** The
+warning now tells you, but only if someone reads the log.
+
+## Auditing the Settings page against the code
+
+Six of eight switches were enforced. The two that were not:
+
+- `EncryptRecordingsSeparateKey` — **nothing encrypted anything.** Recordings
+  went to object storage as plaintext with no `ServerSideEncryption` option. The
+  switch defaulted on and promised the opposite. Removed in migration 010;
+  implementing it needs an answer to key custody and key loss (lose it and every
+  recording, including backups, is gone).
+- `RequireEbpfForRoot` — now enforced via the authorize endpoint, refusing an
+  elevated session unless the host's agent reports a loaded probe, and
+  surfacing the agent's own reason.
+
+**Check any new policy toggle has a reader before it has a switch.**
+
+## Environment hazard on this machine
+
+`panmail-dev-postgres` also publishes host port **5433**, colliding with
+`argus-postgres`. `localhost:5433` may authenticate against another project's
+database. Use the container IP (`192.168.65.8:5432`) for anything that must be
+certain. Apple `container` networking also stalls intermittently, which produced
+`dial tcp ...: i/o timeout` refusals during the soak and cost two wrong
+diagnoses.
