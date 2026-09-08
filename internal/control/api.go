@@ -386,6 +386,11 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Version        string `json:"version"`
 		ActiveSessions int    `json:"active_sessions"`
 		Posture        any    `json:"posture"`
+		// What the agent has always sent and this struct did not accept, so
+		// every heartbeat carrying it was rejected whole. ExecTracing is
+		// whether the kernel probe is loaded; ExecReason says why not.
+		ExecTracing bool   `json:"exec_tracing"`
+		ExecReason  string `json:"exec_reason"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -396,7 +401,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
-		in.ActiveSessions, in.Posture)
+		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason)
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,

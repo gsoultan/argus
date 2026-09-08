@@ -34,7 +34,7 @@ func TestZeroPolicyLosesRecordingGuarantees(t *testing.T) {
 	}
 	d := DefaultPolicy()
 	if !d.ProxySftpSubsystem || !d.FailClosedOnRecordingLoss ||
-		!d.RequireEbpfForRoot || !d.EncryptRecordingsSeparateKey {
+		!d.RequireEbpfForRoot {
 		t.Error("DefaultPolicy must keep every recording guarantee on")
 	}
 }

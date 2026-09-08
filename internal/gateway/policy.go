@@ -39,10 +39,9 @@ type Policy struct {
 	AllowAgentForward bool `json:"allowAgentForward"`
 	AllowX11Forward   bool `json:"allowX11Forward"`
 
-	ProxySftpSubsystem           bool `json:"proxySftpSubsystem"`
-	FailClosedOnRecordingLoss    bool `json:"failClosedOnRecordingLoss"`
-	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
-	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
+	ProxySftpSubsystem        bool `json:"proxySftpSubsystem"`
+	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
+	RequireEbpfForRoot        bool `json:"requireEbpfForRoot"`
 
 	// ElevatedPrincipals need an approved access request before a session may
 	// open as one. The list comes from the control plane with the rest of the
@@ -60,11 +59,10 @@ type Policy struct {
 // nothing in this package constructs one — PolicyHolder starts from here.
 func DefaultPolicy() Policy {
 	return Policy{
-		ProxySftpSubsystem:           true,
-		FailClosedOnRecordingLoss:    true,
-		RequireEbpfForRoot:           true,
-		EncryptRecordingsSeparateKey: true,
-		ElevatedPrincipals:           DefaultElevatedPrincipals(),
+		ProxySftpSubsystem:        true,
+		FailClosedOnRecordingLoss: true,
+		RequireEbpfForRoot:        true,
+		ElevatedPrincipals:        DefaultElevatedPrincipals(),
 	}
 }
 
@@ -190,15 +188,14 @@ func (p Policy) channelRequestAllowed(kind string) (governed, allowed bool) {
 // recording loss" is not a mistake worth leaving available.
 func policyFromWire(w reporter.GatewayPolicy) Policy {
 	p := Policy{
-		AllowLocalForward:            w.AllowLocalForward,
-		AllowRemoteForward:           w.AllowRemoteForward,
-		AllowAgentForward:            w.AllowAgentForward,
-		AllowX11Forward:              w.AllowX11Forward,
-		ProxySftpSubsystem:           w.ProxySftpSubsystem,
-		FailClosedOnRecordingLoss:    w.FailClosedOnRecordingLoss,
-		RequireEbpfForRoot:           w.RequireEbpfForRoot,
-		EncryptRecordingsSeparateKey: w.EncryptRecordingsSeparateKey,
-		ElevatedPrincipals:           w.ElevatedPrincipals,
+		AllowLocalForward:         w.AllowLocalForward,
+		AllowRemoteForward:        w.AllowRemoteForward,
+		AllowAgentForward:         w.AllowAgentForward,
+		AllowX11Forward:           w.AllowX11Forward,
+		ProxySftpSubsystem:        w.ProxySftpSubsystem,
+		FailClosedOnRecordingLoss: w.FailClosedOnRecordingLoss,
+		RequireEbpfForRoot:        w.RequireEbpfForRoot,
+		ElevatedPrincipals:        w.ElevatedPrincipals,
 	}
 	// A control plane too old to send the list is not a control plane that
 	// thinks nothing is elevated. Treating an absent field as an empty list
@@ -220,8 +217,7 @@ func (p Policy) Equal(o Policy) bool {
 		p.AllowX11Forward != o.AllowX11Forward ||
 		p.ProxySftpSubsystem != o.ProxySftpSubsystem ||
 		p.FailClosedOnRecordingLoss != o.FailClosedOnRecordingLoss ||
-		p.RequireEbpfForRoot != o.RequireEbpfForRoot ||
-		p.EncryptRecordingsSeparateKey != o.EncryptRecordingsSeparateKey {
+		p.RequireEbpfForRoot != o.RequireEbpfForRoot {
 		return false
 	}
 	return slices.Equal(p.ElevatedPrincipals, o.ElevatedPrincipals)

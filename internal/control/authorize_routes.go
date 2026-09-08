@@ -70,6 +70,39 @@ func (a *API) authorizePrincipal(r *http.Request, email, target, principal strin
 		}
 	}
 
+	// Kernel evidence, when the policy insists on it for elevated sessions.
+	//
+	// "PTY capture alone can be defeated by base64 or by running a script" is
+	// what the console says about this switch, and it was true of every root
+	// session because nothing read the switch. A session recorded at PTY
+	// fidelity cannot evidence what ran, which for root is the whole question.
+	if pol, perr := a.store.GatewayPolicy(r.Context()); perr == nil && pol.RequireEbpfForRoot {
+		tracing, why, terr := a.store.ExecTracingFor(r.Context(), target)
+		if terr != nil {
+			return Authorization{}, terr
+		}
+		if !tracing {
+			if why == "" {
+				why = "the agent reports no kernel probe"
+			}
+			a.log.Warn("elevated session refused: no kernel evidence available",
+				"email", email, "principal", principal, "target", target, "reason", why)
+			if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
+				Action:     "session.elevation_refused",
+				Severity:   "notice",
+				ActorEmail: email,
+				Target:     target,
+				Detail: "Refused a session as " + principal +
+					": policy requires kernel-observed execution evidence and " + why + ".",
+			}); aerr != nil {
+				a.log.Error("audit append failed", "error", aerr)
+			}
+			return Authorization{Reason: "policy requires kernel-observed evidence for " +
+				principal + " sessions, and " + why +
+				"; install or repair the Argus agent on this host, or change the policy"}, nil
+		}
+	}
+
 	granted, expires, err := a.store.ActiveGrant(r.Context(), email, target, principal)
 	if err != nil {
 		return Authorization{}, err

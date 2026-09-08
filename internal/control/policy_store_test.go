@@ -26,7 +26,7 @@ func TestGatewayPolicySeedsTheClosedDefaults(t *testing.T) {
 		t.Errorf("no forwarding channel may be open on a fresh database: %+v", p)
 	}
 	if !p.ProxySftpSubsystem || !p.FailClosedOnRecordingLoss ||
-		!p.RequireEbpfForRoot || !p.EncryptRecordingsSeparateKey {
+		!p.RequireEbpfForRoot {
 		t.Errorf("every recording guarantee must be on by default: %+v", p)
 	}
 }

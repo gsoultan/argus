@@ -127,10 +127,9 @@ type GatewayPolicy struct {
 	AllowAgentForward  bool `json:"allowAgentForward"`
 	AllowX11Forward    bool `json:"allowX11Forward"`
 
-	ProxySftpSubsystem           bool `json:"proxySftpSubsystem"`
-	FailClosedOnRecordingLoss    bool `json:"failClosedOnRecordingLoss"`
-	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
-	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
+	ProxySftpSubsystem        bool `json:"proxySftpSubsystem"`
+	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
+	RequireEbpfForRoot        bool `json:"requireEbpfForRoot"`
 
 	// ElevatedPrincipals need an approved access request. Defined by the
 	// control plane so the two services cannot disagree about what "elevated"

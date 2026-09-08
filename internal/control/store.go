@@ -393,7 +393,7 @@ func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
 // watched" is a property of the host that the console needs to show, not
 // something an operator should have to join two views to work out.
 func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
-	activeSessions int, posture any) error {
+	activeSessions int, posture any, execTracing bool, execReason string) error {
 
 	var postureJSON []byte
 	if posture != nil {
@@ -411,15 +411,18 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO agents (hostname, version, last_seen_at, active_sessions, posture, updated_at)
-		VALUES ($1,$2,now(),$3,$4,now())
+		INSERT INTO agents (hostname, version, last_seen_at, active_sessions, posture,
+		                    exec_tracing, exec_reason, updated_at)
+		VALUES ($1,$2,now(),$3,$4,$5,$6,now())
 		ON CONFLICT (hostname) DO UPDATE SET
 			version         = EXCLUDED.version,
 			last_seen_at    = now(),
 			active_sessions = EXCLUDED.active_sessions,
 			posture         = COALESCE(EXCLUDED.posture, agents.posture),
+			exec_tracing    = EXCLUDED.exec_tracing,
+			exec_reason     = EXCLUDED.exec_reason,
 			updated_at      = now()`,
-		hostname, version, activeSessions, postureJSON); err != nil {
+		hostname, version, activeSessions, postureJSON, execTracing, execReason); err != nil {
 		return err
 	}
 
@@ -662,4 +665,28 @@ func (s *Store) Stats(ctx context.Context) (FleetStats, error) {
 			&st.CredentialsOverdue, &st.StandingCredentialAssets,
 			&st.SessionsDirectToday, &st.AssetsUnmonitored, &st.AgentsStale)
 	return st, err
+}
+
+// ExecTracingFor reports whether the agent on host has its kernel probe loaded,
+// and why not when it does not.
+//
+// Matched by agent hostname or by the asset's agent_hostname override, because
+// the name an agent calls itself is not always the name the inventory uses.
+func (s *Store) ExecTracingFor(ctx context.Context, host string) (bool, string, error) {
+	var tracing bool
+	var reason string
+	err := s.pool.QueryRow(ctx, `
+		SELECT a.exec_tracing, a.exec_reason
+		  FROM agents a
+		 WHERE a.hostname = $1
+		    OR a.hostname = (SELECT agent_hostname FROM assets WHERE hostname = $1)
+		 ORDER BY a.last_seen_at DESC
+		 LIMIT 1`, host).Scan(&tracing, &reason)
+	if err == pgx.ErrNoRows {
+		return false, "no agent has reported from this host", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	return tracing, reason, nil
 }

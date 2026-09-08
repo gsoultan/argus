@@ -1,0 +1,19 @@
+-- Remove a control that did nothing.
+--
+-- The console offered "Encrypt recordings at rest with a separate key", said it
+-- "keeps the recording key distinct from the credential vault key, so
+-- compromising one does not yield the other", and defaulted it on. Nothing in
+-- this codebase encrypted anything: recordings were written as plaintext and
+-- uploaded to object storage with no ServerSideEncryption option set.
+--
+-- So an operator reading that page believed their session transcripts were
+-- protected at rest, and a breach of the object store would have handed over
+-- every keystroke of every privileged session in plaintext.
+--
+-- A switch that is stored, displayed and audited but read by nothing is the
+-- exact failure this product's own settings page was written to avoid: a
+-- control that appears to be set must be set. Encrypting recordings is worth
+-- building -- and when it is built it comes back with an implementation behind
+-- it, and with an answer to what happens when the key is lost, which is a
+-- question a column cannot answer.
+ALTER TABLE gateway_policy DROP COLUMN IF EXISTS encrypt_recordings_separate_key;

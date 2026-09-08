@@ -21,10 +21,9 @@ type GatewayPolicy struct {
 	AllowAgentForward  bool `json:"allowAgentForward"`
 	AllowX11Forward    bool `json:"allowX11Forward"`
 
-	ProxySftpSubsystem           bool `json:"proxySftpSubsystem"`
-	FailClosedOnRecordingLoss    bool `json:"failClosedOnRecordingLoss"`
-	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
-	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
+	ProxySftpSubsystem        bool `json:"proxySftpSubsystem"`
+	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
+	RequireEbpfForRoot        bool `json:"requireEbpfForRoot"`
 
 	// ElevatedPrincipals is served, never stored. It is what this control plane
 	// enforces, sent so a gateway does not have to hold its own copy and drift.
@@ -46,14 +45,13 @@ type GatewayPolicy struct {
 // empty struct.
 func DefaultGatewayPolicy() GatewayPolicy {
 	return GatewayPolicy{
-		AllowLocalForward:            false,
-		AllowRemoteForward:           false,
-		AllowAgentForward:            false,
-		AllowX11Forward:              false,
-		ProxySftpSubsystem:           true,
-		FailClosedOnRecordingLoss:    true,
-		RequireEbpfForRoot:           true,
-		EncryptRecordingsSeparateKey: true,
+		AllowLocalForward:         false,
+		AllowRemoteForward:        false,
+		AllowAgentForward:         false,
+		AllowX11Forward:           false,
+		ProxySftpSubsystem:        true,
+		FailClosedOnRecordingLoss: true,
+		RequireEbpfForRoot:        true,
 	}
 }
 
@@ -65,12 +63,12 @@ func (s *Store) GatewayPolicy(ctx context.Context) (GatewayPolicy, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT allow_local_forward, allow_remote_forward, allow_agent_forward,
 		       allow_x11_forward, proxy_sftp_subsystem, fail_closed_on_recording_loss,
-		       require_ebpf_for_root, encrypt_recordings_separate_key,
+		       require_ebpf_for_root,
 		       to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), updated_by
 		  FROM gateway_policy WHERE id = TRUE`).Scan(
 		&p.AllowLocalForward, &p.AllowRemoteForward, &p.AllowAgentForward,
 		&p.AllowX11Forward, &p.ProxySftpSubsystem, &p.FailClosedOnRecordingLoss,
-		&p.RequireEbpfForRoot, &p.EncryptRecordingsSeparateKey,
+		&p.RequireEbpfForRoot,
 		&p.UpdatedAt, &p.UpdatedBy)
 	if err != nil {
 		return DefaultGatewayPolicy(), fmt.Errorf("read gateway policy: %w", err)
@@ -95,13 +93,12 @@ func (s *Store) SaveGatewayPolicy(
 			proxy_sftp_subsystem            = $5,
 			fail_closed_on_recording_loss   = $6,
 			require_ebpf_for_root           = $7,
-			encrypt_recordings_separate_key = $8,
 			updated_at                      = now(),
-			updated_by                      = $9
+			updated_by                      = $8
 		WHERE id = TRUE`,
 		p.AllowLocalForward, p.AllowRemoteForward, p.AllowAgentForward,
 		p.AllowX11Forward, p.ProxySftpSubsystem, p.FailClosedOnRecordingLoss,
-		p.RequireEbpfForRoot, p.EncryptRecordingsSeparateKey, actor)
+		p.RequireEbpfForRoot, actor)
 	if err != nil {
 		return GatewayPolicy{}, fmt.Errorf("save gateway policy: %w", err)
 	}
@@ -135,8 +132,6 @@ var policyFields = []policyField{
 		"sessions may proceed unrecorded"},
 	{"eBPF requirement for root sessions", func(p GatewayPolicy) bool { return p.RequireEbpfForRoot }, false,
 		"root sessions may rely on PTY capture alone"},
-	{"separate key for recordings at rest", func(p GatewayPolicy) bool { return p.EncryptRecordingsSeparateKey }, false,
-		"the recording key and the vault key become the same secret"},
 }
 
 // PolicyChange is one field that moved.

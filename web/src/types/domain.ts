@@ -341,7 +341,6 @@ export interface GatewayPolicy {
   proxySftpSubsystem: boolean
   failClosedOnRecordingLoss: boolean
   requireEbpfForRoot: boolean
-  encryptRecordingsSeparateKey: boolean
 }
 
 export type PolicyKey = keyof GatewayPolicy
