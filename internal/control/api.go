@@ -316,7 +316,7 @@ func (a *API) getAudit(w http.ResponseWriter, r *http.Request, _ string) {
 
 func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	var in Session
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/session"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -392,7 +392,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ExecTracing bool   `json:"exec_tracing"`
 		ExecReason  string `json:"exec_reason"`
 	}
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -421,7 +421,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {
 	var in Asset
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/asset"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -438,7 +438,7 @@ func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) postAudit(w http.ResponseWriter, r *http.Request) {
 	var in AuditEvent
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/audit"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -481,10 +481,15 @@ func fidelityUnsupported(s Session) bool {
 	return s.CommandCount == nil || *s.CommandCount == 0
 }
 
+// decode reads a request body from the console, strictly.
+//
+// Unknown fields are refused here because the console ships with this build:
+// there is no version skew between them, so an unrecognised field is a typo or
+// a stale client and should fail where someone will see it.
+//
+// Reporters are a different matter entirely -- see decodeReport.
 func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
-	// Reject unknown fields: a reporter sending something this build does not
-	// understand should fail loudly rather than have data silently dropped.
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return errors.New("invalid JSON: " + err.Error())

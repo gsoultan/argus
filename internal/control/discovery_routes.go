@@ -142,7 +142,7 @@ func (a *API) postFacts(w http.ResponseWriter, r *http.Request) {
 		Hostname string `json:"hostname"`
 		HostFacts
 	}
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/facts"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
