@@ -31,6 +31,23 @@ type Client struct {
 	// control-plane restart would lose every session that happened during it.
 	spoolPath string
 	mu        sync.Mutex
+
+	// MaxSpoolBytes bounds the spool. Zero means DefaultMaxSpoolBytes.
+	//
+	// It was unbounded. A control plane that is unreachable for a week -- which
+	// is exactly what a misconfigured agent does, silently -- grows this file
+	// without limit on the host that must keep recording. A full disk then
+	// stops the recorder, and a session that cannot be recorded is terminated,
+	// so an unreachable control plane eventually takes privileged access down
+	// with it. Measured on the dev fleet: 11.9 MB and climbing.
+	MaxSpoolBytes int64
+
+	// failures counts consecutive delivery failures, and firstFailure is when
+	// the run started. A single warning per report is indistinguishable from
+	// noise; an operator needs to be told that evidence has stopped arriving.
+	failures     int
+	firstFailure time.Time
+	lastEscalate time.Time
 }
 
 // New builds a reporter. An empty baseURL disables reporting entirely, which is
@@ -115,7 +132,66 @@ func (c *Client) post(ctx context.Context, path string, v any) {
 		c.log.Warn("control plane unreachable, spooling report",
 			"path", path, "error", err)
 		c.spool(spoolEntry{Path: path, Body: body, At: time.Now().UTC()})
+		c.noteFailure(err)
+		return
 	}
+	c.noteSuccess()
+}
+
+// DefaultMaxSpoolBytes bounds the undelivered-report file.
+//
+// Generous enough to survive a long control-plane outage on a busy gateway, and
+// small enough that it cannot be what fills the disk.
+const DefaultMaxSpoolBytes = 64 << 20 // 64 MiB
+
+// escalateAfter is how long a run of failures must last before it stops being
+// a warning and becomes an error, and how often to repeat it.
+//
+// Reports are frequent, so the first minute of an outage is ordinary. An hour
+// of silence is a fleet that has stopped producing evidence.
+const escalateAfter = 5 * time.Minute
+
+// noteFailure records a delivery failure and escalates a sustained run of them.
+//
+// One warning per failed report reads as noise. What an operator needs to know
+// is that reports have not been landing for twenty minutes -- because for that
+// whole time the console has been showing a fleet that looks fine.
+func (c *Client) noteFailure(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	if c.failures == 0 {
+		c.firstFailure = now
+		c.lastEscalate = now
+	}
+	c.failures++
+
+	since := now.Sub(c.firstFailure)
+	if since < escalateAfter || now.Sub(c.lastEscalate) < escalateAfter {
+		return
+	}
+	c.lastEscalate = now
+	c.log.Error("nothing has reached the control plane for a sustained period",
+		"for", since.Round(time.Second), "failed_reports", c.failures, "error", err,
+		"detail", "sessions and audit events are being spooled, not delivered; "+
+			"the console is showing a fleet it has stopped hearing from")
+}
+
+// noteSuccess ends a run of failures, and says so if there was one worth
+// mentioning -- an operator who saw the alarm needs to see it clear.
+func (c *Client) noteSuccess() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failures == 0 {
+		return
+	}
+	if since := time.Since(c.firstFailure); since >= escalateAfter {
+		c.log.Info("the control plane is reachable again",
+			"was_unreachable_for", since.Round(time.Second),
+			"failed_reports", c.failures)
+	}
+	c.failures = 0
 }
 
 func (c *Client) send(ctx context.Context, path string, body []byte) error {
@@ -149,12 +225,68 @@ func (c *Client) spool(e spoolEntry) {
 	if err := os.MkdirAll(filepath.Dir(c.spoolPath), 0o700); err != nil {
 		return
 	}
+	c.trimSpoolLocked()
+
 	f, err := os.OpenFile(c.spoolPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 	_ = json.NewEncoder(f).Encode(e)
+}
+
+// trimSpoolLocked drops the oldest reports once the spool exceeds its bound.
+//
+// Oldest first, deliberately. If some evidence has to go, the report an
+// investigator is least likely to want is the one furthest in the past, and the
+// alternative -- refusing to spool anything new -- silently discards whatever is
+// happening right now, which is the part somebody is probably asking about.
+//
+// Losing evidence is not acceptable, but neither is filling the disk that the
+// recorder is writing to: a full disk stops recording, and a session that
+// cannot be recorded is terminated. Between losing the oldest spooled reports
+// and taking privileged access down, this is the lesser harm, and it says so.
+//
+// Caller holds c.mu.
+func (c *Client) trimSpoolLocked() {
+	max := c.MaxSpoolBytes
+	if max <= 0 {
+		max = DefaultMaxSpoolBytes
+	}
+	fi, err := os.Stat(c.spoolPath)
+	if err != nil || fi.Size() <= max {
+		return
+	}
+
+	data, err := os.ReadFile(c.spoolPath)
+	if err != nil {
+		return
+	}
+	// Keep the newest half, so trimming is occasional rather than once per
+	// report at the boundary.
+	keepFrom := int64(len(data)) - max/2
+	if keepFrom < 0 {
+		keepFrom = 0
+	}
+	// Start at a record boundary; a half line would not survive a reload.
+	if i := bytes.IndexByte(data[keepFrom:], '\n'); i >= 0 {
+		keepFrom += int64(i) + 1
+	}
+	dropped := bytes.Count(data[:keepFrom], []byte{'\n'})
+
+	tmp := c.spoolPath + ".trim"
+	if err := os.WriteFile(tmp, data[keepFrom:], 0o600); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, c.spoolPath); err != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	c.log.Error("the report spool is full; the oldest undelivered reports were dropped",
+		"dropped", dropped, "limit_bytes", max, "path", c.spoolPath,
+		"detail", "the control plane has been unreachable long enough to fill "+
+			"the spool; those sessions and audit events are lost, and the disk "+
+			"this recorder writes to was the alternative")
 }
 
 // Drain retries spooled reports, returning how many were delivered.
