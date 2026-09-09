@@ -349,3 +349,96 @@ func TestShadowIsToldWhenTheSessionIsTerminated(t *testing.T) {
 		t.Error("the viewer was disconnected without being told why")
 	}
 }
+
+// A viewer that types must not reach the session, and the socket it types into
+// must still be drained.
+//
+// Nothing a shadow sent ever reached a session -- verified live by typing into
+// one and watching the target execute nothing. But the connection was never
+// read at all, and coder/websocket handles ping and close frames inside Read.
+// So a viewer that went away was noticed only when a write to it eventually
+// failed, and whatever a viewer sent sat in a buffer nobody would drain.
+func TestAViewerCannotTypeIntoTheSession(t *testing.T) {
+	srv, sess, cfg := newTestServer(t)
+	ts := shadowHTTP(t, srv, cfg)
+
+	ticket, err := cfg.Signer.IssueSessionScopedTicket(
+		"auditor@northwind.id", auth.ScopeShadow, sess.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") +
+		"/ws/shadow?session=" + sess.ID + "&ticket=" + ticket
+	c, _, err := websocket.Dial(ctx, url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	if m := readMsg(t, ctx, c); m.Type != "ready" {
+		t.Fatalf("first message = %s, want ready", m.Type)
+	}
+
+	// Type at it. The write itself may well succeed -- what must not happen is
+	// that anything reaches the session.
+	if err := c.Write(ctx, websocket.MessageText,
+		[]byte(`{"type":"input","data":"rm -rf /\n"}`)); err != nil {
+		t.Logf("write refused outright: %v", err)
+	}
+
+	// The session must still be delivering its own output, unaffected.
+	if err := sess.rec.Write(recorder.Output, []byte("still-mine\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	m := readMsg(t, ctx, c)
+	if m.Type != "output" || m.Data != "still-mine\r\n" {
+		t.Fatalf("next frame = %s/%q; the viewer's input came back as session "+
+			"output, which means it reached the session", m.Type, m.Data)
+	}
+}
+
+// A viewer going away is noticed at once, not at the next write.
+func TestAViewerLeavingIsNoticedImmediately(t *testing.T) {
+	srv, sess, cfg := newTestServer(t)
+	ts := shadowHTTP(t, srv, cfg)
+
+	ticket, err := cfg.Signer.IssueSessionScopedTicket(
+		"auditor@northwind.id", auth.ScopeShadow, sess.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") +
+		"/ws/shadow?session=" + sess.ID + "&ticket=" + ticket
+	c, _, err := websocket.Dial(ctx, url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	if m := readMsg(t, ctx, c); m.Type != "ready" {
+		t.Fatalf("first message = %s, want ready", m.Type)
+	}
+
+	before := sess.Hub().Viewers()
+	if before < 1 {
+		t.Fatalf("hub reports %d viewers with a viewer attached", before)
+	}
+
+	_ = c.Close(websocket.StatusNormalClosure, "done")
+
+	// The subscription is released when the handler returns, which now happens
+	// as soon as the peer closes rather than at the next failed write.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if sess.Hub().Viewers() < before {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("the viewer left and the gateway still holds %d viewers",
+		sess.Hub().Viewers())
+}
