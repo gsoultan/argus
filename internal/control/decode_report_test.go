@@ -142,3 +142,67 @@ func TestUnknownFieldsUnderstandsTags(t *testing.T) {
 		t.Errorf("unknown = %v, want [surprise]", got)
 	}
 }
+
+// The key scan reads every shape of value without keeping any of it.
+//
+// unknownFields decoded into map[string]json.RawMessage, which copies each
+// value's bytes; it decodes into a type that discards them now. That is a
+// substitution in the middle of the one path every report takes, so the shapes
+// it has to survive are worth stating rather than assuming.
+func TestTheKeyScanSurvivesEveryValueShape(t *testing.T) {
+	type known struct {
+		A string `json:"a"`
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"nested object", `{"a":"x","deep":{"one":{"two":[1,2,3]}}}`, []string{"deep"}},
+		{"array of objects", `{"a":"x","rows":[{"k":1},{"k":2}]}`, []string{"rows"}},
+		{"null", `{"a":"x","gone":null}`, []string{"gone"}},
+		{"numbers and bools", `{"a":"x","n":-1.5e10,"b":true}`, []string{"b", "n"}},
+		{"string with a brace", `{"a":"x","s":"}{\"not\":\"a key\""}`, []string{"s"}},
+		{"escaped key", `{"a":"x","with\"quote":1}`, []string{`with"quote`}},
+		{"empty object", `{}`, nil},
+		{"only known", `{"a":"x"}`, nil},
+		{"not an object", `["a","b"]`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unknownFields([]byte(tc.body), &known{})
+			if len(got) != len(tc.want) {
+				t.Fatalf("unknownFields = %q, want %q", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("unknownFields = %q, want %q", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// The cached field names are read, never written.
+//
+// knownFieldNames hands out one shared map per type. A caller that mutated it
+// would poison every later request for that endpoint, so the cache returns the
+// same answer however many times it is asked.
+func TestTheFieldNameCacheIsStable(t *testing.T) {
+	type known struct {
+		A string `json:"a"`
+		B string `json:"b"`
+	}
+
+	first := unknownFields([]byte(`{"a":1,"zzz":2}`), &known{})
+	for i := 0; i < 50; i++ {
+		got := unknownFields([]byte(`{"a":1,"zzz":2}`), &known{})
+		if len(got) != len(first) || (len(got) > 0 && got[0] != first[0]) {
+			t.Fatalf("call %d returned %q, first returned %q -- the cached names "+
+				"changed under repetition", i, got, first)
+		}
+	}
+	if len(first) != 1 || first[0] != "zzz" {
+		t.Fatalf("unknownFields = %q, want [zzz]", first)
+	}
+}
