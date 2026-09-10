@@ -337,13 +337,9 @@ func (s *Session) report(chainHead, state string) {
 
 	// Off the session's path but not off the server's books: shutdown waits for
 	// these, or the last thing a session ever says about itself is lost.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	s.srv.reports.Add(1)
-	go func() {
-		defer s.srv.reports.Done()
-		defer cancel()
+	s.srv.report(func(ctx context.Context) {
 		s.srv.cfg.Reporter.Session(ctx, rec)
-	}()
+	})
 }
 
 // uploadRecording pushes the sealed artefact to object storage.
@@ -672,11 +668,7 @@ func (s *Session) reportFileEvent(e sftp.Event) {
 	// Tracked like the rest. A file transfer is the evidence an investigation
 	// reaches for first, and losing its audit line to the exit is exactly the
 	// wrong record to drop.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	s.srv.reports.Add(1)
-	go func() {
-		defer s.srv.reports.Done()
-		defer cancel()
+	s.srv.report(func(ctx context.Context) {
 		s.srv.cfg.Reporter.Audit(ctx, map[string]any{
 			"action":     action,
 			"severity":   severity,
@@ -684,7 +676,7 @@ func (s *Session) reportFileEvent(e sftp.Event) {
 			"target":     s.Target.Hostname,
 			"detail":     e.Describe(),
 		})
-	}()
+	})
 }
 
 // relay copies src to dst while teeing to the recording.

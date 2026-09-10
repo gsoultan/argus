@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -88,7 +89,7 @@ type Server struct {
 	// a session -- but nothing waited for them either, so at shutdown the final
 	// report of every session in flight was lost to the exit. The recording was
 	// sealed and uploaded and the row still said `active` with no chain head.
-	reports sync.WaitGroup
+	reports reportTracker
 	closing bool
 
 	// startedAt backs the uptime this gateway reports about itself. Set once in
@@ -293,7 +294,7 @@ func (s *Server) CloseWithin(d time.Duration) error {
 // is recorded, uploaded, and still reads as running with nothing to verify it
 // against.
 func (s *Server) DrainReports(d time.Duration) bool {
-	if waitGroup(&s.reports, d) {
+	if s.reports.waitFor(d) {
 		return true
 	}
 	s.log.Error("session reports did not reach the control plane before shutdown",
@@ -302,6 +303,139 @@ func (s *Server) DrainReports(d time.Duration) bool {
 			"reports them again or an operator reconciles them")
 	return false
 }
+
+// report runs a control-plane call on the server's books.
+//
+// Deliberately off the request path -- a slow control plane must not stall a
+// session -- but tracked, because untracked the final report of every session
+// in flight was lost to the exit.
+//
+// The gate is the part that is not obvious. sync.WaitGroup forbids an Add that
+// overlaps a Wait, and the listener drains DrainReports follows are bounded: a
+// session that outlives its drain is still unwinding when the wait starts, and
+// its report would Add to a WaitGroup already being waited on. That panics --
+// in the path whose entire job is getting the last evidence out.
+//
+// Past the gate the call still happens, with a context that is already done, so
+// the reporter skips the attempt and takes its spool path. A gateway seconds
+// from exit cannot finish a round trip anyway; what it can do is leave the
+// report on disk for the next start to deliver. Losing the panic by dropping
+// the report would trade a rare crash for a quiet hole in the evidence, which
+// is the wrong way round.
+func (s *Server) report(f func(context.Context)) {
+	if !s.reports.begin() {
+		// The drain has already given up. There is no time left to spend on a
+		// round trip, so hand the call a context that is already done: the
+		// reporter skips the attempt and takes its spool path, leaving the
+		// report on disk for the next start to deliver. Dropping it instead
+		// would trade a rare crash for a quiet hole in the evidence, which is
+		// the wrong way round.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		f(ctx)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reportTimeout)
+	go func() {
+		defer s.reports.done()
+		defer cancel()
+		f(ctx)
+	}()
+}
+
+// reportTracker counts the control-plane calls a shutdown has to wait for.
+//
+// Deliberately not a sync.WaitGroup. A WaitGroup forbids an Add that overlaps a
+// Wait, and that overlap is exactly the shutdown this exists for: the listener
+// drains DrainReports follows are bounded -- main gives each 30s and a seal
+// grace and then moves on -- so a session outliving its drain is still
+// unwinding when the wait starts, and its report's Add lands on a WaitGroup
+// already being waited on. That panics, in the path whose only job is getting
+// the last evidence out of a gateway about to stop existing.
+//
+// A counter under a mutex has no such rule, which is the point: a report
+// arriving mid-wait is simply one more thing to wait for. That is also the
+// honest answer to it. There is usually grace left, and delivering the report
+// now beats spooling it for a restart that may be an upgrade away.
+type reportTracker struct {
+	mu       sync.Mutex
+	cond     *sync.Cond
+	inFlight int
+	// expired and closed are separate. expired ends one wait; closed says the
+	// waiting is over for good, and only then is a new report better spooled
+	// than attempted.
+	expired bool
+	closed  bool
+}
+
+// initLocked builds the condition variable on first use, so a zero Server works.
+func (t *reportTracker) initLocked() {
+	if t.cond == nil {
+		t.cond = sync.NewCond(&t.mu)
+	}
+}
+
+// begin registers a report, or reports that the shutdown has stopped waiting.
+func (t *reportTracker) begin() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initLocked()
+	if t.closed {
+		return false
+	}
+	t.inFlight++
+	return true
+}
+
+func (t *reportTracker) done() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initLocked()
+	t.inFlight--
+	if t.inFlight == 0 {
+		t.cond.Broadcast()
+	}
+}
+
+// Wait blocks until nothing is in flight.
+func (t *reportTracker) Wait() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.initLocked()
+	for t.inFlight > 0 {
+		t.cond.Wait()
+	}
+}
+
+// waitFor blocks until nothing is in flight or d elapses, and returns whether
+// everything landed. After it returns, no further report is waited for.
+func (t *reportTracker) waitFor(d time.Duration) bool {
+	t.mu.Lock()
+	t.initLocked()
+	t.mu.Unlock()
+
+	timer := time.AfterFunc(d, func() {
+		t.mu.Lock()
+		t.expired = true
+		t.mu.Unlock()
+		t.cond.Broadcast()
+	})
+	defer timer.Stop()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for t.inFlight > 0 && !t.expired {
+		t.cond.Wait()
+	}
+	// Set last, not first. While there was grace left a late report was worth
+	// delivering; only now is there nothing left to deliver it with.
+	t.closed = true
+	return t.inFlight == 0
+}
+
+// reportTimeout bounds one control-plane report.
+const reportTimeout = 5 * time.Second
 
 // ReportGrace is how long a shutdown should wait for outstanding reports.
 const ReportGrace = reportGrace
