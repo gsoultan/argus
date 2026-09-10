@@ -92,6 +92,11 @@ type Session struct {
 	killedBy     string
 	killReason   string
 	terminatedAt time.Time
+	// evidenceWaived records that policy asked for kernel-observed execution
+	// evidence for this session and the control plane allowed it without any,
+	// because the requester's role exempts them. Set once at authorisation and
+	// read only by riskFlags.
+	evidenceWaived bool
 }
 
 // authorizeElevated refuses an elevated principal without an approval on file.
@@ -108,9 +113,9 @@ type Session struct {
 // file, so an unanswerable question is not a yes. Ordinary principals are
 // unaffected either way: they need no approval, so an outage does not stop
 // anyone doing their job.
-func (s *Server) authorizeElevated(user, principal, hostname string) error {
+func (s *Server) authorizeElevated(user, principal, hostname string) (bool, error) {
 	if !s.policy().IsElevated(principal) {
-		return nil
+		return false, nil
 	}
 
 	rep := s.cfg.Reporter
@@ -121,7 +126,7 @@ func (s *Server) authorizeElevated(user, principal, hostname string) error {
 		s.log.Error("refusing an elevated session: no control plane to ask",
 			"user", user, "principal", principal, "target", hostname,
 			"detail", "configure `control` so approvals can be checked")
-		return fmt.Errorf("opening a session as %s needs an approved access request, "+
+		return false, fmt.Errorf("opening a session as %s needs an approved access request, "+
 			"and this gateway has no control plane to check one against", principal)
 	}
 
@@ -131,7 +136,7 @@ func (s *Server) authorizeElevated(user, principal, hostname string) error {
 	if err != nil {
 		s.log.Error("refusing an elevated session: the control plane could not be asked",
 			"user", user, "principal", principal, "target", hostname, "error", err)
-		return fmt.Errorf("opening a session as %s needs an approved access request, "+
+		return false, fmt.Errorf("opening a session as %s needs an approved access request, "+
 			"and the control plane could not be reached to check", principal)
 	}
 	if !auth.Allowed {
@@ -141,11 +146,11 @@ func (s *Server) authorizeElevated(user, principal, hostname string) error {
 		}
 		s.log.Warn("elevated session refused",
 			"user", user, "principal", principal, "target", hostname, "reason", reason)
-		return fmt.Errorf("%s", reason)
+		return false, fmt.Errorf("%s", reason)
 	}
 	s.log.Info("elevated session authorised",
 		"user", user, "principal", principal, "target", hostname, "expires", auth.ExpiresAt)
-	return nil
+	return auth.KernelEvidenceWaived, nil
 }
 
 // newSession authorises an SSH-transport request and dials the target.
@@ -189,7 +194,8 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 	// Being listed is permission to ask, not permission to have. An elevated
 	// principal needs an approved access request behind it, which only the
 	// control plane can answer.
-	if err := s.authorizeElevated(user, principal, asset.Hostname); err != nil {
+	evidenceWaived, err := s.authorizeElevated(user, principal, asset.Hostname)
+	if err != nil {
 		return nil, err
 	}
 
@@ -203,6 +209,8 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 		srv:       s,
 		hub:       live.NewHub(),
 		pol:       s.policy(),
+
+		evidenceWaived: evidenceWaived,
 	}
 	sess.log = s.log.With("session", sess.ID, "user", user,
 		"target", asset.Hostname, "principal", principal)
@@ -398,6 +406,12 @@ func (s *Session) riskFlags() []string {
 	}
 	if s.recordingIsBroken() {
 		flags = append(flags, "recording-incomplete")
+	}
+	// An elevated session the policy wanted kernel evidence for, allowed
+	// without it. The exemption is deliberate; the session looking like an
+	// ordinary one was not.
+	if s.evidenceWaived {
+		flags = append(flags, "kernel-evidence-waived")
 	}
 	return flags
 }

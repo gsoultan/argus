@@ -183,6 +183,8 @@ const RISK_LABEL: Record<RiskFlag, string> = {
   'unpinned-host-key': 'Target host key was not pinned',
   'break-glass': 'Emergency access path used',
   'bulk-file-transfer': 'Unusually large file transfer volume',
+  'kernel-evidence-waived':
+    'Policy required kernel-observed execution evidence and there was none. Allowed by role — this recording cannot evidence what ran.',
 }
 
 export function RiskFlags({ flags }: { flags: RiskFlag[] }) {
@@ -194,7 +196,10 @@ export function RiskFlags({ flags }: { flags: RiskFlag[] }) {
           <Badge
             size="xs"
             color={
-              f === 'bypassed-gateway' || f === 'root-principal' || f === 'break-glass'
+              f === 'bypassed-gateway' ||
+              f === 'root-principal' ||
+              f === 'break-glass' ||
+              f === 'kernel-evidence-waived'
                 ? 'rose'
                 : 'amber'
             }

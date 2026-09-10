@@ -180,6 +180,7 @@ export type RiskFlag =
   | 'unpinned-host-key'
   | 'break-glass'
   | 'bulk-file-transfer'
+  | 'kernel-evidence-waived'
 
 /* ── Access requests (JIT) ───────────────────────────────────────────────── */
 

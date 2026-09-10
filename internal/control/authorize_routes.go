@@ -28,6 +28,12 @@ type Authorization struct {
 	// next rather than only that the answer was no.
 	Reason    string     `json:"reason,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// KernelEvidenceWaived means the policy demanded kernel-observed execution
+	// evidence for this session and it was allowed without any, because the
+	// requester's role exempts them. The session is real and permitted; what it
+	// cannot do is evidence what ran, and the console says so rather than
+	// showing an elevated session that looks like every other one.
+	KernelEvidenceWaived bool `json:"kernelEvidenceWaived,omitempty"`
 }
 
 // handleAuthorize answers a gateway asking about one session.
@@ -52,6 +58,31 @@ func (a *API) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, auth)
 }
 
+// kernelEvidenceWaived reports whether policy demanded kernel-observed evidence
+// for a session on this target and the target cannot produce it.
+//
+// Only the role-exempt path asks. Everyone else is refused by the block below,
+// so for them the question never becomes a waiver.
+//
+// An error reading either the policy or the agent's capability is not a waiver:
+// it is not knowing, and claiming a waiver that was never granted would put a
+// false line in the audit chain. The refusal path treats an error as fatal for
+// the same reason from the other direction.
+func (a *API) kernelEvidenceWaived(r *http.Request, target string) (bool, string) {
+	pol, err := a.store.GatewayPolicy(r.Context())
+	if err != nil || !pol.RequireEbpfForRoot {
+		return false, ""
+	}
+	tracing, why, err := a.store.ExecTracingFor(r.Context(), target)
+	if err != nil || tracing {
+		return false, ""
+	}
+	if why == "" {
+		why = "the agent reports no kernel probe"
+	}
+	return true, why
+}
+
 // authorizePrincipal applies the elevation rules.
 func (a *API) authorizePrincipal(r *http.Request, email, target, principal string) (Authorization, error) {
 	if !isElevated(principal) {
@@ -64,13 +95,31 @@ func (a *API) authorizePrincipal(r *http.Request, email, target, principal strin
 	// exemption is audited here rather than left implicit.
 	if acct, err := a.store.Account(r.Context(), email); err == nil {
 		if acct.Role == "admin" || acct.Role == "owner" {
-			a.log.Info("elevated session allowed by role",
-				"email", email, "role", acct.Role, "principal", principal, "target", target)
-			a.auditElevation(r, email, target,
-				"Allowed a session as "+principal+" by role "+acct.Role+
-					", with no access request. Admins are exempt so the approval "+
-					"chain being broken cannot lock everyone out.")
-			return Authorization{Allowed: true}, nil
+			detail := "Allowed a session as " + principal + " by role " + acct.Role +
+				", with no access request. Admins are exempt so the approval " +
+				"chain being broken cannot lock everyone out."
+			// The exemption was written for the approval chain, and it clears
+			// the kernel-evidence requirement on its way past. Extending it
+			// there is deliberate -- an admin sent to repair a broken agent
+			// cannot be blocked by that agent being broken -- but it returned
+			// before the requirement was even read, so the record said only
+			// that a role allowed the session. An auditor had to infer the
+			// waiver from the absence of a refusal.
+			waived, why := a.kernelEvidenceWaived(r, target)
+			if waived {
+				a.log.Warn("elevated session allowed by role without kernel evidence",
+					"email", email, "role", acct.Role, "principal", principal,
+					"target", target, "reason", why)
+				detail += " Policy requires kernel-observed execution evidence for " +
+					principal + " sessions and " + why + ". The requirement was " +
+					"waived by role: this session is recorded at PTY fidelity and " +
+					"cannot evidence what ran."
+			} else {
+				a.log.Info("elevated session allowed by role",
+					"email", email, "role", acct.Role, "principal", principal, "target", target)
+			}
+			a.auditElevation(r, email, target, detail)
+			return Authorization{Allowed: true, KernelEvidenceWaived: waived}, nil
 		}
 	}
 

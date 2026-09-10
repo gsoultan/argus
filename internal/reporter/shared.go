@@ -160,6 +160,12 @@ type Authorization struct {
 	Allowed   bool       `json:"allowed"`
 	Reason    string     `json:"reason,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// KernelEvidenceWaived means the session was allowed as elevated without
+	// the kernel-observed evidence the policy asks for, because the requester's
+	// role exempts them. Carried back so the session record can say it: an
+	// exemption that only exists in the control plane's audit chain is invisible
+	// on the session an auditor is actually looking at.
+	KernelEvidenceWaived bool `json:"kernelEvidenceWaived,omitempty"`
 }
 
 // Authorize asks whether a person may open a session as a principal on a host.

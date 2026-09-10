@@ -37,7 +37,7 @@ func elevationServer(t *testing.T, pol Policy) *Server {
 func TestElevatedSessionRefusedWithNoControlPlane(t *testing.T) {
 	srv := elevationServer(t, DefaultPolicy())
 
-	err := srv.authorizeElevated("lin@northwind.id", "root", "pay-01")
+	_, err := srv.authorizeElevated("lin@northwind.id", "root", "pay-01")
 	if err == nil {
 		t.Fatal("root opened with no approval and no control plane to check one")
 	}
@@ -51,7 +51,7 @@ func TestElevatedSessionRefusedWithNoControlPlane(t *testing.T) {
 func TestOrdinaryPrincipalsNeedNoApproval(t *testing.T) {
 	srv := elevationServer(t, DefaultPolicy())
 	for _, principal := range []string{"ops", "deploy", "webapp"} {
-		if err := srv.authorizeElevated("lin@northwind.id", principal, "pay-01"); err != nil {
+		if _, err := srv.authorizeElevated("lin@northwind.id", principal, "pay-01"); err != nil {
 			t.Errorf("%q was refused: %v", principal, err)
 		}
 	}
@@ -63,7 +63,7 @@ func TestOrdinaryPrincipalsNeedNoApproval(t *testing.T) {
 func TestElevationIsCaseInsensitive(t *testing.T) {
 	srv := elevationServer(t, DefaultPolicy())
 	for _, principal := range []string{"root", "ROOT", "Root", "Administrator", "administrator", "AdMiN"} {
-		if err := srv.authorizeElevated("lin@northwind.id", principal, "win-01"); err == nil {
+		if _, err := srv.authorizeElevated("lin@northwind.id", principal, "win-01"); err == nil {
 			t.Errorf("%q was treated as ordinary", principal)
 		}
 	}
@@ -75,13 +75,13 @@ func TestTheElevatedListComesFromPolicy(t *testing.T) {
 	pol.ElevatedPrincipals = []string{"dbadmin"}
 	srv := elevationServer(t, pol)
 
-	if err := srv.authorizeElevated("lin@northwind.id", "dbadmin", "pay-01"); err == nil {
+	if _, err := srv.authorizeElevated("lin@northwind.id", "dbadmin", "pay-01"); err == nil {
 		t.Error("a principal the policy calls elevated was let through")
 	}
 	// And root is no longer elevated for this deployment, because the control
 	// plane said so. Surprising, but it is the control plane's call to make
 	// and the gateway must not hold a second opinion.
-	if err := srv.authorizeElevated("lin@northwind.id", "root", "pay-01"); err != nil {
+	if _, err := srv.authorizeElevated("lin@northwind.id", "root", "pay-01"); err != nil {
 		t.Errorf("root was refused though the policy does not list it: %v", err)
 	}
 }
