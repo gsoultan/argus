@@ -172,6 +172,34 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 		return
 	}
 
+	// Being listed is permission to ask, not permission to have -- the same
+	// rule the SSH path and the browser path both enforce.
+	//
+	// This path cannot enforce it the same way, because it has no idea who is
+	// asking. The request is an mstshash cookie: an unauthenticated string
+	// carrying a principal and a target and no person at all. `sess.User` is
+	// synthesised from the principal, and the CredSSP identity is the *target*
+	// account Argus injects from the vault, not the operator. So there is
+	// nobody to hold an approval and nobody to name in the audit chain, and
+	// asking the control plane about "administrator@win-01" would look up a
+	// grant for an account that does not exist and dress a denial up as an
+	// authorisation.
+	//
+	// Refusing is the only honest answer available here. Until this path
+	// authenticates a person, an elevated Windows account is not reachable
+	// through it -- which is what the README already claims of every elevated
+	// session, and what the risk flags already assume by treating
+	// administrator as root's equivalent.
+	if s.srv.policy().IsElevated(req.Principal) {
+		s.log.Warn("rdp elevated principal refused: this path cannot identify the requester",
+			"principal", req.Principal, "target", asset.Hostname, "remote", remote,
+			"detail", "an elevated account needs an approved access request, and the "+
+				"mstshash cookie names no person to hold one; use the browser "+
+				"console, which authenticates before it brokers")
+		rdp.Refuse(conn, rdp.FailInconsistentFlags)
+		return
+	}
+
 	sess := &rdp.Session{
 		ID:        newRDPSessionID(),
 		User:      req.Principal + "@" + asset.Hostname,
