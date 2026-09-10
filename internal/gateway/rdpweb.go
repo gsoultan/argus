@@ -414,13 +414,9 @@ func (s *Server) reportRDPWeb(sess *rdp.Session, chainHead, state string) {
 		rec["terminationReason"] = reason
 	}
 	// Tracked, so shutdown waits for it rather than exiting through it.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	s.reports.Add(1)
-	go func() {
-		defer s.reports.Done()
-		defer cancel()
+	s.report(func(ctx context.Context) {
 		s.cfg.Reporter.Session(ctx, rec)
-	}()
+	})
 }
 
 // uploadRDPWebRecording moves a sealed browser-session recording off the host.

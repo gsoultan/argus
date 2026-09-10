@@ -404,13 +404,9 @@ func (s *RDPServer) report(sess *rdp.Session, chainHead, state string) {
 
 	// On the server's books, so shutdown waits for it. Detached and untracked,
 	// the last thing a session said about itself was lost to the exit.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	s.srv.reports.Add(1)
-	go func() {
-		defer s.srv.reports.Done()
-		defer cancel()
+	s.srv.report(func(ctx context.Context) {
 		s.srv.cfg.Reporter.Session(ctx, rec)
-	}()
+	})
 }
 
 func (s *RDPServer) riskFlags(sess *rdp.Session) []string {

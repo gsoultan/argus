@@ -486,11 +486,7 @@ func (s *Session) auditForward(action, severity, detail string) {
 	if s.srv == nil || s.srv.cfg.Reporter == nil || !s.srv.cfg.Reporter.Enabled() {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	s.srv.reports.Add(1)
-	go func() {
-		defer s.srv.reports.Done()
-		defer cancel()
+	s.srv.report(func(ctx context.Context) {
 		s.srv.cfg.Reporter.Audit(ctx, map[string]any{
 			"action":     action,
 			"severity":   severity,
@@ -498,5 +494,5 @@ func (s *Session) auditForward(action, severity, detail string) {
 			"target":     s.Target.Hostname,
 			"detail":     detail,
 		})
-	}()
+	})
 }
