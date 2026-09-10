@@ -75,6 +75,24 @@ jobs:
             exit 1
           fi
 
+      - name: Check the generated readers match the model
+        # The committed rgen packages are 28k lines nobody reads in review.
+        # This compares them to internal/control/rmodel and needs no database,
+        # so it runs even if the service above is down. The same shape as the
+        # probe-object check in the kernel job: an artifact in git that is
+        # derived from something else in git has to be provably derived.
+        run: go run ./cmd/stormgen verify -stale internal/control/rgen
+
+      - name: Check the model matches the database
+        env:
+          ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
+        # migrations/ is the source of truth for this schema and storm never
+        # applies DDL, so nothing else keeps the model honest. This was wired
+        # into scripts/check.sh only, which CI does not run -- and three
+        # migrations landed against a model that knew about none of them
+        # before anything noticed.
+        run: go run ./cmd/stormgen verify -dsn "$ARGUS_TEST_DATABASE_URL"
+
       - name: Fuzz the SSH request parsers
         # These read bytes from the network before any policy runs. A panic
         # there takes down every session on the gateway, so a short fuzz run on
