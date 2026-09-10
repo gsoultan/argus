@@ -181,6 +181,11 @@ export type RiskFlag =
   | 'break-glass'
   | 'bulk-file-transfer'
   | 'kernel-evidence-waived'
+  | 'terminated'
+  | 'recording-incomplete'
+  | 'no-credential-injection'
+  | 'legacy-credssp-binding'
+  | 'no-network-level-auth'
 
 /* ── Access requests (JIT) ───────────────────────────────────────────────── */
 

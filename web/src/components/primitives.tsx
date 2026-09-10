@@ -185,6 +185,15 @@ const RISK_LABEL: Record<RiskFlag, string> = {
   'bulk-file-transfer': 'Unusually large file transfer volume',
   'kernel-evidence-waived':
     'Policy required kernel-observed execution evidence and there was none. Allowed by role — this recording cannot evidence what ran.',
+  terminated: 'Ended by an administrator, not by the person using it',
+  'recording-incomplete':
+    'The replay is short of what happened — frames the session saw never reached the file',
+  'no-credential-injection':
+    'The user supplied their own password, so a standing credential still exists on the target',
+  'legacy-credssp-binding':
+    'Pre-version-5 CredSSP binding — not bound to a nonce, so a captured exchange can be replayed against another channel',
+  'no-network-level-auth':
+    'TLS without CredSSP — the user met the host’s own logon screen through the tunnel, unauthenticated until they typed something',
 }
 
 export function RiskFlags({ flags }: { flags: RiskFlag[] }) {
@@ -199,7 +208,8 @@ export function RiskFlags({ flags }: { flags: RiskFlag[] }) {
               f === 'bypassed-gateway' ||
               f === 'root-principal' ||
               f === 'break-glass' ||
-              f === 'kernel-evidence-waived'
+              f === 'kernel-evidence-waived' ||
+              f === 'recording-incomplete'
                 ? 'rose'
                 : 'amber'
             }
