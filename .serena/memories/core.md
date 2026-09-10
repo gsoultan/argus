@@ -39,3 +39,13 @@ Read this file first, then only the memory a task actually needs.
   crown jewel — whoever reads it mints any certificate.
 - **Heuristic evidence is labelled as heuristic.** Commands scraped from a PTY
   stream are never presented next to kernel-observed execve events as equals.
+- **An optional dependency is an interface field, so it is never assigned a nil
+  pointer.** `gateway.Config.Storage` changed from `*storage.Client` to a
+  one-method interface so the stranded-upload case could be tested without a
+  live MinIO, and `main` went on assigning a possibly-nil `*storage.Client`.
+  A nil pointer in an interface is not a nil interface: all four
+  `cfg.Storage == nil` guards went dead at once, and a gateway with no
+  `storage:` block logged an upload failure per session and spooled every
+  recording for a retry that could never succeed. `cmd/argus-gateway`'s
+  `recordingStore` exists for this, and is tested. The same trap waits for
+  `Reporter`, `CA` and `Policy` the day any of them stops being concrete.
