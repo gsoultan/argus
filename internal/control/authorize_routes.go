@@ -66,6 +66,10 @@ func (a *API) authorizePrincipal(r *http.Request, email, target, principal strin
 		if acct.Role == "admin" || acct.Role == "owner" {
 			a.log.Info("elevated session allowed by role",
 				"email", email, "role", acct.Role, "principal", principal, "target", target)
+			a.auditElevation(r, email, target,
+				"Allowed a session as "+principal+" by role "+acct.Role+
+					", with no access request. Admins are exempt so the approval "+
+					"chain being broken cannot lock everyone out.")
 			return Authorization{Allowed: true}, nil
 		}
 	}
@@ -128,5 +132,33 @@ func (a *API) authorizePrincipal(r *http.Request, email, target, principal strin
 
 	a.log.Info("elevated session authorised by grant",
 		"email", email, "principal", principal, "target", target, "expires", expires)
+	// The positive case, not only the refusals.
+	//
+	// "Who held root on this host, when, and under which approval" is the
+	// question an audit opens with, and it was the one event this path did not
+	// record -- every refusal was in the chain and every grant was not. The
+	// browser terminal has audited its own authorisations all along; this is
+	// the same fact arriving by the other door.
+	until := "an unstated time"
+	if expires != nil {
+		until = expires.UTC().Format(time.RFC3339)
+	}
+	a.auditElevation(r, email, target,
+		"Allowed a session as "+principal+" under an approved access request, until "+until+".")
 	return Authorization{Allowed: true, ExpiresAt: expires}, nil
+}
+
+// auditElevation records that elevated access was granted.
+func (a *API) auditElevation(r *http.Request, email, target, detail string) {
+	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action: "session.elevation_allowed",
+		// Notice, not info: this is the line an auditor searches for, and it
+		// should not sit at the same level as routine chatter.
+		Severity:   "notice",
+		ActorEmail: email,
+		Target:     target,
+		Detail:     detail,
+	}); err != nil {
+		a.log.Error("audit append failed", "error", err)
+	}
 }
