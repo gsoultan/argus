@@ -183,6 +183,13 @@ func (c *Client) noteFailure(err error) {
 func (c *Client) noteSuccess() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.noteSuccessLocked()
+}
+
+// noteSuccessLocked is noteSuccess with c.mu already held.
+//
+// Drain holds the lock for its whole pass, so it cannot call noteSuccess.
+func (c *Client) noteSuccessLocked() {
 	if c.failures == 0 {
 		return
 	}
@@ -332,6 +339,12 @@ func (c *Client) Drain(ctx context.Context) int {
 	}
 	if delivered > 0 {
 		c.log.Info("delivered spooled reports", "count", delivered)
+		// A drained spool is proof the control plane is reachable. Without
+		// this the failure run outlived the outage: the "reachable again"
+		// line never printed for an operator who had seen the alarm, and the
+		// next single transient failure re-fired it claiming an outage
+		// measured from the old one -- hours after delivery had resumed.
+		c.noteSuccessLocked()
 	}
 	return delivered
 }
