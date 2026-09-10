@@ -409,6 +409,28 @@ func run() error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
+	// Recordings that could not be uploaded when their session ended.
+	//
+	// Once at start-up so a gateway restarted after an outage picks up whatever
+	// the previous run could not deliver, then on a timer.
+	go func() {
+		if n := srv.RetryUploads(ctx); n > 0 {
+			log.Info("delivered recordings stranded by an earlier outage", "count", n)
+		}
+		t := time.NewTicker(gateway.UploadRetryEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if n := srv.RetryUploads(ctx); n > 0 {
+					log.Info("delivered recordings stranded by an earlier outage", "count", n)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Publish the inventory so the console's credential-mode counts reflect
 	// what the gateway actually does, rather than a field nobody sets.
 	if rep != nil {

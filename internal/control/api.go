@@ -130,6 +130,8 @@ func (a *API) Handler() http.Handler {
 	// Asked by a gateway before it opens an elevated session. See
 	// authorize_routes.go for why the decision lives here and not there.
 	mux.HandleFunc("GET /api/v1/report/authorize", a.reporter(a.handleAuthorize))
+	// A gateway that retried a stranded upload, saying where it landed.
+	mux.HandleFunc("POST /api/v1/report/recording", a.reporter(a.handleRecordingStored))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.reporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/facts", a.reporter(a.postFacts))

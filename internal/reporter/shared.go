@@ -181,3 +181,16 @@ func (c *Client) Authorize(ctx context.Context, email, target, principal string)
 	}
 	return &out, nil
 }
+
+// RecordingStored tells the control plane where a retried upload landed.
+//
+// Narrow on purpose: a gateway retrying a stranded upload no longer holds the
+// session that produced it, and a partial session report would blank fields the
+// closing report had already set.
+func (c *Client) RecordingStored(ctx context.Context, id, chainHead, key string) error {
+	return c.call(ctx, http.MethodPost, "/api/v1/report/recording", map[string]string{
+		"id":            id,
+		"chainHead":     chainHead,
+		"recordingPath": key,
+	}, nil)
+}

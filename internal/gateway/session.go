@@ -353,8 +353,17 @@ func (s *Session) uploadRecording(chainHead string) string {
 	key, err := s.srv.cfg.Storage.Upload(ctx,
 		storage.LocalPath(s.srv.cfg.RecordingDir, s.ID), s.ID, chainHead, s.StartedAt)
 	if err != nil {
+		// Queued, not just logged. A store that is briefly unreachable used to
+		// strand a recording forever: the artefact stayed on disk, the console
+		// went on saying it existed only on this host, and rebuilding the host
+		// destroyed it. See pending_uploads.go.
 		s.log.Error("recording upload failed, artefact remains local only",
-			"error", err, "detail", "evidence is stored only on the host that produced it")
+			"error", err, "detail", "queued for retry; until it lands, this "+
+				"evidence is stored only on the host that produced it")
+		s.srv.queueUpload(pendingUpload{
+			SessionID: s.ID, ChainHead: chainHead,
+			StartedAt: s.StartedAt, FailedAt: time.Now().UTC(),
+		})
 		return ""
 	}
 	s.log.Info("recording uploaded", "key", key)

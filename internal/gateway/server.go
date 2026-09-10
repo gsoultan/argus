@@ -18,7 +18,6 @@ import (
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/secrets"
 	"github.com/gsoultan/argus/internal/sshca"
-	"github.com/gsoultan/argus/internal/storage"
 )
 
 // Config is everything the gateway needs to run.
@@ -56,7 +55,7 @@ type Config struct {
 	// Storage moves sealed recordings off this host. Optional, but without it
 	// the evidence lives only where it was produced — which means whoever
 	// compromises the gateway can delete the record of having done so.
-	Storage *storage.Client
+	Storage RecordingStore
 
 	// Policy is what a brokered session may do. Nil means the closed
 	// configuration, which is what this gateway enforced before policy was

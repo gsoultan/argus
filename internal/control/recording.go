@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"context"
+	"errors"
+	"fmt"
 	"github.com/gsoultan/argus/internal/recorder"
 	"github.com/gsoultan/argus/internal/storage"
 )
@@ -144,4 +147,58 @@ func (a *API) presignRecording(w http.ResponseWriter, r *http.Request, actor str
 		"chainHead": sess.ChainHead,
 		"warning":   "Reads through this link are not audited.",
 	})
+}
+
+// StoreRecordingKey records where a session's artefact now lives.
+//
+// Narrow on purpose. A gateway retrying a stranded upload knows the session id,
+// the chain head and the new object key, and nothing else -- it no longer holds
+// the Session that produced them. Sending a partial session report instead
+// would be worse than useless: UpsertSession assigns state unconditionally, so
+// a report with an empty state would blank a finished session's state on its
+// way past.
+func (s *Store) StoreRecordingKey(ctx context.Context, id, chainHead, key string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE sessions
+		   SET recording_key = $2,
+		       chain_head    = COALESCE(NULLIF($3,''), chain_head)
+		 WHERE id = $1::uuid`, id, key, chainHead)
+	if err != nil {
+		return fmt.Errorf("store recording key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNoSuchSession
+	}
+	return nil
+}
+
+// ErrNoSuchSession is returned when a report names a session that is not here.
+var ErrNoSuchSession = errors.New("no such session")
+
+// handleRecordingStored is what a gateway calls after a retried upload lands.
+func (a *API) handleRecordingStored(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID            string `json:"id"`
+		ChainHead     string `json:"chainHead"`
+		RecordingPath string `json:"recordingPath"`
+	}
+	if err := decodeReport(r, &in, a.log, "report/recording"); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if in.ID == "" || in.RecordingPath == "" {
+		writeErr(w, http.StatusBadRequest, "id and recordingPath are required")
+		return
+	}
+	if err := a.store.StoreRecordingKey(r.Context(), in.ID, in.ChainHead, in.RecordingPath); err != nil {
+		if errors.Is(err, ErrNoSuchSession) {
+			writeErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		a.fail(w, "store recording key", err)
+		return
+	}
+	a.log.Info("a stranded recording reached object storage",
+		"session", in.ID, "key", in.RecordingPath)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
