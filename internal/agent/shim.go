@@ -205,12 +205,29 @@ func execSession(cfg ShimConfig, origCmd string, st *stream) int {
 	}
 
 	var cmd *exec.Cmd
-	if origCmd != "" {
+	switch {
+	case isInternalSFTP(origCmd):
+		// sshd applies ForceCommand to subsystem requests too, and for
+		// `Subsystem sftp internal-sftp` it hands us SSH_ORIGINAL_COMMAND
+		// "internal-sftp" -- which is compiled into sshd and is not a program.
+		// Running it through the shell fails, the connection closes with no
+		// message, and every SFTP and SCP transfer to an agent-managed host
+		// stops working the moment the agent is installed.
+		//
+		// That is the traffic this product most wants to see: "who moved which
+		// file" is the question an exfiltration investigation opens with.
+		server, err := findSFTPServer()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: %v\n", err)
+			return 1
+		}
+		cmd = exec.Command(server)
+	case origCmd != "":
 		// Non-interactive: `ssh host cmd`, scp, sftp, rsync, Ansible. This is
 		// the path automation uses, so leaving it unrecorded would make the
 		// most-used route the least visible one.
 		cmd = exec.Command(shell, "-c", origCmd)
-	} else {
+	default:
 		cmd = exec.Command(shell, "-l")
 	}
 	cmd.Env = os.Environ()
@@ -300,6 +317,48 @@ func execWithPTY(cmd *exec.Cmd, st *stream) int {
 
 	wg.Wait()
 	return waitCode(cmd)
+}
+
+// isInternalSFTP reports whether sshd is asking for its built-in SFTP server.
+//
+// Matched on the exact strings sshd uses. A prefix match would catch a user
+// command that merely mentions sftp and quietly run a file server instead.
+func isInternalSFTP(origCmd string) bool {
+	switch strings.TrimSpace(origCmd) {
+	case "internal-sftp", "sftp-server":
+		return true
+	}
+	return false
+}
+
+// sftpServerPaths are where the OpenSSH SFTP server lives, by distribution.
+var sftpServerPaths = []string{
+	"/usr/lib/openssh/sftp-server",     // Debian, Ubuntu
+	"/usr/libexec/openssh/sftp-server", // RHEL, Rocky, Alma, Fedora
+	"/usr/libexec/sftp-server",         // Alpine, some BSD-ish layouts
+	"/usr/lib/ssh/sftp-server",         // Arch
+	"/usr/local/libexec/sftp-server",   // built from source
+}
+
+// findSFTPServer locates a real SFTP server to run in place of internal-sftp.
+//
+// A clear refusal when there is none. The host has sshd's built-in server and
+// no standalone one, which is a supported sshd configuration and an impossible
+// one for a ForceCommand -- and an operator whose transfers stopped needs to be
+// told to install a package, not left with a closed connection.
+func findSFTPServer() (string, error) {
+	for _, p := range sftpServerPaths {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	if p, err := exec.LookPath("sftp-server"); err == nil {
+		return p, nil
+	}
+	return "", fmt.Errorf("this host has no sftp-server binary, only sshd's " +
+		"built-in one, which cannot be run from a ForceCommand; install it " +
+		"(Debian/Ubuntu: openssh-sftp-server, RHEL: openssh-server) so file " +
+		"transfers work and can be recorded")
 }
 
 // execWithoutPTY handles `ssh host cmd` and subsystems, which have no terminal.

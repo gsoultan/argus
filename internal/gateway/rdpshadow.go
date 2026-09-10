@@ -57,6 +57,35 @@ func (s *Server) handleRDPShadow(cfg WebConfig) http.HandlerFunc {
 }
 
 func (s *Server) runRDPShadow(ctx context.Context, conn *websocket.Conn, sess *rdp.Session) {
+	// Drain the viewer's side of the socket.
+	//
+	// A shadow is read-only and nothing a viewer sends ever reached the session
+	// -- verified by typing into one and watching the target execute nothing.
+	// But the socket was not read at all, and that costs two things:
+	// coder/websocket handles ping and close frames inside Read, so a viewer
+	// that went away was noticed only when a write to it eventually failed, and
+	// whatever a viewer sent sat in a buffer nobody would drain.
+	//
+	// Done with a goroutine this function owns rather than conn.CloseRead: the
+	// library's version is waited on by CloseNow, which the handler defers, and
+	// the two deadlock on each other.
+	// readCtx is captured before ctx is reassigned below. Closing over ctx
+	// itself would have the goroutine reading the variable while this function
+	// writes it -- a race the detector catches and a bug that would outlive it.
+	readCtx := ctx
+	viewerGone, viewerLeft := context.WithCancel(ctx)
+	defer viewerLeft()
+	go func() {
+		defer viewerLeft()
+		for {
+			if _, _, err := conn.Read(readCtx); err != nil {
+				return // the viewer closed, or the connection did
+			}
+			// Discarded on purpose. A viewer that can type is not a viewer.
+		}
+	}()
+	ctx = viewerGone
+
 	_, frames, cancel := sess.Hub().Subscribe()
 	defer cancel()
 

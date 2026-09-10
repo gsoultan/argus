@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -298,7 +299,7 @@ func run() error {
 		CA:                 ca,
 		AuthLimiter:        authLimiter,
 		Reporter:           rep,
-		Storage:            store,
+		Storage:            recordingStore(store),
 		Policy:             policy,
 	})
 	if err != nil {
@@ -345,6 +346,7 @@ func run() error {
 			webTLS, err = tlsconfig.Server(tlsconfig.ServerOptions{
 				CertFile: cfg.Web.TLS.CertFile,
 				KeyFile:  cfg.Web.TLS.KeyFile,
+				Log:      log,
 			})
 			if err != nil {
 				return err
@@ -373,6 +375,7 @@ func run() error {
 		rdpTLS, err := tlsconfig.Server(tlsconfig.ServerOptions{
 			CertFile: cfg.RDP.TLS.CertFile,
 			KeyFile:  cfg.RDP.TLS.KeyFile,
+			Log:      log,
 		})
 		if err != nil {
 			return fmt.Errorf("rdp tls: %w", err)
@@ -397,16 +400,35 @@ func run() error {
 	}
 
 	// Drain in-flight sessions on signal rather than cutting them mid-command.
+	//
+	// Handled below rather than in a goroutine. Closing the listener is the
+	// first thing a shutdown does, so Listen returns immediately -- and when
+	// main returned on that, the process exited through the middle of its own
+	// drain. Every session still open lost its recording to the exit, which is
+	// precisely what the drain exists to prevent.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Recordings that could not be uploaded when their session ended.
+	//
+	// Once at start-up so a gateway restarted after an outage picks up whatever
+	// the previous run could not deliver, then on a timer.
 	go func() {
-		<-stop
-		log.Info("shutting down, waiting for sessions to finish")
-		cancelWeb()
-		if rdpSrv != nil {
-			_ = rdpSrv.Close()
+		if n := srv.RetryUploads(ctx); n > 0 {
+			log.Info("delivered recordings stranded by an earlier outage", "count", n)
 		}
-		_ = srv.Close()
+		t := time.NewTicker(gateway.UploadRetryEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if n := srv.RetryUploads(ctx); n > 0 {
+					log.Info("delivered recordings stranded by an earlier outage", "count", n)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
 	}()
 
 	// Publish the inventory so the console's credential-mode counts reflect
@@ -436,7 +458,43 @@ func run() error {
 		"listen", cfg.Listen,
 		"recordings", cfg.RecordingDir)
 
-	return srv.Listen()
+	// Listen in the background so a signal and a listener failure can be told
+	// apart. Waiting on Listen alone cannot distinguish "we are shutting down"
+	// from "we could not bind".
+	listenErr := make(chan error, 1)
+	go func() { listenErr <- srv.Listen() }()
+
+	select {
+	case err := <-listenErr:
+		// Failed on its own; no shutdown is in flight.
+		return err
+	case <-stop:
+		log.Info("shutting down, waiting for sessions to finish")
+		cancelWeb()
+
+		// Both listeners drain at once. Sequentially they would add up -- two
+		// bounded drains of 30s plus their seal grace is 80s, past the unit's
+		// TimeoutStopSec, so the SIGKILL this whole path exists to avoid would
+		// arrive during the second one. They are independent; there is no
+		// reason to make SSH wait for a desktop.
+		var draining sync.WaitGroup
+		if rdpSrv != nil {
+			draining.Add(1)
+			go func() { defer draining.Done(); _ = rdpSrv.Close() }()
+		}
+		draining.Add(1)
+		go func() { defer draining.Done(); _ = srv.Close() }()
+		draining.Wait()
+
+		// After both, not inside either. Each listener queues its sessions'
+		// reports as they unwind, so a wait inside one drain catches only what
+		// the other had already queued -- and an RDP session sealing a
+		// millisecond later had its report spawned and abandoned.
+		srv.DrainReports(gateway.ReportGrace)
+		<-listenErr
+		log.Info("shutdown complete")
+		return nil
+	}
 }
 
 func loadConfig(path string) (config, error) {
@@ -575,4 +633,19 @@ nothing in authorized_keys outlives a session:
 
 Set the asset to "credential_mode": "ca-certificate" in the inventory.
 `, ca.PublicKey())
+}
+
+// recordingStore hands the gateway object storage, or nothing at all.
+//
+// The explicit nil matters. Config.Storage is an interface, and assigning a nil
+// *storage.Client to it produces a non-nil interface holding a nil pointer --
+// which is how this shipped once. Every `cfg.Storage == nil` guard in the
+// gateway went dead at the same moment, so a gateway with no `storage:` block
+// logged an upload failure per session and spooled each recording for a retry
+// that could never succeed.
+func recordingStore(c *storage.Client) gateway.RecordingStore {
+	if c == nil {
+		return nil
+	}
+	return c
 }

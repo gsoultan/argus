@@ -11,7 +11,7 @@ func TestDefaultGatewayPolicyIsClosed(t *testing.T) {
 		t.Error("no forwarding channel may be open by default")
 	}
 	if !p.ProxySftpSubsystem || !p.FailClosedOnRecordingLoss ||
-		!p.RequireEbpfForRoot || !p.EncryptRecordingsSeparateKey {
+		!p.RequireEbpfForRoot {
 		t.Error("every recording guarantee must be on by default")
 	}
 }

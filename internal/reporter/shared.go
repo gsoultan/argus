@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -126,10 +127,15 @@ type GatewayPolicy struct {
 	AllowAgentForward  bool `json:"allowAgentForward"`
 	AllowX11Forward    bool `json:"allowX11Forward"`
 
-	ProxySftpSubsystem           bool `json:"proxySftpSubsystem"`
-	FailClosedOnRecordingLoss    bool `json:"failClosedOnRecordingLoss"`
-	RequireEbpfForRoot           bool `json:"requireEbpfForRoot"`
-	EncryptRecordingsSeparateKey bool `json:"encryptRecordingsSeparateKey"`
+	ProxySftpSubsystem        bool `json:"proxySftpSubsystem"`
+	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
+	RequireEbpfForRoot        bool `json:"requireEbpfForRoot"`
+
+	// ElevatedPrincipals need an approved access request. Defined by the
+	// control plane so the two services cannot disagree about what "elevated"
+	// means; an older gateway that does not know the field falls back to its
+	// own default rather than to an empty list.
+	ElevatedPrincipals []string `json:"elevatedPrincipals"`
 }
 
 // GatewayPolicy fetches the policy in force.
@@ -147,4 +153,50 @@ func (c *Client) GatewayPolicy(ctx context.Context) (*GatewayPolicy, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// Authorization is the control plane's answer about one session.
+type Authorization struct {
+	Allowed   bool       `json:"allowed"`
+	Reason    string     `json:"reason,omitempty"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// KernelEvidenceWaived means the session was allowed as elevated without
+	// the kernel-observed evidence the policy asks for, because the requester's
+	// role exempts them. Carried back so the session record can say it: an
+	// exemption that only exists in the control plane's audit chain is invisible
+	// on the session an auditor is actually looking at.
+	KernelEvidenceWaived bool `json:"kernelEvidenceWaived,omitempty"`
+}
+
+// Authorize asks whether a person may open a session as a principal on a host.
+//
+// An error means the question could not be answered, which is not the same as
+// "no" and must not be treated as "yes" either. The gateway refuses elevated
+// sessions on an error, because a control plane that cannot be reached is
+// exactly when someone would like root without an approval on file.
+func (c *Client) Authorize(ctx context.Context, email, target, principal string) (*Authorization, error) {
+	q := url.Values{}
+	q.Set("email", email)
+	q.Set("target", target)
+	q.Set("principal", principal)
+
+	var out Authorization
+	if err := c.call(ctx, http.MethodGet,
+		"/api/v1/report/authorize?"+q.Encode(), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RecordingStored tells the control plane where a retried upload landed.
+//
+// Narrow on purpose: a gateway retrying a stranded upload no longer holds the
+// session that produced it, and a partial session report would blank fields the
+// closing report had already set.
+func (c *Client) RecordingStored(ctx context.Context, id, chainHead, key string) error {
+	return c.call(ctx, http.MethodPost, "/api/v1/report/recording", map[string]string{
+		"id":            id,
+		"chainHead":     chainHead,
+		"recordingPath": key,
+	}, nil)
 }

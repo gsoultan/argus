@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -91,6 +92,65 @@ type Session struct {
 	killedBy     string
 	killReason   string
 	terminatedAt time.Time
+	// evidenceWaived records that policy asked for kernel-observed execution
+	// evidence for this session and the control plane allowed it without any,
+	// because the requester's role exempts them. Set once at authorisation and
+	// read only by riskFlags.
+	evidenceWaived bool
+}
+
+// authorizeElevated refuses an elevated principal without an approval on file.
+//
+// The console has always said elevated access needs an approved request, and
+// the browser terminal has always enforced it. This path -- the one a product
+// that leads with "Linux SSH first" is actually used through -- enforced
+// nothing: it checked authorized_keys and the asset's principal list, then
+// dialled the target as root. Where a key is injected for root, which is the
+// entire point of credential injection, that session opened.
+//
+// Refusals here are fail-closed by design. A control plane that cannot be
+// reached is exactly the moment someone would like root with no approval on
+// file, so an unanswerable question is not a yes. Ordinary principals are
+// unaffected either way: they need no approval, so an outage does not stop
+// anyone doing their job.
+func (s *Server) authorizeElevated(user, principal, hostname string) (bool, error) {
+	if !s.policy().IsElevated(principal) {
+		return false, nil
+	}
+
+	rep := s.cfg.Reporter
+	if rep == nil || !rep.Enabled() {
+		// Standalone. Say so loudly rather than silently allowing it: a gateway
+		// with no control plane has no approvals to consult, and pretending
+		// otherwise is how this control went missing in the first place.
+		s.log.Error("refusing an elevated session: no control plane to ask",
+			"user", user, "principal", principal, "target", hostname,
+			"detail", "configure `control` so approvals can be checked")
+		return false, fmt.Errorf("opening a session as %s needs an approved access request, "+
+			"and this gateway has no control plane to check one against", principal)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	auth, err := rep.Authorize(ctx, user, hostname, principal)
+	if err != nil {
+		s.log.Error("refusing an elevated session: the control plane could not be asked",
+			"user", user, "principal", principal, "target", hostname, "error", err)
+		return false, fmt.Errorf("opening a session as %s needs an approved access request, "+
+			"and the control plane could not be reached to check", principal)
+	}
+	if !auth.Allowed {
+		reason := auth.Reason
+		if reason == "" {
+			reason = "opening a session as " + principal + " needs an approved access request"
+		}
+		s.log.Warn("elevated session refused",
+			"user", user, "principal", principal, "target", hostname, "reason", reason)
+		return false, fmt.Errorf("%s", reason)
+	}
+	s.log.Info("elevated session authorised",
+		"user", user, "principal", principal, "target", hostname, "expires", auth.ExpiresAt)
+	return auth.KernelEvidenceWaived, nil
 }
 
 // newSession authorises an SSH-transport request and dials the target.
@@ -131,6 +191,14 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 		return nil, fmt.Errorf("principal %q is not permitted on %s", principal, asset.Hostname)
 	}
 
+	// Being listed is permission to ask, not permission to have. An elevated
+	// principal needs an approved access request behind it, which only the
+	// control plane can answer.
+	evidenceWaived, err := s.authorizeElevated(user, principal, asset.Hostname)
+	if err != nil {
+		return nil, err
+	}
+
 	sess := &Session{
 		ID:        newSessionID(),
 		User:      user,
@@ -141,6 +209,8 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 		srv:       s,
 		hub:       live.NewHub(),
 		pol:       s.policy(),
+
+		evidenceWaived: evidenceWaived,
 	}
 	sess.log = s.log.With("session", sess.ID, "user", user,
 		"target", asset.Hostname, "principal", principal)
@@ -265,8 +335,12 @@ func (s *Session) report(chainHead, state string) {
 		}
 	}
 
+	// Off the session's path but not off the server's books: shutdown waits for
+	// these, or the last thing a session ever says about itself is lost.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.srv.reports.Add(1)
 	go func() {
+		defer s.srv.reports.Done()
 		defer cancel()
 		s.srv.cfg.Reporter.Session(ctx, rec)
 	}()
@@ -288,8 +362,24 @@ func (s *Session) uploadRecording(chainHead string) string {
 	key, err := s.srv.cfg.Storage.Upload(ctx,
 		storage.LocalPath(s.srv.cfg.RecordingDir, s.ID), s.ID, chainHead, s.StartedAt)
 	if err != nil {
+		// Queued, not just logged. A store that is briefly unreachable used to
+		// strand a recording forever: the artefact stayed on disk, the console
+		// went on saying it existed only on this host, and rebuilding the host
+		// destroyed it. See pending_uploads.go.
+		//
+		// Not queued when there is no store at all. ErrNotConfigured is not an
+		// outage, and spooling one entry per session for a retry that can only
+		// return the same answer grows a file that nothing will ever drain.
+		if errors.Is(err, storage.ErrNotConfigured) {
+			return ""
+		}
 		s.log.Error("recording upload failed, artefact remains local only",
-			"error", err, "detail", "evidence is stored only on the host that produced it")
+			"error", err, "detail", "queued for retry; until it lands, this "+
+				"evidence is stored only on the host that produced it")
+		s.srv.queueUpload(pendingUpload{
+			SessionID: s.ID, ChainHead: chainHead,
+			StartedAt: s.StartedAt, FailedAt: time.Now().UTC(),
+		})
 		return ""
 	}
 	s.log.Info("recording uploaded", "key", key)
@@ -316,6 +406,12 @@ func (s *Session) riskFlags() []string {
 	}
 	if s.recordingIsBroken() {
 		flags = append(flags, "recording-incomplete")
+	}
+	// An elevated session the policy wanted kernel evidence for, allowed
+	// without it. The exemption is deliberate; the session looking like an
+	// ordinary one was not.
+	if s.evidenceWaived {
+		flags = append(flags, "kernel-evidence-waived")
 	}
 	return flags
 }
@@ -387,7 +483,7 @@ func (s *Session) Terminate(by, reason string) bool {
 	}
 	s.killedBy, s.killReason = by, reason
 	s.terminatedAt = time.Now().UTC()
-	rec, client := s.rec, s.client
+	rec, client, user := s.rec, s.client, s.userConn
 	s.mu.Unlock()
 
 	notice := fmt.Sprintf("\r\n\x1b[1;31margus: session terminated by %s (%s)\x1b[0m\r\n", by, reason)
@@ -397,11 +493,22 @@ func (s *Session) Terminate(by, reason string) bool {
 		_ = rec.Write(recorder.Output, []byte(notice))
 	}
 
-	// Closing the client connection is what actually ends it. The user's own
-	// connection collapses with it, since every channel is multiplexed over
-	// this one transport.
+	// Both ends, because they are two different transports.
+	//
+	// `client` is the connection to the target; closing it ends the shell.
+	// `userConn` is the operator's own connection, and it does NOT collapse
+	// with the target's -- the comment here used to claim it did. So a
+	// terminated session left the operator connected to a gateway with a dead
+	// shell, and left handleConn blocked on a socket nobody was going to close.
+	//
+	// That is a leak on an ordinary terminate, and on shutdown it was worse:
+	// the drain waited for handleConn, handleConn waited for the operator, and
+	// the recording was never sealed because the deferred Close never ran.
 	if client != nil {
 		_ = client.Close()
+	}
+	if user != nil {
+		_ = user.Close()
 	}
 	s.log.Warn("session terminated", "session", s.ID, "by", by, "reason", reason)
 	return true
@@ -562,8 +669,13 @@ func (s *Session) reportFileEvent(e sftp.Event) {
 		severity = "warning"
 	}
 
+	// Tracked like the rest. A file transfer is the evidence an investigation
+	// reaches for first, and losing its audit line to the exit is exactly the
+	// wrong record to drop.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.srv.reports.Add(1)
 	go func() {
+		defer s.srv.reports.Done()
 		defer cancel()
 		s.srv.cfg.Reporter.Audit(ctx, map[string]any{
 			"action":     action,

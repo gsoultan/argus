@@ -18,6 +18,7 @@ Read this file first, then only the memory a task actually needs.
 | [local-authentication](local-authentication.md) | Passwords, TOTP, recovery codes, first-run |
 | [capacity-and-drills](capacity-and-drills.md) | Load testing, published limits, backup restore drills |
 | [upgrades-and-bootstrap-auth](upgrades-and-bootstrap-auth.md) | Migrations, account identity, static tokens, multi-gateway |
+| [shutdown-and-evidence](shutdown-and-evidence.md) | Any long-running loop, restarts, drains, reporting goroutines |
 
 ## Standing rules for this repo
 
@@ -38,3 +39,22 @@ Read this file first, then only the memory a task actually needs.
   crown jewel — whoever reads it mints any certificate.
 - **Heuristic evidence is labelled as heuristic.** Commands scraped from a PTY
   stream are never presented next to kernel-observed execve events as equals.
+- **The native RDP listener authenticates nobody.** `rdp.Request` is parsed from
+  an mstshash cookie and carries a principal and a target -- no person.
+  `Session.User` is synthesised as `principal@hostname`, and the CredSSP
+  identity is the *target* account Argus injects from the vault, not the
+  operator. So that path cannot call `/report/authorize` meaningfully: there is
+  no email to hold a grant and none to name in the audit chain. Elevated
+  principals are refused outright there as of 2026-09-10; the browser console
+  is the path that authenticates before it brokers. Anything proposing
+  approvals, JIT or per-user policy for native RDP has to add identity first.
+- **An optional dependency is an interface field, so it is never assigned a nil
+  pointer.** `gateway.Config.Storage` changed from `*storage.Client` to a
+  one-method interface so the stranded-upload case could be tested without a
+  live MinIO, and `main` went on assigning a possibly-nil `*storage.Client`.
+  A nil pointer in an interface is not a nil interface: all four
+  `cfg.Storage == nil` guards went dead at once, and a gateway with no
+  `storage:` block logged an upload failure per session and spooled every
+  recording for a retry that could never succeed. `cmd/argus-gateway`'s
+  `recordingStore` exists for this, and is tested. The same trap waits for
+  `Reporter`, `CA` and `Policy` the day any of them stops being concrete.

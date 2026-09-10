@@ -55,6 +55,11 @@ type RDPServer struct {
 	// targets holds each session's connection to the host, so an administrator
 	// can end a session that Argus is only relaying.
 	targets map[string]net.Conn
+	// clients holds the operator's own connection. Closing only the target
+	// leaves them attached to a gateway with a dead desktop and leaves
+	// handleConn blocked on a socket nobody is going to close -- the same
+	// asymmetry the SSH side had, with the same consequence at shutdown.
+	clients map[string]net.Conn
 	closing bool
 	wg      sync.WaitGroup
 }
@@ -167,6 +172,34 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 		return
 	}
 
+	// Being listed is permission to ask, not permission to have -- the same
+	// rule the SSH path and the browser path both enforce.
+	//
+	// This path cannot enforce it the same way, because it has no idea who is
+	// asking. The request is an mstshash cookie: an unauthenticated string
+	// carrying a principal and a target and no person at all. `sess.User` is
+	// synthesised from the principal, and the CredSSP identity is the *target*
+	// account Argus injects from the vault, not the operator. So there is
+	// nobody to hold an approval and nobody to name in the audit chain, and
+	// asking the control plane about "administrator@win-01" would look up a
+	// grant for an account that does not exist and dress a denial up as an
+	// authorisation.
+	//
+	// Refusing is the only honest answer available here. Until this path
+	// authenticates a person, an elevated Windows account is not reachable
+	// through it -- which is what the README already claims of every elevated
+	// session, and what the risk flags already assume by treating
+	// administrator as root's equivalent.
+	if s.srv.policy().IsElevated(req.Principal) {
+		s.log.Warn("rdp elevated principal refused: this path cannot identify the requester",
+			"principal", req.Principal, "target", asset.Hostname, "remote", remote,
+			"detail", "an elevated account needs an approved access request, and the "+
+				"mstshash cookie names no person to hold one; use the browser "+
+				"console, which authenticates before it brokers")
+		rdp.Refuse(conn, rdp.FailInconsistentFlags)
+		return
+	}
+
 	sess := &rdp.Session{
 		ID:        newRDPSessionID(),
 		User:      req.Principal + "@" + asset.Hostname,
@@ -266,6 +299,8 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 	}
 
 	s.track(sess)
+	s.setClient(sess.ID, conn)
+	defer s.clearClient(sess.ID)
 	s.report(sess, "", "active")
 	log.Info("rdp session opened",
 		"protocol", rdp.ProtocolName(protocol),
@@ -279,7 +314,14 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 
 	head, closeErr := sess.Close()
 	s.untrack(sess)
-	s.report(sess, head, "closed")
+	// A desktop someone stopped is not one that finished. The console has a
+	// distinct state for it; reporting both as "closed" made an administrative
+	// terminate indistinguishable from a logout.
+	state := "closed"
+	if _, _, killed := sess.Killed(); killed {
+		state = "terminated"
+	}
+	s.report(sess, head, state)
 
 	if relayErr != nil {
 		log.Error("rdp session ended with an error", "error", relayErr)
@@ -341,6 +383,13 @@ func (s *RDPServer) report(sess *rdp.Session, chainHead, state string) {
 		"reportedBy": "gateway",
 		"riskFlags":  s.riskFlags(sess),
 	}
+	// Who ended it and why, when someone did. Never sent before, so an
+	// administrator terminating a desktop left no record of having done it --
+	// the row read the same as a user who closed their own session.
+	if by, reason, killed := sess.Killed(); killed {
+		rec["terminatedBy"] = by
+		rec["terminationReason"] = reason
+	}
 	if chainHead != "" {
 		rec["chainHead"] = chainHead
 		rec["endedAt"] = time.Now().UTC()
@@ -353,42 +402,19 @@ func (s *RDPServer) report(sess *rdp.Session, chainHead, state string) {
 		}
 	}
 
+	// On the server's books, so shutdown waits for it. Detached and untracked,
+	// the last thing a session said about itself was lost to the exit.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.srv.reports.Add(1)
 	go func() {
+		defer s.srv.reports.Done()
 		defer cancel()
 		s.srv.cfg.Reporter.Session(ctx, rec)
 	}()
 }
 
 func (s *RDPServer) riskFlags(sess *rdp.Session) []string {
-	flags := []string{}
-	// Administrator is to Windows what root is to Linux.
-	switch sess.Principal {
-	case "Administrator", "administrator", "admin":
-		flags = append(flags, "root-principal")
-	}
-	if pin, ok := s.srv.cfg.HostKeys.Lookup(sess.Target); !ok || pin.Fingerprint == "" {
-		flags = append(flags, "unpinned-host-key")
-	}
-	if h := sess.StartedAt.Hour(); h < 7 || h > 20 {
-		flags = append(flags, "off-hours")
-	}
-	// A session where the user supplied their own password is one where a
-	// standing credential still exists on the target.
-	if !sess.Injected {
-		flags = append(flags, "no-credential-injection")
-	}
-	// The pre-version-5 binding is not nonce-bound, so a captured exchange can
-	// be replayed against another channel. Worth telling an auditor apart.
-	if sess.LegacyBinding {
-		flags = append(flags, "legacy-credssp-binding")
-	}
-	// TLS without CredSSP means the user meets a Windows logon screen through
-	// the tunnel, unauthenticated until they type something.
-	if sess.Protocol == rdp.ProtocolSSL {
-		flags = append(flags, "no-network-level-auth")
-	}
-	return flags
+	return s.srv.rdpRiskFlags(sess)
 }
 
 func (s *RDPServer) track(sess *rdp.Session) {
@@ -415,7 +441,16 @@ func (s *RDPServer) ActiveSessions() []*rdp.Session {
 }
 
 // Close stops accepting and waits for sessions in flight.
-func (s *RDPServer) Close() error {
+func (s *RDPServer) Close() error { return s.CloseWithin(DefaultDrain) }
+
+// CloseWithin stops accepting, waits up to d for desktops to close on their
+// own, and then ends the rest deliberately.
+//
+// Unbounded before, exactly as the SSH listener was, and worse in one respect:
+// main closes this one first, so a single open desktop held the whole shutdown
+// -- including the SSH drain that seals SSH recordings -- until systemd lost
+// patience and sent SIGKILL.
+func (s *RDPServer) CloseWithin(d time.Duration) error {
 	s.mu.Lock()
 	s.closing = true
 	ln := s.listener
@@ -424,7 +459,24 @@ func (s *RDPServer) Close() error {
 	if ln != nil {
 		_ = ln.Close()
 	}
-	s.wg.Wait()
+
+	if !waitGroup(&s.wg, d) {
+		live := s.ActiveSessions()
+		s.log.Warn("rdp sessions still open at the end of the drain window; "+
+			"ending them so their recordings are sealed",
+			"sessions", len(live), "drain", d)
+		for _, sess := range live {
+			sess.Terminate("argus", "the gateway is shutting down")
+			// Terminate only marks it; the connections are what actually end
+			// it, and both have to go.
+			s.disconnect(sess.ID)
+		}
+		if !waitGroup(&s.wg, sealGrace) {
+			s.log.Error("rdp sessions did not finish sealing within the grace period",
+				"remaining", len(s.ActiveSessions()), "grace", sealGrace,
+				"detail", "their recordings may have no chain head and cannot be verified")
+		}
+	}
 	return nil
 }
 
@@ -456,9 +508,21 @@ func (s *RDPServer) uploadRDPRecording(sess *rdp.Session, chainHead string) stri
 		storage.LocalPathExt(s.cfg.RecordingDir, sess.ID, rdp.Extension),
 		sess.ID, chainHead, sess.StartedAt)
 	if err != nil {
+		if errors.Is(err, storage.ErrNotConfigured) {
+			return ""
+		}
+		// Queued like a terminal recording. Without this an RDP artefact that
+		// missed one upload stayed on the host forever: the retry pass only
+		// ever carried .cast files, so a desktop session was stranded by the
+		// same outage a shell session recovered from.
 		s.log.Error("rdp recording upload failed, artefact remains local only",
 			"session", sess.ID, "error", err,
-			"detail", "evidence is stored only on the host that produced it")
+			"detail", "queued for retry; until it lands, this evidence is "+
+				"stored only on the host that produced it")
+		s.srv.queueUpload(pendingUpload{
+			SessionID: sess.ID, ChainHead: chainHead, Ext: rdp.Extension,
+			StartedAt: sess.StartedAt, FailedAt: time.Now().UTC(),
+		})
 		return ""
 	}
 	s.log.Info("rdp recording uploaded", "session", sess.ID, "key", key)
@@ -489,11 +553,33 @@ func (s *RDPServer) refresh(id string) error {
 // the relay and seals the recording.
 func (s *RDPServer) disconnect(id string) {
 	s.mu.Lock()
-	target := s.targets[id]
+	target, client := s.targets[id], s.clients[id]
 	s.mu.Unlock()
+	// Both, because they are two different connections. Closing the target
+	// ends the desktop; the operator's own socket stays open until it is
+	// closed too, and until then handleConn cannot return and the recording
+	// cannot be sealed.
 	if target != nil {
 		_ = target.Close()
 	}
+	if client != nil {
+		_ = client.Close()
+	}
+}
+
+func (s *RDPServer) setClient(id string, conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clients == nil {
+		s.clients = map[string]net.Conn{}
+	}
+	s.clients[id] = conn
+}
+
+func (s *RDPServer) clearClient(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, id)
 }
 
 func (s *RDPServer) setTarget(id string, conn net.Conn) {

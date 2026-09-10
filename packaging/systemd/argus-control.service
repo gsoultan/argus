@@ -12,6 +12,11 @@ ExecStart=/usr/bin/argus-control --config /etc/argus/control.yaml
 Restart=on-failure
 RestartSec=5s
 
+# The control plane finishes requests in flight before exiting; gateways and
+# agents are mid-report when a restart lands. Comfortably over its own 10s
+# shutdown deadline.
+TimeoutStopSec=45s
+
 # Secrets come from the environment; the config file holds only ${VAR}
 # references. 0600 root:argus so the unit can read it and nobody else can.
 EnvironmentFile=-/etc/argus/control.env

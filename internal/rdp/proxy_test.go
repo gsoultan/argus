@@ -506,3 +506,42 @@ func sendDataIndication(userID, channel uint16, data []byte) []byte {
 	}
 	return append(head, data...)
 }
+
+// A frame the session saw and the file did not has to be visible afterwards.
+//
+// The relay stops on a failed write, so the session ends rather than carrying
+// on unrecorded. What was missing is any mark on the artefact: a replay that
+// cuts off part-way looks exactly like a session that ended there, and an
+// auditor cannot tell the two apart without being told.
+func TestABrokenRecordingIsMarkedOnTheSession(t *testing.T) {
+	var sink brokenFrameWriter
+	rec, err := NewRecorder(&sink, Header{Width: 1024, Height: 768})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{ID: "rdp-1", rec: rec}
+
+	if err := s.record(ClientInput, []byte("first frame")); err != nil {
+		t.Fatalf("the first frame should record: %v", err)
+	}
+	if s.RecordingBroken() {
+		t.Fatal("a healthy recording must not be marked broken")
+	}
+
+	sink.broken = true
+	if err := s.record(ServerOutput, []byte("second frame")); err == nil {
+		t.Fatal("the broken writer should have failed the record")
+	}
+	if !s.RecordingBroken() {
+		t.Error("a frame that could not be written left no mark on the session")
+	}
+}
+
+type brokenFrameWriter struct{ broken bool }
+
+func (b *brokenFrameWriter) Write(p []byte) (int, error) {
+	if b.broken {
+		return 0, errors.New("no space left on device")
+	}
+	return len(p), nil
+}

@@ -39,6 +39,9 @@ type API struct {
 	// AllowedOrigins for browser CORS.
 	AllowedOrigins []string
 
+	// startedAt backs the uptime this process reports about itself.
+	startedAt time.Time
+
 	// throttles bounds the authentication surface. Nil disables throttling.
 	throttles *Throttles
 
@@ -71,7 +74,8 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{store: store, log: log, UserTokens: map[string]string{}}
+	return &API{store: store, log: log, UserTokens: map[string]string{},
+		startedAt: time.Now()}
 }
 
 // Handler returns the router.
@@ -105,6 +109,8 @@ func (a *API) Handler() http.Handler {
 
 	// Console read surface. Paths match what web/src/lib/api.ts already calls.
 	mux.HandleFunc("GET /api/v1/stats", a.user(a.getStats))
+	// The process, not the fleet. Loopback only; see process_stats.go.
+	mux.HandleFunc("GET /stats", a.handleProcessStats)
 	mux.HandleFunc("GET /api/v1/assets", a.user(a.getAssets))
 	mux.HandleFunc("GET /api/v1/sessions", a.user(a.getSessions))
 	mux.HandleFunc("GET /api/v1/sessions/{id}", a.user(a.getSession))
@@ -121,6 +127,11 @@ func (a *API) Handler() http.Handler {
 
 	// Reporter surface. Machine token only.
 	mux.HandleFunc("POST /api/v1/report/session", a.reporter(a.postSession))
+	// Asked by a gateway before it opens an elevated session. See
+	// authorize_routes.go for why the decision lives here and not there.
+	mux.HandleFunc("GET /api/v1/report/authorize", a.reporter(a.handleAuthorize))
+	// A gateway that retried a stranded upload, saying where it landed.
+	mux.HandleFunc("POST /api/v1/report/recording", a.reporter(a.handleRecordingStored))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.reporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/facts", a.reporter(a.postFacts))
@@ -307,7 +318,7 @@ func (a *API) getAudit(w http.ResponseWriter, r *http.Request, _ string) {
 
 func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	var in Session
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/session"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -377,8 +388,13 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Version        string `json:"version"`
 		ActiveSessions int    `json:"active_sessions"`
 		Posture        any    `json:"posture"`
+		// What the agent has always sent and this struct did not accept, so
+		// every heartbeat carrying it was rejected whole. ExecTracing is
+		// whether the kernel probe is loaded; ExecReason says why not.
+		ExecTracing bool   `json:"exec_tracing"`
+		ExecReason  string `json:"exec_reason"`
 	}
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -387,7 +403,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
-		in.ActiveSessions, in.Posture)
+		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason)
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,
@@ -407,7 +423,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {
 	var in Asset
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/asset"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -424,7 +440,7 @@ func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) postAudit(w http.ResponseWriter, r *http.Request) {
 	var in AuditEvent
-	if err := decode(r, &in); err != nil {
+	if err := decodeReport(r, &in, a.log, "report/audit"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -467,10 +483,15 @@ func fidelityUnsupported(s Session) bool {
 	return s.CommandCount == nil || *s.CommandCount == 0
 }
 
+// decode reads a request body from the console, strictly.
+//
+// Unknown fields are refused here because the console ships with this build:
+// there is no version skew between them, so an unrecognised field is a typo or
+// a stale client and should fail where someone will see it.
+//
+// Reporters are a different matter entirely -- see decodeReport.
 func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
-	// Reject unknown fields: a reporter sending something this build does not
-	// understand should fail loudly rather than have data silently dropped.
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return errors.New("invalid JSON: " + err.Error())

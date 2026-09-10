@@ -41,7 +41,6 @@ const DEFAULT_POLICY: GatewayPolicy = {
   proxySftpSubsystem: true,
   failClosedOnRecordingLoss: true,
   requireEbpfForRoot: true,
-  encryptRecordingsSeparateKey: true,
 }
 
 // Mutable copies — mutations in the UI need somewhere to land.

@@ -32,6 +32,10 @@ type Collector struct {
 	listener net.Listener
 	wg       sync.WaitGroup
 	closing  bool
+	// conns holds each shim's connection. A shim that is still attached keeps
+	// handle() blocked on a read, and without a way to close it a shutdown
+	// waits for a shell nobody is going to exit.
+	conns map[net.Conn]struct{}
 
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
@@ -107,7 +111,20 @@ func (c *Collector) Listen(path string) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", path, err)
 	}
+	// Published under the mutex, because Close reads it from another goroutine.
+	// The unsynchronised write was invisible until the shutdown path started
+	// reading the field properly, which is the usual way these surface.
+	//
+	// A shutdown that arrives before this point has already set closing, and
+	// leaving the listener unpublished would let it accept after Close ran.
+	c.mu.Lock()
+	closed := c.closing
 	c.listener = ln
+	c.mu.Unlock()
+	if closed {
+		_ = ln.Close()
+		return nil
+	}
 
 	// Any local user must be able to connect — their session is what we are
 	// recording. Confidentiality comes from the daemon owning the output, not
@@ -134,23 +151,98 @@ func (c *Collector) Listen(path string) error {
 			continue
 		}
 		c.wg.Add(1)
+		c.trackConn(conn)
 		go func() {
 			defer c.wg.Done()
+			defer c.untrackConn(conn)
 			c.handle(conn)
 		}()
 	}
 }
 
-// Close stops accepting and waits for in-flight recordings to seal.
-func (c *Collector) Close() error {
+// DefaultDrain bounds how long a shutdown waits for shims to finish.
+//
+// The agent runs on every managed host, so this is the shutdown that happens
+// most often -- once per host per upgrade.
+const DefaultDrain = 30 * time.Second
+
+// sealGrace is how long the shims get to finish writing once disconnected.
+const sealGrace = 10 * time.Second
+
+// Close stops accepting and drains in-flight recordings.
+func (c *Collector) Close() error { return c.CloseWithin(DefaultDrain) }
+
+// CloseWithin stops accepting, waits up to d for shims to finish, then
+// disconnects the rest so their recordings are sealed.
+//
+// Unbounded before. A shim stays attached for the life of the shell it is
+// recording, so any host with someone logged in held the agent's shutdown open
+// until systemd sent SIGKILL -- and SIGKILL means the recording is never
+// sealed, has no chain head, and cannot be verified. On a fleet, an upgrade
+// did that to every host with an active session at once.
+func (c *Collector) CloseWithin(d time.Duration) error {
 	c.mu.Lock()
 	c.closing = true
+	ln := c.listener
 	c.mu.Unlock()
-	if c.listener != nil {
-		_ = c.listener.Close()
+	if ln != nil {
+		_ = ln.Close()
 	}
-	c.wg.Wait()
+
+	if !waitGroup(&c.wg, d) {
+		c.mu.Lock()
+		open := make([]net.Conn, 0, len(c.conns))
+		for conn := range c.conns {
+			open = append(open, conn)
+		}
+		active := len(c.active)
+		c.mu.Unlock()
+
+		c.log.Warn("shims still attached at the end of the drain window; "+
+			"disconnecting them so their recordings are sealed",
+			"shims", len(open), "sessions", active, "drain", d)
+		for _, conn := range open {
+			_ = conn.Close()
+		}
+		if !waitGroup(&c.wg, sealGrace) {
+			c.log.Error("recordings did not finish sealing within the grace period",
+				"grace", sealGrace,
+				"detail", "they may have no chain head and cannot be verified")
+		}
+	}
 	return nil
+}
+
+func (c *Collector) trackConn(conn net.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conns == nil {
+		c.conns = map[net.Conn]struct{}{}
+	}
+	c.conns[conn] = struct{}{}
+}
+
+func (c *Collector) untrackConn(conn net.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.conns, conn)
+}
+
+// waitGroup waits on wg for at most d, reporting whether it drained.
+func waitGroup(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
 }
 
 // ActiveCount reports sessions currently being recorded.

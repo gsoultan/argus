@@ -119,6 +119,8 @@ type Session struct {
 	// indistinguishable from a dropped connection.
 	killedBy   string
 	killReason string
+	// recordingBroken marks a frame the session saw and the file did not.
+	recordingBroken bool
 
 	mu       sync.Mutex
 	rec      *Recorder
@@ -484,7 +486,24 @@ func (s *Session) record(stream Stream, frame []byte) error {
 	if s.closed || s.rec == nil {
 		return nil
 	}
-	return s.rec.Write(stream, frame)
+	if err := s.rec.Write(stream, frame); err != nil {
+		// The relay stops on this, so the session ends rather than continuing
+		// unrecorded -- but the artefact it leaves is a desktop that cuts off
+		// part-way, and nothing said so. An auditor watching a replay end
+		// abruptly needs to know it was the recording that failed and not the
+		// session that ended there.
+		s.recordingBroken = true
+		return err
+	}
+	return nil
+}
+
+// RecordingBroken reports that a frame the session saw could not be written,
+// so the recording is short of what happened.
+func (s *Session) RecordingBroken() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recordingBroken
 }
 
 // Hub returns the session's broadcast hub, creating it on first use.

@@ -144,7 +144,11 @@ func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
 
 	head, closeErr := sess.Close()
 	s.untrackRDPWeb(sess)
-	s.reportRDPWeb(sess, head, "closed")
+	state := "closed"
+	if _, _, killed := sess.Killed(); killed {
+		state = "terminated"
+	}
+	s.reportRDPWeb(sess, head, state)
 	_ = client.Close()
 	<-inputDone
 
@@ -391,7 +395,7 @@ func (s *Server) reportRDPWeb(sess *rdp.Session, chainHead, state string) {
 		"clientIp":      sess.RemoteIP,
 		"fidelity":      "rdp",
 		"reportedBy":    "gateway",
-		"riskFlags":     []string{},
+		"riskFlags":     s.rdpRiskFlags(sess),
 	}
 	if chainHead != "" {
 		rec["chainHead"] = chainHead
@@ -404,8 +408,16 @@ func (s *Server) reportRDPWeb(sess *rdp.Session, chainHead, state string) {
 			rec["recordingBytes"] = bytes
 		}
 	}
+	// Who ended it and why, when someone did.
+	if by, reason, killed := sess.Killed(); killed {
+		rec["terminatedBy"] = by
+		rec["terminationReason"] = reason
+	}
+	// Tracked, so shutdown waits for it rather than exiting through it.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.reports.Add(1)
 	go func() {
+		defer s.reports.Done()
 		defer cancel()
 		s.cfg.Reporter.Session(ctx, rec)
 	}()
@@ -423,10 +435,61 @@ func (s *Server) uploadRDPWebRecording(sess *rdp.Session, chainHead string) stri
 		storage.LocalPathExt(s.cfg.RecordingDir, sess.ID, rdp.Extension),
 		sess.ID, chainHead, sess.StartedAt)
 	if err != nil {
+		if errors.Is(err, storage.ErrNotConfigured) {
+			return ""
+		}
 		s.log.Error("rdp recording upload failed, artefact remains local only",
-			"session", sess.ID, "error", err)
+			"session", sess.ID, "error", err,
+			"detail", "queued for retry; until it lands, this evidence is "+
+				"stored only on the host that produced it")
+		s.queueUpload(pendingUpload{
+			SessionID: sess.ID, ChainHead: chainHead, Ext: rdp.Extension,
+			StartedAt: sess.StartedAt, FailedAt: time.Now().UTC(),
+		})
 		return ""
 	}
 	s.log.Info("rdp recording uploaded", "session", sess.ID, "key", key)
 	return key
+}
+
+// rdpRiskFlags derives the signals the console highlights for a Remote
+// Desktop session.
+//
+// On Server rather than RDPServer because the browser-brokered path reports
+// the same kind of session through a different type. It used to send a
+// hardcoded empty list, so a browser session whose recording cut off part-way
+// carried no recording-incomplete flag and read as clean in the console.
+func (s *Server) rdpRiskFlags(sess *rdp.Session) []string {
+	flags := []string{}
+	// Administrator is to Windows what root is to Linux.
+	switch sess.Principal {
+	case "Administrator", "administrator", "admin":
+		flags = append(flags, "root-principal")
+	}
+	if pin, ok := s.cfg.HostKeys.Lookup(sess.Target); !ok || pin.Fingerprint == "" {
+		flags = append(flags, "unpinned-host-key")
+	}
+	if h := sess.StartedAt.Hour(); h < 7 || h > 20 {
+		flags = append(flags, "off-hours")
+	}
+	// A session where the user supplied their own password is one where a
+	// standing credential still exists on the target.
+	if !sess.Injected {
+		flags = append(flags, "no-credential-injection")
+	}
+	// The pre-version-5 binding is not nonce-bound, so a captured exchange can
+	// be replayed against another channel. Worth telling an auditor apart.
+	if sess.LegacyBinding {
+		flags = append(flags, "legacy-credssp-binding")
+	}
+	// TLS without CredSSP means the user meets a Windows logon screen through
+	// the tunnel, unauthenticated until they type something.
+	if sess.Protocol == rdp.ProtocolSSL {
+		flags = append(flags, "no-network-level-auth")
+	}
+	// A replay that cuts off part-way is not a session that ended there.
+	if sess.RecordingBroken() {
+		flags = append(flags, "recording-incomplete")
+	}
+	return flags
 }

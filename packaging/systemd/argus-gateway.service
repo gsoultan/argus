@@ -12,6 +12,16 @@ ExecStart=/usr/bin/argus-gateway --config /etc/argus/gateway.yaml
 Restart=on-failure
 RestartSec=5s
 
+# Longer than the gateway's own drain (30s) plus its seal grace (10s), so
+# systemd never SIGKILLs it part-way through shutting down.
+#
+# A SIGKILL here is not a tidy stop. Session.Close is what seals a recording and
+# computes its chain head, so a gateway killed with sessions open leaves those
+# recordings on disk unverifiable and their rows marked active forever. The
+# default DefaultTimeoutStopSec of 90s is enough today; stating it means a
+# distro changing that default cannot quietly reintroduce the problem.
+TimeoutStopSec=75s
+
 EnvironmentFile=-/etc/argus/gateway.env
 
 # The gateway holds session plaintext in memory and, in certificate mode, a CA

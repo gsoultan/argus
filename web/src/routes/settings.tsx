@@ -88,13 +88,6 @@ const RECORDING_POLICY: FieldSpec[] = [
       'PTY capture alone can be defeated by base64 or by running a script. For root, insist on kernel-observed execve evidence.',
     riskOn: false,
   },
-  {
-    key: 'encryptRecordingsSeparateKey',
-    label: 'Encrypt recordings at rest with a separate key',
-    description:
-      'Keeps the recording key distinct from the credential vault key, so compromising one does not yield the other.',
-    riskOn: false,
-  },
 ]
 
 const ALL_FIELDS = [...SSH_POLICY, ...RECORDING_POLICY]

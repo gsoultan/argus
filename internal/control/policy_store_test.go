@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -25,7 +26,7 @@ func TestGatewayPolicySeedsTheClosedDefaults(t *testing.T) {
 		t.Errorf("no forwarding channel may be open on a fresh database: %+v", p)
 	}
 	if !p.ProxySftpSubsystem || !p.FailClosedOnRecordingLoss ||
-		!p.RequireEbpfForRoot || !p.EncryptRecordingsSeparateKey {
+		!p.RequireEbpfForRoot {
 		t.Errorf("every recording guarantee must be on by default: %+v", p)
 	}
 }
@@ -70,7 +71,7 @@ func TestSaveGatewayPolicyRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GatewayPolicy: %v", err)
 	}
-	if reread != saved {
+	if !reflect.DeepEqual(reread, saved) {
 		t.Errorf("re-read differs from the save response:\n saved  %+v\n reread %+v", saved, reread)
 	}
 }

@@ -289,6 +289,44 @@ function SessionDetail() {
       />
 
       <Box p="lg">
+        {/* First, and filled rather than light: everything below it is suspect.
+            The side panel already carried this verdict as a badge, which an
+            operator watching a replay has no reason to look at. A recording
+            that does not match what the gateway sealed is not a recording with
+            a caveat, it is an artefact that cannot be used as evidence, and the
+            player should not present it as though it were. */}
+        {verified === 'tampered' && (
+          <Alert
+            color="rose"
+            variant="filled"
+            icon={<IconAlertTriangle size={16} />}
+            mb="md"
+            title="This recording does not match what the gateway sealed"
+          >
+            <Text size="xs">
+              The stored artefact's hash chain disagrees with the chain head recorded when
+              this session ended, so it has been altered since. What plays below is the
+              file as it stands now, shown so an investigator can see what was changed —
+              it is not evidence of what happened. Preserve it and treat this as an
+              incident.
+            </Text>
+          </Alert>
+        )}
+        {verified === 'error' && (
+          <Alert
+            color="amber"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            mb="md"
+            title="This recording could not be verified"
+          >
+            <Text size="xs">
+              The control plane could not check the artefact against its sealed chain head.
+              That is not the same as finding it altered, and not the same as finding it
+              intact — until it verifies, nothing below should be relied on.
+            </Text>
+          </Alert>
+        )}
         {session.fidelity === 'ebpf' && decoded.status === 'ready' && !kernelObserved && (
           <Alert
             color="rose"
@@ -393,6 +431,19 @@ function SessionDetail() {
                     <FidelityBadge fidelity={session.fidelity} />
                   </Field>
                   <Field label="Risk flags"><RiskFlags flags={session.riskFlags} /></Field>
+                  {/* Shown only when there is something to say. A session that
+                      ended normally has no reason, and an empty "Ended by"
+                      field reads as missing data rather than as "nobody did". */}
+                  {session.terminatedBy && (
+                    <Field label="Ended by">
+                      <Text size="xs">
+                        {session.terminatedBy}
+                        {session.terminationReason
+                          ? <Text span size="xs" c="dimmed"> — {session.terminationReason}</Text>
+                          : null}
+                      </Text>
+                    </Field>
+                  )}
                 </Stack>
               </Card>
 

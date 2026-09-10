@@ -15,6 +15,9 @@ func (a *API) getPolicy(w http.ResponseWriter, r *http.Request, _ string) {
 		a.fail(w, "gateway policy", err)
 		return
 	}
+	// Served, not stored: this is what the control plane enforces, and a
+	// gateway holding its own copy is how the two would come to disagree.
+	p.ElevatedPrincipals = ElevatedPrincipals()
 	writeJSON(w, http.StatusOK, p)
 }
 

@@ -208,8 +208,26 @@ not the gateway's: the failures were the target refusing TCP connections, and
 the gateway reported each one with the reason rather than hanging.
 
 Across 1232 sessions the gateway sealed and uploaded 1232 recordings, panicked
-zero times, and did not trend upward in memory over repeated 200-session runs.
-Steady state is ~24 MB idle.
+zero times. Steady state is ~24 MB idle.
+
+### Soak
+
+5300 sessions in waves through one gateway over 90 minutes, with the numbers
+read from `/stats` at idle between waves — after every session has torn down,
+which is the only moment a leak is visible.
+
+| | first half | second half |
+| --- | --- | --- |
+| goroutines at idle | 38.1 | 34.3 |
+| heap in use at idle | 7.31 MB | 6.91 MB |
+
+Both went **down**. A goroutine leaked per session would have shown +5300.
+
+13 of 212 waves failed, every one because the gateway could not reach the
+target over the development container network (`dial tcp: i/o timeout`). It
+refused each session with that reason rather than hanging, which is the
+behaviour worth having. Run this on a laptop and expect the same: the limit
+you hit first is the environment.
 
 ### Two gateways at once
 
@@ -227,6 +245,28 @@ Reproduce with `dev/argus2.yaml.example`.
 These figures are from a development environment on one machine. They are a
 floor to plan against, not a datasheet, and nobody has yet measured a fleet of
 targets or a gateway under sustained multi-hour load.
+
+### Checking a running process
+
+Both servers report on themselves at `GET /stats`, over loopback only:
+
+```sh
+curl -sk https://127.0.0.1:8081/stats   # gateway
+curl -sk https://127.0.0.1:8080/stats   # control plane
+```
+
+Goroutines, live heap, heap objects, session count, uptime — and for the control
+plane, database pool size. A goroutine count that climbs while the session count
+does not is a leak, stated directly; it is the failure that looks fine for a
+week and then does not.
+
+Counts only, and deliberately not `net/http/pprof`. The gateway holds session
+plaintext — every keystroke and every byte of output for every live session — so
+a heap dump of it is a transcript of everyone's privileged work, including
+anything typed that was a password. That is not a debugging endpoint. Loopback
+is enforced in the handler rather than by the listen address, and a caller from
+anywhere else gets 404 rather than 403, so the endpoint is not advertised to
+someone who may not use it.
 
 ## Security posture
 
