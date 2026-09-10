@@ -299,7 +299,7 @@ func run() error {
 		CA:                 ca,
 		AuthLimiter:        authLimiter,
 		Reporter:           rep,
-		Storage:            store,
+		Storage:            recordingStore(store),
 		Policy:             policy,
 	})
 	if err != nil {
@@ -633,4 +633,19 @@ nothing in authorized_keys outlives a session:
 
 Set the asset to "credential_mode": "ca-certificate" in the inventory.
 `, ca.PublicKey())
+}
+
+// recordingStore hands the gateway object storage, or nothing at all.
+//
+// The explicit nil matters. Config.Storage is an interface, and assigning a nil
+// *storage.Client to it produces a non-nil interface holding a nil pointer --
+// which is how this shipped once. Every `cfg.Storage == nil` guard in the
+// gateway went dead at the same moment, so a gateway with no `storage:` block
+// logged an upload failure per session and spooled each recording for a retry
+// that could never succeed.
+func recordingStore(c *storage.Client) gateway.RecordingStore {
+	if c == nil {
+		return nil
+	}
+	return c
 }

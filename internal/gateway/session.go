@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -357,6 +358,13 @@ func (s *Session) uploadRecording(chainHead string) string {
 		// strand a recording forever: the artefact stayed on disk, the console
 		// went on saying it existed only on this host, and rebuilding the host
 		// destroyed it. See pending_uploads.go.
+		//
+		// Not queued when there is no store at all. ErrNotConfigured is not an
+		// outage, and spooling one entry per session for a retry that can only
+		// return the same answer grows a file that nothing will ever drain.
+		if errors.Is(err, storage.ErrNotConfigured) {
+			return ""
+		}
 		s.log.Error("recording upload failed, artefact remains local only",
 			"error", err, "detail", "queued for retry; until it lands, this "+
 				"evidence is stored only on the host that produced it")

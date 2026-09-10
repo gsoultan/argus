@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -35,6 +36,21 @@ type pendingUpload struct {
 	ChainHead string    `json:"chainHead"`
 	StartedAt time.Time `json:"startedAt"`
 	FailedAt  time.Time `json:"failedAt"`
+	// Ext is the artefact's extension, because a Remote Desktop recording and
+	// a terminal one are different formats and a verifier handed the wrong one
+	// reports tampering rather than a mismatch. Empty means ".cast": entries
+	// written before RDP recordings were queued here carry no Ext, and a
+	// terminal capture is all they could have been.
+	Ext string `json:"ext,omitempty"`
+}
+
+// localPath is where this entry's artefact sits on disk.
+func (p pendingUpload) localPath(dir string) string {
+	ext := p.Ext
+	if ext == "" {
+		ext = ".cast"
+	}
+	return storage.LocalPathExt(dir, p.SessionID, ext)
 }
 
 // UploadRetryEvery is how often strays are retried.
@@ -74,55 +90,97 @@ func (s *Server) queueUpload(p pendingUpload) {
 	_ = json.NewEncoder(f).Encode(p)
 }
 
-// RetryUploads attempts every pending upload once, rewriting the list with what
-// still failed. It returns how many were delivered.
-//
-// Called on a timer and once at start-up, so a gateway restarted after an
-// outage picks up whatever the previous run could not deliver.
-func (s *Server) RetryUploads(ctx context.Context) int {
-	path := s.pendingPath()
-	if path == "" || s.cfg.Storage == nil {
-		return 0
-	}
-	pendingMu.Lock()
-	defer pendingMu.Unlock()
-
+// readPendingLocked parses the list. The caller holds pendingMu.
+func readPendingLocked(path string) []pendingUpload {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0 // nothing pending
+		return nil // nothing pending
 	}
-	var pending []pendingUpload
+	defer f.Close()
+	var out []pendingUpload
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
 		var p pendingUpload
 		if json.Unmarshal(sc.Bytes(), &p) == nil && p.SessionID != "" {
-			pending = append(pending, p)
+			out = append(out, p)
 		}
 	}
-	f.Close()
+	return out
+}
+
+// retryPassMu serialises retry passes without blocking queueUpload.
+//
+// A pass can outlast the ticker that starts it -- 60s per stray -- and two
+// passes uploading the same artefact would race each other's rewrite of the
+// list. Deliberately not pendingMu: see RetryUploads.
+var retryPassMu sync.Mutex
+
+// RetryUploads attempts every pending upload once, rewriting the list with what
+// still failed. It returns how many were delivered.
+//
+// Called on a timer and once at start-up, so a gateway restarted after an
+// outage picks up whatever the previous run could not deliver.
+//
+// The uploads run unlocked. Holding pendingMu across the pass put every session
+// teardown behind 60s per stray: during an outage with a dozen of them, a
+// session ending -- or the shutdown drain -- waited ten minutes to append one
+// line. The list is re-read afterwards and only confirmed entries are removed,
+// so anything queued mid-pass survives, and a crash mid-pass costs a repeated
+// upload rather than a forgotten recording.
+func (s *Server) RetryUploads(ctx context.Context) int {
+	path := s.pendingPath()
+	if path == "" || s.cfg.Storage == nil {
+		return 0
+	}
+	if !retryPassMu.TryLock() {
+		return 0 // a pass is already running; it will carry these
+	}
+	defer retryPassMu.Unlock()
+
+	pendingMu.Lock()
+	pending := readPendingLocked(path)
+	pendingMu.Unlock()
 	if len(pending) == 0 {
+		pendingMu.Lock()
 		_ = os.Remove(path)
+		pendingMu.Unlock()
 		return 0
 	}
 
-	var stillFailing []pendingUpload
+	// done is what must leave the list: delivered, or gone from disk and beyond
+	// retrying. Anything not in it stays, including entries appended while this
+	// pass was running.
+	done := map[string]bool{}
 	delivered := 0
 	for _, p := range pending {
-		local := storage.LocalPath(s.cfg.RecordingDir, p.SessionID)
+		local := p.localPath(s.cfg.RecordingDir)
 		if _, err := os.Stat(local); err != nil {
 			// The artefact is gone. Nothing to upload and nothing to retry, and
 			// saying so is better than retrying a file that will never appear.
 			s.log.Error("a pending recording is no longer on disk",
 				"session", p.SessionID, "path", local,
 				"detail", "it was never copied to object storage and is now lost")
+			done[p.SessionID] = true
 			continue
 		}
 		upCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		key, err := s.cfg.Storage.Upload(upCtx, local, p.SessionID, p.ChainHead, p.StartedAt)
 		cancel()
 		if err != nil {
-			stillFailing = append(stillFailing, p)
+			if errors.Is(err, storage.ErrNotConfigured) {
+				// Not an outage: there is no store and never was. Retrying the
+				// rest of the list would be the same answer N more times.
+				//
+				// Stop the pass rather than return from it: anything already
+				// delivered still has to leave the list, or the next pass
+				// uploads it a second time.
+				s.log.Warn("pending recordings cannot be uploaded: no object storage is configured",
+					"pending", len(pending),
+					"detail", "the artefacts remain on this host; configure `storage` "+
+						"and they will be delivered on the next pass")
+				break
+			}
 			continue
 		}
 		// Tell the control plane, or the console goes on saying the recording
@@ -133,20 +191,33 @@ func (s *Server) RetryUploads(ctx context.Context) int {
 			s.log.Warn("uploaded a stranded recording but could not tell the control plane",
 				"session", p.SessionID, "key", key, "error", err,
 				"detail", "kept for the next pass; the upload will simply happen again")
-			stillFailing = append(stillFailing, p)
 			continue
 		}
+		done[p.SessionID] = true
 		delivered++
 		s.log.Info("a stranded recording reached object storage",
 			"session", p.SessionID, "key", key,
 			"stranded_for", time.Since(p.FailedAt).Round(time.Second))
 	}
 
-	if len(stillFailing) == 0 {
+	if len(done) == 0 {
+		return delivered
+	}
+	// Re-read under the lock: entries appended while the uploads were running
+	// are not in `pending`, and rewriting from that snapshot would drop them.
+	pendingMu.Lock()
+	var keep []pendingUpload
+	for _, p := range readPendingLocked(path) {
+		if !done[p.SessionID] {
+			keep = append(keep, p)
+		}
+	}
+	if len(keep) == 0 {
 		_ = os.Remove(path)
 	} else {
-		rewritePending(path, stillFailing)
+		rewritePending(path, keep)
 	}
+	pendingMu.Unlock()
 	return delivered
 }
 

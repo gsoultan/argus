@@ -386,38 +386,7 @@ func (s *RDPServer) report(sess *rdp.Session, chainHead, state string) {
 }
 
 func (s *RDPServer) riskFlags(sess *rdp.Session) []string {
-	flags := []string{}
-	// Administrator is to Windows what root is to Linux.
-	switch sess.Principal {
-	case "Administrator", "administrator", "admin":
-		flags = append(flags, "root-principal")
-	}
-	if pin, ok := s.srv.cfg.HostKeys.Lookup(sess.Target); !ok || pin.Fingerprint == "" {
-		flags = append(flags, "unpinned-host-key")
-	}
-	if h := sess.StartedAt.Hour(); h < 7 || h > 20 {
-		flags = append(flags, "off-hours")
-	}
-	// A session where the user supplied their own password is one where a
-	// standing credential still exists on the target.
-	if !sess.Injected {
-		flags = append(flags, "no-credential-injection")
-	}
-	// The pre-version-5 binding is not nonce-bound, so a captured exchange can
-	// be replayed against another channel. Worth telling an auditor apart.
-	if sess.LegacyBinding {
-		flags = append(flags, "legacy-credssp-binding")
-	}
-	// TLS without CredSSP means the user meets a Windows logon screen through
-	// the tunnel, unauthenticated until they type something.
-	if sess.Protocol == rdp.ProtocolSSL {
-		flags = append(flags, "no-network-level-auth")
-	}
-	// A replay that cuts off part-way is not a session that ended there.
-	if sess.RecordingBroken() {
-		flags = append(flags, "recording-incomplete")
-	}
-	return flags
+	return s.srv.rdpRiskFlags(sess)
 }
 
 func (s *RDPServer) track(sess *rdp.Session) {
@@ -511,9 +480,21 @@ func (s *RDPServer) uploadRDPRecording(sess *rdp.Session, chainHead string) stri
 		storage.LocalPathExt(s.cfg.RecordingDir, sess.ID, rdp.Extension),
 		sess.ID, chainHead, sess.StartedAt)
 	if err != nil {
+		if errors.Is(err, storage.ErrNotConfigured) {
+			return ""
+		}
+		// Queued like a terminal recording. Without this an RDP artefact that
+		// missed one upload stayed on the host forever: the retry pass only
+		// ever carried .cast files, so a desktop session was stranded by the
+		// same outage a shell session recovered from.
 		s.log.Error("rdp recording upload failed, artefact remains local only",
 			"session", sess.ID, "error", err,
-			"detail", "evidence is stored only on the host that produced it")
+			"detail", "queued for retry; until it lands, this evidence is "+
+				"stored only on the host that produced it")
+		s.srv.queueUpload(pendingUpload{
+			SessionID: sess.ID, ChainHead: chainHead, Ext: rdp.Extension,
+			StartedAt: sess.StartedAt, FailedAt: time.Now().UTC(),
+		})
 		return ""
 	}
 	s.log.Info("rdp recording uploaded", "session", sess.ID, "key", key)
