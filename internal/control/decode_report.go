@@ -71,11 +71,11 @@ type logger interface {
 // inside a structure the receiver already understands -- and walking arbitrary
 // nesting here would cost more than it explains.
 func unknownFields(body []byte, v any) []string {
-	var raw map[string]json.RawMessage
+	var raw map[string]jsonSkip
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil // not an object; nothing to compare against
 	}
-	known := jsonFieldNames(reflect.TypeOf(v))
+	known := knownFieldNames(reflect.TypeOf(v))
 	var out []string
 	for k := range raw {
 		if _, ok := known[k]; !ok {
@@ -84,6 +84,36 @@ func unknownFields(body []byte, v any) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// jsonSkip accepts any value and keeps none of it.
+//
+// This scan needs the keys and nothing else. map[string]json.RawMessage copied
+// every value's bytes to answer that -- RawMessage's UnmarshalJSON appends
+// them -- on every report from every gateway, for a log line emitted at most
+// once per endpoint and field set.
+type jsonSkip struct{}
+
+func (jsonSkip) UnmarshalJSON([]byte) error { return nil }
+
+// knownFieldNames is jsonFieldNames, computed once per type.
+//
+// The answer is a property of a struct this build compiled, so it cannot change
+// between requests, and the reflect walk that produced it ran on every one.
+//
+// Unbounded is fine here where it would not be elsewhere in this file: the key
+// is a reflect.Type from this package's own handlers, six of them, not anything
+// a reporter can supply. The returned map is shared, so it is read and never
+// written.
+var knownFields sync.Map // reflect.Type -> map[string]struct{}
+
+func knownFieldNames(t reflect.Type) map[string]struct{} {
+	if cached, ok := knownFields.Load(t); ok {
+		return cached.(map[string]struct{})
+	}
+	names := jsonFieldNames(t)
+	knownFields.Store(t, names)
+	return names
 }
 
 // jsonFieldNames collects the names a type accepts, following embedded structs.
