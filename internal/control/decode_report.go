@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -116,19 +117,60 @@ func jsonFieldNames(t reflect.Type) map[string]struct{} {
 	return names
 }
 
+// maxWarnedFieldSets bounds how many distinct endpoint/field-set combinations
+// are remembered.
+//
+// The key is built from field names a reporter chose, so without a bound this
+// is a map an authenticated reporter can grow from the outside, one line of
+// JSON at a time, for as long as the control plane runs.
+const maxWarnedFieldSets = 1024
+
+// maxWarnedKeyFields bounds how much of one report's unknown-field list reaches
+// the key and the log line. A 1 MiB body can carry thousands of names, and
+// neither a map key nor a log field wants all of them.
+const maxWarnedKeyFields = 16
+
 // warnedFields keeps the log to one line per endpoint and field set.
 //
 // A gateway reports on every session. Without this, a single unknown field
 // would produce a line per report and bury itself in its own noise.
-var warnedFields sync.Map
+//
+// Emptied wholesale at the cap rather than evicted entry by entry: this decides
+// only whether a Warn repeats, so the cheapest policy that cannot grow is the
+// right one. A repeat after a reset is the honest outcome anyway -- the skew it
+// reports is still there.
+var (
+	warnedMu     sync.Mutex
+	warnedFields = map[string]struct{}{}
+)
 
 func warnUnknownOnce(log logger, endpoint string, unknown []string) {
-	key := endpoint + "\x00" + strings.Join(unknown, ",")
-	if _, seen := warnedFields.LoadOrStore(key, struct{}{}); seen {
+	named, extra := unknown, 0
+	if len(named) > maxWarnedKeyFields {
+		named, extra = named[:maxWarnedKeyFields], len(named)-maxWarnedKeyFields
+	}
+	key := endpoint + "\x00" + strings.Join(named, ",")
+	if extra > 0 {
+		key += "\x00+" + strconv.Itoa(extra)
+	}
+
+	warnedMu.Lock()
+	if _, seen := warnedFields[key]; seen {
+		warnedMu.Unlock()
 		return
 	}
+	if len(warnedFields) >= maxWarnedFieldSets {
+		clear(warnedFields)
+	}
+	warnedFields[key] = struct{}{}
+	warnedMu.Unlock()
+
+	fields := strings.Join(named, ", ")
+	if extra > 0 {
+		fields += ", and " + strconv.Itoa(extra) + " more"
+	}
 	log.Warn("a reporter sent fields this build does not understand",
-		"endpoint", endpoint, "fields", strings.Join(unknown, ", "),
+		"endpoint", endpoint, "fields", fields,
 		"detail", "the rest of the message was kept; this control plane is "+
 			"older than something reporting to it, and whatever those fields "+
 			"carry is not being stored")

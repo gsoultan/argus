@@ -53,7 +53,7 @@ type heartbeatIn struct {
 
 // A field this build does not know must not cost the whole message.
 func TestAnUnknownFieldDoesNotDiscardTheMessage(t *testing.T) {
-	warnedFields = sync.Map{}
+	warnedFields = map[string]struct{}{}
 	var in heartbeatIn
 	log := &capturingLogger{}
 
@@ -73,7 +73,7 @@ func TestAnUnknownFieldDoesNotDiscardTheMessage(t *testing.T) {
 
 // And it must be said out loud, because silence is what let this run for a week.
 func TestAnUnknownFieldIsReportedOnce(t *testing.T) {
-	warnedFields = sync.Map{}
+	warnedFields = map[string]struct{}{}
 	log := &capturingLogger{}
 	for i := 0; i < 5; i++ {
 		var in heartbeatIn
@@ -93,7 +93,7 @@ func TestAnUnknownFieldIsReportedOnce(t *testing.T) {
 
 // Malformed JSON is still an error; tolerance is for unknown fields, not rubbish.
 func TestMalformedJSONIsStillRefused(t *testing.T) {
-	warnedFields = sync.Map{}
+	warnedFields = map[string]struct{}{}
 	var in heartbeatIn
 	if err := decodeReport(report(`{"hostname": `), &in, &capturingLogger{},
 		"report/heartbeat"); err == nil {
@@ -103,7 +103,7 @@ func TestMalformedJSONIsStillRefused(t *testing.T) {
 
 // A body with nothing unexpected logs nothing.
 func TestAKnownBodyIsSilent(t *testing.T) {
-	warnedFields = sync.Map{}
+	warnedFields = map[string]struct{}{}
 	log := &capturingLogger{}
 	var in heartbeatIn
 	if err := decodeReport(report(`{"hostname":"db-01","active_sessions":1}`),
