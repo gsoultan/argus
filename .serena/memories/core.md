@@ -39,6 +39,15 @@ Read this file first, then only the memory a task actually needs.
   crown jewel — whoever reads it mints any certificate.
 - **Heuristic evidence is labelled as heuristic.** Commands scraped from a PTY
   stream are never presented next to kernel-observed execve events as equals.
+- **The native RDP listener authenticates nobody.** `rdp.Request` is parsed from
+  an mstshash cookie and carries a principal and a target -- no person.
+  `Session.User` is synthesised as `principal@hostname`, and the CredSSP
+  identity is the *target* account Argus injects from the vault, not the
+  operator. So that path cannot call `/report/authorize` meaningfully: there is
+  no email to hold a grant and none to name in the audit chain. Elevated
+  principals are refused outright there as of 2026-09-10; the browser console
+  is the path that authenticates before it brokers. Anything proposing
+  approvals, JIT or per-user policy for native RDP has to add identity first.
 - **An optional dependency is an interface field, so it is never assigned a nil
   pointer.** `gateway.Config.Storage` changed from `*storage.Client` to a
   one-method interface so the stranded-upload case could be tested without a
