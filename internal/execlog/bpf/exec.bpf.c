@@ -155,19 +155,25 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 SEC("tracepoint/sched/sched_process_exit")
 int handle_exit(struct trace_event_raw_sched_process_template *ctx)
 {
-    __u64 id = bpf_get_current_pid_tgid();
-    __u32 tgid = (__u32)(id >> 32);
-    __u32 tid  = (__u32)id;
+    __u32 tid = (__u32)bpf_get_current_pid_tgid();
 
-    // Only when the whole thread group is going, not when one of its threads
-    // is. This tracepoint fires per thread, and the map is keyed by thread
-    // group: deleting on any thread exit removes a live session the moment its
-    // process happens to retire a worker thread. A Go or Java shell helper does
-    // that constantly, so the effect is that tracking silently stops almost
-    // immediately and nothing is ever reported.
-    if (tgid != tid)
-        return 0;
-
-    bpf_map_delete_elem(&tracked, &tgid);
+    // By tid, always -- never by tgid on a thread exit.
+    //
+    // Deleting by tgid here would remove a live session the moment its process
+    // retired a worker thread, and a Go or Java shell helper does that
+    // constantly: tracking would stop almost immediately and nothing would be
+    // reported. That is why this used to return early for a thread.
+    //
+    // But returning early leaked. handle_fork inserts ctx->child_pid, and for a
+    // thread clone that is a tid, not a tgid; handle_exec only ever looks up by
+    // tgid, so the entry was never useful and was never removed either.
+    // Measured: 64 threads created and joined left 65 entries behind. At
+    // MAX_TRACKED the map stops accepting, new children go untracked, and the
+    // execve evidence stops with nothing saying so.
+    //
+    // Deleting by tid does both jobs. A worker thread removes only its own
+    // stray entry; the group leader's tid is its tgid, so its exit still
+    // removes the session.
+    bpf_map_delete_elem(&tracked, &tid);
     return 0;
 }
