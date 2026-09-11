@@ -86,6 +86,20 @@ the object key and the database id are different strings for the same session.
 Making them agree is a data migration — every object already in every bucket
 carries the undashed name — so the drill normalises instead.
 
+## The reporting order hid the real fault
+
+Fixed 2026-09-11. The corruption check ran before the coverage check and
+exited, so a run that found two bad files said "2 of 12271 recording(s) are
+corrupt" and stopped -- while 12,269 had gone unverified in the same pass.
+
+That is how the id-format mismatch above stayed hidden for as long as it did.
+A small true statement standing in front of a large one. Coverage is reported
+first now, and a backup where more than half the recordings have no stored
+chain head fails on that by name, whether or not anything else is wrong.
+
+If a check can only report one thing, make sure it is the one that says how
+much of the job it actually did.
+
 ## Known-bad artefacts in the dev object store
 
 Session `3ae54ffe-7cd2-faf2-c920-559e98b9f713` exists in the MinIO bucket under
