@@ -48,6 +48,24 @@ Read this file first, then only the memory a task actually needs.
   principals are refused outright there as of 2026-09-10; the browser console
   is the path that authenticates before it brokers. Anything proposing
   approvals, JIT or per-user policy for native RDP has to add identity first.
+
+  The options were costed on 2026-09-11, and the decision is to leave it
+  refused until Windows RDP is actually on the roadmap:
+
+  - **Gateway as an NLA server** is how commercial RDP proxies do this, and it
+    is blocked. Server-side NTLM needs the NT hash -- MD4 of the UTF-16
+    password -- and accounts are argon2id (`internal/control/accounts.go`).
+    Storing NT hashes alongside would be a password-equivalent secret in the
+    database, which is a downgrade, so this needs Kerberos/AD delegation.
+  - **A short one-time code in the mstshash cookie** is the practical one.
+    `ParseCookie` already takes `principal:host`, and recovery codes are the
+    precedent for a short high-entropy secret (80 bits, SHA-256, not argon2).
+    The existing `Signer.IssueTicket` is far too long -- it is a signed token
+    carrying email, scope, target and expiry -- so this needs a new opaque
+    code. Verify mstsc's truncation of that field before committing to it.
+  - **Out-of-band pre-authorisation** binding source IP plus target for a short
+    window needs no client change and is not identity; IP is spoofable and NAT
+    collides. Rejected for a product whose claim is knowing who did what.
 - **An optional dependency is an interface field, so it is never assigned a nil
   pointer.** `gateway.Config.Storage` changed from `*storage.Client` to a
   one-method interface so the stranded-upload case could be tested without a
