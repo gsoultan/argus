@@ -150,7 +150,15 @@ func Open(ctx context.Context, log *slog.Logger) (Probe, error) {
 		return nil, errors.New("probe object has no tracked map")
 	}
 
-	rd, err := ringbuf.NewReader(coll.Maps["events"])
+	events := coll.Maps["events"]
+	if events == nil {
+		// Checked like the others. NewReader dereferences it immediately, so a
+		// renamed map took the agent down with a nil dereference instead of
+		// saying which map was missing.
+		p.closeResources()
+		return nil, errors.New("probe object has no events map")
+	}
+	rd, err := ringbuf.NewReader(events)
 	if err != nil {
 		p.closeResources()
 		return nil, fmt.Errorf("open ring buffer: %w", err)
@@ -181,6 +189,10 @@ func (p *linuxProbe) Track(pid int, sessionID string) error {
 			return fmt.Errorf("prepare drop counter for %q: %w", sessionID, err)
 		}
 	}
+	// The userspace half, created here for the same reason: the drop path only
+	// ever adds to a counter that already exists, so it cannot create one for a
+	// session that has finished.
+	p.chanDrops.LoadOrStore(sessionID, new(atomic.Uint64))
 	if err := p.tracked.Put(uint32(pid), key); err != nil {
 		// A full map means executions would go unattributed from here on, which
 		// the caller must be able to refuse rather than discover in an audit.
@@ -203,8 +215,15 @@ func (p *linuxProbe) Untrack(pid int) {
 func (p *linuxProbe) Events() <-chan Exec { return p.events }
 
 func (p *linuxProbe) noteChanDrop(sessionID string) {
-	v, _ := p.chanDrops.LoadOrStore(sessionID, new(atomic.Uint64))
-	v.(*atomic.Uint64).Add(1)
+	// Load, not LoadOrStore. Forget releases a session once its fidelity has
+	// been decided, and descendants can still be running and still emitting --
+	// so storing here put the entry straight back, growing this map for the
+	// life of the process. That is the leak Forget exists to prevent, and it
+	// also minted a permanent key for every unattributable event. Track
+	// creates the counter; nothing else does.
+	if v, ok := p.chanDrops.Load(sessionID); ok {
+		v.(*atomic.Uint64).Add(1)
+	}
 }
 
 // Drops reports executions that never reached a sink for this session.
@@ -214,23 +233,25 @@ func (p *linuxProbe) noteChanDrop(sessionID string) {
 // Either makes "every execve is in the recording" false, and the caller is
 // expected to report the session at reduced fidelity rather than repeat a
 // claim the artefact cannot support.
-func (p *linuxProbe) Drops(sessionID string) uint64 {
+func (p *linuxProbe) Drops(sessionID string) (uint64, bool) {
 	var key [sessionLen]byte
 	copy(key[:], sessionID)
 
 	var kernel uint64
 	if err := p.drops.Lookup(key, &kernel); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-		// Not knowing is not the same as none. Report a loss rather than
-		// let a failed read read as a clean session.
-		p.log.Error("cannot read the kernel drop counter; assuming evidence was lost",
+		// Not knowing is not the same as none, and it is not the same as one
+		// either. This used to return a sentinel 1, which the caller stored and
+		// logged as a fact -- a count nobody could tell from a real single
+		// loss. It reports that it does not know, and the caller decides.
+		p.log.Error("cannot read the kernel drop counter",
 			"session", sessionID, "error", err)
-		return 1
+		return 0, false
 	}
 	var queued uint64
 	if v, ok := p.chanDrops.Load(sessionID); ok {
 		queued = v.(*atomic.Uint64).Load()
 	}
-	return kernel + queued
+	return kernel + queued, true
 }
 
 // Forget releases a session's counters once they have been read.

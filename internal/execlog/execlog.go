@@ -132,7 +132,12 @@ type Probe interface {
 	// Drops reports executions for this session that never reached a sink,
 	// whichever side of the ring buffer lost them. Non-zero means the
 	// recording cannot claim to list everything that ran.
-	Drops(sessionID string) uint64
+	//
+	// The second return says whether the count is known at all. A probe that
+	// cannot read its own counter must not report zero, and must not invent a
+	// number either: the caller decides what an unknown means, and for this
+	// product it means the same as a loss.
+	Drops(sessionID string) (uint64, bool)
 	// Forget releases a session's drop counter. Separate from Untrack, which
 	// is per-pid: the counter is per-session, and one that is never released
 	// fills a bounded map the same way stray pids used to.
@@ -238,17 +243,6 @@ func (t *Tracer) Attach(sessionID string, pid int, sink func(Exec)) error {
 }
 
 // Detach stops recording a session.
-// Drops reports executions this session lost before they reached its sink.
-//
-// Read it before Detach: the probe releases a session's counters when it stops
-// tracking, and a count nobody collected is the same as no count at all.
-func (t *Tracer) Drops(sessionID string) uint64 {
-	if t == nil || t.probe == nil {
-		return 0
-	}
-	return t.probe.Drops(sessionID)
-}
-
 // Detach stops recording a session. It deliberately leaves the loss counters
 // alone -- see TakeLost, which the caller must call once it has finished with
 // the recording.
@@ -268,18 +262,21 @@ func (t *Tracer) Detach(sessionID string, pid int) {
 // which is what a global counter only the tests looked at amounted to. The
 // sealed record went out claiming eBPF fidelity, that every execve is in the
 // file, while missing commands the kernel had reported.
-func (t *Tracer) TakeLost(sessionID string) uint64 {
+func (t *Tracer) TakeLost(sessionID string) (lost uint64, known bool) {
 	if t == nil || t.probe == nil {
-		return 0
+		// No probe, no claim to undermine: this host never reported eBPF
+		// fidelity, so "nothing lost" is the truth rather than an assumption.
+		return 0, true
 	}
 	t.mu.Lock()
-	lost := t.late[sessionID]
+	lost = t.late[sessionID]
 	delete(t.late, sessionID)
 	t.mu.Unlock()
 
-	lost += t.probe.Drops(sessionID)
+	dropped, known := t.probe.Drops(sessionID)
+	lost += dropped
 	t.probe.Forget(sessionID)
-	return lost
+	return lost, known
 }
 
 // Late reports executions seen for sessions with no sink.
@@ -356,9 +353,9 @@ func (c *Context) Attach(sessionID string, pid int, sink func(Exec)) error {
 // Zero when there is no probe, because a host with no kernel tier never claimed
 // eBPF fidelity to begin with. Call it once, after the recording is closed:
 // see Tracer.TakeLost for why the timing is the point.
-func (c *Context) TakeLost(sessionID string) uint64 {
+func (c *Context) TakeLost(sessionID string) (lost uint64, known bool) {
 	if c == nil || c.Tracer == nil {
-		return 0
+		return 0, true
 	}
 	return c.Tracer.TakeLost(sessionID)
 }

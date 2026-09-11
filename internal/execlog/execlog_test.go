@@ -19,6 +19,8 @@ type fakeProbe struct {
 	trackErr error
 	closed   bool
 	drops    map[string]uint64
+	// dropsUnreadable stands in for a probe that cannot read its own counter.
+	dropsUnreadable bool
 }
 
 func newFakeProbe() *fakeProbe {
@@ -29,10 +31,13 @@ func newFakeProbe() *fakeProbe {
 	}
 }
 
-func (p *fakeProbe) Drops(sessionID string) uint64 {
+func (p *fakeProbe) Drops(sessionID string) (uint64, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.drops[sessionID]
+	if p.dropsUnreadable {
+		return 0, false
+	}
+	return p.drops[sessionID], true
 }
 
 func (p *fakeProbe) Forget(sessionID string) {
@@ -345,16 +350,16 @@ func TestAnExecutionAfterDetachIsChargedToItsSession(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if got := tr.TakeLost("sess-late"); got != 2 {
+	if got, known := tr.TakeLost("sess-late"); got != 2 || !known {
 		t.Errorf("TakeLost = %d, want 2 -- the session that lost these "+
 			"executions is the one whose fidelity has to change", got)
 	}
 	// Taken once: a second call must not charge them again.
-	if got := tr.TakeLost("sess-late"); got != 0 {
+	if got, _ := tr.TakeLost("sess-late"); got != 0 {
 		t.Errorf("TakeLost = %d on a second call, want 0", got)
 	}
 	// Another session is unaffected by its neighbour's losses.
-	if got := tr.TakeLost("sess-other"); got != 0 {
+	if got, _ := tr.TakeLost("sess-other"); got != 0 {
 		t.Errorf("an unrelated session reports %d lost, want 0", got)
 	}
 	if seen != 0 {
@@ -381,7 +386,50 @@ func TestTakeLostSumsBothSourcesOfLoss(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if got := tr.TakeLost("sess-both"); got != 4 {
+	if got, _ := tr.TakeLost("sess-both"); got != 4 {
 		t.Errorf("TakeLost = %d, want 4 (3 dropped by the probe, 1 after detach)", got)
+	}
+}
+
+// A count that could not be read is not a count of zero.
+//
+// Drops used to return a sentinel 1 on a failed map read, which the collector
+// stored and logged as a fact -- indistinguishable from a real single loss. It
+// says it does not know now, and the caller decides. For this product an
+// unknown means the same as a loss: eBPF fidelity asserts every execve is in
+// the file, and that is not a claim to make from a counter nobody could read.
+func TestAnUnreadableDropCountIsNotZero(t *testing.T) {
+	p := newFakeProbe()
+	p.dropsUnreadable = true
+	tr := NewTracer(p)
+	defer tr.Close()
+
+	if err := tr.Attach("sess-unknown", 333, func(Exec) {}); err != nil {
+		t.Fatal(err)
+	}
+	tr.Detach("sess-unknown", 333)
+
+	lost, known := tr.TakeLost("sess-unknown")
+	if known {
+		t.Fatal("a probe that cannot read its counter reported a known count")
+	}
+	if lost != 0 {
+		t.Errorf("lost = %d on an unreadable count; the number is meaningless "+
+			"and inventing one is what this replaced", lost)
+	}
+}
+
+// A host with no probe reports a known zero, not an unknown.
+//
+// It never claimed eBPF fidelity, so there is no claim to undermine and no
+// reason to degrade a recording that was only ever terminal output.
+func TestNoProbeMeansNothingLostRatherThanUnknown(t *testing.T) {
+	var c *Context
+	if lost, known := c.TakeLost("sess-none"); lost != 0 || !known {
+		t.Errorf("TakeLost on a nil context = (%d, %v), want (0, true)", lost, known)
+	}
+	empty := &Context{Reason: "kernel too old"}
+	if lost, known := empty.TakeLost("sess-none"); lost != 0 || !known {
+		t.Errorf("TakeLost with no tracer = (%d, %v), want (0, true)", lost, known)
 	}
 }

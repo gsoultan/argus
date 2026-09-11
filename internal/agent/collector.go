@@ -424,7 +424,18 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 	// Detach and here finds no sink, and counting it anywhere the fidelity
 	// decision does not read is the same as discarding it. Taken once: this
 	// releases the counters.
-	if lost := c.Exec.TakeLost(sess.id); lost > 0 {
+	switch lost, known := c.Exec.TakeLost(sess.id); {
+	case !known:
+		// The probe could not read its own counter, so whether anything was
+		// lost is unknown -- and an unknown is not a zero. eBPF fidelity
+		// asserts every execve is in the file, which is not a claim to make
+		// from a counter that could not be read.
+		sess.noteExecDropped(1)
+		c.log.Error("cannot tell whether kernel executions were lost; reporting reduced fidelity",
+			"session", sess.id,
+			"detail", "the recording is complete as terminal output; nothing "+
+				"can vouch for it as a list of everything that ran")
+	case lost > 0:
 		sess.noteExecDropped(lost)
 		c.log.Warn("kernel executions were lost; reporting reduced fidelity",
 			"session", sess.id, "lost", lost,
