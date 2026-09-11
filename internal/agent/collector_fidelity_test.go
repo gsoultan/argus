@@ -155,3 +155,56 @@ func TestDroppedExecutionsAccumulate(t *testing.T) {
 		t.Errorf("execDropped = %d, want 5", got)
 	}
 }
+
+// A failure to record must not copy the command line into the agent's log.
+//
+// argv is the thing this product is built to control: `mysql -p...`,
+// `curl -H "Authorization: ..."`, a postgres:// URL with its password in it.
+// The recording that carries it is access-controlled and hash-chained. The
+// agent's log is neither, and it was getting the full command line on every
+// write failure and every dropped event.
+func TestAFailedRecordingDoesNotLogTheCommandLine(t *testing.T) {
+	var logged strings.Builder
+	log := slog.New(slog.NewTextHandler(&logged, nil))
+
+	// Healthy at construction -- recorder.New writes the header -- then broken,
+	// which is the sequence the existing failure tests use.
+	w := &brokenWriter{}
+	s := sessionOn(t, w)
+	w.broken = true
+
+	e := anExec("mysql")
+	e.Args = []string{"mysql", "-u", "root", "-phunter2-the-password"}
+
+	s.recordExec(e, log)
+
+	out := logged.String()
+	if out == "" {
+		t.Fatal("nothing was logged; this test can no longer tell what reaches the log")
+	}
+	if strings.Contains(out, "hunter2-the-password") {
+		t.Errorf("the agent log contains a credential from argv:\n  %s\n"+
+			"it was captured into an access-controlled recording and copied "+
+			"out of it into a log that is not", out)
+	}
+	// The diagnostic still has to be useful.
+	if !strings.Contains(out, "/usr/bin/mysql") {
+		t.Errorf("the log no longer says which program failed:\n  %s", out)
+	}
+}
+
+// The recording itself still carries the full argument vector. Removing it
+// from the log must not remove it from the evidence.
+func TestTheRecordingStillCarriesTheFullArgv(t *testing.T) {
+	var out strings.Builder
+	s := sessionOn(t, &out)
+	e := anExec("mysql")
+	e.Args = []string{"mysql", "-u", "root", "-phunter2-the-password"}
+
+	s.recordExec(e, nil)
+
+	if !strings.Contains(out.String(), "hunter2-the-password") {
+		t.Error("the recording does not contain the argument vector; the " +
+			"evidence is what is supposed to hold it")
+	}
+}

@@ -488,8 +488,11 @@ func (s *activeSession) recordExec(e execlog.Exec, log *slog.Logger) {
 		// Once per session. A full disk fails every subsequent execution too,
 		// and a line per command buries the one that matters.
 		if first && log != nil {
+			// The program, not the command line: argv carries credentials,
+			// and this log is not the access-controlled artefact they were
+			// captured into.
 			log.Error("recording a kernel execution failed",
-				"session", s.id, "command", e.CommandLine(), "error", err,
+				"session", s.id, "program", e.Filename, "argc", len(e.Args), "error", err,
 				"detail", "this recording no longer evidences every execution "+
 					"and will be reported at reduced fidelity")
 		}
