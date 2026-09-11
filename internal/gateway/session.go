@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -964,10 +963,27 @@ func loadInjectedKey(path string) (ssh.Signer, error) {
 	return signer, nil
 }
 
+// canonicalUUID formats 16 random bytes as a UUID, version and variant set.
+//
+// The formatting is the point, not the bits. A bare hex string is 128 bits that
+// Postgres accepts in a uuid column and prints back dashed, so the same session
+// had two spellings: the gateway named the recording object with one and the
+// control plane stored the other. Nothing in the product compared them -- the
+// console fetches by the key it was given -- but the restore drill has to map
+// backwards, and for 12,268 recordings it could not.
+//
+// Objects already in a bucket keep the old name, so scripts/drill.sh still
+// normalises both sides. This stops the mismatch being created.
+func canonicalUUID(b []byte) string {
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 func newSessionID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return canonicalUUID(b)
 }
 
 // sendExitStatus tells the client what the remote command returned.

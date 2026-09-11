@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -485,7 +484,7 @@ func newRDPSessionID() string {
 		// who can list them.
 		panic("rdp: no entropy for a session id: " + err.Error())
 	}
-	return hex.EncodeToString(b[:])
+	return canonicalUUID(b[:])
 }
 
 // uploadRDPRecording moves a sealed recording off the gateway.

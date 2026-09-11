@@ -1,0 +1,6 @@
+{"version":2,"width":80,"height":24,"timestamp":1788252213,"title":"ops@pay-01.payments.northwind.id","env":{"ARGUS_SESSION":"3ae54ffe7cd2faf2c920559e98b9f713","ARGUS_USER":"dewi.p@northwind.id"}}
+[0.002,"i","echo INNOCENT-COMMAND; hostname; uname -sm\r\n"]
+[0.013,"o","INNOCENT-COMMAND\n"]
+[0.014,"o","argus-target\n"]
+[0.014,"o","Linux aarch64\n"]
+[0.014,"o","\r\nargus: session f37acc687059e4f2750c542d1a1f44d5 recorded (chain 4fbe4e8d9778…)\r\n"]
