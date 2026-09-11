@@ -79,6 +79,12 @@ type Exec struct {
 // CommandLine renders the execution the way an auditor reads it.
 func (e Exec) CommandLine() string {
 	if len(e.Args) == 0 {
+		if e.Truncated {
+			// The arguments did not survive the kernel read. Returning the
+			// filename alone would report a command that had none, which is a
+			// different and more confident statement than the probe can make.
+			return e.Filename + " …[truncated]"
+		}
 		return e.Filename
 	}
 	var b strings.Builder
