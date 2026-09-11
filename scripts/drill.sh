@@ -141,32 +141,63 @@ else
   checked=0
   failed=0
   unknown=0
-  # Read on fd 3, not stdin. `container exec -i` reads stdin, and when this
-  # loop was fed through stdin it consumed the remaining filenames: the drill
-  # checked the first recording, printed "1 recording(s) verified", and passed
-  # -- the sampling failure the comment above says it must never do.
-  while IFS= read -r cast <&3; do
-    id=$(basename "$cast"); id=${id%.cast}; id=${id%.argusrdp}
-    # </dev/null as well as fd 3, so this stays correct if the loop is ever
-    # rewritten to read from stdin again.
-    head=$("$runtime" exec -i argus-postgres psql -U argus -d argus -tAc \
-      "SELECT COALESCE(chain_head,'') FROM sessions WHERE id = '$id'" \
-      </dev/null 2>/dev/null | tr -d ' \r')
-    if [[ -z "$head" ]]; then
-      # A recording with no stored head cannot be verified. Counted and
-      # reported rather than silently skipped, since a backup made entirely of
-      # unverifiable files would otherwise pass.
-      unknown=$((unknown + 1))
-      continue
-    fi
+
+  # Every chain head in one query, not one query per recording.
+  #
+  # This shelled into the database container for each file. At 54 ms a round
+  # trip that is eleven minutes on a 12,271-recording backup, spent re-asking a
+  # question one statement answers -- and sessions is the table here that only
+  # grows, so the drill was on its way to being the kind nobody runs. An
+  # untested backup is a hope; so is a backup whose test takes an hour.
+  #
+  # Rows with no chain head are dropped here rather than filtered later, so a
+  # recording pointing at one lands in `unknown` exactly as it did when the
+  # lookup was per-file.
+  HEADS=$(mktemp)
+  PAIRS=$(mktemp)
+  JOINED=$(mktemp)
+  ORPHANS=$(mktemp)
+  "$runtime" exec -i argus-postgres psql -U argus -d argus -tAc \
+    "SELECT replace(id::text,'-',''), chain_head FROM sessions WHERE chain_head IS NOT NULL AND chain_head <> ''" \
+    </dev/null 2>/dev/null \
+    | tr -d ' \r' | awk -F'|' -v OFS='\t' 'NF==2 && $1 != "" {print $1, $2}' \
+    | LC_ALL=C sort -t"$(printf '\t')" -k1,1 > "$HEADS"
+
+  # id and path, sorted on id so join can match in one pass. Tab-separated and
+  # path last, so a backup directory containing a space still reads back whole.
+  #
+  # Dashes stripped from both sides, because the same session id is written two
+  # ways. The gateway makes one with hex.EncodeToString -- 32 characters, no
+  # dashes -- and names the object with it; the control plane stores it in a
+  # uuid column, which reads back canonical and dashed. Compared as strings they
+  # never match, so this check found a stored chain head for none of the 12,268
+  # real recordings in the bucket and counted every one of them "unverifiable".
+  # It said so, which is the only reason this was findable at all.
+  awk -v OFS='\t' '{
+    path = $0
+    k = split(path, parts, "/")
+    id = parts[k]
+    sub(/\.(cast|argusrdp)$/, "", id)
+    gsub(/-/, "", id)
+    print id, path
+  }' "$RECORDING_LIST" | LC_ALL=C sort -t"$(printf '\t')" -k1,1 > "$PAIRS"
+
+  # Matched: id, head, path. Unmatched: a recording whose session has no head.
+  LC_ALL=C join -t"$(printf '\t')" -1 1 -2 1 -o 1.1,2.2,1.2 "$PAIRS" "$HEADS" > "$JOINED"
+  LC_ALL=C join -t"$(printf '\t')" -1 1 -2 1 -v 1 "$PAIRS" "$HEADS" > "$ORPHANS"
+  unknown=$(wc -l < "$ORPHANS" | tr -d ' ')
+
+  # Still fd 3: argus-verify is not container exec, but the next thing put in
+  # this loop might be, and that bug cost this check its meaning once already.
+  while IFS="$(printf '\t')" read -r id head cast <&3; do
     if ./bin/argus-verify "$cast" "$head" >/dev/null 2>&1; then
       checked=$((checked + 1))
     else
       failed=$((failed + 1))
       fail "  $id does not verify against its stored chain head"
     fi
-  done 3< "$RECORDING_LIST"
-  rm -f "$RECORDING_LIST"
+  done 3< "$JOINED"
+  rm -f "$RECORDING_LIST" "$HEADS" "$PAIRS" "$JOINED" "$ORPHANS"
 
   # The loop must have accounted for every file. If it did not, something ate
   # the iteration and the counts below describe a subset -- which is the one
