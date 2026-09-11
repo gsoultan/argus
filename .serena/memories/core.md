@@ -39,6 +39,21 @@ Read this file first, then only the memory a task actually needs.
   crown jewel — whoever reads it mints any certificate.
 - **Heuristic evidence is labelled as heuristic.** Commands scraped from a PTY
   stream are never presented next to kernel-observed execve events as equals.
+- **A kernel tier that stops reporting must say so.** Four faults in
+  `internal/execlog`, all fixed 2026-09-11, all the same shape: evidence
+  disappearing while the record looked clean. `SESSION_LEN` sized for the old
+  bare-hex ids made `Track` refuse every canonical UUID, so the tier was simply
+  off; `handle_fork` inserted thread tids that `handle_exit` never deleted,
+  leaking one `tracked` entry per thread until the bounded map stopped
+  accepting; a full ring buffer and a backed-up consumer both discarded execs
+  while the session went on claiming `fidelity: ebpf`; and an unreadable argv
+  was reported as a command that took no arguments. The rule these all serve is
+  already written in `995e25d3` -- eBPF fidelity asserts *every execve is in
+  the file*, so anything that can lose one has to end the claim.
+- **Kernel tests skip themselves, so a green run proves nothing.** Every test in
+  `internal/execlog` skips on a kernel that cannot load the probe. Check the
+  skip count, not the exit code. The working recipe is in
+  [[local-ebpf-cannot-be-tested]]; a full pass is ~30 tests and 0 skips.
 - **The native RDP listener authenticates nobody.** `rdp.Request` is parsed from
   an mstshash cookie and carries a principal and a target -- no person.
   `Session.User` is synthesised as `principal@hostname`, and the CredSSP
