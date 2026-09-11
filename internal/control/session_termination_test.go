@@ -32,10 +32,28 @@ func newUUID(t *testing.T) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
+// dropSession removes a test's session row when it is done.
+//
+// The database is shared between tests and between runs -- see unique() in
+// store_test.go -- so a row left behind is a row every later test sees. These
+// were the only sessions in it, which meant a test that did not seed its own
+// data could look like it was comparing something when it was comparing
+// whatever happened to be lying around.
+func dropSession(t *testing.T, s *Store, id string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if _, err := s.pool.Exec(context.Background(),
+			`DELETE FROM sessions WHERE id = $1`, id); err != nil {
+			t.Errorf("cleaning up session %s: %v", id, err)
+		}
+	})
+}
+
 func TestATerminatedSessionReportIsStored(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	id := newUUID(t)
+	dropSession(t, s, id)
 	by, why := "lin@northwind.id", "credential harvesting observed in the session"
 	head := "a1b2c3d4e5f60718293a4b5c6d7e8f900112233445566778899aabbccddeeff0"
 	ended := time.Now().UTC()
@@ -79,6 +97,7 @@ func TestALaterReportDoesNotForgetWhyASessionEnded(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	id := newUUID(t)
+	dropSession(t, s, id)
 	by, why := "argus", "the gateway is shutting down"
 
 	base := Session{
