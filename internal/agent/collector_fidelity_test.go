@@ -208,3 +208,26 @@ func TestTheRecordingStillCarriesTheFullArgv(t *testing.T) {
 			"evidence is what is supposed to hold it")
 	}
 }
+
+// A session whose losses could not be counted does not claim eBPF fidelity.
+//
+// An unknown is not a zero. The claim is that every execve is in the file, and
+// a counter nobody could read is no basis for making it.
+func TestAnUncountableLossStillEndsTheEBPFClaim(t *testing.T) {
+	var out strings.Builder
+	s := sessionOn(t, &out)
+	ebpf := &execlog.Context{Tracer: &execlog.Tracer{}}
+
+	s.recordExec(anExec("whoami"), nil)
+	if s.fidelity(ebpf) != execlog.FidelityEBPF {
+		t.Fatal("precondition: a healthy session claims eBPF fidelity")
+	}
+
+	// What seal does when TakeLost reports it cannot tell.
+	s.noteExecDropped(1)
+
+	if got := s.fidelity(ebpf); got != execlog.FidelityPTY {
+		t.Errorf("fidelity = %q when the loss count was unreadable, want %q",
+			got, execlog.FidelityPTY)
+	}
+}

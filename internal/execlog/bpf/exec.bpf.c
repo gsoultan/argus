@@ -101,7 +101,17 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
             return 0;
     }
 
-    bpf_map_update_elem(&tracked, &child, sk, BPF_ANY);
+    if (bpf_map_update_elem(&tracked, &child, sk, BPF_ANY) != 0) {
+        // The map is full. This child, and everything it goes on to run, will
+        // not be attributed to the session -- which is the silent gap the exit
+        // handler below calls a correctness requirement rather than
+        // housekeeping. Charged to the session that lost it, so the recording
+        // stops claiming to list everything that ran instead of quietly
+        // omitting a subtree.
+        __u64 *lost = bpf_map_lookup_elem(&drops, sk);
+        if (lost)
+            __sync_fetch_and_add(lost, 1);
+    }
     return 0;
 }
 

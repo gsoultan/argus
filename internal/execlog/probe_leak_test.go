@@ -111,8 +111,8 @@ func TestDroppedExecutionsAreCounted(t *testing.T) {
 	}
 	defer p.Untrack(pid)
 
-	if got := p.Drops(session); got != 0 {
-		t.Fatalf("a fresh session starts with %d drops, want 0", got)
+	if got, known := p.Drops(session); got != 0 || !known {
+		t.Fatalf("a fresh session starts with %d drops (known=%v), want 0 and known", got, known)
 	}
 
 	// Deliberately drain nothing. 1024 is the channel; go well past it.
@@ -121,7 +121,10 @@ func TestDroppedExecutionsAreCounted(t *testing.T) {
 	}
 	time.Sleep(500 * time.Millisecond)
 
-	got := p.Drops(session)
+	got, known := p.Drops(session)
+	if !known {
+		t.Fatal("the drop count could not be read")
+	}
 	t.Logf("drops recorded: %d", got)
 	if got == 0 {
 		t.Error("executions were discarded with the channel full and the " +
@@ -131,7 +134,7 @@ func TestDroppedExecutionsAreCounted(t *testing.T) {
 
 	// Forget releases it, or the bounded map fills the way tracked used to.
 	p.Forget(session)
-	if got := p.Drops(session); got != 0 {
+	if got, _ := p.Drops(session); got != 0 {
 		t.Errorf("Drops = %d after Forget, want 0", got)
 	}
 }
