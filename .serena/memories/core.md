@@ -50,6 +50,14 @@ Read this file first, then only the memory a task actually needs.
   was reported as a command that took no arguments. The rule these all serve is
   already written in `995e25d3` -- eBPF fidelity asserts *every execve is in
   the file*, so anything that can lose one has to end the claim.
+- **After a run of fixes to one package, get a second reader before the next
+  one.** `internal/execlog` took eight patches on 2026-09-11. Three of the bugs
+  were introduced by the same person fixing the others. A `/code-review` of the
+  package afterwards found the most serious remaining defect -- executions
+  arriving after `Detach` were counted where the fidelity decision never looked,
+  so sealed recordings claimed eBPF fidelity while missing commands -- plus two
+  of those three self-inflicted ones. Familiarity with a file stops being an
+  advantage somewhere around the fourth consecutive change to it.
 - **Kernel tests skip themselves, so a green run proves nothing.** Every test in
   `internal/execlog` skips on a kernel that cannot load the probe. Check the
   skip count, not the exit code. The working recipe is in
