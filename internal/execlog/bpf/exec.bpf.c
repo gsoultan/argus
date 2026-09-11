@@ -149,7 +149,19 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     // The verifier needs the bound restated against the buffer size.
     if (len > 0 && len <= ARGS_BUF_SIZE) {
         long n = bpf_probe_read_user(e->args, len, (void *)arg_start);
-        e->args_len = (n == 0) ? (__u32)len : 0;
+        if (n == 0) {
+            e->args_len = (__u32)len;
+        } else {
+            // argv lives in userspace and this helper does not fault pages in,
+            // so a read can fail on memory that is simply not resident. Saying
+            // args_len = 0 and nothing else reports a command that had no
+            // arguments, which for `bash -c '...'` is the difference between
+            // recording a shell and recording what it was told to run. Flagged
+            // rather than asserted: not having the arguments and there being
+            // none are not the same fact.
+            e->args_len = 0;
+            e->truncated = 1;
+        }
     } else {
         e->args_len = 0;
     }

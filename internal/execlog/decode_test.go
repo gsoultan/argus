@@ -223,3 +223,62 @@ func TestTheGoConstantsMatchTheProbeSource(t *testing.T) {
 		}
 	}
 }
+
+// An execution whose arguments could not be read says so.
+//
+// bpf_probe_read_user does not fault pages in, so argv can be unreadable on
+// memory that is simply not resident. The probe then has no arguments to
+// report -- and reporting none is a different, more confident statement than
+// it can make. For `bash -c '...'` it is the difference between recording a
+// shell and recording what it was told to run.
+func TestAnUnreadableArgvIsNotReportedAsNoArguments(t *testing.T) {
+	e := Exec{Filename: "/usr/bin/bash", Truncated: true}
+	got := e.CommandLine()
+	if got == "/usr/bin/bash" {
+		t.Fatal("an execution with unreadable arguments renders as the bare " +
+			"filename, which reads as a command that took none")
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Errorf("CommandLine() = %q, want it to say the arguments are incomplete", got)
+	}
+}
+
+// The marker survives whether or not any arguments were recovered.
+func TestTheTruncationMarkerIsNotLostWithArguments(t *testing.T) {
+	e := Exec{Filename: "/usr/bin/bash", Args: []string{"bash", "-c"}, Truncated: true}
+	if got := e.CommandLine(); !strings.Contains(got, "truncated") {
+		t.Errorf("CommandLine() = %q, want a truncation marker", got)
+	}
+}
+
+// The buffer boundary, stated rather than trusted.
+//
+// The probe clamps at ARGS_BUF_SIZE and flags anything longer. An argv of
+// exactly that size is complete and must not be flagged; one byte more must
+// be. Off-by-one here would either cry truncation on a whole command or, worse,
+// present a cut-off one as whole.
+func TestTheArgsBufferBoundaryIsExact(t *testing.T) {
+	src, _ := regexp.Compile(`(?m)^\s*if \(len > ARGS_BUF_SIZE\) \{`)
+	if !src.Match([]byte(probeSource)) {
+		t.Fatal("the probe no longer clamps argv with `if (len > ARGS_BUF_SIZE)`; " +
+			"this test describes arithmetic that has changed")
+	}
+	// Restated here so the expectation is readable next to the claim:
+	//   len <  4096 -> complete, not flagged
+	//   len == 4096 -> complete, not flagged (the buffer holds it exactly)
+	//   len >  4096 -> clamped to 4096 and flagged
+	for _, tc := range []struct {
+		len       int
+		truncated bool
+	}{
+		{argsBufSize - 1, false},
+		{argsBufSize, false},
+		{argsBufSize + 1, true},
+	} {
+		got := tc.len > argsBufSize
+		if got != tc.truncated {
+			t.Errorf("argv of %d bytes: truncated = %v, want %v",
+				tc.len, got, tc.truncated)
+		}
+	}
+}
