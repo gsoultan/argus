@@ -31,6 +31,9 @@ type Client struct {
 	// control-plane restart would lose every session that happened during it.
 	spoolPath string
 	mu        sync.Mutex
+	// drainMu serialises Drain passes. Deliberately not mu: the point of the
+	// split is that a pass holds nothing while it is on the network.
+	drainMu sync.Mutex
 
 	// MaxSpoolBytes bounds the spool. Zero means DefaultMaxSpoolBytes.
 	//
@@ -304,14 +307,28 @@ func (c *Client) Drain(ctx context.Context) int {
 	if !c.Enabled() || c.spoolPath == "" {
 		return 0
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// One pass at a time, on its own mutex. A pass can outlast the ticker that
+	// starts it, and two sending the same entries would deliver them twice and
+	// race each other's rewrite.
+	if !c.drainMu.TryLock() {
+		return 0
+	}
+	defer c.drainMu.Unlock()
 
+	c.mu.Lock()
 	data, err := os.ReadFile(c.spoolPath)
+	c.mu.Unlock()
 	if err != nil {
 		return 0
 	}
 
+	// The sending happens unlocked.
+	//
+	// This used to hold c.mu for the whole pass, and post() reaches spool()
+	// which takes the same mutex: a control plane slow enough to need draining
+	// was therefore slow enough to stall every session trying to report
+	// through it, each one waiting behind the entire backlog. The lock is for
+	// the spool file, not for the network.
 	var remaining []byte
 	delivered := 0
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -329,16 +346,9 @@ func (c *Client) Drain(ctx context.Context) int {
 		delivered++
 	}
 
-	if len(remaining) == 0 {
-		_ = os.Remove(c.spoolPath)
-	} else {
-		tmp := c.spoolPath + ".tmp"
-		if err := os.WriteFile(tmp, remaining, 0o600); err == nil {
-			_ = os.Rename(tmp, c.spoolPath)
-		}
-	}
+	c.mu.Lock()
+	c.reconcileSpoolLocked(data, remaining, delivered)
 	if delivered > 0 {
-		c.log.Info("delivered spooled reports", "count", delivered)
 		// A drained spool is proof the control plane is reachable. Without
 		// this the failure run outlived the outage: the "reachable again"
 		// line never printed for an operator who had seen the alarm, and the
@@ -346,7 +356,48 @@ func (c *Client) Drain(ctx context.Context) int {
 		// measured from the old one -- hours after delivery had resumed.
 		c.noteSuccessLocked()
 	}
+	c.mu.Unlock()
+
+	if delivered > 0 {
+		c.log.Info("delivered spooled reports", "count", delivered)
+	}
 	return delivered
+}
+
+// reconcileSpoolLocked rewrites the spool with what this pass could not deliver
+// plus whatever arrived while it was sending.
+//
+// snapshot is what the pass started from; remaining is the subset of it that
+// still fails. Anything past the snapshot was appended by spool() during the
+// pass and has to survive a rewrite that knows nothing about it -- which is the
+// cost of doing the sending unlocked, and cheaper than the stall it replaces.
+func (c *Client) reconcileSpoolLocked(snapshot, remaining []byte, delivered int) {
+	current, err := os.ReadFile(c.spoolPath)
+	if err != nil {
+		return // already gone; nothing to rewrite
+	}
+	if !bytes.HasPrefix(current, snapshot) {
+		// trimSpoolLocked rewrote the file underneath this pass. The entries in
+		// remaining may be exactly the ones it decided to drop, and putting
+		// them back would undo a bound that exists to stop this file filling
+		// the disk. Leave what is there; the cost is that anything this pass
+		// did deliver is still listed and will be sent again, and a duplicate
+		// report is a better outcome than a resurrected one.
+		c.log.Warn("the spool was rewritten while it was being drained",
+			"delivered", delivered,
+			"detail", "undelivered reports from this pass were left for the next one")
+		return
+	}
+
+	out := append(remaining, current[len(snapshot):]...)
+	if len(out) == 0 {
+		_ = os.Remove(c.spoolPath)
+		return
+	}
+	tmp := c.spoolPath + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o600); err == nil {
+		_ = os.Rename(tmp, c.spoolPath)
+	}
 }
 
 // StartDrainLoop retries the spool periodically until ctx is cancelled.
