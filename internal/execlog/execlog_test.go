@@ -319,3 +319,69 @@ func TestCloseIsIdempotentAndStopsDispatch(t *testing.T) {
 		t.Error("Attach succeeded on a closed tracer")
 	}
 }
+
+// An execution that arrives after Detach has to reach the fidelity decision.
+//
+// It was counted in a global field that only these tests read, so the session
+// it belonged to never learned about it: the recording sealed and went out
+// claiming eBPF fidelity -- that every execve is in the file -- while missing
+// a command the kernel had reported. Per-session, and collected by the code
+// that decides what the artefact can evidence.
+func TestAnExecutionAfterDetachIsChargedToItsSession(t *testing.T) {
+	p := newFakeProbe()
+	tr := NewTracer(p)
+	defer tr.Close()
+
+	var seen int
+	if err := tr.Attach("sess-late", 111, func(Exec) { seen++ }); err != nil {
+		t.Fatal(err)
+	}
+	tr.Detach("sess-late", 111)
+
+	// The kernel is still reporting descendants of a session that has gone.
+	p.emit(Exec{SessionID: "sess-late", Filename: "/usr/bin/whoami"})
+	p.emit(Exec{SessionID: "sess-late", Filename: "/usr/bin/id"})
+	for tr.Late() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+
+	if got := tr.TakeLost("sess-late"); got != 2 {
+		t.Errorf("TakeLost = %d, want 2 -- the session that lost these "+
+			"executions is the one whose fidelity has to change", got)
+	}
+	// Taken once: a second call must not charge them again.
+	if got := tr.TakeLost("sess-late"); got != 0 {
+		t.Errorf("TakeLost = %d on a second call, want 0", got)
+	}
+	// Another session is unaffected by its neighbour's losses.
+	if got := tr.TakeLost("sess-other"); got != 0 {
+		t.Errorf("an unrelated session reports %d lost, want 0", got)
+	}
+	if seen != 0 {
+		t.Errorf("the detached sink still received %d executions", seen)
+	}
+}
+
+// Probe-side drops and post-detach arrivals are one number to the caller.
+func TestTakeLostSumsBothSourcesOfLoss(t *testing.T) {
+	p := newFakeProbe()
+	tr := NewTracer(p)
+	defer tr.Close()
+
+	if err := tr.Attach("sess-both", 222, func(Exec) {}); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.drops["sess-both"] = 3
+	p.mu.Unlock()
+
+	tr.Detach("sess-both", 222)
+	p.emit(Exec{SessionID: "sess-both", Filename: "/usr/bin/whoami"})
+	for tr.Late() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+
+	if got := tr.TakeLost("sess-both"); got != 4 {
+		t.Errorf("TakeLost = %d, want 4 (3 dropped by the probe, 1 after detach)", got)
+	}
+}

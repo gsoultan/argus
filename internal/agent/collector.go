@@ -412,17 +412,6 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 	delete(c.active, sess.id)
 	c.mu.Unlock()
 
-	// Before Detach, which releases the counter. An execution the kernel or
-	// this process dropped never reached recordExec, so execLost never saw it
-	// and the session would have gone on claiming eBPF fidelity -- that every
-	// execve is in the file -- with a hole in it.
-	if lost := c.Exec.Drops(sess.id); lost > 0 {
-		sess.noteExecDropped(lost)
-		c.log.Warn("kernel executions were lost; reporting reduced fidelity",
-			"session", sess.id, "dropped", lost,
-			"detail", "the recording is complete as terminal output but cannot "+
-				"stand as a list of everything that ran")
-	}
 	c.Exec.Detach(sess.id, sess.start.PID)
 
 	head, err := sess.rec.Close()
@@ -430,6 +419,18 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 		c.log.Error("sealing recording failed", "session", sess.id, "error", err)
 	}
 	_ = sess.file.Close()
+
+	// After the close, before the claim. An execution that arrives between
+	// Detach and here finds no sink, and counting it anywhere the fidelity
+	// decision does not read is the same as discarding it. Taken once: this
+	// releases the counters.
+	if lost := c.Exec.TakeLost(sess.id); lost > 0 {
+		sess.noteExecDropped(lost)
+		c.log.Warn("kernel executions were lost; reporting reduced fidelity",
+			"session", sess.id, "lost", lost,
+			"detail", "the recording is complete as terminal output but cannot "+
+				"stand as a list of everything that ran")
+	}
 
 	_, bytes, _ := sess.rec.Stats()
 
