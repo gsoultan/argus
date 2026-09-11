@@ -90,3 +90,48 @@ func TestThreadsDoNotAccumulateInTheTrackedMap(t *testing.T) {
 		t.Errorf("tracking was lost; commands seen: %s", render(got))
 	}
 }
+
+// A drop is counted, not just logged.
+//
+// The events channel holds 1024. Nothing drains it here, so once it fills the
+// probe discards rather than blocking the ring buffer reader -- the right
+// choice, since blocking makes the kernel drop far more. What was missing is
+// that the discard was invisible past a log line: the session went on claiming
+// eBPF fidelity, which asserts every execve is in the recording.
+func TestDroppedExecutionsAreCounted(t *testing.T) {
+	probe := openProbe(t)
+	p, ok := probe.(*linuxProbe)
+	if !ok {
+		t.Skip("not the linux probe")
+	}
+	session := "drop-count-0001"
+	pid := kernelPID(t, probe)
+	if err := p.Track(pid, session); err != nil {
+		t.Fatal(err)
+	}
+	defer p.Untrack(pid)
+
+	if got := p.Drops(session); got != 0 {
+		t.Fatalf("a fresh session starts with %d drops, want 0", got)
+	}
+
+	// Deliberately drain nothing. 1024 is the channel; go well past it.
+	for i := 0; i < 2500; i++ {
+		_ = exec.Command("/bin/true").Run()
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	got := p.Drops(session)
+	t.Logf("drops recorded: %d", got)
+	if got == 0 {
+		t.Error("executions were discarded with the channel full and the " +
+			"counter stayed at zero -- the session would report eBPF fidelity " +
+			"for a recording that is missing executions")
+	}
+
+	// Forget releases it, or the bounded map fills the way tracked used to.
+	p.Forget(session)
+	if got := p.Drops(session); got != 0 {
+		t.Errorf("Drops = %d after Forget, want 0", got)
+	}
+}

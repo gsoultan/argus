@@ -123,6 +123,14 @@ type Probe interface {
 	Untrack(pid int)
 	// Events yields executions until the probe is closed.
 	Events() <-chan Exec
+	// Drops reports executions for this session that never reached a sink,
+	// whichever side of the ring buffer lost them. Non-zero means the
+	// recording cannot claim to list everything that ran.
+	Drops(sessionID string) uint64
+	// Forget releases a session's drop counter. Separate from Untrack, which
+	// is per-pid: the counter is per-session, and one that is never released
+	// fills a bounded map the same way stray pids used to.
+	Forget(sessionID string)
 	// Close detaches from the kernel.
 	Close() error
 }
@@ -223,8 +231,22 @@ func (t *Tracer) Attach(sessionID string, pid int, sink func(Exec)) error {
 }
 
 // Detach stops recording a session.
+// Drops reports executions this session lost before they reached its sink.
+//
+// Read it before Detach: the probe releases a session's counters when it stops
+// tracking, and a count nobody collected is the same as no count at all.
+func (t *Tracer) Drops(sessionID string) uint64 {
+	if t == nil || t.probe == nil {
+		return 0
+	}
+	return t.probe.Drops(sessionID)
+}
+
 func (t *Tracer) Detach(sessionID string, pid int) {
 	t.probe.Untrack(pid)
+	// After Untrack, so nothing can add to a counter that is about to go. Read
+	// Drops before calling this: what is not collected here is gone.
+	t.probe.Forget(sessionID)
 	t.mu.Lock()
 	delete(t.sinks, sessionID)
 	t.mu.Unlock()
@@ -295,6 +317,15 @@ func (c *Context) Attach(sessionID string, pid int, sink func(Exec)) error {
 }
 
 // Detach releases a session.
+// Drops reports executions this session lost. Zero when there is no probe,
+// because a host with no kernel tier never claimed eBPF fidelity to begin with.
+func (c *Context) Drops(sessionID string) uint64 {
+	if c == nil || c.Tracer == nil {
+		return 0
+	}
+	return c.Tracer.Drops(sessionID)
+}
+
 func (c *Context) Detach(sessionID string, pid int) {
 	if c == nil || c.Tracer == nil {
 		return

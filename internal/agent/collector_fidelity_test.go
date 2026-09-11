@@ -106,3 +106,52 @@ func TestNoProbeMeansPTY(t *testing.T) {
 		t.Errorf("fidelity = %q with no tracer, want %q", got, execlog.FidelityPTY)
 	}
 }
+
+// An execution that never arrived ends the claim just as one that arrived and
+// could not be written.
+//
+// These fail differently and were handled differently. recordExec sets
+// execLost when a kernel execution reaches the agent and the write fails. An
+// execution the kernel dropped because its ring buffer was full, or that this
+// process dropped because the consumer was behind, never reaches recordExec at
+// all -- so nothing was set, and the session went on reporting eBPF fidelity
+// with a hole in it. That claim is the strongest this product makes about an
+// artefact: every execve is in the file.
+func TestAnExecutionLostBeforeItArrivedEndsTheEBPFClaim(t *testing.T) {
+	var out strings.Builder
+	s := sessionOn(t, &out)
+	ebpf := &execlog.Context{Tracer: &execlog.Tracer{}}
+
+	s.recordExec(anExec("whoami"), nil)
+	if s.fidelity(ebpf) != execlog.FidelityEBPF {
+		t.Fatal("precondition: a healthy session claims eBPF fidelity")
+	}
+
+	// What the collector does when the probe reports losses at seal time.
+	s.noteExecDropped(1)
+
+	if got := s.fidelity(ebpf); got != execlog.FidelityPTY {
+		t.Errorf("fidelity = %q after an execution was dropped, want %q -- the "+
+			"recording is still complete terminal output, but it cannot stand "+
+			"as a list of everything that ran", got, execlog.FidelityPTY)
+	}
+	// The output already written is still the record, and still chained.
+	if !strings.Contains(out.String(), "whoami") {
+		t.Error("degrading fidelity discarded the executions that did arrive")
+	}
+}
+
+// Drops accumulate rather than replace, so two losses do not read as one.
+func TestDroppedExecutionsAccumulate(t *testing.T) {
+	var out strings.Builder
+	s := sessionOn(t, &out)
+	s.noteExecDropped(2)
+	s.noteExecDropped(3)
+
+	s.mu.Lock()
+	got := s.execDropped
+	s.mu.Unlock()
+	if got != 5 {
+		t.Errorf("execDropped = %d, want 5", got)
+	}
+}
