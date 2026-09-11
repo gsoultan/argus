@@ -88,6 +88,10 @@ type activeSession struct {
 	// written. The claim eBPF fidelity makes is "every execve is here", and one
 	// dropped event makes that false for the whole recording.
 	execLost bool
+	// execDropped counts executions that never arrived at all, as opposed to
+	// execLost which is one that arrived and could not be written. Different
+	// causes, same consequence for what the artefact can claim.
+	execDropped uint64
 }
 
 // NewCollector builds a collector writing recordings into dir.
@@ -408,6 +412,17 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 	delete(c.active, sess.id)
 	c.mu.Unlock()
 
+	// Before Detach, which releases the counter. An execution the kernel or
+	// this process dropped never reached recordExec, so execLost never saw it
+	// and the session would have gone on claiming eBPF fidelity -- that every
+	// execve is in the file -- with a hole in it.
+	if lost := c.Exec.Drops(sess.id); lost > 0 {
+		sess.noteExecDropped(lost)
+		c.log.Warn("kernel executions were lost; reporting reduced fidelity",
+			"session", sess.id, "dropped", lost,
+			"detail", "the recording is complete as terminal output but cannot "+
+				"stand as a list of everything that ran")
+	}
 	c.Exec.Detach(sess.id, sess.start.PID)
 
 	head, err := sess.rec.Close()
@@ -485,11 +500,18 @@ func (s *activeSession) recordExec(e execlog.Exec, log *slog.Logger) {
 	s.mu.Unlock()
 }
 
+// noteExecDropped records executions lost before they reached this session.
+func (s *activeSession) noteExecDropped(n uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.execDropped += n
+}
+
 // fidelity reports what this recording can evidence.
 func (s *activeSession) fidelity(c *execlog.Context) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.ptyOnly || s.execLost {
+	if s.ptyOnly || s.execLost || s.execDropped > 0 {
 		// Degraded rather than absent: the terminal output in this recording is
 		// still complete and still chained. What it cannot do is stand as a
 		// list of everything that ran.

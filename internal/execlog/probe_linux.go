@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -35,8 +36,12 @@ type linuxProbe struct {
 	links   []link.Link
 	reader  *ringbuf.Reader
 	tracked *ebpf.Map
-	events  chan Exec
-	log     *slog.Logger
+	drops   *ebpf.Map
+	// chanDrops counts executions this process could not hand on, which the
+	// kernel counter cannot see. Same meaning, other side of the ring buffer.
+	chanDrops sync.Map // sessionID -> *atomic.Uint64
+	events    chan Exec
+	log       *slog.Logger
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -134,6 +139,11 @@ func Open(ctx context.Context, log *slog.Logger) (Probe, error) {
 		p.links = append(p.links, l)
 	}
 
+	p.drops = coll.Maps["drops"]
+	if p.drops == nil {
+		p.closeResources()
+		return nil, errors.New("probe object has no drops map")
+	}
 	p.tracked = coll.Maps["tracked"]
 	if p.tracked == nil {
 		p.closeResources()
@@ -162,6 +172,15 @@ func (p *linuxProbe) Track(pid int, sessionID string) error {
 	}
 	var key [sessionLen]byte
 	copy(key[:], sessionID)
+	// Before tracking, so the kernel never reaches the drop path without a
+	// counter to add to. Put rather than a create-if-absent: a second Track for
+	// the same session must not reset a count already taken.
+	var zero uint64
+	if err := p.drops.Lookup(key, &zero); err != nil {
+		if err := p.drops.Put(key, uint64(0)); err != nil {
+			return fmt.Errorf("prepare drop counter for %q: %w", sessionID, err)
+		}
+	}
 	if err := p.tracked.Put(uint32(pid), key); err != nil {
 		// A full map means executions would go unattributed from here on, which
 		// the caller must be able to refuse rather than discover in an audit.
@@ -182,6 +201,47 @@ func (p *linuxProbe) Untrack(pid int) {
 }
 
 func (p *linuxProbe) Events() <-chan Exec { return p.events }
+
+func (p *linuxProbe) noteChanDrop(sessionID string) {
+	v, _ := p.chanDrops.LoadOrStore(sessionID, new(atomic.Uint64))
+	v.(*atomic.Uint64).Add(1)
+}
+
+// Drops reports executions that never reached a sink for this session.
+//
+// Both sides of the ring buffer: the kernel refusing to write because it is
+// full, and this process refusing to queue because the consumer is behind.
+// Either makes "every execve is in the recording" false, and the caller is
+// expected to report the session at reduced fidelity rather than repeat a
+// claim the artefact cannot support.
+func (p *linuxProbe) Drops(sessionID string) uint64 {
+	var key [sessionLen]byte
+	copy(key[:], sessionID)
+
+	var kernel uint64
+	if err := p.drops.Lookup(key, &kernel); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		// Not knowing is not the same as none. Report a loss rather than
+		// let a failed read read as a clean session.
+		p.log.Error("cannot read the kernel drop counter; assuming evidence was lost",
+			"session", sessionID, "error", err)
+		return 1
+	}
+	var queued uint64
+	if v, ok := p.chanDrops.Load(sessionID); ok {
+		queued = v.(*atomic.Uint64).Load()
+	}
+	return kernel + queued
+}
+
+// Forget releases a session's counters once they have been read.
+func (p *linuxProbe) Forget(sessionID string) {
+	var key [sessionLen]byte
+	copy(key[:], sessionID)
+	if err := p.drops.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		p.log.Warn("cannot clear a drop counter", "session", sessionID, "error", err)
+	}
+	p.chanDrops.Delete(sessionID)
+}
 
 func (p *linuxProbe) read() {
 	defer p.wg.Done()
@@ -220,6 +280,7 @@ func (p *linuxProbe) read() {
 			// Dropping is preferable to blocking the ring buffer reader, which
 			// would cause the kernel to drop far more. Said out loud because a
 			// gap in kernel evidence must never be silent.
+			p.noteChanDrop(e.SessionID)
 			p.log.Warn("execution event dropped; the consumer is not keeping up",
 				"session", e.SessionID, "command", e.CommandLine())
 		}

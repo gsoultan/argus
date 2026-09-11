@@ -46,6 +46,18 @@ struct {
     __type(value, struct session_key);
 } tracked SEC(".maps");
 
+// session -> executions the ring buffer refused.
+//
+// Pre-created by Track, so the path below only ever looks up and adds: creating
+// an entry here could itself fail, and a counter of lost evidence that can be
+// lost is not a counter.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_TRACKED);
+    __type(key, struct session_key);
+    __type(value, __u64);
+} drops SEC(".maps");
+
 struct exec_event {
     __u32 pid;
     __u32 ppid;
@@ -145,7 +157,15 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     // Only the bytes actually used are published; the scratch buffer is 4 KiB
     // and copying all of it per exec would waste most of the ring buffer.
     __u64 payload = offsetof(struct exec_event, args) + e->args_len;
-    bpf_ringbuf_output(&events, e, payload, 0);
+    if (bpf_ringbuf_output(&events, e, payload, 0) != 0) {
+        // The ring buffer is full and this execution is gone. Counted, because
+        // eBPF fidelity claims every execve is in the recording and one that
+        // never left the kernel makes that false -- silently, which is the part
+        // that matters. The session is reported at reduced fidelity instead.
+        __u64 *lost = bpf_map_lookup_elem(&drops, sk);
+        if (lost)
+            __sync_fetch_and_add(lost, 1);
+    }
     return 0;
 }
 

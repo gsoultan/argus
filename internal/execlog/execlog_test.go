@@ -18,10 +18,27 @@ type fakeProbe struct {
 	events   chan Exec
 	trackErr error
 	closed   bool
+	drops    map[string]uint64
 }
 
 func newFakeProbe() *fakeProbe {
-	return &fakeProbe{tracked: map[int]string{}, events: make(chan Exec, 64)}
+	return &fakeProbe{
+		tracked: map[int]string{},
+		events:  make(chan Exec, 64),
+		drops:   map[string]uint64{},
+	}
+}
+
+func (p *fakeProbe) Drops(sessionID string) uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.drops[sessionID]
+}
+
+func (p *fakeProbe) Forget(sessionID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.drops, sessionID)
 }
 
 func (p *fakeProbe) Track(pid int, sessionID string) error {
