@@ -3,6 +3,8 @@ package gateway
 import (
 	"regexp"
 	"testing"
+
+	"github.com/gsoultan/argus/internal/execlog"
 )
 
 // Session ids are canonical UUIDs, because they are stored in one.
@@ -78,4 +80,32 @@ func canonicalise(id string) string {
 	}
 	h := string(hexOnly)
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
+// A session id has to fit the field the kernel probe carries it in.
+//
+// These are two packages that never reference each other, joined only by an id
+// travelling gateway -> control plane -> agent -> probe. Widening the id broke
+// the far end: execlog sized its field for 32 hex characters, so Track refused
+// every session and the kernel evidence tier was simply off. It failed closed
+// and said so in a log nobody was reading, and every test in both packages
+// still passed.
+func TestASessionIdFitsTheKernelProbe(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gen  func() string
+	}{
+		{"ssh", newSessionID},
+		{"rdp", newRDPSessionID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := tc.gen()
+			if len(id) > execlog.MaxSessionID {
+				t.Fatalf("session id %q is %d bytes and the probe carries at "+
+					"most %d -- execlog.Track will refuse every session and "+
+					"the kernel evidence tier will be off",
+					id, len(id), execlog.MaxSessionID)
+			}
+		})
+	}
 }

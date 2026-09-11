@@ -22,7 +22,13 @@ char LICENSE[] SEC("license") = "GPL";
 
 #define ARGS_BUF_SIZE 4096
 #define MAX_TRACKED   10240
-#define SESSION_LEN   33 /* 32 hex characters and a terminator */
+/* A canonical UUID is 36 characters, plus a terminator. It was 33, sized for
+ * the bare hex ids the gateway used to mint; when those became canonical UUIDs
+ * the userspace side began refusing to track any session at all, because a
+ * 36-character id does not fit. Refusing was the right failure -- a truncated
+ * id attributes an execution to a session that does not exist -- but the
+ * kernel evidence tier was off until this matched. */
+#define SESSION_LEN   37
 #define COMM_LEN      16
 #define FILENAME_LEN  256
 

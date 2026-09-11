@@ -2,8 +2,11 @@ package execlog
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/binary"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -25,6 +28,9 @@ func buildRecord(t *testing.T, raw rawEvent, args []byte) []byte {
 	return buf.Bytes()
 }
 
+//go:embed bpf/exec.bpf.c
+var probeSource string
+
 // The offset the BPF program publishes from must match what the decoder reads
 // from. If these ever disagree, every field after the divergence is garbage
 // that still looks like a command.
@@ -34,7 +40,7 @@ func TestHeaderLayoutMatchesTheProbe(t *testing.T) {
 		t.Fatalf("rawEvent is %d bytes, argsOffset is %d", got, argsOffset)
 	}
 	// Restated independently of the constant's own arithmetic.
-	want := 4 + 4 + 4 + 4 + 1 + 33 + 16 + 256
+	want := 4 + 4 + 4 + 4 + 1 + 37 + 16 + 256
 	if argsOffset != want {
 		t.Errorf("argsOffset = %d, want %d", argsOffset, want)
 	}
@@ -178,5 +184,42 @@ func TestCstringHandlesAnUnterminatedBuffer(t *testing.T) {
 	}
 	if got := cstring([]byte{'a', 'b', 0, 'x', 'y'}); got != "ab" {
 		t.Errorf("cstring stopped at the wrong place: %q", got)
+	}
+}
+
+// The Go constants and the C the probe is compiled from are one layout written
+// twice. Nothing checked that they agreed.
+//
+// They stopped agreeing the moment session ids became canonical UUIDs: the C
+// sized the field for 32 hex characters, so Track refused every session and the
+// kernel evidence tier was off. That failed closed, which is the right
+// direction, but it was found by reading rather than by anything failing.
+func TestTheGoConstantsMatchTheProbeSource(t *testing.T) {
+	src := probeSource
+	for _, tc := range []struct {
+		macro string
+		got   int
+	}{
+		{"SESSION_LEN", sessionLen},
+		{"COMM_LEN", commLen},
+		{"FILENAME_LEN", filenameLen},
+		{"ARGS_BUF_SIZE", argsBufSize},
+	} {
+		re := regexp.MustCompile(`(?m)^#define\s+` + tc.macro + `\s+(\d+)`)
+		m := re.FindSubmatch([]byte(src))
+		if m == nil {
+			t.Errorf("%s is not defined in bpf/exec.bpf.c; this test can no "+
+				"longer tell whether the two sides agree", tc.macro)
+			continue
+		}
+		want, err := strconv.Atoi(string(m[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.got != want {
+			t.Errorf("%s is %d in C and %d in Go -- every field after it "+
+				"decodes as garbage that still looks like a command",
+				tc.macro, want, tc.got)
+		}
 	}
 }

@@ -22,7 +22,7 @@ import (
 // silently misreading the ring buffer would produce plausible-looking commands
 // that nobody ran, which is worse than reporting nothing.
 const (
-	sessionLen  = 33
+	sessionLen  = 37
 	commLen     = 16
 	filenameLen = 256
 	argsBufSize = 4096
@@ -30,6 +30,15 @@ const (
 	// Byte offset of the variable-length args tail.
 	argsOffset = 4 + 4 + 4 + 4 + 1 + sessionLen + commLen + filenameLen
 )
+
+// MaxSessionID is the longest session id the probe can carry.
+//
+// Exported so the side that mints ids can be held to it. When ids became
+// canonical UUIDs the field was still sized for 32 hex characters, and Track
+// refused every session -- correctly, since a truncated id attributes an
+// execution to a session that does not exist, but the kernel evidence tier was
+// off and nothing failed to say so.
+const MaxSessionID = sessionLen - 1
 
 // rawEvent mirrors the fixed-size head of struct exec_event.
 type rawEvent struct {
