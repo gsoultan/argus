@@ -208,15 +208,31 @@ else
     exit 1
   fi
 
-  if (( failed > 0 )); then
-    fail "$failed of $n recording(s) are corrupt — this backup is not usable as evidence."
-    exit 1
-  fi
+  # Coverage before corruption, and both before exiting.
+  #
+  # A handful of corrupt files is the louder message, and it used to be the
+  # only one: this reported "2 of 12271 are corrupt" and exited while 12,269
+  # went unverified, because the corruption check ran first and stopped the
+  # script. The small true statement hid the large one. Say how much was
+  # actually checked, then say what failed, then fail on either.
+  bad=0
   if (( checked == 0 )); then
     fail "None of the $n recording(s) could be verified ($unknown had no stored chain head)."
     fail "A backup nothing can vouch for must not be reported as good."
-    exit 1
+    bad=1
+  elif (( unknown * 2 > n )); then
+    # More than half. The threshold is where the check stops being a check:
+    # a verdict drawn from a minority of the files describes a sample, and
+    # this script exists because a sample once passed for the whole.
+    fail "Only $checked of $n recording(s) could be verified; $unknown had no stored chain head."
+    fail "Most of this backup is unverified, whatever else this run says about it."
+    bad=1
   fi
+  if (( failed > 0 )); then
+    fail "$failed of $n recording(s) are corrupt — this backup is not usable as evidence."
+    bad=1
+  fi
+  (( bad )) && exit 1
   ok "$checked recording(s) verified against their stored chain heads"
   (( unknown > 0 )) && warn "$unknown recording(s) had no stored chain head and were not verified"
 fi
