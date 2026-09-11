@@ -155,7 +155,7 @@ type Tracer struct {
 	// late counts executions that arrived for a session already sealed. A
 	// non-zero count is worth surfacing rather than hiding: it means the
 	// recording was closed while the session was still running commands.
-	late   int
+	late   map[string]uint64
 	closed bool
 
 	done chan struct{}
@@ -167,6 +167,7 @@ func NewTracer(p Probe) *Tracer {
 	t := &Tracer{
 		probe: p,
 		sinks: map[string]func(Exec){},
+		late:  map[string]uint64{},
 		done:  make(chan struct{}),
 	}
 	t.wg.Add(1)
@@ -197,7 +198,7 @@ func (t *Tracer) dispatch(e Exec) {
 		// An exec for a session nobody is recording. Counting it is the point:
 		// silently discarding would hide that the kernel saw activity the
 		// recording does not contain.
-		t.late++
+		t.late[e.SessionID]++
 		t.mu.Unlock()
 		return
 	}
@@ -248,21 +249,48 @@ func (t *Tracer) Drops(sessionID string) uint64 {
 	return t.probe.Drops(sessionID)
 }
 
+// Detach stops recording a session. It deliberately leaves the loss counters
+// alone -- see TakeLost, which the caller must call once it has finished with
+// the recording.
 func (t *Tracer) Detach(sessionID string, pid int) {
 	t.probe.Untrack(pid)
-	// After Untrack, so nothing can add to a counter that is about to go. Read
-	// Drops before calling this: what is not collected here is gone.
-	t.probe.Forget(sessionID)
 	t.mu.Lock()
 	delete(t.sinks, sessionID)
 	t.mu.Unlock()
+}
+
+// TakeLost reports every execution this session lost, and releases the counts.
+//
+// Call it as late as possible and exactly once: after the recording is closed,
+// before deciding what the recording can evidence. The window matters. An exec
+// that arrives between Detach and the seal finds no sink, and counting it
+// anywhere the fidelity decision does not read is the same as discarding it --
+// which is what a global counter only the tests looked at amounted to. The
+// sealed record went out claiming eBPF fidelity, that every execve is in the
+// file, while missing commands the kernel had reported.
+func (t *Tracer) TakeLost(sessionID string) uint64 {
+	if t == nil || t.probe == nil {
+		return 0
+	}
+	t.mu.Lock()
+	lost := t.late[sessionID]
+	delete(t.late, sessionID)
+	t.mu.Unlock()
+
+	lost += t.probe.Drops(sessionID)
+	t.probe.Forget(sessionID)
+	return lost
 }
 
 // Late reports executions seen for sessions with no sink.
 func (t *Tracer) Late() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.late
+	n := 0
+	for _, v := range t.late {
+		n += int(v)
+	}
+	return n
 }
 
 // Close stops consuming and closes the probe.
@@ -323,13 +351,16 @@ func (c *Context) Attach(sessionID string, pid int, sink func(Exec)) error {
 }
 
 // Detach releases a session.
-// Drops reports executions this session lost. Zero when there is no probe,
-// because a host with no kernel tier never claimed eBPF fidelity to begin with.
-func (c *Context) Drops(sessionID string) uint64 {
+// TakeLost reports every execution this session lost, and releases the counts.
+//
+// Zero when there is no probe, because a host with no kernel tier never claimed
+// eBPF fidelity to begin with. Call it once, after the recording is closed:
+// see Tracer.TakeLost for why the timing is the point.
+func (c *Context) TakeLost(sessionID string) uint64 {
 	if c == nil || c.Tracer == nil {
 		return 0
 	}
-	return c.Tracer.Drops(sessionID)
+	return c.Tracer.TakeLost(sessionID)
 }
 
 func (c *Context) Detach(sessionID string, pid int) {
