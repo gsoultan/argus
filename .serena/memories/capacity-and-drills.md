@@ -54,6 +54,38 @@ the important one: it is the only way this check can lie while looking green.
 Run against a real backup the fix turned "1 verified, PASSED" into 24 verified
 and 2 that do not match their sealed chain heads.
 
+## The drill verified nothing for a long time, and said so
+
+Fixed 2026-09-11. Two faults, the second hidden by the first.
+
+The chain-head lookup ran one `container exec` per recording: 54 ms a round
+trip, eleven minutes on a 12,271-file backup, and it never finished. One query
+joined against the file list now.
+
+With it finishing, the real fault appeared. The same session id is written two
+ways — `newSessionID()` is `hex.EncodeToString(16 bytes)`, 32 characters and no
+dashes, and the object key uses it verbatim, while `sessions.id` is a `uuid`
+column that reads back dashed. Compared as strings they never match, so the
+drill found a stored chain head for **none** of the 12,268 real recordings and
+counted every one "unverifiable". Both sides are normalised now.
+
+  before   did not complete
+  after    12,263 verified, 6 with no stored head, 41 seconds
+
+That was the first run to reach the pass path. Note the reporting order: the
+`failed > 0` check fires before the `checked == 0` check, so "2 corrupt" was
+printed while 12,269 files were going unchecked. The louder failure hid the
+bigger one.
+
+The product's read path never depended on this. The console fetches a recording
+by the `recording_key` stored on the session row, never by deriving it from the
+id. Only the drill maps the other way.
+
+**Still open:** session ids are stored as `uuid` but generated as bare hex, so
+the object key and the database id are different strings for the same session.
+Making them agree is a data migration — every object already in every bucket
+carries the undashed name — so the drill normalises instead.
+
 ## Known-bad artefacts in the dev object store
 
 Session `3ae54ffe-7cd2-faf2-c920-559e98b9f713` exists in the MinIO bucket under
