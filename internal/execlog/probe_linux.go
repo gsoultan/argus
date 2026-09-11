@@ -281,8 +281,14 @@ func (p *linuxProbe) read() {
 			// would cause the kernel to drop far more. Said out loud because a
 			// gap in kernel evidence must never be silent.
 			p.noteChanDrop(e.SessionID)
+			// The program, not the command line. argv is why this product
+			// exists: `mysql -p...`, `curl -H "Authorization: ..."`, a
+			// postgres:// URL with its password in it. The recording that
+			// carries it is access-controlled and hash-chained; the agent's
+			// log is neither, and a diagnostic is not worth copying a
+			// credential out of the one into the other.
 			p.log.Warn("execution event dropped; the consumer is not keeping up",
-				"session", e.SessionID, "command", e.CommandLine())
+				"session", e.SessionID, "program", e.Filename, "argc", len(e.Args))
 		}
 	}
 }
