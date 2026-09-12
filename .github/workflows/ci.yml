@@ -295,6 +295,23 @@ jobs:
           sudo systemd-analyze verify /lib/systemd/system/argus-agent.service
           argus-agent scan --shim /usr/bin/argus-agent || true
 
+      - name: Confirm the shipped config does not expose the SSH port
+        # A shipped default reaches every install that never edits the file,
+        # which is most of them. The browser terminal is the intended way in
+        # and does not touch this listener at all -- webssh calls the same Dial
+        # in-process -- so 0.0.0.0 here buys nothing and puts authorized_keys
+        # on the internet. Native-client access is opt-in, and this is what
+        # stops that decision drifting back by accident.
+        run: |
+          set -euo pipefail
+          listen=$(grep -E '^listen:' packaging/config/gateway.yaml)
+          echo "$listen"
+          case "$listen" in
+            *0.0.0.0*|*'"[::]'*|*'"*:'*)
+              echo "::error::packaging/config/gateway.yaml exposes the SSH listener by default; exposing it is an operator's decision, not a shipped one"
+              exit 1 ;;
+          esac
+
       - name: Confirm the units are hardened
         run: |
           set -euo pipefail

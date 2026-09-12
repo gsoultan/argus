@@ -1,6 +1,19 @@
 # Argus SSH gateway.
 
-listen: "0.0.0.0:2222"
+# Loopback by default. The browser terminal on the `web` listener below is the
+# intended way in, and it is not a lesser path: webssh calls the same Dial as
+# the ssh(1) one, so the principal is checked against the inventory, the
+# target's host key is verified against its pin, the credential is injected,
+# an elevated principal still needs an approved access request, and the session
+# is recorded to the same hash-chained artefact. Nothing about the browser
+# console goes through this port.
+#
+# So this exists for operators who want a native client -- scp, sftp, an
+# existing jump-host config, muscle memory. That is a real need and worth
+# serving, but it is opt-in: change this to 0.0.0.0:2222 when you want it, and
+# put it behind a VPN or an allowlist when you do. `authorized_keys` is the
+# whole perimeter once this is reachable.
+listen: "127.0.0.1:2222"
 host_key: "/etc/argus/ssh/gateway_host_key"
 authorized_keys: "/etc/argus/ssh/authorized_keys"
 inventory: "/etc/argus/inventory.json"
@@ -12,8 +25,11 @@ recording_dir: "/var/lib/argus/recordings"
 # presents the first time it is reached.
 trust_on_first_use: false
 
-# The SSH listener is internet-facing and gets scanned continuously. This
-# bounds connection attempts per client address, before the handshake.
+# Bounds connection attempts per client address, before the handshake. Mostly
+# matters once `listen` above is reachable from anywhere: an exposed SSH port
+# gets scanned continuously. Left on regardless, because the cost is nothing
+# and the day someone exposes the port is not the day they will remember to
+# turn it on.
 rate_limit:
   connections_per_minute: 30
   burst: 10

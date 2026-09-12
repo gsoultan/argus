@@ -156,6 +156,18 @@ sha256sum -c checksums.txt --ignore-missing
 
 ## Connecting
 
+The browser terminal is the way in by default, at the gateway's `web` listener.
+It is not a lesser path: it calls the same `Dial` as `ssh(1)` in-process, so the
+principal is checked against the inventory, the host key is verified against its
+pin, the credential is injected, an elevated principal still needs an approved
+access request, and the session is recorded to the same hash-chained artefact.
+
+The packaged config binds the SSH listener to loopback, because nothing about
+the browser console goes through it. Native clients are worth serving and the
+rest of this section is about them — set `listen: "0.0.0.0:2222"` to allow them,
+and put the port behind a VPN or an allowlist when you do. Once it is reachable,
+`authorized_keys` is the whole perimeter.
+
 The target is encoded in the SSH username, so ordinary tooling works unchanged:
 
 ```sh
