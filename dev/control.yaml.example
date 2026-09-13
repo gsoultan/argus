@@ -1,8 +1,8 @@
-listen: "0.0.0.0:8080"
+listen: "0.0.0.0:8480"
 database_url: "postgres://argus:argus@localhost:5433/argus?sslmode=disable"
 allowed_origins:
-  - "http://localhost:5273"
-  - "http://127.0.0.1:5273"
+  - "http://localhost:5290"
+  - "http://127.0.0.1:5290"
 # Static console tokens: a bootstrap hatch for a deployment with no other way
 # in. The control plane refuses to start if these are set once an identity
 # provider is configured or any local account exists, because a string in a

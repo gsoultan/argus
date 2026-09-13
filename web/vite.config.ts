@@ -86,7 +86,7 @@ export default defineConfig({
   },
   worker: { format: 'es' },
   server: {
-    port: 5273,
+    port: 5290,
     // Proxy the control plane so the console and the API share an origin.
     //
     // This is not a dev convenience: a session cookie with SameSite=Lax is not
@@ -103,8 +103,8 @@ export default defineConfig({
       //
       // secure:false accepts the dev certificate. It applies only to the dev
       // server's own proxy, never to anything shipped.
-      '/api': { target: 'https://127.0.0.1:8080', changeOrigin: false, secure: false },
-      '/auth': { target: 'https://127.0.0.1:8080', changeOrigin: false, secure: false },
+      '/api': { target: 'https://127.0.0.1:8480', changeOrigin: false, secure: false },
+      '/auth': { target: 'https://127.0.0.1:8480', changeOrigin: false, secure: false },
     },
   },
 })
