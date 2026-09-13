@@ -294,6 +294,7 @@ func TestPasswordlessAccountsDoNotCountAsSignInAble(t *testing.T) {
 	h := newLoginHarness(t)
 	ctx := t.Context()
 	email := unique("passwordless") + "@northwind.id"
+	dropAccount(t, h.store, email)
 	if _, err := h.store.pool.Exec(ctx,
 		`INSERT INTO users (email, display_name, role) VALUES ($1,'Passwordless','operator')`,
 		email); err != nil {

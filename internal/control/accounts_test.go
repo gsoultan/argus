@@ -17,7 +17,26 @@ func newAccount(t *testing.T, s *Store, role string) (email, password string) {
 	if _, err := s.CreateAccount(context.Background(), email, "Test User", role, password); err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
+	dropAccount(t, s, email)
 	return email, password
+}
+
+// dropAccount removes a test's account when it is done.
+//
+// These tests share one database between runs -- see unique() in
+// store_test.go -- so an account left behind is permanent. A dev database had
+// collected 1,070 of them against a single real account, every one of them a
+// row with a usable password hash and a role. Harmless in that nobody knows
+// the passwords, and still the wrong thing for a product whose first-run check
+// is "does any loginable account exist".
+func dropAccount(t *testing.T, s *Store, email string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if _, err := s.pool.Exec(context.Background(),
+			`DELETE FROM users WHERE lower(email) = lower($1)`, email); err != nil {
+			t.Errorf("cleaning up account %s: %v", email, err)
+		}
+	})
 }
 
 func TestAuthenticateAcceptsTheRightPassword(t *testing.T) {
@@ -76,6 +95,7 @@ func TestAccountWithoutAPasswordCannotAuthenticate(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	email := unique("federated") + "@northwind.id"
+	dropAccount(t, s, email)
 	if _, err := s.pool.Exec(ctx,
 		`INSERT INTO users (email, display_name, role) VALUES ($1,$2,'operator')`,
 		email, "Federated"); err != nil {
