@@ -20,6 +20,7 @@ func TestAccountEmailsAreCaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 	lower := unique("alice") + "@corp.example"
 	upper := "A" + lower[1:]
+	dropAccount(t, s, lower)
 
 	id1, err := s.CreateAccount(ctx, lower, "Alice Admin", "admin", "correct-horse-battery-staple")
 	if err != nil {
@@ -42,6 +43,7 @@ func TestSignInIsNotAmbiguousAcrossCase(t *testing.T) {
 	ctx := context.Background()
 	lower := unique("bob") + "@corp.example"
 	upper := "B" + lower[1:]
+	dropAccount(t, s, lower)
 
 	if _, err := s.CreateAccount(ctx, lower, "Bob Admin", "admin", "first-password-here"); err != nil {
 		t.Fatalf("create: %v", err)

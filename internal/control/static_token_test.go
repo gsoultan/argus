@@ -64,6 +64,7 @@ func TestAStaticTokenDoesNotMintAdmin(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	email := unique("viewer") + "@corp.example"
+	dropAccount(t, s, email)
 	if _, err := s.CreateAccount(ctx, email, "A Viewer", "viewer", "a-long-enough-password"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
