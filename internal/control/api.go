@@ -78,9 +78,61 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 }
 
 // Handler returns the router.
+// Handler serves both surfaces on one listener, which is the default.
+//
+// See ConsoleHandler and FleetHandler for the split: the routes are identical
+// either way, and which listener carries them changes nothing about what any
+// of them check.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
+	a.registerCommon(mux)
+	a.registerConsole(mux)
+	a.registerFleet(mux)
+	return a.securityHeaders(a.cors(mux))
+}
 
+// ConsoleHandler serves the surface a person reaches: sign-in, the console's
+// reads, tickets, access requests.
+//
+// Separable from the fleet surface so an operator can bind it somewhere
+// narrower -- a VPN address, an internal interface -- while gateways and agents
+// go on reporting to an address they can actually reach. Nothing here is a
+// substitute for the authentication on these routes; it only decides who can
+// knock.
+func (a *API) ConsoleHandler() http.Handler {
+	mux := http.NewServeMux()
+	a.registerCommon(mux)
+	a.registerConsole(mux)
+	return a.securityHeaders(a.cors(mux))
+}
+
+// FleetHandler serves the surface gateways and agents reach.
+//
+// Every route on it is behind the reporter token and, when a client CA is
+// configured, a verified client certificate as well. This is the half that has
+// to stay reachable: a control plane the fleet cannot post to keeps no
+// recordings, no chain heads and no audit events, and the console goes on
+// showing a fleet it has stopped hearing from.
+func (a *API) FleetHandler() http.Handler {
+	mux := http.NewServeMux()
+	a.registerCommon(mux)
+	a.registerFleet(mux)
+	return a.securityHeaders(a.cors(mux))
+}
+
+// registerCommon adds what both surfaces need: liveness, and the process's own
+// stats, which refuse anything that is not loopback regardless of listener.
+func (a *API) registerCommon(mux *http.ServeMux) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	// The process, not the fleet. Loopback only; see process_stats.go.
+	mux.HandleFunc("GET /stats", a.handleProcessStats)
+}
+
+// registerConsole adds the routes a person reaches.
+func (a *API) registerConsole(mux *http.ServeMux) {
 	// Authentication endpoints are throttled per client.
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)
 	// Local accounts: the surface a password-guessing attempt actually reaches,
@@ -99,14 +151,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
 	mux.HandleFunc("GET /api/v1/grant", a.user(a.getGrant))
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-
 	// Console read surface. Paths match what web/src/lib/api.ts already calls.
 	mux.HandleFunc("GET /api/v1/stats", a.user(a.getStats))
-	// The process, not the fleet. Loopback only; see process_stats.go.
-	mux.HandleFunc("GET /stats", a.handleProcessStats)
 	mux.HandleFunc("GET /api/v1/assets", a.user(a.getAssets))
 	mux.HandleFunc("GET /api/v1/sessions", a.user(a.getSessions))
 	mux.HandleFunc("GET /api/v1/sessions/{id}", a.user(a.getSession))
@@ -121,6 +167,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/policy", a.user(a.getPolicy))
 	mux.HandleFunc("POST /api/v1/policy", a.postPolicy)
 
+}
+
+// registerFleet adds the routes a gateway or agent reaches.
+func (a *API) registerFleet(mux *http.ServeMux) {
 	// Reporter surface. Machine token only.
 	mux.HandleFunc("POST /api/v1/report/session", a.reporter(a.postSession))
 	// Asked by a gateway before it opens an elevated session. See
@@ -141,7 +191,6 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/gateway/policy", a.reporter(a.getGatewayPolicy))
 	mux.HandleFunc("POST /api/v1/hostkeys/pin", a.reporter(a.postHostKeyPin))
 
-	return a.securityHeaders(a.cors(mux))
 }
 
 // securityHeaders sets the response headers a browser needs to protect the
