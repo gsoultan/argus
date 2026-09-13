@@ -152,7 +152,59 @@ start_deps() {
   "$DEPS_SCRIPT" up || warn "Dependencies unavailable — argus-control may fail to start."
 }
 
-# ── Process supervision ──────────────────────────────────────────────────────
+# Refuses to go further when a selected service cannot resolve its config.
+#
+# The services already refuse to start on their own, and do it well --
+# internal/secrets names every unresolved reference at once rather than making
+# you rediscover them one restart at a time. But that happens after `bun
+# install` and deps.sh have run, so on a fresh clone, which is exactly when
+# secrets.env is missing, you pay a dependency install and a container startup
+# before being told. By then the warning further up has scrolled away and all
+# that is left on screen is a generic "a service exited".
+#
+# Keyed on the variables the selected services actually reference, not on
+# whether dev/secrets.env exists. Exporting them by hand is a documented way to
+# run this, and `dev.sh web` needs none of them -- a check on the file would
+# refuse both.
+require_secrets() {
+  local svc cmd config name names list
+  local -a missing=() stale=()
+
+  names=""
+  for svc in "${SELECTED[@]}"; do
+    cmd=$(svc_field "$svc" 6)
+    [[ $cmd =~ -config[[:space:]]+([^[:space:]]+) ]] || continue
+    config="$ARGUS_ROOT/${BASH_REMATCH[1]}"
+    [[ -f "$config" ]] || continue
+    # Bare ${NAME} only: ${NAME:-default} cannot fail, and ${file:/path} is
+    # read from disk rather than from the environment.
+    names="$names$(grep -oE '[$]\{[A-Za-z_][A-Za-z0-9_]*\}' "$config" | tr -d '${}' || true)
+"
+  done
+
+  for name in $(printf '%s' "$names" | sort -u); do
+    if [[ -z "${!name:-}" ]]; then
+      missing+=("$name")
+    elif [[ "${!name}" == "CHANGE-ME" ]]; then
+      stale+=("$name")
+    fi
+  done
+
+  if (( ${#missing[@]} == 0 && ${#stale[@]} == 0 )); then
+    return 0
+  fi
+  if (( ${#missing[@]} > 0 )); then
+    printf -v list '%s, ' "${missing[@]}"
+    fail "Not set: ${list%, }"
+  fi
+  if (( ${#stale[@]} > 0 )); then
+    printf -v list '%s, ' "${stale[@]}"
+    fail "Still CHANGE-ME: ${list%, }"
+  fi
+  die "Copy dev/secrets.env.example to dev/secrets.env and fill it in, or export them yourself."
+}
+
+# ââ Process supervision# ── Process supervision ──────────────────────────────────────────────────────
 
 declare -a CHILD_PIDS=()
 SHUTTING_DOWN=0
@@ -258,6 +310,8 @@ for svc in "${SERVICES[@]}"; do
 done
 
 (( ${#SELECTED[@]} )) || die "No services to run. Try --help."
+
+require_secrets
 
 for svc in "${SELECTED[@]}"; do
   check_port "$(svc_field "$svc" 1)" "$(svc_field "$svc" 2)"
