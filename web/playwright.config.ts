@@ -34,6 +34,19 @@ export default defineConfig({
         launchOptions: { args: ['--enable-precise-memory-info'] },
       },
     },
+    {
+      // A second engine, because "works in Chrome" is not the claim. Safari
+      // silently dropped the dev session cookie -- it was marked Secure and
+      // served over plain HTTP -- and sign-in did nothing, with five green CI
+      // jobs behind it, because everything here ran Chromium.
+      //
+      // The memory specs stay Chromium-only: performance.memory does not exist
+      // in WebKit, so running them here would fail on the measurement rather
+      // than on the thing being measured.
+      name: 'webkit',
+      testIgnore: /.*-memory\.spec\.ts/,
+      use: { ...devices['Desktop Safari'] },
+    },
   ],
   webServer: {
     command:

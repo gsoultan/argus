@@ -207,6 +207,21 @@ jobs:
             echo "::error::generated service worker does not denylist /auth/ — SSO will loop"
             exit 1
           }
+      - name: Confirm the dev config does not mark cookies Secure
+        # The dev console is served by Vite over plain HTTP and proxies to the
+        # control plane, so a Secure session cookie on that origin is one the
+        # browser may discard. Safari discards it: sign-in returned 200, stored
+        # nothing, and put you back on the form with no error. Chrome allows it
+        # on localhost, so this reproduces on one machine and not the next.
+        #
+        # Only the dev example is checked. Production leaves secure_cookies
+        # unset and inherits Secure from its tls: block, which is correct.
+        run: |
+          set -euo pipefail
+          grep -qE '^secure_cookies:[[:space:]]*false' ../dev/control.yaml.example || {
+            echo "::error::dev/control.yaml.example must set secure_cookies: false — the dev console is reached over HTTP and Safari drops a Secure cookie, making sign-in fail silently"
+            exit 1
+          }
 
   console-e2e:
     name: Console in a browser
@@ -219,7 +234,7 @@ jobs:
         with:
           bun-version: "1.4.0"
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium
+      - run: bunx playwright install --with-deps chromium webkit
       # Every route with zero console errors, the fonts actually loading, the
       # audit chain verifying in WASM, and -- the reason this job exists --
       # the replay heap staying flat on an 8 MB recording. These were all
