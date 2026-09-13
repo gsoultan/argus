@@ -278,9 +278,6 @@ for svc in "${SELECTED[@]}"; do
 done
 
 printf '\n  %sWeb UI%s   http://localhost:5290\n' "$BOLD" "$RESET"
-if [[ -e cmd/argus-gateway ]]; then
-  printf '  %sSSH%s      ssh ops:HOST@localhost -p 2222\n' "$BOLD" "$RESET"
-fi
 printf '  %sStop%s     Ctrl-C\n\n' "$DIM" "$RESET"
 
 # Surface a crashed service instead of leaving the user staring at a dead feed.

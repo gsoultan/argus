@@ -35,6 +35,7 @@ if [[ "$TARGET" == all || "$TARGET" == web ]]; then
   [[ -d "$WEB_DIR/node_modules" ]] || die "Web dependencies missing — run ./scripts/setup.sh"
   step "Web"
   run_check "typecheck" bash -c "cd '$WEB_DIR' && bun run typecheck"
+  run_check "test" bash -c "cd '$WEB_DIR' && bun run test"
   run_check "production build" bash -c "cd '$WEB_DIR' && bunx vite build --logLevel error"
 fi
 
