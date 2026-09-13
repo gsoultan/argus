@@ -5,9 +5,11 @@ Configured in `web/vite.config.ts` under `VitePWA`.
 ## The bug worth remembering
 
 `navigateFallbackDenylist` originally listed only `/^\/api\//`. Workbox binds a
-navigation route to `index.html`, and `loginURL()` navigates to `/auth/login` —
+navigation route to `index.html`, and `loginURL()` navigated to `/auth/login` —
 same origin, not denylisted. So the worker served cached `index.html` instead,
-and **SSO sign-in looped forever with no error**.
+and **SSO sign-in looped forever with no error**. That navigation is gone with
+OIDC, but the denylist stays: the rule below is what it protects, not that one
+route.
 
 It only broke once the worker had installed, so the first visit always worked
 and every visit after it did not. Both `/api/` and `/auth/` are now denylisted

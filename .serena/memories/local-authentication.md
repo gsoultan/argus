@@ -1,6 +1,8 @@
 # Local authentication
 
-Argus holds its own accounts. An identity provider is optional, not required.
+Argus holds its own accounts. There is no identity provider: OIDC was removed
+in full (provider, flow, role mapping, the `idp_subject` column and the Dex
+stand-in), so local accounts are the only way in.
 
 Before this, signing in meant standing up OIDC first -- right for an enterprise
 that already runs one, wrong as the price of admission for everyone else, and
@@ -49,8 +51,8 @@ this finished a shape that was designed for rather than adding a new one.
 
 ## First run
 
-`/auth/me` reports `passwordEnabled`, `oidcEnabled` and `accountsExist`, and the
-sign-in screen renders whichever doors exist. With no accounts it shows the
+`/auth/me` reports `passwordEnabled` and `accountsExist`, and the sign-in screen
+renders the password form when both hold. With no accounts it shows the
 `users add` command instead of a form that could only refuse. `accountsExist`
-counts local accounts only -- a federated one has no password and must not make
-the console claim a password will work.
+keys on `password_hash IS NOT NULL AND disabled_at IS NULL` -- a row without a
+hash must not make the console claim a password will work.

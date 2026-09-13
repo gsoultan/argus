@@ -109,7 +109,6 @@ export const api = {
           role: (id.role ?? 'auditor') as User['role'],
           // Identity lives in the provider, so the console reports what the
           // session carries rather than inventing the rest.
-          idpSubject: null,
           mfaEnrolled: false,
           lastSeenAt: new Date().toISOString(),
         }

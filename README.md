@@ -299,14 +299,10 @@ works -- the codes are ordinary TOTP. Enrolment issues ten single-use recovery
 codes, shown once and stored only as digests, for the phone that ends up in a
 river.
 
-SSO remains available for deployments that want it. Set `oidc:` in the control
-plane's config and the sign-in screen offers both; leave it out and it offers
-the password form alone. Neither requires the other.
-
 `user_tokens:` is a bootstrap hatch for a deployment that has no other way in
 yet, and it is the only thing here that skips the password, the second factor
 and the role. The control plane therefore **refuses to start** when it is set
-alongside an identity provider or any local account. Where it does apply, the
+alongside any local account. Where it does apply, the
 role comes from the named account rather than from holding the string.
 
 ## Controls an operator should know exist

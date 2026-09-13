@@ -3,16 +3,14 @@ package control
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
 )
 
-// SetAuth enables OIDC login and terminal tickets.
-func (a *API) SetAuth(o *auth.OIDC, signer *auth.Signer, consoleURL string, secureCookies bool) {
-	a.oidc = o
+// SetAuth enables session signing and terminal tickets.
+func (a *API) SetAuth(signer *auth.Signer, consoleURL string, secureCookies bool) {
 	a.signer = signer
 	a.consoleURL = consoleURL
 	a.secureCookies = secureCookies
@@ -23,11 +21,12 @@ func (a *API) SetAuth(o *auth.OIDC, signer *auth.Signer, consoleURL string, secu
 // Order matters: a session cookie is the real credential, and static tokens are
 // a development fallback that must never shadow it.
 //
-// The static path used to be disabled only when OIDC was configured. Once Argus
-// grew its own accounts that was the wrong test: a deployment signing people in
-// with a password and a second factor still honoured a bearer token from the
-// config file, and handed it admin regardless of whose address it named. Every
-// control the login page enforces was one header away from being skipped.
+// The static path is disabled outright once the deployment has a real way in.
+// Gating it on anything narrower was the wrong test: a deployment signing
+// people in with a password and a second factor still honoured a bearer token
+// from the config file, and handed it admin regardless of whose address it
+// named. Every control the login page enforces was one header away from being
+// skipped.
 //
 // StaticTokensDisabled is decided at start-up, where the deployment can be
 // refused outright rather than quietly downgraded.
@@ -39,7 +38,7 @@ func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 			}
 		}
 	}
-	if a.oidc != nil || a.StaticTokensDisabled {
+	if a.StaticTokensDisabled {
 		return auth.Session{}, false
 	}
 	email, ok := a.UserTokens[bearer(r)]
@@ -54,88 +53,6 @@ func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 		role = acct.Role
 	}
 	return auth.Session{Email: email, Name: email, Role: role}, true
-}
-
-/* ── Login ───────────────────────────────────────────────────────────────── */
-
-func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if a.oidc == nil {
-		writeErr(w, http.StatusNotImplemented, "OIDC is not configured")
-		return
-	}
-
-	// Only same-origin return paths. An open redirect here would let an
-	// attacker bounce a freshly authenticated user to a site they control.
-	returnTo := r.URL.Query().Get("return_to")
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
-		returnTo = "/"
-	}
-
-	redirect, stateCookie, err := a.oidc.AuthCodeURL(a.signer, returnTo)
-	if err != nil {
-		a.fail(w, "begin login", err)
-		return
-	}
-	auth.SetCookie(w, auth.StateCookieName, stateCookie, 10*time.Minute, a.secureCookies)
-	http.Redirect(w, r, redirect, http.StatusFound)
-}
-
-func (a *API) handleCallback(w http.ResponseWriter, r *http.Request) {
-	if a.oidc == nil {
-		writeErr(w, http.StatusNotImplemented, "OIDC is not configured")
-		return
-	}
-
-	// An IdP that refuses is a normal outcome, not a server fault.
-	if e := r.URL.Query().Get("error"); e != "" {
-		a.log.Warn("identity provider refused login",
-			"error", e, "description", r.URL.Query().Get("error_description"))
-		a.RecordAuthFailure(r)
-		a.redirectWithError(w, r, e)
-		return
-	}
-
-	stateCookie, err := r.Cookie(auth.StateCookieName)
-	if err != nil {
-		a.RecordAuthFailure(r)
-		a.redirectWithError(w, r, "login_expired")
-		return
-	}
-	auth.ClearCookie(w, auth.StateCookieName, a.secureCookies)
-
-	sess, returnTo, err := a.oidc.Exchange(r.Context(), a.signer,
-		r.URL.Query().Get("code"), r.URL.Query().Get("state"), stateCookie.Value)
-	if err != nil {
-		// State mismatch, a bad nonce or a failed code exchange. Each is a
-		// forgery attempt or a broken client, and both are worth counting.
-		a.log.Warn("login failed", "error", err)
-		a.RecordAuthFailure(r)
-		a.redirectWithError(w, r, "login_failed")
-		return
-	}
-
-	token, err := a.signer.IssueSession(sess, a.sessionTTL())
-	if err != nil {
-		a.fail(w, "issue session", err)
-		return
-	}
-	auth.SetCookie(w, auth.SessionCookieName, token, a.sessionTTL(), a.secureCookies)
-
-	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
-		Action:     "auth.login",
-		Severity:   "info",
-		ActorEmail: sess.Email,
-		Target:     "console",
-		Detail:     "Signed in via OIDC as role " + sess.Role + ".",
-	}); aerr != nil {
-		a.log.Error("audit append failed", "error", aerr)
-	}
-
-	// A completed sign-in clears the failure budget, so someone who fumbled a
-	// login once is not throttled for the rest of the hour.
-	a.RecordAuthSuccess(r)
-	a.log.Info("user signed in", "email", sess.Email, "role", sess.Role)
-	http.Redirect(w, r, a.consoleURL+returnTo, http.StatusFound)
 }
 
 func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -159,9 +76,9 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.authenticate(r)
 	if !ok {
 		// The console needs to know which doors exist before it can draw one.
-		// passwordEnabled is what makes a local sign-in form appear; without
-		// it a deployment with no identity provider shows no way in at all,
-		// which is the state this product spent its whole life in.
+		// passwordEnabled is what makes the sign-in form appear; without it the
+		// console shows no way in at all, which is the state this product spent
+		// its whole life in.
 		// accountsExist distinguishes "sign in" from "nobody can yet". On a
 		// fresh install the form cannot succeed, and saying so beats letting
 		// someone retype a password they never set.
@@ -171,8 +88,6 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
 			"authenticated":   false,
-			"loginUrl":        a.loginPath(),
-			"oidcEnabled":     a.oidc != nil,
 			"passwordEnabled": a.signer != nil,
 			"accountsExist":   accounts,
 		})
@@ -314,13 +229,6 @@ func (a *API) ticketTTL() time.Duration {
 		return a.TicketTTL
 	}
 	return 60 * time.Second
-}
-
-func (a *API) loginPath() string { return "/auth/login" }
-
-func (a *API) redirectWithError(w http.ResponseWriter, r *http.Request, reason string) {
-	u := a.consoleURL + "/?auth_error=" + url.QueryEscape(reason)
-	http.Redirect(w, r, u, http.StatusFound)
 }
 
 // ErrNoAuth is returned when a request carries no usable credential.

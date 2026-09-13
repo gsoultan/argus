@@ -33,7 +33,7 @@ func main() {
 		token, err = s.IssueTicket("dewi.p@northwind.id", os.Args[2], os.Args[3], time.Minute)
 	case "session":
 		// A console session cookie, for exercising the user-facing endpoints
-		// without going through the identity provider.
+		// without going through the sign-in form.
 		token, err = s.IssueSession(auth.Session{
 			Email: os.Args[2], Name: os.Args[2], Role: os.Args[3],
 		}, time.Hour)

@@ -48,15 +48,13 @@ export interface Identity {
    *
    * Distinct from "not signed in": the two look identical to a user and need
    * opposite responses. Reporting an outage as a configuration problem is how
-   * someone spends an afternoon on their identity provider because a proxy
-   * line pointed at the wrong scheme.
+   * someone spends an afternoon on their sign-in settings because a proxy line
+   * pointed at the wrong scheme.
    */
   unreachable?: boolean
   email?: string
   displayName?: string
   role?: string
-  loginUrl?: string
-  oidcEnabled?: boolean
   /** True when this control plane holds accounts of its own. */
   passwordEnabled?: boolean
   /** False on a fresh install, where nobody can sign in yet. */
@@ -120,12 +118,12 @@ export async function whoami(): Promise<Identity> {
       headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
     })
     // 401 is the expected answer for a browser that has not signed in yet, and
-    // its body carries loginUrl and oidcEnabled -- everything the sign-in
-    // screen needs. Treating it as an outage is what hid the sign-in button
-    // entirely: LoginGate checks `unreachable` before `oidcEnabled`, so a
-    // healthy control plane correctly saying "you are not signed in" rendered
-    // as "could not be reached", with nothing to click. Sign-in was impossible
-    // by construction, which is exactly the confusion the flag exists to stop.
+    // its body carries passwordEnabled and accountsExist -- everything the
+    // sign-in screen needs. Treating it as an outage is what hid the sign-in
+    // form entirely: LoginGate checks `unreachable` first, so a healthy control
+    // plane correctly saying "you are not signed in" rendered as "could not be
+    // reached", with nothing to click. Sign-in was impossible by construction,
+    // which is exactly the confusion the flag exists to stop.
     if (res.ok || res.status === 401) {
       return (await res.json()) as Identity
     }
@@ -140,10 +138,6 @@ export async function whoami(): Promise<Identity> {
     // No response at all: wrong address, wrong scheme, or nothing listening.
     return { authenticated: false, unreachable: true }
   }
-}
-
-export function loginURL(returnTo = window.location.pathname): string {
-  return `${BASE}/auth/login?return_to=${encodeURIComponent(returnTo)}`
 }
 
 export async function logout(): Promise<void> {
@@ -444,7 +438,7 @@ async function get<T>(path: string): Promise<T> {
   try {
     res = await fetch(`${BASE}${path}`, {
       // Session cookie is the real credential; the bearer token is a development
-      // fallback the control plane ignores once OIDC is configured.
+      // fallback the control plane refuses once any account exists.
       credentials: 'include',
       headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
     })

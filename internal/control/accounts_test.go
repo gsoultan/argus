@@ -69,14 +69,15 @@ func TestDisabledAccountsCannotAuthenticate(t *testing.T) {
 	}
 }
 
-// An account federated through OIDC has no password, and must not be reachable
-// by guessing one.
+// An account row can exist with no password hash -- created directly, or left
+// behind by a sign-in method this product no longer has. It must not be
+// reachable by guessing one.
 func TestAccountWithoutAPasswordCannotAuthenticate(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	email := unique("federated") + "@northwind.id"
 	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO users (email, display_name, role, idp_subject) VALUES ($1,$2,'operator','sub-1')`,
+		`INSERT INTO users (email, display_name, role) VALUES ($1,$2,'operator')`,
 		email, "Federated"); err != nil {
 		t.Fatal(err)
 	}

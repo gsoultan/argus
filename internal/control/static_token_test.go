@@ -103,7 +103,7 @@ func TestASessionCookieStillAuthenticates(t *testing.T) {
 		t.Fatalf("signer: %v", err)
 	}
 	t.Cleanup(signer.Close)
-	a.SetAuth(nil, signer, "https://console.example", true)
+	a.SetAuth(signer, "https://console.example", true)
 	a.StaticTokensDisabled = true
 
 	tok, err := signer.IssueSession(auth.Session{

@@ -44,8 +44,7 @@ describe('LoginGate', () => {
   it('offers a password form when the control plane holds its own accounts', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       json(401, {
-        authenticated: false, passwordEnabled: true,
-        oidcEnabled: false, accountsExist: true,
+        authenticated: false, passwordEnabled: true, accountsExist: true,
       }),
     ))
     await renderGate()
@@ -53,33 +52,7 @@ describe('LoginGate', () => {
     expect(await screen.findByLabelText(/^email$/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^sign in$/i })).toBeInTheDocument()
-    // No identity provider is configured, so nothing should suggest one.
-    expect(screen.queryByRole('link', { name: /sso/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument()
-  })
-
-  it('offers SSO when an identity provider is configured', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, { authenticated: false, loginUrl: '/auth/login', oidcEnabled: true }),
-    ))
-    await renderGate()
-
-    const link = await screen.findByRole('link', { name: /sign in with sso/i })
-    expect(link).toHaveAttribute('href', expect.stringContaining('/auth/login'))
-    expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument()
-  })
-
-  // Both doors, when both exist.
-  it('offers both when both are available', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, {
-        authenticated: false, passwordEnabled: true,
-        oidcEnabled: true, accountsExist: true,
-      }),
-    ))
-    await renderGate()
-    expect(await screen.findByLabelText(/^email$/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /sign in with sso/i })).toBeInTheDocument()
   })
 
   it('reports an outage when nothing answers, and offers no button', async () => {
@@ -87,7 +60,7 @@ describe('LoginGate', () => {
     await renderGate()
 
     expect(await screen.findByText(/could not be reached/i)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /sign in with sso/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument()
   })
 
   // A brand new deployment. A form that can only ever refuse reads as a bug,
@@ -95,8 +68,7 @@ describe('LoginGate', () => {
   it('tells a fresh install how to create the first account', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       json(401, {
-        authenticated: false, passwordEnabled: true,
-        oidcEnabled: false, accountsExist: false,
+        authenticated: false, passwordEnabled: true, accountsExist: false,
       }),
     ))
     await renderGate()
@@ -110,13 +82,13 @@ describe('LoginGate', () => {
   // empty card someone stares at.
   it('says so when there is no way to sign in at all, and how to fix it', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, { authenticated: false, oidcEnabled: false, passwordEnabled: false }),
+      json(401, { authenticated: false, passwordEnabled: false }),
     ))
     await renderGate()
 
     expect(await screen.findByText(/no way to sign anyone in/i)).toBeInTheDocument()
     expect(screen.getByText(/argus-control users add/)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /sign in with sso/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
   })
 
   // The signed-in path is not asserted here: past the gate the whole shell
