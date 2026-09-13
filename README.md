@@ -314,8 +314,8 @@ river.
 `user_tokens:` is a bootstrap hatch for a deployment that has no other way in
 yet, and it is the only thing here that skips the password, the second factor
 and the role. The control plane therefore **refuses to start** when it is set
-alongside any local account. Where it does apply, the
-role comes from the named account rather than from holding the string.
+alongside any local account. Where it does apply, the role comes from the named
+account rather than from holding the string.
 
 ## Controls an operator should know exist
 
