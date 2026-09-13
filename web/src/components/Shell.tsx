@@ -3,8 +3,8 @@ import {
   NavLink as MantineNavLink, ScrollArea, Stack, Text, Tooltip,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { Link, useRouterState } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { Link, useRouter, useRouterState } from '@tanstack/react-router'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconActivity, IconBell, IconChevronDown, IconClipboardCheck, IconFileDescription,
   IconLogout, IconPlugConnected, IconServer2, IconSettings, IconShieldLock,
@@ -71,6 +71,8 @@ function Logo() {
  */
 function LoginGate({ children }: { children: React.ReactNode }) {
   const [identity, setIdentity] = useState<Identity | null>(null)
+  const queryClient = useQueryClient()
+  const router = useRouter()
 
   const refresh = useCallback(() => {
     if (!isConfigured()) {
@@ -82,12 +84,29 @@ function LoginGate({ children }: { children: React.ReactNode }) {
 
   useEffect(refresh, [refresh])
 
+  // Route loaders do not wait for this gate. `/` calls ensureQueryData(stats)
+  // while nobody is signed in, takes a 401, and the router commits that error
+  // to the match; acquiring a session does not re-run it. So the console drew
+  // its error boundary on the first screen after every sign-in, and reloading
+  // was the only way past -- which is a poor thing to ask of someone who has
+  // just proved who they are.
+  //
+  // Both caches have to be cleared: invalidateQueries drops the 401 that
+  // ensureQueryData stored, and router.invalidate re-runs the loaders that
+  // stored it. Doing this before setIdentity means the loaders re-run while
+  // the form is still up, so the console renders once, with data.
+  const handleSignedIn = useCallback(async () => {
+    await queryClient.invalidateQueries()
+    await router.invalidate()
+    refresh()
+  }, [queryClient, router, refresh])
+
   if (!identity) {
     return <Center h="100vh"><Loader size="sm" color="teal" /></Center>
   }
 
   if (!identity.authenticated) {
-    return <SignIn identity={identity} onSignedIn={refresh} />
+    return <SignIn identity={identity} onSignedIn={handleSignedIn} />
   }
 
   return <>{children}</>
