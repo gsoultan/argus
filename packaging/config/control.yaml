@@ -4,7 +4,23 @@
 # too many workflows. Supply the values in /etc/argus/control.env, or from a
 # mounted file with ${file:/run/secrets/name}.
 
+# Where gateways and agents report, and -- unless console_listen is set below
+# -- where people sign in too. This has to stay reachable by the fleet: a
+# control plane they cannot post to keeps no recordings, no chain heads and no
+# audit events, while the console goes on showing a fleet it has stopped
+# hearing from. So it is not a listener to quietly move to loopback.
 listen: "0.0.0.0:8080"
+
+# Optional. Give the console its own address and the two surfaces separate:
+# `listen` above then carries only what gateways and agents post to, and this
+# carries only what a person signs in to. Bind it to a VPN address or an
+# internal interface to take the human surface off the public one without
+# taking the fleet's reporting with it.
+#
+# It also lets the fleet listener demand a client certificate at the handshake
+# instead of per route, because nothing on it is a browser.
+#
+# console_listen: "127.0.0.1:8080"
 database_url: "${ARGUS_DATABASE_URL}"
 console_url: ""
 

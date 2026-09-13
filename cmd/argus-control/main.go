@@ -38,7 +38,16 @@ import (
 var version = "dev"
 
 type config struct {
-	Listen         string            `yaml:"listen"`
+	Listen string `yaml:"listen"`
+	// ConsoleListen optionally moves the human surface to its own address.
+	//
+	// Empty, which is the default, means one listener serves everything --
+	// unchanged from before this existed. Set it and the two surfaces split:
+	// `listen` carries only what gateways and agents post to, and this carries
+	// only what a person signs in to. That lets the console be bound somewhere
+	// narrow without taking the fleet's reporting with it, which is the reason
+	// `listen` cannot simply be moved to loopback.
+	ConsoleListen  string            `yaml:"console_listen"`
 	DatabaseURL    string            `yaml:"database_url"`
 	AllowedOrigins []string          `yaml:"allowed_origins"`
 	UserTokens     map[string]string `yaml:"user_tokens"`
@@ -274,25 +283,48 @@ func run() error {
 		}
 	}()
 
-	srv := &http.Server{
-		Addr:              cfg.Listen,
-		Handler:           api.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
+	// One listener unless the console is given its own address.
+	type listener struct {
+		name string
+		srv  *http.Server
+	}
+	var listeners []listener
+	newServer := func(addr string, h http.Handler) *http.Server {
+		return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	}
+	if cfg.ConsoleListen == "" {
+		listeners = append(listeners, listener{"control", newServer(cfg.Listen, api.Handler())})
+	} else {
+		listeners = append(listeners,
+			listener{"fleet", newServer(cfg.Listen, api.FleetHandler())},
+			listener{"console", newServer(cfg.ConsoleListen, api.ConsoleHandler())})
 	}
 
 	if cfg.TLS != nil {
-		srv.TLSConfig, err = tlsconfig.Server(tlsconfig.ServerOptions{
-			CertFile:     cfg.TLS.CertFile,
-			KeyFile:      cfg.TLS.KeyFile,
-			ClientCAFile: cfg.TLS.ClientCAFile,
-			// Not required: the same listener serves browsers, which have no
-			// client certificate. Reporter routes check for one separately.
-			RequireClientCert: false,
-			Log:               log,
-		})
-		if err != nil {
-			return err
+		for _, l := range listeners {
+			// A listener that serves no browsers can demand a client
+			// certificate at the handshake rather than per route. That is the
+			// one security difference the split makes rather than merely
+			// moving an address: an unauthorised caller is refused before it
+			// reaches a handler at all. The combined and console listeners
+			// cannot do this -- a browser has no certificate to offer -- so
+			// they verify one when given and the reporter routes check for it
+			// themselves, exactly as before.
+			requireCert := l.name == "fleet" && cfg.TLS.ClientCAFile != ""
+			l.srv.TLSConfig, err = tlsconfig.Server(tlsconfig.ServerOptions{
+				CertFile:          cfg.TLS.CertFile,
+				KeyFile:           cfg.TLS.KeyFile,
+				ClientCAFile:      cfg.TLS.ClientCAFile,
+				RequireClientCert: requireCert,
+				Log:               log,
+			})
+			if err != nil {
+				return err
+			}
 		}
+		// Unchanged either way: the route-level check is what a leaked reporter
+		// token still has to get past, and it does not become optional because
+		// a listener happens to be strict.
 		api.RequirePeerCert = cfg.TLS.ClientCAFile != ""
 	}
 
@@ -308,21 +340,30 @@ func run() error {
 	// shutdown that called itself graceful. Those are spooled and retried, so
 	// nothing was lost permanently, but the restart was dropping work it had
 	// promised to finish.
-	served := make(chan error, 1)
-	go func() {
-		if cfg.TLS != nil {
-			log.Info("argus-control listening (TLS)",
-				"version", version, "addr", cfg.Listen,
-				"mtls", cfg.TLS.ClientCAFile != "")
-			served <- srv.ListenAndServeTLS("", "")
-			return
-		}
+	served := make(chan error, len(listeners))
+	if cfg.TLS == nil {
 		log.Warn("argus-control is serving PLAINTEXT HTTP",
 			"detail", "session cookies, recordings and the audit log cross this "+
 				"listener in the clear; configure `tls` or terminate TLS in front of it")
-		log.Info("argus-control listening", "version", version, "addr", cfg.Listen)
-		served <- srv.ListenAndServe()
-	}()
+	}
+	for _, l := range listeners {
+		l := l
+		if cfg.TLS != nil {
+			log.Info("argus-control listening (TLS)",
+				"version", version, "surface", l.name, "addr", l.srv.Addr,
+				"mtls", cfg.TLS.ClientCAFile != "")
+		} else {
+			log.Info("argus-control listening",
+				"version", version, "surface", l.name, "addr", l.srv.Addr)
+		}
+		go func() {
+			if cfg.TLS != nil {
+				served <- l.srv.ListenAndServeTLS("", "")
+				return
+			}
+			served <- l.srv.ListenAndServe()
+		}()
+	}
 
 	select {
 	case err := <-served:
@@ -335,13 +376,20 @@ func run() error {
 		log.Info("shutting down, finishing requests in flight")
 		shutdownCtx, c := context.WithTimeout(context.Background(), 10*time.Second)
 		defer c()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Error("some requests did not finish before the deadline", "error", err)
+		// Every listener, and all of them before the sweeper stops: a request
+		// in flight on one must not be cut off because the other drained first.
+		for _, l := range listeners {
+			if err := l.srv.Shutdown(shutdownCtx); err != nil {
+				log.Error("some requests did not finish before the deadline",
+					"surface", l.name, "error", err)
+			}
 		}
 		// The sweeper stops only once nothing is being served, so a request
 		// already in a handler is not cut off by its own background context.
 		cancel()
-		<-served
+		for range listeners {
+			<-served
+		}
 		log.Info("shutdown complete")
 		return nil
 	}
