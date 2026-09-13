@@ -4,7 +4,7 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { IconAlertTriangle, IconInfoCircle, IconKey, IconSearch } from '@tabler/icons-react'
+import { IconAlertTriangle, IconInfoCircle, IconSearch } from '@tabler/icons-react'
 import { PageHeader } from '~/components/Shell'
 import { Mono, Stat, relTime } from '~/components/primitives'
 import { usersQuery } from '~/lib/queries'
@@ -45,7 +45,6 @@ function Users() {
   }, [users, search])
 
   const withoutMfa = (users ?? []).filter((u) => !u.mfaEnrolled)
-  const local = (users ?? []).filter((u) => !u.idpSubject)
   const approvers = (users ?? []).filter(
     (u) => u.role === 'approver' || u.role === 'admin' || u.role === 'owner',
   )
@@ -54,25 +53,24 @@ function Users() {
     <Box>
       <PageHeader
         title="Users & roles"
-        description="Identity comes from the OIDC provider. Argus adds the authorization layer on top — and separation of duty between requester and approver."
+        description="Argus holds its own accounts and the authorization layer on top — and separation of duty between requester and approver."
       />
 
       <Box p="lg">
         {/* The page used to flag problems it offered no way to act on. It still
-            cannot change a role — that is the IdP's job, deliberately — so it
-            says where the change is made instead of implying it happens here. */}
+            cannot change a role — there is no endpoint for it — so it says
+            where the change is made instead of implying it happens here. */}
         <Alert color="sky" variant="light" icon={<IconInfoCircle size={16} />} mb="md">
           <Text size="xs">
-            Roles and MFA enrolment are read from your identity provider on each sign-in;
-            Argus does not store passwords and cannot change them. Grant or revoke a role by
-            moving the person between the mapped IdP groups, then have them sign in again.
-            The one exception is the local break-glass account below, which exists precisely
-            so an IdP outage does not lock you out of your own infrastructure.
+            Accounts live in Argus. Roles are set on the host with{' '}
+            <Text span ff="monospace" inherit>argus-control users add --role</Text>, not from
+            this page, so granting or revoking one is an action with a shell audit trail
+            behind it. MFA is enrolled by the account holder from their own profile.
           </Text>
         </Alert>
 
         <Grid gap="sm" mb="md">
-          <Grid.Col span={{ base: 12, sm: 4 }}>
+          <Grid.Col span={{ base: 12, sm: 6 }}>
             <Stat
               label="Users"
               value={users?.length ?? 0}
@@ -80,20 +78,12 @@ function Users() {
               tone="ok"
             />
           </Grid.Col>
-          <Grid.Col span={{ base: 12, sm: 4 }}>
+          <Grid.Col span={{ base: 12, sm: 6 }}>
             <Stat
               label="Without MFA"
               value={withoutMfa.length}
               sub="A password alone is one phish away from a brokered root session."
               tone={withoutMfa.length > 0 ? 'warn' : 'ok'}
-            />
-          </Grid.Col>
-          <Grid.Col span={{ base: 12, sm: 4 }}>
-            <Stat
-              label="Local accounts"
-              value={local.length}
-              sub="Outside the IdP by design, so they survive an SSO outage."
-              tone={local.length > 1 ? 'warn' : 'ok'}
             />
           </Grid.Col>
         </Grid>
@@ -132,7 +122,6 @@ function Users() {
                 <Table.Tr>
                   <Table.Th>User</Table.Th>
                   <Table.Th>Role</Table.Th>
-                  <Table.Th>Identity source</Table.Th>
                   <Table.Th>MFA</Table.Th>
                   <Table.Th>Last seen</Table.Th>
                 </Table.Tr>
@@ -152,30 +141,11 @@ function Users() {
                       </Tooltip>
                     </Table.Td>
                     <Table.Td>
-                      {u.idpSubject ? (
-                        <Mono c="dimmed">{u.idpSubject}</Mono>
-                      ) : (
-                        <Tooltip
-                          label="Local account, deliberately outside the IdP so it still works when SSO is down"
-                          maw={300}
-                          multiline
-                        >
-                          <Badge size="xs" color="rose" leftSection={<IconKey size={10} />}>
-                            local break-glass
-                          </Badge>
-                        </Tooltip>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
                       {u.mfaEnrolled ? (
                         <Badge size="xs" color="teal" variant="light">enrolled</Badge>
                       ) : (
                         <Tooltip
-                          label={
-                            u.idpSubject
-                              ? 'Enrol this person in your identity provider — Argus reads the claim, it cannot set it.'
-                              : 'A local account without MFA is a standing password to your gateway. Enrol it or delete it.'
-                          }
+                          label="An account without MFA is a standing password to your gateway. Enrol it or delete it."
                           maw={300}
                           multiline
                         >

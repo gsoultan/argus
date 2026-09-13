@@ -1,0 +1,18 @@
+-- Remove the last trace of single sign-on.
+--
+-- OIDC is gone from this product: the provider, the authorization-code flow,
+-- the group-to-role mapping and the Dex stand-in used to exercise them in
+-- development. `idp_subject` was the only column that existed for it, carrying
+-- the provider's subject claim and null for every local account.
+--
+-- Accounts created through single sign-on have a subject and no password hash.
+-- Dropping this column does not delete them, and it does not lock them out any
+-- harder than removing the flow already did -- there is no longer a way to
+-- present an assertion, so the only route back in is a password. An operator
+-- upgrading past this point gives those accounts one with
+-- `argus-control users add`, or removes them.
+--
+-- Kept deliberately narrow: the column goes, the rows stay. Deleting user rows
+-- would take their audit history's actor with them, and the audit log is the
+-- one thing in this product that must not lose entries.
+ALTER TABLE users DROP COLUMN IF EXISTS idp_subject;

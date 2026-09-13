@@ -86,7 +86,7 @@ export default defineConfig({
   },
   worker: { format: 'es' },
   server: {
-    port: 5273,
+    port: 5290,
     // Proxy the control plane so the console and the API share an origin.
     //
     // This is not a dev convenience: a session cookie with SameSite=Lax is not
@@ -97,14 +97,14 @@ export default defineConfig({
     proxy: {
       // The control plane serves HTTPS whenever a certificate is configured,
       // which the dev config does. Proxying to http:// fails every request,
-      // and because whoami() falls back silently the console then reports
-      // "no identity provider configured" — which sends you to check Dex
-      // instead of the one line that is actually wrong.
+      // and because whoami() falls back silently the console then reports the
+      // deployment as unreachable — which sends you hunting for a dead control
+      // plane instead of the one line here that is actually wrong.
       //
       // secure:false accepts the dev certificate. It applies only to the dev
       // server's own proxy, never to anything shipped.
-      '/api': { target: 'https://127.0.0.1:8080', changeOrigin: false, secure: false },
-      '/auth': { target: 'https://127.0.0.1:8080', changeOrigin: false, secure: false },
+      '/api': { target: 'https://127.0.0.1:8480', changeOrigin: false, secure: false },
+      '/auth': { target: 'https://127.0.0.1:8480', changeOrigin: false, secure: false },
     },
   },
 })

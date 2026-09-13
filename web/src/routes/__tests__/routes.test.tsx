@@ -123,7 +123,7 @@ describe('users', () => {
     await renderRoute('/users')
     // The page cannot change a role and no longer implies it can.
     expect(
-      await screen.findByText(/Argus does not store passwords and cannot change them/i),
+      await screen.findByText(/Roles are set on the host with/i),
     ).toBeInTheDocument()
   })
 })

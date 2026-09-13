@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  *
  * Collapsing the two is what made signing in impossible: /auth/me answers 401
  * for a browser that has not signed in, whoami reported that as unreachable,
- * and LoginGate checks `unreachable` before `oidcEnabled` -- so the console
- * showed an outage message and never rendered the sign-in button at all.
+ * and LoginGate checks `unreachable` first -- so the console showed an outage
+ * message and never rendered the sign-in form at all.
  *
  * The same conflation in get() was worse: one refused request marked the whole
  * deployment unreachable, and orFallback then answered with the demo fixture.
@@ -43,16 +43,16 @@ describe('whoami', () => {
   it('reports a 401 as "not signed in", carrying what the sign-in screen needs', async () => {
     const { whoami } = await loadLive()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, { authenticated: false, loginUrl: '/auth/login', oidcEnabled: true }),
+      json(401, { authenticated: false, passwordEnabled: true, accountsExist: true }),
     ))
 
     const id = await whoami()
-    // The button is only rendered when this is falsy. This single field is
+    // The form is only rendered when this is falsy. This single field is
     // what stood between an operator and the ability to log in at all.
     expect(id.unreachable).toBeFalsy()
     expect(id.authenticated).toBe(false)
-    expect(id.oidcEnabled).toBe(true)
-    expect(id.loginUrl).toBe('/auth/login')
+    expect(id.passwordEnabled).toBe(true)
+    expect(id.accountsExist).toBe(true)
   })
 
   it('reports a signed-in session', async () => {
@@ -72,7 +72,7 @@ describe('whoami', () => {
   })
 
   // A proxy that cannot reach the control plane is genuinely an outage, and
-  // an operator sent to check their identity provider instead would waste an
+  // an operator sent to check their sign-in settings instead would waste an
   // afternoon on the wrong thing.
   it('reports a gateway error as unreachable', async () => {
     const { whoami } = await loadLive()

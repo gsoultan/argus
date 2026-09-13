@@ -18,7 +18,7 @@ ca:
   validity: 2m
 
 control:
-  url: "https://localhost:8080"
+  url: "https://localhost:8480"
   ca_file: "certs/ca.crt"
   cert_file: "certs/client.crt"
   key_file: "certs/client.key"
@@ -28,8 +28,8 @@ control:
 web:
   listen: "127.0.0.1:8081"
   allowed_origins:
-    - "localhost:5273"
-    - "127.0.0.1:5273"
+    - "localhost:5290"
+    - "127.0.0.1:5290"
   signing_secret: "${ARGUS_SIGNING_SECRET}"
   tls:
     cert_file: "certs/server.crt"

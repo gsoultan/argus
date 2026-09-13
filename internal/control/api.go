@@ -56,7 +56,6 @@ type API struct {
 
 	storage *storage.Client
 
-	oidc          *auth.OIDC
 	signer        *auth.Signer
 	consoleURL    string
 	secureCookies bool
@@ -82,13 +81,10 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Authentication endpoints are throttled per client. The callback matters
-	// most: it burns an IdP round trip on every call.
-	mux.HandleFunc("GET /auth/login", a.limitLogin(a.handleLogin))
-	mux.HandleFunc("GET /auth/callback", a.limitLogin(a.handleCallback))
+	// Authentication endpoints are throttled per client.
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)
-	// Local accounts. Throttled like the OIDC flow, because this is now the
-	// surface a password-guessing attempt actually reaches.
+	// Local accounts: the surface a password-guessing attempt actually reaches,
+	// and the only one left.
 	mux.HandleFunc("POST /auth/password", a.limitLogin(a.handlePasswordLogin))
 	mux.HandleFunc("POST /auth/mfa", a.limitLogin(a.handleMFAVerify))
 	mux.HandleFunc("POST /auth/mfa/enrol", a.handleMFABegin)

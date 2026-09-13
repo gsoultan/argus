@@ -32,8 +32,7 @@ func newLoginHarness(t *testing.T) *loginHarness {
 		t.Fatal(err)
 	}
 	t.Cleanup(signer.Close)
-	// No OIDC: the deployment this product now supports out of the box.
-	api.SetAuth(nil, signer, "", false)
+	api.SetAuth(signer, "", false)
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
@@ -89,9 +88,6 @@ func TestUnauthenticatedMeAdvertisesPasswordSignIn(t *testing.T) {
 	me := h.me(t)
 	if me["passwordEnabled"] != true {
 		t.Error("a control plane that can issue sessions must say so")
-	}
-	if me["oidcEnabled"] != false {
-		t.Error("no identity provider is configured; it must not claim otherwise")
 	}
 }
 
@@ -292,25 +288,26 @@ func TestFreshInstallReportsThatNobodyCanSignInYet(t *testing.T) {
 	}
 }
 
-// An account with no password is federated, not local: it must not make the
-// console claim somebody can sign in with a password.
-func TestFederatedAccountsDoNotCountAsSignInAble(t *testing.T) {
+// An account with no password hash cannot sign in, so it must not make the
+// console claim somebody can. AnyAccountExists is what the sign-in form reads.
+func TestPasswordlessAccountsDoNotCountAsSignInAble(t *testing.T) {
 	h := newLoginHarness(t)
 	ctx := t.Context()
+	email := unique("passwordless") + "@northwind.id"
 	if _, err := h.store.pool.Exec(ctx,
-		`INSERT INTO users (email, display_name, role, idp_subject) VALUES ($1,'Fed','operator','s')`,
-		unique("fed")+"@northwind.id"); err != nil {
+		`INSERT INTO users (email, display_name, role) VALUES ($1,'Passwordless','operator')`,
+		email); err != nil {
 		t.Fatal(err)
 	}
 	// Not asserting false outright, since the shared database may hold local
 	// accounts from other tests; asserting the row itself is not counted.
 	var counted bool
 	if err := h.store.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM users WHERE idp_subject = 's' AND password_hash IS NOT NULL)`).
-		Scan(&counted); err != nil {
+		`SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND password_hash IS NOT NULL)`,
+		email).Scan(&counted); err != nil {
 		t.Fatal(err)
 	}
 	if counted {
-		t.Error("a federated account was given a password hash")
+		t.Error("an account created without a password was given a hash")
 	}
 }
