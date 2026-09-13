@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import {
-  Alert, Box, Button, Center, Divider, Paper, PasswordInput, Stack, Text,
+  Alert, Box, Button, Center, Paper, PasswordInput, Stack, Text,
   TextInput,
 } from '@mantine/core'
 import { IconAlertTriangle, IconKey, IconShieldLock } from '@tabler/icons-react'
 import {
-  loginURL, passwordLogin, verifyMFA, type Identity,
+  passwordLogin, verifyMFA, type Identity,
 } from '~/lib/live'
 import { FS } from '~/theme'
 
@@ -13,9 +13,8 @@ import { FS } from '~/theme'
  * The sign-in screen.
  *
  * Argus holds its own accounts, so this is a real form rather than a handoff.
- * An identity provider remains optional and appears alongside when one is
- * configured; a deployment with neither would have no way in at all, so the
- * screen says so rather than rendering an empty card.
+ * A deployment holding none has no way in at all, so the screen says so rather
+ * than rendering an empty card.
  *
  * Two steps when a second factor is enrolled. The password screen never learns
  * whether an address exists — the control plane returns one message for every
@@ -170,27 +169,11 @@ export function SignIn({ identity, onSignedIn }: {
               </form>
             )}
 
-            {identity.passwordEnabled && identity.oidcEnabled && (
-              <Divider my="lg" label="or" labelPosition="center" />
-            )}
-
-            {identity.oidcEnabled && (
-              <Button
-                fullWidth
-                variant={identity.passwordEnabled ? 'default' : 'filled'}
-                component="a"
-                href={loginURL()}
-                leftSection={<IconShieldLock size={15} />}
-              >
-                Sign in with SSO
-              </Button>
-            )}
-
-            {!identity.passwordEnabled && !identity.oidcEnabled && (
+            {!identity.passwordEnabled && (
               <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />}>
                 <Text size="xs">
-                  This control plane has no way to sign anyone in: no accounts and no
-                  identity provider. Create the first account on the host with{' '}
+                  This control plane has no way to sign anyone in: it holds no accounts
+                  yet. Create the first one on the host with{' '}
                   <Text span ff="monospace" inherit>argus-control users add</Text>.
                 </Text>
               </Alert>

@@ -3,21 +3,25 @@
 ## Static console tokens are the sharpest edge in this codebase
 
 `user_tokens:` in the control plane config maps a bearer string to an email. It
-bypasses the password, the second factor and the role. It was disabled only
-when OIDC was configured -- which became the wrong test the moment Argus grew
-its own accounts, because a password+MFA deployment still honoured it and
-handed out `Role: "admin"` regardless of whose address the token named.
+bypasses the password, the second factor and the role. It was once disabled only
+when OIDC was configured -- the wrong test the moment Argus grew its own
+accounts, because a password+MFA deployment still honoured it and handed out
+`Role: "admin"` regardless of whose address the token named. OIDC has since
+been removed entirely, so local accounts are the only thing the gate can ask
+about.
 
 Now: the role comes from the named account, and `cmd/argus-control/main.go`
-**refuses to start** when `user_tokens` is set alongside a provider or any local
+**refuses to start** when `user_tokens` is set alongside any local
 account. Refuses rather than ignores -- a deployment that thinks its dev token
 works will use it.
 
-The only supported case is bootstrap: no provider, no accounts. It warns.
+The only supported case is bootstrap: no accounts at all. It warns.
 
 **If you add another authentication path, revisit `API.authenticate`.** The
-pattern to watch for is a guard that names one mechanism (`a.oidc != nil`)
-instead of asking the real question ("is there a real way in?").
+pattern to watch for is a guard that names one mechanism instead of asking the
+real question ("is there a real way in?"). `a.oidc != nil` was exactly that
+guard, and removing OIDC deleted it rather than fixing it -- the question is now
+carried by `StaticTokensDisabled` alone.
 
 ## Email identity: store and compare the same string
 

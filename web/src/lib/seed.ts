@@ -35,14 +35,14 @@ const uuid = () =>
 /* ── Users ───────────────────────────────────────────────────────────────── */
 
 export const users: User[] = [
-  { id: uuid(), email: 'r.hakim@northwind.id', displayName: 'R. Hakim', role: 'owner', idpSubject: 'okta|001', mfaEnrolled: true, lastSeenAt: ago(3) },
-  { id: uuid(), email: 'dewi.p@northwind.id', displayName: 'Dewi P.', role: 'admin', idpSubject: 'okta|002', mfaEnrolled: true, lastSeenAt: ago(18) },
-  { id: uuid(), email: 'tomas.lie@northwind.id', displayName: 'Tomas Lie', role: 'approver', idpSubject: 'okta|003', mfaEnrolled: true, lastSeenAt: ago(52) },
-  { id: uuid(), email: 'a.wijaya@northwind.id', displayName: 'A. Wijaya', role: 'operator', idpSubject: 'okta|004', mfaEnrolled: true, lastSeenAt: ago(1) },
-  { id: uuid(), email: 'kevin.tan@northwind.id', displayName: 'Kevin Tan', role: 'operator', idpSubject: 'okta|005', mfaEnrolled: false, lastSeenAt: ago(140) },
-  { id: uuid(), email: 'siti.n@northwind.id', displayName: 'Siti N.', role: 'operator', idpSubject: 'okta|006', mfaEnrolled: true, lastSeenAt: ago(9) },
-  { id: uuid(), email: 'audit@northwind.id', displayName: 'Internal Audit', role: 'auditor', idpSubject: 'okta|007', mfaEnrolled: true, lastSeenAt: ago(410) },
-  { id: uuid(), email: 'breakglass@northwind.id', displayName: 'Break-glass', role: 'admin', idpSubject: null, mfaEnrolled: true, lastSeenAt: ago(14_400) },
+  { id: uuid(), email: 'r.hakim@northwind.id', displayName: 'R. Hakim', role: 'owner', mfaEnrolled: true, lastSeenAt: ago(3) },
+  { id: uuid(), email: 'dewi.p@northwind.id', displayName: 'Dewi P.', role: 'admin', mfaEnrolled: true, lastSeenAt: ago(18) },
+  { id: uuid(), email: 'tomas.lie@northwind.id', displayName: 'Tomas Lie', role: 'approver', mfaEnrolled: true, lastSeenAt: ago(52) },
+  { id: uuid(), email: 'a.wijaya@northwind.id', displayName: 'A. Wijaya', role: 'operator', mfaEnrolled: true, lastSeenAt: ago(1) },
+  { id: uuid(), email: 'kevin.tan@northwind.id', displayName: 'Kevin Tan', role: 'operator', mfaEnrolled: false, lastSeenAt: ago(140) },
+  { id: uuid(), email: 'siti.n@northwind.id', displayName: 'Siti N.', role: 'operator', mfaEnrolled: true, lastSeenAt: ago(9) },
+  { id: uuid(), email: 'audit@northwind.id', displayName: 'Internal Audit', role: 'auditor', mfaEnrolled: true, lastSeenAt: ago(410) },
+  { id: uuid(), email: 'breakglass@northwind.id', displayName: 'Break-glass', role: 'admin', mfaEnrolled: true, lastSeenAt: ago(14_400) },
 ]
 export const currentUser = users[1]!
 

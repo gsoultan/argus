@@ -1,7 +1,7 @@
 # Web console architecture
 
 `web/` — Vite 8 + React 19 + Mantine 9 + TanStack Router/Query, built with Bun.
-No Node required. Dev server on 5273, proxying `/api` and `/auth` to the control
+No Node required. Dev server on 5290, proxying `/api` and `/auth` to the control
 plane over **HTTPS** (it serves TLS whenever a cert is configured; proxying to
 http:// fails every request and the console then misreports it as "no identity
 provider configured").

@@ -36,20 +36,3 @@ session_ttl: 8h
 ticket_ttl: 60s
 agent_stale_after: 90s
 log_level: "info"
-
-# Uncomment and complete to enable SSO. Until then the console has no way in,
-# which is the correct default for a system of record.
-#
-# oidc:
-#   issuer: "https://idp.example.com"
-#   client_id: "argus-console"
-#   client_secret: "${ARGUS_OIDC_CLIENT_SECRET}"
-#   redirect_url: "https://argus.example.com/auth/callback"
-#   role_claim: "groups"
-#   # An unmapped user gets this. Keep it least-privileged so a broken mapping
-#   # fails closed.
-#   default_role: "auditor"
-#   role_map:
-#     argus-admins: "admin"
-#     argus-approvers: "approver"
-#     engineering: "operator"

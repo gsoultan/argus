@@ -11,12 +11,12 @@ import (
 // Throttles guards the authentication surface.
 //
 // Split by what an attempt costs rather than applying one number everywhere. A
-// login redirect is cheap; a callback burns an IdP round trip; a failed
-// authentication is the thing worth counting most tightly, because a client
+// malformed login is cheap; a failed authentication is the thing worth counting
+// most tightly, because a client
 // producing failures at a rate a legitimate user never reaches is doing
 // something a legitimate user never does.
 type Throttles struct {
-	// login covers starting the OIDC flow and the callback that completes it.
+	// login covers every request to a sign-in endpoint, valid or not.
 	login *ratelimit.Limiter
 	// failures counts refused authentications, far more tightly.
 	failures *ratelimit.Limiter

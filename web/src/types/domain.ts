@@ -18,8 +18,6 @@ export interface User {
   email: string
   displayName: string
   role: UserRole
-  /** Sourced from the OIDC provider; null for local break-glass accounts. */
-  idpSubject: string | null
   mfaEnrolled: boolean
   lastSeenAt: ISOTime | null
 }

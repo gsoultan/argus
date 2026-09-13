@@ -214,7 +214,6 @@ func _assertUserShape(m m0.User) {
 		m.Email,
 		m.DisplayName,
 		m.Role,
-		m.IdpSubject,
 		m.MfaEnrolled,
 		m.LastSeenAt,
 		m.CreatedAt,

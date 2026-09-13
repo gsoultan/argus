@@ -45,9 +45,8 @@ type config struct {
 	ReporterToken  string            `yaml:"reporter_token"`
 	// AgentStaleAfter is how long an agent may be silent before the fleet is
 	// told. Short on purpose: silence is how a killed agent looks.
-	AgentStaleAfter time.Duration    `yaml:"agent_stale_after"`
-	Storage         *storage.Config  `yaml:"storage"`
-	OIDC            *auth.OIDCConfig `yaml:"oidc"`
+	AgentStaleAfter time.Duration   `yaml:"agent_stale_after"`
+	Storage         *storage.Config `yaml:"storage"`
 	// SigningSecret signs session cookies and terminal tickets. Shared with the
 	// gateway so it can verify tickets without calling back.
 	SigningSecret string `yaml:"signing_secret"`
@@ -173,25 +172,6 @@ func run() error {
 		defer signer.Close()
 	}
 
-	var provider *auth.OIDC
-	if cfg.OIDC != nil {
-		if signer == nil {
-			return fmt.Errorf("signing_secret is required when oidc is configured")
-		}
-		provider, err = auth.NewOIDC(ctx, *cfg.OIDC)
-		if err != nil {
-			return err
-		}
-		if provider != nil {
-			log.Info("OIDC enabled", "issuer", cfg.OIDC.Issuer,
-				"default_role", cfg.OIDC.DefaultRole)
-		}
-	}
-	if provider == nil {
-		log.Info("no identity provider configured; sign-in uses local accounts",
-			"detail", "create the first one with `argus-control users add`")
-	}
-
 	rl := control.ThrottleConfig{}
 	if cfg.RateLimit != nil {
 		rl = control.ThrottleConfig{
@@ -227,15 +207,15 @@ func run() error {
 			"detail", "they will be sent over plain HTTP and can be captured in "+
 				"transit; acceptable for local development only")
 	}
-	api.SetAuth(provider, signer, cfg.ConsoleURL, secureCookies)
+	api.SetAuth(signer, cfg.ConsoleURL, secureCookies)
 	api.SessionTTL = cfg.SessionTTL
 	api.TicketTTL = cfg.TicketTTL
 	api.UserTokens = cfg.UserTokens
 
 	// Static tokens are a bootstrap convenience and nothing more. The moment a
-	// deployment has a real way in -- an identity provider, or one local
-	// account -- honouring them would mean a string in a config file walking
-	// past the password and second factor that account was given.
+	// deployment has a real way in -- one local account -- honouring them would
+	// mean a string in a config file walking past the password and second
+	// factor that account was given.
 	//
 	// Refused, not ignored. A deployment that thinks its dev token still works
 	// will use it, and finding out at the wrong moment is the whole problem.
@@ -245,23 +225,16 @@ func run() error {
 			log.Error("cannot tell whether local accounts exist", "error", err)
 			os.Exit(1)
 		}
-		switch {
-		case provider != nil:
-			fmt.Fprintln(os.Stderr, "argus-control: user_tokens is set alongside an "+
-				"identity provider.\nRemove user_tokens: it would be a way into this "+
-				"deployment that single sign-on cannot see.")
-			os.Exit(1)
-		case accounts:
+		if accounts {
 			fmt.Fprintln(os.Stderr, "argus-control: user_tokens is set and local "+
 				"accounts exist.\nRemove user_tokens: a bearer token in a config file "+
 				"must not stand in for a password and a second factor.")
 			os.Exit(1)
-		default:
-			log.Warn("static console tokens are active",
-				"detail", "no identity provider and no local accounts yet, so these are "+
-					"the only way in; create an account with `argus-control users add` "+
-					"and remove user_tokens before this is used for anything real")
 		}
+		log.Warn("static console tokens are active",
+			"detail", "no local accounts yet, so these are the only way in; create "+
+				"an account with `argus-control users add` and remove user_tokens "+
+				"before this is used for anything real")
 	} else {
 		api.StaticTokensDisabled = true
 	}

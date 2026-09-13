@@ -4,7 +4,7 @@
 #
 # Starts every service that exists in the tree and streams their logs into one
 # prefixed, colourised feed. Ctrl-C tears the whole thing down, including any
-# grandchildren — a half-dead Vite holding port 5273 is the most annoying way to
+# grandchildren — a half-dead Vite holding port 5290 is the most annoying way to
 # start a morning.
 #
 # Services are DETECTED, not assumed. Today that is the web UI; when
@@ -30,8 +30,8 @@ cd "$ARGUS_ROOT"
 # Adding a service is one line; nothing else in this script needs to change.
 
 SERVICES=(
-  "web|5273|$MAGENTA|web|web/package.json|bun run dev"
-  "control|8080|$BLUE|.|cmd/argus-control|go run ./cmd/argus-control -config dev/control.yaml"
+  "web|5290|$MAGENTA|web|web/package.json|bun run dev"
+  "control|8480|$BLUE|.|cmd/argus-control|go run ./cmd/argus-control -config dev/control.yaml"
   "gateway|2222|$GREEN|.|cmd/argus-gateway|go run ./cmd/argus-gateway -config dev/argus.yaml"
 )
 
@@ -277,7 +277,7 @@ for svc in "${SELECTED[@]}"; do
   run_service "$name" "$color" "$dir" "$cmd"
 done
 
-printf '\n  %sWeb UI%s   http://localhost:5273\n' "$BOLD" "$RESET"
+printf '\n  %sWeb UI%s   http://localhost:5290\n' "$BOLD" "$RESET"
 if [[ -e cmd/argus-gateway ]]; then
   printf '  %sSSH%s      ssh ops:HOST@localhost -p 2222\n' "$BOLD" "$RESET"
 fi

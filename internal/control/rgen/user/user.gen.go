@@ -24,7 +24,6 @@ type Row struct {
 	Email         string
 	DisplayName   string
 	Role          string
-	IdpSubject    runtime.Null[string]
 	MfaEnrolled   bool
 	LastSeenAt    runtime.Null[time.Time]
 	CreatedAt     time.Time
@@ -69,7 +68,7 @@ const (
 	opNotExists runtime.Op = 26
 )
 
-const nCols = 12
+const nCols = 11
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -211,55 +210,48 @@ func (q *Query) cursor(col uint32, r Row) {
 		q.strs[q.ns] = r.Role
 		q.ns++
 	case 4:
-		if int(q.ns) >= len(q.strs) {
-			q.over = true
-			return
-		}
-		q.strs[q.ns] = r.IdpSubject.V
-		q.ns++
-	case 5:
 		if int(q.nbo) >= len(q.bools) {
 			q.over = true
 			return
 		}
 		q.bools[q.nbo] = r.MfaEnrolled
 		q.nbo++
-	case 6:
+	case 5:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.LastSeenAt.V
 		q.ntm++
-	case 7:
+	case 6:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.CreatedAt
 		q.ntm++
-	case 8:
+	case 7:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.PasswordHash.V
 		q.ns++
-	case 9:
+	case 8:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.TotpSecret.V
 		q.ns++
-	case 10:
+	case 9:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.MfaEnrolledAt.V
 		q.ntm++
-	case 11:
+	case 10:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
@@ -436,14 +428,13 @@ var (
 	Email         = TextCol{1}
 	DisplayName   = TextCol{2}
 	Role          = TextCol{3}
-	IdpSubject    = NullTextCol{4}
-	MfaEnrolled   = BoolCol{5}
-	LastSeenAt    = NullTimeCol{6}
-	CreatedAt     = TimeCol{7}
-	PasswordHash  = NullTextCol{8}
-	TotpSecret    = NullTextCol{9}
-	MfaEnrolledAt = NullTimeCol{10}
-	DisabledAt    = NullTimeCol{11}
+	MfaEnrolled   = BoolCol{4}
+	LastSeenAt    = NullTimeCol{5}
+	CreatedAt     = TimeCol{6}
+	PasswordHash  = NullTextCol{7}
+	TotpSecret    = NullTextCol{8}
+	MfaEnrolledAt = NullTimeCol{9}
+	DisabledAt    = NullTimeCol{10}
 )
 
 // UUIDCol addresses a uuid column.
@@ -493,35 +484,6 @@ func (h TextCol) In(v ...string) Pred { return Pred{col: h.c, op: opIn, anyStr: 
 // comparison NULL for every row and the result empty —
 // PostgreSQL's rule for NOT IN, not storm's.
 func (h TextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
-
-// NullTextCol addresses a text column.
-type NullTextCol struct{ c uint8 }
-
-func (h NullTextCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
-func (h NullTextCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
-func (h NullTextCol) AscNullsFirst() Sort {
-	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
-}
-func (h NullTextCol) DescNullsLast() Sort {
-	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
-}
-
-func (h NullTextCol) Eq(v string) Pred    { return Pred{col: h.c, op: opEq, str: v} }
-func (h NullTextCol) NotEq(v string) Pred { return Pred{col: h.c, op: opNotEq, str: v} }
-func (h NullTextCol) Gt(v string) Pred    { return Pred{col: h.c, op: opGt, str: v} }
-func (h NullTextCol) Gte(v string) Pred   { return Pred{col: h.c, op: opGte, str: v} }
-func (h NullTextCol) Lt(v string) Pred    { return Pred{col: h.c, op: opLt, str: v} }
-func (h NullTextCol) Lte(v string) Pred   { return Pred{col: h.c, op: opLte, str: v} }
-func (h NullTextCol) Like(v string) Pred  { return Pred{col: h.c, op: opLike, str: v} }
-func (h NullTextCol) ILike(v string) Pred { return Pred{col: h.c, op: opILike, str: v} }
-func (h NullTextCol) In(v ...string) Pred { return Pred{col: h.c, op: opIn, anyStr: v} }
-
-// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
-// comparison NULL for every row and the result empty —
-// PostgreSQL's rule for NOT IN, not storm's.
-func (h NullTextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
-func (h NullTextCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
-func (h NullTextCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
 
 // BoolCol addresses a bool column.
 type BoolCol struct{ c uint8 }
@@ -577,6 +539,35 @@ func (h TimeCol) Gt(v time.Time) Pred    { return Pred{col: h.c, op: opGt, tim: 
 func (h TimeCol) Gte(v time.Time) Pred   { return Pred{col: h.c, op: opGte, tim: v} }
 func (h TimeCol) Lt(v time.Time) Pred    { return Pred{col: h.c, op: opLt, tim: v} }
 func (h TimeCol) Lte(v time.Time) Pred   { return Pred{col: h.c, op: opLte, tim: v} }
+
+// NullTextCol addresses a text column.
+type NullTextCol struct{ c uint8 }
+
+func (h NullTextCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullTextCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullTextCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullTextCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullTextCol) Eq(v string) Pred    { return Pred{col: h.c, op: opEq, str: v} }
+func (h NullTextCol) NotEq(v string) Pred { return Pred{col: h.c, op: opNotEq, str: v} }
+func (h NullTextCol) Gt(v string) Pred    { return Pred{col: h.c, op: opGt, str: v} }
+func (h NullTextCol) Gte(v string) Pred   { return Pred{col: h.c, op: opGte, str: v} }
+func (h NullTextCol) Lt(v string) Pred    { return Pred{col: h.c, op: opLt, str: v} }
+func (h NullTextCol) Lte(v string) Pred   { return Pred{col: h.c, op: opLte, str: v} }
+func (h NullTextCol) Like(v string) Pred  { return Pred{col: h.c, op: opLike, str: v} }
+func (h NullTextCol) ILike(v string) Pred { return Pred{col: h.c, op: opILike, str: v} }
+func (h NullTextCol) In(v ...string) Pred { return Pred{col: h.c, op: opIn, anyStr: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h NullTextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
+func (h NullTextCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
+func (h NullTextCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -747,7 +738,7 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
-		case 4:
+		case 7:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -755,13 +746,6 @@ func (q *Query) leaf(p Pred) {
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
 		case 8:
-			if int(q.nas) >= 3 {
-				q.over = true
-				return
-			}
-			q.anyStr[q.nas] = p.anyStr
-			q.nas++
-		case 9:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -802,19 +786,19 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 4:
-		if int(q.ns) >= 6 {
-			q.over = true
-			return
-		}
-		q.strs[q.ns] = p.str
-		q.ns++
-	case 5:
 		if int(q.nbo) >= 4 {
 			q.over = true
 			return
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 5:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	case 6:
 		if int(q.ntm) >= 4 {
 			q.over = true
@@ -823,12 +807,12 @@ func (q *Query) leaf(p Pred) {
 		q.tims[q.ntm] = p.tim
 		q.ntm++
 	case 7:
-		if int(q.ntm) >= 4 {
+		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
-		q.tims[q.ntm] = p.tim
-		q.ntm++
+		q.strs[q.ns] = p.str
+		q.ns++
 	case 8:
 		if int(q.ns) >= 6 {
 			q.over = true
@@ -837,20 +821,13 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 9:
-		if int(q.ns) >= 6 {
-			q.over = true
-			return
-		}
-		q.strs[q.ns] = p.str
-		q.ns++
-	case 10:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
-	case 11:
+	case 10:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
@@ -896,18 +873,6 @@ func (q Query) RoleLike(v string) Query              { return q.Where(Role.Like(
 func (q Query) RoleILike(v string) Query             { return q.Where(Role.ILike(v)) }
 func (q Query) RoleIn(v ...string) Query             { return q.Where(Role.In(v...)) }
 func (q Query) RoleNotIn(v ...string) Query          { return q.Where(Role.NotIn(v...)) }
-func (q Query) IdpSubjectEq(v string) Query          { return q.Where(IdpSubject.Eq(v)) }
-func (q Query) IdpSubjectNotEq(v string) Query       { return q.Where(IdpSubject.NotEq(v)) }
-func (q Query) IdpSubjectGt(v string) Query          { return q.Where(IdpSubject.Gt(v)) }
-func (q Query) IdpSubjectGte(v string) Query         { return q.Where(IdpSubject.Gte(v)) }
-func (q Query) IdpSubjectLt(v string) Query          { return q.Where(IdpSubject.Lt(v)) }
-func (q Query) IdpSubjectLte(v string) Query         { return q.Where(IdpSubject.Lte(v)) }
-func (q Query) IdpSubjectLike(v string) Query        { return q.Where(IdpSubject.Like(v)) }
-func (q Query) IdpSubjectILike(v string) Query       { return q.Where(IdpSubject.ILike(v)) }
-func (q Query) IdpSubjectIn(v ...string) Query       { return q.Where(IdpSubject.In(v...)) }
-func (q Query) IdpSubjectNotIn(v ...string) Query    { return q.Where(IdpSubject.NotIn(v...)) }
-func (q Query) IdpSubjectIsNull() Query              { return q.Where(IdpSubject.IsNull()) }
-func (q Query) IdpSubjectIsNotNull() Query           { return q.Where(IdpSubject.IsNotNull()) }
 func (q Query) MfaEnrolledEq(v bool) Query           { return q.Where(MfaEnrolled.Eq(v)) }
 func (q Query) MfaEnrolledNotEq(v bool) Query        { return q.Where(MfaEnrolled.NotEq(v)) }
 func (q Query) LastSeenAtEq(v time.Time) Query       { return q.Where(LastSeenAt.Eq(v)) }
@@ -965,7 +930,7 @@ func (q Query) DisabledAtLte(v time.Time) Query      { return q.Where(DisabledAt
 func (q Query) DisabledAtIsNull() Query              { return q.Where(DisabledAt.IsNull()) }
 func (q Query) DisabledAtIsNotNull() Query           { return q.Where(DisabledAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "email", "display_name", "role", "idp_subject", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at" FROM "users"`
+const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at" FROM "users"`
 const countPrefix = `SELECT count(*) FROM "users"`
 const existsPrefix = `SELECT 1 FROM "users"`
 const existsSuffix = ` LIMIT 1`
@@ -1026,12 +991,6 @@ var orderTable = [nCols][4]string{
 		"\"role\" ASC NULLS FIRST",
 		"\"role\" DESC NULLS LAST",
 	},
-	{ // idp_subject
-		"\"idp_subject\"",
-		"\"idp_subject\" DESC",
-		"\"idp_subject\" ASC NULLS FIRST",
-		"\"idp_subject\" DESC NULLS LAST",
-	},
 	{ // mfa_enrolled
 		"\"mfa_enrolled\"",
 		"\"mfa_enrolled\" DESC",
@@ -1083,7 +1042,6 @@ var identTable = [nCols]string{
 	"\"email\"",
 	"\"display_name\"",
 	"\"role\"",
-	"\"idp_subject\"",
 	"\"mfa_enrolled\"",
 	"\"last_seen_at\"",
 	"\"created_at\"",
@@ -1123,7 +1081,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [12][27]runtime.Frag{
+var fragTable = [11][27]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1237,35 +1195,6 @@ var fragTable = [12][27]runtime.Frag{
 		{},
 		{},
 		{},
-		{},
-		{},
-	},
-	{ // idp_subject
-		{}, // opNone
-		{A: "\"idp_subject\" = $", B: ""},
-		{A: "\"idp_subject\" <> $", B: ""},
-		{A: "\"idp_subject\" > $", B: ""},
-		{A: "\"idp_subject\" >= $", B: ""},
-		{A: "\"idp_subject\" < $", B: ""},
-		{A: "\"idp_subject\" <= $", B: ""},
-		{A: "\"idp_subject\" LIKE $", B: ""},
-		{A: "\"idp_subject\" ILIKE $", B: ""},
-		{},
-		{},
-		{},
-		{},
-		{},
-		{A: "\"idp_subject\" = ANY($", B: ")"},
-		{A: "\"idp_subject\" <> ALL($", B: ")"},
-		{},
-		{},
-		{},
-		{},
-		{},
-		{},
-		{},
-		{A: "\"idp_subject\" IS NULL", B: ""},
-		{A: "\"idp_subject\" IS NOT NULL", B: ""},
 		{},
 		{},
 	},
@@ -1631,14 +1560,13 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Email = sl.Str(rv[1])
 	r.DisplayName = sl.Str(rv[2])
 	r.Role = sl.Str(rv[3])
-	r.IdpSubject = runtime.NullText(rv[4], sl)
-	r.MfaEnrolled = runtime.Bool(rv[5])
-	r.LastSeenAt = runtime.Nullable(rv[6], runtime.Timestamptz)
-	r.CreatedAt = runtime.Timestamptz(rv[7])
-	r.PasswordHash = runtime.NullText(rv[8], sl)
-	r.TotpSecret = runtime.NullText(rv[9], sl)
-	r.MfaEnrolledAt = runtime.Nullable(rv[10], runtime.Timestamptz)
-	r.DisabledAt = runtime.Nullable(rv[11], runtime.Timestamptz)
+	r.MfaEnrolled = runtime.Bool(rv[4])
+	r.LastSeenAt = runtime.Nullable(rv[5], runtime.Timestamptz)
+	r.CreatedAt = runtime.Timestamptz(rv[6])
+	r.PasswordHash = runtime.NullText(rv[7], sl)
+	r.TotpSecret = runtime.NullText(rv[8], sl)
+	r.MfaEnrolledAt = runtime.Nullable(rv[9], runtime.Timestamptz)
+	r.DisabledAt = runtime.Nullable(rv[10], runtime.Timestamptz)
 	return nil
 }
 
@@ -1720,15 +1648,11 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
-			case 4:
+			case 7:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 8:
-				b.anyStr[nas] = q.anyStr[nas]
-				v = append(v, &b.anyStr[nas])
-				nas++
-			case 9:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1753,34 +1677,30 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.strs[ns])
 			ns++
 		case 4:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
-		case 5:
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 5:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		case 6:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
 		case 7:
-			b.tims[ntm] = q.tims[ntm]
-			v = append(v, &b.tims[ntm])
-			ntm++
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		case 8:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
 		case 9:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
-		case 10:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
-		case 11:
+		case 10:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
@@ -1921,7 +1841,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "idp_subject", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING "id", "email", "display_name", "role", "idp_subject", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at"`
+const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at"`
 
 const updatePrefix = `UPDATE "users" SET `
 const deletePrefix = `DELETE FROM "users"`
@@ -1932,24 +1852,22 @@ const (
 	dEmail         uint64 = 1 << 0
 	dDisplayName   uint64 = 1 << 1
 	dRole          uint64 = 1 << 2
-	dIdpSubject    uint64 = 1 << 3
-	dMfaEnrolled   uint64 = 1 << 4
-	dLastSeenAt    uint64 = 1 << 5
-	dCreatedAt     uint64 = 1 << 6
-	dPasswordHash  uint64 = 1 << 7
-	dTotpSecret    uint64 = 1 << 8
-	dMfaEnrolledAt uint64 = 1 << 9
-	dDisabledAt    uint64 = 1 << 10
+	dMfaEnrolled   uint64 = 1 << 3
+	dLastSeenAt    uint64 = 1 << 4
+	dCreatedAt     uint64 = 1 << 5
+	dPasswordHash  uint64 = 1 << 6
+	dTotpSecret    uint64 = 1 << 7
+	dMfaEnrolledAt uint64 = 1 << 8
+	dDisabledAt    uint64 = 1 << 9
 )
 
-const nUpdatable = 11
+const nUpdatable = 10
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"email\" = $", B: ""},           // email
 	{A: "\"display_name\" = $", B: ""},    // display_name
 	{A: "\"role\" = $", B: ""},            // role
-	{A: "\"idp_subject\" = $", B: ""},     // idp_subject
 	{A: "\"mfa_enrolled\" = $", B: ""},    // mfa_enrolled
 	{A: "\"last_seen_at\" = $", B: ""},    // last_seen_at
 	{A: "\"created_at\" = $", B: ""},      // created_at
@@ -1972,17 +1890,16 @@ const (
 	iEmail         uint64 = 1 << 1
 	iDisplayName   uint64 = 1 << 2
 	iRole          uint64 = 1 << 3
-	iIdpSubject    uint64 = 1 << 4
-	iMfaEnrolled   uint64 = 1 << 5
-	iLastSeenAt    uint64 = 1 << 6
-	iCreatedAt     uint64 = 1 << 7
-	iPasswordHash  uint64 = 1 << 8
-	iTotpSecret    uint64 = 1 << 9
-	iMfaEnrolledAt uint64 = 1 << 10
-	iDisabledAt    uint64 = 1 << 11
+	iMfaEnrolled   uint64 = 1 << 4
+	iLastSeenAt    uint64 = 1 << 5
+	iCreatedAt     uint64 = 1 << 6
+	iPasswordHash  uint64 = 1 << 7
+	iTotpSecret    uint64 = 1 << 8
+	iMfaEnrolledAt uint64 = 1 << 9
+	iDisabledAt    uint64 = 1 << 10
 )
 
-const nInsertable = 12
+const nInsertable = 11
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1990,7 +1907,6 @@ var insCols = [nInsertable]string{
 	"\"email\"",
 	"\"display_name\"",
 	"\"role\"",
-	"\"idp_subject\"",
 	"\"mfa_enrolled\"",
 	"\"last_seen_at\"",
 	"\"created_at\"",
@@ -2006,7 +1922,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 
 const insPlaceholder = "$"
 const insPrefix = "INSERT INTO \"users\""
-const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"idp_subject\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\""
+const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2052,18 +1968,6 @@ func (m *Mut) SetDisplayName(v string) {
 func (m *Mut) SetRole(v string) {
 	m.row.Role = v
 	m.dirty |= dRole
-}
-
-func (m *Mut) SetIdpSubject(v string) {
-	m.row.IdpSubject = runtime.Null[string]{V: v, Valid: true}
-	m.dirty |= dIdpSubject
-}
-
-// SetIdpSubjectNull writes SQL NULL. It is a separate method because a
-// zero value and an absent value are different facts.
-func (m *Mut) SetIdpSubjectNull() {
-	m.row.IdpSubject = runtime.Null[string]{}
-	m.dirty |= dIdpSubject
 }
 
 func (m *Mut) SetMfaEnrolled(v bool) {
@@ -2179,18 +2083,6 @@ func (n *Ins) SetDisplayName(v string) {
 func (n *Ins) SetRole(v string) {
 	n.row.Role = v
 	n.set |= iRole
-}
-
-func (n *Ins) SetIdpSubject(v string) {
-	n.row.IdpSubject = runtime.Null[string]{V: v, Valid: true}
-	n.set |= iIdpSubject
-}
-
-// SetIdpSubjectNull writes SQL NULL explicitly, which is not the same as
-// leaving the column unset and taking its default.
-func (n *Ins) SetIdpSubjectNull() {
-	n.row.IdpSubject = runtime.Null[string]{}
-	n.set |= iIdpSubject
 }
 
 func (n *Ins) SetMfaEnrolled(v bool) {
@@ -2310,7 +2202,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 11)
+	set := make([]string, 0, 10)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2323,27 +2215,24 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "role")
 		}
 		if mask&(1<<4) != 0 {
-			set = append(set, "idp_subject")
-		}
-		if mask&(1<<5) != 0 {
 			set = append(set, "mfa_enrolled")
 		}
-		if mask&(1<<6) != 0 {
+		if mask&(1<<5) != 0 {
 			set = append(set, "last_seen_at")
 		}
-		if mask&(1<<7) != 0 {
+		if mask&(1<<6) != 0 {
 			set = append(set, "created_at")
 		}
-		if mask&(1<<8) != 0 {
+		if mask&(1<<7) != 0 {
 			set = append(set, "password_hash")
 		}
-		if mask&(1<<9) != 0 {
+		if mask&(1<<8) != 0 {
 			set = append(set, "totp_secret")
 		}
-		if mask&(1<<10) != 0 {
+		if mask&(1<<9) != 0 {
 			set = append(set, "mfa_enrolled_at")
 		}
-		if mask&(1<<11) != 0 {
+		if mask&(1<<10) != 0 {
 			set = append(set, "disabled_at")
 		}
 	case 1:
@@ -2354,27 +2243,24 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "role")
 		}
 		if mask&(1<<4) != 0 {
-			set = append(set, "idp_subject")
-		}
-		if mask&(1<<5) != 0 {
 			set = append(set, "mfa_enrolled")
 		}
-		if mask&(1<<6) != 0 {
+		if mask&(1<<5) != 0 {
 			set = append(set, "last_seen_at")
 		}
-		if mask&(1<<7) != 0 {
+		if mask&(1<<6) != 0 {
 			set = append(set, "created_at")
 		}
-		if mask&(1<<8) != 0 {
+		if mask&(1<<7) != 0 {
 			set = append(set, "password_hash")
 		}
-		if mask&(1<<9) != 0 {
+		if mask&(1<<8) != 0 {
 			set = append(set, "totp_secret")
 		}
-		if mask&(1<<10) != 0 {
+		if mask&(1<<9) != 0 {
 			set = append(set, "mfa_enrolled_at")
 		}
-		if mask&(1<<11) != 0 {
+		if mask&(1<<10) != 0 {
 			set = append(set, "disabled_at")
 		}
 	case 2:
@@ -2388,27 +2274,24 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "role")
 		}
 		if mask&(1<<4) != 0 {
-			set = append(set, "idp_subject")
-		}
-		if mask&(1<<5) != 0 {
 			set = append(set, "mfa_enrolled")
 		}
-		if mask&(1<<6) != 0 {
+		if mask&(1<<5) != 0 {
 			set = append(set, "last_seen_at")
 		}
-		if mask&(1<<7) != 0 {
+		if mask&(1<<6) != 0 {
 			set = append(set, "created_at")
 		}
-		if mask&(1<<8) != 0 {
+		if mask&(1<<7) != 0 {
 			set = append(set, "password_hash")
 		}
-		if mask&(1<<9) != 0 {
+		if mask&(1<<8) != 0 {
 			set = append(set, "totp_secret")
 		}
-		if mask&(1<<10) != 0 {
+		if mask&(1<<9) != 0 {
 			set = append(set, "mfa_enrolled_at")
 		}
-		if mask&(1<<11) != 0 {
+		if mask&(1<<10) != 0 {
 			set = append(set, "disabled_at")
 		}
 	}
@@ -2482,7 +2365,6 @@ var assignFor = map[string]string{
 	"email":           "\"email\" = EXCLUDED.\"email\"",
 	"display_name":    "\"display_name\" = EXCLUDED.\"display_name\"",
 	"role":            "\"role\" = EXCLUDED.\"role\"",
-	"idp_subject":     "\"idp_subject\" = EXCLUDED.\"idp_subject\"",
 	"mfa_enrolled":    "\"mfa_enrolled\" = EXCLUDED.\"mfa_enrolled\"",
 	"last_seen_at":    "\"last_seen_at\" = EXCLUDED.\"last_seen_at\"",
 	"created_at":      "\"created_at\" = EXCLUDED.\"created_at\"",
@@ -2542,20 +2424,18 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 		case 3:
 			args = append(args, n.row.Role)
 		case 4:
-			args = append(args, n.row.IdpSubject.Arg())
-		case 5:
 			args = append(args, n.row.MfaEnrolled)
-		case 6:
+		case 5:
 			args = append(args, n.row.LastSeenAt.Arg())
-		case 7:
+		case 6:
 			args = append(args, n.row.CreatedAt)
-		case 8:
+		case 7:
 			args = append(args, n.row.PasswordHash.Arg())
-		case 9:
+		case 8:
 			args = append(args, n.row.TotpSecret.Arg())
-		case 10:
+		case 9:
 			args = append(args, n.row.MfaEnrolledAt.Arg())
-		case 11:
+		case 10:
 			args = append(args, n.row.DisabledAt.Arg())
 		}
 	}
@@ -2594,12 +2474,11 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 12)
+	args := make([]any, 0, 11)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
 	args = append(args, r.Role)
-	args = append(args, r.IdpSubject.Arg())
 	args = append(args, r.MfaEnrolled)
 	args = append(args, r.LastSeenAt.Arg())
 	args = append(args, r.CreatedAt)
@@ -2637,7 +2516,6 @@ var copyCols = []string{
 	"email",
 	"display_name",
 	"role",
-	"idp_subject",
 	"mfa_enrolled",
 	"last_seen_at",
 	"created_at",
@@ -2651,7 +2529,7 @@ var copyCols = []string{
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [12]any
+	buf  [11]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2673,14 +2551,13 @@ func (s *rowSource) Values() []any {
 	s.buf[1] = &r.Email
 	s.buf[2] = &r.DisplayName
 	s.buf[3] = &r.Role
-	s.buf[4] = r.IdpSubject.Ptr()
-	s.buf[5] = &r.MfaEnrolled
-	s.buf[6] = r.LastSeenAt.Ptr()
-	s.buf[7] = &r.CreatedAt
-	s.buf[8] = r.PasswordHash.Ptr()
-	s.buf[9] = r.TotpSecret.Ptr()
-	s.buf[10] = r.MfaEnrolledAt.Ptr()
-	s.buf[11] = r.DisabledAt.Ptr()
+	s.buf[4] = &r.MfaEnrolled
+	s.buf[5] = r.LastSeenAt.Ptr()
+	s.buf[6] = &r.CreatedAt
+	s.buf[7] = r.PasswordHash.Ptr()
+	s.buf[8] = r.TotpSecret.Ptr()
+	s.buf[9] = r.MfaEnrolledAt.Ptr()
+	s.buf[10] = r.DisabledAt.Ptr()
 	return s.buf[:]
 }
 
@@ -2722,14 +2599,12 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 8
 	mask |= 1 << 9
 	mask |= 1 << 10
-	mask |= 1 << 11
 	st := stmtForInsert(mask, 0)
-	args := make([]any, 0, 12)
+	args := make([]any, 0, 11)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
 	args = append(args, r.Role)
-	args = append(args, r.IdpSubject.Arg())
 	args = append(args, r.MfaEnrolled)
 	args = append(args, r.LastSeenAt.Arg())
 	args = append(args, r.CreatedAt)
@@ -2779,20 +2654,18 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 		case 3:
 			args = append(args, n.row.Role)
 		case 4:
-			args = append(args, n.row.IdpSubject.Arg())
-		case 5:
 			args = append(args, n.row.MfaEnrolled)
-		case 6:
+		case 5:
 			args = append(args, n.row.LastSeenAt.Arg())
-		case 7:
+		case 6:
 			args = append(args, n.row.CreatedAt)
-		case 8:
+		case 7:
 			args = append(args, n.row.PasswordHash.Arg())
-		case 9:
+		case 8:
 			args = append(args, n.row.TotpSecret.Arg())
-		case 10:
+		case 9:
 			args = append(args, n.row.MfaEnrolledAt.Arg())
-		case 11:
+		case 10:
 			args = append(args, n.row.DisabledAt.Arg())
 		}
 	}
@@ -2843,20 +2716,18 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 		case 2:
 			args = append(args, m.row.Role)
 		case 3:
-			args = append(args, m.row.IdpSubject.Arg())
-		case 4:
 			args = append(args, m.row.MfaEnrolled)
-		case 5:
+		case 4:
 			args = append(args, m.row.LastSeenAt.Arg())
-		case 6:
+		case 5:
 			args = append(args, m.row.CreatedAt)
-		case 7:
+		case 6:
 			args = append(args, m.row.PasswordHash.Arg())
-		case 8:
+		case 7:
 			args = append(args, m.row.TotpSecret.Arg())
-		case 9:
+		case 8:
 			args = append(args, m.row.MfaEnrolledAt.Arg())
-		case 10:
+		case 9:
 			args = append(args, m.row.DisabledAt.Arg())
 		}
 	}
@@ -2920,20 +2791,18 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 		case 2:
 			args = append(args, m.row.Role)
 		case 3:
-			args = append(args, m.row.IdpSubject.Arg())
-		case 4:
 			args = append(args, m.row.MfaEnrolled)
-		case 5:
+		case 4:
 			args = append(args, m.row.LastSeenAt.Arg())
-		case 6:
+		case 5:
 			args = append(args, m.row.CreatedAt)
-		case 7:
+		case 6:
 			args = append(args, m.row.PasswordHash.Arg())
-		case 8:
+		case 7:
 			args = append(args, m.row.TotpSecret.Arg())
-		case 9:
+		case 8:
 			args = append(args, m.row.MfaEnrolledAt.Arg())
-		case 10:
+		case 9:
 			args = append(args, m.row.DisabledAt.Arg())
 		}
 	}

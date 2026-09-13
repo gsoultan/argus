@@ -300,7 +300,6 @@ type User struct {
 	Email         string
 	DisplayName   string
 	Role          string
-	IdpSubject    *string
 	MfaEnrolled   bool
 	LastSeenAt    *time.Time
 	CreatedAt     time.Time

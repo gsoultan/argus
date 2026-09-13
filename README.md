@@ -26,8 +26,8 @@ the Go control plane will serve.
 
 | | |
 |---|---|
-| Web UI | http://localhost:5273 |
-| Control plane API | http://localhost:8080 *(once built)* |
+| Web UI | http://localhost:5290 |
+| Control plane API | http://localhost:8480 *(once built)* |
 | SSH gateway | `localhost:2222` *(once built)* |
 
 ### The scripts
@@ -264,7 +264,7 @@ Both servers report on themselves at `GET /stats`, over loopback only:
 
 ```sh
 curl -sk https://127.0.0.1:8081/stats   # gateway
-curl -sk https://127.0.0.1:8080/stats   # control plane
+curl -sk https://127.0.0.1:8480/stats   # control plane
 ```
 
 Goroutines, live heap, heap objects, session count, uptime — and for the control
@@ -311,14 +311,10 @@ works -- the codes are ordinary TOTP. Enrolment issues ten single-use recovery
 codes, shown once and stored only as digests, for the phone that ends up in a
 river.
 
-SSO remains available for deployments that want it. Set `oidc:` in the control
-plane's config and the sign-in screen offers both; leave it out and it offers
-the password form alone. Neither requires the other.
-
 `user_tokens:` is a bootstrap hatch for a deployment that has no other way in
 yet, and it is the only thing here that skips the password, the second factor
 and the role. The control plane therefore **refuses to start** when it is set
-alongside an identity provider or any local account. Where it does apply, the
+alongside any local account. Where it does apply, the
 role comes from the named account rather than from holding the string.
 
 ## Controls an operator should know exist
