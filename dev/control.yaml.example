@@ -28,6 +28,18 @@ console_url: ""
 session_ttl: 8h
 ticket_ttl: 60s
 
+# The browser reaches this through the Vite dev server on http://localhost:5290,
+# over plain HTTP and never TLS. A Secure cookie on that origin is one the
+# browser is entitled to drop, and Safari does -- which makes sign-in return
+# 200, store nothing, and put you straight back on the form with no error to
+# explain it. Chrome allows it for localhost, so this reproduces on one machine
+# and not the next.
+#
+# The tls: block below describes this listener; it says nothing about how the
+# console is reached in development. Production leaves this unset and gets
+# Secure cookies from that block, which is the point of the override.
+secure_cookies: false
+
 tls:
   cert_file: "certs/server.crt"
   key_file: "certs/server.key"
