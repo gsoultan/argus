@@ -92,3 +92,4 @@ web/playwright-report/
 # Playwright writes here if run from the wrong directory
 test-results/
 playwright-report/
+web/dist-live/

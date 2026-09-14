@@ -239,6 +239,11 @@ jobs:
       # audit chain verifying in WASM, and -- the reason this job exists --
       # the replay heap staying flat on an 8 MB recording. These were all
       # measured by hand once; this is what keeps them true.
+      #
+      # Also the sign-in screen, on both engines, against e2e/authstub.mjs. The
+      # rest of the suite builds with no control plane configured, where
+      # LoginGate waves everything through -- so that screen went untested until
+      # two bugs had already shipped through the gap.
       - run: bun run e2e
         env:
           CI: "true"
