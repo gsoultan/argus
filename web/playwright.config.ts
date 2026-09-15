@@ -48,11 +48,35 @@ export default defineConfig({
       use: { ...devices['Desktop Safari'] },
     },
   ],
-  webServer: {
-    command:
-      'VITE_CONTROL_URL= bunx vite build --logLevel error && bunx vite preview --port 5510 --strictPort',
-    url: 'http://localhost:5510',
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-  },
+  webServer: [
+    {
+      // Both bundles are built here, in one command, in sequence. Splitting
+      // them across the two entries below ran two vite builds concurrently in
+      // one project -- Playwright starts webServers in parallel -- and a
+      // preview server handed out index.html while the hashed font assets it
+      // referenced were still being written. Twenty-three tests failed on
+      // missing fonts rather than on anything real.
+      //
+      // globalSetup is not the place for it either: Playwright starts its
+      // webServers before globalSetup runs, so the preview would find no dist.
+      command:
+        'VITE_CONTROL_URL= bunx vite build --logLevel error'
+        + ' && VITE_CONTROL_URL=/ bunx vite build --outDir dist-live --logLevel error'
+        + ' && bunx vite preview --port 5510 --strictPort',
+      url: 'http://localhost:5510',
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+    {
+      // Serves the control-plane build, so the sign-in screen exists at all --
+      // with VITE_CONTROL_URL empty, LoginGate waves everything through and
+      // there is nothing to sign in to. Starts immediately and answers 404
+      // until the build above lands, which is what Playwright polls this url
+      // for.
+      command: 'node e2e/authstub.mjs',
+      url: 'http://localhost:5511',
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+  ],
 })
