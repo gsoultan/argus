@@ -1,61 +1,52 @@
 import {
-  ActionIcon, AppShell, Avatar, Badge, Box, Burger, Group, Indicator, Menu,
-  NavLink as MantineNavLink, ScrollArea, Stack, Text, Tooltip,
+  ActionIcon, AppShell, Avatar, Badge, Box, Burger, Center, Group, Indicator, Loader,
+  Menu, NavLink as MantineNavLink, Progress, ScrollArea, Stack, Text, Tooltip,
+  UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconActivity, IconBell, IconChevronDown, IconClipboardCheck, IconFileDescription,
-  IconLogout, IconPlugConnected, IconServer2, IconSettings, IconShieldLock,
-  IconTerminal2, IconUsers,
+  IconBell, IconChevronDown, IconLogout, IconSearch, IconSettings, IconShieldLock,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useState } from 'react'
-import { Center, Loader } from '@mantine/core'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
+import { CommandPalette } from '~/components/CommandPalette'
+import { NAV_SECTIONS, isActive } from '~/components/nav'
 import { isConfigured, logout, whoami, type Identity } from '~/lib/live'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 
-const NAV: {
-  to: string
-  label: string
-  icon: typeof IconActivity
-  badge?: (s: { requestsPending: number; sessionsActive: number; coverageGaps: number }) => number
-}[] = [
-  { to: '/', label: 'Overview', icon: IconActivity },
-  { to: '/connect', label: 'Connect', icon: IconPlugConnected },
-  { to: '/sessions', label: 'Sessions', icon: IconTerminal2, badge: (s) => s.sessionsActive },
-  { to: '/requests', label: 'Access requests', icon: IconClipboardCheck, badge: (s) => s.requestsPending },
-  { to: '/assets', label: 'Assets', icon: IconServer2 },
-  // Badged on the unreviewed count: a coverage gap nobody is told about is one
-  // nobody closes.
-  { to: '/coverage', label: 'Coverage', icon: IconShieldLock, badge: (s) => s.coverageGaps },
-  { to: '/audit', label: 'Audit log', icon: IconFileDescription },
-  { to: '/users', label: 'Users & roles', icon: IconUsers },
-  { to: '/settings', label: 'Settings', icon: IconSettings },
-]
+const HEADER_H = 52
+const NAVBAR_W = 244
 
+/**
+ * The mark.
+ *
+ * Azure, not teal: the logo is brand, and teal now means one thing only —
+ * something Argus verified. A product mark wearing the verification colour
+ * spent the console's loudest signal on decoration.
+ */
 function Logo() {
   return (
-    <Group gap={10} wrap="nowrap">
+    <Group gap={SP.cozy} wrap="nowrap">
       <Box
         w={26}
         h={26}
         className="grid place-items-center shrink-0"
         style={{
           borderRadius: 7,
-          background: 'linear-gradient(140deg, var(--color-verified), #0f766e)',
-          boxShadow: '0 0 14px rgba(45,212,167,0.32)',
+          background: 'linear-gradient(140deg, var(--color-brand-bright), #1b4ec4)',
+          boxShadow: '0 0 14px rgba(37, 99, 235, 0.35)',
         }}
       >
-        <IconShieldLock size={15} color="#04140f" stroke={2.4} />
+        <IconShieldLock size={15} color="#fff" stroke={2.4} />
       </Box>
       <Box>
-        <Text fw={700} size="sm" lh={1.1} c="slate.0" style={{ letterSpacing: '0.02em' }}>
+        <Text fw={700} size={FS.body} lh={1.1} c="slate.0" style={{ letterSpacing: '0.04em' }}>
           ARGUS
         </Text>
-        <Text size={FS.micro} c="dimmed" lh={1.1} style={{ letterSpacing: '0.09em' }}>
+        <Text size={FS.micro} c="dimmed" lh={1.15} style={{ letterSpacing: '0.09em' }}>
           PRIVILEGED ACCESS
         </Text>
       </Box>
@@ -102,7 +93,11 @@ function LoginGate({ children }: { children: React.ReactNode }) {
   }, [queryClient, router, refresh])
 
   if (!identity) {
-    return <Center h="100vh"><Loader size="sm" color="teal" /></Center>
+    return (
+      <Center h="100vh">
+        <Loader size="sm" color="azure" />
+      </Center>
+    )
   }
 
   if (!identity.authenticated) {
@@ -121,7 +116,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function ShellInner({ children }: { children: React.ReactNode }) {
-  const [opened, { toggle }] = useDisclosure()
+  const [opened, { toggle, close }] = useDisclosure()
+  const [paletteOpen, palette] = useDisclosure(false)
   const { data: me } = useQuery(meQuery())
   const { data: stats } = useQuery(statsQuery())
   const { data: cov } = useQuery(coverageQuery())
@@ -135,10 +131,31 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   }
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
+  // Cmd-K anywhere. Captured on the document so it works while focus is inside
+  // a table, a filter or the replay player.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        palette.toggle()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [palette])
+
+  // Closing the drawer on navigation: on a phone the overlay otherwise stays up
+  // over the page it just took you to.
+  useEffect(close, [pathname, close])
+
+  const caCoverage = stats
+    ? Math.round(((stats.assetsTotal - stats.standingCredentialAssets) / stats.assetsTotal) * 100)
+    : 0
+
   return (
     <AppShell
-      header={{ height: 52 }}
-      navbar={{ width: 232, breakpoint: 'sm', collapsed: { mobile: !opened } }}
+      header={{ height: HEADER_H }}
+      navbar={{ width: NAVBAR_W, breakpoint: 'sm', collapsed: { mobile: !opened } }}
       padding={0}
       styles={{
         header: { background: 'var(--color-surface)', borderColor: 'var(--color-line)' },
@@ -147,8 +164,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       }}
     >
       <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between" wrap="nowrap">
-          <Group gap="md" wrap="nowrap">
+        <Group h="100%" px="md" justify="space-between" wrap="nowrap" gap="md">
+          <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
             <Burger
               opened={opened}
               onClick={toggle}
@@ -156,25 +173,67 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               size="sm"
               aria-label={opened ? 'Close navigation' : 'Open navigation'}
             />
-            <Box hiddenFrom="sm"><Logo /></Box>
-            <Badge
-              variant="outline"
-              color="slate"
-              size="sm"
-              visibleFrom="sm"
-              className="argus-digest"
-            >
-              northwind-prod · ap-southeast-3
-            </Badge>
+            <Box hiddenFrom="sm">
+              <Logo />
+            </Box>
+            <Tooltip label="The tenant and region this console is pointed at">
+              <Badge variant="default" color="slate" size="sm" visibleFrom="sm" className="argus-digest">
+                northwind-prod · ap-southeast-3
+              </Badge>
+            </Tooltip>
           </Group>
 
+          {/* A search field rather than an icon: the shortcut is discoverable
+              only if something on screen says it exists. */}
+          <UnstyledButton
+            onClick={palette.open}
+            visibleFrom="md"
+            aria-label="Search pages, hosts, sessions and people"
+            style={{
+              flex: 1,
+              maxWidth: 340,
+              border: '1px solid var(--color-line)',
+              background: 'var(--color-raised)',
+              borderRadius: 7,
+              padding: '5px 10px',
+            }}
+          >
+            <Group gap={SP.snug} wrap="nowrap">
+              <IconSearch size={14} opacity={0.6} />
+              <Text size={FS.meta} c="dimmed" style={{ flex: 1 }}>
+                Search…
+              </Text>
+              <Badge size="xs" variant="default" color="slate" className="argus-digest">
+                ⌘K
+              </Badge>
+            </Group>
+          </UnstyledButton>
+
           <Group gap="xs" wrap="nowrap">
+            <ActionIcon
+              hiddenFrom="md"
+              variant="subtle"
+              color="slate"
+              aria-label="Search"
+              onClick={palette.open}
+            >
+              <IconSearch size={17} />
+            </ActionIcon>
+
             {stats && stats.sessionsActive > 0 && (
               <Tooltip label={`${stats.sessionsActive} sessions in progress right now`}>
                 <Badge
                   color="sky"
                   variant="light"
-                  leftSection={<Box w={6} h={6} className="rounded-full bg-sky-400 animate-pulse" />}
+                  visibleFrom="xs"
+                  leftSection={
+                    <Box
+                      w={6}
+                      h={6}
+                      className="rounded-full animate-pulse"
+                      style={{ background: 'var(--color-live)' }}
+                    />
+                  }
                 >
                   {stats.sessionsActive} live
                 </Badge>
@@ -199,23 +258,29 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               </ActionIcon>
             </Indicator>
 
-            <Menu position="bottom-end" width={210} withArrow>
+            <Menu position="bottom-end" width={220} withArrow>
               <Menu.Target>
-                <Group gap={8} className="cursor-pointer select-none" wrap="nowrap">
-                  <Avatar size={27} radius="sm" color="teal" variant="light">
-                    {me?.displayName.slice(0, 2).toUpperCase() ?? '··'}
-                  </Avatar>
-                  <Box visibleFrom="sm">
-                    <Text size="xs" fw={600} lh={1.15}>{me?.displayName}</Text>
-                    <Text size={FS.micro} c="dimmed" lh={1.15} tt="capitalize">{me?.role}</Text>
-                  </Box>
-                  <IconChevronDown size={13} opacity={0.5} />
-                </Group>
+                <UnstyledButton aria-label="Account menu">
+                  <Group gap={SP.cozy} wrap="nowrap">
+                    <Avatar size={27} radius="sm" color="azure" variant="light">
+                      {me?.displayName.slice(0, 2).toUpperCase() ?? '··'}
+                    </Avatar>
+                    <Box visibleFrom="sm" ta="left">
+                      <Text size={FS.meta} fw={600} lh={1.15}>
+                        {me?.displayName}
+                      </Text>
+                      <Text size={FS.micro} c="dimmed" lh={1.15} tt="capitalize">
+                        {me?.role}
+                      </Text>
+                    </Box>
+                    <IconChevronDown size={13} opacity={0.5} />
+                  </Group>
+                </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>{me?.email}</Menu.Label>
                 <Menu.Item leftSection={<IconSettings size={14} />} component={Link} to="/settings">
-                  Preferences
+                  Gateway policy
                 </Menu.Item>
                 <Menu.Divider />
                 <Menu.Item
@@ -239,36 +304,68 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           <Logo />
         </Box>
 
-        <AppShell.Section grow component={ScrollArea} px="xs">
-          <Stack gap={2}>
-            {NAV.map((item) => {
-              const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)
-              const count = item.badge ? item.badge(navStats) : 0
-              return (
-                <MantineNavLink
-                  key={item.to}
-                  component={Link}
-                  to={item.to as never}
-                  label={item.label}
-                  active={active}
-                  variant="light"
-                  color="teal"
-                  leftSection={<item.icon size={16} stroke={1.7} />}
-                  rightSection={
-                    count > 0 ? (
-                      <Badge size="xs" circle color={item.to === '/sessions' ? 'sky' : 'amber'}>
-                        {count}
-                      </Badge>
-                    ) : null
-                  }
-                  styles={{ root: { borderRadius: 7 }, label: { fontSize: 13 } }}
-                />
-              )
-            })}
+        <AppShell.Section grow component={ScrollArea} px="xs" pb="xs">
+          <Stack gap="md">
+            {NAV_SECTIONS.map((section) => (
+              <Box key={section.label}>
+                <Text
+                  size={FS.micro}
+                  c="dimmed"
+                  fw={700}
+                  tt="uppercase"
+                  px="xs"
+                  mb={SP.tight}
+                  style={{ letterSpacing: '0.1em' }}
+                >
+                  {section.label}
+                </Text>
+                <Stack gap={SP.hair}>
+                  {section.items.map((item) => {
+                    const active = isActive(pathname, item.to)
+                    const count = item.badge ? item.badge(navStats) : 0
+                    return (
+                      <Tooltip
+                        key={item.to}
+                        label={item.blurb}
+                        position="right"
+                        openDelay={600}
+                        maw={230}
+                        multiline
+                      >
+                        <MantineNavLink
+                          component={Link}
+                          to={item.to as never}
+                          label={item.label}
+                          active={active}
+                          variant="light"
+                          color="azure"
+                          leftSection={<item.icon size={16} stroke={1.7} />}
+                          rightSection={
+                            count > 0 ? (
+                              <Badge size="xs" circle color={item.badgeColor ?? 'amber'}>
+                                {count}
+                              </Badge>
+                            ) : null
+                          }
+                          styles={{ label: { fontSize: 13 } }}
+                        />
+                      </Tooltip>
+                    )
+                  })}
+                </Stack>
+              </Box>
+            ))}
           </Stack>
         </AppShell.Section>
 
-        <AppShell.Section p="md">
+        {/* The product's central claim, kept in view rather than stated once on
+            a marketing page: how much of the fleet has no reusable credential
+            left to steal.
+
+            Hidden on the Overview, which renders the same figure as a full card
+            with its progress bar and explanation — the two were on screen
+            together, saying the same thing twice. */}
+        <AppShell.Section p="md" pt="xs" display={pathname === '/' ? 'none' : undefined}>
           <Box
             p="xs"
             style={{
@@ -277,13 +374,14 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               background: 'var(--color-raised)',
             }}
           >
-            <Group gap={6} mb={4} wrap="nowrap">
-              <IconShieldLock size={13} className="text-teal-400" />
-              <Text size={FS.micro} fw={600} c="slate.2" style={{ letterSpacing: '0.05em' }}>
+            <Group gap={SP.snug} mb={SP.snug} wrap="nowrap">
+              <IconShieldLock size={13} style={{ color: 'var(--color-verified)' }} />
+              <Text size={FS.micro} fw={700} c="slate.2" style={{ letterSpacing: '0.06em' }}>
                 ZERO STANDING PRIVILEGE
               </Text>
             </Group>
-            <Text size={FS.micro} c="dimmed" lh={1.4}>
+            <Progress value={caCoverage} color="teal" size={4} radius="xl" mb={SP.snug} />
+            <Text size={FS.micro} c="dimmed" lh={1.45}>
               {stats
                 ? `${stats.assetsTotal - stats.standingCredentialAssets} of ${stats.assetsTotal} assets on certificate auth`
                 : '—'}
@@ -293,36 +391,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       </AppShell.Navbar>
 
       <AppShell.Main>{children}</AppShell.Main>
-    </AppShell>
-  )
-}
 
-/** Consistent page header used by every route. */
-export function PageHeader({
-  title,
-  description,
-  actions,
-}: {
-  title: string
-  description?: string
-  actions?: React.ReactNode
-}) {
-  return (
-    <Group
-      justify="space-between"
-      align="flex-start"
-      px="lg"
-      py="md"
-      wrap="nowrap"
-      style={{ borderBottom: '1px solid var(--color-line)' }}
-    >
-      <Box>
-        <Text component="h1" fw={600} size={FS.title} lh={1.3}>{title}</Text>
-        {description && (
-          <Text size="xs" c="dimmed" mt={4} maw={640}>{description}</Text>
-        )}
-      </Box>
-      {actions && <Group gap="xs" wrap="nowrap">{actions}</Group>}
-    </Group>
+      <CommandPalette opened={paletteOpen} onClose={palette.close} />
+    </AppShell>
   )
 }

@@ -1,15 +1,17 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Grid, Group, Modal, ScrollArea, Stack, Text, Textarea, ThemeIcon, } from '@mantine/core'
+  Alert, Badge, Box, Button, Card, Grid, Group, Modal, ScrollArea, Stack, Text,
+  Textarea,
+} from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconArrowLeft, IconDownload, IconEye, IconInfoCircle, IconLink,
-  IconPlayerStop, IconShieldCheck,
+  IconAlertTriangle, IconDownload, IconEye, IconInfoCircle, IconLink, IconListDetails,
+  IconPlayerStop, IconShieldCheck, IconTerminal2,
 } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { PlayerFallback } from '~/components/PlayerFallback'
 
@@ -38,7 +40,7 @@ import {
   Digest, Field, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes,
   duration,
 } from '~/components/primitives'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import { buildCast } from '~/lib/cast'
 import { downloadText, stamp } from '~/lib/download'
 import { notifyOk } from '~/lib/notify'
@@ -186,8 +188,17 @@ function SessionDetail() {
 
   if (!session) {
     return (
-      <Box p="lg">
-        <Text size="sm" c="dimmed">Session not found.</Text>
+      <Box>
+        <PageHeader crumbs={[{ label: 'Sessions', to: '/sessions' }]} title="Session not found" />
+        <PageBody>
+          <Card>
+            <EmptyState
+              icon={IconTerminal2}
+              title="No such session."
+              description="It may have been aged out of retention, or the link is stale."
+            />
+          </Card>
+        </PageBody>
       </Box>
     )
   }
@@ -237,25 +248,22 @@ function SessionDetail() {
   // reads as a fault rather than as "this session is over".
   const canShadow = session.state === 'active'
   const isRDP = session.protocol === 'rdp'
+  const host = session.assetHostname.split('.')[0] ?? session.assetHostname
 
   return (
     <Box>
+      {/* Navigation moved into the trail above the title. "Back" used to be the
+          first of four equally weighted buttons, the last of which terminates a
+          live session — so the cheapest and the most destructive action on the
+          page were the same size, colour weight and distance apart. */}
       <PageHeader
-        title={`${session.principal}@${session.assetHostname.split('.')[0]}`}
+        crumbs={[{ label: 'Sessions', to: '/sessions' }, { label: `${session.principal}@${host}` }]}
+        title={`${session.principal}@${host}`}
+        status={<SessionStateBadge state={session.state} />}
         description={`Opened by ${session.userEmail} from ${session.clientIp} · ${absTime(session.startedAt)}`}
         actions={
           <>
-            <ButtonLink
-              size="xs"
-              variant="subtle"
-              color="slate"
-              to="/sessions"
-              leftSection={<IconArrowLeft size={14} />}
-            >
-              Back
-            </ButtonLink>
             <Button
-              size="xs"
               variant="default"
               leftSection={<IconDownload size={14} />}
               disabled={!cast}
@@ -265,7 +273,6 @@ function SessionDetail() {
             </Button>
             {canShadow && (
               <Button
-                size="xs"
                 color="amber"
                 variant="light"
                 leftSection={<IconEye size={14} />}
@@ -276,7 +283,6 @@ function SessionDetail() {
             )}
             {session.state === 'active' && (
               <Button
-                size="xs"
                 color="rose"
                 leftSection={<IconPlayerStop size={14} />}
                 onClick={confirm.open}
@@ -288,7 +294,7 @@ function SessionDetail() {
         }
       />
 
-      <Box p="lg">
+      <PageBody>
         {/* First, and filled rather than light: everything below it is suspect.
             The side panel already carried this verdict as a badge, which an
             operator watching a replay has no reason to look at. A recording
@@ -300,10 +306,9 @@ function SessionDetail() {
             color="rose"
             variant="filled"
             icon={<IconAlertTriangle size={16} />}
-            mb="md"
             title="This recording does not match what the gateway sealed"
           >
-            <Text size="xs">
+            <Text size={FS.body} lh={1.5}>
               The stored artefact's hash chain disagrees with the chain head recorded when
               this session ended, so it has been altered since. What plays below is the
               file as it stands now, shown so an investigator can see what was changed —
@@ -315,12 +320,10 @@ function SessionDetail() {
         {verified === 'error' && (
           <Alert
             color="amber"
-            variant="light"
             icon={<IconAlertTriangle size={16} />}
-            mb="md"
             title="This recording could not be verified"
           >
-            <Text size="xs">
+            <Text size={FS.body} lh={1.5}>
               The control plane could not check the artefact against its sealed chain head.
               That is not the same as finding it altered, and not the same as finding it
               intact — until it verifies, nothing below should be relied on.
@@ -330,12 +333,10 @@ function SessionDetail() {
         {session.fidelity === 'ebpf' && decoded.status === 'ready' && !kernelObserved && (
           <Alert
             color="rose"
-            variant="light"
             icon={<IconAlertTriangle size={16} />}
-            mb="md"
             title="Recorded as eBPF, but the recording carries no kernel events"
           >
-            <Text size="xs">
+            <Text size={FS.body} lh={1.5}>
               The session was reported at eBPF fidelity, yet this artefact contains no
               kernel-observed executions. Either the agent's probe stopped mid-session or the
               recording was altered after the fact. The command timeline below falls back to
@@ -347,12 +348,10 @@ function SessionDetail() {
         {session.fidelity === 'pty' && !kernelObserved && (
           <Alert
             color="amber"
-            variant="light"
             icon={<IconInfoCircle size={16} />}
-            mb="md"
             title="PTY-only recording"
           >
-            <Text size="xs">
+            <Text size={FS.body} lh={1.5}>
               This session was captured at the gateway as a terminal stream. It faithfully shows
               what crossed the wire, but a user can obscure intent — base64-encoded commands, or
               a script whose body never appears on screen. Treat the command timeline below as an
@@ -379,7 +378,7 @@ function SessionDetail() {
                   </Box>
                 ) : (
                   <Box p="lg">
-                    <Text size="xs" c="dimmed">
+                    <Text size={FS.meta} c="dimmed">
                       {rdpError ?? 'Decoding the recording…'}
                     </Text>
                   </Box>
@@ -394,14 +393,10 @@ function SessionDetail() {
 
           <Grid.Col span={{ base: 12, xl: 4 }}>
             <Stack gap="sm">
-              <Card padding="md">
-                <Group justify="space-between" mb="sm">
-                  <Text fw={600} size="sm">Session</Text>
-                  <SessionStateBadge state={session.state} />
-                </Group>
-                <Stack gap={10}>
+              <SectionCard title="Session" icon={IconTerminal2} iconColor="sky">
+                <Stack gap="sm">
                   <Field label="Target">
-                    <Group gap={6}>
+                    <Group gap={SP.snug}>
                       <Mono>{session.assetHostname}</Mono>
                       <ButtonLink
                         size="compact-xs"
@@ -416,7 +411,7 @@ function SessionDetail() {
                     </Group>
                   </Field>
                   <Group grow>
-                    <Field label="Principal"><Mono c="teal.4">{session.principal}</Mono></Field>
+                    <Field label="Principal"><Mono c="azure.3">{session.principal}</Mono></Field>
                     <Field label="Protocol"><Mono>{session.protocol}</Mono></Field>
                   </Group>
                   <Group grow>
@@ -445,56 +440,46 @@ function SessionDetail() {
                     </Field>
                   )}
                 </Stack>
-              </Card>
+              </SectionCard>
 
-              <Card padding="md">
-                <Group gap={8} mb={6}>
-                  <ThemeIcon variant="light" color="teal" size={22} radius="sm">
-                    <IconShieldCheck size={13} />
-                  </ThemeIcon>
-                  <Text fw={600} size="sm">Recording integrity</Text>
-                </Group>
-                <Text size={FS.micro} c="dimmed" mb="sm" lh={1.45}>
-                  Each recording chunk is hashed into a chain rooted at the session start, so any
-                  edit to the stored artefact invalidates every subsequent link.
-                </Text>
-                <Field label="Chain head">
-                  {session.chainHead ? <Digest value={session.chainHead} chars={32} /> : '—'}
-                </Field>
-                {verified && (
-                  <Field label="Server verification">
-                    <Badge
-                      size="sm"
-                      color={verified === 'intact' ? 'teal' : verified === 'tampered' ? 'rose' : 'slate'}
-                      variant={verified === 'tampered' ? 'filled' : 'light'}
-                    >
-                      {verified === 'intact' ? 'chain intact' : verified}
-                    </Badge>
+              <SectionCard
+                title="Recording integrity"
+                icon={IconShieldCheck}
+                iconColor="teal"
+                description="Each recording chunk is hashed into a chain rooted at the session start, so any edit to the stored artefact invalidates every subsequent link."
+              >
+                <Stack gap="sm">
+                  <Field label="Chain head">
+                    {session.chainHead ? <Digest value={session.chainHead} chars={32} /> : '—'}
                   </Field>
-                )}
-                <ButtonLink
-                  size="compact-xs"
-                  variant="light"
-                  color="teal"
-                  mt="sm"
-                  fullWidth
-                  to="/audit"
-                >
-                  Verify in audit log
-                </ButtonLink>
-              </Card>
+                  {verified && (
+                    <Field label="Server verification">
+                      <Badge
+                        size="sm"
+                        color={verified === 'intact' ? 'teal' : verified === 'tampered' ? 'rose' : 'slate'}
+                        variant={verified === 'tampered' ? 'filled' : 'light'}
+                      >
+                        {verified === 'intact' ? 'chain intact' : verified}
+                      </Badge>
+                    </Field>
+                  )}
+                  <ButtonLink size="compact-xs" variant="light" fullWidth to="/audit">
+                    Verify in audit log
+                  </ButtonLink>
+                </Stack>
+              </SectionCard>
 
-              <Card padding={0}>
-                <Group justify="space-between" p="md" pb="xs">
-                  <Text fw={600} size="sm">Command timeline</Text>
-                  <Badge
-                    size="xs"
-                    color={kernelObserved ? 'teal' : 'amber'}
-                    variant="light"
-                  >
+              <SectionCard
+                title="Command timeline"
+                icon={IconListDetails}
+                iconColor={kernelObserved ? 'teal' : 'amber'}
+                flush
+                badge={
+                  <Badge size="xs" color={kernelObserved ? 'teal' : 'amber'} variant="light">
                     {kernelObserved ? 'kernel-observed' : 'heuristic'}
                   </Badge>
-                </Group>
+                }
+              >
                 <ScrollArea.Autosize mah={300}>
                   <Stack gap={0}>
                     {commands.map((c, i) => {
@@ -504,20 +489,20 @@ function SessionDetail() {
                         <Box
                           key={`${c.t}-${i}`}
                           px="md"
-                          py={6}
+                          py={SP.snug}
                           style={{
                             borderTop: '1px solid var(--color-line)',
-                            background: active ? 'rgba(45,212,167,0.07)' : undefined,
+                            background: active ? 'rgba(37, 99, 235, 0.10)' : undefined,
                             borderLeft: active
-                              ? '2px solid var(--color-verified)'
+                              ? '2px solid var(--color-brand-bright)'
                               : '2px solid transparent',
                           }}
                         >
-                          <Group gap={8} wrap="nowrap" align="flex-start">
+                          <Group gap={SP.cozy} wrap="nowrap" align="flex-start">
                             <Text size={FS.micro} c="dimmed" ff="monospace" w={38} style={{ flexShrink: 0 }}>
                               {`${String(Math.floor(c.t / 60)).padStart(2, '0')}:${String(Math.floor(c.t % 60)).padStart(2, '0')}`}
                             </Text>
-                            <Text size="xs" ff="monospace" c={active ? 'teal.3' : 'slate.2'} style={{ wordBreak: 'break-all' }}>
+                            <Text size="xs" ff="monospace" c={active ? 'azure.2' : 'slate.2'} style={{ wordBreak: 'break-all' }}>
                               {c.cmd}
                             </Text>
                           </Group>
@@ -525,17 +510,23 @@ function SessionDetail() {
                       )
                     })}
                     {commands.length === 0 && (
-                      <Text size="xs" c="dimmed" ta="center" py="lg">
-                        No commands detected.
-                      </Text>
+                      <EmptyState
+                        compact
+                        title="No commands detected."
+                        description={
+                          kernelObserved
+                            ? 'The kernel recorded no execve for this session.'
+                            : 'Nothing in the terminal stream looked like a command. That is not the same as nothing having run.'
+                        }
+                      />
                     )}
                   </Stack>
                 </ScrollArea.Autosize>
-              </Card>
+              </SectionCard>
             </Stack>
           </Grid.Col>
         </Grid>
-      </Box>
+      </PageBody>
 
       <Modal
         opened={shadowOpen}
@@ -543,16 +534,16 @@ function SessionDetail() {
         title={`Watching ${session.userEmail} · ${session.principal}@${session.assetHostname}`}
         size="90%"
       >
-        <Alert color="amber" variant="light" icon={<IconEye size={16} />} mb="md">
-          <Text size="xs">
+        <Alert color="amber" icon={<IconEye size={16} />} mb="md">
+          <Text size={FS.body} lh={1.5}>
             Read-only. Keystrokes are not shown — the host echoes what the user types, so the
             output below already contains it. Your attaching to this session has been written to
             the audit log against your account.
           </Text>
         </Alert>
         {shadowError && (
-          <Alert color="rose" variant="light" mb="md">
-            <Text size="xs">{shadowError}</Text>
+          <Alert color="rose" mb="md">
+            <Text size={FS.body}>{shadowError}</Text>
           </Alert>
         )}
         {/* Keyed on open state so closing the modal disposes the terminal and
@@ -598,14 +589,15 @@ function SessionDetail() {
       </Modal>
 
       <Modal opened={confirmOpen} onClose={confirm.close} title="Terminate session" size="md">
-        <Alert color="rose" variant="light" icon={<IconAlertTriangle size={16} />} mb="md">
-          <Text size="xs">
+        <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
+          <Text size={FS.body} lh={1.5}>
             The connection to <Mono>{session.assetHostname}</Mono> will be closed immediately.
             Any in-flight command keeps running on the host — terminating the session stops
             further input, it does not roll anything back.
           </Text>
         </Alert>
         <Textarea
+          size="sm"
           label="Reason"
           description="Recorded in the audit log against your account."
           placeholder="e.g. Session opened outside the approved window for INC-4471."
@@ -615,12 +607,11 @@ function SessionDetail() {
           onChange={(e) => setNote(e.currentTarget.value)}
         />
         <Group justify="flex-end" mt="md">
-          <Button variant="subtle" color="slate" size="xs" onClick={confirm.close}>
+          <Button variant="subtle" color="slate" onClick={confirm.close}>
             Cancel
           </Button>
           <Button
             color="rose"
-            size="xs"
             loading={terminate.isPending}
             disabled={note.trim().length < 8}
             onClick={onTerminate}

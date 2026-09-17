@@ -135,3 +135,60 @@ describe('unknown routes', () => {
     expect(screen.getByText('No such page.')).toBeInTheDocument()
   })
 })
+
+/**
+ * The console's information architecture.
+ *
+ * Nine flat destinations were grouped into three sections without changing a
+ * single path, so these assert the grouping exists and that the links inside it
+ * still point where they always did.
+ */
+describe('navigation', () => {
+  it('groups its destinations under named sections', async () => {
+    await renderRoute('/')
+    for (const section of ['Operate', 'Fleet', 'Governance']) {
+      expect(await screen.findByText(section)).toBeInTheDocument()
+    }
+  })
+})
+
+describe('overview alerts', () => {
+  /**
+   * This button said "Review coverage" and navigated to /assets — the inventory
+   * table, which lists hosts and answers nothing about whether an agent is
+   * reporting from each one. The alert it sits in is specifically about hosts
+   * that would not record a bypass, which is the Coverage page's whole subject.
+   */
+  it('sends a coverage gap to Coverage rather than to the inventory', async () => {
+    await renderRoute('/')
+    const link = await screen.findByRole('link', { name: /review coverage/i })
+    expect(link).toHaveAttribute('href', '/coverage')
+  })
+})
+
+describe('empty states', () => {
+  /**
+   * "No sessions match." on its own reads the same whether the filter is too
+   * narrow, the fleet is genuinely idle, or the query failed. The guidance is
+   * the part that tells them apart.
+   */
+  it('say what to do next, not only that there is nothing', async () => {
+    await renderRoute('/sessions')
+    const search = await screen.findByPlaceholderText(/filter by user, host/i)
+    fireEvent.change(search, { target: { value: 'no-such-host-anywhere' } })
+    expect(await screen.findByText('No sessions match.')).toBeInTheDocument()
+    expect(screen.getByText(/widen it, or clear the search/i)).toBeInTheDocument()
+  })
+})
+
+describe('command palette', () => {
+  it('opens on the keyboard and reaches a host by name from any page', async () => {
+    await renderRoute('/')
+    fireEvent.keyDown(document, { key: 'k', metaKey: true })
+
+    const input = await screen.findByPlaceholderText(/search pages, hosts/i)
+    fireEvent.change(input, { target: { value: 'db-01' } })
+
+    expect(await screen.findByText('db-01.data.northwind.id')).toBeInTheDocument()
+  })
+})

@@ -213,10 +213,10 @@ export function Replay({ decoded, onTimeChange }: ReplayProps) {
     return (
       <Box className="grid place-items-center" h={420} style={{ background: '#05080c' }}>
         <Stack align="center" gap="xs">
-          <Loader size="sm" color="teal" />
+          <Loader size="sm" color="azure" />
           <Text size="xs" c="dimmed">Decoding recording…</Text>
           {decoded.progress > 0 && (
-            <Progress value={decoded.progress * 100} size="xs" w={180} color="teal" />
+            <Progress value={decoded.progress * 100} size="xs" w={180} color="azure" />
           )}
         </Stack>
       </Box>
@@ -256,7 +256,7 @@ export function Replay({ decoded, onTimeChange }: ReplayProps) {
           {decoded.frameCount.toLocaleString()} frames
         </Badge>
         <Tooltip label="Decoded and indexed off the main thread in a Web Worker, which also holds the frames">
-          <Badge size="xs" variant="outline" color="teal" className="argus-digest">
+          <Badge size="xs" variant="outline" color="azure" className="argus-digest">
             decoded in {decoded.ms}ms
           </Badge>
         </Tooltip>

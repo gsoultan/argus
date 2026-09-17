@@ -19,6 +19,14 @@ Fixture state lives in module scope (`db` in `api.ts`), so it survives
 client-side navigation and resets on a full page reload. Worth knowing when
 testing persistence — a hard reload is not a valid persistence check.
 
+## Page composition
+
+Routes own content; `components/page.tsx` owns layout. `PageHeader`, `PageBody`,
+`Toolbar`, `SectionCard`, `EmptyState` and `DataTable` are the only shapes a
+route should be assembling, and `components/nav.ts` is the single definition of
+the sidebar's three sections — read by both `Shell` and `CommandPalette`. See
+[design-system](design-system.md) before changing any of them.
+
 ## Where the workers are
 
 Four, all in `web/src/workers/`. Two of them own state rather than shipping it

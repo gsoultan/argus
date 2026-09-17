@@ -1,16 +1,14 @@
 import { useState } from 'react'
-import {
-  Box, Card, Group, Select, Table, Text, TextInput, Tooltip,
-} from '@mantine/core'
+import { Box, Group, Select, Table, Text, TextInput, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconSearch } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { IconSearch, IconServer2 } from '@tabler/icons-react'
+import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import {
   AgentBadge, BypassBadge, CredentialBadge, HealthDot, HostKeyBadge, Mono,
   relTime, rowNav,
 } from '~/components/primitives'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import { assetsQuery, groupsQuery } from '~/lib/queries'
 import type { Asset } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
@@ -42,6 +40,8 @@ function Assets() {
     }),
   )
 
+  const filtered = Boolean(search.trim() || groupId || hostKeyState)
+
   return (
     <Box>
       <PageHeader
@@ -49,10 +49,15 @@ function Assets() {
         description="Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified."
       />
 
-      <Box p="lg">
-        <Group gap="xs" mb="sm" wrap="wrap">
+      <PageBody>
+        <Toolbar
+          right={
+            <Text size={FS.micro} c="dimmed">
+              {assets?.length ?? 0} assets
+            </Text>
+          }
+        >
           <TextInput
-            size="xs"
             w={280}
             placeholder="Filter by hostname, address, OS or tag"
             leftSection={<IconSearch size={14} />}
@@ -60,7 +65,6 @@ function Assets() {
             onChange={(e) => setSearch(e.currentTarget.value)}
           />
           <Select
-            size="xs"
             w={190}
             placeholder="All groups"
             clearable
@@ -69,7 +73,6 @@ function Assets() {
             data={groups?.map((g) => ({ value: g.id, label: `${g.name} (${g.assetCount})` })) ?? []}
           />
           <Select
-            size="xs"
             w={170}
             placeholder="Any host key state"
             clearable
@@ -81,74 +84,67 @@ function Assets() {
               { value: 'changed', label: 'Changed' },
             ]}
           />
-        </Group>
+        </Toolbar>
 
-        <Card padding={0}>
-          <Table.ScrollContainer minWidth={980} type="native">
-            <Table verticalSpacing={8} horizontalSpacing="md" highlightOnHover striped="even">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Host</Table.Th>
-                <Table.Th>Address</Table.Th>
-                <Table.Th>OS</Table.Th>
-                <Table.Th>Auth</Table.Th>
-                <Table.Th>Host key</Table.Th>
-                <Table.Th>Agent</Table.Th>
-                <Table.Th>Bypass</Table.Th>
-                <Table.Th>Rotated</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {assets?.map((a) => (
-                <Table.Tr
-                  key={a.id}
-                  {...rowNav(() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }))}
-                >
-                  <Table.Td>
-                    <Group gap={8} wrap="nowrap">
-                      <HealthDot health={a.health} />
-                      <Box>
-                        <Mono>{a.hostname.split('.')[0]}</Mono>
-                        <Text size={FS.micro} c="dimmed">
-                          {a.hostname.split('.').slice(1).join('.')}
-                        </Text>
-                      </Box>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td><Mono c="dimmed">{a.address}:{a.port}</Mono></Table.Td>
-                  <Table.Td><Text size="xs" c="dimmed">{a.os}</Text></Table.Td>
-                  <Table.Td><CredentialBadge mode={a.credentialMode} /></Table.Td>
-                  <Table.Td><HostKeyBadge state={a.hostKeyState} /></Table.Td>
-                  <Table.Td>
-                    <AgentBadge state={a.agentState} lastSeen={a.agentLastSeenAt} />
-                  </Table.Td>
-                  <Table.Td>
-                    <BypassBadge posture={a.bypassPosture} unmanagedKeys={a.unmanagedKeyCount} />
-                  </Table.Td>
-                  <Table.Td>
-                    {a.credentialMode === 'ca-certificate' ? (
-                      <Tooltip label="Certificate auth — nothing to rotate">
-                        <Text size="xs" c="dimmed">n/a</Text>
-                      </Tooltip>
-                    ) : (
-                      <Text size="xs" c={rotationOverdue(a) ? 'amber.4' : 'dimmed'}>
-                        {relTime(a.credentialRotatedAt)}
-                        {rotationOverdue(a) && ' ⚠'}
-                      </Text>
-                    )}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-            </Table.ScrollContainer>
-          {assets?.length === 0 && (
-            <Text size="xs" c="dimmed" ta="center" py="xl">No assets match.</Text>
-          )}
-        </Card>
-
-        <Text size={FS.micro} c="dimmed" mt="xs">{assets?.length ?? 0} assets.</Text>
-      </Box>
+        <DataTable
+          minWidth={980}
+          loading={assets === undefined}
+          isEmpty={assets?.length === 0}
+          columns={['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated']}
+          empty={
+            <EmptyState
+              icon={IconServer2}
+              title="No assets match."
+              description={
+                filtered
+                  ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'
+                  : 'The inventory is empty. Enrol a host from Coverage, or add one with argus-control assets add.'
+              }
+            />
+          }
+        >
+          {assets?.map((a) => (
+            <Table.Tr
+              key={a.id}
+              {...rowNav(() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }))}
+            >
+              <Table.Td>
+                <Group gap={SP.cozy} wrap="nowrap">
+                  <HealthDot health={a.health} />
+                  <Box>
+                    <Mono>{a.hostname.split('.')[0]}</Mono>
+                    <Text size={FS.micro} c="dimmed">
+                      {a.hostname.split('.').slice(1).join('.')}
+                    </Text>
+                  </Box>
+                </Group>
+              </Table.Td>
+              <Table.Td><Mono c="dimmed">{a.address}:{a.port}</Mono></Table.Td>
+              <Table.Td><Text size="xs" c="dimmed">{a.os}</Text></Table.Td>
+              <Table.Td><CredentialBadge mode={a.credentialMode} /></Table.Td>
+              <Table.Td><HostKeyBadge state={a.hostKeyState} /></Table.Td>
+              <Table.Td>
+                <AgentBadge state={a.agentState} lastSeen={a.agentLastSeenAt} />
+              </Table.Td>
+              <Table.Td>
+                <BypassBadge posture={a.bypassPosture} unmanagedKeys={a.unmanagedKeyCount} />
+              </Table.Td>
+              <Table.Td>
+                {a.credentialMode === 'ca-certificate' ? (
+                  <Tooltip label="Certificate auth — nothing to rotate">
+                    <Text size="xs" c="dimmed">n/a</Text>
+                  </Tooltip>
+                ) : (
+                  <Text size="xs" c={rotationOverdue(a) ? 'amber.4' : 'dimmed'}>
+                    {relTime(a.credentialRotatedAt)}
+                    {rotationOverdue(a) && ' ⚠'}
+                  </Text>
+                )}
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </DataTable>
+      </PageBody>
     </Box>
   )
 }
