@@ -30,6 +30,44 @@ the Go control plane will serve.
 | Control plane API | http://localhost:8480 *(once built)* |
 | SSH gateway | `localhost:2222` *(once built)* |
 
+### Signing in locally
+
+There is no default account, here or anywhere else. Nothing is seeded, so the
+console has nothing to let you in with until you make something -- see
+[Signing in](#signing-in) for why that is deliberate rather than an omission.
+
+Make one against the dev control plane:
+
+```bash
+set -a; . dev/secrets.env; set +a
+go run ./cmd/argus-control -config dev/control.yaml \
+  users add you@example.com --role admin
+```
+
+Two things that will otherwise waste your afternoon:
+
+- **`-config` goes before the subcommand.** After it, you get
+  `unknown flag "-config"`, which reads as the flag not existing rather than
+  being in the wrong place.
+- **Load `dev/secrets.env` first.** Without it the config cannot resolve its
+  `${VAR}` references and the command exits before it reaches the database.
+
+The password is read from the terminal without echo. Piping one in works too,
+for provisioning a throwaway account in a script:
+
+```bash
+printf '%s\n' "$A_PASSWORD" | go run ./cmd/argus-control \
+  -config dev/control.yaml users add you@example.com --role admin
+```
+
+Then sign in at the web UI above. The console keeps the URL you asked for, so a
+deep link takes you back to that page rather than the dashboard.
+
+If the sign-in form never appears and the console says the control plane could
+not be reached, that is not an authentication problem -- the control plane is
+down or the console is pointed at the wrong address. `./scripts/dev.sh` names
+the specific cause on startup.
+
 ### The scripts
 
 | Script | Does |
