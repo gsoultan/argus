@@ -12,6 +12,9 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -37,6 +40,9 @@ type linuxProbe struct {
 	reader  *ringbuf.Reader
 	tracked *ebpf.Map
 	drops   *ebpf.Map
+	// clock turns the probe's CLOCK_MONOTONIC stamps into wall-clock time.
+	// Read once, here, rather than per event.
+	clock monoClock
 	// chanDrops counts executions this process could not hand on, which the
 	// kernel counter cannot see. Same meaning, other side of the ring buffer.
 	chanDrops sync.Map // sessionID -> *atomic.Uint64
@@ -115,6 +121,7 @@ func Open(ctx context.Context, log *slog.Logger) (Probe, error) {
 		events: make(chan Exec, 1024),
 		log:    log,
 		done:   make(chan struct{}),
+		clock:  readMonoClock(log),
 	}
 
 	// Attach exit first and fork second, so a process cannot be born into the
@@ -283,7 +290,7 @@ func (p *linuxProbe) read() {
 			continue
 		}
 
-		e, err := decodeEvent(rec.RawSample)
+		e, err := decodeEvent(rec.RawSample, p.clock)
 		if err != nil {
 			// A malformed record means the Go layout and the C struct have
 			// diverged. Reporting it is essential: the alternative is emitting
@@ -361,4 +368,25 @@ func inPIDNamespace() bool {
 		return false
 	}
 	return ns != initialPIDNamespace
+}
+
+// readMonoClock pairs CLOCK_MONOTONIC with the wall clock, once.
+//
+// The probe stamps events with bpf_ktime_get_ns, which is this same clock, so
+// the difference between a reading and this reference is how long ago the
+// kernel saw the exec. Both clocks exclude suspend, so a laptop that slept
+// mid-session does not acquire a gap the recording never had.
+//
+// A failure leaves the zero value, which decodeEvent reads as "no reference"
+// and falls back to decode time. Losing the accuracy is bad; silently shifting
+// every timestamp by an unknown amount would be worse.
+func readMonoClock(log *slog.Logger) monoClock {
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
+		log.Warn("cannot read the monotonic clock; execution times will be "+
+			"stamped when this process decodes them, not when the kernel saw them",
+			"error", err)
+		return monoClock{}
+	}
+	return monoClock{mono: ts.Nano(), wall: time.Now().UTC()}
 }

@@ -40,7 +40,7 @@ func TestHeaderLayoutMatchesTheProbe(t *testing.T) {
 		t.Fatalf("rawEvent is %d bytes, argsOffset is %d", got, argsOffset)
 	}
 	// Restated independently of the constant's own arithmetic.
-	want := 4 + 4 + 4 + 4 + 1 + 37 + 16 + 256
+	want := 8 + 4 + 4 + 4 + 4 + 1 + 37 + 16 + 256
 	if argsOffset != want {
 		t.Errorf("argsOffset = %d, want %d", argsOffset, want)
 	}
@@ -55,7 +55,7 @@ func TestDecodeFullEvent(t *testing.T) {
 	copy(raw.Comm[:], "bash")
 	copy(raw.Filename[:], "/usr/bin/bash")
 
-	e, err := decodeEvent(buildRecord(t, raw, args))
+	e, err := decodeEvent(buildRecord(t, raw, args), monoClock{})
 	if err != nil {
 		t.Fatalf("decodeEvent: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestDecodePreservesObfuscatedCommands(t *testing.T) {
 	copy(raw.Session[:], "sess")
 	copy(raw.Filename[:], "/bin/sh")
 
-	e, err := decodeEvent(buildRecord(t, raw, args))
+	e, err := decodeEvent(buildRecord(t, raw, args), monoClock{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestDecodePreservesObfuscatedCommands(t *testing.T) {
 }
 
 func TestDecodeRejectsShortRecords(t *testing.T) {
-	if _, err := decodeEvent(make([]byte, argsOffset-1)); err == nil {
+	if _, err := decodeEvent(make([]byte, argsOffset-1), monoClock{}); err == nil {
 		t.Error("a truncated record decoded without error")
 	}
 	// Exactly the header and no argv is legitimate: a process can exec with an
@@ -109,7 +109,7 @@ func TestDecodeRejectsShortRecords(t *testing.T) {
 	var raw rawEvent
 	copy(raw.Session[:], "sess")
 	copy(raw.Filename[:], "/bin/true")
-	e, err := decodeEvent(buildRecord(t, raw, nil))
+	e, err := decodeEvent(buildRecord(t, raw, nil), monoClock{})
 	if err != nil {
 		t.Fatalf("header-only record: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestDecodeClampsAnOverstatedLength(t *testing.T) {
 	raw.ArgsLen = 9999 // more than the record holds
 	copy(raw.Session[:], "sess")
 
-	e, err := decodeEvent(buildRecord(t, raw, args))
+	e, err := decodeEvent(buildRecord(t, raw, args), monoClock{})
 	if err != nil {
 		t.Fatalf("decodeEvent: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestTruncationSurvivesDecoding(t *testing.T) {
 	raw.Truncated = 1
 	copy(raw.Session[:], "sess")
 
-	e, err := decodeEvent(buildRecord(t, raw, args))
+	e, err := decodeEvent(buildRecord(t, raw, args), monoClock{})
 	if err != nil {
 		t.Fatal(err)
 	}
