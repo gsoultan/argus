@@ -41,6 +41,9 @@ type Account struct {
 	TOTPSecret   string
 	MFAEnrolled  bool
 	Disabled     bool
+	// DisabledAt is when it was revoked, for a listing that says so rather
+	// than only that it happened.
+	DisabledAt *time.Time
 }
 
 // Account looks a user up by email, case-insensitively.
@@ -298,6 +301,99 @@ func (s *Store) AnyAccountExists(ctx context.Context) (bool, error) {
 		`SELECT EXISTS(SELECT 1 FROM users WHERE password_hash IS NOT NULL AND disabled_at IS NULL)`).
 		Scan(&exists)
 	return exists, err
+}
+
+// ErrLastAdmin means disabling this account would leave nobody able to
+// administer the deployment.
+var ErrLastAdmin = errors.New("this is the last account that can administer this deployment")
+
+// ErrAlreadyInState means the account was already in the state asked for.
+var ErrAlreadyInState = errors.New("the account is already in that state")
+
+// SetAccountDisabled revokes or restores an account.
+//
+// The column has been read since it was added -- a disabled account cannot
+// sign in, does not count toward accountsExist, and does not count as an
+// administrator -- but nothing ever wrote it. So an account could be created
+// and never revoked, which for a product about controlling access is the wrong
+// half of the pair to have.
+//
+// Refuses to disable the last administrator. That is what CountAdmins was
+// written for, and a deployment nobody can administer is not a safer one: the
+// way out of it is direct SQL against the database, which is the thing this
+// exists to avoid needing.
+func (s *Store) SetAccountDisabled(ctx context.Context, email string, disabled bool) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var role string
+	var already *time.Time
+	err = tx.QueryRow(ctx,
+		`SELECT role, disabled_at FROM users WHERE lower(email) = lower($1) FOR UPDATE`,
+		email).Scan(&role, &already)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNoAccount
+	}
+	if err != nil {
+		return err
+	}
+	if (already != nil) == disabled {
+		return ErrAlreadyInState
+	}
+
+	// Counted inside the transaction, with the row locked: two disables racing
+	// each other could otherwise each see one other administrator and both
+	// proceed.
+	if disabled && (role == "admin" || role == "owner") {
+		var others int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM users
+			  WHERE role IN ('owner','admin') AND disabled_at IS NULL
+			    AND lower(email) <> lower($1)`, email).Scan(&others); err != nil {
+			return err
+		}
+		if others == 0 {
+			return ErrLastAdmin
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET disabled_at = CASE WHEN $2 THEN now() ELSE NULL END
+		 WHERE lower(email) = lower($1)`, email, disabled); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// Accounts lists every local account, disabled ones included.
+//
+// Disabled ones especially: an operator asking who can sign in needs to see
+// that an account exists and is revoked, not to be shown a list it is missing
+// from and conclude it was never there.
+func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT email, display_name, role, mfa_enrolled, disabled_at
+		  FROM users ORDER BY lower(email)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Account{}
+	for rows.Next() {
+		var a Account
+		var disabledAt *time.Time
+		if err := rows.Scan(&a.Email, &a.DisplayName, &a.Role, &a.MFAEnrolled, &disabledAt); err != nil {
+			return nil, err
+		}
+		a.DisabledAt = disabledAt
+		a.Disabled = disabledAt != nil
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // CountAdmins reports how many accounts can change policy, so the console can

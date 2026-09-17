@@ -122,8 +122,22 @@ func run() error {
 	// `argus-control users add <email>` creates a local account. A deployment
 	// needs one before anyone can sign in, and seeding a default administrator
 	// with a known password would be shipping a backdoor.
-	if flag.NArg() >= 2 && flag.Arg(0) == "users" && flag.Arg(1) == "add" {
-		return runUsersAdd(configPath, flag.Args()[2:])
+	if flag.NArg() >= 2 && flag.Arg(0) == "users" {
+		switch flag.Arg(1) {
+		case "add":
+			return runUsersAdd(configPath, flag.Args()[2:])
+		case "list":
+			return runUsersList(configPath)
+		// Revoking access is the other half of creating it, and until these
+		// existed only the first half did: disabled_at was read on every
+		// sign-in and written by nothing.
+		case "disable":
+			return runUsersSetDisabled(configPath, flag.Args()[2:], true)
+		case "enable":
+			return runUsersSetDisabled(configPath, flag.Args()[2:], false)
+		default:
+			return fmt.Errorf("unknown users command %q: add, list, disable, enable", flag.Arg(1))
+		}
 	}
 
 	cfg, err := loadConfig(configPath)
