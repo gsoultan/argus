@@ -119,12 +119,30 @@ func (r *Recorder) Write(s Stream, p []byte) error {
 // separate stream it would be exactly as forgeable as the shell history it
 // exists to replace, and a chain that covered the terminal output but not the
 // command list would guarantee the wrong half.
-func (r *Recorder) Exec(v any) error {
+func (r *Recorder) Exec(v any) error { return r.ExecAt(time.Time{}, v) }
+
+// ExecAt records an execution at the moment the kernel saw it.
+//
+// The frame's offset is what places a command in the replay, and taking it
+// from time.Now() placed it where this process got round to writing it
+// instead. Under a backlog -- a burst of execs, a ring buffer filling, a busy
+// consumer -- those are not the same moment, and that is exactly when the
+// order matters to whoever is reading it back.
+//
+// A zero `at`, or one from before the recording started, falls back to now:
+// there is no probe timestamp to trust, and a frame at a negative offset is
+// one no player will place correctly.
+func (r *Recorder) ExecAt(at time.Time, v any) error {
 	payload, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("marshal exec event: %w", err)
 	}
 	elapsed := time.Since(r.started).Seconds()
+	if !at.IsZero() {
+		if d := at.Sub(r.started); d >= 0 {
+			elapsed = d.Seconds()
+		}
+	}
 	line, err := json.Marshal([]any{round3(elapsed), string(Kernel), string(payload)})
 	if err != nil {
 		return fmt.Errorf("marshal exec frame: %w", err)

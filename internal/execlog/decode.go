@@ -28,7 +28,7 @@ const (
 	argsBufSize = 4096
 
 	// Byte offset of the variable-length args tail.
-	argsOffset = 4 + 4 + 4 + 4 + 1 + sessionLen + commLen + filenameLen
+	argsOffset = 8 + 4 + 4 + 4 + 4 + 1 + sessionLen + commLen + filenameLen
 )
 
 // MaxSessionID is the longest session id the probe can carry.
@@ -42,6 +42,7 @@ const MaxSessionID = sessionLen - 1
 
 // rawEvent mirrors the fixed-size head of struct exec_event.
 type rawEvent struct {
+	Ktime     uint64
 	PID       uint32
 	PPID      uint32
 	UID       uint32
@@ -53,7 +54,31 @@ type rawEvent struct {
 }
 
 // decodeEvent parses one ring buffer record.
-func decodeEvent(b []byte) (Exec, error) {
+// monoClock converts a bpf_ktime_get_ns reading into wall-clock time.
+//
+// The probe stamps CLOCK_MONOTONIC, which is nanoseconds since boot and means
+// nothing on its own. One reference pair -- the same clock and the wall clock,
+// read together at start-up -- turns every later reading into a real time
+// without asking the kernel again per event.
+//
+// Zero value is usable and says "no reference", which makes the caller fall
+// back to decode time rather than inventing one from an epoch it never read.
+type monoClock struct {
+	mono int64
+	wall time.Time
+}
+
+// at converts a kernel reading. A zero clock, or a reading from before the
+// reference, returns the zero time: a timestamp that is merely different from
+// the truth is worse than one the caller can see is missing.
+func (c monoClock) at(ktime uint64) time.Time {
+	if c.wall.IsZero() || ktime == 0 || int64(ktime) < c.mono {
+		return time.Time{}
+	}
+	return c.wall.Add(time.Duration(int64(ktime) - c.mono)).UTC()
+}
+
+func decodeEvent(b []byte, clock monoClock) (Exec, error) {
 	if len(b) < argsOffset {
 		return Exec{}, fmt.Errorf("record is %d bytes, shorter than the %d-byte header",
 			len(b), argsOffset)
@@ -72,7 +97,13 @@ func decodeEvent(b []byte) (Exec, error) {
 		Comm:      cstring(raw.Comm[:]),
 		Filename:  cstring(raw.Filename[:]),
 		Truncated: raw.Truncated != 0,
-		At:        time.Now().UTC(),
+		At:        clock.at(raw.Ktime),
+	}
+	if e.At.IsZero() {
+		// No usable reference. Decode time is wrong under a backlog, which is
+		// the whole reason the kernel stamp exists -- but it is the only thing
+		// left, and a zero timestamp in the recording would be worse.
+		e.At = time.Now().UTC()
 	}
 
 	argsLen := int(raw.ArgsLen)

@@ -492,7 +492,9 @@ func newID() string {
 // The session keeps recording -- the terminal output is still complete and
 // still chained -- but it stops claiming to be a full list of what ran.
 func (s *activeSession) recordExec(e execlog.Exec, log *slog.Logger) {
-	if err := s.rec.Exec(e); err != nil {
+	// At the moment the kernel saw it, not the moment this got round to
+	// writing it. See Recorder.ExecAt.
+	if err := s.rec.ExecAt(e.At, e); err != nil {
 		s.mu.Lock()
 		first := !s.execLost
 		s.execLost = true

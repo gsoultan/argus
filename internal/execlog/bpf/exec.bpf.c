@@ -59,6 +59,19 @@ struct {
 } drops SEC(".maps");
 
 struct exec_event {
+    /* When the kernel saw the exec, from bpf_ktime_get_ns -- CLOCK_MONOTONIC,
+     * suspend excluded, which is what userspace compares it against.
+     *
+     * First in the struct on purpose: a __u64 at offset 0 needs no padding to
+     * align, and everything after it is a __u32 or a byte array, so the C
+     * layout stays packed and the Go mirror can keep reading it with
+     * encoding/binary. Padding here would be invisible until a field decoded
+     * as garbage that still looked like a command.
+     *
+     * Without it the timestamp was whenever userspace got round to decoding
+     * the event. A burst that backs the ring buffer up is exactly when the two
+     * diverge, and exactly when an auditor most wants the order to be real. */
+    __u64 ktime;
     __u32 pid;
     __u32 ppid;
     __u32 uid;
@@ -129,6 +142,7 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     if (!e)
         return 0;
 
+    e->ktime = bpf_ktime_get_ns();
     e->pid = pid;
     e->uid = (__u32)bpf_get_current_uid_gid();
     e->truncated = 0;
