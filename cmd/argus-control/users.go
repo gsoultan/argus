@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"golang.org/x/term"
@@ -123,4 +125,134 @@ func readPassword() (string, error) {
 		return "", errors.New("the two passwords do not match")
 	}
 	return string(first), nil
+}
+
+// `argus-control users list` shows who can sign in, and who used to.
+//
+// Disabled accounts are listed rather than hidden: an operator asking who has
+// access needs to see that an account exists and is revoked, not to be shown a
+// list it is missing from and conclude it was never there.
+func runUsersList(configPath string) error {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	store, err := control.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	accounts, err := store.Accounts(ctx)
+	if err != nil {
+		return err
+	}
+	if len(accounts) == 0 {
+		fmt.Println("No accounts. Create one with: argus-control users add <email>")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "EMAIL\tROLE\tMFA\tSTATE")
+	for _, a := range accounts {
+		mfa := "no"
+		if a.MFAEnrolled {
+			mfa = "yes"
+		}
+		state := "active"
+		if a.Disabled {
+			state = "disabled"
+			if a.DisabledAt != nil {
+				state += " " + a.DisabledAt.UTC().Format(time.RFC3339)
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.Email, a.Role, mfa, state)
+	}
+	return w.Flush()
+}
+
+// `argus-control users disable` and `users enable` revoke and restore access.
+//
+// The column these set has been read since it was added -- a disabled account
+// cannot sign in, does not count toward accountsExist, and does not count as an
+// administrator -- and nothing ever wrote it. An account could be created and
+// never revoked, which for a product about controlling access is the wrong half
+// of the pair to ship.
+//
+// On the host, like `users add`, and for the same reason: whoever has shell
+// there can already reach the database, so this is not a new privilege. What it
+// is, is a supported way to do it that leaves an audit entry, instead of an
+// UPDATE somebody types from memory at the wrong moment.
+func runUsersSetDisabled(configPath string, args []string, disabled bool) error {
+	verb := "enable"
+	if disabled {
+		verb = "disable"
+	}
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("usage: argus-control users %s <email>", verb)
+	}
+	email := args[0]
+
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	store, err := control.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	switch err := store.SetAccountDisabled(ctx, email, disabled); {
+	case err == nil:
+	case errors.Is(err, control.ErrLastAdmin):
+		return fmt.Errorf("refusing to disable %s: %w\n"+
+			"Give another account the admin or owner role first. A deployment "+
+			"nobody can administer is recovered with direct SQL, which is what "+
+			"this command exists to avoid needing.", email, err)
+	case errors.Is(err, control.ErrAlreadyInState):
+		fmt.Printf("%s is already %sd.\n", email, verb)
+		return nil
+	case errors.Is(err, control.ErrNoAccount):
+		return fmt.Errorf("no account for %s", email)
+	default:
+		return err
+	}
+
+	// Written down, because revoking access is exactly the kind of act an
+	// investigation asks about afterwards. The actor is the host user: this
+	// runs without a console session, and naming the shell that did it is more
+	// honest than attributing it to the service.
+	if _, err := store.AppendAudit(ctx, control.AuditEvent{
+		Action:     "account." + verb + "d",
+		Severity:   "notice",
+		ActorEmail: hostActor(),
+		Target:     email,
+		Detail: fmt.Sprintf("Account %s %sd with argus-control on the host.",
+			email, verb),
+	}); err != nil {
+		// The account is already changed; failing here would report the
+		// opposite of what happened.
+		fmt.Fprintf(os.Stderr, "warning: %sd %s but could not write the audit entry: %v\n",
+			verb, email, err)
+	}
+
+	fmt.Printf("%sd %s.\n", verb, email)
+	return nil
+}
+
+// hostActor names whoever ran this, preferring the human behind a sudo.
+func hostActor() string {
+	if u := os.Getenv("SUDO_USER"); u != "" {
+		return u + "@host"
+	}
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username + "@host"
+	}
+	return "unknown@host"
 }
