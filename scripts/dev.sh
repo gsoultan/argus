@@ -204,7 +204,62 @@ require_secrets() {
   die "Copy dev/secrets.env.example to dev/secrets.env and fill it in, or export them yourself."
 }
 
-# ââ Process supervision# ── Process supervision ──────────────────────────────────────────────────────
+# ââ Process supervision# db_reachable probes one TCP address, without waiting out a dead one.
+db_reachable() {
+  local host=$1 port=$2
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 3 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null
+  else
+    (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null
+  fi
+}
+
+# Refuses to start a service that cannot reach its database.
+#
+# deps.sh puts Postgres on localhost:5433, but database_url in the config can
+# name anywhere and nothing checked that the two agreed. A stale address -- a
+# container IP left over from a previous run is how this happens -- costs a
+# sixty second dial timeout before argus-control gives up, and what lands on
+# screen is a generic "a service exited", several screens below the address
+# that was actually wrong.
+#
+# Runs after start_deps, since that is what brings Postgres up.
+require_database() {
+  local svc name cmd config url hostport host port
+
+  for svc in "${SELECTED[@]}"; do
+    cmd=$(svc_field "$svc" 6)
+    [[ $cmd =~ -config[[:space:]]+([^[:space:]]+) ]] || continue
+    config="$ARGUS_ROOT/${BASH_REMATCH[1]}"
+    [[ -f "$config" ]] || continue
+
+    url=$(grep -E '^database_url:' "$config" 2>/dev/null | head -1 || true)
+    [[ -n "$url" ]] || continue
+    url=${url#*:}
+    url=$(printf '%s' "$url" | tr -d ' "')
+
+    # postgres://user:pass@host:port/db
+    hostport=${url#*@}
+    hostport=${hostport%%/*}
+    host=${hostport%%:*}
+    port=${hostport#*:}
+    if [[ "$port" == "$host" ]]; then port=5432; fi
+    [[ -n "$host" && -n "$port" ]] || continue
+
+    # Bounded: an unroutable address -- which a stale container IP usually is
+    # -- makes the connect itself hang for over a minute, which is the wait
+    # this check exists to replace rather than reproduce. `timeout` is not on
+    # every machine, so fall back to the plain probe where it is missing.
+    if ! db_reachable "$host" "$port"; then
+      name=$(svc_field "$svc" 1)
+      fail "$name cannot reach its database at $host:$port"
+      fail "database_url in ${config#"$ARGUS_ROOT"/} points there; deps.sh puts Postgres on localhost:5433."
+      die "Start it with ./scripts/deps.sh up, or correct database_url."
+    fi
+  done
+}
+
+# ── Process supervision ──────────────────────────────────────────────────────
 
 declare -a CHILD_PIDS=()
 SHUTTING_DOWN=0
@@ -318,6 +373,8 @@ for svc in "${SELECTED[@]}"; do
 done
 
 (( START_DEPS )) && start_deps
+
+require_database
 
 printf '\n'
 info "Starting ${#SELECTED[@]} service(s)"
