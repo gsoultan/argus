@@ -25,6 +25,7 @@ const ROOT = new URL('..', import.meta.url).pathname
 const MARKER = new URL('../dist-monolith/.build-complete', import.meta.url).pathname
 const DEADLINE = Date.now() + 150_000
 
+/** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 while (!existsSync(MARKER)) {

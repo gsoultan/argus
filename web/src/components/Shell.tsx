@@ -1,13 +1,14 @@
 import {
-  ActionIcon, AppShell, Avatar, Badge, Box, Burger, Center, Group, Indicator, Loader,
-  Menu, NavLink as MantineNavLink, Progress, ScrollArea, Stack, Text, Tooltip,
+  ActionIcon, Alert, AppShell, Avatar, Badge, Box, Burger, Center, Group, Indicator,
+  Loader, Menu, NavLink as MantineNavLink, Progress, ScrollArea, Stack, Text, Tooltip,
   UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconBell, IconChevronDown, IconLogout, IconSearch, IconSettings, IconShieldLock,
+  IconAlertTriangle, IconBell, IconChevronDown, IconLogout, IconSearch, IconSettings,
+  IconShieldLock,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useState } from 'react'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
@@ -125,7 +126,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const { data: me } = useQuery(meQuery())
   const statsQuery_ = useQuery(statsQuery())
   const stats = statsQuery_.data
-  const statsPending = statsQuery_.isPending
+  const source = dataSource(statsQuery_.isPending)
   const { data: cov } = useQuery(coverageQuery())
 
   // Both directions count as a gap: an unmanaged host and a managed host with
@@ -182,7 +183,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             <Box hiddenFrom="sm">
               <Logo markOnly />
             </Box>
-            <DataSourceBadge pending={statsPending} />
+            <DataSourceBadge source={source} />
           </Group>
 
           {/* A search field rather than an icon: the shortcut is discoverable
@@ -392,7 +393,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main>{children}</AppShell.Main>
+      <AppShell.Main>
+        {source === 'unreachable' && <FallbackBanner />}
+        {children}
+      </AppShell.Main>
 
       <CommandPalette opened={paletteOpen} onClose={palette.close} />
     </AppShell>
@@ -433,8 +437,56 @@ function ShellInner({ children }: { children: React.ReactNode }) {
  * a convenience and gives up its space on a narrow screen; "you are looking at
  * fixture data" is the whole point of the control and stays.
  */
-function DataSourceBadge({ pending }: { pending: boolean }) {
-  if (!isConfigured()) {
+type DataSource = 'fixture' | 'live' | 'connecting' | 'unreachable'
+
+/**
+ * Which data is on screen, decided once.
+ *
+ * `pending` is why this takes an argument: before the first request settles,
+ * "not answering" would be a guess rather than an answer.
+ */
+function dataSource(pending: boolean): DataSource {
+  if (!isConfigured()) return 'fixture'
+  if (isLive()) return 'live'
+  return pending ? 'connecting' : 'unreachable'
+}
+
+/**
+ * A configured control plane that is not answering, said at the size of the
+ * problem.
+ *
+ * Seeing the rose badge rendered is what prompted this: the corner said "not
+ * answering" while the page underneath it announced "13 hosts would not record
+ * a bypass", three agents gone silent and six live sessions — every figure
+ * invented, because `live.orFallback` serves the fixture rather than showing
+ * nothing. A specific, alarming, actionable claim about a fleet that is not
+ * yours outweighs a badge, and the badge is the only thing that was dissenting.
+ *
+ * In the shell rather than per route, so no page can forget it. Settings has
+ * carried an equivalent for the *unconfigured* case for a while; the configured
+ * one is more dangerous, because then the operator expects real data.
+ */
+function FallbackBanner() {
+  return (
+    <Alert
+      color="rose"
+      variant="filled"
+      radius={0}
+      icon={<IconAlertTriangle size={17} />}
+      title={`${controlPlaneHost()} is not answering — nothing below is your fleet`}
+    >
+      <Text size={FS.body} lh={1.5}>
+        The console fell back to its built-in sample data so the interface still
+        works, which means every count, host and session on this page is
+        invented. Do not act on any of it. Check that the control plane is
+        running and reachable.
+      </Text>
+    </Alert>
+  )
+}
+
+function DataSourceBadge({ source }: { source: DataSource }) {
+  if (source === 'fixture') {
     return (
       <Tooltip
         label="No control plane is configured. Every figure on this screen is generated demo data, not your fleet."
@@ -448,7 +500,7 @@ function DataSourceBadge({ pending }: { pending: boolean }) {
     )
   }
 
-  if (isLive()) {
+  if (source === 'live') {
     return (
       <Tooltip
         label={`Connected to ${controlPlaneHost()}. Sessions are brokered through ${gatewayHost()}.`}
@@ -462,8 +514,7 @@ function DataSourceBadge({ pending }: { pending: boolean }) {
     )
   }
 
-  // Before the first request settles, "not answering" would be a guess.
-  if (pending) {
+  if (source === 'connecting') {
     return (
       <Badge variant="default" color="slate" size="sm" visibleFrom="sm">
         Connecting…

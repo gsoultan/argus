@@ -62,8 +62,17 @@ query string.** `serveFile()` in `helpers.ts` is the safe form — use it.
 `tsconfig.json` includes `e2e` and `playwright.config.ts`. It did not, and a
 syntax error in `helpers.ts` — a doc comment containing a `**` glob, whose `*/`
 closed the comment early — passed `bun run typecheck` untouched and surfaced
-only as Playwright collecting zero tests. The Node globals the suite needs are
-declared in `e2e/node-globals.d.ts` rather than by adding `@types/node`.
+only as Playwright collecting zero tests. `allowJs` + `checkJs` cover
+`authstub.mjs` and `preview-monolith.mjs` too — 158 lines, load-bearing for the
+sign-in and cascade suites, and nothing was reading them. That needed
+`@types/node` (the first in this project; `engines.node` was already declared),
+which also replaced a hand-rolled globals shim and the `declare const process`
+in `vite.config.ts`. Eight errors surfaced, all trivial except one worth having:
+`req.url` is optional in Node's own types, and the stub built a `URL` from it
+unguarded — a malformed request line would have taken the server down mid-suite.
+
+Type the scripts with JSDoc rather than converting them: `node` executes them
+directly, which is the point of them.
 
 - **the data-source badge** (`signin.spec.ts`): that the header does not claim a
   connection before one has answered. Route matters — on `/` the state is

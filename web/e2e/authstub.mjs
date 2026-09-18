@@ -14,6 +14,7 @@
 //
 // Deliberately not the real control plane: that needs Postgres, certificates
 // and a signing secret, and this is testing the console rather than the server.
+/** @import { IncomingMessage, ServerResponse } from 'node:http' */
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
@@ -26,6 +27,7 @@ const SECURE = process.env.STUB_SECURE_COOKIE === '1'
 
 const SESSION = 'stub-session-token'
 const PASSWORD = 'stub-password'
+/** @type {Record<string, string>} */
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2',
@@ -38,6 +40,12 @@ const STATS = {
   standingCredentialAssets: 0, sessionsDirectToday: 0,
 }
 
+/**
+ * @param {ServerResponse} res
+ * @param {number} code
+ * @param {unknown} body
+ * @param {Record<string, string>} [headers]
+ */
 const json = (res, code, body, headers = {}) => {
   const payload = JSON.stringify(body)
   res.writeHead(code, {
@@ -48,16 +56,18 @@ const json = (res, code, body, headers = {}) => {
   res.end(payload)
 }
 
+/** @param {IncomingMessage} req */
 async function readBody(req) {
   const chunks = []
   for await (const c of req) chunks.push(c)
   try { return JSON.parse(Buffer.concat(chunks).toString() || '{}') } catch { return {} }
 }
 
+/** @param {IncomingMessage} req */
 const signedIn = (req) => (req.headers.cookie ?? '').includes(`argus_session=${SESSION}`)
 
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url, `http://localhost:${PORT}`)
+  const url = new URL(req.url ?? '/', `http://localhost:${PORT}`)
   const path = url.pathname
 
   if (path === '/auth/password' && req.method === 'POST') {

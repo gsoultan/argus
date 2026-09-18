@@ -43,6 +43,18 @@ Read this file first, then only the memory a task actually needs.
   on it, so the browser's host *is* the control plane's address rather than a
   stand-in for it, and a name from config would be weaker: it can be typoed,
   copied between environments, or claimed by two deployments at once.
+
+  **And when a configured control plane stops answering, the shell says so at
+  the size of the problem**, not only in the corner. `FallbackBanner` in
+  `Shell.tsx` — full width, filled, naming the host, telling the operator not to
+  act on anything below. Prompted by actually looking at the rose badge
+  rendered: the corner said "not answering" while the page underneath announced
+  "13 hosts would not record a bypass", three agents gone silent and six live
+  sessions, every figure invented. A specific, alarming, actionable claim about
+  a fleet that is not yours outweighs a badge. Settings had carried an
+  equivalent for the *unconfigured* case for a while; the configured one is more
+  dangerous, because then the operator expects real data. `dataSource()` decides
+  once so the badge and the banner cannot disagree.
 - **A control that appears to be set must be set.** The Settings page shipped
   once with uncontrolled switches that silently reverted; that is the specific
   failure mode this product cannot have.

@@ -104,9 +104,12 @@ test.describe('the data-source badge', () => {
 
     await page.goto('/connect', { waitUntil: 'commit' })
 
-    await expect(page.getByText(/^Connecting/)).toBeVisible()
+    // Scoped to the header badge: `getByText` matches substrings, and the
+    // fallback banner's title carries the host too.
+    const badge = page.locator('header .mantine-Badge-root').first()
+    await expect(badge).toHaveText(/^Connecting/)
     // And once something answers, it names what it reached.
-    await expect(page.getByText('localhost:5511')).toBeVisible({ timeout: 15_000 })
+    await expect(badge).toHaveText('localhost:5511', { timeout: 15_000 })
   })
 
   /**
@@ -135,7 +138,12 @@ test.describe('the data-source badge', () => {
     await page.route('**/api/v1/**', (route) => route.abort())
     await page.reload()
 
-    await expect(page.getByText('Not answering')).toBeVisible()
-    await expect(page.getByText('localhost:5511')).toBeHidden()
+    await expect(page.locator('header .mantine-Badge-root').first()).toHaveText('Not answering')
+
+    // And says it at the size of the problem. The corner badge alone left the
+    // page underneath announcing "13 hosts would not record a bypass", three
+    // agents gone silent and six live sessions — every figure invented, because
+    // orFallback serves the fixture rather than showing nothing.
+    await expect(page.getByText(/nothing below is your fleet/)).toBeVisible()
   })
 })
