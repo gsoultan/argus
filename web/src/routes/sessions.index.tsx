@@ -63,11 +63,13 @@ function Sessions() {
             search box sat down here, which read as two unrelated controls. */}
         <Toolbar
           right={
-            <Text size={FS.micro} c="dimmed">
-              {rows.length === LIMIT
-                ? `First ${LIMIT} of ${sessions?.length ?? 0}`
-                : `${rows.length} of ${sessions?.length ?? 0} sessions`}
-            </Text>
+            sessions && (
+              <Text size={FS.micro} c="dimmed">
+                {rows.length === LIMIT
+                  ? `First ${LIMIT} of ${sessions.length}`
+                  : `${rows.length} of ${sessions.length} sessions`}
+              </Text>
+            )
           }
         >
           <TextInput
@@ -80,11 +82,13 @@ function Sessions() {
           <SegmentedControl
             value={filter}
             onChange={(v) => setFilter(v as Filter)}
+            // No parenthetical until there is something to put in it: "Live (0)"
+            // while the log is still loading is an answer, and a wrong one.
             data={[
               { label: 'All', value: 'all' },
-              { label: `Live (${activeCount})`, value: 'active' },
-              { label: `Bypassed (${directCount})`, value: 'direct' },
-              { label: `Flagged (${flaggedCount})`, value: 'flagged' },
+              { label: sessions ? `Live (${activeCount})` : 'Live', value: 'active' },
+              { label: sessions ? `Bypassed (${directCount})` : 'Bypassed', value: 'direct' },
+              { label: sessions ? `Flagged (${flaggedCount})` : 'Flagged', value: 'flagged' },
             ]}
           />
         </Toolbar>

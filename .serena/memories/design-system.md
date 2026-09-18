@@ -101,13 +101,26 @@ header, filter row, card header and empty state inline.
   everything?" answered "no gaps anywhere" while the request was in flight — the
   most reassuring possible reading of not knowing. Callers must pass `undefined`
   rather than collapsing it to zero.
-- **Neither `/connect` nor `/coverage` has a route loader, deliberately.** A
-  loader is awaited before the router's first render, so it blanks the console —
-  shell included — until it resolves; measured at ~2.8s against a slow control
-  plane. Connect's chunk also carries a terminal emulator. An honest loading
-  state beats a blank page, and it is what keeps the header's `Connecting…`
-  state reachable at all: every route that *does* block has already proven the
-  control plane is there by the time the shell paints.
+- **A count you do not have is not zero — anywhere.** Not just `Stat`: toolbar
+  totals, card badges and filter chips all rendered `0` while their query was in
+  flight. "0 assets", "Live (0)", "0 unreviewed", and a certificate-coverage
+  card reading "0%" over "0 / 0" with an empty bar — a fleet with no coverage at
+  all, which is the opposite of what that card exists to claim. Render nothing,
+  or a skeleton. `?? 0` is still right where it *suppresses* something: a nav
+  badge or an alert you cannot yet substantiate should not appear.
+- **Neither `/connect` nor `/coverage` has a route loader, deliberately.** The
+  fix for a page that lied while loading is an honest loading state, not a
+  loader; Connect's chunk also carries a terminal emulator, so blocking on it is
+  the worst version of that trade in the application.
+- **The router paints the shell while a loader runs** — `defaultPendingMs: 150`
+  and `defaultPendingComponent` in `main.tsx`. With neither set, a cold load
+  against a slow control plane rendered *nothing*: no header, no navigation, not
+  even a spinner, measured blank past 2.2s. 150ms rather than 0 because a warm
+  route change lands in ~36ms and should swap straight to the new page instead
+  of blinking a spinner at it; first visits take ~800ms and are the ones that
+  want one. This is what makes the seven blocking loaders worth keeping — they
+  still start the fetch in parallel with the route chunk and still power
+  preload-on-intent, without owning the whole screen while they do it.
 - **An empty state says what to do next.** "No assets match." alone reads the
   same whether the filter is too narrow, the fleet is empty, or the request
   failed.

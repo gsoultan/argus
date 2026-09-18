@@ -113,9 +113,11 @@ function Assets() {
       <PageBody>
         <Toolbar
           right={
-            <Text size={FS.micro} c="dimmed">
-              {assets?.length ?? 0} {filtered ? 'matching' : 'assets'}
-            </Text>
+            assets && (
+              <Text size={FS.micro} c="dimmed">
+                {assets.length} {filtered ? 'matching' : 'assets'}
+              </Text>
+            )
           }
         >
           <TextInput

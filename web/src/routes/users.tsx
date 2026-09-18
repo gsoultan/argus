@@ -103,9 +103,11 @@ function Users() {
 
         <Toolbar
           right={
-            <Text size={FS.micro} c="dimmed">
-              {rows.length} of {users?.length ?? 0} users
-            </Text>
+            users && (
+              <Text size={FS.micro} c="dimmed">
+                {rows.length} of {users.length} users
+              </Text>
+            )
           }
         >
           <TextInput

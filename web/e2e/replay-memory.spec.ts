@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { firstSessionPath, heapMB, makeCast, watchErrors } from './helpers'
+import { firstSessionPath, heapMB, makeCast, watchErrors, serveFile } from './helpers'
 
 /**
  * The property the replay rewrite exists to guarantee: the main thread does
@@ -22,14 +22,7 @@ test.use({ serviceWorkers: 'block' })
 test('terminal replay holds a flat main-thread heap on a large recording', async ({ page }) => {
   test.slow()
   const cast = makeCast(8 * 1024 * 1024)
-  // Matched on pathname, not a glob. `**/e2e.cast` also matches the page's
-  // own URL — the recording is passed as `?cast=/e2e.cast`, so the query string
-  // ends with it — and Playwright then fulfils the *navigation* with the
-  // recording, leaving the browser rendering it as plain text. A service
-  // worker hid that by serving the navigation itself.
-  await page.route((url) => url.pathname === '/e2e.cast', (route) =>
-    route.fulfill({ status: 200, contentType: 'text/plain', body: cast }),
-  )
+  await serveFile(page, '/e2e.cast', cast, 'text/plain')
   const errs = watchErrors(page)
 
   const path = await firstSessionPath(page, /SSH/)

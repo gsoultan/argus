@@ -1,4 +1,4 @@
-import { Box, Card, Group, Skeleton, Stack, Table, Text, ThemeIcon } from '@mantine/core'
+import { Box, Card, Center, Group, Loader, Skeleton, Stack, Table, Text, ThemeIcon } from '@mantine/core'
 import { Link } from '@tanstack/react-router'
 import { IconChevronRight, type IconProps } from '@tabler/icons-react'
 import type { ComponentType, ReactNode } from 'react'
@@ -328,5 +328,24 @@ export function TableSkeleton({ rows, cols }: { rows: number; cols: number }) {
         </Table.Tr>
       ))}
     </>
+  )
+}
+
+/**
+ * What fills the outlet while a route's loader runs.
+ *
+ * Sized to the viewport minus the header so the shell does not jump when the
+ * real page arrives.
+ */
+export function RoutePending() {
+  return (
+    <Center h="60vh">
+      <Stack align="center" gap="xs">
+        <Loader size="sm" color="azure" />
+        <Text size={FS.meta} c="dimmed">
+          Loading…
+        </Text>
+      </Stack>
+    </Center>
   )
 }

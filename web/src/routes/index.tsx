@@ -1,4 +1,7 @@
-import { Alert, Badge, Box, Grid, Group, Progress, ScrollArea, Stack, Table, Text, Tooltip } from '@mantine/core'
+import {
+  Alert, Badge, Box, Grid, Group, Progress, ScrollArea, Skeleton, Stack, Table, Text,
+  Tooltip,
+} from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
@@ -133,8 +136,8 @@ function Overview() {
           <Grid.Col span={{ base: 6, md: 3 }}>
             <Stat
               label="Live sessions"
-              value={stats?.sessionsActive ?? '—'}
-              sub={`${stats?.sessionsToday ?? 0} in the last 24h`}
+              value={stats?.sessionsActive}
+              sub={stats ? `${stats.sessionsToday} in the last 24h` : undefined}
               icon={IconTerminal2}
               color="sky"
               onClick={() => navigate({ to: '/sessions' })}
@@ -143,7 +146,7 @@ function Overview() {
           <Grid.Col span={{ base: 6, md: 3 }}>
             <Stat
               label="Pending approvals"
-              value={stats?.requestsPending ?? '—'}
+              value={stats?.requestsPending}
               sub="awaiting a decision"
               icon={IconClipboardCheck}
               color="amber"
@@ -154,7 +157,7 @@ function Overview() {
           <Grid.Col span={{ base: 6, md: 3 }}>
             <Stat
               label="Unverified hosts"
-              value={stats?.hostKeysUnpinned ?? '—'}
+              value={stats?.hostKeysUnpinned}
               sub="host key not pinned"
               icon={IconShieldOff}
               color="rose"
@@ -165,7 +168,7 @@ function Overview() {
           <Grid.Col span={{ base: 6, md: 3 }}>
             <Stat
               label="Bypassed gateway"
-              value={stats?.sessionsDirectToday ?? '—'}
+              value={stats?.sessionsDirectToday}
               sub="direct to sshd, 24h"
               icon={IconDoorExit}
               color="rose"
@@ -183,9 +186,11 @@ function Overview() {
               iconColor="sky"
               flush
               badge={
-                <Badge size="xs" color="sky" variant="light">
-                  {live?.length ?? 0}
-                </Badge>
+                live && (
+                  <Badge size="xs" color="sky" variant="light">
+                    {live.length}
+                  </Badge>
+                )
               }
               action={
                 <ButtonLink
@@ -257,18 +262,24 @@ function Overview() {
                 iconColor="teal"
                 description="Assets where Argus mints a short-lived certificate per session, so no reusable credential exists to steal."
               >
-                <Group justify="space-between" align="flex-end" mb={SP.snug}>
-                  <Text size="xl" fw={600} lh={1}>{caCoverage}%</Text>
-                  <Text size={FS.meta} c="dimmed">
-                    {stats ? stats.assetsTotal - stats.standingCredentialAssets : 0} / {stats?.assetsTotal ?? 0}
-                  </Text>
-                </Group>
-                <Progress value={caCoverage} color="teal" size="sm" radius="xl" />
-                <Text size={FS.micro} c="dimmed" mt={SP.cozy} lh={1.5}>
-                  The remaining {stats?.standingCredentialAssets ?? 0} use vaulted keys injected
-                  by the gateway. Users never see them, but they are standing credentials —
-                  move hosts to certificate auth where you can.
-                </Text>
+                {stats ? (
+                  <>
+                    <Group justify="space-between" align="flex-end" mb={SP.snug}>
+                      <Text size="xl" fw={600} lh={1}>{caCoverage}%</Text>
+                      <Text size={FS.meta} c="dimmed">
+                        {stats.assetsTotal - stats.standingCredentialAssets} / {stats.assetsTotal}
+                      </Text>
+                    </Group>
+                    <Progress value={caCoverage} color="teal" size="sm" radius="xl" />
+                    <Text size={FS.micro} c="dimmed" mt={SP.cozy} lh={1.5}>
+                      The remaining {stats.standingCredentialAssets} use vaulted keys injected
+                      by the gateway. Users never see them, but they are standing credentials —
+                      move hosts to certificate auth where you can.
+                    </Text>
+                  </>
+                ) : (
+                  <Skeleton height={46} radius="sm" />
+                )}
               </SectionCard>
 
               <SectionCard

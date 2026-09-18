@@ -23,5 +23,8 @@
     "resolveJsonModule": true,
     "paths": { "~/*": ["./src/*"] }
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+  // e2e included: a syntax error in e2e/helpers.ts once passed `bun run
+  // typecheck` untouched and only surfaced when Playwright failed to collect
+  // any tests at all. The specs are TypeScript; they should be checked like it.
+  "include": ["src", "e2e", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }

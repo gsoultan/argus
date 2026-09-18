@@ -187,9 +187,11 @@ function CoverageView() {
           iconColor={unreviewed?.length ? 'amber' : 'slate'}
           description="Agents reporting from machines the inventory has no entry for. Enrolling creates the asset; it grants nobody a login."
           badge={
-            <Badge size="sm" variant="light" color={unreviewed?.length ? 'amber' : 'slate'}>
-              {unreviewed?.length ?? 0} unreviewed
-            </Badge>
+            unreviewed && (
+              <Badge size="sm" variant="light" color={unreviewed.length ? 'amber' : 'slate'}>
+                {unreviewed.length} unreviewed
+              </Badge>
+            )
           }
           flush
         >

@@ -60,6 +60,29 @@ export function watchErrors(page: Page) {
   }
 }
 
+/**
+ * Serves a generated recording to the app, matched on pathname.
+ *
+ * Deliberately not a glob: a `**` wildcard followed by `/e2e.cast` also matches
+ * the page's own URL, because the recording is passed as `?cast=/e2e.cast` and
+ * the query string ends with it — so Playwright fulfils the navigation with the
+ * browser renders an 8 MB asciicast as plain text. A service worker masked that
+ * for as long as one was serving navigations, which is why it survived.
+ *
+ * Route anything by pathname when the same path can appear in a query string.
+ */
+export async function serveFile(
+  page: Page,
+  pathname: string,
+  body: string | Buffer,
+  contentType: string,
+): Promise<void> {
+  await page.route(
+    (url) => url.pathname === pathname,
+    (route) => route.fulfill({ status: 200, contentType, body }),
+  )
+}
+
 export async function heapMB(page: Page): Promise<number> {
   return page.evaluate(() => {
     const m = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory

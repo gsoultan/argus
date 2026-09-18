@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { firstSessionPath, heapMB, watchErrors } from './helpers'
+import { firstSessionPath, heapMB, watchErrors, serveFile } from './helpers'
 
 /**
  * The desktop player uses the same design as the terminal one -- the worker
@@ -58,14 +58,7 @@ test.use({ serviceWorkers: 'block' })
 test('desktop replay holds a flat main-thread heap on a large recording', async ({ page }) => {
   test.slow()
   const stream = makeDisplayStream({ seconds: 300, rects: 300, full: 6, w: 1024, h: 768 })
-  // Matched on pathname, not a glob. `**/e2e.rdp` also matches the page's
-  // own URL — the recording is passed as `?rdp=/e2e.rdp`, so the query string
-  // ends with it — and Playwright then fulfils the *navigation* with the
-  // recording, leaving the browser rendering it as plain text. A service
-  // worker hid that by serving the navigation itself.
-  await page.route((url) => url.pathname === '/e2e.rdp', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/octet-stream', body: stream }),
-  )
+  await serveFile(page, '/e2e.rdp', stream, 'application/octet-stream')
   const errs = watchErrors(page)
 
   let path: string

@@ -4,11 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// Declared rather than pulled in with @types/node. This config reads exactly one
-// environment variable, and the whole toolchain is Bun — adding Node's type
-// surface to the project to describe `process.env.ARGUS_CSS` would be a large
-// dependency for a single string.
-declare const process: { env: Record<string, string | undefined> }
+// `process` is declared once for the whole project in e2e/node-globals.d.ts.
 
 export default defineConfig({
   plugins: [

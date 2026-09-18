@@ -57,7 +57,13 @@ recording is passed as `?cast=/e2e.cast` and the query string ends with it — s
 Playwright fulfilled the *navigation* with the recording and the browser
 rendered an 8 MB asciicast as plain text. Both specs now match on
 `url.pathname`. **Never glob-match a route on a path that also appears in a
-query string.**
+query string.** `serveFile()` in `helpers.ts` is the safe form — use it.
+
+`tsconfig.json` includes `e2e` and `playwright.config.ts`. It did not, and a
+syntax error in `helpers.ts` — a doc comment containing a `**` glob, whose `*/`
+closed the comment early — passed `bun run typecheck` untouched and surfaced
+only as Playwright collecting zero tests. The Node globals the suite needs are
+declared in `e2e/node-globals.d.ts` rather than by adding `@types/node`.
 
 - **the data-source badge** (`signin.spec.ts`): that the header does not claim a
   connection before one has answered. Route matters — on `/` the state is
