@@ -81,6 +81,10 @@ directly, which is the point of them.
   while the first call is in flight. And `page.route` cannot see requests a
   service worker re-issues, so the delay it depends on needs
   `test.use({ serviceWorkers: 'block' })` or it silently does nothing.
+- **what a first visit weighs** (`weight.spec.ts`): JS and CSS on a cold load of
+  `/`, against fixed budgets. Chromium only — the assets are identical on every
+  engine. Uses `encodedBodySize` from resource timing; summing `content-length`
+  reports zero, because `vite preview` does not send it.
 - **the cascade** (`cascade.spec.ts`): every route rendered by both the shipped
   build and a reference build using Mantine's concatenated stylesheet, with
   `getComputedStyle` compared property by property. Includes the two routes that

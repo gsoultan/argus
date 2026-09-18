@@ -56,6 +56,22 @@ from `vite preview` responses, so summing response headers reports ~0.
 `CommandPalette` is `lazy()` for this reason: eager it cost 3.4 kB of every
 cold load for a panel most sessions never open.
 
+`e2e/weight.spec.ts` asserts the budget now rather than leaving it in a note —
+250 kB of code and 32 kB of CSS. The measurement is deterministic to a tenth of
+a kilobyte across runs, so those are tight on purpose. The CSS ceiling is what
+catches `app.css` being swapped back to Mantine's concatenated stylesheet:
+measured, that takes it from 26.6 kB to 39.6 kB.
+
+**The in-memory fixture stays in the eager graph.** `Shell` needs
+`statsQuery`/`meQuery`/`coverageQuery`, which pulls `queries.ts → api.ts →
+seed.ts`. The `queries.js` chunk is 27.5 kB on disk, which looks like an
+obvious thing to defer — but almost none of that is the fixture. Measured by
+gutting `seed.ts` to empty stubs and rebuilding: the whole fixture is worth
+**2.9 kB** of the cold load, because the seed data is generated at runtime by a
+PRNG rather than shipped. Not worth making `orFallback`'s failure path depend on
+a dynamic import, and doubly so given the fallback is what runs when the control
+plane is already unreachable.
+
 `app.css` is split: the Mantine import list lives there, everything Argus writes
 itself lives in `app.tokens.css`, and `app.monolith.css` is a reference variant
 built only by `e2e/cascade.spec.ts`. `ARGUS_CSS=monolith` swaps it in through a
