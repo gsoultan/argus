@@ -81,10 +81,17 @@ directly, which is the point of them.
   while the first call is in flight. And `page.route` cannot see requests a
   service worker re-issues, so the delay it depends on needs
   `test.use({ serviceWorkers: 'block' })` or it silently does nothing.
-- **what a first visit weighs** (`weight.spec.ts`): JS and CSS on a cold load of
-  `/`, against fixed budgets. Chromium only — the assets are identical on every
-  engine. Uses `encodedBodySize` from resource timing; summing `content-length`
-  reports zero, because `vite preview` does not send it.
+- **what a visit weighs** (`weight.spec.ts`): JS, CSS and fonts against fixed
+  budgets, on `/` (233.6 kB of code) and on a deep link to a session detail
+  (340.8 kB — the extra is xterm and the replay player, which no other route
+  pays for). Also asserts exactly two font files: @fontsource ships a subset per
+  script, and more than two means a non-latin one is being pulled eagerly.
+  Chromium only — the assets are identical on every engine. Uses
+  `encodedBodySize` from resource timing; summing `content-length` reports zero,
+  because `vite preview` does not send it. The detail measurement runs in its
+  own cold context, because reaching the page warms the cache for it.
+- **what the worker stores** (`precache.spec.ts`): see
+  [pwa-and-service-worker](pwa-and-service-worker.md).
 - **the cascade** (`cascade.spec.ts`): every route rendered by both the shipped
   build and a reference build using Mantine's concatenated stylesheet, with
   `getComputedStyle` compared property by property. Includes the two routes that

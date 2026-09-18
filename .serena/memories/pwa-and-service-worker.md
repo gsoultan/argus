@@ -24,6 +24,26 @@ a live session; swapping the app out mid-stream drops the socket with no
 explanation and discards a half-written termination reason.
 `components/PWAUpdate.tsx` offers the reload and lets the operator pick when.
 
+## Precaching is asserted
+
+`e2e/precache.spec.ts` reads the manifest compiled into `dist/sw.js` and checks
+what the build decided to store: no route chunks (it names xterm when it fires),
+no non-latin font subsets, no duplicate urls, and ceilings on the entry count
+and total size. `globPatterns` is a hand-maintained list with the same drift
+profile as the Mantine stylesheet list — widening it is one character, nothing
+fails, and the cost lands on every first visit as a background download nobody
+watches.
+
+Found on writing it: `icon.svg` was precached **twice**, same url and same
+revision, because `globPatterns` listed `**/*.svg` while the manifest already
+precaches it as the app icon. It is the only SVG in the build, so the glob was
+pure duplication and is gone.
+
+Also worth knowing: the `*latin*` glob matches `latin-ext` as well, so four font
+files are precached and only two are ever fetched to render the fixture — 98 kB
+of accented-Latin coverage for European names. That is background precache, not
+the cold load, and `weight.spec.ts` confirms a first visit downloads two files.
+
 ## Precaching
 
 Only the shell — `index.html`, the entry chunk, CSS, SVG, and the **Latin** font

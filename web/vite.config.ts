@@ -26,12 +26,15 @@ export default defineConfig({
         // the rest exist for names this console may never render, and pulling
         // Cyrillic, Greek and Vietnamese up front costs a quarter of a megabyte
         // to no effect. They are still cached if a name ever needs them.
+        //
+        // No '**/*.svg' here: the only SVG in the build is icon.svg, and the
+        // manifest already precaches it as the app icon. Listing both put it in
+        // the manifest twice, with the same revision.
         globPatterns: [
           'index.html',
           'assets/index-*.js',
           'assets/*.css',
           'assets/*latin*.woff2',
-          '**/*.svg',
         ],
         // Anything the control plane serves must reach the control plane.
         //
