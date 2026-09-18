@@ -17,6 +17,14 @@ import { coverageQuery, discoveredQuery, useEnrolHost, useIgnoreHost } from '~/l
 import { isConfigured } from '~/lib/live'
 import type { DiscoveredHost } from '~/types/domain'
 
+/**
+ * No loader, deliberately — see the note on `/connect`.
+ *
+ * What made this page mislead was never the missing loader but `?? 0`: a screen
+ * whose whole job is "does Argus see everything?" answered "no gaps anywhere"
+ * for as long as the request was in flight. `Stat` renders a skeleton for a
+ * count it does not have, which fixes that without blanking the console.
+ */
 export const Route = createFileRoute('/coverage')({ component: CoverageView })
 
 /**
@@ -106,7 +114,7 @@ function CoverageView() {
           <Grid.Col span={{ base: 12, sm: 4 }}>
             <Stat
               label="Linux assets with an agent"
-              value={`${cov?.assetsWithAgent ?? 0} / ${cov?.sshAssets ?? 0}`}
+              value={cov ? `${cov.assetsWithAgent} / ${cov.sshAssets}` : undefined}
               tone={cov && cov.assetsUnmonitored > 0 ? 'warn' : 'ok'}
               sub="An asset with no agent records nothing when someone connects to port 22 directly. Open the ones missing one."
               onClick={() => navigate({ to: '/assets', search: { agent: 'absent' } })}
@@ -119,7 +127,7 @@ function CoverageView() {
           <Grid.Col span={{ base: 12, sm: 4 }}>
             <Stat
               label="Hosts outside the inventory"
-              value={String(cov?.unreviewedHosts ?? 0)}
+              value={cov ? String(cov.unreviewedHosts) : undefined}
               tone={cov && cov.unreviewedHosts > 0 ? 'warn' : 'ok'}
               sub="Agents reporting from machines Argus is not managing. Listed below — the inventory cannot show these."
             />
@@ -127,7 +135,7 @@ function CoverageView() {
           <Grid.Col span={{ base: 12, sm: 4 }}>
             <Stat
               label="Agents gone quiet"
-              value={String(cov?.assetsAgentStale ?? 0)}
+              value={cov ? String(cov.assetsAgentStale) : undefined}
               tone={cov && cov.assetsAgentStale > 0 ? 'warn' : 'ok'}
               sub="An agent can be killed by root on the host. The silence is what gives it away."
               onClick={() => navigate({ to: '/assets', search: { agent: 'stale' } })}

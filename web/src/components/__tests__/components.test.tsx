@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { PlayerControls } from '~/components/PlayerControls'
 import { ErrorState } from '~/components/ErrorState'
-import { rowNav } from '~/components/primitives'
+import { Stat, rowNav } from '~/components/primitives'
 import { renderWithProviders as ui } from '~/test/render'
 
 const base = {
@@ -117,5 +117,26 @@ describe('rowNav', () => {
     expect(go).toHaveBeenCalledTimes(3)
     fireEvent.keyDown(row, { key: 'a' })
     expect(go).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('Stat', () => {
+  /**
+   * Coverage counted its gaps with `cov?.unreviewedHosts ?? 0`, so a page whose
+   * entire job is "does Argus see everything?" answered "no gaps anywhere" for
+   * as long as the request was in flight — the most reassuring possible reading
+   * of not knowing, on the one screen where that reading is most costly.
+   */
+  it('does not report a count it does not have as zero', () => {
+    const { container } = ui(<Stat label="Hosts outside the inventory" value={undefined} />)
+    expect(screen.getByText('HOSTS OUTSIDE THE INVENTORY')).toBeInTheDocument()
+    expect(screen.queryByText('0')).not.toBeInTheDocument()
+    expect(container.querySelector('.mantine-Skeleton-root')).toBeInTheDocument()
+  })
+
+  it('shows a real zero as a zero', () => {
+    const { container } = ui(<Stat label="Hosts outside the inventory" value={0} />)
+    expect(screen.getByText('0')).toBeInTheDocument()
+    expect(container.querySelector('.mantine-Skeleton-root')).not.toBeInTheDocument()
   })
 })

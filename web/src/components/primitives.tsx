@@ -1,4 +1,6 @@
-import { Badge, Box, Card, CopyButton, Group, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core'
+import {
+  Badge, Box, Card, CopyButton, Group, Skeleton, Text, ThemeIcon, Tooltip, UnstyledButton,
+} from '@mantine/core'
 import {
   IconAlertTriangle, IconCertificate, IconCheck, IconChevronRight, IconCopy,
   IconDoorExit, IconKey, IconLock, IconPlayerRecordFilled, IconPlugConnected,
@@ -9,6 +11,7 @@ import type {
   RecordingFidelity, RequestState, RiskFlag, SessionOrigin, SessionState,
 } from '~/types/domain'
 import { FS } from '~/theme'
+import { rem } from '@mantine/core'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
 
@@ -418,7 +421,16 @@ export function Stat({
   label, value, sub, icon, color = 'slate', tone = 'ok', onClick,
 }: {
   label: string
-  value: string | number
+  /**
+   * `undefined` renders a skeleton, and callers must not collapse it to 0.
+   *
+   * Coverage counted its gaps with `cov?.unreviewedHosts ?? 0`, so a page whose
+   * entire job is "does Argus see everything?" answered "no gaps anywhere" for
+   * as long as the request was in flight — the most reassuring possible reading
+   * of not knowing. Same shape as a table rendering an empty tbody while it
+   * loads, which is what DataTable already guards against.
+   */
+  value: string | number | undefined
   sub?: string
   icon?: typeof IconShieldCheck
   color?: string
@@ -458,9 +470,13 @@ export function Stat({
               <IconChevronRight size={11} className="argus-stat-chevron" opacity={0.45} />
             )}
           </Group>
-          <Text size={FS.figure} fw={600} lh={1.15} mt={6} c={warn ? 'amber.4' : undefined}>
-            {value}
-          </Text>
+          {value === undefined ? (
+            <Skeleton height={rem(27)} width={64} radius="sm" mt={6} />
+          ) : (
+            <Text size={FS.figure} fw={600} lh={1.15} mt={6} c={warn ? 'amber.4' : undefined}>
+              {value}
+            </Text>
+          )}
           {sub && (
             <Text size={FS.micro} c="dimmed" mt={4} lh={1.45}>
               {sub}

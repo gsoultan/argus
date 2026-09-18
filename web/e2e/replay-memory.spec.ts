@@ -11,10 +11,23 @@ import { firstSessionPath, heapMB, makeCast, watchErrors } from './helpers'
  * render that re-parsed the whole scrollback) unmistakable, and small enough
  * to decode in a few seconds in CI.
  */
+// These resolve a session id from the list before navigating to the recording,
+// so the page loads twice and a service worker claims it on the second. Requests
+// it makes are invisible to page-level listeners, which left watchErrors here
+// asserting nothing about failed assets. Blocking it restores that, and costs
+// nothing these tests measure: the worker is a separate thread, and what is
+// under test is the main-thread heap.
+test.use({ serviceWorkers: 'block' })
+
 test('terminal replay holds a flat main-thread heap on a large recording', async ({ page }) => {
   test.slow()
   const cast = makeCast(8 * 1024 * 1024)
-  await page.route('**/e2e.cast', (route) =>
+  // Matched on pathname, not a glob. `**/e2e.cast` also matches the page's
+  // own URL — the recording is passed as `?cast=/e2e.cast`, so the query string
+  // ends with it — and Playwright then fulfils the *navigation* with the
+  // recording, leaving the browser rendering it as plain text. A service
+  // worker hid that by serving the navigation itself.
+  await page.route((url) => url.pathname === '/e2e.cast', (route) =>
     route.fulfill({ status: 200, contentType: 'text/plain', body: cast }),
   )
   const errs = watchErrors(page)
@@ -50,5 +63,5 @@ test('terminal replay holds a flat main-thread heap on a large recording', async
   const rows = await page.locator('.xterm-rows > div').count()
   expect(rows).toBeLessThan(80)
 
-  errs.assertClean()
+  await errs.assertClean()
 })

@@ -47,10 +47,23 @@ function makeDisplayStream(opts: { seconds: number; rects: number; full: number;
   return Buffer.concat(entries)
 }
 
+// These resolve a session id from the list before navigating to the recording,
+// so the page loads twice and a service worker claims it on the second. Requests
+// it makes are invisible to page-level listeners, which left watchErrors here
+// asserting nothing about failed assets. Blocking it restores that, and costs
+// nothing these tests measure: the worker is a separate thread, and what is
+// under test is the main-thread heap.
+test.use({ serviceWorkers: 'block' })
+
 test('desktop replay holds a flat main-thread heap on a large recording', async ({ page }) => {
   test.slow()
   const stream = makeDisplayStream({ seconds: 300, rects: 300, full: 6, w: 1024, h: 768 })
-  await page.route('**/e2e.rdp', (route) =>
+  // Matched on pathname, not a glob. `**/e2e.rdp` also matches the page's
+  // own URL — the recording is passed as `?rdp=/e2e.rdp`, so the query string
+  // ends with it — and Playwright then fulfils the *navigation* with the
+  // recording, leaving the browser rendering it as plain text. A service
+  // worker hid that by serving the navigation itself.
+  await page.route((url) => url.pathname === '/e2e.rdp', (route) =>
     route.fulfill({ status: 200, contentType: 'application/octet-stream', body: stream }),
   )
   const errs = watchErrors(page)
@@ -83,5 +96,5 @@ test('desktop replay holds a flat main-thread heap on a large recording', async 
   const ceiling = afterLoad * 1.35 + 24
   expect(duringPlayback, `heap grew during playback: ${afterLoad} -> ${duringPlayback} MB`).toBeLessThan(ceiling)
   expect(afterSeeks, `heap grew after seeks: ${afterLoad} -> ${afterSeeks} MB`).toBeLessThan(ceiling)
-  errs.assertClean()
+  await errs.assertClean()
 })

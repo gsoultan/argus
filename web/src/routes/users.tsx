@@ -71,15 +71,15 @@ function Users() {
           <Grid.Col span={{ base: 12, sm: 6 }}>
             <Stat
               label="Users"
-              value={users?.length ?? 0}
-              sub={`${approvers.length} can decide an access request`}
+              value={users?.length}
+              sub={users ? `${approvers.length} can decide an access request` : undefined}
               tone="ok"
             />
           </Grid.Col>
           <Grid.Col span={{ base: 12, sm: 6 }}>
             <Stat
               label="Without MFA"
-              value={withoutMfa.length}
+              value={users ? withoutMfa.length : undefined}
               sub="A password alone is one phish away from a brokered root session."
               tone={withoutMfa.length > 0 ? 'warn' : 'ok'}
             />

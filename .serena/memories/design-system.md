@@ -96,6 +96,18 @@ header, filter row, card header and empty state inline.
 - **`DataTable` owns the three states a table can be in.** Every table used to
   render an empty `<tbody>` while its query was in flight, which is
   pixel-identical to "this fleet has no hosts".
+- **`Stat` renders a skeleton for a count it does not have.** Coverage used
+  `cov?.unreviewedHosts ?? 0`, so the screen whose whole job is "does Argus see
+  everything?" answered "no gaps anywhere" while the request was in flight — the
+  most reassuring possible reading of not knowing. Callers must pass `undefined`
+  rather than collapsing it to zero.
+- **Neither `/connect` nor `/coverage` has a route loader, deliberately.** A
+  loader is awaited before the router's first render, so it blanks the console —
+  shell included — until it resolves; measured at ~2.8s against a slow control
+  plane. Connect's chunk also carries a terminal emulator. An honest loading
+  state beats a blank page, and it is what keeps the header's `Connecting…`
+  state reachable at all: every route that *does* block has already proven the
+  control plane is there by the time the shell paints.
 - **An empty state says what to do next.** "No assets match." alone reads the
   same whether the filter is too narrow, the fleet is empty, or the request
   failed.

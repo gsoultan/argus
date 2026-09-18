@@ -108,4 +108,34 @@ test.describe('the data-source badge', () => {
     // And once something answers, it names what it reached.
     await expect(page.getByText('localhost:5511')).toBeVisible({ timeout: 15_000 })
   })
+
+  /**
+   * The state the badge exists for.
+   *
+   * `orFallback` serves the in-memory fixture whenever a data call fails, so
+   * the console keeps drawing a complete, plausible fleet that belongs to
+   * nobody. Without this warning that is indistinguishable from a healthy
+   * deployment — and it is the reading an operator would act on.
+   *
+   * Aborted rather than answered with a 503: `get()` raises ControlPlaneError
+   * on a refused status and `orFallback` rethrows it into the error boundary,
+   * which is a different screen. Nothing answering at all is what live.ts calls
+   * the only thing "unreachable" should mean, and it is the case that reaches
+   * the fallback.
+   */
+  test('says the control plane is not answering rather than serving its fallback silently', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await signIn(page)
+    await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+
+    // Up for auth, so the login gate still lets go; dead for everything the
+    // console draws figures from.
+    await page.route('**/api/v1/**', (route) => route.abort())
+    await page.reload()
+
+    await expect(page.getByText('Not answering')).toBeVisible()
+    await expect(page.getByText('localhost:5511')).toBeHidden()
+  })
 })

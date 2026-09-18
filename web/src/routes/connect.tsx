@@ -31,6 +31,15 @@ const RDPScreen = lazy(() =>
   import('~/components/RDPScreen').then((m) => ({ default: m.RDPScreen })),
 )
 
+/**
+ * No loader, deliberately.
+ *
+ * A route loader is awaited before the router's first render, so it blanks the
+ * whole console — shell included — until it resolves. This route's chunk also
+ * carries a terminal emulator, so blocking everything on it to avoid a briefly
+ * empty dropdown is the worst version of that trade in the application. The
+ * host Select says it is loading instead.
+ */
 export const Route = createFileRoute('/connect')({ component: Connect })
 
 const DEFAULT_GATEWAY = GATEWAY_URL
@@ -211,7 +220,11 @@ function Connect() {
               <Step n={1} icon={IconServer2} title="Choose a host">
                 <Select
                   size="sm"
-                  placeholder="Search the inventory"
+                  placeholder={assets ? 'Search the inventory' : 'Loading hosts…'}
+                  // An enabled, searchable, empty Select reports "No host by
+                  // that name" for every query while the inventory is still on
+                  // its way, which is a wrong answer rather than a slow one.
+                  disabled={!assets}
                   searchable
                   nothingFoundMessage="No host by that name"
                   value={target}

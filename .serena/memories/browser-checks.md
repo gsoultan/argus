@@ -37,6 +37,28 @@ asserts the properties directly, on every change, in CI (`console-e2e` job).
   rendered with them (the theme named Inter for months while nothing loaded it)
 - the audit chain verifies in WASM in well under 200 ms
 - no status badge is ever truncated (`BROKERED` vs `BYPASSED`)
+## A service worker makes page-level network assertions vacuous
+
+`page.on('requestfailed')` does not see requests a service worker makes on the
+page's behalf, and `page.route` does not intercept them either. Measured: with a
+worker controlling, aborting every `.woff2` produced **zero** page-level events.
+
+`watchErrors().assertClean()` now enforces its own precondition — it fails if a
+worker is controlling, or if the page loaded twice while one was registered.
+`registerType: 'prompt'` means no `skipWaiting`, so a worker claims the page on
+the *second* load; one navigation in a fresh context is what keeps these honest.
+
+It found two real problems the moment it existed. Both memory specs resolve a
+session id from the list before navigating to the recording, so they load twice
+and their asset assertion had been checking nothing; they now block service
+workers. And blocking exposed a second bug the worker had been masking:
+`page.route('**/e2e.cast')` also matches the page's own URL, because the
+recording is passed as `?cast=/e2e.cast` and the query string ends with it — so
+Playwright fulfilled the *navigation* with the recording and the browser
+rendered an 8 MB asciicast as plain text. Both specs now match on
+`url.pathname`. **Never glob-match a route on a path that also appears in a
+query string.**
+
 - **the data-source badge** (`signin.spec.ts`): that the header does not claim a
   connection before one has answered. Route matters — on `/` the state is
   unreachable because the router's loader awaits `statsQuery` and nothing

@@ -20,7 +20,7 @@ for (const [path, heading] of ROUTES) {
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible()
     // Give lazy chunks and workers a moment to settle before judging.
     await page.waitForLoadState('networkidle')
-    errs.assertClean()
+    await errs.assertClean()
   })
 }
 
@@ -55,7 +55,7 @@ test('the audit chain verifies in the browser', async ({ page }) => {
   // textContent, not innerText: badges render uppercase via CSS.
   const ms = (await page.getByText(/\d+ms off main thread/i).textContent()) ?? ''
   expect(Number(ms.match(/(\d+)ms/i)![1])).toBeLessThan(200)
-  errs.assertClean()
+  await errs.assertClean()
 })
 
 test('no status badge is ever truncated', async ({ page }) => {
