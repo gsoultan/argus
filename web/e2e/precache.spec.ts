@@ -21,9 +21,9 @@ import { join } from 'node:path'
 
 const DIST = new URL('../dist/', import.meta.url).pathname
 
-/** Currently 10 entries, 720.7 kB on disk. */
-const MAX_ENTRIES = 12
-const MAX_KB = 800
+/** 8 entries and 623.5 kB on disk when these were set. */
+const MAX_ENTRIES = 10
+const MAX_KB = 700
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
@@ -51,16 +51,21 @@ test('the worker precaches the shell and nothing else', async ({ browserName }) 
       + 'precaching them makes every first visit pay for pages nobody opened.',
   ).toEqual([])
 
-  // @fontsource ships a subset per script. Latin and latin-ext cover the names
-  // this console renders; the rest are a quarter of a megabyte for characters
-  // it may never show, and runtimeCaching still fetches them if one appears.
-  const nonLatinFonts = entries.filter(
-    (u) => u.endsWith('.woff2') && !u.includes('latin'),
+  // @fontsource ships a subset per script, and exactly two render this console:
+  // Inter and JetBrains Mono, plain latin. weight.spec.ts asserts a first visit
+  // fetches those two, so storing any more is storing what nobody asked for.
+  //
+  // `latin-ext` is the one to watch. The pattern was `*latin*`, which matched it
+  // and put 98 kB of accented-Latin coverage in every first visit. An accented
+  // name still renders — the CacheFirst rule fetches its subset on demand, the
+  // way Cyrillic and Greek always have.
+  const extraFonts = entries.filter(
+    (u) => u.endsWith('.woff2') && !/-latin-wght-/.test(u),
   )
   expect(
-    nonLatinFonts,
-    'Non-latin font subsets are precached. They are fetched on demand by the '
-      + 'CacheFirst font rule when a name actually needs one.',
+    extraFonts,
+    'Font subsets beyond plain latin are precached. They are fetched on demand '
+      + 'by the CacheFirst font rule when a name actually needs one.',
   ).toEqual([])
 
   // Listing icon.svg in globPatterns as well as the manifest put it in twice,
@@ -85,6 +90,12 @@ test('the worker precaches the shell and nothing else', async ({ browserName }) 
     }),
   )
   const totalKB = sizes.reduce((a, b) => a + b, 0) / 1024
+  // Same reason as weight.spec.ts: the figure in the comment above dates, the
+  // reported one cannot.
+  const line =
+    `${entries.length} entries / ${MAX_ENTRIES}, ${totalKB.toFixed(1)} kB / ${MAX_KB}`
+  test.info().annotations.push({ type: 'precache', description: line })
+  console.log(`  ▸ precache: ${line}`)
   expect(
     totalKB,
     `The worker stores ${totalKB.toFixed(1)} kB on a first visit.`,

@@ -39,10 +39,12 @@ revision, because `globPatterns` listed `**/*.svg` while the manifest already
 precaches it as the app icon. It is the only SVG in the build, so the glob was
 pure duplication and is gone.
 
-Also worth knowing: the `*latin*` glob matches `latin-ext` as well, so four font
-files are precached and only two are ever fetched to render the fixture — 98 kB
-of accented-Latin coverage for European names. That is background precache, not
-the cold load, and `weight.spec.ts` confirms a first visit downloads two files.
+The pattern is `assets/*-latin-wght-*.woff2`, not `*latin*`. The looser one also
+matched `latin-ext`, so four font files were stored where two are ever fetched —
+98 kB of accented-Latin coverage pushed at every first visit. Narrowing it took
+the precache from 10 entries and 720.7 kB to 8 and 623.5 kB. An accented name
+still renders: the CacheFirst rule fetches its subset on demand, the way
+Cyrillic, Greek and Vietnamese always have.
 
 ## Precaching
 

@@ -22,10 +22,18 @@ export default defineConfig({
         // kept by runtimeCaching below; precaching all of them meant a first
         // visit downloaded xterm.js and every route the user never opened.
         //
-        // Fonts ship as per-script subsets, so only the Latin ones are listed:
-        // the rest exist for names this console may never render, and pulling
-        // Cyrillic, Greek and Vietnamese up front costs a quarter of a megabyte
-        // to no effect. They are still cached if a name ever needs them.
+        // Fonts ship as per-script subsets, and only the plain Latin ones are
+        // precached. The rest exist for names this console may never render,
+        // and pulling them up front costs a quarter of a megabyte to no effect.
+        // They are still cached the moment a name needs one — the CacheFirst
+        // rule below does that.
+        //
+        // `*latin*` used to be the pattern, which also matched `latin-ext` and
+        // pushed 98 kB of accented-Latin coverage at every first visit. Two
+        // font files are fetched to render this console and four were being
+        // stored; e2e/weight.spec.ts asserts the two, precache.spec.ts the
+        // four-now-two. An accented name still renders, it just fetches its
+        // subset on demand like Cyrillic and Greek always have.
         //
         // No '**/*.svg' here: the only SVG in the build is icon.svg, and the
         // manifest already precaches it as the app icon. Listing both put it in
@@ -34,7 +42,7 @@ export default defineConfig({
           'index.html',
           'assets/index-*.js',
           'assets/*.css',
-          'assets/*latin*.woff2',
+          'assets/*-latin-wght-*.woff2',
         ],
         // Anything the control plane serves must reach the control plane.
         //

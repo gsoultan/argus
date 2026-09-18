@@ -20,11 +20,11 @@ test.use({ serviceWorkers: 'block' })
 
 /** JS + CSS, compressed. */
 const BUDGET_KB = {
-  /** The first screen. Currently 233.6 kB. */
+  /** The first screen. 233.6 kB when this was set. */
   overview: 250,
   /**
-   * A deep link to a recording. Currently 340.8 kB — the extra is xterm.js and
-   * the replay player, which no other route pays for. This is the page most
+   * A deep link to a recording. 340.8 kB when this was set — the extra is
+   * xterm.js and the replay player, which no other route pays for. This is the page most
    * likely to grow quietly, because everything about a session lands on it.
    */
   sessionDetail: 370,
@@ -92,6 +92,17 @@ function expectWithin(what: string, w: Weight, codeBudget: number) {
   const detail =
     `js ${w.js.toFixed(1)} kB across ${w.jsFiles} files, css ${w.css.toFixed(1)} kB, `
     + `fonts ${w.fonts.toFixed(1)} kB across ${w.fontFiles} files`
+
+  // Reported on every run, not only on failure. The figures quoted in the
+  // comments above date the moment a budget is legitimately raised — which is
+  // the decay these tests exist to stop, one level up — so the live number
+  // belongs in the output rather than only in prose.
+  const line = `${what}: ${code.toFixed(1)} kB of code / ${codeBudget} budget — ${detail}`
+  test.info().annotations.push({ type: 'weight', description: line })
+  // Logged as well as annotated: the list reporter shows annotations only for
+  // tests that did not pass, and a number nobody sees while it is healthy is
+  // the same as no number.
+  console.log(`  ▸ ${line}`)
 
   // A budget nothing was measured against passes silently.
   expect(code, `measured nothing on ${what} — did the page load?`).toBeGreaterThan(50)

@@ -56,6 +56,12 @@ from `vite preview` responses, so summing response headers reports ~0.
 `CommandPalette` is `lazy()` for this reason: eager it cost 3.4 kB of every
 cold load for a panel most sessions never open.
 
+**`dist` and `dist-live` are the same bundle.** Compared asset by asset: 59
+files each, identical sizes but for 43 bytes in `queries.js`, which is the baked
+`VITE_CONTROL_URL` string. Nothing is compiled out for a configured deployment —
+the fixture is the fallback path, so it ships either way. One budget covers
+both; there is no separate live-build number to track.
+
 `e2e/weight.spec.ts` asserts the budget now rather than leaving it in a note —
 250 kB of code and 32 kB of CSS. The measurement is deterministic to a tenth of
 a kilobyte across runs, so those are tight on purpose. The CSS ceiling is what
