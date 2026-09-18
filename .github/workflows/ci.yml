@@ -244,6 +244,15 @@ jobs:
       # rest of the suite builds with no control plane configured, where
       # LoginGate waves everything through -- so that screen went untested until
       # two bugs had already shipped through the gap.
+      #
+      # And the cascade: app.css hand-maintains the order of ~47 Mantine
+      # stylesheets, so cascade.spec.ts builds a second bundle using Mantine's
+      # concatenated one and compares getComputedStyle across every route. A
+      # reordered import or a component with no stylesheet compiles, type-checks
+      # and passes every other check in this file.
+      #
+      # Unfiltered on purpose: `playwright test` picks up every spec under e2e/,
+      # so a new one is covered here without touching this workflow.
       - run: bun run e2e
         env:
           CI: "true"

@@ -35,7 +35,26 @@ test.use({ reducedMotion: 'reduce' })
 const SHIPPED = 'http://localhost:5510'
 const REFERENCE = 'http://localhost:5512'
 
-const ROUTES = ['/', '/sessions', '/assets', '/requests', '/audit', '/users', '/settings', '/connect']
+const ROUTES = [
+  '/', '/sessions', '/assets', '/requests', '/audit', '/users', '/settings',
+  '/connect', '/coverage',
+]
+
+/**
+ * The two routes that need an id, reached the way an operator reaches them.
+ *
+ * They are the densest layouts in the console — the replay player, the field
+ * stacks, the command timeline — and they were the ones this check could not
+ * cover, because the path cannot be written down in advance. Clicking the first
+ * row yields one, and the fixture is seeded so it is the same row every time.
+ *
+ * The id is resolved against the shipped build and then used verbatim against
+ * both, so the two are never compared at different records.
+ */
+const DETAIL_ROUTES: Array<[label: string, listPath: string]> = [
+  ['a session detail', '/sessions'],
+  ['an asset detail', '/assets'],
+]
 
 /**
  * Longhands, not shorthands: `border-color` resolves to the empty string when
@@ -132,22 +151,39 @@ function diff(shipped: Snapshot, reference: Snapshot): string[] {
   return problems
 }
 
+async function expectSameCascade(page: import('@playwright/test').Page, route: string) {
+  const shipped = await snapshot(page, SHIPPED, route)
+  const reference = await snapshot(page, REFERENCE, route)
+
+  // A page that probed nothing would pass silently, which is the one result
+  // this test must never give.
+  expect(Object.keys(reference).length).toBeGreaterThan(20)
+
+  const problems = diff(shipped, reference)
+  expect(
+    problems,
+    `app.css disagrees with @mantine/core/styles.layer.css on ${route}.\n`
+      + 'Either an import is out of order or a component has no stylesheet — '
+      + 'regenerate the list from the byte offsets in styles.layer.css.\n\n'
+      + problems.slice(0, 40).join('\n'),
+  ).toEqual([])
+}
+
 for (const route of ROUTES) {
   test(`${route} computes the same styles as Mantine's own stylesheet order`, async ({ page }) => {
-    const shipped = await snapshot(page, SHIPPED, route)
-    const reference = await snapshot(page, REFERENCE, route)
+    await expectSameCascade(page, route)
+  })
+}
 
-    // A page that probed nothing would pass silently, which is the one result
-    // this test must never give.
-    expect(Object.keys(reference).length).toBeGreaterThan(20)
+for (const [label, listPath] of DETAIL_ROUTES) {
+  test(`${label} computes the same styles as Mantine's own stylesheet order`, async ({ page }) => {
+    await page.goto(SHIPPED + listPath)
+    await page.waitForLoadState('networkidle')
+    // rowNav makes the row a keyboard-reachable link without an href, so the
+    // path has to come from following it rather than from reading one.
+    await page.locator('tbody tr[role="link"]').first().click()
+    await page.waitForURL(/\/(sessions|assets)\/[^/]+$/)
 
-    const problems = diff(shipped, reference)
-    expect(
-      problems,
-      `app.css disagrees with @mantine/core/styles.layer.css on ${route}.\n`
-        + 'Either an import is out of order or a component has no stylesheet — '
-        + 'regenerate the list from the byte offsets in styles.layer.css.\n\n'
-        + problems.slice(0, 40).join('\n'),
-    ).toEqual([])
+    await expectSameCascade(page, new URL(page.url()).pathname)
   })
 }

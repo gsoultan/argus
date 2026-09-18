@@ -35,7 +35,10 @@ asserts the properties directly, on every change, in CI (`console-e2e` job).
 - no status badge is ever truncated (`BROKERED` vs `BYPASSED`)
 - **the cascade** (`cascade.spec.ts`): every route rendered by both the shipped
   build and a reference build using Mantine's concatenated stylesheet, with
-  `getComputedStyle` compared property by property. See [design-system](design-system.md)
+  `getComputedStyle` compared property by property. Includes the two routes that
+  need an id — the path is resolved by clicking the first row of the list, on
+  the shipped build, and then used verbatim against both. See
+  [design-system](design-system.md)
 - **terminal replay**: an 8 MB generated asciicast (~50k+ frames) plays at 8x
   and is scrubbed; main-thread heap must stay under `after-decode × 1.35 + 24 MB`
 - **desktop replay**: a ~40 MB generated display stream (300 rects + 6 full

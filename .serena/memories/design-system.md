@@ -223,6 +223,17 @@ breaking them: moving `Paper.layer.css` after `Card.layer.css` reports
 `mantine-Card-root { display: block }`, and deleting `Badge.layer.css` reports
 twelve differences on the badge label.
 
+`/sessions/$id` and `/assets/$id` are covered too, and they are not decoration:
+they hold the replay player, the field stacks and the command timeline, and
+several components render nowhere else. Deleting `Slider.layer.css` — which only
+`PlayerControls` uses — fails the session detail while all nine list routes pass.
+Their paths cannot be written down in advance, so the spec clicks the first row
+of the list on the shipped build and uses the resulting path against both; the
+fixture is seeded, so it is the same record every run.
+
+It runs in CI through `bun run e2e`, which is an unfiltered `playwright test` —
+a new spec under `e2e/` is picked up without touching the workflow.
+
 It samples until two consecutive reads agree instead of after a fixed delay.
 Styles arrive asynchronously — stylesheet, then web fonts, then whatever React
 mounts last — and this compares widths and heights. A fixed settle caught a

@@ -234,3 +234,23 @@ describe('assets and coverage', () => {
     expect(link).toHaveAttribute('href', '/coverage')
   })
 })
+
+describe('the header says which data is on screen', () => {
+  /**
+   * The slot this covers used to read a hard-coded "northwind-prod ·
+   * ap-southeast-3". Argus has no tenant and no region — neither word appears
+   * in the domain — so it was an invented deployment name presented as fact, in
+   * the one place an operator would look to check which deployment they were
+   * about to act on.
+   *
+   * It matters more than a label usually would: live.orFallback serves the
+   * in-memory fixture whenever the control plane cannot be reached, so a
+   * console showing invented numbers is otherwise indistinguishable from one
+   * showing a real fleet.
+   */
+  it('names the fixture as the fixture when no control plane is configured', async () => {
+    await renderRoute('/')
+    expect(await screen.findByText('Local fixture')).toBeInTheDocument()
+    expect(screen.queryByText(/northwind-prod/)).not.toBeInTheDocument()
+  })
+})

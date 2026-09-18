@@ -24,6 +24,15 @@ Read this file first, then only the memory a task actually needs.
 
 - **The console must never present fixture data as real.** `isLive()` exists for
   this. Any new surface that can show either has to say which it is showing.
+  The header badge in `web/src/components/Shell.tsx` is where that is stated
+  for the console as a whole — `Local fixture` in amber when no control plane is
+  configured, the control plane's own host when one has answered, and a refusal
+  to guess in between. It replaced a hard-coded `northwind-prod ·
+  ap-southeast-3` over a tooltip calling it the tenant and region, neither of
+  which exists anywhere in the domain. This matters more than a label usually
+  would because `live.orFallback` serves the fixture whenever the control plane
+  cannot be reached, so a console showing invented numbers is otherwise
+  indistinguishable from one showing a real fleet.
 - **A control that appears to be set must be set.** The Settings page shipped
   once with uncontrolled switches that silently reverted; that is the specific
   failure mode this product cannot have.

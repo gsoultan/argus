@@ -14,7 +14,7 @@ import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
 import { CommandPalette } from '~/components/CommandPalette'
 import { NAV_SECTIONS, isActive } from '~/components/nav'
-import { isConfigured, logout, whoami, type Identity } from '~/lib/live'
+import { controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity } from '~/lib/live'
 import { FS, SP } from '~/theme'
 
 const HEADER_H = 52
@@ -119,7 +119,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [opened, { toggle, close }] = useDisclosure()
   const [paletteOpen, palette] = useDisclosure(false)
   const { data: me } = useQuery(meQuery())
-  const { data: stats } = useQuery(statsQuery())
+  const statsQuery_ = useQuery(statsQuery())
+  const stats = statsQuery_.data
+  const statsPending = statsQuery_.isPending
   const { data: cov } = useQuery(coverageQuery())
 
   // Both directions count as a gap: an unmanaged host and a managed host with
@@ -176,11 +178,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             <Box hiddenFrom="sm">
               <Logo />
             </Box>
-            <Tooltip label="The tenant and region this console is pointed at">
-              <Badge variant="default" color="slate" size="sm" visibleFrom="sm" className="argus-digest">
-                northwind-prod · ap-southeast-3
-              </Badge>
-            </Tooltip>
+            <DataSourceBadge pending={statsPending} />
           </Group>
 
           {/* A search field rather than an icon: the shortcut is discoverable
@@ -394,5 +392,68 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
       <CommandPalette opened={paletteOpen} onClose={palette.close} />
     </AppShell>
+  )
+}
+
+/**
+ * Which data is on the screen.
+ *
+ * This slot used to read `northwind-prod · ap-southeast-3`, hard-coded, over a
+ * tooltip calling it "the tenant and region this console is pointed at". Argus
+ * has no tenant and no region — neither word appears anywhere in the domain —
+ * so it was a fabricated deployment name presented as fact, in the one place an
+ * operator would look to check which deployment they were about to act on. It
+ * also read as a switcher and switched nothing.
+ *
+ * What replaces it is the thing the console genuinely knows and the thing that
+ * actually matters: where its figures come from. `live.orFallback` serves the
+ * in-memory fixture whenever the control plane cannot be reached, so a console
+ * showing invented numbers looks exactly like one showing real ones. That is
+ * the case this badge exists to make visible — see the header of lib/live.ts.
+ */
+function DataSourceBadge({ pending }: { pending: boolean }) {
+  if (!isConfigured()) {
+    return (
+      <Tooltip
+        label="No control plane is configured. Every figure on this screen is generated demo data, not your fleet."
+        multiline
+        maw={280}
+      >
+        <Badge variant="light" color="amber" size="sm" visibleFrom="sm">
+          Local fixture
+        </Badge>
+      </Tooltip>
+    )
+  }
+
+  if (isLive()) {
+    return (
+      <Tooltip label="Connected. Everything on screen came from this control plane.">
+        <Badge variant="default" color="slate" size="sm" visibleFrom="sm" className="argus-digest">
+          {controlPlaneHost()}
+        </Badge>
+      </Tooltip>
+    )
+  }
+
+  // Before the first request settles, "not answering" would be a guess.
+  if (pending) {
+    return (
+      <Badge variant="default" color="slate" size="sm" visibleFrom="sm">
+        Connecting…
+      </Badge>
+    )
+  }
+
+  return (
+    <Tooltip
+      label={`${controlPlaneHost()} has not answered. The console falls back to fixture data rather than showing nothing, so treat anything on screen as unverified.`}
+      multiline
+      maw={300}
+    >
+      <Badge variant="light" color="rose" size="sm" visibleFrom="sm">
+        Control plane not answering
+      </Badge>
+    </Tooltip>
   )
 }
