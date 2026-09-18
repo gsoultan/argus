@@ -206,7 +206,20 @@ export const theme = createTheme({
       // Row height was set per table, at 6, 7, 8, 10 and "xs" across the eight
       // tables in the console — so moving between two list pages changed the
       // rhythm for no reason anyone had decided on.
-      defaultProps: { verticalSpacing: SP.cozy, horizontalSpacing: 'md', highlightOnHover: true },
+      //
+      // The two colours are props, not CSS variables. Mantine sets
+      // `--table-striped-color` on the table element itself, so a `:root` rule
+      // declaring it is overridden and does nothing — which is what happened
+      // here: rows were being painted solid `slate.6`, a mid blue-grey, while a
+      // stylesheet claimed they were 1.4% white. Lightening the neutral ramp
+      // made that louder, and it was banding every list page.
+      defaultProps: {
+        verticalSpacing: SP.cozy,
+        horizontalSpacing: 'md',
+        highlightOnHover: true,
+        stripedColor: 'rgba(255, 255, 255, 0.022)',
+        highlightOnHoverColor: 'rgba(37, 99, 235, 0.07)',
+      },
       styles: {
         th: {
           fontSize: FS.digest,

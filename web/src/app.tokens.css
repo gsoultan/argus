@@ -85,13 +85,10 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: #33425c; }
 
-/* Hover on a table row is an interaction affordance, so it is tinted with the
-   brand rather than with a neutral wash — and kept far below the opacity a
-   semantic badge sits at, so a hovered row never competes with a finding. */
-:root {
-  --table-highlight-on-hover-color: rgba(37, 99, 235, 0.07);
-  --table-striped-color: rgba(255, 255, 255, 0.014);
-}
+/* Table row striping and hover live in the theme, as `stripedColor` and
+   `highlightOnHoverColor` props. They were declared here as CSS variables and
+   silently did nothing: Mantine sets --table-striped-color on the table element,
+   which beats :root. See src/theme. */
 
 /* Rows that navigate. They looked clickable and behaved so on click, but had no
    focus affordance because they were not reachable by keyboard at all. */

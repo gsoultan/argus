@@ -70,6 +70,15 @@ now the `defaultProps` for Button, TextInput, Select, Textarea, MultiSelect,
 PasswordInput, SegmentedControl, Checkbox and Radio. A new control is consistent
 by omission rather than by remembering.
 
+**Table row colours are props, not CSS variables.** `stripedColor` and
+`highlightOnHoverColor` on `Table.defaultProps`. Declaring
+`--table-striped-color` at `:root` looks like it sets the stripe and does not —
+Mantine sets that variable on the table element itself, which wins — so every
+other row was painted solid `slate.6`, a mid blue-grey banding every list page,
+while a stylesheet claimed 1.4% white. Lightening the neutral ramp made it
+louder. `routes.spec.ts` asserts the rendered alpha rather than the variable,
+because the variable being right is precisely what was already believed.
+
 `Table` carries `verticalSpacing: SP.cozy`. Row height had been set per table at
 6, 7, 8, 10 and `"xs"` across the eight tables, so moving between two list pages
 changed the rhythm for no reason anyone had decided on.
