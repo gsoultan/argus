@@ -21,22 +21,14 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "allowJs": true,
-    "checkJs": true,
     "paths": { "~/*": ["./src/*"] }
   },
-  // Everything, including the plain-JavaScript Node scripts under e2e/.
+  // Application code only.
   //
-  // A syntax error in e2e/helpers.ts once passed `bun run typecheck` untouched
-  // and surfaced only as Playwright collecting zero tests, because this listed
-  // `src` alone. checkJs covers authstub.mjs and preview-monolith.mjs too —
-  // they are small, they are load-bearing for the sign-in and cascade suites,
-  // and nothing else was reading them.
-  "include": [
-    "src",
-    "e2e",
-    "vite.config.ts",
-    "vitest.config.ts",
-    "playwright.config.ts"
-  ]
+  // The tooling program below needs @types/node, and TypeScript loads a types
+  // package whole: once anything references `node:http`, `process` and `Buffer`
+  // become globals for every file in that program. With e2e and the configs in
+  // here, `process.env.HOME` in a route typechecked clean — code that would be
+  // undefined in a browser. Two programs keeps Node's surface where Node runs.
+  "include": ["src"]
 }

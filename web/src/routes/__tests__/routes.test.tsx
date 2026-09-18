@@ -253,4 +253,19 @@ describe('the header says which data is on screen', () => {
     expect(await screen.findByText('Local fixture')).toBeInTheDocument()
     expect(screen.queryByText(/northwind-prod/)).not.toBeInTheDocument()
   })
+
+  /**
+   * The banner that says "nothing below is your fleet" belongs to one state:
+   * a control plane that was configured and then stopped answering. Running
+   * against the fixture is not that — nobody configured anything, the badge
+   * already says so, and a warning shown in every state is not a warning.
+   *
+   * Without this, a banner that rendered unconditionally would pass every other
+   * test in this file.
+   */
+  it('does not cry fallback when there is no control plane to have lost', async () => {
+    await renderRoute('/')
+    await screen.findByText('Local fixture')
+    expect(screen.queryByText(/nothing below is your fleet/)).not.toBeInTheDocument()
+  })
 })

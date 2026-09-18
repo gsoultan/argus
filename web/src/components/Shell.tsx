@@ -10,10 +10,20 @@ import {
   IconAlertTriangle, IconBell, IconChevronDown, IconLogout, IconSearch, IconSettings,
   IconShieldLock,
 } from '@tabler/icons-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
-import { CommandPalette } from '~/components/CommandPalette'
+/**
+ * Loaded on first open.
+ *
+ * It pulls in Modal and its focus trap, and it is opened by a minority of
+ * visits. Measured: a cold load of `/` drops from 237.0 kB to 233.6 kB
+ * compressed — 3.4 kB for a panel most sessions never see. Same reasoning as
+ * the terminal and the replay players.
+ */
+const CommandPalette = lazy(() =>
+  import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+)
 import { NAV_SECTIONS, isActive } from '~/components/nav'
 import {
   GATEWAY_URL, controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
@@ -398,7 +408,13 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         {children}
       </AppShell.Main>
 
-      <CommandPalette opened={paletteOpen} onClose={palette.close} />
+      {/* Mounted only while open, so the chunk is fetched on the first ⌘K
+          rather than on every page load. */}
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette opened onClose={palette.close} />
+        </Suspense>
+      )}
     </AppShell>
   )
 }

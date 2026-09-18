@@ -41,6 +41,12 @@ test('signing in renders the console rather than an error boundary', async ({ pa
   await expect(page.getByText('Dev Admin')).toBeVisible()
   await expect(page.getByText(/could not be rendered/i)).toBeHidden()
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+
+  // And the console does not warn about data it did not fall back to. The
+  // banner belongs to a control plane that stopped answering; a banner shown
+  // when one is answering fine is noise that teaches people to ignore it.
+  await expect(page.getByText(/nothing below is your fleet/)).toBeHidden()
+  await expect(page.locator('header .mantine-Badge-root').first()).toHaveText('localhost:5511')
 })
 
 test('the session survives a reload', async ({ page }) => {

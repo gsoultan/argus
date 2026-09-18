@@ -27,6 +27,35 @@ route should be assembling, and `components/nav.ts` is the single definition of
 the sidebar's three sections — read by both `Shell` and `CommandPalette`. See
 [design-system](design-system.md) before changing any of them.
 
+## Two typecheck programs
+
+`tsconfig.json` is application code only; `tsconfig.tooling.json` extends it for
+`e2e/`, `vite.config.ts`, `vitest.config.ts` and `playwright.config.ts`, and is
+the only one with `types: ["node"]` and `checkJs`. `bun run typecheck` runs both.
+
+They are split because TypeScript loads a types package whole: once anything in
+a program references `node:http`, `process` and `Buffer` are globals for every
+file in it. With e2e and the configs in one program with `src`,
+`process.env.HOME` inside a route typechecked clean — code that is undefined in
+a browser. Verified both ways with a throwaway probe file.
+
+## Bundle weight
+
+Measured on a cold load of `/`, compressed, service worker blocked, against
+`6916bcca`: **228.0 kB → 233.6 kB of JS+CSS (+5.6 kB)** for the azure palette,
+the page-layout primitives, the grouped nav, the command palette, the fallback
+banner and the router pending component. CSS moved 26.5 → 26.6 kB, so splitting
+`app.tokens.css` out cost nothing.
+
+Do not read the chunk table for this. It showed the entry chunk growing 33 kB,
+which was `Shell.js` being folded into it — the all-chunk total moved 7.6 kB and
+the real cold load moved less again. `performance.getEntriesByType('resource')`
+and `encodedBodySize` is the number that matters; `content-length` is absent
+from `vite preview` responses, so summing response headers reports ~0.
+
+`CommandPalette` is `lazy()` for this reason: eager it cost 3.4 kB of every
+cold load for a panel most sessions never open.
+
 `app.css` is split: the Mantine import list lives there, everything Argus writes
 itself lives in `app.tokens.css`, and `app.monolith.css` is a reference variant
 built only by `e2e/cascade.spec.ts`. `ARGUS_CSS=monolith` swaps it in through a
