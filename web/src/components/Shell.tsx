@@ -14,7 +14,9 @@ import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
 import { CommandPalette } from '~/components/CommandPalette'
 import { NAV_SECTIONS, isActive } from '~/components/nav'
-import { controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity } from '~/lib/live'
+import {
+  GATEWAY_URL, controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
+} from '~/lib/live'
 import { FS, SP } from '~/theme'
 
 const HEADER_H = 52
@@ -27,7 +29,7 @@ const NAVBAR_W = 244
  * something Argus verified. A product mark wearing the verification colour
  * spent the console's loudest signal on decoration.
  */
-function Logo() {
+function Logo({ markOnly = false }: { markOnly?: boolean }) {
   return (
     <Group gap={SP.cozy} wrap="nowrap">
       <Box
@@ -42,14 +44,16 @@ function Logo() {
       >
         <IconShieldLock size={15} color="#fff" stroke={2.4} />
       </Box>
-      <Box>
-        <Text fw={700} size={FS.body} lh={1.1} c="slate.0" style={{ letterSpacing: '0.04em' }}>
-          ARGUS
-        </Text>
-        <Text size={FS.micro} c="dimmed" lh={1.15} style={{ letterSpacing: '0.09em' }}>
-          PRIVILEGED ACCESS
-        </Text>
-      </Box>
+      {!markOnly && (
+        <Box>
+          <Text fw={700} size={FS.body} lh={1.1} c="slate.0" style={{ letterSpacing: '0.04em' }}>
+            ARGUS
+          </Text>
+          <Text size={FS.micro} c="dimmed" lh={1.15} style={{ letterSpacing: '0.09em' }}>
+            PRIVILEGED ACCESS
+          </Text>
+        </Box>
+      )}
     </Group>
   )
 }
@@ -176,7 +180,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               aria-label={opened ? 'Close navigation' : 'Open navigation'}
             />
             <Box hiddenFrom="sm">
-              <Logo />
+              <Logo markOnly />
             </Box>
             <DataSourceBadge pending={statsPending} />
           </Group>
@@ -410,6 +414,24 @@ function ShellInner({ children }: { children: React.ReactNode }) {
  * in-memory fixture whenever the control plane cannot be reached, so a console
  * showing invented numbers looks exactly like one showing real ones. That is
  * the case this badge exists to make visible — see the header of lib/live.ts.
+ *
+ * **It shows the host, and there is deliberately no configurable deployment
+ * name.** Checked against the control plane before deciding: it has no identity
+ * to report. No tenant, no region, no gateway registry — `gateway_policy` is a
+ * single row and the only heartbeats are agents reporting their own hostname.
+ * Multi-gateway does not change that; it is many gateways to one control plane,
+ * and the console talks to the control plane.
+ *
+ * Same-origin is the supported shape because the session cookie depends on it,
+ * so the browser's host *is* the control plane's address — not a stand-in for
+ * it. A name from config would be weaker, not stronger: it can be typoed or
+ * copied between environments, and two deployments can claim the same one.
+ * Preferring the fact you can check over the label someone typed is the same
+ * reasoning that made the hard-coded original wrong.
+ *
+ * A warning is never hidden by breakpoint. The neutral connected-host label is
+ * a convenience and gives up its space on a narrow screen; "you are looking at
+ * fixture data" is the whole point of the control and stays.
  */
 function DataSourceBadge({ pending }: { pending: boolean }) {
   if (!isConfigured()) {
@@ -419,7 +441,7 @@ function DataSourceBadge({ pending }: { pending: boolean }) {
         multiline
         maw={280}
       >
-        <Badge variant="light" color="amber" size="sm" visibleFrom="sm">
+        <Badge variant="light" color="amber" size="sm">
           Local fixture
         </Badge>
       </Tooltip>
@@ -428,7 +450,11 @@ function DataSourceBadge({ pending }: { pending: boolean }) {
 
   if (isLive()) {
     return (
-      <Tooltip label="Connected. Everything on screen came from this control plane.">
+      <Tooltip
+        label={`Connected to ${controlPlaneHost()}. Sessions are brokered through ${gatewayHost()}.`}
+        multiline
+        maw={300}
+      >
         <Badge variant="default" color="slate" size="sm" visibleFrom="sm" className="argus-digest">
           {controlPlaneHost()}
         </Badge>
@@ -451,9 +477,22 @@ function DataSourceBadge({ pending }: { pending: boolean }) {
       multiline
       maw={300}
     >
-      <Badge variant="light" color="rose" size="sm" visibleFrom="sm">
-        Control plane not answering
+      <Badge variant="light" color="rose" size="sm">
+        Not answering
       </Badge>
     </Tooltip>
   )
+}
+
+/**
+ * The gateway is configured separately from the control plane and can point
+ * somewhere else entirely, so "which deployment am I about to act on" is not
+ * fully answered by the control plane's host alone.
+ */
+function gatewayHost(): string {
+  try {
+    return new URL(GATEWAY_URL).host
+  } catch {
+    return GATEWAY_URL
+  }
 }

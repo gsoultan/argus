@@ -1,5 +1,9 @@
 # Browser checks
 
+CI caches `~/.cache/ms-playwright` keyed on `web/bun.lock`. The browsers are
+~400 MB across two engines; their system libraries are apt packages outside that
+path, so a cache hit still runs `playwright install-deps`.
+
 `web/e2e/` — Playwright against the production build (`bun run e2e`). It builds
 the console with `VITE_CONTROL_URL=` (fixture mode), serves it with
 `vite preview`, and runs in Chromium with `--enable-precise-memory-info` so
@@ -33,6 +37,13 @@ asserts the properties directly, on every change, in CI (`console-e2e` job).
   rendered with them (the theme named Inter for months while nothing loaded it)
 - the audit chain verifies in WASM in well under 200 ms
 - no status badge is ever truncated (`BROKERED` vs `BYPASSED`)
+- **the data-source badge** (`signin.spec.ts`): that the header does not claim a
+  connection before one has answered. Route matters — on `/` the state is
+  unreachable because the router's loader awaits `statsQuery` and nothing
+  renders until it returns; `/connect` declares no loader, so the shell paints
+  while the first call is in flight. And `page.route` cannot see requests a
+  service worker re-issues, so the delay it depends on needs
+  `test.use({ serviceWorkers: 'block' })` or it silently does nothing.
 - **the cascade** (`cascade.spec.ts`): every route rendered by both the shipped
   build and a reference build using Mantine's concatenated stylesheet, with
   `getComputedStyle` compared property by property. Includes the two routes that

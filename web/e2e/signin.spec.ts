@@ -67,3 +67,45 @@ test('a refused password says so instead of doing nothing', async ({ page }) => 
   await expect(page.getByRole('button', { name: /^sign in$/i })).toBeEnabled()
   await expect(page.getByText('Dev Admin')).toBeHidden()
 })
+
+/**
+ * The header badge reports which data is on screen: the control plane's host
+ * once one has answered, `Local fixture` when none is configured, and a warning
+ * if a configured one goes quiet. Between those it must not guess — claiming a
+ * connection that has not been proven is the same class of mistake as the
+ * hard-coded deployment name this badge replaced.
+ *
+ * Finding this state at all took some doing, and the route matters:
+ *
+ * - On `/` it is unreachable. The router's loader awaits `statsQuery`, so
+ *   nothing renders — not even the shell — until that request has come back and
+ *   already proved the control plane is there.
+ * - `/connect` declares no loader, so the shell paints while the first data
+ *   call is still in flight. That is the window, and it is a real one: an
+ *   operator deep-linking to Connect against a slow control plane sees it.
+ */
+test.describe('the data-source badge', () => {
+  // page.route cannot see requests a service worker re-issues on the page's
+  // behalf, and this console registers one — so with it live the delay below
+  // silently does nothing and the test passes against an instant response.
+  test.use({ serviceWorkers: 'block' })
+
+  test('does not claim a connection before one has answered', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+
+    // A control plane that is up — /auth/me still answers, so the login gate
+    // lets go — but slow on the endpoints the console draws figures from.
+    await page.route('**/api/v1/**', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      await route.continue()
+    })
+
+    await page.goto('/connect', { waitUntil: 'commit' })
+
+    await expect(page.getByText(/^Connecting/)).toBeVisible()
+    // And once something answers, it names what it reached.
+    await expect(page.getByText('localhost:5511')).toBeVisible({ timeout: 15_000 })
+  })
+})

@@ -33,6 +33,16 @@ Read this file first, then only the memory a task actually needs.
   would because `live.orFallback` serves the fixture whenever the control plane
   cannot be reached, so a console showing invented numbers is otherwise
   indistinguishable from one showing a real fleet.
+
+  **It shows the host, and there is deliberately no configurable deployment
+  name.** Checked before deciding: the control plane has no identity to report —
+  no tenant, no region, no gateway registry, `gateway_policy` is a single row
+  and the only heartbeats are agents reporting their own hostname. Multi-gateway
+  is many gateways to one control plane, and the console talks to the control
+  plane. Same-origin is the supported shape because the session cookie depends
+  on it, so the browser's host *is* the control plane's address rather than a
+  stand-in for it, and a name from config would be weaker: it can be typoed,
+  copied between environments, or claimed by two deployments at once.
 - **A control that appears to be set must be set.** The Settings page shipped
   once with uncontrolled switches that silently reverted; that is the specific
   failure mode this product cannot have.
