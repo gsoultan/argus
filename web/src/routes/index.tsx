@@ -50,35 +50,43 @@ function Overview() {
             icon={<IconDoorExit size={17} />}
             title={`${stats?.assetsUnmonitored} host${stats?.assetsUnmonitored === 1 ? '' : 's'} would not record a bypass`}
           >
-            <Text size={FS.body} mb="xs" lh={1.5}>
-              These hosts have no agent and no lockdown. Anyone with a standing key can
-              connect straight to sshd on port 22 and Argus will never know the session
-              happened. Until an agent is installed, your recording coverage is not the
-              fleet — it is only the part of it that chooses to use the gateway.
-            </Text>
-            <Group gap="xs">
-              {(stats?.agentsStale ?? 0) > 0 && (
-                <Badge color="rose" variant="filled">
-                  {stats?.agentsStale} agent{stats?.agentsStale === 1 ? '' : 's'} went silent
-                </Badge>
-              )}
-              {(stats?.sessionsDirectToday ?? 0) > 0 && (
-                <Badge color="rose" variant="outline">
-                  {stats?.sessionsDirectToday} direct session(s) in 24h
-                </Badge>
-              )}
-              {/* Coverage, not Assets. This said "Review coverage" and went to
-                  the inventory table, which lists hosts but answers nothing
-                  about whether an agent is reporting from each one. */}
-              <ButtonLink
-                size="compact-xs"
-                variant="subtle"
-                color="rose"
-                to="/coverage"
-                rightSection={<IconArrowRight size={12} />}
-              >
-                Review coverage
-              </ButtonLink>
+            {/* Text and actions share a row rather than stacking.
+                Two sentences, too: the paragraph that used to be here lives on
+                Coverage, where you act on it. A dashboard states the finding and
+                hands over — repeating the full explanation on both, over a badge
+                row of its own, is what pushed the fleet counters off a laptop
+                screen. Capped at a readable measure instead of running the full
+                width of a 1600px window. */}
+            <Group justify="space-between" align="flex-start" gap="md">
+              <Text size={FS.body} lh={1.5} maw={720} style={{ flex: '1 1 300px', minWidth: 0 }}>
+                No agent and no lockdown: anyone with a standing key can reach sshd on port 22
+                and Argus will never know the session happened. Your recording coverage is not
+                the fleet — only the part of it that chooses to use the gateway.
+              </Text>
+              <Group gap="xs">
+                {(stats?.agentsStale ?? 0) > 0 && (
+                  <Badge color="rose" variant="filled">
+                    {stats?.agentsStale} agent{stats?.agentsStale === 1 ? '' : 's'} went silent
+                  </Badge>
+                )}
+                {(stats?.sessionsDirectToday ?? 0) > 0 && (
+                  <Badge color="rose" variant="outline">
+                    {stats?.sessionsDirectToday} direct session(s) in 24h
+                  </Badge>
+                )}
+                {/* Coverage, not Assets. This said "Review coverage" and went to
+                    the inventory table, which lists hosts but answers nothing
+                    about whether an agent is reporting from each one. */}
+                <ButtonLink
+                  size="compact-xs"
+                  variant="light"
+                  color="rose"
+                  to="/coverage"
+                  rightSection={<IconArrowRight size={12} />}
+                >
+                  Review coverage
+                </ButtonLink>
+              </Group>
             </Group>
           </Alert>
         )}
@@ -92,26 +100,31 @@ function Overview() {
             icon={<IconAlertTriangle size={17} />}
             title={`${changed.length} host key${changed.length > 1 ? 's' : ''} changed`}
           >
-            <Text size={FS.body} mb="xs" lh={1.5}>
-              The key presented by {changed.length > 1 ? 'these hosts' : 'this host'} no longer
-              matches the pinned fingerprint. Argus is refusing connections until an admin
-              re-verifies out of band. This is either a rebuild or an active interception.
-            </Text>
-            <Group gap="xs">
-              {changed.slice(0, 4).map((a) => (
-                <Badge key={a.id} color="rose" variant="outline" className="argus-digest">
-                  {a.hostname.split('.')[0]}
-                </Badge>
-              ))}
-              <ButtonLink
-                size="compact-xs"
-                variant="subtle"
-                color="rose"
-                to="/assets"
-                rightSection={<IconArrowRight size={12} />}
-              >
-                Review hosts
-              </ButtonLink>
+            <Group justify="space-between" align="flex-start" gap="md">
+              <Text size={FS.body} lh={1.5} maw={720} style={{ flex: '1 1 300px', minWidth: 0 }}>
+                The presented key no longer matches the pin, so Argus is refusing connections.
+                Either {changed.length > 1 ? 'these hosts were' : 'this host was'} rebuilt, or
+                something is intercepting the connection — verify out of band before re-pinning.
+              </Text>
+              <Group gap="xs">
+                {changed.slice(0, 4).map((a) => (
+                  <Badge key={a.id} color="rose" variant="outline" className="argus-digest">
+                    {a.hostname.split('.')[0]}
+                  </Badge>
+                ))}
+                {/* The count is of changed keys specifically, and the inventory
+                    can now be asked for exactly that set. */}
+                <ButtonLink
+                  size="compact-xs"
+                  variant="light"
+                  color="rose"
+                  to="/assets"
+                  search={{ hostKey: 'changed' }}
+                  rightSection={<IconArrowRight size={12} />}
+                >
+                  Review hosts
+                </ButtonLink>
+              </Group>
             </Group>
           </Alert>
         )}

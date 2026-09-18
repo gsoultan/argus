@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { renderRoute } from '~/test/renderRoute'
 
 /**
@@ -190,5 +190,47 @@ describe('command palette', () => {
     fireEvent.change(input, { target: { value: 'db-01' } })
 
     expect(await screen.findByText('db-01.data.northwind.id')).toBeInTheDocument()
+  })
+})
+
+/**
+ * Assets and Coverage answer different questions about the same fleet, and
+ * deliberately stayed separate pages: the inventory lists what Argus manages,
+ * so a machine nobody enrolled is invisible there by construction, which is
+ * exactly what Coverage is for.
+ *
+ * What they lacked was a way to get from one to the other. Coverage counted
+ * hosts with no agent and could not say which ones; the inventory had no agent
+ * filter to be pointed at. These cover the join.
+ */
+describe('assets and coverage', () => {
+  it('filters the inventory from the URL, so a finding can be linked to', async () => {
+    await renderRoute('/assets?agent=stale')
+    await screen.findByRole('heading', { name: 'Assets' })
+
+    // Every row the filter admits says the agent went quiet. The badge reads
+    // "silent" -- the word the operator sees for a stale agent.
+    const badges = await screen.findAllByText('silent')
+    expect(badges.length).toBeGreaterThan(0)
+    expect(screen.queryByText('no agent')).not.toBeInTheDocument()
+  })
+
+  it('drops a filter value the controls cannot show', async () => {
+    // A hand-edited URL must not put the table into a state with no visible
+    // cause -- rows filtered by something none of the selects can display.
+    await renderRoute('/assets?agent=not-a-state')
+    await screen.findByRole('heading', { name: 'Assets' })
+    expect(await screen.findAllByText('no agent')).not.toHaveLength(0)
+  })
+
+  it('says on the inventory that it is not the whole fleet', async () => {
+    await renderRoute('/assets')
+    // Scoped to the page header: the sidebar links to Coverage from every page,
+    // and what is under test is that this page points at it too.
+    const heading = await screen.findByRole('heading', { name: 'Assets' })
+    const header = heading.closest('.argus-pagehead')
+    expect(header).not.toBeNull()
+    const link = within(header as HTMLElement).getByRole('link', { name: /coverage/i })
+    expect(link).toHaveAttribute('href', '/coverage')
   })
 })

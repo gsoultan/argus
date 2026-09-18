@@ -27,6 +27,13 @@ route should be assembling, and `components/nav.ts` is the single definition of
 the sidebar's three sections — read by both `Shell` and `CommandPalette`. See
 [design-system](design-system.md) before changing any of them.
 
+`app.css` is split: the Mantine import list lives there, everything Argus writes
+itself lives in `app.tokens.css`, and `app.monolith.css` is a reference variant
+built only by `e2e/cascade.spec.ts`. `ARGUS_CSS=monolith` swaps it in through a
+`resolve.alias` entry that must stay ahead of the general `~` one. Keep the two
+variants differing in exactly one thing — which Mantine stylesheets they pull in
+— or the check starts reporting our own divergence as a cascade fault.
+
 ## Where the workers are
 
 Four, all in `web/src/workers/`. Two of them own state rather than shipping it

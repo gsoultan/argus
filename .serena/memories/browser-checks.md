@@ -5,6 +5,20 @@ the console with `VITE_CONTROL_URL=` (fixture mode), serves it with
 `vite preview`, and runs in Chromium with `--enable-precise-memory-info` so
 `performance.memory` is exact rather than quantised.
 
+Three servers, and all three builds are chained into the *first* webServer
+command rather than split across entries: 5510 the fixture build, 5511
+`authstub.mjs` serving the control-plane build so the sign-in screen exists at
+all, 5512 the reference build for the cascade check.
+
+**Playwright starts webServer entries in order, waiting for each url before
+launching the next.** `preview-monolith.mjs` depends on that — by the time it
+runs, the build it serves is already complete. Two earlier versions tried to
+prove freshness from inside that script, by requiring the marker file to be
+newer than the process and then by watching it disappear and return; both
+deadlock under sequential startup, because the build finished before the script
+existed. Freshness is established upstream instead: the entry above deletes
+`dist-monolith` before it builds.
+
 ## Why it exists
 
 Every "fast, low memory" result for the console was first measured by hand. A
@@ -19,6 +33,9 @@ asserts the properties directly, on every change, in CI (`console-e2e` job).
   rendered with them (the theme named Inter for months while nothing loaded it)
 - the audit chain verifies in WASM in well under 200 ms
 - no status badge is ever truncated (`BROKERED` vs `BYPASSED`)
+- **the cascade** (`cascade.spec.ts`): every route rendered by both the shipped
+  build and a reference build using Mantine's concatenated stylesheet, with
+  `getComputedStyle` compared property by property. See [design-system](design-system.md)
 - **terminal replay**: an 8 MB generated asciicast (~50k+ frames) plays at 8x
   and is scrubbed; main-thread heap must stay under `after-decode × 1.35 + 24 MB`
 - **desktop replay**: a ~40 MB generated display stream (300 rects + 6 full

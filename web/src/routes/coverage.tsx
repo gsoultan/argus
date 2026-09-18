@@ -4,12 +4,13 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconCircleCheck, IconEyeOff, IconPlus, IconShieldCheck,
-  IconShieldOff,
+  IconAlertTriangle, IconArrowRight, IconCircleCheck, IconEyeOff, IconPlus,
+  IconShieldCheck, IconShieldOff,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
+import { ButtonLink } from '~/components/links'
 import { Mono, Stat, relTime } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { coverageQuery, discoveredQuery, useEnrolHost, useIgnoreHost } from '~/lib/queries'
@@ -28,6 +29,7 @@ export const Route = createFileRoute('/coverage')({ component: CoverageView })
  * complete while missing whole machines.
  */
 function CoverageView() {
+  const navigate = useNavigate()
   const { data: cov } = useQuery(coverageQuery())
   const { data: unreviewed } = useQuery(discoveredQuery('unreviewed'))
   const { data: ignored } = useQuery(discoveredQuery('ignored'))
@@ -106,15 +108,20 @@ function CoverageView() {
               label="Linux assets with an agent"
               value={`${cov?.assetsWithAgent ?? 0} / ${cov?.sshAssets ?? 0}`}
               tone={cov && cov.assetsUnmonitored > 0 ? 'warn' : 'ok'}
-              sub="An asset with no agent records nothing when someone connects to port 22 directly."
+              sub="An asset with no agent records nothing when someone connects to port 22 directly. Open the ones missing one."
+              onClick={() => navigate({ to: '/assets', search: { agent: 'absent' } })}
             />
           </Grid.Col>
+          {/* Not a link, on purpose. A host outside the inventory is the one
+              thing the Assets table cannot show — it lists what Argus manages —
+              and it is the reason this page exists separately from it. The
+              hosts themselves are in the table below. */}
           <Grid.Col span={{ base: 12, sm: 4 }}>
             <Stat
               label="Hosts outside the inventory"
               value={String(cov?.unreviewedHosts ?? 0)}
               tone={cov && cov.unreviewedHosts > 0 ? 'warn' : 'ok'}
-              sub="Agents reporting from machines Argus is not managing."
+              sub="Agents reporting from machines Argus is not managing. Listed below — the inventory cannot show these."
             />
           </Grid.Col>
           <Grid.Col span={{ base: 12, sm: 4 }}>
@@ -123,6 +130,7 @@ function CoverageView() {
               value={String(cov?.assetsAgentStale ?? 0)}
               tone={cov && cov.assetsAgentStale > 0 ? 'warn' : 'ok'}
               sub="An agent can be killed by root on the host. The silence is what gives it away."
+              onClick={() => navigate({ to: '/assets', search: { agent: 'stale' } })}
             />
           </Grid.Col>
         </Grid>
@@ -148,10 +156,20 @@ function CoverageView() {
             icon={<IconShieldOff size={16} />}
             title={`${cov.assetsUnmonitored} managed ${cov.assetsUnmonitored === 1 ? 'host has' : 'hosts have'} no healthy agent`}
           >
-            <Text size={FS.body} lh={1.5}>
+            <Text size={FS.body} mb="xs" lh={1.5}>
               A session opened straight to sshd on these hosts is not recorded at all. Brokered
               sessions still are — this is the gap the agent exists to close.
             </Text>
+            <ButtonLink
+              size="compact-xs"
+              variant="subtle"
+              color="rose"
+              to="/assets"
+              search={{ agent: 'absent' }}
+              rightSection={<IconArrowRight size={12} />}
+            >
+              Show these hosts
+            </ButtonLink>
           </Alert>
         )}
 

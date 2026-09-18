@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Box, Group, Select, Table, Text, TextInput, Tooltip } from '@mantine/core'
+import { Box, Button, Group, Select, Table, Text, TextInput, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconSearch, IconServer2 } from '@tabler/icons-react'
+import { IconSearch, IconServer2, IconShieldLock, IconX } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
+import { ButtonLink } from '~/components/links'
 import {
   AgentBadge, BypassBadge, CredentialBadge, HealthDot, HostKeyBadge, Mono,
   relTime, rowNav,
@@ -14,8 +15,41 @@ import type { Asset } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
 
+/**
+ * Filters live in the URL.
+ *
+ * Coverage counts hosts with no agent and hosts whose agent went quiet, and had
+ * no way to answer "which ones?" — the two pages described the same fleet and
+ * neither could hand a finding to the other. A filter that is addressable makes
+ * that link possible, and makes a narrowed inventory something an operator can
+ * paste into an incident channel.
+ */
+interface AssetSearch {
+  q?: string
+  group?: string
+  hostKey?: Asset['hostKeyState']
+  agent?: Asset['agentState']
+}
+
+const HOST_KEY_STATES = ['pinned', 'unpinned', 'changed'] as const
+const AGENT_STATES = ['healthy', 'stale', 'absent'] as const
+
+const oneOf = <T extends string>(allowed: readonly T[], v: unknown): T | undefined =>
+  typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : undefined
+
+const str = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.length > 0 ? v : undefined
+
 export const Route = createFileRoute('/assets/')({
   component: Assets,
+  // Unrecognised values are dropped rather than passed through, so a
+  // hand-edited URL cannot put the table into a state the controls cannot show.
+  validateSearch: (search: Record<string, unknown>): AssetSearch => ({
+    q: str(search.q),
+    group: str(search.group),
+    hostKey: oneOf(HOST_KEY_STATES, search.hostKey),
+    agent: oneOf(AGENT_STATES, search.agent),
+  }),
   loader: ({ context }) => context.queryClient.ensureQueryData(assetsQuery({})),
 })
 
@@ -25,65 +59,114 @@ function rotationOverdue(a: Asset): boolean {
   return ref - Date.parse(a.credentialRotatedAt) > a.rotationIntervalDays * 86_400_000
 }
 
+const AGENT_LABEL: Record<Asset['agentState'], string> = {
+  healthy: 'Agent reporting',
+  stale: 'Agent gone quiet',
+  absent: 'No agent installed',
+}
+
 function Assets() {
   const navigate = useNavigate()
-  const [search, setSearch] = useState('')
-  const [groupId, setGroupId] = useState<string | null>(null)
-  const [hostKeyState, setHostKeyState] = useState<string | null>(null)
+  const search = Route.useSearch()
+
+  // Mirrored locally so typing stays instant; the URL is the shareable record
+  // rather than the source the input reads back from on every keystroke.
+  const [text, setText] = useState(search.q ?? '')
+
+  const setSearch = (patch: Partial<AssetSearch>) =>
+    void navigate({ to: '/assets', search: (prev) => ({ ...prev, ...patch }), replace: true })
 
   const { data: groups } = useQuery(groupsQuery())
   const { data: assets } = useQuery(
     assetsQuery({
-      search,
-      groupId,
-      hostKeyState: hostKeyState as Asset['hostKeyState'] | null,
+      search: text,
+      groupId: search.group ?? null,
+      hostKeyState: search.hostKey ?? null,
+      agentState: search.agent ?? null,
     }),
   )
 
-  const filtered = Boolean(search.trim() || groupId || hostKeyState)
+  const filtered = Boolean(text.trim() || search.group || search.hostKey || search.agent)
+
+  const clear = () => {
+    setText('')
+    void navigate({ to: '/assets', search: {}, replace: true })
+  }
 
   return (
     <Box>
       <PageHeader
         title="Assets"
         description="Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified."
+        actions={
+          // Says what this page cannot answer. The inventory lists the hosts
+          // Argus manages, so a machine nobody enrolled is invisible here by
+          // construction — which is the question Coverage exists for.
+          <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
+            <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
+              Coverage
+            </ButtonLink>
+          </Tooltip>
+        }
       />
 
       <PageBody>
         <Toolbar
           right={
             <Text size={FS.micro} c="dimmed">
-              {assets?.length ?? 0} assets
+              {assets?.length ?? 0} {filtered ? 'matching' : 'assets'}
             </Text>
           }
         >
           <TextInput
-            w={280}
+            w={260}
             placeholder="Filter by hostname, address, OS or tag"
             leftSection={<IconSearch size={14} />}
-            value={search}
-            onChange={(e) => setSearch(e.currentTarget.value)}
+            value={text}
+            onChange={(e) => {
+              setText(e.currentTarget.value)
+              setSearch({ q: e.currentTarget.value || undefined })
+            }}
           />
           <Select
-            w={190}
+            w={180}
             placeholder="All groups"
             clearable
-            value={groupId}
-            onChange={setGroupId}
+            value={search.group ?? null}
+            onChange={(v) => setSearch({ group: v ?? undefined })}
             data={groups?.map((g) => ({ value: g.id, label: `${g.name} (${g.assetCount})` })) ?? []}
           />
           <Select
             w={170}
             placeholder="Any host key state"
             clearable
-            value={hostKeyState}
-            onChange={setHostKeyState}
+            value={search.hostKey ?? null}
+            onChange={(v) => setSearch({ hostKey: (v as Asset['hostKeyState']) ?? undefined })}
             data={[
               { value: 'pinned', label: 'Pinned' },
               { value: 'unpinned', label: 'Unpinned' },
               { value: 'changed', label: 'Changed' },
             ]}
           />
+          <Select
+            w={180}
+            placeholder="Any agent state"
+            clearable
+            value={search.agent ?? null}
+            onChange={(v) => setSearch({ agent: (v as Asset['agentState']) ?? undefined })}
+            data={AGENT_STATES.map((s) => ({ value: s, label: AGENT_LABEL[s] }))}
+          />
+          {filtered && (
+            <Button
+              variant="subtle"
+              color="slate"
+              size="compact-xs"
+              leftSection={<IconX size={12} />}
+              onClick={clear}
+            >
+              Clear
+            </Button>
+          )}
         </Toolbar>
 
         <DataTable
@@ -99,6 +182,17 @@ function Assets() {
                 filtered
                   ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'
                   : 'The inventory is empty. Enrol a host from Coverage, or add one with argus-control assets add.'
+              }
+              action={
+                filtered ? (
+                  <Button variant="light" onClick={clear}>
+                    Clear filters
+                  </Button>
+                ) : (
+                  <ButtonLink variant="light" to="/coverage">
+                    Go to Coverage
+                  </ButtonLink>
+                )
               }
             />
           }

@@ -4,6 +4,12 @@ import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// Declared rather than pulled in with @types/node. This config reads exactly one
+// environment variable, and the whole toolchain is Bun — adding Node's type
+// surface to the project to describe `process.env.ARGUS_CSS` would be a large
+// dependency for a single string.
+declare const process: { env: Record<string, string | undefined> }
+
 export default defineConfig({
   plugins: [
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
@@ -82,7 +88,21 @@ export default defineConfig({
     }),
   ],
   resolve: {
-    alias: { '~': new URL('./src', import.meta.url).pathname },
+    // Array form, because order decides which entry wins and the monolith
+    // override has to be matched before the general '~' prefix.
+    alias: [
+      // The reference build for e2e/cascade.spec.ts: identical application,
+      // Mantine's concatenated stylesheet instead of the ~47 per-component
+      // imports whose order app.css maintains by hand. Never set in a shipped
+      // build — see src/app.monolith.css.
+      ...(process.env.ARGUS_CSS === 'monolith'
+        ? [{
+            find: '~/app.css',
+            replacement: new URL('./src/app.monolith.css', import.meta.url).pathname,
+          }]
+        : []),
+      { find: '~', replacement: new URL('./src', import.meta.url).pathname },
+    ],
   },
   worker: { format: 'es' },
   server: {

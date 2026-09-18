@@ -99,6 +99,12 @@ header, filter row, card header and empty state inline.
 - **An empty state says what to do next.** "No assets match." alone reads the
   same whether the filter is too narrow, the fleet is empty, or the request
   failed.
+- **A dashboard alert states the finding and hands over.** Its actions sit
+  beside the prose rather than under it, and the paragraph lives on the page you
+  act on. Two full-width explanations stacked over their own badge rows pushed
+  the fleet counters off a laptop screen. Measure the result: capping the text
+  at a readable width *without* moving the actions made it 20px taller, because
+  a narrower measure wraps more.
 
 ## Shared primitives — `web/src/components/primitives.tsx`
 
@@ -116,6 +122,37 @@ header, filter row, card header and empty state inline.
 - `rowNav(onActivate)` is what makes a table row behave like the link it looks
   like — click, Enter, Space, `tabIndex`, `role`. Spread it or the row is
   unreachable by keyboard.
+
+## Assets and Coverage stay separate
+
+Asked in 2026-09-18 and decided: **do not merge them.** Assets lists the hosts
+Argus manages and each one's trust state. Coverage answers whether Argus sees
+everything — including, in the other direction, agents reporting from machines
+that are not in the inventory at all. The inventory cannot show those by
+construction, and a page that showed only the first gap would look complete
+while missing whole machines.
+
+What was actually wrong is that the boundary was invisible and the drill-down
+did not exist: Coverage counted hosts with no agent and could not say which
+ones, because the inventory had no agent filter to be pointed at. So
+
+- `AssetQuery` gained `agentState` and `bypassPosture`,
+- `/assets` filters live in the URL (`?agent=stale`, `?hostKey=changed`), with
+  unrecognised values dropped in `validateSearch` so a hand-edited link cannot
+  filter the table by something none of the controls can display,
+- Coverage's stat cards drill into those filters, and its unmonitored alert
+  links to the hosts it counted,
+- the Assets header carries a Coverage link stating what the inventory does
+  *not* answer.
+
+**"Hosts outside the inventory" is deliberately not a link.** It is the one
+thing Assets structurally cannot show, and leaving it inert is what makes the
+split legible.
+
+A counter only links to a filter when the two mean the same set. The Overview's
+"Unverified hosts" counts `hostKeyState !== 'pinned'` — unpinned *and* changed —
+and no single filter value carries that, so it stays unfiltered rather than
+landing on a shorter list than the number that was clicked.
 
 ## Information architecture — `web/src/components/nav.ts`
 
@@ -171,7 +208,23 @@ Regenerate the order from the byte offset of each component's first hashed
 class inside `@mantine/core/styles.layer.css`. Adding a Mantine component means
 adding its stylesheet here; nothing will fail, it will simply render unstyled.
 
-The verification worth repeating for any CSS change of this shape: build both
-variants, walk every route in a browser, and compare `getComputedStyle` on a
-fixed set of elements property by property. Screenshot diffing is noisier and
-pixel-identical output is not the same as identical cascade.
+### That verification is now a test
+
+`web/e2e/cascade.spec.ts`. `app.monolith.css` is the same application built with
+Mantine's concatenated stylesheet — its own order, by construction — and the
+spec walks every route in both builds comparing `getComputedStyle` property by
+property. Screenshot diffing is noisier, and pixel-identical output is not the
+same as identical cascade.
+
+The probe set is derived from the DOM (every `mantine-*` and `argus-*` class
+present) rather than hand-listed, so a component added tomorrow is covered
+without anyone remembering. Both failure modes are checked by deliberately
+breaking them: moving `Paper.layer.css` after `Card.layer.css` reports
+`mantine-Card-root { display: block }`, and deleting `Badge.layer.css` reports
+twelve differences on the badge label.
+
+It samples until two consecutive reads agree instead of after a fixed delay.
+Styles arrive asynchronously — stylesheet, then web fonts, then whatever React
+mounts last — and this compares widths and heights. A fixed settle caught a
+table scroll container at the browser's default 16px on WebKit and called it a
+cascade fault. A genuine difference is stable and still fails.

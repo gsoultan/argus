@@ -14,7 +14,7 @@ import { theme } from '~/theme'
 import { ErrorState } from '~/components/ErrorState'
 import { PWAUpdate } from '~/components/PWAUpdate'
 import { routeTree } from './routeTree.gen'
-import './app.css'
+import '~/app.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {
