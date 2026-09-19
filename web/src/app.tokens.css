@@ -1,0 +1,145 @@
+/* ---------------------------------------------------------------------------
+   Argus's own CSS: design tokens, globals and the handful of component classes
+   we write ourselves.
+
+   Imported by BOTH app.css (per-component Mantine imports) and
+   app.monolith.css (Mantine's single concatenated stylesheet). It lives in its
+   own file so the two variants differ in exactly one thing — which Mantine
+   stylesheets they pull in — and e2e/cascade.spec.ts can attribute any
+   computed-style difference to the import order rather than to us.
+   --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+   Surfaces, brand and semantics.
+
+   Four elevations, blue-tinted to match the azure brand rather than sitting
+   grey underneath it: void (the page) < surface (cards, header, navbar) <
+   raised (inset panels, code, hover) < line (borders).
+
+   `--color-brand` is the only colour a control may use. The four semantic
+   colours below it are reserved for meaning — verified / pending / denied /
+   live — and nothing decorative is allowed to spend them. See src/theme.
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-void: #080d16;
+  --color-surface: #0f1724;
+  --color-raised: #161f2f;
+  --color-line: #212c40;
+
+  --color-brand: #2563eb;
+  --color-brand-bright: #5089fb;
+
+  --color-verified: #2dd4a7;
+  --color-pending: #f0b429;
+  --color-denied: #f4576b;
+  --color-live: #38bdf8;
+
+  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+/* Mantine derives `c="dimmed"` from dark-2, which in this palette is a near-white
+   used for primary text — so "dimmed" was barely dimmer than normal body copy.
+   Pinned to the step that was actually designed for secondary text: 5.5:1 on
+   --color-surface, comfortably past AA at the small sizes this console uses it. */
+:root {
+  --mantine-color-dimmed: var(--mantine-color-slate-4);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-void);
+  overscroll-behavior: none;
+}
+
+/* Terminal replay surface — tuned for legibility of dense scrollback. */
+.argus-term {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-variant-ligatures: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 8;
+}
+
+/* Hash chains, host keys, session IDs — anything that must be compared by eye. */
+.argus-digest {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #33425c; }
+
+/* Table row striping and hover live in the theme, as `stripedColor` and
+   `highlightOnHoverColor` props. They were declared here as CSS variables and
+   silently did nothing: Mantine sets --table-striped-color on the table element,
+   which beats :root. See src/theme. */
+
+/* Rows that navigate. They looked clickable and behaved so on click, but had no
+   focus affordance because they were not reachable by keyboard at all. */
+.argus-row:focus-visible {
+  outline: 2px solid var(--color-brand-bright);
+  outline-offset: -2px;
+}
+
+/* Anything interactive gets a visible focus ring. Mantine supplies its own for
+   its components; this covers the elements we make interactive ourselves.
+   Brand, not `live`: a focus ring marks a control, and `--color-live` is spoken
+   for by sessions that are actually in progress. */
+:where(a, button, [role='button'], [role='link'], [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand-bright);
+  outline-offset: 2px;
+}
+
+/* A stat card that drills down says so. Coverage and Users render the same card
+   with no destination, and a hover border alone left "this is a link" and "this
+   is a number" looking identical until you tried one. */
+.argus-stat {
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.argus-stat-link:hover {
+  border-color: var(--color-brand) !important;
+  background: var(--color-raised) !important;
+}
+.argus-stat-chevron {
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+.argus-stat-link:hover .argus-stat-chevron {
+  transform: translateX(2px);
+  opacity: 0.9;
+}
+
+/* Page headers stay put while a long table scrolls under them, so the title,
+   breadcrumb and the actions that operate on the page never scroll away. */
+.argus-pagehead {
+  position: sticky;
+  top: var(--app-shell-header-offset, 52px);
+  z-index: 3;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import {
-  Alert, Box, Button, Center, Paper, PasswordInput, Stack, Text,
+  Alert, Box, Button, Center, Group, Paper, PasswordInput, Stack, Text,
   TextInput,
 } from '@mantine/core'
 import { IconAlertTriangle, IconKey, IconShieldLock } from '@tabler/icons-react'
 import {
   passwordLogin, verifyMFA, type Identity,
 } from '~/lib/live'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 
 /**
  * The sign-in screen.
@@ -72,7 +72,7 @@ export function SignIn({ identity, onSignedIn }: {
 
   return (
     <Center h="100vh">
-      <Paper p="xl" withBorder maw={400} w="100%">
+      <Paper p="xl" withBorder maw={410} w="100%" radius="lg">
         <Brand />
 
         {identity.unreachable ? (
@@ -94,6 +94,7 @@ export function SignIn({ identity, onSignedIn }: {
             {error && <ErrorNote>{error}</ErrorNote>}
             <TextInput
               autoFocus
+              size="sm"
               label={useRecovery ? 'Recovery code' : 'Code'}
               placeholder={useRecovery ? 'xxxx-xxxx-xxxx-xxxx' : '123456'}
               value={code}
@@ -103,7 +104,7 @@ export function SignIn({ identity, onSignedIn }: {
               autoComplete="one-time-code"
               spellCheck={false}
             />
-            <Button type="submit" fullWidth mt="md" loading={busy} disabled={!code.trim()}>
+            <Button type="submit" size="sm" fullWidth mt="md" loading={busy} disabled={!code.trim()}>
               Verify
             </Button>
             <Button
@@ -143,6 +144,7 @@ export function SignIn({ identity, onSignedIn }: {
                 <Stack gap="sm">
                   <TextInput
                     autoFocus
+                    size="sm"
                     label="Email"
                     type="email"
                     autoComplete="username"
@@ -150,6 +152,7 @@ export function SignIn({ identity, onSignedIn }: {
                     onChange={(e) => setEmail(e.currentTarget.value)}
                   />
                   <PasswordInput
+                    size="sm"
                     label="Password"
                     autoComplete="current-password"
                     value={password}
@@ -158,6 +161,7 @@ export function SignIn({ identity, onSignedIn }: {
                 </Stack>
                 <Button
                   type="submit"
+                  size="sm"
                   fullWidth
                   mt="md"
                   loading={busy}
@@ -193,24 +197,38 @@ function ErrorNote({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * The mark, matching the shell's.
+ *
+ * Azure rather than the verification green: this is the product's identity,
+ * and teal is reserved for things Argus has actually checked.
+ */
 function Brand() {
   return (
     <>
-      <Box mb="md">
+      <Group gap={SP.cozy} mb="md" wrap="nowrap">
         <Box
-          w={26}
-          h={26}
+          w={32}
+          h={32}
           className="grid place-items-center shrink-0"
           style={{
-            borderRadius: 7,
-            background: 'linear-gradient(140deg, var(--color-verified), #0f766e)',
+            borderRadius: 8,
+            background: 'linear-gradient(140deg, var(--color-brand-bright), #1b4ec4)',
+            boxShadow: '0 0 18px rgba(37, 99, 235, 0.35)',
           }}
         >
-          <IconShieldLock size={15} color="#04140f" stroke={2.4} />
+          <IconShieldLock size={18} color="#fff" stroke={2.4} />
         </Box>
-      </Box>
-      <Text fw={700} size="sm" style={{ letterSpacing: '0.02em' }}>ARGUS</Text>
-      <Text size={FS.micro} c="dimmed" mb="lg" lh={1.5}>
+        <Box>
+          <Text fw={700} size={FS.body} lh={1.15} style={{ letterSpacing: '0.04em' }}>
+            ARGUS
+          </Text>
+          <Text size={FS.micro} c="dimmed" lh={1.15} style={{ letterSpacing: '0.09em' }}>
+            PRIVILEGED ACCESS
+          </Text>
+        </Box>
+      </Group>
+      <Text size={FS.meta} c="dimmed" mb="lg" lh={1.55}>
         Every action here is attributed to a person, so there is no anonymous
         access — not even read-only.
       </Text>

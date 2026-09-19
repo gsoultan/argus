@@ -1,14 +1,12 @@
 import { useMemo, useState } from 'react'
-import {
-  Alert, Badge, Box, Card, Grid, Group, Table, Text, TextInput, Tooltip,
-} from '@mantine/core'
+import { Alert, Badge, Box, Grid, Group, Table, Text, TextInput, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { IconAlertTriangle, IconInfoCircle, IconSearch } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { IconAlertTriangle, IconInfoCircle, IconSearch, IconUsers } from '@tabler/icons-react'
+import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, Stat, relTime } from '~/components/primitives'
 import { usersQuery } from '~/lib/queries'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import type { UserRole } from '~/types/domain'
 
 export const Route = createFileRoute('/users')({
@@ -56,12 +54,12 @@ function Users() {
         description="Argus holds its own accounts and the authorization layer on top — and separation of duty between requester and approver."
       />
 
-      <Box p="lg">
+      <PageBody>
         {/* The page used to flag problems it offered no way to act on. It still
             cannot change a role — there is no endpoint for it — so it says
             where the change is made instead of implying it happens here. */}
-        <Alert color="sky" variant="light" icon={<IconInfoCircle size={16} />} mb="md">
-          <Text size="xs">
+        <Alert color="sky" icon={<IconInfoCircle size={16} />}>
+          <Text size={FS.body} lh={1.5}>
             Accounts live in Argus. Roles are set on the host with{' '}
             <Text span ff="monospace" inherit>argus-control users add --role</Text>, not from
             this page, so granting or revoking one is an action with a shell audit trail
@@ -69,19 +67,19 @@ function Users() {
           </Text>
         </Alert>
 
-        <Grid gap="sm" mb="md">
+        <Grid gap="sm">
           <Grid.Col span={{ base: 12, sm: 6 }}>
             <Stat
               label="Users"
-              value={users?.length ?? 0}
-              sub={`${approvers.length} can decide an access request`}
+              value={users?.length}
+              sub={users ? `${approvers.length} can decide an access request` : undefined}
               tone="ok"
             />
           </Grid.Col>
           <Grid.Col span={{ base: 12, sm: 6 }}>
             <Stat
               label="Without MFA"
-              value={withoutMfa.length}
+              value={users ? withoutMfa.length : undefined}
               sub="A password alone is one phish away from a brokered root session."
               tone={withoutMfa.length > 0 ? 'warn' : 'ok'}
             />
@@ -91,12 +89,10 @@ function Users() {
         {approvers.length < 2 && (users?.length ?? 0) > 0 && (
           <Alert
             color="amber"
-            variant="light"
             icon={<IconAlertTriangle size={16} />}
-            mb="md"
             title="Separation of duty is not enforceable"
           >
-            <Text size="xs">
+            <Text size={FS.body} lh={1.5}>
               Argus refuses to let anyone approve their own request. With only{' '}
               {approvers.length} account able to approve, a request from that person cannot be
               decided by anyone — and break-glass becomes the only route. Grant the approver
@@ -105,74 +101,73 @@ function Users() {
           </Alert>
         )}
 
-        <TextInput
-          size="xs"
-          mb="sm"
-          maw={340}
-          placeholder="Filter by name, email or role"
-          leftSection={<IconSearch size={14} />}
-          value={search}
-          onChange={(e) => setSearch(e.currentTarget.value)}
-        />
+        <Toolbar
+          right={
+            users && (
+              <Text size={FS.micro} c="dimmed">
+                {rows.length} of {users.length} users
+              </Text>
+            )
+          }
+        >
+          <TextInput
+            w={300}
+            placeholder="Filter by name, email or role"
+            leftSection={<IconSearch size={14} />}
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+          />
+        </Toolbar>
 
-        <Card padding={0}>
-          <Table.ScrollContainer minWidth={720} type="native">
-            <Table verticalSpacing={10} horizontalSpacing="md" highlightOnHover striped="even">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>User</Table.Th>
-                  <Table.Th>Role</Table.Th>
-                  <Table.Th>MFA</Table.Th>
-                  <Table.Th>Last seen</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {rows.map((u) => (
-                  <Table.Tr key={u.id}>
-                    <Table.Td>
-                      <Text size="xs" fw={500}>{u.displayName}</Text>
-                      <Mono c="dimmed">{u.email}</Mono>
-                    </Table.Td>
-                    <Table.Td>
-                      <Tooltip label={ROLE_DESC[u.role]} maw={300} multiline>
-                        <Badge size="sm" color={ROLE_COLOR[u.role]} variant="light">
-                          {u.role}
-                        </Badge>
-                      </Tooltip>
-                    </Table.Td>
-                    <Table.Td>
-                      {u.mfaEnrolled ? (
-                        <Badge size="xs" color="teal" variant="light">enrolled</Badge>
-                      ) : (
-                        <Tooltip
-                          label="An account without MFA is a standing password to your gateway. Enrol it or delete it."
-                          maw={300}
-                          multiline
-                        >
-                          <Group gap={4} wrap="nowrap" style={{ cursor: 'help' }}>
-                            <IconAlertTriangle size={12} className="text-rose-400" />
-                            <Text size="xs" c="rose.4">not enrolled</Text>
-                          </Group>
-                        </Tooltip>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed">{relTime(u.lastSeenAt)}</Text>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
-          {rows.length === 0 && (
-            <Text size="xs" c="dimmed" ta="center" py="xl">No users match.</Text>
-          )}
-        </Card>
-
-        <Text size={FS.micro} c="dimmed" mt="xs">
-          Showing {rows.length} of {users?.length ?? 0} users.
-        </Text>
-      </Box>
+        <DataTable
+          minWidth={720}
+          loading={users === undefined}
+          isEmpty={rows.length === 0}
+          columns={['User', 'Role', 'MFA', 'Last seen']}
+          empty={
+            <EmptyState
+              icon={IconUsers}
+              title="No users match."
+              description="Nobody fits that search. Clear it to see every account."
+            />
+          }
+        >
+          {rows.map((u) => (
+            <Table.Tr key={u.id}>
+              <Table.Td>
+                <Text size="xs" fw={500}>{u.displayName}</Text>
+                <Mono c="dimmed">{u.email}</Mono>
+              </Table.Td>
+              <Table.Td>
+                <Tooltip label={ROLE_DESC[u.role]} maw={300} multiline>
+                  <Badge size="sm" color={ROLE_COLOR[u.role]} variant="light">
+                    {u.role}
+                  </Badge>
+                </Tooltip>
+              </Table.Td>
+              <Table.Td>
+                {u.mfaEnrolled ? (
+                  <Badge size="xs" color="teal" variant="light">enrolled</Badge>
+                ) : (
+                  <Tooltip
+                    label="An account without MFA is a standing password to your gateway. Enrol it or delete it."
+                    maw={300}
+                    multiline
+                  >
+                    <Group gap={SP.tight} wrap="nowrap" style={{ cursor: 'help' }}>
+                      <IconAlertTriangle size={12} style={{ color: 'var(--color-denied)' }} />
+                      <Text size="xs" c="rose.4">not enrolled</Text>
+                    </Group>
+                  </Tooltip>
+                )}
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs" c="dimmed">{relTime(u.lastSeenAt)}</Text>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </DataTable>
+      </PageBody>
     </Box>
   )
 }

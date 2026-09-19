@@ -1,16 +1,17 @@
 import { useMemo, useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Group, Loader, Progress, Select, Stack, Table,
-  Text, TextInput, ThemeIcon, Tooltip,
+  Alert, Badge, Box, Button, Card, Group, Loader, Progress, Select, Table, Text,
+  TextInput, ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconDownload, IconSearch, IconShieldCheck, IconShieldX,
+  IconAlertTriangle, IconDownload, IconFileDescription, IconSearch, IconShieldCheck,
+  IconShieldX,
 } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Digest, Mono, absTime, relTime } from '~/components/primitives'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import { downloadJSON, stamp } from '~/lib/download'
 import { notifyOk, notifyWarn } from '~/lib/notify'
 import { auditQuery } from '~/lib/queries'
@@ -29,6 +30,8 @@ const SEVERITY_COLOR: Record<AuditSeverity, string> = {
   critical: 'rose',
 }
 
+const LIMIT = 200
+
 function Audit() {
   const { data: skeleton } = useQuery(auditQuery())
   const chain = useAuditChain(skeleton)
@@ -44,10 +47,11 @@ function Audit() {
         `${l.actorEmail} ${l.action} ${l.target} ${l.detail}`.toLowerCase().includes(needle),
       )
     }
-    return out.slice(0, 200)
+    return out.slice(0, LIMIT)
   }, [chain.links, search, severity])
 
   const verified = chain.verified
+  const filtered = Boolean(search.trim() || severity)
 
   /**
    * Writes the whole chain out, not the filtered view.
@@ -99,7 +103,6 @@ function Audit() {
         actions={
           <>
             <Button
-              size="xs"
               variant="default"
               leftSection={<IconDownload size={14} />}
               disabled={chain.links.length === 0}
@@ -108,8 +111,6 @@ function Audit() {
               Export evidence pack
             </Button>
             <Button
-              size="xs"
-              color="teal"
               leftSection={<IconShieldCheck size={14} />}
               loading={chain.status === 'working'}
               disabled={chain.links.length === 0}
@@ -121,17 +122,13 @@ function Audit() {
         }
       />
 
-      <Box p="lg">
+      <PageBody>
         {/* The integrity panel is the product's core compliance claim, so it
             gets top billing rather than being buried in a settings page. */}
         <Card
-          padding="md"
-          mb="sm"
-          style={
-            verified && !verified.ok ? { borderColor: 'var(--color-denied)' } : undefined
-          }
+          style={verified && !verified.ok ? { borderColor: 'var(--color-denied)' } : undefined}
         >
-          <Group justify="space-between" wrap="nowrap" align="flex-start">
+          <Group justify="space-between" wrap="nowrap" align="flex-start" gap="md">
             <Group gap="sm" wrap="nowrap" align="flex-start">
               <ThemeIcon
                 variant="light"
@@ -153,7 +150,7 @@ function Audit() {
                         : `Chain broken at sequence ${verified.brokenAt}`
                       : 'Chain built — not yet verified'}
                 </Text>
-                <Text size="xs" c="dimmed" mt={2} maw={620}>
+                <Text size={FS.meta} c="dimmed" mt={SP.hair} maw={620} lh={1.5}>
                   Each entry is <Mono>SHA-256(prevHash ‖ canonical(event))</Mono>, over the
                   same six fields the control plane hashes. Verification runs in your browser,
                   in a Web Worker.{' '}
@@ -162,7 +159,7 @@ function Audit() {
                     : 'These events carry no server hashes, so the console is confirming its own arithmetic — there is no served record to check against.'}
                 </Text>
                 {verified && (
-                  <Group gap="xs" mt={8}>
+                  <Group gap="xs" mt={SP.cozy}>
                     <Badge size="xs" color={verified.ok ? 'teal' : 'rose'} variant="light">
                       {verified.checked.toLocaleString()} links checked
                     </Badge>
@@ -184,32 +181,30 @@ function Audit() {
             </Group>
 
             <Box ta="right" style={{ flexShrink: 0 }}>
-              <Text size={FS.micro} c="dimmed" fw={600} style={{ letterSpacing: '0.05em' }}>
+              <Text size={FS.micro} c="dimmed" fw={700} style={{ letterSpacing: '0.06em' }}>
                 CHAIN HEAD
               </Text>
-              <Box mt={4}>
+              <Box mt={SP.tight}>
                 {chain.head ? <Digest value={chain.head} chars={24} /> : <Loader size="xs" />}
               </Box>
               {chain.ms !== null && (
-                <Text size={FS.micro} c="dimmed" mt={4}>built in {chain.ms}ms</Text>
+                <Text size={FS.micro} c="dimmed" mt={SP.tight}>built in {chain.ms}ms</Text>
               )}
             </Box>
           </Group>
 
           {chain.status === 'working' && (
-            <Progress value={chain.progress * 100} size="xs" mt="sm" color="teal" animated />
+            <Progress value={chain.progress * 100} size="xs" mt="sm" color="azure" animated />
           )}
         </Card>
 
         {verified && !verified.ok && (
           <Alert
             color="rose"
-            variant="light"
             icon={<IconAlertTriangle size={17} />}
-            mb="sm"
             title="Integrity failure"
           >
-            <Text size="xs">
+            <Text size={FS.body} lh={1.5}>
               The recomputed hash diverges from the stored value at sequence {verified.brokenAt}.
               Everything from that point forward is unverifiable. Preserve the current store,
               pull the offline replica, and treat this as an incident.
@@ -217,9 +212,16 @@ function Audit() {
           </Alert>
         )}
 
-        <Group gap="xs" mb="sm">
+        <Toolbar
+          right={
+            <Text size={FS.micro} c="dimmed">
+              {rows.length === LIMIT
+                ? `First ${LIMIT} of ${chain.links.length.toLocaleString()}`
+                : `${rows.length} of ${chain.links.length.toLocaleString()} events`}
+            </Text>
+          }
+        >
           <TextInput
-            size="xs"
             w={300}
             placeholder="Filter by actor, action, target or detail"
             leftSection={<IconSearch size={14} />}
@@ -227,7 +229,6 @@ function Audit() {
             onChange={(e) => setSearch(e.currentTarget.value)}
           />
           <Select
-            size="xs"
             w={150}
             placeholder="Any severity"
             clearable
@@ -235,69 +236,60 @@ function Audit() {
             onChange={setSeverity}
             data={['info', 'notice', 'warning', 'critical']}
           />
-        </Group>
+        </Toolbar>
 
-        <Card padding={0}>
-          <Table.ScrollContainer minWidth={900} type="native">
-            <Table verticalSpacing={6} horizontalSpacing="md" highlightOnHover striped="even">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th w={60}>Seq</Table.Th>
-                <Table.Th w={150}>When</Table.Th>
-                <Table.Th>Action</Table.Th>
-                <Table.Th>Actor</Table.Th>
-                <Table.Th>Target</Table.Th>
-                <Table.Th>Detail</Table.Th>
-                <Table.Th w={130}>Hash</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {rows.map((l) => (
-                <Table.Tr key={l.id}>
-                  <Table.Td><Mono c="dimmed">{l.seq}</Mono></Table.Td>
-                  <Table.Td>
-                    <Tooltip label={absTime(l.at)}>
-                      <Text size="xs" c="dimmed">{relTime(l.at)}</Text>
-                    </Tooltip>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge
-                      size="xs"
-                      color={SEVERITY_COLOR[l.severity as AuditSeverity]}
-                      variant="light"
-                      className="argus-digest"
-                    >
-                      {l.action}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs">{l.actorEmail.split('@')[0]}</Text>
-                  </Table.Td>
-                  <Table.Td><Mono c="dimmed">{l.target.split('.')[0]}</Mono></Table.Td>
-                  <Table.Td>
-                    <Text size="xs" c="dimmed" lineClamp={1} maw={400}>{l.detail}</Text>
-                  </Table.Td>
-                  <Table.Td><Digest value={l.hash} chars={10} /></Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-            </Table.ScrollContainer>
-          {chain.status === 'working' && rows.length === 0 && (
-            <Stack align="center" py="xl" gap="xs">
-              <Loader size="sm" color="teal" />
-              <Text size="xs" c="dimmed">Hashing {skeleton?.length ?? 0} events…</Text>
-            </Stack>
-          )}
-          {chain.status === 'ready' && rows.length === 0 && (
-            <Text size="xs" c="dimmed" ta="center" py="xl">No events match.</Text>
-          )}
-        </Card>
-
-        <Text size={FS.micro} c="dimmed" mt="xs">
-          Showing {rows.length} of {chain.links.length.toLocaleString()} events.
-        </Text>
-      </Box>
+        <DataTable
+          minWidth={900}
+          loading={chain.status === 'working' && rows.length === 0}
+          isEmpty={rows.length === 0}
+          columns={[
+            { label: 'Seq', width: 60 },
+            { label: 'When', width: 150 },
+            'Action', 'Actor', 'Target', 'Detail',
+            { label: 'Hash', width: 130 },
+          ]}
+          empty={
+            <EmptyState
+              icon={IconFileDescription}
+              title="No events match."
+              description={
+                filtered
+                  ? 'Nothing in the chain fits this filter. Note that the export always writes the whole chain regardless.'
+                  : 'The audit log is empty. Every privileged action lands here as it happens.'
+              }
+            />
+          }
+        >
+          {rows.map((l) => (
+            <Table.Tr key={l.id}>
+              <Table.Td><Mono c="dimmed">{l.seq}</Mono></Table.Td>
+              <Table.Td>
+                <Tooltip label={absTime(l.at)}>
+                  <Text size="xs" c="dimmed">{relTime(l.at)}</Text>
+                </Tooltip>
+              </Table.Td>
+              <Table.Td>
+                <Badge
+                  size="xs"
+                  color={SEVERITY_COLOR[l.severity as AuditSeverity]}
+                  variant="light"
+                  className="argus-digest"
+                >
+                  {l.action}
+                </Badge>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs">{l.actorEmail.split('@')[0]}</Text>
+              </Table.Td>
+              <Table.Td><Mono c="dimmed">{l.target.split('.')[0]}</Mono></Table.Td>
+              <Table.Td>
+                <Text size="xs" c="dimmed" lineClamp={1} maw={400}>{l.detail}</Text>
+              </Table.Td>
+              <Table.Td><Digest value={l.hash} chars={10} /></Table.Td>
+            </Table.Tr>
+          ))}
+        </DataTable>
+      </PageBody>
     </Box>
   )
 }

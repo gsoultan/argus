@@ -8,11 +8,11 @@ import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconCheck, IconClockHour4, IconPlus, IconX,
+  IconAlertTriangle, IconCheck, IconClipboardCheck, IconClockHour4, IconPlus, IconX,
 } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, RequestStateBadge, absTime, relTime } from '~/components/primitives'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import { notifyError, notifyWarn } from '~/lib/notify'
 import {
   assetsQuery, requestsQuery, useCreateRequest, useDecideRequest,
@@ -64,35 +64,61 @@ function Requests() {
         title="Access requests"
         description="Time-bounded, justified, and approved by someone other than the requester. Grants expire on their own — nothing to remember to revoke."
         actions={
-          <>
-            <SegmentedControl
-              size="xs"
-              value={tab}
-              onChange={(v) => setTab(v as 'pending' | 'all')}
-              data={[
-                { label: 'Queue', value: 'pending' },
-                { label: 'History', value: 'all' },
-              ]}
-            />
-            <Button size="xs" leftSection={<IconPlus size={14} />} onClick={newModal.open}>
-              Request access
-            </Button>
-          </>
+          <Button leftSection={<IconPlus size={14} />} onClick={newModal.open}>
+            Request access
+          </Button>
         }
       />
 
-      <Box p="lg">
+      <PageBody>
+        {/* Queue/History narrows the list below rather than acting on anything,
+            so it sits with the list. It used to share the header's action slot
+            with the button that files a new request. */}
+        <Toolbar
+          right={
+            requests && requests.length > 0 ? (
+              <Text size={FS.micro} c="dimmed">
+                {requests.length} {tab === 'pending' ? 'waiting' : 'total'}
+              </Text>
+            ) : undefined
+          }
+        >
+          <SegmentedControl
+            value={tab}
+            onChange={(v) => setTab(v as 'pending' | 'all')}
+            data={[
+              { label: 'Queue', value: 'pending' },
+              { label: 'History', value: 'all' },
+            ]}
+          />
+        </Toolbar>
+
         <Stack gap="sm">
           {requests?.map((r) => <RequestCard key={r.id} request={r} />)}
           {requests?.length === 0 && (
-            <Card padding="xl">
-              <Text size="sm" c="dimmed" ta="center">
-                {tab === 'pending' ? 'Nothing waiting for a decision.' : 'No requests yet.'}
-              </Text>
+            <Card>
+              <EmptyState
+                icon={IconClipboardCheck}
+                title={tab === 'pending' ? 'Nothing waiting for a decision.' : 'No requests yet.'}
+                description={
+                  tab === 'pending'
+                    ? 'Every request has been decided. Approved grants expire on their own when their window closes.'
+                    : 'Nobody has asked for privileged access. Requests filed here are what the audit log records a decision against.'
+                }
+                action={
+                  <Button
+                    variant="light"
+                    leftSection={<IconPlus size={14} />}
+                    onClick={newModal.open}
+                  >
+                    Request access
+                  </Button>
+                }
+              />
             </Card>
           )}
         </Stack>
-      </Box>
+      </PageBody>
 
       <NewRequestModal opened={newOpen} onClose={newModal.close} />
     </Box>
@@ -135,13 +161,10 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
   const pending = r.state === 'pending'
 
   return (
-    <Card
-      padding="md"
-      style={r.breakGlass && pending ? { borderColor: 'var(--color-denied)' } : undefined}
-    >
-      <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm">
+    <Card style={r.breakGlass && pending ? { borderColor: 'var(--color-denied)' } : undefined}>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm" gap="md">
         <Box style={{ minWidth: 0 }}>
-          <Group gap={8} mb={4}>
+          <Group gap={SP.cozy} mb={SP.tight}>
             <Text fw={600} size="sm">{r.requesterEmail}</Text>
             <RequestStateBadge state={r.state} />
             {r.breakGlass && (
@@ -152,8 +175,8 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
               </Tooltip>
             )}
           </Group>
-          <Text size="xs" c="dimmed" mb="xs">{r.justification}</Text>
-          <Group gap={6} wrap="wrap">
+          <Text size={FS.body} c="dimmed" mb="xs" lh={1.5}>{r.justification}</Text>
+          <Group gap={SP.snug} wrap="wrap">
             <Badge size="xs" variant="outline" color="slate">as {r.principal}</Badge>
             <Badge size="xs" variant="outline" color="slate">{r.durationMinutes / 60}h window</Badge>
             {r.assetHostnames.slice(0, 3).map((h) => (
@@ -172,8 +195,8 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
         <Box ta="right" style={{ flexShrink: 0 }}>
           <Text size={FS.micro} c="dimmed">{relTime(r.createdAt)}</Text>
           {r.expiresAt && r.state === 'approved' && (
-            <Group gap={4} justify="flex-end" mt={4}>
-              <IconClockHour4 size={11} className="text-amber-400" />
+            <Group gap={SP.tight} justify="flex-end" mt={SP.tight}>
+              <IconClockHour4 size={11} style={{ color: 'var(--color-pending)' }} />
               <Text size={FS.micro} c="amber.4">expires {relTime(r.expiresAt)}</Text>
             </Group>
           )}
@@ -193,7 +216,6 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
         <Box pt="sm" style={{ borderTop: '1px solid var(--color-line)' }}>
           {expanded && (
             <Textarea
-              size="xs"
               mb="xs"
               placeholder="Decision note — required when denying, optional when approving."
               autosize
@@ -303,6 +325,7 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
       <form onSubmit={onSubmit}>
         <Stack gap="md">
           <MultiSelect
+            size="sm"
             label="Target hosts"
             description="Request only what the task needs — broad scope gets denied."
             placeholder="Search hosts"
@@ -321,14 +344,13 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
             value={value.principal}
             onChange={(v) => set('principal', v)}
           >
-            <Group gap="lg" mt={6}>
-              <Radio value="deploy" label="deploy" size="xs" />
-              <Radio value="ops" label="ops" size="xs" />
+            <Group gap="lg" mt={SP.snug}>
+              <Radio value="deploy" label="deploy" />
+              <Radio value="ops" label="ops" />
               <Radio
                 value="root"
-                size="xs"
                 label={
-                  <Group gap={6}>
+                  <Group gap={SP.snug}>
                     <Text size="sm">root</Text>
                     <Badge size="xs" color="rose">elevated</Badge>
                   </Group>
@@ -338,10 +360,9 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
           </Radio.Group>
 
           <Box>
-            <Text size="sm" fw={500} mb={6}>Window</Text>
+            <Text size="sm" fw={500} mb={SP.snug}>Window</Text>
             <SegmentedControl
               fullWidth
-              size="xs"
               value={String(value.durationMinutes)}
               onChange={(v) => set('durationMinutes', Number(v))}
               data={[
@@ -351,13 +372,14 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
                 { label: '4 hours', value: '240' },
               ]}
             />
-            <Text size={FS.micro} c="dimmed" mt={6}>
+            <Text size={FS.micro} c="dimmed" mt={SP.snug} lh={1.5}>
               Policy caps operator grants at {MAX_DURATION_MINUTES / 60} hours. Access
               revokes itself when the window closes — no cleanup task to forget.
             </Text>
           </Box>
 
           <Textarea
+            size="sm"
             label="Justification"
             description="Reference the incident or change ticket. This is what the approver sees and what the audit log keeps."
             placeholder="INC-4471 — settlement worker stuck in retry loop, need to inspect queue depth on the primary."
@@ -371,15 +393,14 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
 
           <Box>
             <Checkbox
-              size="xs"
               color="rose"
               label="Break-glass — production is down and no approver is reachable"
               checked={value.breakGlass}
               onChange={(e) => set('breakGlass', e.currentTarget.checked)}
             />
             {value.breakGlass && (
-              <Alert color="rose" variant="light" mt="xs" icon={<IconAlertTriangle size={15} />}>
-                <Text size="xs">
+              <Alert color="rose" mt="xs" icon={<IconAlertTriangle size={15} />}>
+                <Text size={FS.body} lh={1.5}>
                   Break-glass grants access immediately and notifies every admin plus the
                   security channel. The credential is revoked and regenerated when the window
                   closes, and the session is reviewed. Use it when the alternative is a longer
@@ -389,11 +410,11 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
             )}
           </Box>
 
-          <Group justify="flex-end" mt="xs">
-            <Button variant="subtle" color="slate" size="xs" onClick={close}>
+          <Group justify="flex-end" mt={SP.tight}>
+            <Button variant="subtle" color="slate" onClick={close}>
               Cancel
             </Button>
-            <Button type="submit" size="xs" disabled={!canSubmit} loading={create.isPending}>
+            <Button type="submit" disabled={!canSubmit} loading={create.isPending}>
               Submit request
             </Button>
           </Group>

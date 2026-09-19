@@ -234,7 +234,24 @@ jobs:
         with:
           bun-version: "1.4.0"
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium webkit
+
+      # Two engines' browsers are ~400 MB and the slowest step in this job by
+      # some way. Keyed on the lockfile: Playwright pins a browser build per
+      # release, so the cache has to be dropped whenever that pin can move.
+      - uses: actions/cache@v4
+        id: playwright-browsers
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/bun.lock') }}
+
+      # The browsers are cached; the system libraries they link against are not,
+      # because they are apt packages outside that path. So a hit still installs
+      # dependencies, it just does not re-download Chromium and WebKit.
+      - if: steps.playwright-browsers.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium webkit
+      - if: steps.playwright-browsers.outputs.cache-hit != 'true'
+        run: bunx playwright install --with-deps chromium webkit
+
       # Every route with zero console errors, the fonts actually loading, the
       # audit chain verifying in WASM, and -- the reason this job exists --
       # the replay heap staying flat on an 8 MB recording. These were all
@@ -244,6 +261,15 @@ jobs:
       # rest of the suite builds with no control plane configured, where
       # LoginGate waves everything through -- so that screen went untested until
       # two bugs had already shipped through the gap.
+      #
+      # And the cascade: app.css hand-maintains the order of ~47 Mantine
+      # stylesheets, so cascade.spec.ts builds a second bundle using Mantine's
+      # concatenated one and compares getComputedStyle across every route. A
+      # reordered import or a component with no stylesheet compiles, type-checks
+      # and passes every other check in this file.
+      #
+      # Unfiltered on purpose: `playwright test` picks up every spec under e2e/,
+      # so a new one is covered here without touching this workflow.
       - run: bun run e2e
         env:
           CI: "true"

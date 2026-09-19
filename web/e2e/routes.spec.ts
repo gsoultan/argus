@@ -20,7 +20,7 @@ for (const [path, heading] of ROUTES) {
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible()
     // Give lazy chunks and workers a moment to settle before judging.
     await page.waitForLoadState('networkidle')
-    errs.assertClean()
+    await errs.assertClean()
   })
 }
 
@@ -55,7 +55,7 @@ test('the audit chain verifies in the browser', async ({ page }) => {
   // textContent, not innerText: badges render uppercase via CSS.
   const ms = (await page.getByText(/\d+ms off main thread/i).textContent()) ?? ''
   expect(Number(ms.match(/(\d+)ms/i)![1])).toBeLessThan(200)
-  errs.assertClean()
+  await errs.assertClean()
 })
 
 test('no status badge is ever truncated', async ({ page }) => {
@@ -70,4 +70,40 @@ test('no status badge is ever truncated', async ({ page }) => {
     )
     expect(clipped, `${path}: truncated badges`).toEqual([])
   }
+})
+
+/**
+ * Row striping is a wash, not a fill.
+ *
+ * `--table-striped-color` was declared at `:root`, which looks like it sets the
+ * stripe and does not: Mantine sets that variable on the table element itself,
+ * so the rule was overridden and every other row was painted solid `slate.6` —
+ * a mid blue-grey banding every list page, while a stylesheet claimed 1.4%
+ * white. It is a `stripedColor` prop on the theme now.
+ *
+ * Asserted on the rendered pixel rather than the variable, because the variable
+ * being right is exactly what was already believed.
+ */
+test('striped rows are a wash rather than a fill', async ({ page }) => {
+  await page.goto('/sessions')
+  await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
+
+  const alpha = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('tbody tr')]
+    const striped = rows
+      .map((r) => getComputedStyle(r).backgroundColor)
+      .find((bg) => bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent')
+    if (!striped) return null
+    const parts = striped.match(/[\d.]+/g) ?? []
+    // rgb() with no alpha is fully opaque, which is the failure this catches.
+    return parts.length === 4 ? Number(parts[3]) : 1
+  })
+
+  expect(alpha, 'no striped row found — is striped="even" still set?').not.toBeNull()
+  expect(
+    alpha,
+    `A striped row is drawn at alpha ${alpha}. Anything approaching opaque means `
+      + 'the stripe is a solid colour rather than a wash, which bands the whole '
+      + 'table — see Table.defaultProps.stripedColor in src/theme.',
+  ).toBeLessThan(0.06)
 })

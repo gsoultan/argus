@@ -1,19 +1,17 @@
-import {
-  Alert, Badge, Box, Button, Card, Code, Grid, Group, Stack, Table, Text, ThemeIcon,
-} from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Code, Grid, Group, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconArrowLeft, IconCertificate, IconRefresh, IconShieldCheck,
+  IconAlertTriangle, IconCertificate, IconHistory, IconPlugConnected, IconRefresh,
+  IconServer2, IconShieldCheck,
 } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { run } from '~/lib/notify'
-import { ButtonLink } from '~/components/links'
 import {
   CredentialBadge, Digest, Field, FidelityBadge, HealthDot, HostKeyBadge, Mono,
   SessionStateBadge, absTime, duration, relTime, rowNav,
 } from '~/components/primitives'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import {
   assetQuery, sessionsQuery, usePinHostKey, useRotateCredential,
 } from '~/lib/queries'
@@ -33,7 +31,20 @@ function AssetDetail() {
   const rotate = useRotateCredential()
 
   if (!asset) {
-    return <Box p="lg"><Text size="sm" c="dimmed">Asset not found.</Text></Box>
+    return (
+      <Box>
+        <PageHeader crumbs={[{ label: 'Assets', to: '/assets' }]} title="Asset not found" />
+        <PageBody>
+          <Card>
+            <EmptyState
+              icon={IconServer2}
+              title="No such asset."
+              description="It may have been removed from the inventory, or the link is stale."
+            />
+          </Card>
+        </PageBody>
+      </Box>
+    )
   }
 
   const history = (allSessions ?? []).filter((s) => s.assetId === asset.id).slice(0, 12)
@@ -63,44 +74,35 @@ function AssetDetail() {
   return (
     <Box>
       <PageHeader
+        crumbs={[
+          { label: 'Assets', to: '/assets' },
+          { label: asset.hostname.split('.')[0] ?? asset.hostname },
+        ]}
         title={asset.hostname}
+        status={<HealthDot health={asset.health} />}
         description={`${asset.os} · ${asset.address}:${asset.port}`}
         actions={
-          <>
-            <ButtonLink
-              size="xs"
-              variant="subtle"
-              color="slate"
-              to="/assets"
-              leftSection={<IconArrowLeft size={14} />}
+          !isCa ? (
+            <Button
+              variant="default"
+              leftSection={<IconRefresh size={14} />}
+              loading={rotate.isPending}
+              onClick={onRotate}
             >
-              Back
-            </ButtonLink>
-            {!isCa && (
-              <Button
-                size="xs"
-                variant="default"
-                leftSection={<IconRefresh size={14} />}
-                loading={rotate.isPending}
-                onClick={onRotate}
-              >
-                Rotate credential
-              </Button>
-            )}
-          </>
+              Rotate credential
+            </Button>
+          ) : null
         }
       />
 
-      <Box p="lg">
+      <PageBody>
         {asset.hostKeyState === 'changed' && (
           <Alert
             color="rose"
-            variant="light"
             icon={<IconAlertTriangle size={17} />}
-            mb="md"
             title="Host key does not match the pin"
           >
-            <Text size="xs" mb="sm">
+            <Text size={FS.body} mb="sm" lh={1.5}>
               Argus is refusing connections to this host. Either it was rebuilt or reprovisioned,
               or something is intercepting the connection. Verify the new fingerprint out of band
               — console access, your provisioning system, or a colleague physically at the host —
@@ -115,12 +117,10 @@ function AssetDetail() {
         {asset.hostKeyState === 'unpinned' && (
           <Alert
             color="amber"
-            variant="light"
             icon={<IconAlertTriangle size={17} />}
-            mb="md"
             title="No host key pinned"
           >
-            <Text size="xs" mb="sm">
+            <Text size={FS.body} mb="sm" lh={1.5}>
               Argus terminates SSH for this host, which means it is responsible for verifying the
               target's identity. Until a key is pinned, nothing has been verified — the first
               connection is trust-on-first-use.
@@ -134,17 +134,18 @@ function AssetDetail() {
         <Grid gap="sm">
           <Grid.Col span={{ base: 12, md: 5 }}>
             <Stack gap="sm">
-              <Card padding="md">
-                <Group justify="space-between" mb="sm">
-                  <Text fw={600} size="sm">Identity</Text>
-                  <Group gap={6}>
-                    <HealthDot health={asset.health} />
-                    <Text size="xs" c="dimmed" tt="capitalize">{asset.health}</Text>
-                  </Group>
-                </Group>
-                <Stack gap={12}>
+              <SectionCard
+                title="Identity"
+                icon={IconServer2}
+                badge={
+                  <Badge size="xs" variant="light" color="slate" tt="capitalize">
+                    {asset.health}
+                  </Badge>
+                }
+              >
+                <Stack gap="sm">
                   <Field label="Host key">
-                    <Group gap={8}>
+                    <Group gap={SP.cozy}>
                       <HostKeyBadge state={asset.hostKeyState} />
                       {asset.hostKeyPinnedAt && (
                         <Text size={FS.micro} c="dimmed">
@@ -162,33 +163,26 @@ function AssetDetail() {
                     <Text size="xs" c="dimmed">{relTime(asset.lastCheckedAt)}</Text>
                   </Field>
                   <Field label="Tags">
-                    <Group gap={4}>
+                    <Group gap={SP.tight}>
                       {asset.tags.map((t) => (
                         <Badge key={t} size="xs" variant="outline" color="slate">{t}</Badge>
                       ))}
                     </Group>
                   </Field>
                 </Stack>
-              </Card>
+              </SectionCard>
 
-              <Card padding="md">
-                <Group gap={8} mb={8}>
-                  <ThemeIcon
-                    variant="light"
-                    color={isCa ? 'teal' : 'slate'}
-                    size={22}
-                    radius="sm"
-                  >
-                    {isCa ? <IconCertificate size={13} /> : <IconShieldCheck size={13} />}
-                  </ThemeIcon>
-                  <Text fw={600} size="sm">Authentication to target</Text>
-                </Group>
-                <Stack gap={12}>
+              <SectionCard
+                title="Authentication to target"
+                icon={isCa ? IconCertificate : IconShieldCheck}
+                iconColor={isCa ? 'teal' : 'slate'}
+              >
+                <Stack gap="sm">
                   <Field label="Mode"><CredentialBadge mode={asset.credentialMode} /></Field>
 
                   {isCa ? (
                     <>
-                      <Text size={FS.micro} c="dimmed" lh={1.45}>
+                      <Text size={FS.micro} c="dimmed" lh={1.5}>
                         Argus mints a short-lived certificate for each session. No reusable
                         credential exists on the gateway or the host, so there is nothing to
                         rotate and nothing to steal from the vault.
@@ -201,7 +195,7 @@ function AssetDetail() {
                     </>
                   ) : (
                     <>
-                      <Text size={FS.micro} c="dimmed" lh={1.45}>
+                      <Text size={FS.micro} c="dimmed" lh={1.5}>
                         A vaulted secret is injected by the gateway — the user never sees it. It
                         is still a standing credential. Moving this host to certificate auth
                         removes that exposure entirely.
@@ -218,7 +212,7 @@ function AssetDetail() {
                   )}
 
                   <Field label="Available principals">
-                    <Group gap={6}>
+                    <Group gap={SP.snug}>
                       {asset.principals.map((p) => (
                         <Badge
                           key={p}
@@ -232,80 +226,78 @@ function AssetDetail() {
                     </Group>
                   </Field>
                 </Stack>
-              </Card>
+              </SectionCard>
 
-              <Card padding="md">
-                <Text fw={600} size="sm" mb={8}>Connect</Text>
-                <Text size={FS.micro} c="dimmed" mb={8} lh={1.45}>
-                  No client install and no wrapper script — the target is encoded in the
-                  username, so ordinary <Mono>ssh</Mono>, <Mono>scp</Mono>, <Mono>sftp</Mono> and
-                  Ansible all work unchanged.
-                </Text>
+              <SectionCard
+                title="Connect"
+                icon={IconPlugConnected}
+                description="No client install and no wrapper script — the target is encoded in the username, so ordinary ssh, scp, sftp and Ansible all work unchanged."
+              >
                 <Code block fz={FS.digest}>
                   {`ssh ${asset.principals[0]}:${asset.hostname.split('.')[0]}@argus.northwind.id`}
                 </Code>
-              </Card>
+              </SectionCard>
             </Stack>
           </Grid.Col>
 
           <Grid.Col span={{ base: 12, md: 7 }}>
-            <Card padding={0}>
-              <Group justify="space-between" p="md" pb="sm">
-                <Text fw={600} size="sm">Recent sessions</Text>
-                <Badge size="xs" variant="light" color="slate">{history.length}</Badge>
-              </Group>
+            <SectionCard
+              title="Recent sessions"
+              icon={IconHistory}
+              flush
+              badge={<Badge size="xs" variant="light" color="slate">{history.length}</Badge>}
+            >
               <Table.ScrollContainer minWidth={640} type="native">
-            <Table verticalSpacing={7} horizontalSpacing="md" highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>State</Table.Th>
-                    <Table.Th>User</Table.Th>
-                    <Table.Th>As</Table.Th>
-                    <Table.Th>Started</Table.Th>
-                    <Table.Th>Duration</Table.Th>
-                    <Table.Th>Recording</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {history.map((s) => (
-                    <Table.Tr
-                      key={s.id}
-                      {...rowNav(() =>
-                        navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
-                      )}
-                    >
-                      <Table.Td><SessionStateBadge state={s.state} /></Table.Td>
-                      <Table.Td>
-                        <Text size="xs">{s.userEmail.split('@')[0]}</Text>
-                      </Table.Td>
-                      <Table.Td><Mono c="teal.4">{s.principal}</Mono></Table.Td>
-                      <Table.Td>
-                        <Text size="xs" c="dimmed" title={absTime(s.startedAt)}>
-                          {relTime(s.startedAt)}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" c="dimmed">{duration(s.startedAt, s.endedAt)}</Text>
-                      </Table.Td>
-                      <Table.Td><FidelityBadge fidelity={s.fidelity} /></Table.Td>
-                    </Table.Tr>
-                  ))}
-                  {history.length === 0 && (
+                <Table>
+                  <Table.Thead>
                     <Table.Tr>
-                      <Table.Td colSpan={6}>
-                        <Text size="xs" c="dimmed" ta="center" py="lg">
-                          Nobody has connected to this host yet.
-                        </Text>
-                      </Table.Td>
+                      <Table.Th>State</Table.Th>
+                      <Table.Th>User</Table.Th>
+                      <Table.Th>As</Table.Th>
+                      <Table.Th>Started</Table.Th>
+                      <Table.Th>Duration</Table.Th>
+                      <Table.Th>Recording</Table.Th>
                     </Table.Tr>
-                  )}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-            </Card>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {history.map((s) => (
+                      <Table.Tr
+                        key={s.id}
+                        {...rowNav(() =>
+                          navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
+                        )}
+                      >
+                        <Table.Td><SessionStateBadge state={s.state} /></Table.Td>
+                        <Table.Td>
+                          <Text size="xs">{s.userEmail.split('@')[0]}</Text>
+                        </Table.Td>
+                        <Table.Td><Mono c="azure.3">{s.principal}</Mono></Table.Td>
+                        <Table.Td>
+                          <Text size="xs" c="dimmed" title={absTime(s.startedAt)}>
+                            {relTime(s.startedAt)}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="xs" c="dimmed">{duration(s.startedAt, s.endedAt)}</Text>
+                        </Table.Td>
+                        <Table.Td><FidelityBadge fidelity={s.fidelity} /></Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+              {history.length === 0 && (
+                <EmptyState
+                  compact
+                  icon={IconHistory}
+                  title="Nobody has connected to this host yet."
+                  description="Brokered sessions and anything the agent reports will appear here."
+                />
+              )}
+            </SectionCard>
           </Grid.Col>
         </Grid>
-      </Box>
+      </PageBody>
     </Box>
   )
 }

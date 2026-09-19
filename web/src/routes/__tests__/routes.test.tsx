@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { renderRoute } from '~/test/renderRoute'
 
 /**
@@ -133,5 +133,139 @@ describe('unknown routes', () => {
     await renderRoute('/no-such-page')
     expect(await screen.findByText('404')).toBeInTheDocument()
     expect(screen.getByText('No such page.')).toBeInTheDocument()
+  })
+})
+
+/**
+ * The console's information architecture.
+ *
+ * Nine flat destinations were grouped into three sections without changing a
+ * single path, so these assert the grouping exists and that the links inside it
+ * still point where they always did.
+ */
+describe('navigation', () => {
+  it('groups its destinations under named sections', async () => {
+    await renderRoute('/')
+    for (const section of ['Operate', 'Fleet', 'Governance']) {
+      expect(await screen.findByText(section)).toBeInTheDocument()
+    }
+  })
+})
+
+describe('overview alerts', () => {
+  /**
+   * This button said "Review coverage" and navigated to /assets — the inventory
+   * table, which lists hosts and answers nothing about whether an agent is
+   * reporting from each one. The alert it sits in is specifically about hosts
+   * that would not record a bypass, which is the Coverage page's whole subject.
+   */
+  it('sends a coverage gap to Coverage rather than to the inventory', async () => {
+    await renderRoute('/')
+    const link = await screen.findByRole('link', { name: /review coverage/i })
+    expect(link).toHaveAttribute('href', '/coverage')
+  })
+})
+
+describe('empty states', () => {
+  /**
+   * "No sessions match." on its own reads the same whether the filter is too
+   * narrow, the fleet is genuinely idle, or the query failed. The guidance is
+   * the part that tells them apart.
+   */
+  it('say what to do next, not only that there is nothing', async () => {
+    await renderRoute('/sessions')
+    const search = await screen.findByPlaceholderText(/filter by user, host/i)
+    fireEvent.change(search, { target: { value: 'no-such-host-anywhere' } })
+    expect(await screen.findByText('No sessions match.')).toBeInTheDocument()
+    expect(screen.getByText(/widen it, or clear the search/i)).toBeInTheDocument()
+  })
+})
+
+describe('command palette', () => {
+  it('opens on the keyboard and reaches a host by name from any page', async () => {
+    await renderRoute('/')
+    fireEvent.keyDown(document, { key: 'k', metaKey: true })
+
+    const input = await screen.findByPlaceholderText(/search pages, hosts/i)
+    fireEvent.change(input, { target: { value: 'db-01' } })
+
+    expect(await screen.findByText('db-01.data.northwind.id')).toBeInTheDocument()
+  })
+})
+
+/**
+ * Assets and Coverage answer different questions about the same fleet, and
+ * deliberately stayed separate pages: the inventory lists what Argus manages,
+ * so a machine nobody enrolled is invisible there by construction, which is
+ * exactly what Coverage is for.
+ *
+ * What they lacked was a way to get from one to the other. Coverage counted
+ * hosts with no agent and could not say which ones; the inventory had no agent
+ * filter to be pointed at. These cover the join.
+ */
+describe('assets and coverage', () => {
+  it('filters the inventory from the URL, so a finding can be linked to', async () => {
+    await renderRoute('/assets?agent=stale')
+    await screen.findByRole('heading', { name: 'Assets' })
+
+    // Every row the filter admits says the agent went quiet. The badge reads
+    // "silent" -- the word the operator sees for a stale agent.
+    const badges = await screen.findAllByText('silent')
+    expect(badges.length).toBeGreaterThan(0)
+    expect(screen.queryByText('no agent')).not.toBeInTheDocument()
+  })
+
+  it('drops a filter value the controls cannot show', async () => {
+    // A hand-edited URL must not put the table into a state with no visible
+    // cause -- rows filtered by something none of the selects can display.
+    await renderRoute('/assets?agent=not-a-state')
+    await screen.findByRole('heading', { name: 'Assets' })
+    expect(await screen.findAllByText('no agent')).not.toHaveLength(0)
+  })
+
+  it('says on the inventory that it is not the whole fleet', async () => {
+    await renderRoute('/assets')
+    // Scoped to the page header: the sidebar links to Coverage from every page,
+    // and what is under test is that this page points at it too.
+    const heading = await screen.findByRole('heading', { name: 'Assets' })
+    const header = heading.closest('.argus-pagehead')
+    expect(header).not.toBeNull()
+    const link = within(header as HTMLElement).getByRole('link', { name: /coverage/i })
+    expect(link).toHaveAttribute('href', '/coverage')
+  })
+})
+
+describe('the header says which data is on screen', () => {
+  /**
+   * The slot this covers used to read a hard-coded "northwind-prod ·
+   * ap-southeast-3". Argus has no tenant and no region — neither word appears
+   * in the domain — so it was an invented deployment name presented as fact, in
+   * the one place an operator would look to check which deployment they were
+   * about to act on.
+   *
+   * It matters more than a label usually would: live.orFallback serves the
+   * in-memory fixture whenever the control plane cannot be reached, so a
+   * console showing invented numbers is otherwise indistinguishable from one
+   * showing a real fleet.
+   */
+  it('names the fixture as the fixture when no control plane is configured', async () => {
+    await renderRoute('/')
+    expect(await screen.findByText('Local fixture')).toBeInTheDocument()
+    expect(screen.queryByText(/northwind-prod/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * The banner that says "nothing below is your fleet" belongs to one state:
+   * a control plane that was configured and then stopped answering. Running
+   * against the fixture is not that — nobody configured anything, the badge
+   * already says so, and a warning shown in every state is not a warning.
+   *
+   * Without this, a banner that rendered unconditionally would pass every other
+   * test in this file.
+   */
+  it('does not cry fallback when there is no control plane to have lost', async () => {
+    await renderRoute('/')
+    await screen.findByText('Local fixture')
+    expect(screen.queryByText(/nothing below is your fleet/)).not.toBeInTheDocument()
   })
 })

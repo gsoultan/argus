@@ -1,23 +1,58 @@
 import { useState } from 'react'
-import {
-  Box, Card, Group, Select, Table, Text, TextInput, Tooltip,
-} from '@mantine/core'
+import { Box, Button, Group, Select, Table, Text, TextInput, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconSearch } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { IconSearch, IconServer2, IconShieldLock, IconX } from '@tabler/icons-react'
+import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
+import { ButtonLink } from '~/components/links'
 import {
   AgentBadge, BypassBadge, CredentialBadge, HealthDot, HostKeyBadge, Mono,
   relTime, rowNav,
 } from '~/components/primitives'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import { assetsQuery, groupsQuery } from '~/lib/queries'
 import type { Asset } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
 
+/**
+ * Filters live in the URL.
+ *
+ * Coverage counts hosts with no agent and hosts whose agent went quiet, and had
+ * no way to answer "which ones?" — the two pages described the same fleet and
+ * neither could hand a finding to the other. A filter that is addressable makes
+ * that link possible, and makes a narrowed inventory something an operator can
+ * paste into an incident channel.
+ */
+interface AssetSearch {
+  q?: string
+  group?: string
+  hostKey?: Asset['hostKeyState']
+  agent?: Asset['agentState']
+  bypass?: Asset['bypassPosture']
+}
+
+const HOST_KEY_STATES = ['pinned', 'unpinned', 'changed'] as const
+const AGENT_STATES = ['healthy', 'stale', 'absent'] as const
+const BYPASS_POSTURES = ['enforced', 'monitored', 'open'] as const
+
+const oneOf = <T extends string>(allowed: readonly T[], v: unknown): T | undefined =>
+  typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : undefined
+
+const str = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.length > 0 ? v : undefined
+
 export const Route = createFileRoute('/assets/')({
   component: Assets,
+  // Unrecognised values are dropped rather than passed through, so a
+  // hand-edited URL cannot put the table into a state the controls cannot show.
+  validateSearch: (search: Record<string, unknown>): AssetSearch => ({
+    q: str(search.q),
+    group: str(search.group),
+    hostKey: oneOf(HOST_KEY_STATES, search.hostKey),
+    agent: oneOf(AGENT_STATES, search.agent),
+    bypass: oneOf(BYPASS_POSTURES, search.bypass),
+  }),
   loader: ({ context }) => context.queryClient.ensureQueryData(assetsQuery({})),
 })
 
@@ -27,128 +62,209 @@ function rotationOverdue(a: Asset): boolean {
   return ref - Date.parse(a.credentialRotatedAt) > a.rotationIntervalDays * 86_400_000
 }
 
+const AGENT_LABEL: Record<Asset['agentState'], string> = {
+  healthy: 'Agent reporting',
+  stale: 'Agent gone quiet',
+  absent: 'No agent installed',
+}
+
+/** The words the BypassBadge uses, so the filter reads like the column. */
+const BYPASS_LABEL: Record<Asset['bypassPosture'], string> = {
+  enforced: 'Closed — no way around',
+  monitored: 'Monitored — a bypass is recorded',
+  open: 'Unmonitored — a bypass is invisible',
+}
+
 function Assets() {
   const navigate = useNavigate()
-  const [search, setSearch] = useState('')
-  const [groupId, setGroupId] = useState<string | null>(null)
-  const [hostKeyState, setHostKeyState] = useState<string | null>(null)
+  const search = Route.useSearch()
+
+  // Mirrored locally so typing stays instant; the URL is the shareable record
+  // rather than the source the input reads back from on every keystroke.
+  const [text, setText] = useState(search.q ?? '')
+
+  const setSearch = (patch: Partial<AssetSearch>) =>
+    void navigate({ to: '/assets', search: (prev) => ({ ...prev, ...patch }), replace: true })
 
   const { data: groups } = useQuery(groupsQuery())
   const { data: assets } = useQuery(
     assetsQuery({
-      search,
-      groupId,
-      hostKeyState: hostKeyState as Asset['hostKeyState'] | null,
+      search: text,
+      groupId: search.group ?? null,
+      hostKeyState: search.hostKey ?? null,
+      agentState: search.agent ?? null,
+      bypassPosture: search.bypass ?? null,
     }),
   )
+
+  const filtered = Boolean(
+    text.trim() || search.group || search.hostKey || search.agent || search.bypass,
+  )
+
+  const clear = () => {
+    setText('')
+    void navigate({ to: '/assets', search: {}, replace: true })
+  }
 
   return (
     <Box>
       <PageHeader
         title="Assets"
         description="Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified."
+        actions={
+          // Says what this page cannot answer. The inventory lists the hosts
+          // Argus manages, so a machine nobody enrolled is invisible here by
+          // construction — which is the question Coverage exists for.
+          <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
+            <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
+              Coverage
+            </ButtonLink>
+          </Tooltip>
+        }
       />
 
-      <Box p="lg">
-        <Group gap="xs" mb="sm" wrap="wrap">
+      <PageBody>
+        <Toolbar
+          right={
+            assets && (
+              <Text size={FS.micro} c="dimmed">
+                {assets.length} {filtered ? 'matching' : 'assets'}
+              </Text>
+            )
+          }
+        >
           <TextInput
-            size="xs"
-            w={280}
+            w={260}
             placeholder="Filter by hostname, address, OS or tag"
             leftSection={<IconSearch size={14} />}
-            value={search}
-            onChange={(e) => setSearch(e.currentTarget.value)}
+            value={text}
+            onChange={(e) => {
+              setText(e.currentTarget.value)
+              setSearch({ q: e.currentTarget.value || undefined })
+            }}
           />
           <Select
-            size="xs"
-            w={190}
+            w={180}
             placeholder="All groups"
             clearable
-            value={groupId}
-            onChange={setGroupId}
+            value={search.group ?? null}
+            onChange={(v) => setSearch({ group: v ?? undefined })}
             data={groups?.map((g) => ({ value: g.id, label: `${g.name} (${g.assetCount})` })) ?? []}
           />
           <Select
-            size="xs"
             w={170}
             placeholder="Any host key state"
             clearable
-            value={hostKeyState}
-            onChange={setHostKeyState}
+            value={search.hostKey ?? null}
+            onChange={(v) => setSearch({ hostKey: (v as Asset['hostKeyState']) ?? undefined })}
             data={[
               { value: 'pinned', label: 'Pinned' },
               { value: 'unpinned', label: 'Unpinned' },
               { value: 'changed', label: 'Changed' },
             ]}
           />
-        </Group>
-
-        <Card padding={0}>
-          <Table.ScrollContainer minWidth={980} type="native">
-            <Table verticalSpacing={8} horizontalSpacing="md" highlightOnHover striped="even">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Host</Table.Th>
-                <Table.Th>Address</Table.Th>
-                <Table.Th>OS</Table.Th>
-                <Table.Th>Auth</Table.Th>
-                <Table.Th>Host key</Table.Th>
-                <Table.Th>Agent</Table.Th>
-                <Table.Th>Bypass</Table.Th>
-                <Table.Th>Rotated</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {assets?.map((a) => (
-                <Table.Tr
-                  key={a.id}
-                  {...rowNav(() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }))}
-                >
-                  <Table.Td>
-                    <Group gap={8} wrap="nowrap">
-                      <HealthDot health={a.health} />
-                      <Box>
-                        <Mono>{a.hostname.split('.')[0]}</Mono>
-                        <Text size={FS.micro} c="dimmed">
-                          {a.hostname.split('.').slice(1).join('.')}
-                        </Text>
-                      </Box>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td><Mono c="dimmed">{a.address}:{a.port}</Mono></Table.Td>
-                  <Table.Td><Text size="xs" c="dimmed">{a.os}</Text></Table.Td>
-                  <Table.Td><CredentialBadge mode={a.credentialMode} /></Table.Td>
-                  <Table.Td><HostKeyBadge state={a.hostKeyState} /></Table.Td>
-                  <Table.Td>
-                    <AgentBadge state={a.agentState} lastSeen={a.agentLastSeenAt} />
-                  </Table.Td>
-                  <Table.Td>
-                    <BypassBadge posture={a.bypassPosture} unmanagedKeys={a.unmanagedKeyCount} />
-                  </Table.Td>
-                  <Table.Td>
-                    {a.credentialMode === 'ca-certificate' ? (
-                      <Tooltip label="Certificate auth — nothing to rotate">
-                        <Text size="xs" c="dimmed">n/a</Text>
-                      </Tooltip>
-                    ) : (
-                      <Text size="xs" c={rotationOverdue(a) ? 'amber.4' : 'dimmed'}>
-                        {relTime(a.credentialRotatedAt)}
-                        {rotationOverdue(a) && ' ⚠'}
-                      </Text>
-                    )}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-            </Table.ScrollContainer>
-          {assets?.length === 0 && (
-            <Text size="xs" c="dimmed" ta="center" py="xl">No assets match.</Text>
+          <Select
+            w={180}
+            placeholder="Any agent state"
+            clearable
+            value={search.agent ?? null}
+            onChange={(v) => setSearch({ agent: (v as Asset['agentState']) ?? undefined })}
+            data={AGENT_STATES.map((s) => ({ value: s, label: AGENT_LABEL[s] }))}
+          />
+          {/* The column exists, so the filter does too — Coverage links here
+              with `?bypass=open`, and a filter with no visible control would
+              leave the table narrowed for a reason nothing on screen gives. */}
+          <Select
+            w={230}
+            placeholder="Any bypass posture"
+            clearable
+            value={search.bypass ?? null}
+            onChange={(v) => setSearch({ bypass: (v as Asset['bypassPosture']) ?? undefined })}
+            data={BYPASS_POSTURES.map((s) => ({ value: s, label: BYPASS_LABEL[s] }))}
+          />
+          {filtered && (
+            <Button
+              variant="subtle"
+              color="slate"
+              size="compact-xs"
+              leftSection={<IconX size={12} />}
+              onClick={clear}
+            >
+              Clear
+            </Button>
           )}
-        </Card>
+        </Toolbar>
 
-        <Text size={FS.micro} c="dimmed" mt="xs">{assets?.length ?? 0} assets.</Text>
-      </Box>
+        <DataTable
+          minWidth={980}
+          loading={assets === undefined}
+          isEmpty={assets?.length === 0}
+          columns={['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated']}
+          empty={
+            <EmptyState
+              icon={IconServer2}
+              title="No assets match."
+              description={
+                filtered
+                  ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'
+                  : 'The inventory is empty. Enrol a host from Coverage, or add one with argus-control assets add.'
+              }
+              action={
+                filtered ? (
+                  <Button variant="light" onClick={clear}>
+                    Clear filters
+                  </Button>
+                ) : (
+                  <ButtonLink variant="light" to="/coverage">
+                    Go to Coverage
+                  </ButtonLink>
+                )
+              }
+            />
+          }
+        >
+          {assets?.map((a) => (
+            <Table.Tr
+              key={a.id}
+              {...rowNav(() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }))}
+            >
+              <Table.Td>
+                <Group gap={SP.cozy} wrap="nowrap">
+                  <HealthDot health={a.health} />
+                  <Box>
+                    <Mono>{a.hostname.split('.')[0]}</Mono>
+                    <Text size={FS.micro} c="dimmed">
+                      {a.hostname.split('.').slice(1).join('.')}
+                    </Text>
+                  </Box>
+                </Group>
+              </Table.Td>
+              <Table.Td><Mono c="dimmed">{a.address}:{a.port}</Mono></Table.Td>
+              <Table.Td><Text size="xs" c="dimmed">{a.os}</Text></Table.Td>
+              <Table.Td><CredentialBadge mode={a.credentialMode} /></Table.Td>
+              <Table.Td><HostKeyBadge state={a.hostKeyState} /></Table.Td>
+              <Table.Td>
+                <AgentBadge state={a.agentState} lastSeen={a.agentLastSeenAt} />
+              </Table.Td>
+              <Table.Td>
+                <BypassBadge posture={a.bypassPosture} unmanagedKeys={a.unmanagedKeyCount} />
+              </Table.Td>
+              <Table.Td>
+                {a.credentialMode === 'ca-certificate' ? (
+                  <Tooltip label="Certificate auth — nothing to rotate">
+                    <Text size="xs" c="dimmed">n/a</Text>
+                  </Tooltip>
+                ) : (
+                  <Text size="xs" c={rotationOverdue(a) ? 'amber.4' : 'dimmed'}>
+                    {relTime(a.credentialRotatedAt)}
+                    {rotationOverdue(a) && ' ⚠'}
+                  </Text>
+                )}
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </DataTable>
+      </PageBody>
     </Box>
   )
 }

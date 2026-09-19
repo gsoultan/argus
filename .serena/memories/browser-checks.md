@@ -1,9 +1,27 @@
 # Browser checks
 
+CI caches `~/.cache/ms-playwright` keyed on `web/bun.lock`. The browsers are
+~400 MB across two engines; their system libraries are apt packages outside that
+path, so a cache hit still runs `playwright install-deps`.
+
 `web/e2e/` — Playwright against the production build (`bun run e2e`). It builds
 the console with `VITE_CONTROL_URL=` (fixture mode), serves it with
 `vite preview`, and runs in Chromium with `--enable-precise-memory-info` so
 `performance.memory` is exact rather than quantised.
+
+Three servers, and all three builds are chained into the *first* webServer
+command rather than split across entries: 5510 the fixture build, 5511
+`authstub.mjs` serving the control-plane build so the sign-in screen exists at
+all, 5512 the reference build for the cascade check.
+
+**Playwright starts webServer entries in order, waiting for each url before
+launching the next.** `preview-monolith.mjs` depends on that — by the time it
+runs, the build it serves is already complete. Two earlier versions tried to
+prove freshness from inside that script, by requiring the marker file to be
+newer than the process and then by watching it disappear and return; both
+deadlock under sequential startup, because the build finished before the script
+existed. Freshness is established upstream instead: the entry above deletes
+`dist-monolith` before it builds.
 
 ## Why it exists
 
@@ -19,6 +37,67 @@ asserts the properties directly, on every change, in CI (`console-e2e` job).
   rendered with them (the theme named Inter for months while nothing loaded it)
 - the audit chain verifies in WASM in well under 200 ms
 - no status badge is ever truncated (`BROKERED` vs `BYPASSED`)
+## A service worker makes page-level network assertions vacuous
+
+`page.on('requestfailed')` does not see requests a service worker makes on the
+page's behalf, and `page.route` does not intercept them either. Measured: with a
+worker controlling, aborting every `.woff2` produced **zero** page-level events.
+
+`watchErrors().assertClean()` now enforces its own precondition — it fails if a
+worker is controlling, or if the page loaded twice while one was registered.
+`registerType: 'prompt'` means no `skipWaiting`, so a worker claims the page on
+the *second* load; one navigation in a fresh context is what keeps these honest.
+
+It found two real problems the moment it existed. Both memory specs resolve a
+session id from the list before navigating to the recording, so they load twice
+and their asset assertion had been checking nothing; they now block service
+workers. And blocking exposed a second bug the worker had been masking:
+`page.route('**/e2e.cast')` also matches the page's own URL, because the
+recording is passed as `?cast=/e2e.cast` and the query string ends with it — so
+Playwright fulfilled the *navigation* with the recording and the browser
+rendered an 8 MB asciicast as plain text. Both specs now match on
+`url.pathname`. **Never glob-match a route on a path that also appears in a
+query string.** `serveFile()` in `helpers.ts` is the safe form — use it.
+
+`tsconfig.json` includes `e2e` and `playwright.config.ts`. It did not, and a
+syntax error in `helpers.ts` — a doc comment containing a `**` glob, whose `*/`
+closed the comment early — passed `bun run typecheck` untouched and surfaced
+only as Playwright collecting zero tests. `allowJs` + `checkJs` cover
+`authstub.mjs` and `preview-monolith.mjs` too — 158 lines, load-bearing for the
+sign-in and cascade suites, and nothing was reading them. That needed
+`@types/node` (the first in this project; `engines.node` was already declared),
+which also replaced a hand-rolled globals shim and the `declare const process`
+in `vite.config.ts`. Eight errors surfaced, all trivial except one worth having:
+`req.url` is optional in Node's own types, and the stub built a `URL` from it
+unguarded — a malformed request line would have taken the server down mid-suite.
+
+Type the scripts with JSDoc rather than converting them: `node` executes them
+directly, which is the point of them.
+
+- **the data-source badge** (`signin.spec.ts`): that the header does not claim a
+  connection before one has answered. Route matters — on `/` the state is
+  unreachable because the router's loader awaits `statsQuery` and nothing
+  renders until it returns; `/connect` declares no loader, so the shell paints
+  while the first call is in flight. And `page.route` cannot see requests a
+  service worker re-issues, so the delay it depends on needs
+  `test.use({ serviceWorkers: 'block' })` or it silently does nothing.
+- **what a visit weighs** (`weight.spec.ts`): JS, CSS and fonts against fixed
+  budgets, on `/` (233.6 kB of code) and on a deep link to a session detail
+  (340.8 kB — the extra is xterm and the replay player, which no other route
+  pays for). Also asserts exactly two font files: @fontsource ships a subset per
+  script, and more than two means a non-latin one is being pulled eagerly.
+  Chromium only — the assets are identical on every engine. Uses
+  `encodedBodySize` from resource timing; summing `content-length` reports zero,
+  because `vite preview` does not send it. The detail measurement runs in its
+  own cold context, because reaching the page warms the cache for it.
+- **what the worker stores** (`precache.spec.ts`): see
+  [pwa-and-service-worker](pwa-and-service-worker.md).
+- **the cascade** (`cascade.spec.ts`): every route rendered by both the shipped
+  build and a reference build using Mantine's concatenated stylesheet, with
+  `getComputedStyle` compared property by property. Includes the two routes that
+  need an id — the path is resolved by clicking the first row of the list, on
+  the shipped build, and then used verbatim against both. See
+  [design-system](design-system.md)
 - **terminal replay**: an 8 MB generated asciicast (~50k+ frames) plays at 8x
   and is scrubbed; main-thread heap must stay under `after-decode × 1.35 + 24 MB`
 - **desktop replay**: a ~40 MB generated display stream (300 rects + 6 full
