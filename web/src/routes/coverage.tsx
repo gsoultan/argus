@@ -116,8 +116,7 @@ function CoverageView() {
               label="Linux assets with an agent"
               value={cov ? `${cov.assetsWithAgent} / ${cov.sshAssets}` : undefined}
               tone={cov && cov.assetsUnmonitored > 0 ? 'warn' : 'ok'}
-              sub="An asset with no agent records nothing when someone connects to port 22 directly. Open the ones missing one."
-              onClick={() => navigate({ to: '/assets', search: { agent: 'absent' } })}
+              sub="An asset with no agent records nothing when someone connects to port 22 directly."
             />
           </Grid.Col>
           {/* Not a link, on purpose. A host outside the inventory is the one
@@ -162,7 +161,7 @@ function CoverageView() {
           <Alert
             color="rose"
             icon={<IconShieldOff size={16} />}
-            title={`${cov.assetsUnmonitored} managed ${cov.assetsUnmonitored === 1 ? 'host has' : 'hosts have'} no healthy agent`}
+            title={`${cov.assetsUnmonitored} ${cov.assetsUnmonitored === 1 ? 'host' : 'hosts'} would not record a bypass`}
           >
             <Text size={FS.body} mb="xs" lh={1.5}>
               A session opened straight to sshd on these hosts is not recorded at all. Brokered
@@ -173,7 +172,7 @@ function CoverageView() {
               variant="subtle"
               color="rose"
               to="/assets"
-              search={{ agent: 'absent' }}
+              search={{ bypass: 'open' }}
               rightSection={<IconArrowRight size={12} />}
             >
               Show these hosts
@@ -229,6 +228,7 @@ function CoverageView() {
                         <Mono>{h.addresses.join(', ') || '—'}</Mono>
                       </Table.Td>
                       <Table.Td>
+                        {h.sshPorts.length === 0 && <Text size="xs" c="dimmed">—</Text>}
                         <Group gap={SP.tight}>
                           {h.sshPorts.map((p) => (
                             <Badge
@@ -249,7 +249,9 @@ function CoverageView() {
                       </Table.Td>
                       <Table.Td>
                         <Text size="xs" c="dimmed">
-                          {h.accounts.slice(0, 4).join(', ')}
+                          {h.accounts.length === 0
+                            ? '—'
+                            : h.accounts.slice(0, 4).join(', ')}
                           {h.accounts.length > 4 && ` +${h.accounts.length - 4}`}
                         </Text>
                       </Table.Td>

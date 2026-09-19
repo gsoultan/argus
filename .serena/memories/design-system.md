@@ -183,10 +183,25 @@ ones, because the inventory had no agent filter to be pointed at. So
 thing Assets structurally cannot show, and leaving it inert is what makes the
 split legible.
 
-A counter only links to a filter when the two mean the same set. The Overview's
-"Unverified hosts" counts `hostKeyState !== 'pinned'` — unpinned *and* changed —
-and no single filter value carries that, so it stays unfiltered rather than
-landing on a shorter list than the number that was clicked.
+**A counter only links to a filter when the two mean the same set**, and this
+is harder than it looks — it was got wrong twice.
+
+The Overview's "Unverified hosts" counts `hostKeyState !== 'pinned'` — unpinned
+*and* changed — and no single filter value carries that, so it stays unfiltered.
+Coverage's "Linux assets with an agent" is scoped to SSH and counts anything
+without a *healthy* agent, which is two conditions the inventory filter cannot
+express together; it is unlinked for the same reason.
+
+What shipped wrong: Coverage's bypass alert was headed "N managed hosts have no
+healthy agent" and linked to `?agent=absent`. `assetsUnmonitored` is actually
+`bypassPosture === 'open'`, so on a real control plane the heading said 5 and
+the link landed on 2 — and the alert's own body text had been describing bypass
+posture correctly the whole time. Only running against real data found it; the
+fixture had the two agreeing by coincidence.
+
+`signin.spec.ts` now asserts each Coverage link lands on exactly what it
+counted, against a stub fleet whose coverage counters are *derived* from its
+asset list and whose postures are picked so no two counters agree by accident.
 
 ## Information architecture — `web/src/components/nav.ts`
 

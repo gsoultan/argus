@@ -29,10 +29,12 @@ interface AssetSearch {
   group?: string
   hostKey?: Asset['hostKeyState']
   agent?: Asset['agentState']
+  bypass?: Asset['bypassPosture']
 }
 
 const HOST_KEY_STATES = ['pinned', 'unpinned', 'changed'] as const
 const AGENT_STATES = ['healthy', 'stale', 'absent'] as const
+const BYPASS_POSTURES = ['enforced', 'monitored', 'open'] as const
 
 const oneOf = <T extends string>(allowed: readonly T[], v: unknown): T | undefined =>
   typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : undefined
@@ -49,6 +51,7 @@ export const Route = createFileRoute('/assets/')({
     group: str(search.group),
     hostKey: oneOf(HOST_KEY_STATES, search.hostKey),
     agent: oneOf(AGENT_STATES, search.agent),
+    bypass: oneOf(BYPASS_POSTURES, search.bypass),
   }),
   loader: ({ context }) => context.queryClient.ensureQueryData(assetsQuery({})),
 })
@@ -63,6 +66,13 @@ const AGENT_LABEL: Record<Asset['agentState'], string> = {
   healthy: 'Agent reporting',
   stale: 'Agent gone quiet',
   absent: 'No agent installed',
+}
+
+/** The words the BypassBadge uses, so the filter reads like the column. */
+const BYPASS_LABEL: Record<Asset['bypassPosture'], string> = {
+  enforced: 'Closed — no way around',
+  monitored: 'Monitored — a bypass is recorded',
+  open: 'Unmonitored — a bypass is invisible',
 }
 
 function Assets() {
@@ -83,10 +93,13 @@ function Assets() {
       groupId: search.group ?? null,
       hostKeyState: search.hostKey ?? null,
       agentState: search.agent ?? null,
+      bypassPosture: search.bypass ?? null,
     }),
   )
 
-  const filtered = Boolean(text.trim() || search.group || search.hostKey || search.agent)
+  const filtered = Boolean(
+    text.trim() || search.group || search.hostKey || search.agent || search.bypass,
+  )
 
   const clear = () => {
     setText('')
@@ -157,6 +170,17 @@ function Assets() {
             value={search.agent ?? null}
             onChange={(v) => setSearch({ agent: (v as Asset['agentState']) ?? undefined })}
             data={AGENT_STATES.map((s) => ({ value: s, label: AGENT_LABEL[s] }))}
+          />
+          {/* The column exists, so the filter does too — Coverage links here
+              with `?bypass=open`, and a filter with no visible control would
+              leave the table narrowed for a reason nothing on screen gives. */}
+          <Select
+            w={230}
+            placeholder="Any bypass posture"
+            clearable
+            value={search.bypass ?? null}
+            onChange={(v) => setSearch({ bypass: (v as Asset['bypassPosture']) ?? undefined })}
+            data={BYPASS_POSTURES.map((s) => ({ value: s, label: BYPASS_LABEL[s] }))}
           />
           {filtered && (
             <Button

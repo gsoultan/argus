@@ -153,3 +153,60 @@ test.describe('the data-source badge', () => {
     await expect(page.getByText(/nothing below is your fleet/)).toBeVisible()
   })
 })
+
+/**
+ * Coverage states a number, then links to the inventory filtered to what it
+ * counted. Getting that pairing wrong is silent: the page renders, the link
+ * works, it just lands on a different set of hosts than the one advertised.
+ *
+ * It shipped twice. An alert headed "5 hosts would not record a bypass" linked
+ * to `?agent=absent` and landed on 2, because the count is
+ * `bypassPosture === 'open'` while the filter asked about the agent — caught
+ * only by pointing the console at a real control plane. The rule it violates
+ * was already written down after the same mistake was avoided on the Overview:
+ * **a counter links to a filter only when the two mean the same set.**
+ *
+ * authstub serves a deliberately mixed fleet with its coverage counters derived
+ * from it, so no two of these numbers agree by accident.
+ */
+test.describe('coverage links land on exactly what they counted', () => {
+  const claim = async (page: import('@playwright/test').Page, heading: RegExp) =>
+    Number(((await page.getByText(heading).first().textContent()) ?? '').match(/\d+/)?.[0])
+
+  test('the bypass alert', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/coverage')
+
+    const counted = await claim(page, /would not record a bypass/)
+    expect(counted, 'the stub fleet should have hosts with an open posture').toBeGreaterThan(0)
+
+    await page.getByRole('link', { name: /show these hosts/i }).click()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
+    await expect(
+      page.locator('tbody tr[role="link"]'),
+      `The alert counted ${counted} hosts; its link selects a different set.`,
+    ).toHaveCount(counted)
+  })
+
+  test('the agents-gone-quiet counter', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/coverage')
+
+    // Scoped to the card, not the label: the figure is a sibling of the text.
+    const card = page.locator('.argus-stat', { hasText: 'AGENTS GONE QUIET' })
+    // And waited for: Stat renders a skeleton rather than a zero until the
+    // count arrives, so reading too early gets a card with no digit in it.
+    await expect(card).toContainText(/\d/)
+    const quiet = Number((await card.innerText()).match(/\n\s*(\d+)/)?.[1])
+    expect(quiet, 'the stub fleet should have stale agents').toBeGreaterThan(0)
+
+    await card.click()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
+    await expect(
+      page.locator('tbody tr[role="link"]'),
+      `The card counted ${quiet} quiet agents; its link selects a different set.`,
+    ).toHaveCount(quiet)
+  })
+})
