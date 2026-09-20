@@ -8,8 +8,8 @@ import {
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { run } from '~/lib/notify'
 import {
-  CredentialBadge, Digest, Field, FidelityBadge, HealthDot, HostKeyBadge, Mono,
-  SessionDuration, SessionStateBadge, absTime, relTime, rowNav,
+  ArtefactPending, CredentialBadge, Digest, Field, FidelityBadge, HealthDot,
+  HostKeyBadge, Mono, SessionDuration, SessionStateBadge, absTime, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
@@ -280,7 +280,12 @@ function AssetDetail() {
                         <Table.Td>
                           <SessionDuration session={s} />
                         </Table.Td>
-                        <Table.Td><FidelityBadge fidelity={s.fidelity} /></Table.Td>
+                        <Table.Td>
+                          <Group gap={SP.snug} wrap="nowrap">
+                            <FidelityBadge fidelity={s.fidelity} />
+                            <ArtefactPending session={s} />
+                          </Group>
+                        </Table.Td>
                       </Table.Tr>
                     ))}
                   </Table.Tbody>

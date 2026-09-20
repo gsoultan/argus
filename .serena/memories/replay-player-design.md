@@ -97,6 +97,15 @@ with a precise 404. The defect was only ever in the console.
 
 Two groups in dev, 44 rows: 26 terminated with zero bytes (nothing was ever
 recorded), and 18 closed with real bytes (the artefact exists, on a gateway).
-`recordingKey` is still absent from the console's `Session` type, so the
-sessions list offers Replay on all of them; the detail page now explains itself
-on arrival, which is the part that mattered.
+`recordingKey` is now on the console's `Session` type -- the control plane had
+always sent it and there was simply no field to put it in. `ArtefactPending` in
+`primitives.tsx` marks a finished session whose artefact has not landed, on the
+sessions list, the asset detail table and the session detail's fidelity field.
+
+It says nothing about an **active** session: that recording is still being
+written and has no business being in storage yet, so keying off `recordingKey`
+alone would put the marker on every live row.
+
+The fixture gives most sessions a key and two of them none, the same way it
+carries two silent sessions -- a demo fleet where every recording were
+unretrievable would say nothing useful.

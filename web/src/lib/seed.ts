@@ -166,6 +166,10 @@ function makeSessions(): Session[] {
     // Minutes since anything last reported this session. Only meaningful while
     // it is active; a finished session is not waiting to be heard from.
     quietMins = 0,
+    // Sealed, but the artefact never reached object storage -- it is still on
+    // the gateway that produced it, queued for retry. 44 sessions in the dev
+    // control plane are like this and the list offered Replay on all of them.
+    strandedArtefact = false,
   ) => {
     const asset = pick(assets.filter((a) => a.protocol !== 'rdp'))
     const user = pick(operators)
@@ -206,6 +210,9 @@ function makeSessions(): Session[] {
       commandCount: fidelity === 'ebpf' ? between(3, 180) : null,
       accessRequestId: null,
       chainHead: hex(64),
+      // Sealed and delivered, for everything but the two below. A demo fleet
+      // whose every recording were unretrievable would say nothing useful.
+      recordingKey: strandedArtefact ? null : `recordings/${ago(startMinsAgo).slice(0, 10)}/${uuid()}.cast`,
       riskFlags: flags,
       lastReportedAt: ago(state === 'active' ? quietMins : startMinsAgo - (durMins ?? 0)),
       silent: state === 'active' && quietMins > 3,
@@ -223,6 +230,10 @@ function makeSessions(): Session[] {
   // null -- 26 of them in dev, every one rendering as still running. They are
   // deliberately not back-filled: stamping them now() would invent a time.
   push('terminated', 18_600, null)
+  // Sealed with an artefact that never left the gateway: one that recorded real
+  // bytes, and one that recorded none at all. Both are in dev, in that ratio.
+  push('closed', 5_200, 41, 0, true)
+  push('terminated', 7_400, 3, 0, true)
   for (let i = 0; i < 60; i++) {
     const start = between(100, 4300)
     push(rnd() > 0.96 ? 'terminated' : 'closed', start, between(2, 90))
@@ -251,6 +262,7 @@ const rdpSession: Session = {
   // session is never silent however long ago it last reported.
   lastReportedAt: ago(262),
   silent: false,
+  recordingKey: `recordings/${ago(310).slice(0, 10)}/${uuid()}.cast`,
 }
 
 export const sessions: Session[] = [...generatedSessions, rdpSession].sort(
