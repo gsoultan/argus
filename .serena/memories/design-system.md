@@ -312,3 +312,28 @@ The four cases, and the component is the only place that knows them:
 
 **If you render a session duration, use the component.** A bare `duration()` call
 against `endedAt` is the bug, not the shortcut.
+
+## A counter links to a filter only when the two mean the same set
+
+Written down after the rule was broken on the Coverage alerts twice, and then
+found unenforced on the four Overview tiles, which all linked unfiltered:
+
+- **Live sessions** counted the live ones and opened the whole log.
+- **Unverified hosts** counts `hostKeyState !== 'pinned'` -- unpinned *and*
+  changed -- which no single-state filter could select, so `unverified` now
+  exists as a filter value meaning exactly that set.
+- **Bypassed gateway** counts direct sessions *in 24 hours* and opened every
+  bypass ever recorded. `/sessions?since=24h` now carries the window, shown as
+  a removable badge so the page never silently hides most of its rows.
+- **Pending approvals** was already right, but only because /requests happens to
+  default to its pending tab. Nothing in the code said so; a test does now.
+
+**The tests are the enforcement, and the stub is what makes them real.**
+`e2e/authstub.mjs` derives every counter from its own fixtures -- never a
+hand-written literal, which would only assert that two constants still agree --
+and the fixtures are chosen so a naive link lands on a visibly different number:
+two unpinned hosts across two different states, two direct sessions of which one
+is outside the window.
+
+When adding a counter that links anywhere, add a row to `TILES` in
+`e2e/signin.spec.ts`.

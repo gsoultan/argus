@@ -161,7 +161,13 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
   const pending = r.state === 'pending'
 
   return (
-    <Card style={r.breakGlass && pending ? { borderColor: 'var(--color-denied)' } : undefined}>
+    <Card
+      // A stable handle for the list, the way .argus-stat marks a dashboard
+      // tile. The Overview's "Pending approvals" tile lands here and the two
+      // numbers have to be checkable against each other.
+      className="argus-request"
+      style={r.breakGlass && pending ? { borderColor: 'var(--color-denied)' } : undefined}
+    >
       <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm" gap="md">
         <Box style={{ minWidth: 0 }}>
           <Group gap={SP.cozy} mb={SP.tight}>

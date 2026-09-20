@@ -25,7 +25,7 @@ import { isConfigured } from '~/lib/live'
  * a session that just happened as "4d from now". Real data wins: once a
  * control plane is configured, use the wall clock.
  */
-function now(): number {
+export function now(): number {
   return isConfigured() ? Date.now() : EPOCH
 }
 

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Badge, Box, Group, SegmentedControl, Table, Text, TextInput, Tooltip } from '@mantine/core'
+import {
+  Badge, Box, CloseButton, Group, SegmentedControl, Table, Text, TextInput, Tooltip,
+} from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconPlayerPlay, IconSearch, IconTerminal2 } from '@tabler/icons-react'
@@ -7,7 +9,7 @@ import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/componen
 import { ButtonLink } from '~/components/links'
 import {
   FidelityBadge, Mono, OriginBadge, RiskFlags, SessionDuration, SessionStateBadge, Target,
-  absTime, bytes, relTime, rowNav,
+  absTime, bytes, now, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { sessionsQuery } from '~/lib/queries'
@@ -18,6 +20,15 @@ type Filter = (typeof FILTERS)[number]
 
 interface SessionSearch {
   show?: Filter
+  /**
+   * Narrow everything on the page to the last 24 hours.
+   *
+   * The Overview's "Bypassed gateway" tile counts direct sessions *today*, and
+   * without this its link landed on every direct session ever recorded -- a
+   * superset, which is the same defect as the alert that counted 5 hosts and
+   * selected 2, just in the other direction.
+   */
+  since?: '24h'
 }
 
 export const Route = createFileRoute('/sessions/')({
@@ -32,6 +43,7 @@ export const Route = createFileRoute('/sessions/')({
       typeof search.show === 'string' && (FILTERS as readonly string[]).includes(search.show)
         ? (search.show as Filter)
         : undefined,
+    since: search.since === '24h' ? '24h' : undefined,
   }),
   loader: ({ context }) => context.queryClient.ensureQueryData(sessionsQuery()),
 })
@@ -42,13 +54,33 @@ const LIMIT = 120
 function Sessions() {
   const navigate = useNavigate()
   const { data: sessions } = useQuery(sessionsQuery())
-  const filter = Route.useSearch().show ?? 'all'
-  const setFilter = (show: Filter) =>
-    void navigate({ to: '/sessions', search: show === 'all' ? {} : { show }, replace: true })
+  const { show, since } = Route.useSearch()
+  const filter = show ?? 'all'
+  const setSearchParams = (patch: Partial<SessionSearch>) =>
+    void navigate({
+      to: '/sessions',
+      search: (prev) => {
+        const next: SessionSearch = { ...prev, ...patch }
+        // 'all' is the absence of a filter, not a value to carry around.
+        if (next.show === 'all') delete next.show
+        return next
+      },
+      replace: true,
+    })
   const [search, setSearch] = useState('')
 
+  // The window is applied before anything else, so the segment counts describe
+  // the same set the table does. The Overview's "Live sessions" card disagreed
+  // with the tile above it for precisely the opposite reason: it narrowed the
+  // rows and badged the unnarrowed total.
+  const scoped = useMemo(() => {
+    if (!sessions || since !== '24h') return sessions
+    const cutoff = now() - 24 * 60 * 60_000
+    return sessions.filter((s) => Date.parse(s.startedAt) > cutoff)
+  }, [sessions, since])
+
   const rows = useMemo(() => {
-    let out: Session[] = sessions ?? []
+    let out: Session[] = scoped ?? []
     if (filter === 'active') out = out.filter((s) => s.state === 'active' && !s.silent)
     if (filter === 'silent') out = out.filter((s) => s.state === 'active' && s.silent)
     if (filter === 'direct') out = out.filter((s) => s.origin === 'direct')
@@ -62,13 +94,13 @@ function Sessions() {
       )
     }
     return out.slice(0, LIMIT)
-  }, [sessions, filter, search])
+  }, [scoped, filter, search])
 
-  const activeCount = sessions?.filter((s) => s.state === 'active' && !s.silent).length ?? 0
-  const silentCount = sessions?.filter((s) => s.state === 'active' && s.silent).length ?? 0
-  const flaggedCount = sessions?.filter((s) => s.riskFlags.length > 0).length ?? 0
-  const directCount = sessions?.filter((s) => s.origin === 'direct').length ?? 0
-  const filtered = filter !== 'all' || search.trim().length > 0
+  const activeCount = scoped?.filter((s) => s.state === 'active' && !s.silent).length ?? 0
+  const silentCount = scoped?.filter((s) => s.state === 'active' && s.silent).length ?? 0
+  const flaggedCount = scoped?.filter((s) => s.riskFlags.length > 0).length ?? 0
+  const directCount = scoped?.filter((s) => s.origin === 'direct').length ?? 0
+  const filtered = filter !== 'all' || since === '24h' || search.trim().length > 0
 
   return (
     <Box>
@@ -100,9 +132,30 @@ function Sessions() {
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
           />
+          {/* A filter the user can see and remove. Arriving from the Overview's
+              "direct to sshd, 24h" tile puts the page in a state no control on
+              it expresses, and a table quietly missing most of its rows is
+              worse than one that says why. */}
+          {since === '24h' && (
+            <Badge
+              size="lg"
+              variant="light"
+              color="azure"
+              rightSection={
+                <CloseButton
+                  size="xs"
+                  variant="transparent"
+                  aria-label="Show all time"
+                  onClick={() => setSearchParams({ since: undefined })}
+                />
+              }
+            >
+              Last 24 hours
+            </Badge>
+          )}
           <SegmentedControl
             value={filter}
-            onChange={(v) => setFilter(v as Filter)}
+            onChange={(v) => setSearchParams({ show: v as Filter })}
             // No parenthetical until there is something to put in it: "Live (0)"
             // while the log is still loading is an answer, and a wrong one.
             data={[
@@ -134,7 +187,9 @@ function Sessions() {
                 filtered
                   ? filter === 'silent'
                     ? 'Every active session has reported in recently. Nothing here is a good result.'
-                    : 'Nothing in the log fits this filter. Widen it, or clear the search to see everything.'
+                    : since === '24h'
+                      ? 'Nothing in the last 24 hours fits this filter. Remove the window to search the whole log.'
+                      : 'Nothing in the log fits this filter. Widen it, or clear the search to see everything.'
                   : 'No session has been brokered or reported yet. One appears here as soon as somebody connects.'
               }
             />
