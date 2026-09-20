@@ -253,6 +253,22 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               </Tooltip>
             )}
 
+            {/* Beside the live count rather than added to it. These sessions
+                were counted as live until now — fifteen of them in dev, one for
+                nineteen days — which is exactly the number an operator glances
+                at to decide whether anything is happening. */}
+            {stats && stats.sessionsSilent > 0 && (
+              <Tooltip
+                label={`${stats.sessionsSilent} ${stats.sessionsSilent === 1 ? 'session is' : 'sessions are'} recorded as active but have not been reported in minutes. Their gateway most likely went away without reporting the end. Sessions › Unknown.`}
+                multiline
+                maw={300}
+              >
+                <Badge color="amber" variant="light" visibleFrom="sm">
+                  {stats.sessionsSilent} unknown
+                </Badge>
+              </Tooltip>
+            )}
+
             <Indicator
               disabled={!stats?.requestsPending}
               label={stats?.requestsPending}

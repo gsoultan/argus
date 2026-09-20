@@ -159,7 +159,14 @@ function makeSessions(): Session[] {
   const out: Session[] = []
   const operators = users.filter((u) => u.role === 'operator' || u.role === 'admin')
 
-  const push = (state: Session['state'], startMinsAgo: number, durMins: number | null) => {
+  const push = (
+    state: Session['state'],
+    startMinsAgo: number,
+    durMins: number | null,
+    // Minutes since anything last reported this session. Only meaningful while
+    // it is active; a finished session is not waiting to be heard from.
+    quietMins = 0,
+  ) => {
     const asset = pick(assets.filter((a) => a.protocol !== 'rdp'))
     const user = pick(operators)
     const principal = pick(asset.principals)
@@ -200,10 +207,17 @@ function makeSessions(): Session[] {
       accessRequestId: null,
       chainHead: hex(64),
       riskFlags: flags,
+      lastReportedAt: ago(state === 'active' ? quietMins : startMinsAgo - (durMins ?? 0)),
+      silent: state === 'active' && quietMins > 3,
     })
   }
 
   for (let i = 0; i < 6; i++) push('active', between(2, 95), null)
+  // Two sessions whose gateway went away without reporting the end. The
+  // console has to be able to show this state, because the real control plane
+  // had fifteen of them and showed every one as live.
+  push('active', 27_400, null, 1_450)
+  push('active', 4_100, null, 260)
   for (let i = 0; i < 60; i++) {
     const start = between(100, 4300)
     push(rnd() > 0.96 ? 'terminated' : 'closed', start, between(2, 90))
@@ -228,6 +242,10 @@ const rdpSession: Session = {
   recordingBytes: 38_500_000,
   commandCount: null,
   riskFlags: [],
+  // Explicit, not inherited from the spread: this one is closed, and a closed
+  // session is never silent however long ago it last reported.
+  lastReportedAt: ago(262),
+  silent: false,
 }
 
 export const sessions: Session[] = [...generatedSessions, rdpSession].sort(

@@ -409,6 +409,17 @@ func run() error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
+	// Say that the sessions this gateway is holding are still here. A gateway
+	// killed rather than drained never reports the end, and without this the
+	// control plane cannot tell one of those from a session that is genuinely
+	// still running -- fifteen in dev have been "active" since early September.
+	//
+	// Started here rather than beside SyncPolicy above because it has to cover
+	// desktop sessions as well, and rdpSrv does not exist until now.
+	if rep != nil {
+		go gateway.ReportLiveSessions(ctx, srv, rdpSrv, log)
+	}
+
 	// Recordings that could not be uploaded when their session ended.
 	//
 	// Once at start-up so a gateway restarted after an outage picks up whatever

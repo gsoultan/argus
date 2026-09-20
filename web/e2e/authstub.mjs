@@ -34,8 +34,46 @@ const TYPES = {
   '.png': 'image/png', '.ico': 'image/x-icon', '.wasm': 'application/wasm',
 }
 
+/**
+ * A session log with the three states that matter to the counters.
+ *
+ * `silent` is an active session nothing has reported in minutes, and it is the
+ * one the console used to get wrong: it counted as live, so the header pill and
+ * the Overview tile both overstated what was running, one of them for nineteen
+ * days in the real control plane.
+ *
+ * The three counts are deliberately all different -- 2 live, 3 silent, 5 active
+ * -- so a test asserting "the alert's number matches the rows its link lands
+ * on" cannot pass by landing on the wrong set.
+ */
+const ago = (/** @type {number} */ mins) => new Date(Date.now() - mins * 60_000).toISOString()
+const session = (/** @type {Record<string, unknown>} */ o) => ({
+  userId: 'u1', userEmail: 'lin@northwind.id', assetId: 'a-open-absent-1',
+  assetHostname: 'open-absent-1', principal: 'ops', protocol: 'ssh',
+  origin: 'brokered', clientIp: '103.20.1.5', fidelity: 'pty',
+  recordingBytes: 4096, commandCount: null, accessRequestId: null,
+  chainHead: null, riskFlags: [], endedAt: null, ...o,
+})
+
+const SESSIONS = [
+  session({ id: 's-live-1', state: 'active', startedAt: ago(9), lastReportedAt: ago(0), silent: false }),
+  session({ id: 's-live-2', state: 'active', startedAt: ago(4), lastReportedAt: ago(0), silent: false }),
+  session({ id: 's-quiet-1', state: 'active', startedAt: ago(27_400), lastReportedAt: ago(1_450), silent: true }),
+  session({ id: 's-quiet-2', state: 'active', startedAt: ago(9_100), lastReportedAt: ago(700), silent: true }),
+  session({ id: 's-quiet-3', state: 'active', startedAt: ago(300), lastReportedAt: ago(12), silent: true }),
+  session({ id: 's-closed-1', state: 'closed', startedAt: ago(400), endedAt: ago(360), lastReportedAt: ago(360), silent: false }),
+  session({ id: 's-closed-2', state: 'closed', startedAt: ago(800), endedAt: ago(790), lastReportedAt: ago(790), silent: false }),
+]
+
+const countSessions = (/** @type {(s: any) => boolean} */ f) => SESSIONS.filter(f).length
+
 const STATS = {
-  assetsTotal: 0, assetsUnreachable: 0, hostKeysUnpinned: 0, sessionsActive: 0,
+  assetsTotal: 0, assetsUnreachable: 0, hostKeysUnpinned: 0,
+  // Derived, never written out: two hand-kept literals would drift, and then
+  // the test would be asserting that they still agree rather than that the
+  // console counts and links correctly.
+  sessionsActive: countSessions((s) => s.state === 'active' && !s.silent),
+  sessionsSilent: countSessions((s) => s.state === 'active' && s.silent),
   sessionsToday: 0, requestsPending: 0, credentialsOverdue: 0,
   standingCredentialAssets: 0, sessionsDirectToday: 0,
 }
@@ -155,6 +193,7 @@ const server = createServer(async (req, res) => {
     if (path === '/api/v1/stats') return json(res, 200, STATS)
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
+    if (path === '/api/v1/sessions') return json(res, 200, SESSIONS)
     return json(res, 200, [])
   }
 

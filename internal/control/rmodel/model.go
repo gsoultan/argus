@@ -273,6 +273,15 @@ type Session struct {
 
 	TerminatedBy      *string
 	TerminationReason *string
+	// LastReportedAt is when anything last said this session existed.
+	//
+	// A gateway killed rather than drained never reports the end, so `active`
+	// alone cannot tell a session still running from one whose gateway is
+	// gone -- fifteen in dev have been active since early September. Every
+	// report stamps this and gateways re-report what they hold once a
+	// minute, so silence becomes measurable instead of indistinguishable
+	// from life.
+	LastReportedAt time.Time
 }
 
 func (m *Session) Schema(t *storm.Table) {
@@ -287,6 +296,7 @@ func (m *Session) Schema(t *storm.Table) {
 	t.Col(&m.RiskFlags).Default("'{}'::text[]")
 	t.Col(&m.ReportedBy).Default("''::text")
 	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.LastReportedAt).Default("now()")
 	t.Index(&m.Asset).Named("sessions_asset_id_idx")
 	t.Index(storm.Desc(&m.StartedAt)).Where("origin = 'direct'::text").Named("sessions_direct_idx")
 	t.Index(storm.Desc(&m.StartedAt)).Named("sessions_started_idx")

@@ -202,6 +202,7 @@ func _assertSessionShape(m m0.Session) {
 		m.RecordingKey,
 		m.TerminatedBy,
 		m.TerminationReason,
+		m.LastReportedAt,
 	}
 }
 

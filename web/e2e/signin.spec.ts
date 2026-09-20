@@ -189,6 +189,73 @@ test.describe('coverage links land on exactly what they counted', () => {
     ).toHaveCount(counted)
   })
 
+  /**
+   * The same rule, on the counter that was wrong for nineteen days.
+   *
+   * An active session whose gateway was killed rather than drained never
+   * reports the end, so it stayed `active` forever and every surface counted it
+   * as running. The Overview now says how many are unaccounted for and links to
+   * exactly those -- which is the pairing that has already shipped broken twice
+   * elsewhere, and is invisible when it does: the page renders, the link works,
+   * it just lands on a different set.
+   */
+  test('the unaccounted-sessions alert', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+
+    const counted = await claim(page, /sessions? unaccounted for/)
+    expect(counted, 'the stub log should have silent sessions').toBeGreaterThan(0)
+
+    await page.getByRole('link', { name: /review sessions/i }).click()
+    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
+    await expect(
+      page.locator('tbody tr[role="link"]'),
+      `The alert counted ${counted} sessions; its link selects a different set.`,
+    ).toHaveCount(counted)
+
+    // And the set it landed on is the one it named: every row unknown, none
+    // live. Counting the rows alone would pass on any filter of the same size.
+    // Scoped to the table body, because "unknown" also appears in the filter's
+    // own label and in the header pill.
+    const body = page.locator('tbody')
+    await expect(body.getByText('unknown')).toHaveCount(counted)
+    await expect(body.getByText('live', { exact: true })).toHaveCount(0)
+  })
+
+  /**
+   * The headline number, which is the one an operator glances at to decide
+   * whether anything is happening at all.
+   */
+  test('the header live pill counts only what is still being reported', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+
+    const pill = page.getByText(/\d+ live/)
+    await expect(pill).toBeVisible()
+    const live = Number(((await pill.textContent()) ?? '').match(/\d+/)?.[0])
+
+    // Mantine's SegmentedControl hides the real radio behind a label, so the
+    // input is never clickable; the label is what a user actually hits.
+    await page.goto('/sessions')
+    const segment = (name: RegExp) => page.locator('label').filter({ hasText: name })
+
+    await segment(/^Live/).click()
+    await expect(
+      page.locator('tbody tr[role="link"]'),
+      `The header claimed ${live} live sessions; the Live filter selects a different set.`,
+    ).toHaveCount(live)
+
+    // The silent ones are somewhere, not simply dropped.
+    const unknown = Number(
+      ((await segment(/^Unknown/).textContent()) ?? '').match(/\d+/)?.[0],
+    )
+    expect(unknown).toBeGreaterThan(0)
+    expect(live).not.toBe(unknown)
+
+    await segment(/^Unknown/).click()
+    await expect(page.locator('tbody tr[role="link"]')).toHaveCount(unknown)
+  })
+
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')
     await signIn(page)
