@@ -208,3 +208,34 @@ and that is the session whose recording may never become evidence.
 darwin/arm64 `RLock` on a nil `*Store` does not panic -- it spins with no
 recoverable stack, so a gateway assembled without a store presents as a hung
 session. `New()` already refuses one; this covers hand-built stores in tests.
+
+## The drill could not see a missing recording, only a corrupt one
+
+Step 6 iterated the files that were **in** the restore and checked each against
+the database. Everything it could find was a property of something present, so a
+restore that silently dropped ten thousand objects would have verified the rest
+and reported a pass -- the one failure a restore drill exists to catch. It is
+the same objection the script already makes to sampling: a verdict drawn from
+what happens to be there describes a subset, not the backup.
+
+It now also computes what the backup *should* contain -- every session with a
+`recording_key`, which is the control plane's record that an artefact reached
+object storage -- and joins the other way. Missing ids are named, and the
+failure says the operator cannot tell from here whether the bucket lost them or
+the backup did, and to check the bucket first: a bucket that is short means the
+live system is missing evidence right now, which outranks a bad copy of it.
+
+It also reports, every run, how many sealed recordings never reached object
+storage at all (44 in dev). Not a fault of the backup -- the gateway still holds
+those files and queues the upload for retry -- but that number only grows if
+uploads are failing and nobody is looking, and the drill is what looks.
+
+**On its first run it failed**, naming `3ae54ffe7cd2faf2c920559e98b9f713`. That
+session's row carries `recording_key = 2026/09/01/3ae54ffe….cast` and the bucket
+has no such object: deleting the tamper fixture's duplicates on 2026-09-20
+removed an object a session row still pointed at, and nothing checked for
+references first. **Before deleting from the bucket, check `recording_key`.**
+
+Both branches were exercised against the real 12k-recording backup by nulling
+that one key, running, and restoring it -- a passing branch nobody has run is
+the kind of check this script exists to argue against.
