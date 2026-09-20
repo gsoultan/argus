@@ -157,6 +157,8 @@ else
   PAIRS=$(mktemp)
   JOINED=$(mktemp)
   ORPHANS=$(mktemp)
+  EXPECTED=$(mktemp)
+  MISSING=$(mktemp)
   "$runtime" exec -i argus-postgres psql -U argus -d argus -tAc \
     "SELECT replace(id::text,'-',''), chain_head FROM sessions WHERE chain_head IS NOT NULL AND chain_head <> ''" \
     </dev/null 2>/dev/null \
@@ -187,6 +189,38 @@ else
   LC_ALL=C join -t"$(printf '\t')" -1 1 -2 1 -v 1 "$PAIRS" "$HEADS" > "$ORPHANS"
   unknown=$(wc -l < "$ORPHANS" | tr -d ' ')
 
+  # What the backup should contain, which nothing here used to ask.
+  #
+  # Everything above iterates the files that ARE in the restore and checks them
+  # against the database. That can only ever find corruption. A restore that
+  # silently dropped ten thousand objects would verify the rest and report a
+  # pass -- which is the one failure a restore drill exists to catch, and the
+  # same objection this script already makes to sampling: a verdict drawn from
+  # what happens to be present describes a subset, not the backup.
+  #
+  # `recording_key` is the control plane's record that an artefact reached
+  # object storage. Every session carrying one must have its file here.
+  "$runtime" exec -i argus-postgres psql -U argus -d argus -tAc \
+    "SELECT replace(id::text,'-','') FROM sessions WHERE recording_key IS NOT NULL" \
+    </dev/null 2>/dev/null \
+    | tr -d ' \r' | awk 'NF==1 && $1 != ""' | LC_ALL=C sort > "$EXPECTED"
+
+  LC_ALL=C join -t"$(printf '\t')" -1 1 -2 1 -v 2 "$PAIRS" "$EXPECTED" > "$MISSING"
+  missing=$(wc -l < "$MISSING" | tr -d ' ')
+  expected=$(wc -l < "$EXPECTED" | tr -d ' ')
+  # Named while the file still exists; the verdict is printed after cleanup.
+  # A count tells an operator how bad it is, an id tells them where to look.
+  missing_sample=$(head -5 "$MISSING" | tr '\n' ' ')
+
+  # Sealed, and never in object storage to begin with. Not a fault of the
+  # backup -- the gateway that produced the recording still holds the file and
+  # queues the upload for retry -- but it is evidence that no backup contains,
+  # and a drill that stays quiet about it lets that number grow unwatched.
+  neverstored=$("$runtime" exec -i argus-postgres psql -U argus -d argus -tAc \
+    "SELECT count(*) FROM sessions
+      WHERE chain_head IS NOT NULL AND chain_head <> '' AND recording_key IS NULL" \
+    </dev/null 2>/dev/null | tr -d ' \r')
+
   # Still fd 3: argus-verify is not container exec, but the next thing put in
   # this loop might be, and that bug cost this check its meaning once already.
   while IFS="$(printf '\t')" read -r id head cast <&3; do
@@ -197,7 +231,7 @@ else
       fail "  $id does not verify against its stored chain head"
     fi
   done 3< "$JOINED"
-  rm -f "$RECORDING_LIST" "$HEADS" "$PAIRS" "$JOINED" "$ORPHANS"
+  rm -f "$RECORDING_LIST" "$HEADS" "$PAIRS" "$JOINED" "$ORPHANS" "$EXPECTED" "$MISSING"
 
   # The loop must have accounted for every file. If it did not, something ate
   # the iteration and the counts below describe a subset -- which is the one
@@ -232,9 +266,32 @@ else
     fail "$failed of $n recording(s) are corrupt — this backup is not usable as evidence."
     bad=1
   fi
+  # Absence, which every check above is structurally unable to see. A file that
+  # is not here is not iterated, not joined and not counted -- so a restore that
+  # lost objects passed every test in this script.
+  if (( missing > 0 )); then
+    fail "$missing of $expected recording(s) the control plane says exist are NOT here."
+    fail "  missing: ${missing_sample}"
+    # The backup mirrors the bucket, so this cannot say which end lost the
+    # object -- and the operator's next move differs. Say both, in the order
+    # they are worth checking: a bucket that is short is the live system
+    # missing evidence right now, which outranks a bad copy of it.
+    fail "Either the object store no longer holds them, or this backup did not"
+    fail "copy them. Check the bucket first: if they are gone there, the live"
+    fail "system is missing evidence it believes it has, and no backup will"
+    fail "bring it back."
+    bad=1
+  fi
   (( bad )) && exit 1
   ok "$checked recording(s) verified against their stored chain heads"
+  ok "all $expected recording(s) the control plane says exist are present"
   (( unknown > 0 )) && warn "$unknown recording(s) had no stored chain head and were not verified"
+  # Reported every run, passing or not. This number only grows if uploads are
+  # failing and nobody is looking, and the drill is what looks.
+  if [[ -n "$neverstored" ]] && (( neverstored > 0 )); then
+    warn "$neverstored sealed recording(s) never reached object storage and are in no backup"
+    warn "  their artefacts are still on the gateways that produced them, queued for retry"
+  fi
 fi
 
 printf '\n'
