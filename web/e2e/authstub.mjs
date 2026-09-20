@@ -61,6 +61,10 @@ const SESSIONS = [
   session({ id: 's-quiet-1', state: 'active', startedAt: ago(27_400), lastReportedAt: ago(1_450), silent: true }),
   session({ id: 's-quiet-2', state: 'active', startedAt: ago(9_100), lastReportedAt: ago(700), silent: true }),
   session({ id: 's-quiet-3', state: 'active', startedAt: ago(300), lastReportedAt: ago(12), silent: true }),
+  session({ id: 's-direct-today', state: 'closed', origin: 'direct', startedAt: ago(200), endedAt: ago(190), lastReportedAt: ago(190), silent: false, riskFlags: ['bypassed-gateway'] }),
+  // Older than the window. If the "Bypassed gateway" link ever loses its 24h
+  // scope, this row is what makes the test notice.
+  session({ id: 's-direct-old', state: 'closed', origin: 'direct', startedAt: ago(9_000), endedAt: ago(8_990), lastReportedAt: ago(8_990), silent: false, riskFlags: ['bypassed-gateway'] }),
   session({ id: 's-closed-1', state: 'closed', startedAt: ago(400), endedAt: ago(360), lastReportedAt: ago(360), silent: false }),
   session({ id: 's-closed-2', state: 'closed', startedAt: ago(800), endedAt: ago(790), lastReportedAt: ago(790), silent: false }),
   // Ended at a time nobody recorded: `endedAt` was once written only inside the
@@ -70,17 +74,6 @@ const SESSIONS = [
 ]
 
 const countSessions = (/** @type {(s: any) => boolean} */ f) => SESSIONS.filter(f).length
-
-const STATS = {
-  assetsTotal: 0, assetsUnreachable: 0, hostKeysUnpinned: 0,
-  // Derived, never written out: two hand-kept literals would drift, and then
-  // the test would be asserting that they still agree rather than that the
-  // console counts and links correctly.
-  sessionsActive: countSessions((s) => s.state === 'active' && !s.silent),
-  sessionsSilent: countSessions((s) => s.state === 'active' && s.silent),
-  sessionsToday: 0, requestsPending: 0, credentialsOverdue: 0,
-  standingCredentialAssets: 0, sessionsDirectToday: 0,
-}
 
 /**
  * A small fleet, deliberately mixed.
@@ -109,8 +102,12 @@ const asset = (/** @type {Record<string, unknown>} */ o) => ({
 const ASSETS = [
   asset({ hostname: 'open-absent-1', agentState: 'absent', bypassPosture: 'open' }),
   asset({ hostname: 'open-absent-2', agentState: 'absent', bypassPosture: 'open' }),
-  asset({ hostname: 'open-stale-1', agentState: 'stale', bypassPosture: 'open' }),
-  asset({ hostname: 'monitored-absent', agentState: 'absent', bypassPosture: 'monitored' }),
+  asset({ hostname: 'open-stale-1', agentState: 'stale', bypassPosture: 'open',
+    hostKeyState: 'unpinned' }),
+  // Two different not-pinned states. A single-state filter can select neither
+  // set the "Unverified hosts" tile counts, which is why `unverified` exists.
+  asset({ hostname: 'monitored-absent', agentState: 'absent', bypassPosture: 'monitored',
+    hostKeyState: 'changed' }),
   asset({ hostname: 'monitored-stale', agentState: 'stale', bypassPosture: 'monitored' }),
   asset({ hostname: 'closed-healthy', agentState: 'healthy', bypassPosture: 'enforced' }),
   asset({ hostname: 'win-01', protocol: 'rdp', port: 3389, agentState: 'absent',
@@ -134,6 +131,60 @@ const COVERAGE = {
   rdpAwaitingAgent: count((a) => a.protocol === 'rdp' && a.agentState !== 'healthy'),
   unreviewedHosts: 0,
   ignoredHosts: 0,
+}
+
+/**
+ * Two pending, one already decided.
+ *
+ * The Overview's "Pending approvals" tile lands on /requests, which defaults to
+ * its pending tab -- so the two agree only as long as that default holds.
+ * Nothing in the code says so, which is what the test below is for.
+ */
+const REQUESTS = [
+  {
+    id: 'r-1', requesterId: 'u1', requesterEmail: 'lin@northwind.id',
+    assetIds: ['a-open-absent-1'], assetHostnames: ['open-absent-1'],
+    principal: 'ops', justification: 'Investigating INC-4471 on the payments box.',
+    durationMinutes: 60, state: 'pending', createdAt: ago(30),
+    decidedAt: null, decidedByEmail: null, decisionNote: null,
+    expiresAt: null, breakGlass: false,
+  },
+  {
+    id: 'r-2', requesterId: 'u1', requesterEmail: 'lin@northwind.id',
+    assetIds: ['a-closed-healthy'], assetHostnames: ['closed-healthy'],
+    principal: 'root', justification: 'Rotating the host key after the rebuild.',
+    durationMinutes: 30, state: 'pending', createdAt: ago(12),
+    decidedAt: null, decidedByEmail: null, decisionNote: null,
+    expiresAt: null, breakGlass: true,
+  },
+  {
+    id: 'r-3', requesterId: 'u1', requesterEmail: 'lin@northwind.id',
+    assetIds: ['a-monitored-stale'], assetHostnames: ['monitored-stale'],
+    principal: 'ops', justification: 'Routine patching window.',
+    durationMinutes: 120, state: 'approved', createdAt: ago(300),
+    decidedAt: ago(290), decidedByEmail: 'dev@northwind.id',
+    decisionNote: 'Approved for the window.', expiresAt: ago(-60), breakGlass: false,
+  },
+]
+
+// Declared after ASSETS and SESSIONS because it counts both of them.
+const DAY_AGO = Date.now() - 24 * 60 * 60_000
+const within24h = (/** @type {any} */ s) => Date.parse(s.startedAt) > DAY_AGO
+
+const STATS = {
+  assetsTotal: ASSETS.length,
+  assetsUnreachable: 0,
+  hostKeysUnpinned: count((a) => a.hostKeyState !== 'pinned'),
+  // Derived, never written out: two hand-kept literals would drift, and then
+  // the test would be asserting that they still agree rather than that the
+  // console counts and links correctly.
+  sessionsActive: countSessions((s) => s.state === 'active' && !s.silent),
+  sessionsSilent: countSessions((s) => s.state === 'active' && s.silent),
+  sessionsToday: countSessions(within24h),
+  requestsPending: REQUESTS.filter((r) => r.state === 'pending').length,
+  credentialsOverdue: 0,
+  standingCredentialAssets: 0,
+  sessionsDirectToday: countSessions((s) => s.origin === 'direct' && within24h(s)),
 }
 
 /**
@@ -197,6 +248,10 @@ const server = createServer(async (req, res) => {
     if (path === '/api/v1/stats') return json(res, 200, STATS)
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
+    if (path === '/api/v1/requests') {
+      const want = url.searchParams.get('state')
+      return json(res, 200, want ? REQUESTS.filter((r) => r.state === want) : REQUESTS)
+    }
     if (path === '/api/v1/sessions') {
       // The control plane narrows by state server-side; returning everything
       // here would let a console bug that forgets to filter still look right.

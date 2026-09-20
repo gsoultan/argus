@@ -172,6 +172,13 @@ function Overview() {
           </Alert>
         )}
 
+        {/* Every tile below lands on exactly the set it counted.
+            They all linked unfiltered before, so clicking "2 live sessions"
+            opened a log of twelve thousand rows and clicking "3 bypassed
+            today" opened every bypass ever recorded. The rule was already
+            written down for the alerts on this page after the same mistake
+            shipped twice -- a counter links to a filter only when the two mean
+            the same set -- and the tiles had simply never been held to it. */}
         <Grid gap="sm">
           <Grid.Col span={{ base: 6, md: 3 }}>
             <Stat
@@ -180,7 +187,7 @@ function Overview() {
               sub={stats ? `${stats.sessionsToday} in the last 24h` : undefined}
               icon={IconTerminal2}
               color="sky"
-              onClick={() => navigate({ to: '/sessions' })}
+              onClick={() => navigate({ to: '/sessions', search: { show: 'active' } })}
             />
           </Grid.Col>
           <Grid.Col span={{ base: 6, md: 3 }}>
@@ -201,7 +208,9 @@ function Overview() {
               sub="host key not pinned"
               icon={IconShieldOff}
               color="rose"
-              onClick={() => navigate({ to: '/assets' })}
+              // `unverified`, not `unpinned`: the count is everything that is
+              // not pinned, which includes a key that changed.
+              onClick={() => navigate({ to: '/assets', search: { hostKey: 'unverified' } })}
               tone={(stats?.hostKeysUnpinned ?? 0) > 0 ? 'warn' : 'ok'}
             />
           </Grid.Col>
@@ -212,7 +221,13 @@ function Overview() {
               sub="direct to sshd, 24h"
               icon={IconDoorExit}
               color="rose"
-              onClick={() => navigate({ to: '/sessions' })}
+              // Both halves of "direct to sshd, 24h". Without the window this
+              // landed on every bypass ever recorded, which is a superset --
+              // the same defect as an alert counting 5 and selecting 2, only
+              // in the other direction.
+              onClick={() =>
+                navigate({ to: '/sessions', search: { show: 'direct', since: '24h' } })
+              }
               tone={(stats?.sessionsDirectToday ?? 0) > 0 ? 'warn' : 'ok'}
             />
           </Grid.Col>

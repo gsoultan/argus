@@ -27,12 +27,20 @@ import { isConfigured } from '~/lib/live'
 interface AssetSearch {
   q?: string
   group?: string
-  hostKey?: Asset['hostKeyState']
+  /**
+   * `unverified` is not a state an asset has; it means "any state but pinned".
+   *
+   * The Overview's "Unverified hosts" tile counts `hostKeyState !== 'pinned'`,
+   * which is unpinned *and* changed, and no single-state filter could ever
+   * select that set -- so the tile linked here unfiltered and landed on the
+   * whole inventory.
+   */
+  hostKey?: Asset['hostKeyState'] | 'unverified'
   agent?: Asset['agentState']
   bypass?: Asset['bypassPosture']
 }
 
-const HOST_KEY_STATES = ['pinned', 'unpinned', 'changed'] as const
+const HOST_KEY_STATES = ['pinned', 'unpinned', 'changed', 'unverified'] as const
 const AGENT_STATES = ['healthy', 'stale', 'absent'] as const
 const BYPASS_POSTURES = ['enforced', 'monitored', 'open'] as const
 
@@ -156,8 +164,9 @@ function Assets() {
             placeholder="Any host key state"
             clearable
             value={search.hostKey ?? null}
-            onChange={(v) => setSearch({ hostKey: (v as Asset['hostKeyState']) ?? undefined })}
+            onChange={(v) => setSearch({ hostKey: (v as AssetSearch['hostKey']) ?? undefined })}
             data={[
+              { value: 'unverified', label: 'Not pinned (any)' },
               { value: 'pinned', label: 'Pinned' },
               { value: 'unpinned', label: 'Unpinned' },
               { value: 'changed', label: 'Changed' },

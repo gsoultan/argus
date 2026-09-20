@@ -301,6 +301,45 @@ test.describe('coverage links land on exactly what they counted', () => {
     ).toContainText('—')
   })
 
+  /**
+   * Every tile on the Overview, against the page it opens.
+   *
+   * All four linked unfiltered, so clicking "2 live sessions" opened a log of
+   * twelve thousand rows and clicking "1 bypassed today" opened every bypass
+   * ever recorded. The stub is built so a naive link lands on a visibly
+   * different number in each case: two host keys not pinned across *two*
+   * different states, and two direct sessions of which only one is inside the
+   * 24-hour window.
+   */
+  const TILES = [
+    { label: 'LIVE SESSIONS', heading: 'Sessions', rows: 'tbody tr' },
+    { label: 'UNVERIFIED HOSTS', heading: 'Assets', rows: 'tbody tr' },
+    { label: 'BYPASSED GATEWAY', heading: 'Sessions', rows: 'tbody tr' },
+    // Requests are cards, not a table.
+    { label: 'PENDING APPROVALS', heading: 'Access requests', rows: '.argus-request' },
+  ]
+
+  for (const t of TILES) {
+    test(`the ${t.label.toLowerCase()} tile`, async ({ page }) => {
+      await page.goto('/')
+      await signIn(page)
+
+      const tile = page.locator('.argus-stat', { hasText: t.label })
+      // Waited for: Stat renders a skeleton rather than a zero until the count
+      // arrives, so reading too early gets a card with no digit in it.
+      await expect(tile).toContainText(/\d/)
+      const claimed = Number((await tile.innerText()).match(/\n\s*(\d+)/)?.[1])
+      expect(claimed, `the stub should give ${t.label} something to count`).toBeGreaterThan(0)
+
+      await tile.click()
+      await expect(page.getByRole('heading', { name: t.heading, exact: true })).toBeVisible()
+      await expect(
+        page.locator(t.rows),
+        `${t.label} counted ${claimed}; the page it opens lists a different number.`,
+      ).toHaveCount(claimed)
+    })
+  }
+
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')
     await signIn(page)

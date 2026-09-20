@@ -56,7 +56,11 @@ export interface AssetQuery {
   groupId?: string | null
   health?: Asset['health'] | null
   credentialMode?: Asset['credentialMode'] | null
-  hostKeyState?: Asset['hostKeyState'] | null
+  /**
+   * `unverified` means "any state but pinned" -- the set the Overview's
+   * "Unverified hosts" tile counts. It is not a state an asset can be in.
+   */
+  hostKeyState?: Asset['hostKeyState'] | 'unverified' | null
   /**
    * Agent liveness and whether the host can still be reached around Argus.
    *
@@ -164,7 +168,9 @@ export const api = {
       if (q.groupId && a.groupId !== q.groupId) return false
       if (q.health && a.health !== q.health) return false
       if (q.credentialMode && a.credentialMode !== q.credentialMode) return false
-      if (q.hostKeyState && a.hostKeyState !== q.hostKeyState) return false
+      if (q.hostKeyState === 'unverified') {
+        if (a.hostKeyState === 'pinned') return false
+      } else if (q.hostKeyState && a.hostKeyState !== q.hostKeyState) return false
       if (q.agentState && a.agentState !== q.agentState) return false
       if (q.bypassPosture && a.bypassPosture !== q.bypassPosture) return false
       return true
