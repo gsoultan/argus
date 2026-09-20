@@ -255,6 +255,20 @@ const server = createServer(async (req, res) => {
       const want = url.searchParams.get('state')
       return json(res, 200, want ? REQUESTS.filter((r) => r.state === want) : REQUESTS)
     }
+    // Sealed, with real recorded bytes, and the artefact still on the gateway
+    // that produced it -- 18 sessions in the dev control plane are in exactly
+    // this state. The control plane's own wording, verbatim, because the
+    // console repeats it rather than inventing its own.
+    if (/^\/api\/v1\/sessions\/[^/]+\/recording$/.test(path)) {
+      return json(res, 404, {
+        error: 'recording is not in object storage; it exists only on the host that produced it',
+      })
+    }
+    const one = /^\/api\/v1\/sessions\/([^/]+)$/.exec(path)
+    if (one) {
+      const found = SESSIONS.find((/** @type {any} */ v) => v.id === one[1])
+      return found ? json(res, 200, found) : json(res, 404, { error: 'no such session' })
+    }
     if (path === '/api/v1/sessions') {
       // The control plane narrows by state server-side; returning everything
       // here would let a console bug that forgets to filter still look right.

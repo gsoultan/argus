@@ -61,3 +61,42 @@ frames stay in the worker and the terminal's own buffer is capped
 (`scrollback: 5_000`, ~34 visible rows). This is the property the rewrite
 exists to guarantee; measure it again with `public/big.cast` if the worker
 boundary is ever touched.
+
+## The player must never substitute the demo recording for a real one
+
+`buildCast` writes a scripted session -- `systemctl status payments-worker`,
+invented output, invented colours. It is the right thing to show in the demo
+build and a fabrication anywhere else.
+
+`live.recording()` used to answer `null` for every failure, so the page could
+not tell **"there is no control plane to ask"** from **"one answered and said
+the artefact is not there"**, and fell back to the fiction in both cases. In the
+dev control plane 18 sessions are sealed, carry real recorded bytes, and have an
+artefact still sitting on the gateway that produced them -- every one of them
+replayed as a story, on a page badged as live data.
+
+It now returns `RecordingResult`: `null` means unconfigured and nothing else,
+`{ kind: 'unavailable', reason }` carries the control plane's own wording. The
+reason matters and is not flattened into a generic failure -- an artefact still
+on the gateway is waiting on a retry, a storage outage is waiting on somebody.
+
+**The RDP path never had this bug**, and comparing the two is how it was found:
+`setRdpError('This recording is not available for replay.')` refuses to
+fabricate. When the two replay paths on one page disagree about something like
+this, the terminal one is the one to check.
+
+This is the page-level instance of the rule in `core.md`: the console must never
+present fixture data as real.
+
+## Sessions whose artefact never reached object storage
+
+`chain_head` set and `recording_key` null. The gateway is well-behaved here --
+`uploadRecording` queues a failed upload in `pending_uploads.go` and reports
+without a `recordingPath`, and the control plane answers the recording endpoint
+with a precise 404. The defect was only ever in the console.
+
+Two groups in dev, 44 rows: 26 terminated with zero bytes (nothing was ever
+recorded), and 18 closed with real bytes (the artefact exists, on a gateway).
+`recordingKey` is still absent from the console's `Session` type, so the
+sessions list offers Replay on all of them; the detail page now explains itself
+on arrival, which is the part that mattered.
