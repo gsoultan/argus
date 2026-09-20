@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { screen } from '@testing-library/react'
-import { SessionDuration, SessionStateBadge } from '~/components/primitives'
+import { ArtefactPending, SessionDuration, SessionStateBadge } from '~/components/primitives'
 import { renderWithProviders as ui } from '~/test/render'
 import { api } from '~/lib/api'
 import { EPOCH } from '~/lib/seed'
@@ -127,5 +127,31 @@ describe('how long a session ran', () => {
       />,
     )
     expect(screen.getByText('12m 0s')).toBeInTheDocument()
+  })
+})
+
+/**
+ * A sealed recording with no object-storage key is not lost -- the gateway
+ * still holds the file and queues the upload for retry -- but it cannot be
+ * opened from the console until that lands. 44 sessions in the dev control
+ * plane are in that state, and every list showed the fidelity badge, the byte
+ * count and a Replay button for all of them.
+ */
+describe('a recording that has not reached object storage', () => {
+  it('is marked on a finished session', () => {
+    ui(<ArtefactPending session={{ state: 'closed', recordingKey: null }} />)
+    expect(screen.getByLabelText('Recording not in object storage')).toBeInTheDocument()
+  })
+
+  it('says nothing when the artefact is there', () => {
+    ui(<ArtefactPending session={{ state: 'closed', recordingKey: 'recordings/x.cast' }} />)
+    expect(screen.queryByLabelText('Recording not in object storage')).not.toBeInTheDocument()
+  })
+
+  // An active session's recording is still being written and has no business
+  // being in storage yet, so this would be noise on every live row.
+  it('says nothing about a session still running', () => {
+    ui(<ArtefactPending session={{ state: 'active', recordingKey: null }} />)
+    expect(screen.queryByLabelText('Recording not in object storage')).not.toBeInTheDocument()
   })
 })

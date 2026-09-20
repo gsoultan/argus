@@ -37,8 +37,8 @@ const ShadowTerminal = lazy(() =>
   import('~/components/ShadowTerminal').then((m) => ({ default: m.ShadowTerminal })),
 )
 import {
-  Digest, Field, FidelityBadge, Mono, RiskFlags, SessionDuration, SessionStateBadge,
-  absTime, bytes, relTime,
+  ArtefactPending, Digest, Field, FidelityBadge, Mono, RiskFlags, SessionDuration,
+  SessionStateBadge, absTime, bytes, relTime,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { buildCast } from '~/lib/cast'
@@ -497,7 +497,10 @@ function SessionDetail() {
                     </Field>
                   </Group>
                   <Field label="Recording fidelity">
-                    <FidelityBadge fidelity={session.fidelity} />
+                    <Group gap={SP.snug} wrap="nowrap">
+                      <FidelityBadge fidelity={session.fidelity} />
+                      <ArtefactPending session={session} />
+                    </Group>
                   </Field>
                   <Field label="Risk flags"><RiskFlags flags={session.riskFlags} /></Field>
                   {/* Shown only when there is something to say. A session that

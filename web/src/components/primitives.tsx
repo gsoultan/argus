@@ -2,9 +2,10 @@ import {
   Badge, Box, Card, CopyButton, Group, Skeleton, Text, ThemeIcon, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import {
-  IconAlertTriangle, IconCertificate, IconCheck, IconChevronRight, IconCopy,
-  IconDoorExit, IconKey, IconLock, IconPlayerRecordFilled, IconPlugConnected,
-  IconPlugConnectedX, IconRouteAltLeft, IconShieldCheck, IconShieldOff,
+  IconAlertTriangle, IconCertificate, IconCheck, IconChevronRight, IconCloudOff,
+  IconCopy, IconDoorExit, IconKey, IconLock, IconPlayerRecordFilled,
+  IconPlugConnected, IconPlugConnectedX, IconRouteAltLeft, IconShieldCheck,
+  IconShieldOff,
 } from '@tabler/icons-react'
 import type {
   AgentState, AssetHealth, BypassPosture, CredentialMode, HostKeyState,
@@ -119,6 +120,41 @@ export function SessionDuration({
   }
 
   return text(duration(session.startedAt, null))
+}
+
+/**
+ * Whether this session's recording can actually be opened right now.
+ *
+ * A sealed recording with no object-storage key is not lost: the gateway that
+ * produced it still holds the file and queues the upload for retry. But it
+ * cannot be fetched from here until that lands, and the list was showing the
+ * fidelity badge, the byte count and a Replay button for all 44 sessions in
+ * that state -- every one of which opened a player that could serve nothing.
+ *
+ * Nothing is said about an active session. Its recording is still being written
+ * and has no business being in storage yet.
+ */
+export function ArtefactPending({ session }: { session: Pick<Session, 'state' | 'recordingKey'> }) {
+  if (session.state === 'active' || session.recordingKey) return null
+  return (
+    <Tooltip
+      label="Recorded, but the artefact has not reached object storage — it is still on the gateway that produced it, queued for retry. There is nothing to replay here until it lands."
+      multiline
+      maw={320}
+    >
+      {/* Named, because the tooltip is the only other thing that says what
+          this is and a screen reader never opens one. */}
+      <ThemeIcon
+        variant="light"
+        color="amber"
+        size={18}
+        radius="sm"
+        aria-label="Recording not in object storage"
+      >
+        <IconCloudOff size={12} />
+      </ThemeIcon>
+    </Tooltip>
+  )
 }
 
 /* ── Status badges ───────────────────────────────────────────────────────── */

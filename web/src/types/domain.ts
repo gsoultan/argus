@@ -161,6 +161,18 @@ export interface Session {
   accessRequestId: UUID | null
   /** Head of the recording's hash chain, hex SHA-256. */
   chainHead: string | null
+  /**
+   * Where the artefact lives in object storage. Null means it does not.
+   *
+   * A sealed recording with no key is not lost -- the gateway that produced it
+   * still holds the file and queues the upload for retry -- but it cannot be
+   * opened from here until that lands. 44 sessions in the dev control plane are
+   * in that state, and the list offered Replay on every one of them.
+   *
+   * The control plane has always sent this; the console simply had no field to
+   * put it in.
+   */
+  recordingKey: string | null
   riskFlags: RiskFlag[]
   /** Who stopped this session, when state is 'terminated'. */
   terminatedBy?: string | null

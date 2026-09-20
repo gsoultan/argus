@@ -451,6 +451,33 @@ test.describe('coverage links land on exactly what they counted', () => {
     await expect(page.getByRole('button', { name: /export \.cast/i })).toBeDisabled()
   })
 
+  /**
+   * The list has to say which recordings can actually be opened.
+   *
+   * A sealed recording with no object-storage key is still on the gateway that
+   * produced it, queued for retry, and cannot be fetched from here until that
+   * lands. The list showed the fidelity badge, the byte count and a Replay
+   * button for all 44 such sessions in dev -- every one of which opened a
+   * player with nothing to play.
+   */
+  test('the sessions list says which recordings are not in storage', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/sessions')
+
+    const marker = page.getByLabel('Recording not in object storage')
+    // Exactly the one stranded session in the stub, not every row: the marker
+    // is only useful if it distinguishes.
+    await expect(marker).toHaveCount(1)
+
+    const stranded = page.locator('tbody tr', { has: marker })
+    await expect(stranded).toContainText('closed')
+    // And it is not shown on the live rows, whose recordings are still being
+    // written and have no business being in storage yet.
+    const live = page.locator('tbody tr', { hasText: 'live' })
+    await expect(live.getByLabel('Recording not in object storage')).toHaveCount(0)
+  })
+
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')
     await signIn(page)

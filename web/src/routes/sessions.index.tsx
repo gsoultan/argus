@@ -8,8 +8,8 @@ import { IconPlayerPlay, IconSearch, IconTerminal2 } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import {
-  FidelityBadge, Mono, OriginBadge, RiskFlags, SessionDuration, SessionStateBadge, Target,
-  absTime, bytes, now, relTime, rowNav,
+  ArtefactPending, FidelityBadge, Mono, OriginBadge, RiskFlags, SessionDuration,
+  SessionStateBadge, Target, absTime, bytes, now, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { sessionsQuery } from '~/lib/queries'
@@ -234,6 +234,10 @@ function Sessions() {
                   <Text size={FS.micro} c="dimmed" style={{ whiteSpace: 'nowrap' }}>
                     {bytes(s.recordingBytes)}
                   </Text>
+                  {/* The byte count is true -- that much was recorded -- and on
+                      its own it implies the recording can be fetched. For 44
+                      sessions in dev it cannot. */}
+                  <ArtefactPending session={s} />
                 </Group>
               </Table.Td>
               <Table.Td><RiskFlags flags={s.riskFlags} /></Table.Td>

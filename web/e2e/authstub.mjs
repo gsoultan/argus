@@ -52,7 +52,8 @@ const session = (/** @type {Record<string, unknown>} */ o) => ({
   assetHostname: 'open-absent-1', principal: 'ops', protocol: 'ssh',
   origin: 'brokered', clientIp: '103.20.1.5', fidelity: 'pty',
   recordingBytes: 4096, commandCount: null, accessRequestId: null,
-  chainHead: null, riskFlags: [], endedAt: null, ...o,
+  chainHead: 'c0ffee', recordingKey: 'recordings/2026-09-20/delivered.cast',
+  riskFlags: [], endedAt: null, ...o,
 })
 
 const SESSIONS = [
@@ -66,7 +67,9 @@ const SESSIONS = [
   // scope, this row is what makes the test notice.
   session({ id: 's-direct-old', state: 'closed', origin: 'direct', startedAt: ago(9_000), endedAt: ago(8_990), lastReportedAt: ago(8_990), silent: false, riskFlags: ['bypassed-gateway'] }),
   session({ id: 's-closed-1', state: 'closed', startedAt: ago(400), endedAt: ago(360), lastReportedAt: ago(360), silent: false }),
-  session({ id: 's-closed-2', state: 'closed', startedAt: ago(800), endedAt: ago(790), lastReportedAt: ago(790), silent: false }),
+  // Sealed, with real recorded bytes, and the artefact still on the gateway
+  // that produced it. 44 sessions in the dev control plane are like this.
+  session({ id: 's-closed-2', state: 'closed', startedAt: ago(800), endedAt: ago(790), lastReportedAt: ago(790), silent: false, recordingKey: null }),
   // Ended at a time nobody recorded: `endedAt` was once written only inside the
   // seal branch, so a terminated session with no recorder kept a null. 26 of
   // these in dev, every one rendering as still running.
