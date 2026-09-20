@@ -114,15 +114,23 @@ the swap the hash chain exists to catch. It now lives in the tree as
 `internal/recorder/testdata/relabelled-session.cast` with three tests in
 `internal/recorder/verify_test.go`, under a README that explains it.
 
-The two bucket copies are byte-identical to the committed fixture -- all three
-sha256 to `ffa934e9…` -- so removing them from the bucket loses nothing. They
-were uploaded 20 seconds apart on 2026-09-01, which is what planting the same
-file under two spellings by hand looks like. **Removing them is the one step
-left, and it is deliberately a human's to take.**
+The two bucket copies were byte-identical to the committed fixture -- all three
+sha256 to `ffa934e9…` -- and were uploaded 20 seconds apart on 2026-09-01, which
+is what planting the same file under two spellings by hand looks like. **Removed
+from the dev bucket on 2026-09-20**, on the strength of that: the bytes live in
+git, so restoring them is `git show` and `mc cp`.
 
-**Consequence: `scripts/drill.sh` fails on a full backup until these are
-resolved.** That is the control working correctly. The other 24 recordings
-verify. Confirm both directions when changing the drill.
+**The drill passes end to end now.** 4,220 events restored with a matching head,
+12,263 of 12,269 recordings verified against their stored chain heads.
+
+That was the control working correctly, and the drill passes now they are gone.
+Confirm both directions when changing it.
+
+**Six recordings still have no stored chain head, and the drill says so rather
+than counting them.** 12,263 verified + 6 unverifiable = the 12,269 in the
+bucket, so nothing is being quietly skipped -- but a recording whose session row
+carries no head cannot be evidence of anything, and nothing has yet explained
+why six of them exist. That is the open question this area now has.
 
 ## Nil host key store wedges rather than panics
 
