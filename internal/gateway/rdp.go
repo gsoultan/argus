@@ -389,9 +389,15 @@ func (s *RDPServer) report(sess *rdp.Session, chainHead, state string) {
 		rec["terminatedBy"] = by
 		rec["terminationReason"] = reason
 	}
+	// See the note in session.go: an end time belongs to any session that has
+	// ended, sealed or not. Coupled to the seal, a terminated session with no
+	// recorder read as one still running.
+	if state != "active" {
+		rec["endedAt"] = time.Now().UTC()
+	}
+
 	if chainHead != "" {
 		rec["chainHead"] = chainHead
-		rec["endedAt"] = time.Now().UTC()
 		if key := s.uploadRDPRecording(sess, chainHead); key != "" {
 			rec["recordingPath"] = key
 		}
