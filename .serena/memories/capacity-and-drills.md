@@ -104,10 +104,21 @@ much of the job it actually did.
 
 Session `3ae54ffe-7cd2-faf2-c920-559e98b9f713` exists in the MinIO bucket under
 **two** filenames (dashed and undashed UUID), both 453 bytes, and neither
-verifies against the chain head the gateway sealed. The contents contain
-`echo INNOCENT-COMMAND`, so they are almost certainly a hand-planted tamper
-demo from earlier work -- but nothing records that, so they have been left in
-place as evidence rather than deleted.
+verifies against the chain head the gateway sealed.
+
+**Resolved 2026-09-11 in `9ff98f98`, and confirmed 2026-09-20.** It is a
+deliberate tamper demonstration: session `f37acc68`'s recording with its header
+rewritten by hand to claim `3ae54ffe`. Header and trailer name different
+sessions, which no gateway produces, so it verifies against neither -- exactly
+the swap the hash chain exists to catch. It now lives in the tree as
+`internal/recorder/testdata/relabelled-session.cast` with three tests in
+`internal/recorder/verify_test.go`, under a README that explains it.
+
+The two bucket copies are byte-identical to the committed fixture -- all three
+sha256 to `ffa934e9…` -- so removing them from the bucket loses nothing. They
+were uploaded 20 seconds apart on 2026-09-01, which is what planting the same
+file under two spellings by hand looks like. **Removing them is the one step
+left, and it is deliberately a human's to take.**
 
 **Consequence: `scripts/drill.sh` fails on a full backup until these are
 resolved.** That is the control working correctly. The other 24 recordings
