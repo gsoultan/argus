@@ -176,6 +176,41 @@ type Session struct {
 	RecordingKey *string `json:"recordingKey,omitempty"`
 	// RecordingPath is what a reporter sends; it becomes RecordingKey.
 	RecordingPath string `json:"recordingPath,omitempty"`
+
+	// LastReportedAt is when a reporter last said this session existed, and
+	// Silent is whether that was long enough ago to stop believing it.
+	//
+	// Read-only: a reporter cannot set either. The upsert stamps the timestamp
+	// from the database clock on every report, and Silent is derived here.
+	LastReportedAt time.Time `json:"lastReportedAt"`
+	Silent         bool      `json:"silent"`
+}
+
+// SessionSilenceThreshold is how long an active session may go unreported
+// before this stops presenting it as running.
+//
+// Three times the gateway's LivenessInterval. One missed report is a slow
+// network; three is a gateway that is not coming back. Fifteen sessions in the
+// dev control plane were `active` for up to nineteen days because a gateway
+// killed rather than drained never reports the end, and nothing could reap
+// them: a gateway carries no identity to attribute orphans to, and with no
+// maximum session duration, age alone cannot separate a dead session from a
+// long-running one. So nothing is reaped -- the reader is simply told when the
+// session was last heard from, the way `stale` already works for agents.
+const SessionSilenceThreshold = 3 * time.Minute
+
+// silent reports whether a session has stopped being spoken for.
+//
+// Only an active session can be silent; one that reported an end is finished,
+// however long ago that was.
+//
+// The timestamp comes from the database clock and this comparison uses the
+// control plane's, but the threshold is minutes and the two are ordinary
+// NTP-synced infrastructure, so the skew is not a quantity this can resolve.
+func silent(state string, lastReportedAt time.Time) bool {
+	return state == "active" &&
+		!lastReportedAt.IsZero() &&
+		time.Since(lastReportedAt) > SessionSilenceThreshold
 }
 
 // UpsertSession records or updates a session.
@@ -237,7 +272,12 @@ func (s *Store) UpsertSession(ctx context.Context, in Session) error {
 			-- COALESCE, not EXCLUDED: a later report that omits the reason must
 			-- not erase why a session was stopped.
 			terminated_by      = COALESCE(EXCLUDED.terminated_by, sessions.terminated_by),
-			termination_reason = COALESCE(EXCLUDED.termination_reason, sessions.termination_reason)`,
+			termination_reason = COALESCE(EXCLUDED.termination_reason, sessions.termination_reason),
+			-- Every report is a sign of life, whatever else it carries. A
+			-- session nothing has said anything about for hours is not running
+			-- and has not ended; it is unknown, and this is what lets the
+			-- console say so instead of showing it live for nineteen days.
+			last_reported_at   = now()`,
 		in.ID, in.UserEmail, assetID, in.AssetHostname, in.Principal, in.Protocol,
 		in.Origin, in.OriginReason, in.State, in.StartedAt, in.EndedAt, in.ClientIP,
 		in.Fidelity, in.RecordingBytes, in.CommandCount, in.ExitCode, in.ChainHead,
@@ -354,6 +394,8 @@ func sessionFromRow(r *session.Row) Session {
 	if r.TerminationReason.Valid {
 		v.TerminationReason = &r.TerminationReason.V
 	}
+	v.LastReportedAt = r.LastReportedAt
+	v.Silent = silent(v.State, v.LastReportedAt)
 	return v
 }
 
@@ -365,19 +407,20 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 		       protocol, origin, origin_reason, state, started_at, ended_at,
 		       client_ip, fidelity, recording_bytes, command_count, exit_code,
 		       chain_head, risk_flags, reported_by, recording_key,
-		       terminated_by, termination_reason
+		       terminated_by, termination_reason, last_reported_at
 		FROM sessions WHERE id = $1`, id).Scan(
 		&v.ID, &v.UserEmail, &v.AssetID, &v.AssetHostname, &v.Principal,
 		&v.Protocol, &v.Origin, &v.OriginReason, &v.State, &v.StartedAt,
 		&v.EndedAt, &v.ClientIP, &v.Fidelity, &v.RecordingBytes,
 		&v.CommandCount, &v.ExitCode, &v.ChainHead, &v.RiskFlags, &v.ReportedBy,
-		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason)
+		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason, &v.LastReportedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	v.Silent = silent(v.State, v.LastReportedAt)
 	return &v, nil
 }
 
@@ -711,10 +754,15 @@ func (s *Store) AuditEvents(ctx context.Context, limit int) ([]AuditEvent, error
 
 // FleetStats mirrors the console's dashboard tiles.
 type FleetStats struct {
-	AssetsTotal              int `json:"assetsTotal"`
-	AssetsUnreachable        int `json:"assetsUnreachable"`
-	HostKeysUnpinned         int `json:"hostKeysUnpinned"`
+	AssetsTotal       int `json:"assetsTotal"`
+	AssetsUnreachable int `json:"assetsUnreachable"`
+	HostKeysUnpinned  int `json:"hostKeysUnpinned"`
+	// SessionsActive counts only sessions a reporter still speaks for, and
+	// SessionsSilent the rest -- active on paper, unheard from for longer than
+	// SessionSilenceThreshold. Counting both as live is what let the console
+	// claim fifteen sessions were in progress, the oldest for nineteen days.
 	SessionsActive           int `json:"sessionsActive"`
+	SessionsSilent           int `json:"sessionsSilent"`
 	SessionsToday            int `json:"sessionsToday"`
 	RequestsPending          int `json:"requestsPending"`
 	CredentialsOverdue       int `json:"credentialsOverdue"`
@@ -732,7 +780,10 @@ func (s *Store) Stats(ctx context.Context) (FleetStats, error) {
 		  (SELECT count(*) FROM assets),
 		  (SELECT count(*) FROM assets WHERE health = 'unreachable'),
 		  (SELECT count(*) FROM assets WHERE host_key_state <> 'pinned'),
-		  (SELECT count(*) FROM sessions WHERE state = 'active'),
+		  (SELECT count(*) FROM sessions
+		     WHERE state = 'active' AND last_reported_at >  now() - $1::interval),
+		  (SELECT count(*) FROM sessions
+		     WHERE state = 'active' AND last_reported_at <= now() - $1::interval),
 		  (SELECT count(*) FROM sessions WHERE started_at > now() - interval '24 hours'),
 		  (SELECT count(*) FROM access_requests WHERE state = 'pending'),
 		  (SELECT count(*) FROM assets
@@ -743,9 +794,10 @@ func (s *Store) Stats(ctx context.Context) (FleetStats, error) {
 		  (SELECT count(*) FROM sessions
 		     WHERE origin = 'direct' AND started_at > now() - interval '24 hours'),
 		  (SELECT count(*) FROM assets WHERE bypass_posture = 'open'),
-		  (SELECT count(*) FROM assets WHERE agent_state = 'stale')`).
+		  (SELECT count(*) FROM assets WHERE agent_state = 'stale')`,
+		fmt.Sprintf("%d seconds", int(SessionSilenceThreshold.Seconds()))).
 		Scan(&st.AssetsTotal, &st.AssetsUnreachable, &st.HostKeysUnpinned,
-			&st.SessionsActive, &st.SessionsToday, &st.RequestsPending,
+			&st.SessionsActive, &st.SessionsSilent, &st.SessionsToday, &st.RequestsPending,
 			&st.CredentialsOverdue, &st.StandingCredentialAssets,
 			&st.SessionsDirectToday, &st.AssetsUnmonitored, &st.AgentsStale)
 	return st, err

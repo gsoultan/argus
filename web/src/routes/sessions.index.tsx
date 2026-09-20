@@ -13,24 +13,44 @@ import { FS, SP } from '~/theme'
 import { sessionsQuery } from '~/lib/queries'
 import type { Session } from '~/types/domain'
 
+const FILTERS = ['all', 'active', 'silent', 'direct', 'flagged'] as const
+type Filter = (typeof FILTERS)[number]
+
+interface SessionSearch {
+  show?: Filter
+}
+
 export const Route = createFileRoute('/sessions/')({
   component: Sessions,
+  // In the URL rather than in component state, so "the sessions nobody is
+  // reporting" is a place that can be linked to -- the Overview alert and the
+  // header pill both point here. Unrecognised values are dropped rather than
+  // passed through, so a hand-edited URL cannot put the table into a state the
+  // segmented control cannot show.
+  validateSearch: (search: Record<string, unknown>): SessionSearch => ({
+    show:
+      typeof search.show === 'string' && (FILTERS as readonly string[]).includes(search.show)
+        ? (search.show as Filter)
+        : undefined,
+  }),
   loader: ({ context }) => context.queryClient.ensureQueryData(sessionsQuery()),
 })
 
-type Filter = 'all' | 'active' | 'direct' | 'flagged'
 
 const LIMIT = 120
 
 function Sessions() {
   const navigate = useNavigate()
   const { data: sessions } = useQuery(sessionsQuery())
-  const [filter, setFilter] = useState<Filter>('all')
+  const filter = Route.useSearch().show ?? 'all'
+  const setFilter = (show: Filter) =>
+    void navigate({ to: '/sessions', search: show === 'all' ? {} : { show }, replace: true })
   const [search, setSearch] = useState('')
 
   const rows = useMemo(() => {
     let out: Session[] = sessions ?? []
-    if (filter === 'active') out = out.filter((s) => s.state === 'active')
+    if (filter === 'active') out = out.filter((s) => s.state === 'active' && !s.silent)
+    if (filter === 'silent') out = out.filter((s) => s.state === 'active' && s.silent)
     if (filter === 'direct') out = out.filter((s) => s.origin === 'direct')
     if (filter === 'flagged') out = out.filter((s) => s.riskFlags.length > 0)
     const needle = search.trim().toLowerCase()
@@ -44,7 +64,8 @@ function Sessions() {
     return out.slice(0, LIMIT)
   }, [sessions, filter, search])
 
-  const activeCount = sessions?.filter((s) => s.state === 'active').length ?? 0
+  const activeCount = sessions?.filter((s) => s.state === 'active' && !s.silent).length ?? 0
+  const silentCount = sessions?.filter((s) => s.state === 'active' && s.silent).length ?? 0
   const flaggedCount = sessions?.filter((s) => s.riskFlags.length > 0).length ?? 0
   const directCount = sessions?.filter((s) => s.origin === 'direct').length ?? 0
   const filtered = filter !== 'all' || search.trim().length > 0
@@ -87,6 +108,10 @@ function Sessions() {
             data={[
               { label: 'All', value: 'all' },
               { label: sessions ? `Live (${activeCount})` : 'Live', value: 'active' },
+              // Its own segment rather than folded into Live: these are the
+              // sessions somebody has to go and look at, and burying them in a
+              // log sorted newest-first hides the oldest ones the deepest.
+              { label: sessions ? `Unknown (${silentCount})` : 'Unknown', value: 'silent' },
               { label: sessions ? `Bypassed (${directCount})` : 'Bypassed', value: 'direct' },
               { label: sessions ? `Flagged (${flaggedCount})` : 'Flagged', value: 'flagged' },
             ]}
@@ -107,7 +132,9 @@ function Sessions() {
               title="No sessions match."
               description={
                 filtered
-                  ? 'Nothing in the log fits this filter. Widen it, or clear the search to see everything.'
+                  ? filter === 'silent'
+                    ? 'Every active session has reported in recently. Nothing here is a good result.'
+                    : 'Nothing in the log fits this filter. Widen it, or clear the search to see everything.'
                   : 'No session has been brokered or reported yet. One appears here as soon as somebody connects.'
               }
             />
@@ -120,7 +147,13 @@ function Sessions() {
                 navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
               )}
             >
-              <Table.Td><SessionStateBadge state={s.state} /></Table.Td>
+              <Table.Td>
+                <SessionStateBadge
+                  state={s.state}
+                  silent={s.silent}
+                  lastReportedAt={s.lastReportedAt}
+                />
+              </Table.Td>
               <Table.Td>
                 <Text size="xs">{s.userEmail.split('@')[0]}</Text>
                 <Mono c="dimmed">{s.clientIp}</Mono>
@@ -140,7 +173,14 @@ function Sessions() {
                 </Tooltip>
               </Table.Td>
               <Table.Td>
-                <Text size="xs" c="dimmed">{duration(s.startedAt, s.endedAt)}</Text>
+                {/* A silent session's clock stops at its last report. Running
+                    it to now would say a gateway nobody can find has been
+                    holding a session for nineteen days. */}
+                <Text size="xs" c="dimmed">
+                  {s.silent
+                    ? `${duration(s.startedAt, s.lastReportedAt)}+`
+                    : duration(s.startedAt, s.endedAt)}
+                </Text>
               </Table.Td>
               <Table.Td>
                 <Group gap={SP.snug} wrap="nowrap">

@@ -38,7 +38,7 @@ const ShadowTerminal = lazy(() =>
 )
 import {
   Digest, Field, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes,
-  duration,
+  duration, relTime,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { buildCast } from '~/lib/cast'
@@ -246,6 +246,24 @@ function SessionDetail() {
   // Watching is offered only while there is something to watch. A shadow button
   // on a finished session would open a stream that immediately ends, which
   // reads as a fault rather than as "this session is over".
+  //
+  // A *silent* session is a different case and neither action is withheld for
+  // one, though the temptation is strong — nothing is holding it, so both will
+  // probably fail.
+  //
+  // They are kept because the console has just finished admitting it does not
+  // know whether the session is running, and removing the controls would be
+  // deciding on the operator's behalf from exactly that missing information.
+  // Two things make it the wrong call concretely. A new control plane reading
+  // gateways too old to report liveness sees every genuinely live session as
+  // silent, and would take Watch and Terminate away from all of them for the
+  // length of the upgrade. And the control plane audits the *authorisation* to
+  // terminate rather than its outcome, deliberately — "an operator who tried
+  // to stop a session and could not is a more urgent finding than one who
+  // succeeded" — so a failed attempt is recorded truthfully, not falsely.
+  //
+  // The alert above the page says what is not known. Trying is how an operator
+  // finds out, and that is theirs to choose.
   const canShadow = session.state === 'active'
   const isRDP = session.protocol === 'rdp'
   const host = session.assetHostname.split('.')[0] ?? session.assetHostname
@@ -259,7 +277,13 @@ function SessionDetail() {
       <PageHeader
         crumbs={[{ label: 'Sessions', to: '/sessions' }, { label: `${session.principal}@${host}` }]}
         title={`${session.principal}@${host}`}
-        status={<SessionStateBadge state={session.state} />}
+        status={
+          <SessionStateBadge
+            state={session.state}
+            silent={session.silent}
+            lastReportedAt={session.lastReportedAt}
+          />
+        }
         description={`Opened by ${session.userEmail} from ${session.clientIp} · ${absTime(session.startedAt)}`}
         actions={
           <>
@@ -295,6 +319,27 @@ function SessionDetail() {
       />
 
       <PageBody>
+        {/* Before the recording alerts, because it changes what the page even
+            claims to be showing: this is not a session in progress, and the
+            two actions an operator would reach for are gone. Without a line
+            saying why, their absence reads as a broken page. */}
+        {session.state === 'active' && session.silent && (
+          <Alert
+            color="amber"
+            icon={<IconAlertTriangle size={16} />}
+            title="Nothing has reported this session in minutes"
+          >
+            <Text size={FS.body} lh={1.5}>
+              It was last heard from {relTime(session.lastReportedAt)}, and gateways
+              re-report the sessions they are holding every minute. Most likely its
+              gateway was killed rather than drained, so the end was never reported —
+              but Argus cannot tell that apart from a session still running on a gateway
+              it has lost contact with. Watch and Terminate are still offered, and are the
+              way to find out: if the session is real it can still be watched and stopped,
+              and if it is not, both will fail and the attempt is on the record either way.
+            </Text>
+          </Alert>
+        )}
         {/* First, and filled rather than light: everything below it is suspect.
             The side panel already carried this verdict as a badge, which an
             operator watching a replay has no reason to look at. A recording
@@ -416,7 +461,14 @@ function SessionDetail() {
                   </Group>
                   <Group grow>
                     <Field label="Duration">
-                      <Text size="xs">{duration(session.startedAt, session.endedAt)}</Text>
+                      {/* A silent session's clock stops at its last report:
+                          everything after that is time Argus cannot account
+                          for, not time the session was known to be running. */}
+                      <Text size="xs">
+                        {session.silent
+                          ? `${duration(session.startedAt, session.lastReportedAt)}+`
+                          : duration(session.startedAt, session.endedAt)}
+                      </Text>
                     </Field>
                     <Field label="Size">
                       <Text size="xs">{bytes(session.recordingBytes)}</Text>
@@ -596,6 +648,16 @@ function SessionDetail() {
             further input, it does not roll anything back.
           </Text>
         </Alert>
+        {session.silent && (
+          <Alert color="amber" icon={<IconAlertTriangle size={16} />} mb="md">
+            <Text size={FS.body} lh={1.5}>
+              Nothing has reported this session in minutes, so its gateway may already be
+              gone — in which case there is nothing left to close. Your reason is recorded
+              against your account either way: the log keeps the authorisation, not the
+              outcome, so an attempt that could not be carried out is still on the record.
+            </Text>
+          </Alert>
+        )}
         <Textarea
           size="sm"
           label="Reason"
