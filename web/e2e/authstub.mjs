@@ -63,6 +63,10 @@ const SESSIONS = [
   session({ id: 's-quiet-3', state: 'active', startedAt: ago(300), lastReportedAt: ago(12), silent: true }),
   session({ id: 's-closed-1', state: 'closed', startedAt: ago(400), endedAt: ago(360), lastReportedAt: ago(360), silent: false }),
   session({ id: 's-closed-2', state: 'closed', startedAt: ago(800), endedAt: ago(790), lastReportedAt: ago(790), silent: false }),
+  // Ended at a time nobody recorded: `endedAt` was once written only inside the
+  // seal branch, so a terminated session with no recorder kept a null. 26 of
+  // these in dev, every one rendering as still running.
+  session({ id: 's-unknown-end', state: 'terminated', startedAt: ago(18_600), endedAt: null, lastReportedAt: ago(18_500), silent: false }),
 ]
 
 const countSessions = (/** @type {(s: any) => boolean} */ f) => SESSIONS.filter(f).length
@@ -193,7 +197,12 @@ const server = createServer(async (req, res) => {
     if (path === '/api/v1/stats') return json(res, 200, STATS)
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
-    if (path === '/api/v1/sessions') return json(res, 200, SESSIONS)
+    if (path === '/api/v1/sessions') {
+      // The control plane narrows by state server-side; returning everything
+      // here would let a console bug that forgets to filter still look right.
+      const want = url.searchParams.get('state')
+      return json(res, 200, want ? SESSIONS.filter((/** @type {any} */ s) => s.state === want) : SESSIONS)
+    }
     return json(res, 200, [])
   }
 

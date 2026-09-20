@@ -37,8 +37,8 @@ const ShadowTerminal = lazy(() =>
   import('~/components/ShadowTerminal').then((m) => ({ default: m.ShadowTerminal })),
 )
 import {
-  Digest, Field, FidelityBadge, Mono, RiskFlags, SessionStateBadge, absTime, bytes,
-  duration, relTime,
+  Digest, Field, FidelityBadge, Mono, RiskFlags, SessionDuration, SessionStateBadge,
+  absTime, bytes, relTime,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { buildCast } from '~/lib/cast'
@@ -461,14 +461,7 @@ function SessionDetail() {
                   </Group>
                   <Group grow>
                     <Field label="Duration">
-                      {/* A silent session's clock stops at its last report:
-                          everything after that is time Argus cannot account
-                          for, not time the session was known to be running. */}
-                      <Text size="xs">
-                        {session.silent
-                          ? `${duration(session.startedAt, session.lastReportedAt)}+`
-                          : duration(session.startedAt, session.endedAt)}
-                      </Text>
+                      <SessionDuration session={session} dimmed={false} />
                     </Field>
                     <Field label="Size">
                       <Text size="xs">{bytes(session.recordingBytes)}</Text>

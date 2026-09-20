@@ -9,7 +9,7 @@ import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page
 import { run } from '~/lib/notify'
 import {
   CredentialBadge, Digest, Field, FidelityBadge, HealthDot, HostKeyBadge, Mono,
-  SessionStateBadge, absTime, duration, relTime, rowNav,
+  SessionDuration, SessionStateBadge, absTime, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
@@ -278,7 +278,7 @@ function AssetDetail() {
                           </Text>
                         </Table.Td>
                         <Table.Td>
-                          <Text size="xs" c="dimmed">{duration(s.startedAt, s.endedAt)}</Text>
+                          <SessionDuration session={s} />
                         </Table.Td>
                         <Table.Td><FidelityBadge fidelity={s.fidelity} /></Table.Td>
                       </Table.Tr>

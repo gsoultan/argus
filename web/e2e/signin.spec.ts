@@ -256,6 +256,51 @@ test.describe('coverage links land on exactly what they counted', () => {
     await expect(page.locator('tbody tr[role="link"]')).toHaveCount(unknown)
   })
 
+  /**
+   * Two numbers on one page describing the same thing, and they disagreed.
+   *
+   * The Overview's "Live sessions" section fetches `state = 'active'`, which
+   * includes the sessions nothing has reported -- so its badge counted every
+   * one of them while the Stat tile two rows above counted only the live ones.
+   */
+  test('the Overview agrees with itself about how many sessions are live', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+
+    const tile = page.locator('.argus-stat', { hasText: 'LIVE SESSIONS' })
+    await expect(tile).toContainText(/\d/)
+    const claimed = Number((await tile.innerText()).match(/\n\s*(\d+)/)?.[1])
+    expect(claimed).toBeGreaterThan(0)
+
+    // Scoped to the card the heading belongs to, so this cannot accidentally
+    // count rows from the requests table beside it.
+    const card = page
+      .getByRole('heading', { name: 'Live sessions' })
+      .locator('xpath=ancestor::div[contains(@class,"mantine-Card-root")][1]')
+    await expect(
+      card.locator('tbody tr'),
+      `The tile says ${claimed} live sessions; the table below it lists a different number.`,
+    ).toHaveCount(claimed)
+  })
+
+  /**
+   * A session that ended at a time nobody recorded must not be given one.
+   * `duration(startedAt, endedAt)` counts to now on a null end time, which had
+   * 26 terminated sessions in dev rendering as still running.
+   */
+  test('a session with no recorded end time is not given a running clock', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/sessions')
+
+    const row = page.locator('tbody tr', { hasText: 'terminated' }).first()
+    await expect(row).toBeVisible()
+    await expect(
+      row,
+      'a terminated session with no end time should show no duration at all',
+    ).toContainText('—')
+  })
+
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')
     await signIn(page)

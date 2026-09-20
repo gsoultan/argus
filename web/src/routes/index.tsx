@@ -11,8 +11,8 @@ import {
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import {
-  Digest, FidelityBadge, HealthDot, Mono, OriginBadge, RiskFlags, Stat, Target,
-  duration, relTime, rowNav,
+  Digest, FidelityBadge, HealthDot, Mono, OriginBadge, RiskFlags, SessionDuration, Stat,
+  Target, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { assetsQuery, requestsQuery, sessionsQuery, statsQuery } from '~/lib/queries'
@@ -25,7 +25,13 @@ export const Route = createFileRoute('/')({
 function Overview() {
   const navigate = useNavigate()
   const { data: stats } = useQuery(statsQuery())
-  const { data: live } = useQuery(sessionsQuery('active'))
+  // Filtered, not merely fetched. The query asks for `state = 'active'`, which
+  // includes the sessions nothing has reported in minutes -- so a section
+  // headed "Live sessions" was listing 15 that were not, badging the total, and
+  // disagreeing with the Stat tile two rows above it. They are not hidden: the
+  // alert above links straight to them.
+  const { data: activeSessions } = useQuery(sessionsQuery('active'))
+  const live = activeSessions?.filter((s) => s.state === 'active' && !s.silent)
   const { data: pending } = useQuery(requestsQuery('pending'))
   const { data: assets } = useQuery(assetsQuery({}))
 
@@ -267,7 +273,7 @@ function Overview() {
                           </Table.Td>
                           <Table.Td><OriginBadge origin={s.origin} /></Table.Td>
                           <Table.Td>
-                            <Text size="xs" c="dimmed">{duration(s.startedAt, null)}</Text>
+                            <SessionDuration session={s} />
                           </Table.Td>
                           <Table.Td><FidelityBadge fidelity={s.fidelity} /></Table.Td>
                           <Table.Td><RiskFlags flags={s.riskFlags} /></Table.Td>
