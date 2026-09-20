@@ -41,7 +41,7 @@ export function ErrorState({
         </Code>
         <Group gap="xs" mt={4}>
           {reset && (
-            <Button size="xs" variant="light" color="teal" leftSection={<IconRefresh size={14} />}
+            <Button size="xs" variant="light" leftSection={<IconRefresh size={14} />}
               onClick={reset}>
               Try again
             </Button>

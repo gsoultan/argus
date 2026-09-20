@@ -1,14 +1,17 @@
-import { Badge, Box, Card, CopyButton, Group, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core'
 import {
-  IconAlertTriangle, IconCertificate, IconCheck, IconCopy, IconDoorExit, IconKey,
-  IconLock, IconPlayerRecordFilled, IconPlugConnected, IconPlugConnectedX,
-  IconRouteAltLeft, IconShieldCheck, IconShieldOff,
+  Badge, Box, Card, CopyButton, Group, Skeleton, Text, ThemeIcon, Tooltip, UnstyledButton,
+} from '@mantine/core'
+import {
+  IconAlertTriangle, IconCertificate, IconCheck, IconChevronRight, IconCopy,
+  IconDoorExit, IconKey, IconLock, IconPlayerRecordFilled, IconPlugConnected,
+  IconPlugConnectedX, IconRouteAltLeft, IconShieldCheck, IconShieldOff,
 } from '@tabler/icons-react'
 import type {
   AgentState, AssetHealth, BypassPosture, CredentialMode, HostKeyState,
   RecordingFidelity, RequestState, RiskFlag, SessionOrigin, SessionState,
 } from '~/types/domain'
 import { FS } from '~/theme'
+import { rem } from '@mantine/core'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
 
@@ -332,7 +335,7 @@ export function Digest({ value, chars = 12 }: { value: string; chars?: number })
     <CopyButton value={value} timeout={1200}>
       {({ copied, copy }) => (
         <Tooltip label={copied ? 'Copied' : value} multiline maw={420}>
-          <UnstyledButton onClick={copy} className="argus-digest" c={copied ? 'teal' : 'dimmed'}>
+          <UnstyledButton onClick={copy} className="argus-digest" c={copied ? 'azure.3' : 'dimmed'}>
             <Group gap={4} wrap="nowrap">
               <span>{short}</span>
               {copied ? <IconCheck size={11} /> : <IconCopy size={11} opacity={0.5} />}
@@ -341,6 +344,27 @@ export function Digest({ value, chars = 12 }: { value: string; chars?: number })
         </Tooltip>
       )}
     </CopyButton>
+  )
+}
+
+/**
+ * `principal@host`, with the account carrying the emphasis.
+ *
+ * Written inline on four pages, each choosing its own colour for the principal
+ * — all of them teal, which is the verification colour and says nothing about
+ * an account name. Azure is the brand, which is what an identifier is.
+ */
+export function Target({ principal, hostname }: { principal: string; hostname: string }) {
+  return (
+    // nowrap: hostnames are full of hyphens, and the browser treats every one
+    // as a break opportunity — so `deploy@edge-02` split across two lines in a
+    // narrow column while `ops@db-03` did not, and no two rows in the table
+    // were the same height.
+    <Text component="span" display="inline-block" ff="monospace" size="xs" style={{ whiteSpace: 'nowrap' }}>
+      <Text span c="azure.3" inherit fw={500}>{principal}</Text>
+      <Text span c="dimmed" inherit>@</Text>
+      {hostname.split('.')[0]}
+    </Text>
   )
 }
 
@@ -383,12 +407,30 @@ export function Field({ label, children }: { label: string; children: React.Reac
  * had an icon, uppercase label and a 27px figure; coverage's had none of those
  * and a 28px one. Two cards that mean the same thing now look the same, and
  * `tone` decides emphasis rather than each caller inventing it.
+ *
+ * The label is uppercased in JavaScript rather than with `tt="uppercase"` on
+ * purpose: these are the strings the route tests read, and a CSS transform
+ * leaves the DOM text in sentence case where `getByText('LIVE SESSIONS')`
+ * cannot find it.
+ *
+ * A clickable card now says so — a chevron and a pointer — because Coverage and
+ * Users render the identical card with no destination, and a hover border was
+ * the only thing distinguishing "this drills down" from "this is a number".
  */
 export function Stat({
   label, value, sub, icon, color = 'slate', tone = 'ok', onClick,
 }: {
   label: string
-  value: string | number
+  /**
+   * `undefined` renders a skeleton, and callers must not collapse it to 0.
+   *
+   * Coverage counted its gaps with `cov?.unreviewedHosts ?? 0`, so a page whose
+   * entire job is "does Argus see everything?" answered "no gaps anywhere" for
+   * as long as the request was in flight — the most reassuring possible reading
+   * of not knowing. Same shape as a table rendering an empty tbody while it
+   * loads, which is what DataTable already guards against.
+   */
+  value: string | number | undefined
   sub?: string
   icon?: typeof IconShieldCheck
   color?: string
@@ -397,6 +439,7 @@ export function Stat({
 }) {
   const Icon = icon
   const interactive = Boolean(onClick)
+  const warn = tone === 'warn'
   return (
     <Card
       padding="md"
@@ -414,18 +457,31 @@ export function Stat({
             },
           }
         : {})}
-      className={`transition-colors hover:border-slate-600 ${interactive ? 'cursor-pointer' : ''}`}
-      style={tone === 'warn' ? { borderColor: 'var(--color-pending)' } : undefined}
+      className={`argus-stat transition-colors ${interactive ? 'cursor-pointer argus-stat-link' : ''}`}
+      style={warn ? { borderColor: 'var(--color-pending)' } : undefined}
     >
-      <Group justify="space-between" wrap="nowrap" align="flex-start">
-        <Box>
-          <Text size={FS.micro} c="dimmed" fw={600} style={{ letterSpacing: '0.06em' }}>
-            {label.toUpperCase()}
-          </Text>
-          <Text size={FS.figure} fw={600} lh={1.2} mt={4} c={tone === 'warn' ? 'amber.4' : undefined}>
-            {value}
-          </Text>
-          {sub && <Text size={FS.micro} c="dimmed" mt={2}>{sub}</Text>}
+      <Group justify="space-between" wrap="nowrap" align="flex-start" gap="sm">
+        <Box style={{ minWidth: 0 }}>
+          <Group gap={4} wrap="nowrap">
+            <Text size={FS.micro} c="dimmed" fw={700} style={{ letterSpacing: '0.08em' }}>
+              {label.toUpperCase()}
+            </Text>
+            {interactive && (
+              <IconChevronRight size={11} className="argus-stat-chevron" opacity={0.45} />
+            )}
+          </Group>
+          {value === undefined ? (
+            <Skeleton height={rem(27)} width={64} radius="sm" mt={6} />
+          ) : (
+            <Text size={FS.figure} fw={600} lh={1.15} mt={6} c={warn ? 'amber.4' : undefined}>
+              {value}
+            </Text>
+          )}
+          {sub && (
+            <Text size={FS.micro} c="dimmed" mt={4} lh={1.45}>
+              {sub}
+            </Text>
+          )}
         </Box>
         {Icon && (
           <ThemeIcon variant="light" color={color} size={32} radius="md">

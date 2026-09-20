@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// `process` is declared once for the whole project in e2e/node-globals.d.ts.
+
 export default defineConfig({
   plugins: [
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
@@ -20,16 +22,27 @@ export default defineConfig({
         // kept by runtimeCaching below; precaching all of them meant a first
         // visit downloaded xterm.js and every route the user never opened.
         //
-        // Fonts ship as per-script subsets, so only the Latin ones are listed:
-        // the rest exist for names this console may never render, and pulling
-        // Cyrillic, Greek and Vietnamese up front costs a quarter of a megabyte
-        // to no effect. They are still cached if a name ever needs them.
+        // Fonts ship as per-script subsets, and only the plain Latin ones are
+        // precached. The rest exist for names this console may never render,
+        // and pulling them up front costs a quarter of a megabyte to no effect.
+        // They are still cached the moment a name needs one — the CacheFirst
+        // rule below does that.
+        //
+        // `*latin*` used to be the pattern, which also matched `latin-ext` and
+        // pushed 98 kB of accented-Latin coverage at every first visit. Two
+        // font files are fetched to render this console and four were being
+        // stored; e2e/weight.spec.ts asserts the two, precache.spec.ts the
+        // four-now-two. An accented name still renders, it just fetches its
+        // subset on demand like Cyrillic and Greek always have.
+        //
+        // No '**/*.svg' here: the only SVG in the build is icon.svg, and the
+        // manifest already precaches it as the app icon. Listing both put it in
+        // the manifest twice, with the same revision.
         globPatterns: [
           'index.html',
           'assets/index-*.js',
           'assets/*.css',
-          'assets/*latin*.woff2',
-          '**/*.svg',
+          'assets/*-latin-wght-*.woff2',
         ],
         // Anything the control plane serves must reach the control plane.
         //
@@ -82,7 +95,21 @@ export default defineConfig({
     }),
   ],
   resolve: {
-    alias: { '~': new URL('./src', import.meta.url).pathname },
+    // Array form, because order decides which entry wins and the monolith
+    // override has to be matched before the general '~' prefix.
+    alias: [
+      // The reference build for e2e/cascade.spec.ts: identical application,
+      // Mantine's concatenated stylesheet instead of the ~47 per-component
+      // imports whose order app.css maintains by hand. Never set in a shipped
+      // build — see src/app.monolith.css.
+      ...(process.env.ARGUS_CSS === 'monolith'
+        ? [{
+            find: '~/app.css',
+            replacement: new URL('./src/app.monolith.css', import.meta.url).pathname,
+          }]
+        : []),
+      { find: '~', replacement: new URL('./src', import.meta.url).pathname },
+    ],
   },
   worker: { format: 'es' },
   server: {

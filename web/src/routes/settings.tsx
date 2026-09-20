@@ -10,12 +10,12 @@ import {
   IconAlertTriangle, IconDeviceDesktop, IconInfoCircle, IconLock, IconNetwork,
   IconShieldLock, IconTerminal2,
 } from '@tabler/icons-react'
-import { PageHeader } from '~/components/Shell'
+import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
 import { meQuery, policyQuery, useSavePolicy } from '~/lib/queries'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { isConfigured } from '~/lib/live'
-import { FS } from '~/theme'
+import { FS, SP } from '~/theme'
 import type { GatewayPolicy, PolicyKey } from '~/types/domain'
 
 export const Route = createFileRoute('/settings')({
@@ -156,12 +156,11 @@ function Settings() {
         actions={
           changes.length > 0 ? (
             <>
-              <Button size="xs" variant="subtle" color="slate" onClick={discard}>
+              <Button variant="subtle" color="slate" onClick={discard}>
                 Discard
               </Button>
               <Button
-                size="xs"
-                color={loosening.length > 0 ? 'amber' : 'teal'}
+                color={loosening.length > 0 ? 'amber' : 'azure'}
                 loading={savePolicy.isPending}
                 onClick={confirm.open}
               >
@@ -172,16 +171,10 @@ function Settings() {
         }
       />
 
-      <Box p="lg">
+      <PageBody>
         {!canEdit && me && (
-          <Alert
-            color="slate"
-            variant="light"
-            icon={<IconInfoCircle size={16} />}
-            mb="md"
-            title="Read-only"
-          >
-            <Text size="xs">
+          <Alert color="slate" icon={<IconInfoCircle size={16} />} title="Read-only">
+            <Text size={FS.body} lh={1.5}>
               Gateway policy is changed by an owner or admin. Your role is{' '}
               <Mono>{me.role}</Mono>, so these are shown as configured rather than as
               controls you can move.
@@ -199,12 +192,10 @@ function Settings() {
         {!isConfigured() && (
           <Alert
             color="amber"
-            variant="light"
             icon={<IconAlertTriangle size={16} />}
-            mb="md"
             title="Not connected to a control plane"
           >
-            <Text size="xs">
+            <Text size={FS.body} lh={1.5}>
               Changes are held in this browser session only and reach no gateway. Point{' '}
               <Mono>VITE_CONTROL_URL</Mono> at a running control plane to make this page
               authoritative.
@@ -216,7 +207,7 @@ function Settings() {
           <Grid.Col span={{ base: 12, lg: 7 }}>
             <Stack gap="sm">
               <PolicyCard
-                icon={<IconTerminal2 size={13} />}
+                icon={IconTerminal2}
                 title="SSH channel policy"
                 note={
                   <>
@@ -234,7 +225,7 @@ function Settings() {
                 onChange={set}
               />
               <PolicyCard
-                icon={<IconLock size={13} />}
+                icon={IconLock}
                 title="Recording & retention"
                 fields={RECORDING_POLICY}
                 policy={current}
@@ -247,45 +238,33 @@ function Settings() {
 
           <Grid.Col span={{ base: 12, lg: 5 }}>
             <Stack gap="sm">
-              <Card padding="md">
-                <Group gap={8} mb="sm">
-                  <ThemeIcon variant="light" color="sky" size={22} radius="sm">
-                    <IconNetwork size={13} />
-                  </ThemeIcon>
-                  <Text fw={600} size="sm">Gateway endpoint</Text>
-                </Group>
-                <Text size={FS.micro} c="dimmed" mb="xs" lh={1.45}>
-                  Users connect with their normal client. The target is encoded in the username,
-                  so there is nothing to install and existing tooling keeps working.
-                </Text>
+              <SectionCard
+                title="Gateway endpoint"
+                icon={IconNetwork}
+                iconColor="sky"
+                description="Users connect with their normal client. The target is encoded in the username, so there is nothing to install and existing tooling keeps working."
+              >
                 <Code block fz={FS.digest}>
                   {`ssh ops:db-01@argus.northwind.id
 scp report.csv ops:db-01@argus.northwind.id:/tmp/
 sftp ops:db-01@argus.northwind.id`}
                 </Code>
-              </Card>
+              </SectionCard>
 
-              <Card padding="md">
-                <Group gap={8} mb="sm">
-                  <ThemeIcon variant="light" color="teal" size={22} radius="sm">
-                    <IconShieldLock size={13} />
-                  </ThemeIcon>
-                  <Text fw={600} size="sm">Certificate authority</Text>
-                </Group>
-                <Text size={FS.micro} c="dimmed" mb="xs" lh={1.45}>
-                  Add this to a host to move it off standing credentials. Argus then mints a
-                  short-lived certificate per session and there is nothing left in the vault to
-                  steal for that host.
-                </Text>
+              <SectionCard
+                title="Certificate authority"
+                icon={IconShieldLock}
+                iconColor="teal"
+                description="Add this to a host to move it off standing credentials. Argus then mints a short-lived certificate per session and there is nothing left in the vault to steal for that host."
+              >
                 <Code block fz={FS.micro}>
                   {`# /etc/ssh/sshd_config
 TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
                 </Code>
-              </Card>
+              </SectionCard>
 
-              <Alert color="sky" variant="light" icon={<IconInfoCircle size={16} />}>
-                <Text size="xs" fw={600} mb={4}>Threat model, stated plainly</Text>
-                <Text size="xs" lh={1.5}>
+              <Alert color="sky" icon={<IconInfoCircle size={16} />} title="Threat model, stated plainly">
+                <Text size={FS.body} lh={1.55}>
                   Argus terminates SSH, so the gateway holds session plaintext in memory. That is
                   the price of working against hosts with no agent installed. Treat gateway nodes
                   as your highest-value asset: no shared tenancy, no third-party agents, hardware
@@ -294,23 +273,23 @@ TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
                 </Text>
               </Alert>
 
-              <Card padding="md" style={{ borderStyle: 'dashed' }}>
-                <Group gap={8} mb={6}>
+              <Card style={{ borderStyle: 'dashed' }}>
+                <Group gap={SP.cozy} mb={SP.snug}>
                   <ThemeIcon variant="light" color="slate" size={22} radius="sm">
                     <IconDeviceDesktop size={13} />
                   </ThemeIcon>
                   <Text fw={600} size="sm">Windows RDP</Text>
                   <Badge size="xs" color="slate" variant="outline">phase 3</Badge>
                 </Group>
-                <Text size={FS.micro} c="dimmed" lh={1.45}>
+                <Text size={FS.micro} c="dimmed" lh={1.5}>
                   RDP runs as a separate service rather than inside the SSH gateway — different
                   protocol, different recording pipeline, different failure modes. Linux SSH gets
                   finished first.
                 </Text>
               </Card>
 
-              <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />}>
-                <Text size="xs">
+              <Alert color="amber" icon={<IconAlertTriangle size={16} />}>
+                <Text size={FS.body} lh={1.5}>
                   Command detection from PTY output is a heuristic, and <Mono>argus</Mono> labels
                   it as such everywhere it appears. Do not present it to an auditor as proof of
                   what ran — that is what the eBPF tier is for.
@@ -319,7 +298,7 @@ TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
             </Stack>
           </Grid.Col>
         </Grid>
-      </Box>
+      </PageBody>
 
       <Modal
         opened={confirmOpen}
@@ -328,18 +307,18 @@ TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
         size="md"
       >
         {loosening.length > 0 && (
-          <Alert color="rose" variant="light" icon={<IconAlertTriangle size={16} />} mb="md">
-            <Text size="xs">
+          <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
+            <Text size={FS.body} lh={1.5}>
               {loosening.length === 1 ? 'One change loosens' : `${loosening.length} changes loosen`}{' '}
               the gateway. Every session opened after this uses the new policy.
             </Text>
           </Alert>
         )}
-        <Text size="xs" c="dimmed" mb="xs">
+        <Text size={FS.meta} c="dimmed" mb="xs">
           The whole policy is written, and the change is recorded in the audit log against
           your account.
         </Text>
-        <List size="xs" spacing={6}>
+        <List size="xs" spacing={SP.snug}>
           {changes.map((f) => {
             const on = Boolean(draft?.[f.key])
             return (
@@ -365,11 +344,10 @@ TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
           })}
         </List>
         <Group justify="flex-end" mt="md">
-          <Button size="xs" variant="subtle" color="slate" onClick={confirm.close}>
+          <Button variant="subtle" color="slate" onClick={confirm.close}>
             Cancel
           </Button>
           <Button
-            size="xs"
             color={loosening.length > 0 ? 'rose' : 'teal'}
             loading={savePolicy.isPending}
             onClick={commit}
@@ -385,7 +363,7 @@ TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
 function PolicyCard({
   icon, title, note, fields, policy, saved, disabled, onChange,
 }: {
-  icon: React.ReactNode
+  icon: typeof IconTerminal2
   title: string
   /** Stated once for the card rather than repeated on every toggle. */
   note?: React.ReactNode
@@ -396,16 +374,10 @@ function PolicyCard({
   onChange: (key: PolicyKey, value: boolean) => void
 }) {
   return (
-    <Card padding="md">
-      <Group gap={8} mb="md">
-        <ThemeIcon variant="light" color="teal" size={22} radius="sm">
-          {icon}
-        </ThemeIcon>
-        <Text fw={600} size="sm">{title}</Text>
-      </Group>
+    <SectionCard title={title} icon={icon}>
       {note && (
-        <Alert color="slate" variant="light" icon={<IconInfoCircle size={15} />} mb="md">
-          <Text size={FS.micro} lh={1.5}>{note}</Text>
+        <Alert color="slate" icon={<IconInfoCircle size={15} />} mb="md">
+          <Text size={FS.micro} lh={1.55}>{note}</Text>
         </Alert>
       )}
       <Stack gap="lg">
@@ -421,7 +393,7 @@ function PolicyCard({
           />
         ))}
       </Stack>
-    </Card>
+    </SectionCard>
   )
 }
 
@@ -441,18 +413,17 @@ function Toggle({
   return (
     <Group justify="space-between" wrap="nowrap" align="flex-start" gap="lg">
       <Box>
-        <Group gap={6}>
+        <Group gap={SP.snug}>
           <Text size="xs" fw={500}>{spec.label}</Text>
           {risky && <Badge size="xs" color="rose">raises risk</Badge>}
           {modified && <Badge size="xs" color="amber" variant="outline">unsaved</Badge>}
         </Group>
-        <Text size={FS.micro} c="dimmed" mt={2} lh={1.45}>{spec.description}</Text>
+        <Text size={FS.micro} c="dimmed" mt={SP.hair} lh={1.5}>{spec.description}</Text>
       </Box>
       {loading ? (
         <Skeleton height={20} width={36} radius="xl" style={{ flexShrink: 0 }} />
       ) : (
         <Switch
-          size="sm"
           color={spec.riskOn ? 'rose' : 'teal'}
           checked={checked}
           disabled={disabled}

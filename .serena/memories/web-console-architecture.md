@@ -19,6 +19,72 @@ Fixture state lives in module scope (`db` in `api.ts`), so it survives
 client-side navigation and resets on a full page reload. Worth knowing when
 testing persistence — a hard reload is not a valid persistence check.
 
+## Page composition
+
+Routes own content; `components/page.tsx` owns layout. `PageHeader`, `PageBody`,
+`Toolbar`, `SectionCard`, `EmptyState` and `DataTable` are the only shapes a
+route should be assembling, and `components/nav.ts` is the single definition of
+the sidebar's three sections — read by both `Shell` and `CommandPalette`. See
+[design-system](design-system.md) before changing any of them.
+
+## Two typecheck programs
+
+`tsconfig.json` is application code only; `tsconfig.tooling.json` extends it for
+`e2e/`, `vite.config.ts`, `vitest.config.ts` and `playwright.config.ts`, and is
+the only one with `types: ["node"]` and `checkJs`. `bun run typecheck` runs both.
+
+They are split because TypeScript loads a types package whole: once anything in
+a program references `node:http`, `process` and `Buffer` are globals for every
+file in it. With e2e and the configs in one program with `src`,
+`process.env.HOME` inside a route typechecked clean — code that is undefined in
+a browser. Verified both ways with a throwaway probe file.
+
+## Bundle weight
+
+Measured on a cold load of `/`, compressed, service worker blocked, against
+`6916bcca`: **228.0 kB → 233.6 kB of JS+CSS (+5.6 kB)** for the azure palette,
+the page-layout primitives, the grouped nav, the command palette, the fallback
+banner and the router pending component. CSS moved 26.5 → 26.6 kB, so splitting
+`app.tokens.css` out cost nothing.
+
+Do not read the chunk table for this. It showed the entry chunk growing 33 kB,
+which was `Shell.js` being folded into it — the all-chunk total moved 7.6 kB and
+the real cold load moved less again. `performance.getEntriesByType('resource')`
+and `encodedBodySize` is the number that matters; `content-length` is absent
+from `vite preview` responses, so summing response headers reports ~0.
+
+`CommandPalette` is `lazy()` for this reason: eager it cost 3.4 kB of every
+cold load for a panel most sessions never open.
+
+**`dist` and `dist-live` are the same bundle.** Compared asset by asset: 59
+files each, identical sizes but for 43 bytes in `queries.js`, which is the baked
+`VITE_CONTROL_URL` string. Nothing is compiled out for a configured deployment —
+the fixture is the fallback path, so it ships either way. One budget covers
+both; there is no separate live-build number to track.
+
+`e2e/weight.spec.ts` asserts the budget now rather than leaving it in a note —
+250 kB of code and 32 kB of CSS. The measurement is deterministic to a tenth of
+a kilobyte across runs, so those are tight on purpose. The CSS ceiling is what
+catches `app.css` being swapped back to Mantine's concatenated stylesheet:
+measured, that takes it from 26.6 kB to 39.6 kB.
+
+**The in-memory fixture stays in the eager graph.** `Shell` needs
+`statsQuery`/`meQuery`/`coverageQuery`, which pulls `queries.ts → api.ts →
+seed.ts`. The `queries.js` chunk is 27.5 kB on disk, which looks like an
+obvious thing to defer — but almost none of that is the fixture. Measured by
+gutting `seed.ts` to empty stubs and rebuilding: the whole fixture is worth
+**2.9 kB** of the cold load, because the seed data is generated at runtime by a
+PRNG rather than shipped. Not worth making `orFallback`'s failure path depend on
+a dynamic import, and doubly so given the fallback is what runs when the control
+plane is already unreachable.
+
+`app.css` is split: the Mantine import list lives there, everything Argus writes
+itself lives in `app.tokens.css`, and `app.monolith.css` is a reference variant
+built only by `e2e/cascade.spec.ts`. `ARGUS_CSS=monolith` swaps it in through a
+`resolve.alias` entry that must stay ahead of the general `~` one. Keep the two
+variants differing in exactly one thing — which Mantine stylesheets they pull in
+— or the check starts reporting our own divergence as a cascade fault.
+
 ## Where the workers are
 
 Four, all in `web/src/workers/`. Two of them own state rather than shipping it

@@ -57,6 +57,16 @@ export interface AssetQuery {
   health?: Asset['health'] | null
   credentialMode?: Asset['credentialMode'] | null
   hostKeyState?: Asset['hostKeyState'] | null
+  /**
+   * Agent liveness and whether the host can still be reached around Argus.
+   *
+   * Both exist so Coverage can hand a finding to the inventory: it counts hosts
+   * with no agent and hosts whose agent went quiet, and until these existed
+   * there was no way to ask "which ones?" — the two pages described the same
+   * fleet and neither could take you from one to the other.
+   */
+  agentState?: Asset['agentState'] | null
+  bypassPosture?: Asset['bypassPosture'] | null
 }
 
 /**
@@ -152,6 +162,8 @@ export const api = {
       if (q.health && a.health !== q.health) return false
       if (q.credentialMode && a.credentialMode !== q.credentialMode) return false
       if (q.hostKeyState && a.hostKeyState !== q.hostKeyState) return false
+      if (q.agentState && a.agentState !== q.agentState) return false
+      if (q.bypassPosture && a.bypassPosture !== q.bypassPosture) return false
       return true
     })
   },

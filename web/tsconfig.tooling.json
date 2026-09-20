@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Node's globals belong to exactly these files. See the note in
+    // tsconfig.json for what happens when they are in scope for `src` too.
+    "types": ["node"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // The Playwright stub and the reference-build server are plain JavaScript,
+    // executed by `node` directly. checkJs covers them; a syntax error in
+    // e2e/helpers.ts once passed typecheck untouched and surfaced only as
+    // Playwright collecting zero tests.
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["e2e", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+}

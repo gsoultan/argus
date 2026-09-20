@@ -259,7 +259,7 @@ function StatusBadge({ state }: { state: TerminalState }) {
   }
   if (state === 'live') {
     return (
-      <Badge size="xs" color="sky" leftSection={<Box w={6} h={6} className="rounded-full bg-sky-400 animate-pulse" />}>
+      <Badge size="xs" color="sky" leftSection={<Box w={6} h={6} className="rounded-full animate-pulse" style={{ background: 'var(--color-live)' }} />}>
         live · recording
       </Badge>
     )

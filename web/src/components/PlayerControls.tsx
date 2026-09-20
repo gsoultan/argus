@@ -72,7 +72,7 @@ export function PlayerControls({
       <Group gap="sm" wrap="nowrap">
         <ActionIcon
           variant="filled"
-          color="teal"
+          color="azure"
           radius="xl"
           size="lg"
           disabled={disabled}
@@ -117,7 +117,7 @@ export function PlayerControls({
           max={total || 1}
           step={0.1}
           label={(v) => clock(v)}
-          color="teal"
+          color="azure"
           size="sm"
           disabled={disabled}
           // Mantine renders the thumb as a div; without this it is the one

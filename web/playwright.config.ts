@@ -59,9 +59,19 @@ export default defineConfig({
       //
       // globalSetup is not the place for it either: Playwright starts its
       // webServers before globalSetup runs, so the preview would find no dist.
+      //
+      // The monolith build joins the same chain for the same reason, and its
+      // marker file is written last so preview-monolith.mjs can tell a finished
+      // build from a directory left behind by the previous run.
       command:
-        'VITE_CONTROL_URL= bunx vite build --logLevel error'
+        // Removed whole, not just emptied: preview-monolith.mjs treats the
+        // presence of the marker as proof the reference build belongs to this
+        // run, and that only holds if the previous run's output is gone first.
+        'rm -rf dist-monolith'
+        + ' && VITE_CONTROL_URL= bunx vite build --logLevel error'
         + ' && VITE_CONTROL_URL=/ bunx vite build --outDir dist-live --logLevel error'
+        + ' && ARGUS_CSS=monolith VITE_CONTROL_URL= bunx vite build --outDir dist-monolith --logLevel error'
+        + ' && touch dist-monolith/.build-complete'
         + ' && bunx vite preview --port 5510 --strictPort',
       url: 'http://localhost:5510',
       reuseExistingServer: !process.env.CI,
@@ -75,6 +85,15 @@ export default defineConfig({
       // for.
       command: 'node e2e/authstub.mjs',
       url: 'http://localhost:5511',
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+    },
+    {
+      // The reference build for cascade.spec.ts: same application, Mantine's
+      // concatenated stylesheet instead of the per-component list app.css
+      // maintains by hand. Waits for the build above rather than racing it.
+      command: 'node e2e/preview-monolith.mjs',
+      url: 'http://localhost:5512',
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
     },

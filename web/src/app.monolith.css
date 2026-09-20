@@ -1,0 +1,27 @@
+/* ---------------------------------------------------------------------------
+   The reference variant. NOT shipped.
+
+   app.css imports ~47 individual Mantine component stylesheets, which is 12 kB
+   gzipped smaller but puts the cascade order in a hand-maintained list. This
+   file imports Mantine's own concatenated stylesheet, which is in Mantine's own
+   order by construction.
+
+   e2e/cascade.spec.ts builds both and compares getComputedStyle property by
+   property across every route. That is the only thing that can catch either
+   failure this arrangement invites: a reordered import (a Card computing
+   `display: block` because it landed before Paper) or a component whose
+   stylesheet was never added at all (renders unstyled, compiles, type-checks,
+   passes every other test).
+
+   Built with ARGUS_CSS=monolith, which swaps this in for app.css — see
+   vite.config.ts. Keep the two blocks below identical to app.css.
+   --------------------------------------------------------------------------- */
+@layer theme, base, mantine, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@import '@mantine/core/styles.layer.css';
+
+@import './app.tokens.css';

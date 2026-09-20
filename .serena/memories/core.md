@@ -24,6 +24,37 @@ Read this file first, then only the memory a task actually needs.
 
 - **The console must never present fixture data as real.** `isLive()` exists for
   this. Any new surface that can show either has to say which it is showing.
+  The header badge in `web/src/components/Shell.tsx` is where that is stated
+  for the console as a whole — `Local fixture` in amber when no control plane is
+  configured, the control plane's own host when one has answered, and a refusal
+  to guess in between. It replaced a hard-coded `northwind-prod ·
+  ap-southeast-3` over a tooltip calling it the tenant and region, neither of
+  which exists anywhere in the domain. This matters more than a label usually
+  would because `live.orFallback` serves the fixture whenever the control plane
+  cannot be reached, so a console showing invented numbers is otherwise
+  indistinguishable from one showing a real fleet.
+
+  **It shows the host, and there is deliberately no configurable deployment
+  name.** Checked before deciding: the control plane has no identity to report —
+  no tenant, no region, no gateway registry, `gateway_policy` is a single row
+  and the only heartbeats are agents reporting their own hostname. Multi-gateway
+  is many gateways to one control plane, and the console talks to the control
+  plane. Same-origin is the supported shape because the session cookie depends
+  on it, so the browser's host *is* the control plane's address rather than a
+  stand-in for it, and a name from config would be weaker: it can be typoed,
+  copied between environments, or claimed by two deployments at once.
+
+  **And when a configured control plane stops answering, the shell says so at
+  the size of the problem**, not only in the corner. `FallbackBanner` in
+  `Shell.tsx` — full width, filled, naming the host, telling the operator not to
+  act on anything below. Prompted by actually looking at the rose badge
+  rendered: the corner said "not answering" while the page underneath announced
+  "13 hosts would not record a bypass", three agents gone silent and six live
+  sessions, every figure invented. A specific, alarming, actionable claim about
+  a fleet that is not yours outweighs a badge. Settings had carried an
+  equivalent for the *unconfigured* case for a while; the configured one is more
+  dangerous, because then the operator expects real data. `dataSource()` decides
+  once so the badge and the banner cannot disagree.
 - **A control that appears to be set must be set.** The Settings page shipped
   once with uncontrolled switches that silently reverted; that is the specific
   failure mode this product cannot have.

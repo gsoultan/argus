@@ -41,6 +41,24 @@ export function isConfigured(): boolean {
   return RAW_BASE !== ''
 }
 
+/**
+ * What this console is pointed at, for display in the header.
+ *
+ * Same-origin is the supported shape, so in the usual deployment this is the
+ * host the operator already typed — which is the point: it says *which*
+ * deployment they are looking at, verifiably, rather than a name someone
+ * configured a UI to claim.
+ */
+export function controlPlaneHost(): string {
+  if (!isConfigured()) return ''
+  if (RAW_BASE === '/') return window.location.host
+  try {
+    return new URL(BASE).host
+  } catch {
+    return BASE
+  }
+}
+
 export interface Identity {
   authenticated: boolean
   /**

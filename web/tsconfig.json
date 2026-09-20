@@ -23,5 +23,12 @@
     "resolveJsonModule": true,
     "paths": { "~/*": ["./src/*"] }
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+  // Application code only.
+  //
+  // The tooling program below needs @types/node, and TypeScript loads a types
+  // package whole: once anything references `node:http`, `process` and `Buffer`
+  // become globals for every file in that program. With e2e and the configs in
+  // here, `process.env.HOME` in a route typechecked clean — code that would be
+  // undefined in a browser. Two programs keeps Node's surface where Node runs.
+  "include": ["src"]
 }
