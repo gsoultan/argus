@@ -331,6 +331,23 @@ function Overview() {
                       by the gateway. Users never see them, but they are standing credentials —
                       move hosts to certificate auth where you can.
                     </Text>
+                    {/* The sentence above is an instruction, and until now there
+                        was nowhere to carry it out: the inventory had no filter
+                        for "not on certificate auth", so the only way to find
+                        these hosts was to read every row. */}
+                    {stats.standingCredentialAssets > 0 && (
+                      <ButtonLink
+                        size="compact-xs"
+                        variant="subtle"
+                        color="slate"
+                        mt={SP.snug}
+                        to="/assets"
+                        search={{ credential: 'standing' }}
+                        rightSection={<IconArrowRight size={12} />}
+                      >
+                        Show these hosts
+                      </ButtonLink>
+                    )}
                   </>
                 ) : (
                   <Skeleton height={46} radius="sm" />

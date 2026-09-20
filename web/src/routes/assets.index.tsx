@@ -11,7 +11,7 @@ import {
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { assetsQuery, groupsQuery } from '~/lib/queries'
-import type { Asset } from '~/types/domain'
+import type { Asset, CredentialMode } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
 
@@ -38,11 +38,27 @@ interface AssetSearch {
   hostKey?: Asset['hostKeyState'] | 'unverified'
   agent?: Asset['agentState']
   bypass?: Asset['bypassPosture']
+  /**
+   * `standing` is not a mode an asset has; it means "any mode but
+   * ca-certificate" -- the set the Overview's zero-standing-privilege card
+   * counts and then tells you to shrink.
+   */
+  credential?: CredentialMode | 'standing'
 }
 
 const HOST_KEY_STATES = ['pinned', 'unpinned', 'changed', 'unverified'] as const
 const AGENT_STATES = ['healthy', 'stale', 'absent'] as const
 const BYPASS_POSTURES = ['enforced', 'monitored', 'open'] as const
+const CREDENTIAL_MODES = [
+  'standing', 'ca-certificate', 'injected-key', 'injected-password',
+] as const
+
+const CREDENTIAL_LABEL: Record<(typeof CREDENTIAL_MODES)[number], string> = {
+  standing: 'Standing credential (any)',
+  'ca-certificate': 'Certificate, no standing secret',
+  'injected-key': 'Injected key',
+  'injected-password': 'Injected password',
+}
 
 const oneOf = <T extends string>(allowed: readonly T[], v: unknown): T | undefined =>
   typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : undefined
@@ -60,6 +76,7 @@ export const Route = createFileRoute('/assets/')({
     hostKey: oneOf(HOST_KEY_STATES, search.hostKey),
     agent: oneOf(AGENT_STATES, search.agent),
     bypass: oneOf(BYPASS_POSTURES, search.bypass),
+    credential: oneOf(CREDENTIAL_MODES, search.credential),
   }),
   loader: ({ context }) => context.queryClient.ensureQueryData(assetsQuery({})),
 })
@@ -102,11 +119,13 @@ function Assets() {
       hostKeyState: search.hostKey ?? null,
       agentState: search.agent ?? null,
       bypassPosture: search.bypass ?? null,
+      credentialMode: search.credential ?? null,
     }),
   )
 
   const filtered = Boolean(
-    text.trim() || search.group || search.hostKey || search.agent || search.bypass,
+    text.trim() || search.group || search.hostKey || search.agent || search.bypass ||
+      search.credential,
   )
 
   const clear = () => {
@@ -190,6 +209,17 @@ function Assets() {
             value={search.bypass ?? null}
             onChange={(v) => setSearch({ bypass: (v as Asset['bypassPosture']) ?? undefined })}
             data={BYPASS_POSTURES.map((s) => ({ value: s, label: BYPASS_LABEL[s] }))}
+          />
+          {/* The Overview counts the assets still on a standing credential and
+              says to move them; without this there was nowhere to go and see
+              which ones. */}
+          <Select
+            w={240}
+            placeholder="Any credential mode"
+            clearable
+            value={search.credential ?? null}
+            onChange={(v) => setSearch({ credential: (v as AssetSearch['credential']) ?? undefined })}
+            data={CREDENTIAL_MODES.map((m) => ({ value: m, label: CREDENTIAL_LABEL[m] }))}
           />
           {filtered && (
             <Button

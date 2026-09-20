@@ -100,15 +100,18 @@ const asset = (/** @type {Record<string, unknown>} */ o) => ({
 })
 
 const ASSETS = [
-  asset({ hostname: 'open-absent-1', agentState: 'absent', bypassPosture: 'open' }),
-  asset({ hostname: 'open-absent-2', agentState: 'absent', bypassPosture: 'open' }),
+  asset({ hostname: 'open-absent-1', agentState: 'absent', bypassPosture: 'open',
+    credentialMode: 'injected-key' }),
+  asset({ hostname: 'open-absent-2', agentState: 'absent', bypassPosture: 'open',
+    credentialMode: 'injected-password' }),
   asset({ hostname: 'open-stale-1', agentState: 'stale', bypassPosture: 'open',
     hostKeyState: 'unpinned' }),
   // Two different not-pinned states. A single-state filter can select neither
   // set the "Unverified hosts" tile counts, which is why `unverified` exists.
   asset({ hostname: 'monitored-absent', agentState: 'absent', bypassPosture: 'monitored',
     hostKeyState: 'changed' }),
-  asset({ hostname: 'monitored-stale', agentState: 'stale', bypassPosture: 'monitored' }),
+  asset({ hostname: 'monitored-stale', agentState: 'stale', bypassPosture: 'monitored',
+    credentialMode: 'injected-key' }),
   asset({ hostname: 'closed-healthy', agentState: 'healthy', bypassPosture: 'enforced' }),
   asset({ hostname: 'win-01', protocol: 'rdp', port: 3389, agentState: 'absent',
     bypassPosture: 'monitored', os: 'Windows Server 2022' }),
@@ -183,7 +186,7 @@ const STATS = {
   sessionsToday: countSessions(within24h),
   requestsPending: REQUESTS.filter((r) => r.state === 'pending').length,
   credentialsOverdue: 0,
-  standingCredentialAssets: 0,
+  standingCredentialAssets: count((a) => a.credentialMode !== 'ca-certificate'),
   sessionsDirectToday: countSessions((s) => s.origin === 'direct' && within24h(s)),
 }
 

@@ -170,6 +170,12 @@ test.describe('the data-source badge', () => {
  * from it, so no two of these numbers agree by accident.
  */
 test.describe('coverage links land on exactly what they counted', () => {
+  // These navigate more than once, so a service worker claims the page on the
+  // second load and re-issues its requests -- invisibly to page.route, which
+  // one test here relies on to stub a coverage payload. Scoped to this block so
+  // the sign-in and reload tests above still exercise the worker.
+  test.use({ serviceWorkers: 'block' })
+
   const claim = async (page: import('@playwright/test').Page, heading: RegExp) =>
     Number(((await page.getByText(heading).first().textContent()) ?? '').match(/\d+/)?.[0])
 
@@ -339,6 +345,75 @@ test.describe('coverage links land on exactly what they counted', () => {
       ).toHaveCount(claimed)
     })
   }
+
+  /**
+   * A tile's colour has to come from the number on it.
+   *
+   * "Linux assets with an agent" showed `assetsWithAgent / sshAssets` and took
+   * its tone from `assetsUnmonitored` -- a different set. A host with no agent
+   * but a `monitored` posture is counted by one and not the other, so a fleet
+   * could show "1 / 6" in the calm colour while five Linux assets were
+   * recording nothing at all.
+   *
+   * The coverage payload is stubbed per-test rather than shaped in authstub,
+   * because the case that was broken needs `assetsUnmonitored === 0` and the
+   * bypass alert above needs it above zero.
+   */
+  test('a coverage tile takes its colour from its own figure', async ({ page }) => {
+    // Registered before the first load, not after signing in: the shell reads
+    // coverage on mount for its nav badge, so by the time /coverage renders the
+    // answer is already in the query cache and no second request is made.
+    await page.route('**/api/v1/coverage', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          // Deliberately a shape the stub fleet cannot produce, so a failure to
+          // intercept shows up as a wrong figure rather than passing by luck.
+          assets: 9, assetsWithAgent: 2, assetsAgentStale: 0,
+          // Nothing can be reached around Argus, and seven Linux assets still
+          // have no agent. The old rule called that calm.
+          assetsUnmonitored: 0,
+          unreviewedHosts: 0, ignoredHosts: 0,
+          sshAssets: 9, rdpAssets: 0, rdpAwaitingAgent: 0,
+        }),
+      }),
+    )
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/coverage')
+
+    const tile = page.locator('.argus-stat', { hasText: 'LINUX ASSETS WITH AN AGENT' })
+    await expect(tile, 'the coverage payload was not intercepted').toContainText('2 / 9')
+    await expect(
+      tile,
+      'seven Linux assets have no agent, so this tile must not read as calm',
+    ).toHaveAttribute('data-tone', 'warn')
+  })
+
+  /**
+   * "Move hosts to certificate auth where you can" is an instruction, and
+   * until the filter existed there was nowhere to carry it out -- the only way
+   * to find the hosts still on a vaulted secret was to read every row.
+   *
+   * The set spans both injected modes, so no single-mode filter selects it.
+   */
+  test('the standing-credential card lands on the hosts it counted', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+
+    const card = page.locator('.mantine-Card-root', { hasText: 'Zero standing privilege' })
+    await expect(card).toContainText(/The remaining \d+ use vaulted keys/)
+    const counted = Number(((await card.innerText()).match(/The remaining (\d+)/) ?? [])[1])
+    expect(counted, 'the stub fleet should have hosts on a standing credential').toBeGreaterThan(0)
+
+    await card.getByRole('link', { name: /show these hosts/i }).click()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
+    await expect(
+      page.locator('tbody tr[role="link"]'),
+      `The card counted ${counted} hosts; its link selects a different set.`,
+    ).toHaveCount(counted)
+  })
 
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')

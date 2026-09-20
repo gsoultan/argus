@@ -115,7 +115,13 @@ function CoverageView() {
             <Stat
               label="Linux assets with an agent"
               value={cov ? `${cov.assetsWithAgent} / ${cov.sshAssets}` : undefined}
-              tone={cov && cov.assetsUnmonitored > 0 ? 'warn' : 'ok'}
+              // From its own figure. This took its colour from
+              // `assetsUnmonitored`, a different set: a host with no agent but
+              // a `monitored` posture is counted by one and not the other, so
+              // a fleet could show "1 / 6" in green while five Linux assets
+              // recorded nothing. The memory already warns that "has no agent"
+              // and "can be reached around Argus" are not the same question.
+              tone={cov && cov.assetsWithAgent < cov.sshAssets ? 'warn' : 'ok'}
               sub="An asset with no agent records nothing when someone connects to port 22 directly."
             />
           </Grid.Col>
