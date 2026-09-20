@@ -545,6 +545,10 @@ export function Stat({
           }
         : {})}
       className={`argus-stat transition-colors ${interactive ? 'cursor-pointer argus-stat-link' : ''}`}
+      // The tone is otherwise only an inline border colour, and a tile taking
+      // its colour from a set other than the one it displays is exactly the
+      // kind of thing worth asserting -- Coverage did it for a while.
+      data-tone={tone}
       style={warn ? { borderColor: 'var(--color-pending)' } : undefined}
     >
       <Group justify="space-between" wrap="nowrap" align="flex-start" gap="sm">

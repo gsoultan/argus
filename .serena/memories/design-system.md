@@ -337,3 +337,43 @@ is outside the window.
 
 When adding a counter that links anywhere, add a row to `TILES` in
 `e2e/signin.spec.ts`.
+
+## A tile's colour comes from the number on it
+
+"Linux assets with an agent" on Coverage showed `assetsWithAgent / sshAssets`
+and took its `tone` from `assetsUnmonitored` -- a different set. A host with no
+agent but a `monitored` posture is counted by one and not the other, so the tile
+could read "1 / 6" in the calm colour while five Linux assets recorded nothing.
+
+`Stat` now carries `data-tone`, so this is assertable. Every other tone in the
+console already derived from its own value; that one did not.
+
+## An instruction needs somewhere to carry it out
+
+The Overview's zero-standing-privilege card says "move hosts to certificate auth
+where you can" over a count, and the inventory had no filter for "not on
+certificate auth" -- so the only way to find those hosts was to read every row.
+`credential=standing` now selects exactly that set, the same shape as
+`hostKey=unverified`.
+
+**Two pseudo-values exist for this reason and both are deliberate**: a count of
+"everything except one state" can never be selected by a filter that matches one
+exact state.
+
+Still computed and rendered nowhere: `assetsUnreachable` and
+`credentialsOverdue`. `rotationOverdue` is flagged per row on the inventory with
+a warning glyph but cannot be filtered for, so those rows are visible and not
+findable. Not a broken promise -- nothing instructs you to act on them -- but
+the next thing in this family if it ever is.
+
+## Stubbing an API response in an e2e test
+
+`page.route` must be registered **before the first navigation**, not before the
+page that reads the data: the shell fetches coverage on mount for its nav badge,
+so by the time `/coverage` renders the answer is already in the query cache.
+
+And the describe needs `test.use({ serviceWorkers: 'block' })`. Any test that
+navigates twice gets a service worker claiming the page on the second load,
+after which it re-issues requests invisibly to `page.route` -- the interception
+silently does nothing and the assertion passes against real data. Make the
+stubbed payload a shape the fixture cannot produce, so that failure is loud.

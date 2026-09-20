@@ -55,7 +55,11 @@ export interface AssetQuery {
   search?: string
   groupId?: string | null
   health?: Asset['health'] | null
-  credentialMode?: Asset['credentialMode'] | null
+  /**
+   * `standing` means "any mode but ca-certificate" -- the set the Overview
+   * counts and asks you to shrink. It is not a mode an asset can be in.
+   */
+  credentialMode?: Asset['credentialMode'] | 'standing' | null
   /**
    * `unverified` means "any state but pinned" -- the set the Overview's
    * "Unverified hosts" tile counts. It is not a state an asset can be in.
@@ -167,7 +171,9 @@ export const api = {
       }
       if (q.groupId && a.groupId !== q.groupId) return false
       if (q.health && a.health !== q.health) return false
-      if (q.credentialMode && a.credentialMode !== q.credentialMode) return false
+      if (q.credentialMode === 'standing') {
+        if (a.credentialMode === 'ca-certificate') return false
+      } else if (q.credentialMode && a.credentialMode !== q.credentialMode) return false
       if (q.hostKeyState === 'unverified') {
         if (a.hostKeyState === 'pinned') return false
       } else if (q.hostKeyState && a.hostKeyState !== q.hostKeyState) return false
