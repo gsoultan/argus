@@ -68,7 +68,39 @@ export function bytes(n: number): string {
 
 /* ── Status badges ───────────────────────────────────────────────────────── */
 
-export function SessionStateBadge({ state }: { state: SessionState }) {
+/**
+ * `silent` is the state the console could not previously express.
+ *
+ * A gateway killed rather than drained never reports the end, so the session
+ * stays `active` forever: fifteen in the dev control plane, the oldest live for
+ * nineteen days by this badge's reckoning. Gateways now re-report what they
+ * hold once a minute, and past three intervals of silence this stops claiming
+ * the session is running.
+ *
+ * Amber, not rose. An agent going quiet is evidence someone with root killed
+ * it; a gateway going quiet is usually a restart. The honest reading is "we do
+ * not know", which is what amber already means everywhere else here.
+ */
+export function SessionStateBadge({
+  state,
+  silent,
+  lastReportedAt,
+}: {
+  state: SessionState
+  silent?: boolean
+  lastReportedAt?: string | null
+}) {
+  if (state === 'active' && silent) {
+    return (
+      <Tooltip
+        label={`Reported active, but nothing has spoken for it since ${relTime(lastReportedAt ?? null)}. Its gateway most likely went away without reporting the end — the session is not necessarily still running.`}
+        multiline
+        maw={320}
+      >
+        <Badge color="amber" leftSection={<IconAlertTriangle size={11} />}>unknown</Badge>
+      </Tooltip>
+    )
+  }
   if (state === 'active') {
     return (
       <Badge

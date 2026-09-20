@@ -132,6 +132,40 @@ function Overview() {
           </Alert>
         )}
 
+        {/* Amber, below the rose alerts: nobody is being attacked, but the
+            console has lost track of a session and the number above it is
+            smaller than it looks. Fifteen of these accumulated unnoticed in
+            dev, the oldest holding for nineteen days, because every one of
+            them was being counted as live. */}
+        {(stats?.sessionsSilent ?? 0) > 0 && (
+          <Alert
+            color="amber"
+            icon={<IconAlertTriangle size={17} />}
+            title={`${stats!.sessionsSilent} session${stats!.sessionsSilent > 1 ? 's' : ''} unaccounted for`}
+          >
+            <Group justify="space-between" align="flex-start" gap="md">
+              <Text size={FS.body} lh={1.5} maw={720} style={{ flex: '1 1 300px', minWidth: 0 }}>
+                {stats!.sessionsSilent > 1 ? 'These are' : 'This is'} recorded as active, but
+                no gateway has reported {stats!.sessionsSilent > 1 ? 'them' : 'it'} in minutes
+                — most likely a gateway was killed rather than drained, so the end was never
+                reported. Argus cannot tell that apart from a session still running somewhere
+                it has lost contact with, so {stats!.sessionsSilent > 1 ? 'they are' : 'it is'}
+                {' '}no longer counted as live.
+              </Text>
+              <ButtonLink
+                size="compact-xs"
+                variant="light"
+                color="amber"
+                to="/sessions"
+                search={{ show: 'silent' }}
+                rightSection={<IconArrowRight size={12} />}
+              >
+                Review sessions
+              </ButtonLink>
+            </Group>
+          </Alert>
+        )}
+
         <Grid gap="sm">
           <Grid.Col span={{ base: 6, md: 3 }}>
             <Stat
