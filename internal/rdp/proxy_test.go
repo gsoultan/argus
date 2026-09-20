@@ -545,3 +545,51 @@ func (b *brokenFrameWriter) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// TestHandshakeRecordsHowMuchOfTheCookieArrived covers the one fact that
+// decides whether this path can ever identify a person.
+//
+// Giving RDP a real requester means carrying a short one-time secret in the
+// mstshash cookie beside the target, and whether that fits depends on what the
+// client does to the field. Nothing in this tree knew the limit and nothing
+// logged enough to find out: a truncated cookie failed to parse and took its
+// own evidence with it. Both paths record the length now, so one connection
+// from a real mstsc answers it.
+func TestHandshakeRecordsHowMuchOfTheCookieArrived(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cookie string
+		want   int
+	}{
+		{"a cookie that parses", "ops:win-01", 10},
+		// What truncation looks like from here: the separator never arrived,
+		// so the parse fails and the length is the only evidence left.
+		{"a cookie cut short", "ops-win-0", 9},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cookieLen(tc.cookie); got != tc.want {
+				t.Errorf("cookieLen(%q) = %d, want %d", tc.cookie, got, tc.want)
+			}
+		})
+	}
+
+	// And it reaches the log on the path that refuses, which is the one
+	// carrying the evidence when a client truncates.
+	//
+	// pipeConns, not net.Pipe: Refuse writes a failure response, and an
+	// unbuffered pipe with nobody reading blocks there until the package times
+	// out -- which is how the first version of this test failed.
+	var buf strings.Builder
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	client, server := pipeConns(t)
+	go func() {
+		_, _ = client.Write(connectionRequest("justausername", ProtocolHybrid, true))
+	}()
+	if _, _, err := Handshake(server, log); err == nil {
+		t.Fatal("Handshake accepted a cookie with no target")
+	}
+	if out := buf.String(); !strings.Contains(out, "cookie_len=13") {
+		t.Errorf("the refusal did not record the cookie length; log was:\n%s", out)
+	}
+}

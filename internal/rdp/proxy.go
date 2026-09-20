@@ -67,6 +67,27 @@ func ParseCookie(cookie string) (Request, error) {
 	return Request{Principal: principal, Target: target}, nil
 }
 
+// cookieLen reports how many bytes the client actually put in the mstshash
+// field.
+//
+// This exists to answer one open question. Giving this path a real identity
+// means carrying a short one-time secret in the cookie alongside the target,
+// and whether that fits depends entirely on what mstsc does to the field: an
+// 80-bit code is around sixteen characters before the principal and host are
+// added, so a client that truncates aggressively rules the design out. Nothing
+// in this tree knew the limit, and nothing logged enough to find out -- a
+// truncated cookie simply failed to parse and took its evidence with it.
+//
+// To take the measurement: connect with mstsc using a deliberately long
+// username and read cookie_len from the gateway log. What was typed against
+// what arrived is the answer.
+//
+// The length only, never the value. Today the cookie is `principal:host` and
+// carries nothing secret, but the whole point of the design above is to put a
+// credential in it, and a log line that survives into that world would be
+// logging the credential.
+func cookieLen(cookie string) int { return len(cookie) }
+
 // CertFingerprint renders an X.509 certificate the way host pins are stored.
 //
 // The same SHA256:base64 shape OpenSSH uses for keys, so one trust store holds
@@ -192,6 +213,13 @@ func Handshake(client net.Conn, log *slog.Logger) (Request, uint32, error) {
 	if err != nil {
 		// The connection is well-formed but says nothing about where it wants
 		// to go. Answering with a failure lets the client show the reason.
+		//
+		// The length is logged because a cookie that will not parse is the
+		// shape a truncated one takes -- see the note on cookieLen below.
+		if log != nil {
+			log.Warn("rdp connection request could not be parsed",
+				"cookie_len", cookieLen(info.Cookie), "error", err)
+		}
 		Refuse(client, FailInconsistentFlags)
 		return Request{}, 0, err
 	}
@@ -199,6 +227,7 @@ func Handshake(client net.Conn, log *slog.Logger) (Request, uint32, error) {
 	if log != nil {
 		log.Info("rdp connection request",
 			"principal", req.Principal, "target", req.Target,
+			"cookie_len", cookieLen(info.Cookie),
 			"protocol", ProtocolName(protocol),
 			"offered", fmt.Sprintf("%#08x", info.RequestedProtocols))
 	}
