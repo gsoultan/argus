@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { screen } from '@testing-library/react'
-import { SessionStateBadge } from '~/components/primitives'
+import { SessionDuration, SessionStateBadge } from '~/components/primitives'
 import { renderWithProviders as ui } from '~/test/render'
 import { api } from '~/lib/api'
+import { EPOCH } from '~/lib/seed'
 
 /**
  * The console used to read `state === 'active'` as "running now".
@@ -64,5 +65,67 @@ describe('the fleet counters', () => {
     // The headline number is the one that was wrong, so assert it is smaller
     // rather than only that the two agree.
     expect(stats.sessionsActive).toBeLessThan(active.length)
+  })
+})
+
+/**
+ * `duration(startedAt, endedAt)` counts to now when the end time is null, which
+ * is right for a session in progress and wrong for every other reason that
+ * field can be empty. Two of those are in the dev control plane: 15 sessions
+ * whose gateway went away, and 26 `terminated` ones stored before the end time
+ * was written outside the seal branch. Every one of them rendered as still
+ * running -- the oldest at 310 hours -- on the Overview and in two tables.
+ */
+describe('how long a session ran', () => {
+  // Against EPOCH, not Date.now(): with no control plane configured the
+  // console measures relative times from the fixture's frozen clock, which is
+  // what these components will be reading.
+  const at = (minsAgo: number) => new Date(EPOCH - minsAgo * 60_000).toISOString()
+  const base = {
+    startedAt: at(90),
+    endedAt: null as string | null,
+    state: 'active' as const,
+    silent: false,
+    lastReportedAt: at(0),
+  }
+
+  it('counts to now only while the session is actually running', () => {
+    ui(<SessionDuration session={base} />)
+    expect(screen.getByText('1h 30m')).toBeInTheDocument()
+  })
+
+  it('stops at the last report when nothing is speaking for the session', () => {
+    ui(
+      <SessionDuration
+        session={{
+          ...base,
+          silent: true,
+          lastReportedAt: at(30),
+        }}
+      />,
+    )
+    // An hour of the ninety minutes is unaccounted for, so it is not claimed.
+    expect(screen.getByText('1h 0m+')).toBeInTheDocument()
+  })
+
+  it('gives no figure at all for a session that ended at an unknown time', () => {
+    ui(<SessionDuration session={{ ...base, state: 'terminated', endedAt: null }} />)
+    expect(screen.getByText('—')).toBeInTheDocument()
+    // The bug this replaces: a terminated session rendered as 310 hours of
+    // uptime because the clock ran to now.
+    expect(screen.queryByText(/\dh/)).not.toBeInTheDocument()
+  })
+
+  it('uses the recorded end time when there is one', () => {
+    ui(
+      <SessionDuration
+        session={{
+          ...base,
+          state: 'closed',
+          endedAt: at(78),
+        }}
+      />,
+    )
+    expect(screen.getByText('12m 0s')).toBeInTheDocument()
   })
 })

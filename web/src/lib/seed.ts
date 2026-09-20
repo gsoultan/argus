@@ -218,6 +218,11 @@ function makeSessions(): Session[] {
   // had fifteen of them and showed every one as live.
   push('active', 27_400, null, 1_450)
   push('active', 4_100, null, 260)
+  // And one that ended at a time nobody recorded. `endedAt` used to be written
+  // inside the seal branch, so a terminated session with no recorder kept a
+  // null -- 26 of them in dev, every one rendering as still running. They are
+  // deliberately not back-filled: stamping them now() would invent a time.
+  push('terminated', 18_600, null)
   for (let i = 0; i < 60; i++) {
     const start = between(100, 4300)
     push(rnd() > 0.96 ? 'terminated' : 'closed', start, between(2, 90))

@@ -8,7 +8,7 @@ import {
 } from '@tabler/icons-react'
 import type {
   AgentState, AssetHealth, BypassPosture, CredentialMode, HostKeyState,
-  RecordingFidelity, RequestState, RiskFlag, SessionOrigin, SessionState,
+  RecordingFidelity, RequestState, RiskFlag, Session, SessionOrigin, SessionState,
 } from '~/types/domain'
 import { FS } from '~/theme'
 import { rem } from '@mantine/core'
@@ -64,6 +64,61 @@ export function bytes(n: number): string {
   if (n < 1024) return `${n} B`
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1024 ** 2).toFixed(1)} MB`
+}
+
+/**
+ * How long a session ran — for all four things that can be true of one.
+ *
+ * `duration(startedAt, endedAt)` counts to now when the end time is null, which
+ * is right for a session in progress and wrong for every other reason the field
+ * can be empty. Two of those exist in the dev control plane right now: 15
+ * sessions whose gateway went away without reporting the end, and 26
+ * `terminated` ones stored before the end time was written outside the seal
+ * branch. Both rendered as still running, the oldest at 310 hours, on the
+ * Overview and in two tables.
+ *
+ * A terminal session with no end time gets no number at all. We know it
+ * stopped and we do not know when, and "—" with the reason in a tooltip says
+ * that; any figure here would be invented. Those rows are deliberately not
+ * back-filled — stamping them `now()` would record a time nobody observed.
+ */
+export function SessionDuration({
+  session,
+  dimmed = true,
+}: {
+  session: Pick<Session, 'startedAt' | 'endedAt' | 'state' | 'silent' | 'lastReportedAt'>
+  dimmed?: boolean
+}) {
+  const text = (v: string) => (
+    <Text size="xs" c={dimmed ? 'dimmed' : undefined}>{v}</Text>
+  )
+
+  if (session.endedAt) return text(duration(session.startedAt, session.endedAt))
+
+  if (session.state !== 'active') {
+    return (
+      <Tooltip
+        label="This session ended, but no end time was ever recorded for it — so how long it ran is not known. Counting to now would invent a figure."
+        multiline
+        maw={300}
+      >
+        {text('—')}
+      </Tooltip>
+    )
+  }
+
+  // Active but unreported: the clock stops at the last report, because
+  // everything after it is time Argus cannot account for rather than time the
+  // session was known to be running.
+  if (session.silent && session.lastReportedAt) {
+    return (
+      <Tooltip label={`Running when last reported, ${relTime(session.lastReportedAt)}. Anything since is unaccounted for.`}>
+        {text(`${duration(session.startedAt, session.lastReportedAt)}+`)}
+      </Tooltip>
+    )
+  }
+
+  return text(duration(session.startedAt, null))
 }
 
 /* ── Status badges ───────────────────────────────────────────────────────── */

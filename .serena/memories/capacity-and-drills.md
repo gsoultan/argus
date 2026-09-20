@@ -169,9 +169,28 @@ plane is exactly when it would be broken. It is applied in Go rather than in the
 `ON CONFLICT` clause so it covers the first report too, which is an INSERT.
 
 **The 41 existing bad rows are left alone.** We do not know when those sessions
-ended, and stamping them `now()` would invent a time rather than record one. The
-15 stuck in `active` are a separate question -- nothing reaps a session whose
-gateway died -- and that one is still open.
+ended, and stamping them `now()` would invent a time rather than record one.
+
+**Closed 2026-09-20.** The 15 stuck in `active` were the second half of this,
+and nothing can reap them -- see the session-liveness section in
+`shutdown-and-evidence.md` for why, and for what was built instead. The console
+no longer counts them as live.
+
+**The rows are still there, and the console now renders them honestly.** A
+session with no end time can be any of three things and only one of them is
+"running": `SessionDuration` in `web/src/components/primitives.tsx` is the single
+place that decides. A terminal session with no end time gets no figure at all --
+"—" with the reason in a tooltip -- because we know it stopped and not when.
+Before that, `duration(startedAt, null)` counted to now at every call site, so
+the 26 terminated rows rendered as up to 310 hours of uptime on the Overview, the
+sessions list and the asset detail.
+
+The Overview's "Live sessions" card had a second, independent version of the
+same overstatement: it fetches `state = 'active'` and badged the whole count, so
+it said 17 while the Stat tile two rows above said 2. It now filters on
+`state === 'active' && !silent` explicitly rather than trusting the query string
+to have narrowed it -- splitting a state filter across server and client is what
+produced the disagreement.
 
 **Why it matters beyond tidiness.** `fidelityUnsupported` in
 `internal/control/api.go` returns false when `EndedAt == nil`, on the reasonable

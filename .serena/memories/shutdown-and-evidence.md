@@ -146,6 +146,55 @@ Six of eight switches were enforced. The two that were not:
 
 **Check any new policy toggle has a reader before it has a switch.**
 
+## Session liveness: why silence is reported, not reaped
+
+Fifteen sessions in the dev control plane were `active` from early September to
+2026-09-20, the oldest for nineteen days. A gateway killed rather than drained
+never reports the end, so the row keeps the state it was born with, and the
+console counted every one as running.
+
+**Reaping is not buildable and it was checked before choosing.** A gateway
+carries no identity the control plane could attribute orphans to — `reportedBy`
+is the literal string `"gateway"`. There is no enforced maximum session
+duration: `MaxDurationMinutes` caps a *grant*, `session_ttl` is the console
+login. So age alone cannot separate a dead session from a long-running one, and
+inventing a `silent` session state would break every filter and the audit
+semantics.
+
+So `sessions.last_reported_at` (migration 013) records when anything last spoke
+for a session, gateways re-report what they hold every `LivenessInterval`
+(1 min), and `control.SessionSilenceThreshold` (3 min) is where the control
+plane stops claiming the session is live. The two constants are a protocol
+between separate binaries, not a shared symbol.
+
+**There are three registries that can report a session `active`**, and a
+keepalive must walk all of them: `Server.sessions` (SSH and browser terminals),
+`Server.rdpWeb` (browser desktops), `RDPServer.sessions` (the RDP proxy).
+Walking only the first — which is what the first draft did — marks a desktop
+session unknown three minutes in while somebody is still looking at it. That
+does not degrade the signal, it inverts it.
+`TestTheKeepaliveCoversEveryKindOfSession` is the guard.
+
+Deregistration happens **before** the closing report on all three paths
+(`server.go`, `webssh.go`, `rdp.go`, `rdpweb.go`), which is what stops a
+keepalive landing after a close and taking a row back to `active` while its end
+time stands. Preserve that ordering.
+
+**No index on `last_reported_at`.** A partial index `WHERE state = 'active'`
+was tried; `EXPLAIN` showed the planner taking `sessions_state_idx` instead.
+The active set is bounded by concurrency rather than history, so narrowing on
+`state` already lands on a handful of rows, while every keepalive would have
+paid to maintain the index.
+
+**The console does not withhold controls on a silent session.** Watch and
+Terminate stay. It has just finished admitting it does not know whether the
+session is running, and removing them decides for the operator on exactly that
+missing information — besides which a new control plane reading gateways too
+old to report liveness sees every live session as silent, and would disarm all
+of them for the length of the upgrade. The terminate audit entry records the
+*authorisation*, not the outcome, deliberately: "an operator who tried to stop a
+session and could not is a more urgent finding than one who succeeded."
+
 ## Environment hazard on this machine
 
 `panmail-dev-postgres` also publishes host port **5433**, colliding with

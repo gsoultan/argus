@@ -288,3 +288,27 @@ Styles arrive asynchronously — stylesheet, then web fonts, then whatever React
 mounts last — and this compares widths and heights. A fixed settle caught a
 table scroll container at the browser's default 16px on WebKit and called it a
 cascade fault. A genuine difference is stable and still fails.
+
+## One component owns "how long did this run"
+
+`SessionDuration` in `web/src/components/primitives.tsx`. Four call sites used
+to spell it three different ways, and one of them hardcoded
+`duration(s.startedAt, null)` on the assumption its list was live.
+
+`duration(from, to)` counts to **now** when `to` is null, which is correct for a
+session in progress and wrong for every other reason that field is empty. Two of
+those exist in real data: a session whose gateway went away without reporting the
+end, and a terminal session stored before the end time was written outside the
+seal branch. Both rendered as still running, the oldest at 310 hours.
+
+The four cases, and the component is the only place that knows them:
+
+| State | Renders |
+| :--- | :--- |
+| ended, end time recorded | the real figure |
+| ended, no end time | `—` plus a tooltip; any number would be invented |
+| active, reported recently | counts to now |
+| active, silent | capped at the last report, suffixed `+` |
+
+**If you render a session duration, use the component.** A bare `duration()` call
+against `endedAt` is the bug, not the shortcut.

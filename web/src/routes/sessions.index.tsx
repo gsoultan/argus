@@ -6,8 +6,8 @@ import { IconPlayerPlay, IconSearch, IconTerminal2 } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import {
-  FidelityBadge, Mono, OriginBadge, RiskFlags, SessionStateBadge, Target, absTime,
-  bytes, duration, relTime, rowNav,
+  FidelityBadge, Mono, OriginBadge, RiskFlags, SessionDuration, SessionStateBadge, Target,
+  absTime, bytes, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { sessionsQuery } from '~/lib/queries'
@@ -172,16 +172,7 @@ function Sessions() {
                   <Text size="xs" c="dimmed">{relTime(s.startedAt)}</Text>
                 </Tooltip>
               </Table.Td>
-              <Table.Td>
-                {/* A silent session's clock stops at its last report. Running
-                    it to now would say a gateway nobody can find has been
-                    holding a session for nineteen days. */}
-                <Text size="xs" c="dimmed">
-                  {s.silent
-                    ? `${duration(s.startedAt, s.lastReportedAt)}+`
-                    : duration(s.startedAt, s.endedAt)}
-                </Text>
-              </Table.Td>
+              <Table.Td><SessionDuration session={s} /></Table.Td>
               <Table.Td>
                 <Group gap={SP.snug} wrap="nowrap">
                   <FidelityBadge fidelity={s.fidelity} />
