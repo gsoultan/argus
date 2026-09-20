@@ -415,6 +415,42 @@ test.describe('coverage links land on exactly what they counted', () => {
     ).toHaveCount(counted)
   })
 
+  /**
+   * The console must never present fixture data as real, and the replay player
+   * was doing exactly that.
+   *
+   * `buildCast` writes a scripted session -- `systemctl status
+   * payments-worker` and invented output -- which is the right thing to show in
+   * the demo build and a fabrication anywhere else. The fetch helper answered
+   * `null` for every failure, so the page could not tell "there is no control
+   * plane to ask" from "one answered and said the artefact is not there", and
+   * fell back to the fiction in both cases. 18 sessions in the dev control
+   * plane are sealed, carry real recorded bytes, and have an artefact still on
+   * the gateway that produced them: every one of them replayed as a story.
+   */
+  test('a recording the control plane cannot serve is not replaced by a fiction', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/sessions')
+
+    await page.locator('tbody tr[role="link"]').first().click()
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/)
+
+    await expect(
+      page.getByText('This recording is not available to replay'),
+    ).toBeVisible()
+    // The control plane's reason, carried through rather than flattened into a
+    // generic failure: it decides whether the operator waits for a retry or
+    // goes and does something.
+    await expect(page.getByText(/exists only on the host that produced it/)).toBeVisible()
+
+    await expect(
+      page.getByText(/systemctl status payments-worker/),
+      'the generated demo recording was shown in place of the real one',
+    ).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /export \.cast/i })).toBeDisabled()
+  })
+
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')
     await signIn(page)

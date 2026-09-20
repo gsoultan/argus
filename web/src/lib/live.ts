@@ -366,6 +366,18 @@ export async function terminateRDPSession(
 }
 
 /** Sessions the gateway currently has open, as opposed to what it last reported. */
+/**
+ * What came back when the console asked for a session's recording.
+ *
+ * `unavailable` carries the control plane's own reason so the page can repeat
+ * it. A recording that is sealed but still on the gateway that produced it is
+ * a different situation from a storage outage, and the operator needs to know
+ * which -- one is waiting on a retry, the other on somebody.
+ */
+export type RecordingResult =
+  | { kind: 'ok'; cast: string; verified: string }
+  | { kind: 'unavailable'; reason: string }
+
 export interface LiveSession {
   id: string
   userEmail: string
@@ -550,13 +562,45 @@ export const live = {
    * than assuming intact, because a recording that fails verification is the
    * single most important thing an auditor can be told about it.
    */
-  async recording(id: string): Promise<{ cast: string; verified: string } | null> {
+  /**
+   * `null` means *no control plane is configured* and nothing else.
+   *
+   * That distinction is the whole point of the return type. This used to
+   * answer `null` for every failure, and the caller could not tell "there is
+   * no server to ask" from "the server answered and said the artefact is not
+   * there" -- so it fell back to a generated cast in both cases and replayed a
+   * scripted fiction as if it were the session. 18 sessions in the dev control
+   * plane are in exactly that state: sealed, with real recorded bytes, and an
+   * artefact still sitting on the gateway that produced it.
+   *
+   * The control plane's own wording is carried through rather than replaced.
+   * It knows which of several things went wrong and says so precisely.
+   */
+  async recording(id: string): Promise<RecordingResult | null> {
     if (!isConfigured()) return null
-    const res = await fetch(`${BASE}/api/v1/sessions/${id}/recording`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
-    if (!res.ok) return null
+    let res: Response
+    try {
+      res = await fetch(`${BASE}/api/v1/sessions/${id}/recording`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      })
+    } catch {
+      return { kind: 'unavailable', reason: 'The control plane could not be reached.' }
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      let reason = ''
+      try {
+        reason = (JSON.parse(body) as { error?: string }).error ?? ''
+      } catch {
+        reason = body.slice(0, 200)
+      }
+      return {
+        kind: 'unavailable',
+        reason: reason || `The control plane answered ${res.status}.`,
+      }
+    }
     return {
+      kind: 'ok',
       cast: await res.text(),
       verified: res.headers.get('X-Argus-Chain-Verified') ?? 'unverified',
     }

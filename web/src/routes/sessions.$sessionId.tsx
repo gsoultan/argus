@@ -8,8 +8,8 @@ import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconDownload, IconEye, IconInfoCircle, IconLink, IconListDetails,
-  IconPlayerStop, IconShieldCheck, IconTerminal2,
+  IconAlertTriangle, IconDownload, IconEye, IconFileOff, IconInfoCircle, IconLink,
+  IconListDetails, IconPlayerStop, IconShieldCheck, IconTerminal2,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -76,6 +76,9 @@ function SessionDetail() {
     verified: string
   } | null>(null)
   const [rdpError, setRdpError] = useState<string>()
+  // Why the control plane would not give us the recording, in its own words.
+  // Set only when one answered -- an unconfigured console has nothing to say.
+  const [castError, setCastError] = useState<string>()
   const [realCast, setRealCast] = useState<string | undefined>()
   const [verified, setVerified] = useState<string | null>(null)
   const [fetched, setFetched] = useState(false)
@@ -139,7 +142,10 @@ function SessionDetail() {
       .recording(session.id)
       .then((r) => {
         if (cancelled) return
-        if (r) { setRealCast(r.cast); setVerified(r.verified) }
+        if (r?.kind === 'ok') { setRealCast(r.cast); setVerified(r.verified) }
+        // `null` means no control plane is configured; anything else means one
+        // answered and could not give us the artefact.
+        if (r?.kind === 'unavailable') setCastError(r.reason)
         setFetched(true)
       })
       .catch(() => { if (!cancelled) setFetched(true) })
@@ -152,11 +158,21 @@ function SessionDetail() {
     // failed, or the console would briefly replay a fixture and then swap it
     // for the real thing — which looks like the recording changed.
     if (!fetched) return undefined
+    // And never when a control plane answered and said no.
+    //
+    // buildCast writes a scripted session -- `systemctl status
+    // payments-worker`, invented output -- which is the right thing to show in
+    // the demo build and a fabrication anywhere else. It used to be shown for
+    // *every* failed fetch, so a sealed recording still sitting on the gateway
+    // that produced it (18 such sessions in the dev control plane) replayed as
+    // a fiction with nothing on the page saying so. The RDP path on this same
+    // page has always refused to do this; the terminal path was the outlier.
+    if (castError) return undefined
     return session
       ? buildCast(session.assetHostname, session.principal, session.startedAt,
           session.fidelity === 'ebpf' ? 'ebpf' : 'pty')
       : undefined
-  }, [realCast, fetched, session])
+  }, [realCast, fetched, session, castError])
 
   const decoded = useCastDecoder(cast)
 
@@ -428,6 +444,19 @@ function SessionDetail() {
                     </Text>
                   </Box>
                 )
+              ) : castError ? (
+                // In the control plane's own words. It knows which of several
+                // things went wrong -- an artefact still on the gateway, a
+                // storage outage, storage not configured at all -- and the
+                // difference decides whether the operator waits for a retry or
+                // goes and does something.
+                <Box p="lg">
+                  <EmptyState
+                    icon={IconFileOff}
+                    title="This recording is not available to replay"
+                    description={castError}
+                  />
+                </Box>
               ) : (
                 <Suspense fallback={<PlayerFallback label="Loading player…" />}>
                   <Replay decoded={decoded} onTimeChange={setCursor} />
