@@ -126,11 +126,47 @@ git, so restoring them is `git show` and `mc cp`.
 That was the control working correctly, and the drill passes now they are gone.
 Confirm both directions when changing it.
 
-**Six recordings still have no stored chain head, and the drill says so rather
-than counting them.** 12,263 verified + 6 unverifiable = the 12,269 in the
-bucket, so nothing is being quietly skipped -- but a recording whose session row
-carries no head cannot be evidence of anything, and nothing has yet explained
-why six of them exist. That is the open question this area now has.
+**Six recordings have no stored chain head, and the drill says so rather than
+counting them.** 12,263 verified + 6 unverifiable = the 12,269 in the bucket, so
+nothing is quietly skipped. Traced 2026-09-20; five are a real defect and one is
+litter.
+
+- `0001/01/01/sess-9.cast`, 14 bytes, no session row. A hand-made artefact, the
+  zero-value date prefix being what an unset `StartedAt` writes.
+- Five belong to sessions stuck in `active` since 2026-09-07, with
+  `ended_at IS NULL` and no head. They are part of a larger set.
+
+## A terminal state with no end time
+
+`ended_at IS NULL` and an empty `chain_head` correlate **exactly** -- every
+session with an end time has a head, every session without one has neither:
+
+| state | ended_at null | rows |
+| :--- | :--- | ---: |
+| closed | no | 12,276 |
+| terminated | no | 30 |
+| **terminated** | **yes** | **26** |
+| **active** | **yes** | **15** |
+
+Twenty-six sessions say they were terminated and also say they never ended. The
+fifteen `active` ones have been live for 13-19 days.
+
+**Cause.** `Session.report` in `internal/gateway/session.go` writes `endedAt`
+*inside* `if chainHead != ""`, and `Session.Close` returns `("", nil)` when
+`s.rec == nil` -- no recorder, no error, no head. So a session that ends without
+a recorder is reported with a terminal state and no end time, and the control
+plane's `ended_at = COALESCE(EXCLUDED.ended_at, sessions.ended_at)` keeps the
+NULL. End time and seal are one conditional; they should not be.
+
+**Why it matters beyond tidiness.** `fidelityUnsupported` in
+`internal/control/api.go` returns false when `EndedAt == nil`, on the reasonable
+ground that a session in flight has legitimately observed nothing yet -- so
+these sessions are exempt from the evidence check by accident. The console
+computes elapsed from `now()` against a null `endedAt`, which is why the
+Overview shows sessions running for 287 hours. And the split is worst where it
+matters most: every one of 12,276 `closed` sessions is sealed, against 30 of 56
+`terminated` ones. An administrator kills a session because something is wrong,
+and that is the session whose recording may never become evidence.
 
 ## Nil host key store wedges rather than panics
 
