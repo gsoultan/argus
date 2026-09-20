@@ -151,12 +151,27 @@ session with an end time has a head, every session without one has neither:
 Twenty-six sessions say they were terminated and also say they never ended. The
 fifteen `active` ones have been live for 13-19 days.
 
-**Cause.** `Session.report` in `internal/gateway/session.go` writes `endedAt`
-*inside* `if chainHead != ""`, and `Session.Close` returns `("", nil)` when
-`s.rec == nil` -- no recorder, no error, no head. So a session that ends without
-a recorder is reported with a terminal state and no end time, and the control
-plane's `ended_at = COALESCE(EXCLUDED.ended_at, sessions.ended_at)` keeps the
-NULL. End time and seal are one conditional; they should not be.
+**Cause, fixed 2026-09-20.** `Session.report` wrote `endedAt` *inside*
+`if chainHead != ""`, and `Session.Close` returns `("", nil)` when
+`s.rec == nil` -- no recorder, no error, no head. So a session that ended
+without a recorder was reported with a terminal state and no end time, and the
+control plane's `COALESCE(EXCLUDED.ended_at, sessions.ended_at)` kept the NULL.
+
+An end time is now written whenever the state is terminal, in all three report
+paths -- SSH, native RDP and browser RDP, which all had the same shape. The seal
+keeps its own branch: an unsealed recording still carries no `chainHead` and no
+byte count, because neither is true of it. What changed is that the session no
+longer claims to be running.
+
+`UpsertSession` also fills a missing end time for any terminal state, because
+this side owns the invariant and an older gateway reporting into a newer control
+plane is exactly when it would be broken. It is applied in Go rather than in the
+`ON CONFLICT` clause so it covers the first report too, which is an INSERT.
+
+**The 41 existing bad rows are left alone.** We do not know when those sessions
+ended, and stamping them `now()` would invent a time rather than record one. The
+15 stuck in `active` are a separate question -- nothing reaps a session whose
+gateway died -- and that one is still open.
 
 **Why it matters beyond tidiness.** `fidelityUnsupported` in
 `internal/control/api.go` returns false when `EndedAt == nil`, on the reasonable

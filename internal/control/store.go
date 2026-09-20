@@ -199,6 +199,24 @@ func (s *Store) UpsertSession(ctx context.Context, in Session) error {
 		in.RiskFlags = []string{}
 	}
 
+	// A terminal state with no end time is a row that contradicts itself, and
+	// the console reads the null as "still running" -- 26 sessions in dev said
+	// "terminated" and "never ended" at once, and the Overview showed them
+	// running for hundreds of hours. It also exempted them from
+	// fidelityUnsupported, which skips a session with no EndedAt because one
+	// still in flight has legitimately observed nothing yet.
+	//
+	// The gateway no longer sends one (see Session.report), but this side owns
+	// the invariant: an older gateway reporting into a newer control plane is
+	// exactly when it would be broken, and recording when we learned the
+	// session was over beats recording that it never was. Applied here rather
+	// than in the ON CONFLICT clause so it covers the first report too, which
+	// is an INSERT and would otherwise store the null.
+	if in.State != "" && in.State != "active" && in.EndedAt == nil {
+		now := time.Now().UTC()
+		in.EndedAt = &now
+	}
+
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO sessions (
 			id, user_email, asset_id, asset_hostname, principal, protocol,
