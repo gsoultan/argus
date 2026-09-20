@@ -324,10 +324,30 @@ func (s *Session) report(chainHead, state string) {
 	if key != "" {
 		rec["recordingPath"] = key
 	}
+	// An end time whenever the session has one, sealed or not.
+	//
+	// This used to live inside the chainHead branch below, so a session that
+	// ended without a recorder -- Close returns ("", nil) when there is none --
+	// was reported with a terminal state and no end time at all. The row then
+	// said "terminated" and "never ended" at once, 26 of them in dev, and the
+	// console read the null as still-running and showed elapsed times in the
+	// hundreds of hours.
+	//
+	// Worse than cosmetic: fidelityUnsupported in internal/control skips any
+	// session with a nil EndedAt, on the fair ground that one still in flight
+	// has legitimately observed nothing yet. So these were exempt from the
+	// evidence check by accident, and terminations -- the sessions most likely
+	// to matter -- were the likeliest to be exempt.
+	//
+	// The seal stays in its own branch. An unsealed recording still has no
+	// chainHead and no byte count, because neither is true of it; what changes
+	// is that the session no longer claims to be running.
+	if state != "active" {
+		rec["endedAt"] = time.Now().UTC()
+	}
+
 	if chainHead != "" {
 		rec["chainHead"] = chainHead
-		now := time.Now().UTC()
-		rec["endedAt"] = now
 		if s.rec != nil {
 			_, bytes, _ := s.rec.Stats()
 			rec["recordingBytes"] = bytes
