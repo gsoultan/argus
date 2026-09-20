@@ -478,6 +478,33 @@ test.describe('coverage links land on exactly what they counted', () => {
     await expect(live.getByLabel('Recording not in object storage')).toHaveCount(0)
   })
 
+  /**
+   * "Chain intact" has to say what it checked.
+   *
+   * The console fetches the most recent 500 entries, verifies them, reports
+   * intact, and offered an evidence pack whose own doc comment called it "the
+   * whole chain". The dev log holds 4,546. A hash chain checked from an
+   * arbitrary starting point proves that fragment is internally consistent and
+   * nothing whatever about what came before it, so the verdict was true of a
+   * window and false of the log -- and an auditor handed that pack had no way
+   * to tell.
+   */
+  test('the audit page says how much of the log it is holding', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/audit')
+
+    // The stub serves 12 entries and declares a log of 4,546.
+    await expect(page.getByText(/most recent 12 of 4,546 entries/)).toBeVisible()
+    await expect(page.getByText(/says nothing about the 4,534 older entries/)).toBeVisible()
+
+    await page.getByRole('button', { name: /verify chain/i }).click()
+    await expect(page.getByText(/links checked/)).toBeVisible()
+    // The verdict badge now carries its own denominator, so "12 links checked"
+    // cannot be read as the whole log.
+    await expect(page.getByText(/of 4,546 in the log/)).toBeVisible()
+  })
+
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')
     await signIn(page)

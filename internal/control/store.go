@@ -720,6 +720,20 @@ func chainHash(prev string, e AuditEvent) string {
 }
 
 // AuditEvents lists the log, newest first.
+// CountAuditEvents is how many entries the log holds, which is not the same as
+// how many AuditEvents returns.
+//
+// The console fetches the most recent 500, verifies them, and used to report
+// "chain intact" and offer an "evidence pack" described as the whole chain --
+// with 4,046 of the dev log's 4,546 entries absent and nothing saying so. A
+// hash chain checked from an arbitrary starting point proves the fragment is
+// internally consistent and nothing whatever about what came before it.
+func (s *Store) CountAuditEvents(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&n)
+	return n, err
+}
+
 func (s *Store) AuditEvents(ctx context.Context, limit int) ([]AuditEvent, error) {
 	if limit <= 0 || limit > 2000 {
 		limit = 500

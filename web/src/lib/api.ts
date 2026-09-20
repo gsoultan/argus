@@ -14,8 +14,9 @@ import {
   terminateRDPSession as terminateRDPOnGateway,
   terminateSession as terminateOnGateway,
 } from '~/lib/live'
+import type { AuditPage } from '~/lib/live'
 import type {
-  AccessRequest, Asset, AssetGroup, AuditEvent, FleetStats, GatewayPolicy, Session, User,
+  AccessRequest, Asset, AssetGroup, FleetStats, GatewayPolicy, Session, User,
 } from '~/types/domain'
 
 /**
@@ -344,10 +345,20 @@ export const api = {
    * Returns the chain skeleton. Hashes are computed client-side in a worker —
    * the point of the chain is that you don't have to trust this response.
    */
-  async auditSkeleton(): Promise<Omit<AuditEvent, 'hash' | 'prevHash'>[]> {
+  /**
+   * The log the audit page verifies, and how much of it this is.
+   *
+   * `total` is null when nothing can say -- the fixture is the whole of itself,
+   * and a control plane too old to send the header has not told us. Null must
+   * read as "unknown", never as "the window is everything".
+   */
+  async auditSkeleton(): Promise<AuditPage> {
     return live.orFallback(live.audit, async () => {
       await latency(200)
-      return buildAuditSkeleton()
+      const events = buildAuditSkeleton()
+      // The fixture holds exactly what it generates; there is no more of it,
+      // so the window and the log are the same thing here.
+      return { events, total: events.length }
     })
   },
 }

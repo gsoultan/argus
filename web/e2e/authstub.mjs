@@ -173,6 +173,26 @@ const REQUESTS = [
   },
 ]
 
+/**
+ * The audit log as a real control plane serves it: a slice, plus a header
+ * saying how big the log is.
+ *
+ * The two numbers are deliberately different. The console used to verify what
+ * it received, report "chain intact", and export an evidence pack documented as
+ * the whole chain -- with no way to know it held 500 of 4,546 entries.
+ */
+const AUDIT_TOTAL = 4546
+const AUDIT_WINDOW_EVENTS = Array.from({ length: 12 }, (_, i) => ({
+  seq: AUDIT_TOTAL - 11 + i,
+  id: `ae-${AUDIT_TOTAL - 11 + i}`,
+  at: ago(60 - i * 5),
+  action: 'session.terminate',
+  severity: 'warning',
+  actorEmail: 'dev@northwind.id',
+  target: 's-live-1',
+  detail: 'Authorised ending a session',
+}))
+
 // Declared after ASSETS and SESSIONS because it counts both of them.
 const DAY_AGO = Date.now() - 24 * 60 * 60_000
 const within24h = (/** @type {any} */ s) => Date.parse(s.startedAt) > DAY_AGO
@@ -254,6 +274,16 @@ const server = createServer(async (req, res) => {
     if (path === '/api/v1/stats') return json(res, 200, STATS)
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
+    // A window of a larger log, which is what a real control plane serves: the
+    // console asks for the most recent 500 and the dev log holds 4,546. No
+    // server hashes, so the page takes its "confirming its own arithmetic"
+    // branch -- what is under test is whether it admits how much it has, not
+    // whether the arithmetic is right.
+    if (path === '/api/v1/audit') {
+      return json(res, 200, AUDIT_WINDOW_EVENTS, {
+        'x-argus-audit-total': String(AUDIT_TOTAL),
+      })
+    }
     if (path === '/api/v1/requests') {
       const want = url.searchParams.get('state')
       return json(res, 200, want ? REQUESTS.filter((r) => r.state === want) : REQUESTS)

@@ -1,3 +1,4 @@
+import type { ChainInput } from '~/workers/chain.worker'
 import type {
   AccessRequest,
   Asset,
@@ -374,6 +375,21 @@ export async function terminateRDPSession(
  * a different situation from a storage outage, and the operator needs to know
  * which -- one is waiting on a retry, the other on somebody.
  */
+/** How many entries the audit page fetches. See `audit`. */
+export const AUDIT_WINDOW = 500
+
+/**
+ * A slice of the audit log, and how big the log actually is.
+ *
+ * `total` is null when nothing can say so -- a control plane too old to send
+ * the header. Null must read as "unknown", never as "this window is the whole
+ * log", because the difference is whether a verdict covers the record.
+ */
+export interface AuditPage {
+  events: ChainInput[]
+  total: number | null
+}
+
 export type RecordingResult =
   | { kind: 'ok'; cast: string; verified: string }
   | { kind: 'unavailable'; reason: string }
@@ -549,7 +565,33 @@ export const live = {
    * recomputes it in a worker — an "intact" verdict that depends on trusting
    * the server that served the log is not worth much.
    */
-  audit: () => get<AuditEvent[]>('/api/v1/audit?limit=500'),
+  /**
+   * The most recent slice of the log, and how big the log actually is.
+   *
+   * The console verifies what it receives and reports "chain intact". Without
+   * the total it was describing a window while sounding like it described the
+   * log: 500 of the dev control plane's 4,546 entries, with the other 4,046
+   * absent from the page, from the verdict and from the exported evidence
+   * pack -- which is documented as "the whole chain".
+   *
+   * A hash chain checked from an arbitrary starting point proves the fragment
+   * is internally consistent and nothing at all about what came before it.
+   */
+  async audit(): Promise<AuditPage> {
+    const res = await fetch(`${BASE}/api/v1/audit?limit=${AUDIT_WINDOW}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    if (!res.ok) throw new Error(`audit: ${res.status}`)
+    const events = (await res.json()) as AuditEvent[]
+    const header = res.headers.get('X-Argus-Audit-Total')
+    const total = header === null ? null : Number(header)
+    return {
+      events,
+      // A control plane too old to send it, or a number that is not one, has
+      // to read as "unknown" rather than as "the window is the whole log".
+      total: total === null || !Number.isFinite(total) ? null : total,
+    }
+  },
 
   requests: (state?: string) =>
     get<AccessRequest[]>(`/api/v1/requests${state ? `?state=${state}` : ''}`),

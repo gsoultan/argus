@@ -356,6 +356,19 @@ func (a *API) getAudit(w http.ResponseWriter, r *http.Request, _ string) {
 		a.fail(w, "audit", err)
 		return
 	}
+	// How much of the log this is. A caller that verifies what it received and
+	// reports "intact" is describing a window, and without this it has no way
+	// to know that -- the response is just a shorter array.
+	//
+	// A header rather than an envelope: the body is a bare array everywhere
+	// this is consumed, and X-Argus-Chain-Verified already establishes the
+	// pattern for saying something *about* a response here.
+	if total, cerr := a.store.CountAuditEvents(r.Context()); cerr == nil {
+		w.Header().Set("X-Argus-Audit-Total", strconv.Itoa(total))
+	} else {
+		a.log.Warn("could not count audit events", "error", cerr,
+			"detail", "the console cannot tell whether it received the whole log")
+	}
 	writeJSON(w, http.StatusOK, events)
 }
 

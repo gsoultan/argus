@@ -33,8 +33,24 @@ const SEVERITY_COLOR: Record<AuditSeverity, string> = {
 const LIMIT = 200
 
 function Audit() {
-  const { data: skeleton } = useQuery(auditQuery())
-  const chain = useAuditChain(skeleton)
+  const { data: page } = useQuery(auditQuery())
+  const chain = useAuditChain(page?.events)
+
+  // What this page holds against what the log contains. They are the same for
+  // the fixture and usually not for a real control plane, which serves the most
+  // recent AUDIT_WINDOW entries -- 500 of the dev log's 4,546.
+  //
+  // `total` null means nothing could say. That has to read as unknown rather
+  // than as "the window is everything", because the difference decides whether
+  // a verdict covers the record or a fragment of it.
+  const total = page?.total ?? null
+  const partial = total !== null && total > chain.links.length
+  const firstSeq = chain.links.length > 0 ? chain.links[0]!.seq : null
+  const lastSeq = chain.links.length > 0 ? chain.links[chain.links.length - 1]!.seq : null
+  const coverage =
+    firstSeq !== null && lastSeq !== null
+      ? `sequence ${Math.min(firstSeq, lastSeq).toLocaleString()}–${Math.max(firstSeq, lastSeq).toLocaleString()}`
+      : null
   const [search, setSearch] = useState('')
   const [severity, setSeverity] = useState<string | null>(null)
 
@@ -54,11 +70,17 @@ function Audit() {
   const filtered = Boolean(search.trim() || severity)
 
   /**
-   * Writes the whole chain out, not the filtered view.
+   * Writes everything this page holds, not the filtered view.
    *
    * An evidence pack containing only the rows someone had searched for would be
    * unverifiable by definition — the chain is only checkable end to end. The
    * filter is a reading aid; the export is the record.
+   *
+   * "Everything this page holds" is not always the whole log. The console
+   * fetches the most recent AUDIT_WINDOW entries, and this used to say
+   * `eventCount` and `chainHead` with no indication that 4,046 of the dev log's
+   * 4,546 were missing — a pack an auditor would reasonably read as complete.
+   * It now records what it covers and refuses to imply more.
    */
   const onExport = () => {
     if (chain.links.length === 0) return
@@ -85,10 +107,26 @@ function Audit() {
         algorithm: 'SHA-256(prevHash || canonicalJSON(event))',
         chainHead: chain.head,
         eventCount: chain.links.length,
+        // The three fields that stop this pack being read as the whole record.
+        // `complete: null` is "the server did not say", which is not the same
+        // as true and must never be written as true.
+        totalEventsInLog: total,
+        complete: total === null ? null : total === chain.links.length,
+        coveredSequences:
+          firstSeq !== null && lastSeq !== null
+            ? { from: Math.min(firstSeq, lastSeq), to: Math.max(firstSeq, lastSeq) }
+            : null,
         events: chain.links,
       },
       `argus-evidence-${stamp()}.json`,
     )
+    if (partial) {
+      notifyWarn(
+        'Exported a partial log',
+        `${chain.links.length.toLocaleString()} of ${total!.toLocaleString()} entries. The pack records that it is incomplete — it is not the whole chain.`,
+      )
+      return
+    }
     notifyOk(
       'Evidence pack exported',
       `${chain.links.length.toLocaleString()} events with their hashes and the chain head.`,
@@ -158,11 +196,31 @@ function Audit() {
                     ? 'It checks the hashes the control plane stored against the contents it served, so an intact result does not depend on trusting it.'
                     : 'These events carry no server hashes, so the console is confirming its own arithmetic — there is no served record to check against.'}
                 </Text>
+                {/* Before the verdict badges, because it changes what they
+                    mean. A hash chain checked from an arbitrary starting point
+                    proves that fragment is internally consistent and nothing
+                    whatever about what came before it -- so "chain intact" over
+                    500 of 4,546 entries is a true statement about a window and
+                    a false one about the log. */}
+                {partial && (
+                  <Text size={FS.meta} c="amber.4" mt={SP.cozy} lh={1.5} fw={500}>
+                    This is the most recent {chain.links.length.toLocaleString()} of{' '}
+                    {total!.toLocaleString()} entries{coverage ? ` (${coverage})` : ''}. Anything
+                    verified here covers those and says nothing about the{' '}
+                    {(total! - chain.links.length).toLocaleString()} older entries, which this
+                    page has not fetched.
+                  </Text>
+                )}
                 {verified && (
                   <Group gap="xs" mt={SP.cozy}>
                     <Badge size="xs" color={verified.ok ? 'teal' : 'rose'} variant="light">
                       {verified.checked.toLocaleString()} links checked
                     </Badge>
+                    {partial && (
+                      <Badge size="xs" color="amber" variant="light">
+                        of {total!.toLocaleString()} in the log
+                      </Badge>
+                    )}
                     <Badge size="xs" variant="outline" color="slate">
                       {verified.ms}ms off main thread
                     </Badge>
@@ -218,6 +276,7 @@ function Audit() {
               {rows.length === LIMIT
                 ? `First ${LIMIT} of ${chain.links.length.toLocaleString()}`
                 : `${rows.length} of ${chain.links.length.toLocaleString()} events`}
+              {partial && ` fetched, ${total!.toLocaleString()} in the log`}
             </Text>
           }
         >
