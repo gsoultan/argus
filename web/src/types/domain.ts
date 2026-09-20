@@ -168,6 +168,24 @@ export interface Session {
    *  first, and the answer has to come from the record rather than from
    *  whoever remembers. */
   terminationReason?: string | null
+
+  /** When a reporter last said this session existed. */
+  lastReportedAt: ISOTime
+  /**
+   * The session is `active` and nothing has spoken for it in minutes.
+   *
+   * A gateway killed rather than drained never reports the end, so `state`
+   * alone could not tell a session still running from one whose gateway is
+   * gone -- fifteen showed as live in dev, the oldest for nineteen days, and
+   * every duration on the page counted up against them. Nothing reaps them:
+   * a gateway carries no identity to attribute orphans to, and with no
+   * maximum session duration, age alone proves nothing. So the console says
+   * it does not know, rather than saying "live" and being wrong.
+   *
+   * Derived by the control plane, not here: the comparison is against the
+   * database clock and a browser's may be anything at all.
+   */
+  silent: boolean
 }
 
 export type RiskFlag =
@@ -264,7 +282,10 @@ export interface FleetStats {
   assetsTotal: number
   assetsUnreachable: number
   hostKeysUnpinned: number
+  /** Sessions a reporter still speaks for. Excludes `sessionsSilent`. */
   sessionsActive: number
+  /** Active on paper, unheard from for minutes. See Session.silent. */
+  sessionsSilent: number
   sessionsToday: number
   requestsPending: number
   credentialsOverdue: number

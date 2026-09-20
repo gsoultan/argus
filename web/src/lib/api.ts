@@ -79,7 +79,10 @@ function computeStats(): FleetStats {
     assetsTotal: db.assets.length,
     assetsUnreachable: db.assets.filter((a) => a.health === 'unreachable').length,
     hostKeysUnpinned: db.assets.filter((a) => a.hostKeyState !== 'pinned').length,
-    sessionsActive: db.sessions.filter((s) => s.state === 'active').length,
+    // Live means a reporter still speaks for it. A session whose gateway went
+    // away is counted apart rather than folded in -- see Session.silent.
+    sessionsActive: db.sessions.filter((s) => s.state === 'active' && !s.silent).length,
+    sessionsSilent: db.sessions.filter((s) => s.state === 'active' && s.silent).length,
     sessionsToday: db.sessions.filter((s) => Date.parse(s.startedAt) > dayAgo).length,
     requestsPending: db.requests.filter((r) => r.state === 'pending').length,
     credentialsOverdue: db.assets.filter((a) => {
