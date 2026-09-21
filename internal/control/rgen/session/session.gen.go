@@ -44,6 +44,7 @@ type Row struct {
 	RecordingKey      runtime.Null[string]
 	TerminatedBy      runtime.Null[string]
 	TerminationReason runtime.Null[string]
+	EndInferred       bool
 	LastReportedAt    time.Time
 }
 
@@ -82,7 +83,7 @@ const (
 	opNotExists runtime.Op = 26
 )
 
-const nCols = 25
+const nCols = 26
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -92,11 +93,12 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs            [6]string
-	nums            [6]int64
-	raws            [4][16]byte
-	tims            [4]time.Time
-	ns, nn, nr, ntm uint8
+	strs                 [6]string
+	nums                 [6]int64
+	raws                 [4][16]byte
+	tims                 [4]time.Time
+	bools                [4]bool
+	ns, nn, nr, ntm, nbo uint8
 
 	anyRaw                 [3][][16]byte
 	anyStr                 [3][]string
@@ -359,6 +361,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		q.strs[q.ns] = r.TerminationReason.V
 		q.ns++
 	case 24:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.EndInferred
+		q.nbo++
+	case 25:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
@@ -516,10 +525,19 @@ type Pred struct {
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
 	anyI32 []int32
 	anyI64 []int64
+}
+
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Typed column handles. The type of the handle is what makes
@@ -549,7 +567,8 @@ var (
 	RecordingKey      = NullTextCol{21}
 	TerminatedBy      = NullTextCol{22}
 	TerminationReason = NullTextCol{23}
-	LastReportedAt    = TimeCol{24}
+	EndInferred       = BoolCol{24}
+	LastReportedAt    = TimeCol{25}
 )
 
 // UUIDCol addresses a uuid column.
@@ -772,6 +791,21 @@ func (h TextArrayCol) ContainedBy(v ...string) Pred {
 func (h TextArrayCol) Overlaps(v ...string) Pred {
 	return Pred{col: h.c, op: opArrayOverlaps, anyStr: v}
 }
+
+// BoolCol addresses a bool column.
+type BoolCol struct{ c uint8 }
+
+func (h BoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h BoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h BoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h BoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -1228,6 +1262,13 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 24:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 25:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
@@ -1464,6 +1505,8 @@ func (q Query) TerminationReasonNotIn(v ...string) Query {
 }
 func (q Query) TerminationReasonIsNull() Query        { return q.Where(TerminationReason.IsNull()) }
 func (q Query) TerminationReasonIsNotNull() Query     { return q.Where(TerminationReason.IsNotNull()) }
+func (q Query) EndInferredEq(v bool) Query            { return q.Where(EndInferred.Eq(v)) }
+func (q Query) EndInferredNotEq(v bool) Query         { return q.Where(EndInferred.NotEq(v)) }
 func (q Query) LastReportedAtEq(v time.Time) Query    { return q.Where(LastReportedAt.Eq(v)) }
 func (q Query) LastReportedAtNotEq(v time.Time) Query { return q.Where(LastReportedAt.NotEq(v)) }
 func (q Query) LastReportedAtGt(v time.Time) Query    { return q.Where(LastReportedAt.Gt(v)) }
@@ -1471,7 +1514,7 @@ func (q Query) LastReportedAtGte(v time.Time) Query   { return q.Where(LastRepor
 func (q Query) LastReportedAtLt(v time.Time) Query    { return q.Where(LastReportedAt.Lt(v)) }
 func (q Query) LastReportedAtLte(v time.Time) Query   { return q.Where(LastReportedAt.Lte(v)) }
 
-const selectPrefix = `SELECT "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "last_reported_at" FROM "sessions"`
+const selectPrefix = `SELECT "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at" FROM "sessions"`
 const countPrefix = `SELECT count(*) FROM "sessions"`
 const existsPrefix = `SELECT 1 FROM "sessions"`
 const existsSuffix = ` LIMIT 1`
@@ -1652,6 +1695,12 @@ var orderTable = [nCols][4]string{
 		"\"termination_reason\" ASC NULLS FIRST",
 		"\"termination_reason\" DESC NULLS LAST",
 	},
+	{ // end_inferred
+		"\"end_inferred\"",
+		"\"end_inferred\" DESC",
+		"\"end_inferred\" ASC NULLS FIRST",
+		"\"end_inferred\" DESC NULLS LAST",
+	},
 	{ // last_reported_at
 		"\"last_reported_at\"",
 		"\"last_reported_at\" DESC",
@@ -1687,6 +1736,7 @@ var identTable = [nCols]string{
 	"\"recording_key\"",
 	"\"terminated_by\"",
 	"\"termination_reason\"",
+	"\"end_inferred\"",
 	"\"last_reported_at\"",
 }
 
@@ -1720,7 +1770,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [25][27]runtime.Frag{
+var fragTable = [26][27]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2417,6 +2467,35 @@ var fragTable = [25][27]runtime.Frag{
 		{},
 		{},
 	},
+	{ // end_inferred
+		{}, // opNone
+		{A: "\"end_inferred\" = $", B: ""},
+		{A: "\"end_inferred\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 	{ // last_reported_at
 		{}, // opNone
 		{A: "\"last_reported_at\" = $", B: ""},
@@ -2629,7 +2708,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.RecordingKey = runtime.NullText(rv[21], sl)
 	r.TerminatedBy = runtime.NullText(rv[22], sl)
 	r.TerminationReason = runtime.NullText(rv[23], sl)
-	r.LastReportedAt = runtime.Timestamptz(rv[24])
+	r.EndInferred = runtime.Bool(rv[24])
+	r.LastReportedAt = runtime.Timestamptz(rv[25])
 	return decErr
 }
 
@@ -2639,6 +2719,7 @@ type binder struct {
 	nums   [6]int64
 	raws   [4][16]byte
 	tims   [4]time.Time
+	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	anyI32 [3][]int32
@@ -2687,7 +2768,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nn, nr, ntm, nar, nas, nai32, nai64 uint8
+	var ns, nn, nr, ntm, nbo, nar, nas, nai32, nai64 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -2884,6 +2965,10 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.strs[ns])
 			ns++
 		case 24:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 25:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
@@ -3024,7 +3109,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "sessions" ("id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "last_reported_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "last_reported_at"`
+const insertSQL = `INSERT INTO "sessions" ("id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at"`
 
 const updatePrefix = `UPDATE "sessions" SET `
 const deletePrefix = `DELETE FROM "sessions"`
@@ -3055,10 +3140,11 @@ const (
 	dRecordingKey      uint64 = 1 << 20
 	dTerminatedBy      uint64 = 1 << 21
 	dTerminationReason uint64 = 1 << 22
-	dLastReportedAt    uint64 = 1 << 23
+	dEndInferred       uint64 = 1 << 23
+	dLastReportedAt    uint64 = 1 << 24
 )
 
-const nUpdatable = 24
+const nUpdatable = 25
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3085,6 +3171,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"recording_key\" = $", B: ""},      // recording_key
 	{A: "\"terminated_by\" = $", B: ""},      // terminated_by
 	{A: "\"termination_reason\" = $", B: ""}, // termination_reason
+	{A: "\"end_inferred\" = $", B: ""},       // end_inferred
 	{A: "\"last_reported_at\" = $", B: ""},   // last_reported_at
 }
 
@@ -3121,10 +3208,11 @@ const (
 	iRecordingKey      uint64 = 1 << 21
 	iTerminatedBy      uint64 = 1 << 22
 	iTerminationReason uint64 = 1 << 23
-	iLastReportedAt    uint64 = 1 << 24
+	iEndInferred       uint64 = 1 << 24
+	iLastReportedAt    uint64 = 1 << 25
 )
 
-const nInsertable = 25
+const nInsertable = 26
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3152,6 +3240,7 @@ var insCols = [nInsertable]string{
 	"\"recording_key\"",
 	"\"terminated_by\"",
 	"\"termination_reason\"",
+	"\"end_inferred\"",
 	"\"last_reported_at\"",
 }
 
@@ -3161,7 +3250,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 
 const insPlaceholder = "$"
 const insPrefix = "INSERT INTO \"sessions\""
-const insReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"last_reported_at\""
+const insReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3377,6 +3466,11 @@ func (m *Mut) SetTerminationReason(v string) {
 func (m *Mut) SetTerminationReasonNull() {
 	m.row.TerminationReason = runtime.Null[string]{}
 	m.dirty |= dTerminationReason
+}
+
+func (m *Mut) SetEndInferred(v bool) {
+	m.row.EndInferred = v
+	m.dirty |= dEndInferred
 }
 
 func (m *Mut) SetLastReportedAt(v time.Time) {
@@ -3599,6 +3693,11 @@ func (n *Ins) SetTerminationReasonNull() {
 	n.set |= iTerminationReason
 }
 
+func (n *Ins) SetEndInferred(v bool) {
+	n.row.EndInferred = v
+	n.set |= iEndInferred
+}
+
 func (n *Ins) SetLastReportedAt(v time.Time) {
 	n.row.LastReportedAt = v
 	n.set |= iLastReportedAt
@@ -3649,7 +3748,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 24)
+	set := make([]string, 0, 25)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -3722,6 +3821,9 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "termination_reason")
 		}
 		if mask&(1<<24) != 0 {
+			set = append(set, "end_inferred")
+		}
+		if mask&(1<<25) != 0 {
 			set = append(set, "last_reported_at")
 		}
 	}
@@ -3795,6 +3897,7 @@ var assignFor = map[string]string{
 	"recording_key":      "\"recording_key\" = EXCLUDED.\"recording_key\"",
 	"terminated_by":      "\"terminated_by\" = EXCLUDED.\"terminated_by\"",
 	"termination_reason": "\"termination_reason\" = EXCLUDED.\"termination_reason\"",
+	"end_inferred":       "\"end_inferred\" = EXCLUDED.\"end_inferred\"",
 	"last_reported_at":   "\"last_reported_at\" = EXCLUDED.\"last_reported_at\"",
 }
 
@@ -3888,6 +3991,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 		case 23:
 			args = append(args, n.row.TerminationReason.Arg())
 		case 24:
+			args = append(args, n.row.EndInferred)
+		case 25:
 			args = append(args, n.row.LastReportedAt)
 		}
 	}
@@ -3926,7 +4031,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 26)
 	args = append(args, r.ID)
 	args = append(args, r.UserEmail)
 	args = append(args, r.AssetID.Arg())
@@ -3951,6 +4056,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.RecordingKey.Arg())
 	args = append(args, r.TerminatedBy.Arg())
 	args = append(args, r.TerminationReason.Arg())
+	args = append(args, r.EndInferred)
 	args = append(args, r.LastReportedAt)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
@@ -4002,6 +4108,7 @@ var copyCols = []string{
 	"recording_key",
 	"terminated_by",
 	"termination_reason",
+	"end_inferred",
 	"last_reported_at",
 }
 
@@ -4009,7 +4116,7 @@ var copyCols = []string{
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [25]any
+	buf  [26]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4051,7 +4158,8 @@ func (s *rowSource) Values() []any {
 	s.buf[21] = r.RecordingKey.Ptr()
 	s.buf[22] = r.TerminatedBy.Ptr()
 	s.buf[23] = r.TerminationReason.Ptr()
-	s.buf[24] = &r.LastReportedAt
+	s.buf[24] = &r.EndInferred
+	s.buf[25] = &r.LastReportedAt
 	return s.buf[:]
 }
 
@@ -4107,8 +4215,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 22
 	mask |= 1 << 23
 	mask |= 1 << 24
+	mask |= 1 << 25
 	st := stmtForInsert(mask, 0)
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 26)
 	args = append(args, r.ID)
 	args = append(args, r.UserEmail)
 	args = append(args, r.AssetID.Arg())
@@ -4133,6 +4242,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.RecordingKey.Arg())
 	args = append(args, r.TerminatedBy.Arg())
 	args = append(args, r.TerminationReason.Arg())
+	args = append(args, r.EndInferred)
 	args = append(args, r.LastReportedAt)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
@@ -4216,6 +4326,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 		case 23:
 			args = append(args, n.row.TerminationReason.Arg())
 		case 24:
+			args = append(args, n.row.EndInferred)
+		case 25:
 			args = append(args, n.row.LastReportedAt)
 		}
 	}
@@ -4306,6 +4418,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 		case 22:
 			args = append(args, m.row.TerminationReason.Arg())
 		case 23:
+			args = append(args, m.row.EndInferred)
+		case 24:
 			args = append(args, m.row.LastReportedAt)
 		}
 	}
@@ -4409,6 +4523,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 		case 22:
 			args = append(args, m.row.TerminationReason.Arg())
 		case 23:
+			args = append(args, m.row.EndInferred)
+		case 24:
 			args = append(args, m.row.LastReportedAt)
 		}
 	}

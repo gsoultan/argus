@@ -277,6 +277,36 @@ func run() error {
 					log.Error("stale agent sweep failed", "error", err)
 					continue
 				}
+				// A session whose gateway never came back. Closed at its
+				// last report rather than at now(), and marked inferred, so
+				// the record says what was observed and what was deduced.
+				if closed, cerr := store.CloseAbandonedSessions(ctx, control.SessionAbandonedAfter); cerr != nil {
+					log.Error("abandoned session sweep failed", "error", cerr)
+				} else {
+					for _, sess := range closed {
+						log.Warn("closed a session whose gateway stopped reporting",
+							"session", sess.ID, "user", sess.UserEmail,
+							"target", sess.Principal+"@"+sess.AssetHostname,
+							"last_reported", sess.LastReportedAt)
+						// One event per session, not one per sweep. An auditor
+						// asking what became of a particular session has to
+						// find the answer under that session.
+						if _, aerr := store.AppendAudit(ctx, control.AuditEvent{
+							Action:     "session.closed_unreported",
+							Severity:   "warn",
+							ActorEmail: "system",
+							Target:     sess.ID,
+							Detail: "No gateway reported " + sess.UserEmail + "'s session as " +
+								sess.Principal + "@" + sess.AssetHostname + " for " +
+								control.SessionAbandonedAfter.String() + ". Closed at its last " +
+								"report, " + sess.LastReportedAt.Format(time.RFC3339) +
+								"; the actual end was not observed.",
+						}); aerr != nil {
+							log.Error("could not record an inferred session close",
+								"session", sess.ID, "error", aerr)
+						}
+					}
+				}
 				if _, serr := store.SweepTickets(ctx); serr != nil {
 					log.Error("ticket sweep failed", "error", serr)
 				}

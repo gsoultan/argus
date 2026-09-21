@@ -298,6 +298,7 @@ function SessionDetail() {
             state={session.state}
             silent={session.silent}
             lastReportedAt={session.lastReportedAt}
+            endInferred={session.endInferred}
           />
         }
         description={`Opened by ${session.userEmail} from ${session.clientIp} · ${absTime(session.startedAt)}`}

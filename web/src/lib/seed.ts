@@ -170,6 +170,10 @@ function makeSessions(): Session[] {
     // the gateway that produced it, queued for retry. 44 sessions in the dev
     // control plane are like this and the list offered Replay on all of them.
     strandedArtefact = false,
+    // Closed by the control plane after a day of silence rather than by a
+    // report. The end time is the last sighting, so the console has to be able
+    // to show an end it did not observe.
+    inferredEnd = false,
   ) => {
     const asset = pick(assets.filter((a) => a.protocol !== 'rdp'))
     const user = pick(operators)
@@ -216,6 +220,7 @@ function makeSessions(): Session[] {
       riskFlags: flags,
       lastReportedAt: ago(state === 'active' ? quietMins : startMinsAgo - (durMins ?? 0)),
       silent: state === 'active' && quietMins > 3,
+      endInferred: inferredEnd,
     })
   }
 
@@ -233,6 +238,8 @@ function makeSessions(): Session[] {
   // Sealed with an artefact that never left the gateway: one that recorded real
   // bytes, and one that recorded none at all. Both are in dev, in that ratio.
   push('closed', 5_200, 41, 0, true)
+  // A gateway that never came back. Closed at its last report, 26 days ago.
+  push('closed', 37_400, 0, 0, false, true)
   push('terminated', 7_400, 3, 0, true)
   for (let i = 0; i < 60; i++) {
     const start = between(100, 4300)
@@ -262,6 +269,7 @@ const rdpSession: Session = {
   // session is never silent however long ago it last reported.
   lastReportedAt: ago(262),
   silent: false,
+  endInferred: false,
   recordingKey: `recordings/${ago(310).slice(0, 10)}/${uuid()}.cast`,
 }
 
