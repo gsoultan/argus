@@ -430,7 +430,7 @@ func TestConcurrentAuditAppendsStayChained(t *testing.T) {
 	}
 	wg.Wait()
 
-	events, err := s.AuditEvents(context.Background(), 500)
+	events, err := s.AuditEvents(context.Background(), 500, 0)
 	if err != nil {
 		t.Fatalf("AuditEvents: %v", err)
 	}
@@ -620,7 +620,7 @@ func TestServedAuditTimestampIsTheStringThatWasHashed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	events, err := s.AuditEvents(ctx, 50)
+	events, err := s.AuditEvents(ctx, 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

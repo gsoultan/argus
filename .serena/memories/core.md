@@ -68,8 +68,14 @@ Read this file first, then only the memory a task actually needs.
   `complete` and `coveredSequences`. `complete: null` means the server did not
   say and must never be written as `true`.
 
-  **Still a window.** Paging the whole log into the browser is the follow-up;
-  what changed is that a partial pack can no longer be read as a complete one.
+  **It now pages.** `/api/v1/audit?before=<seq>` walks backwards, and the
+  console loops until a short page ends the log or `AUDIT_CEILING` (20,000)
+  stops it. Paging on **seq, not an offset**: the log grows at the head while a
+  reader runs, and an offset would shift under it -- which on a hash chain means
+  silently skipping a link.
+
+  The ceiling is a bound, not a target. Past it the coverage statement names the
+  ceiling and points at `argus-control audit verify`, which has no such limit.
 - **A control that appears to be set must be set.** The Settings page shipped
   once with uncontrolled switches that silently reverted; that is the specific
   failure mode this product cannot have.

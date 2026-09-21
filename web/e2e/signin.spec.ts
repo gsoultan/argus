@@ -479,30 +479,64 @@ test.describe('coverage links land on exactly what they counted', () => {
   })
 
   /**
-   * "Chain intact" has to say what it checked.
+   * "Chain intact" has to cover the log, or say that it does not.
    *
-   * The console fetches the most recent 500 entries, verifies them, reports
-   * intact, and offered an evidence pack whose own doc comment called it "the
-   * whole chain". The dev log holds 4,546. A hash chain checked from an
-   * arbitrary starting point proves that fragment is internally consistent and
-   * nothing whatever about what came before it, so the verdict was true of a
-   * window and false of the log -- and an auditor handed that pack had no way
-   * to tell.
+   * The console fetched the most recent 500 entries, verified them, reported
+   * intact, and offered an evidence pack its own doc comment called "the whole
+   * chain". The dev log holds 4,546. A hash chain checked from an arbitrary
+   * starting point proves that fragment is internally consistent and nothing
+   * whatever about what came before it.
+   *
+   * It now pages backwards until the log runs out. The stub serves all 4,546
+   * with real `before` paging, so this exercises the loop against a server:
+   * three requests, the last one short, which is how it learns to stop.
    */
-  test('the audit page says how much of the log it is holding', async ({ page }) => {
+  test('the audit page fetches the whole log, not the newest page of it', async ({ page }) => {
     await page.goto('/')
     await signIn(page)
     await page.goto('/audit')
 
-    // The stub serves 12 entries and declares a log of 4,546.
-    await expect(page.getByText(/most recent 12 of 4,546 entries/)).toBeVisible()
-    await expect(page.getByText(/says nothing about the 4,534 older entries/)).toBeVisible()
+    // Every entry, across three requests of 2000, 2000 and 546. The table
+    // itself shows a page of them; the denominator is the whole log.
+    await expect(page.getByText(/of 4,546/)).toBeVisible()
+    await expect(
+      page.getByText(/says nothing about the/),
+      'the log was fetched in full, so nothing should be disclaimed',
+    ).toHaveCount(0)
 
     await page.getByRole('button', { name: /verify chain/i }).click()
-    await expect(page.getByText(/links checked/)).toBeVisible()
-    // The verdict badge now carries its own denominator, so "12 links checked"
-    // cannot be read as the whole log.
-    await expect(page.getByText(/of 4,546 in the log/)).toBeVisible()
+    await expect(page.getByText(/4,5\d\d links checked/)).toBeVisible()
+    // No denominator badge: there is nothing left over to name.
+    await expect(page.getByText(/in the log/)).toHaveCount(0)
+  })
+
+  /**
+   * And when it cannot hold the whole log, it says so rather than implying the
+   * verdict covers it. The header is inflated on the first response only --
+   * which is the one the console reads the total from, by design, so a write
+   * landing mid-fetch cannot move the denominator.
+   */
+  test('the audit page admits when it is holding only part of the log', async ({ page }) => {
+    let first = true
+    await page.route('**/api/v1/audit*', async (route) => {
+      const res = await route.fetch()
+      const headers = { ...res.headers() }
+      if (first) {
+        headers['x-argus-audit-total'] = '99999'
+        first = false
+      }
+      await route.fulfill({ response: res, headers })
+    })
+
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/audit')
+
+    await expect(page.getByText(/most recent 4,546 of 99,999 entries/)).toBeVisible()
+    await expect(page.getByText(/says nothing about the 95,453 older entries/)).toBeVisible()
+
+    await page.getByRole('button', { name: /verify chain/i }).click()
+    await expect(page.getByText(/of 99,999 in the log/)).toBeVisible()
   })
 
   test('the agents-gone-quiet counter', async ({ page }) => {
