@@ -15,6 +15,7 @@ import { FS, SP } from '~/theme'
 import { downloadJSON, stamp } from '~/lib/download'
 import { notifyOk, notifyWarn } from '~/lib/notify'
 import { auditQuery } from '~/lib/queries'
+import { AUDIT_CEILING } from '~/lib/live'
 import { useAuditChain } from '~/lib/useWorkers'
 import type { AuditSeverity } from '~/types/domain'
 
@@ -205,10 +206,12 @@ function Audit() {
                 {partial && (
                   <Text size={FS.meta} c="amber.4" mt={SP.cozy} lh={1.5} fw={500}>
                     This is the most recent {chain.links.length.toLocaleString()} of{' '}
-                    {total!.toLocaleString()} entries{coverage ? ` (${coverage})` : ''}. Anything
-                    verified here covers those and says nothing about the{' '}
-                    {(total! - chain.links.length).toLocaleString()} older entries, which this
-                    page has not fetched.
+                    {total!.toLocaleString()} entries{coverage ? ` (${coverage})` : ''} — the
+                    console holds at most {AUDIT_CEILING.toLocaleString()}. Anything verified
+                    here covers those and says nothing about the{' '}
+                    {(total! - chain.links.length).toLocaleString()} older entries, which are
+                    not on this page. Verify the full log on the control plane with{' '}
+                    <Mono>argus-control audit verify</Mono>.
                   </Text>
                 )}
                 {verified && (

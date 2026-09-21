@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -734,13 +735,25 @@ func (s *Store) CountAuditEvents(ctx context.Context) (int, error) {
 	return n, err
 }
 
-func (s *Store) AuditEvents(ctx context.Context, limit int) ([]AuditEvent, error) {
+// AuditEvents returns the newest entries first.
+//
+// `before` pages backwards: pass the lowest seq you already hold and the next
+// call continues from there. Zero or less starts at the newest.
+//
+// Paging on seq rather than an offset because the log only ever grows at the
+// head -- an OFFSET would shift under a reader while new events arrived, which
+// on a hash chain means silently skipping a link.
+func (s *Store) AuditEvents(ctx context.Context, limit, before int) ([]AuditEvent, error) {
 	if limit <= 0 || limit > 2000 {
 		limit = 500
 	}
+	// A sentinel above every real seq, so one statement serves both cases.
+	if before <= 0 {
+		before = math.MaxInt32
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT seq, id::text, at, action, severity, actor_email, target, detail, prev_hash, hash
-		FROM audit_events ORDER BY seq DESC LIMIT $1`, limit)
+		FROM audit_events WHERE seq < $2 ORDER BY seq DESC LIMIT $1`, limit, before)
 	if err != nil {
 		return nil, err
 	}

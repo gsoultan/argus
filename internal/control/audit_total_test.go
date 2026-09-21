@@ -26,7 +26,7 @@ func TestTheAuditTotalIsNotTheNumberOfEventsReturned(t *testing.T) {
 	}
 
 	const window = 5
-	events, err := s.AuditEvents(ctx, window)
+	events, err := s.AuditEvents(ctx, window, 0)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}

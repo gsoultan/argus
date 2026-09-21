@@ -375,8 +375,19 @@ export async function terminateRDPSession(
  * a different situation from a storage outage, and the operator needs to know
  * which -- one is waiting on a retry, the other on somebody.
  */
-/** How many entries the audit page fetches. See `audit`. */
-export const AUDIT_WINDOW = 500
+/** Entries per request. The control plane refuses more than 2000. */
+export const AUDIT_PAGE = 2000
+
+/**
+ * The most entries the console will hold.
+ *
+ * A bound, not a target. The page verifies the chain and exports it as
+ * evidence, so it should hold the whole log wherever that is reasonable -- but
+ * a long-lived deployment's log is unbounded and a browser's memory is not.
+ * Past this the pack is honestly marked incomplete, which is what the coverage
+ * statement and `complete: false` exist for.
+ */
+export const AUDIT_CEILING = 20_000
 
 /**
  * A slice of the audit log, and how big the log actually is.
@@ -578,19 +589,43 @@ export const live = {
    * is internally consistent and nothing at all about what came before it.
    */
   async audit(): Promise<AuditPage> {
-    const res = await fetch(`${BASE}/api/v1/audit?limit=${AUDIT_WINDOW}`, {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    })
-    if (!res.ok) throw new Error(`audit: ${res.status}`)
-    const events = (await res.json()) as AuditEvent[]
-    const header = res.headers.get('X-Argus-Audit-Total')
-    const total = header === null ? null : Number(header)
-    return {
-      events,
-      // A control plane too old to send it, or a number that is not one, has
-      // to read as "unknown" rather than as "the window is the whole log".
-      total: total === null || !Number.isFinite(total) ? null : total,
+    const events: AuditEvent[] = []
+    let total: number | null = null
+    let before = 0
+
+    // Paged until the log runs out or the ceiling is reached. Verifying the
+    // newest 500 and calling the verdict the log's was the defect; fetching
+    // one page and stopping would be the same defect with better wording.
+    for (;;) {
+      const qs = `limit=${AUDIT_PAGE}${before > 0 ? `&before=${before}` : ''}`
+      const res = await fetch(`${BASE}/api/v1/audit?${qs}`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      })
+      if (!res.ok) throw new Error(`audit: ${res.status}`)
+
+      // Only from the first response. It counts the whole log, and re-reading
+      // it per page would let a mid-fetch write change the denominator.
+      if (total === null) {
+        const header = res.headers.get('X-Argus-Audit-Total')
+        const n = header === null ? NaN : Number(header)
+        // A control plane too old to send it, or a number that is not one, has
+        // to read as "unknown" rather than as "what we have is everything".
+        total = Number.isFinite(n) ? n : null
+      }
+
+      const batch = (await res.json()) as AuditEvent[]
+      events.push(...batch)
+      // Short page means the log ended. Asking again would return nothing and
+      // cost a round trip to learn it.
+      if (batch.length < AUDIT_PAGE) break
+      if (events.length >= AUDIT_CEILING) break
+      // The lowest seq we hold. Paging on seq rather than an offset because the
+      // log grows at the head while this runs, and an offset would shift under
+      // us -- which on a hash chain means skipping a link.
+      before = batch[batch.length - 1]!.seq
     }
+
+    return { events, total }
   },
 
   requests: (state?: string) =>

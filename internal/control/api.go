@@ -351,7 +351,10 @@ func (a *API) getSession(w http.ResponseWriter, r *http.Request, _ string) {
 
 func (a *API) getAudit(w http.ResponseWriter, r *http.Request, _ string) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	events, err := a.store.AuditEvents(r.Context(), limit)
+	// Paging backwards through the log, so the console can fetch all of it
+	// rather than verifying a window and calling the verdict the log's.
+	before, _ := strconv.Atoi(r.URL.Query().Get("before"))
+	events, err := a.store.AuditEvents(r.Context(), limit, before)
 	if err != nil {
 		a.fail(w, "audit", err)
 		return

@@ -182,16 +182,22 @@ const REQUESTS = [
  * the whole chain -- with no way to know it held 500 of 4,546 entries.
  */
 const AUDIT_TOTAL = 4546
-const AUDIT_WINDOW_EVENTS = Array.from({ length: 12 }, (_, i) => ({
-  seq: AUDIT_TOTAL - 11 + i,
-  id: `ae-${AUDIT_TOTAL - 11 + i}`,
-  at: ago(60 - i * 5),
-  action: 'session.terminate',
-  severity: 'warning',
-  actorEmail: 'dev@northwind.id',
-  target: 's-live-1',
-  detail: 'Authorised ending a session',
-}))
+// The whole log, newest first, so `before` paging is exercised against a real
+// server rather than mocked. The console asks for 2000 at a time, so this takes
+// three requests and the last one is short -- which is how it learns to stop.
+const AUDIT_EVENTS = Array.from({ length: AUDIT_TOTAL }, (_, i) => {
+  const seq = AUDIT_TOTAL - i
+  return {
+    seq,
+    id: `ae-${seq}`,
+    at: ago(i),
+    action: 'session.terminate',
+    severity: 'warning',
+    actorEmail: 'dev@northwind.id',
+    target: 's-live-1',
+    detail: `Authorised ending a session (#${seq})`,
+  }
+})
 
 // Declared after ASSETS and SESSIONS because it counts both of them.
 const DAY_AGO = Date.now() - 24 * 60 * 60_000
@@ -280,9 +286,12 @@ const server = createServer(async (req, res) => {
     // branch -- what is under test is whether it admits how much it has, not
     // whether the arithmetic is right.
     if (path === '/api/v1/audit') {
-      return json(res, 200, AUDIT_WINDOW_EVENTS, {
-        'x-argus-audit-total': String(AUDIT_TOTAL),
-      })
+      const limit = Math.min(Number(url.searchParams.get('limit')) || 500, 2000)
+      const before = Number(url.searchParams.get('before')) || 0
+      // Strictly less than `before`, matching the control plane. An off-by-one
+      // here would either repeat a link or skip one, and both break the chain.
+      const page = AUDIT_EVENTS.filter((e) => (before > 0 ? e.seq < before : true)).slice(0, limit)
+      return json(res, 200, page, { 'x-argus-audit-total': String(AUDIT_TOTAL) })
     }
     if (path === '/api/v1/requests') {
       const want = url.searchParams.get('state')
