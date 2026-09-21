@@ -55,6 +55,21 @@ Read this file first, then only the memory a task actually needs.
   equivalent for the *unconfigured* case for a while; the configured one is more
   dangerous, because then the operator expects real data. `dataSource()` decides
   once so the badge and the banner cannot disagree.
+- **A verdict must say what it covered.** The audit page fetches the most recent
+  `AUDIT_WINDOW` (500) entries, verified them, reported "Chain intact", and
+  offered an evidence pack whose own doc comment called it "the whole chain" --
+  with 4,046 of the dev log's 4,546 entries absent and nothing saying so. A hash
+  chain checked from an arbitrary starting point proves that fragment is
+  internally consistent and **nothing whatever** about what came before it, so
+  the verdict was true of a window and false of the log.
+
+  `/api/v1/audit` now returns `X-Argus-Audit-Total`, the page states its
+  coverage above the verdict badges, and the pack records `totalEventsInLog`,
+  `complete` and `coveredSequences`. `complete: null` means the server did not
+  say and must never be written as `true`.
+
+  **Still a window.** Paging the whole log into the browser is the follow-up;
+  what changed is that a partial pack can no longer be read as a complete one.
 - **A control that appears to be set must be set.** The Settings page shipped
   once with uncontrolled switches that silently reverted; that is the specific
   failure mode this product cannot have.
