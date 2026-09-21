@@ -273,6 +273,14 @@ type Session struct {
 
 	TerminatedBy      *string
 	TerminationReason *string
+	// EndInferred marks an end the control plane deduced rather than observed.
+	//
+	// True only for a session closed by CloseAbandonedSessions, whose EndedAt is
+	// its last report rather than a reported end. Without this a closed session
+	// with an end time reads as a clean logout and an auditor cannot tell the
+	// two apart.
+	EndInferred bool
+
 	// LastReportedAt is when anything last said this session existed.
 	//
 	// A gateway killed rather than drained never reports the end, so `active`
@@ -297,6 +305,7 @@ func (m *Session) Schema(t *storm.Table) {
 	t.Col(&m.ReportedBy).Default("''::text")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.Col(&m.LastReportedAt).Default("now()")
+	t.Col(&m.EndInferred).Default("false")
 	t.Index(&m.Asset).Named("sessions_asset_id_idx")
 	t.Index(storm.Desc(&m.StartedAt)).Where("origin = 'direct'::text").Named("sessions_direct_idx")
 	t.Index(storm.Desc(&m.StartedAt)).Named("sessions_started_idx")

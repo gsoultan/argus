@@ -539,6 +539,29 @@ test.describe('coverage links land on exactly what they counted', () => {
     await expect(page.getByText(/of 99,999 in the log/)).toBeVisible()
   })
 
+  /**
+   * A session Argus closed on a dead gateway's behalf must not read as a
+   * clean logout.
+   *
+   * Its end time is the last moment it was seen alive, not a reported end, so
+   * both the state and the duration are claims about a lower bound. A plain
+   * "closed" with a plain figure would say the session ran exactly that long
+   * and stopped tidily, neither of which was observed.
+   */
+  test('an inferred end is not shown as an ordinary close', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.goto('/sessions')
+
+    const row = page.locator('tbody tr', { hasText: 'ended (inferred)' })
+    await expect(row).toHaveCount(1)
+    // The duration on that row reads as a floor, not a figure.
+    await expect(row).toContainText(/\d+h \d+m\+/)
+
+    // And an ordinary close still reads plainly, so the distinction carries.
+    await expect(page.locator('tbody tr', { hasText: /^closed/ }).first()).toBeVisible()
+  })
+
   test('the agents-gone-quiet counter', async ({ page }) => {
     await page.goto('/')
     await signIn(page)

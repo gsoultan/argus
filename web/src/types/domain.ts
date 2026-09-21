@@ -198,6 +198,16 @@ export interface Session {
    * database clock and a browser's may be anything at all.
    */
   silent: boolean
+  /**
+   * The end was deduced, not observed.
+   *
+   * True for a session the control plane closed after a day of silence. Its
+   * `endedAt` is the last moment it was seen alive, not a reported end -- so
+   * it ran at least that long and probably longer, and how much longer is not
+   * knowable. Without this a closed session with an end time reads as a clean
+   * logout, and an auditor could not tell the two apart.
+   */
+  endInferred: boolean
 }
 
 export type RiskFlag =

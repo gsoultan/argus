@@ -267,7 +267,14 @@ function AssetDetail() {
                           navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
                         )}
                       >
-                        <Table.Td><SessionStateBadge state={s.state} /></Table.Td>
+                        <Table.Td>
+                          <SessionStateBadge
+                            state={s.state}
+                            silent={s.silent}
+                            lastReportedAt={s.lastReportedAt}
+                            endInferred={s.endInferred}
+                          />
+                        </Table.Td>
                         <Table.Td>
                           <Text size="xs">{s.userEmail.split('@')[0]}</Text>
                         </Table.Td>

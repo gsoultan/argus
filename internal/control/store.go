@@ -185,6 +185,70 @@ type Session struct {
 	// from the database clock on every report, and Silent is derived here.
 	LastReportedAt time.Time `json:"lastReportedAt"`
 	Silent         bool      `json:"silent"`
+
+	// EndInferred marks an end the control plane deduced rather than observed.
+	// See CloseAbandonedSessions. Read-only: a reporter cannot set it.
+	EndInferred bool `json:"endInferred"`
+}
+
+// SessionAbandonedAfter is how long an active session may go unreported before
+// the control plane closes it on the gateway's behalf.
+//
+// A day, against SessionSilenceThreshold's three minutes. The gap is the point:
+// three minutes of silence means "we do not know", and the console says so. A
+// full day means the gateway is not coming back, and leaving the row `active`
+// forever -- fifteen in dev, the oldest for nineteen days -- makes the unknown
+// count grow without bound and never resolves anything.
+//
+// Long enough that no ordinary interruption reaches it. A gateway restart, a
+// network partition, an operator's lunch: all of them re-report within a minute
+// of coming back, and a re-report clears the silence outright.
+const SessionAbandonedAfter = 24 * time.Hour
+
+// CloseAbandonedSessions ends sessions whose gateway never came back.
+//
+// The end time written is each session's `last_reported_at`, never `now()`.
+// That is the last moment the session was observed alive; it ended at some
+// unknown point at or after it. Writing the observation rather than the guess is
+// the difference between a log saying "alive at least until here" and one that
+// invents a minute nobody watched.
+//
+// `end_inferred` keeps the two apart, and every surface that shows an end has to
+// be able to say which kind it is. A closed session with an end time otherwise
+// reads as a clean logout.
+//
+// Returns the sessions it closed so the caller can record each one. A privileged
+// session ending is an audit event whether a person or a sweeper decided it.
+func (s *Store) CloseAbandonedSessions(ctx context.Context, after time.Duration) ([]Session, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE sessions
+		   SET state        = 'closed',
+		       ended_at     = last_reported_at,
+		       end_inferred = true
+		 WHERE state = 'active'
+		   AND last_reported_at < now() - $1::interval
+		RETURNING id::text, user_email, asset_hostname, principal, started_at,
+		          last_reported_at`,
+		fmt.Sprintf("%d seconds", int(after.Seconds())))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Session{}
+	for rows.Next() {
+		var v Session
+		if err := rows.Scan(&v.ID, &v.UserEmail, &v.AssetHostname, &v.Principal,
+			&v.StartedAt, &v.LastReportedAt); err != nil {
+			return nil, err
+		}
+		v.State = "closed"
+		v.EndInferred = true
+		end := v.LastReportedAt
+		v.EndedAt = &end
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // SessionSilenceThreshold is how long an active session may go unreported
@@ -397,6 +461,7 @@ func sessionFromRow(r *session.Row) Session {
 	}
 	v.LastReportedAt = r.LastReportedAt
 	v.Silent = silent(v.State, v.LastReportedAt)
+	v.EndInferred = r.EndInferred
 	return v
 }
 
@@ -408,13 +473,14 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 		       protocol, origin, origin_reason, state, started_at, ended_at,
 		       client_ip, fidelity, recording_bytes, command_count, exit_code,
 		       chain_head, risk_flags, reported_by, recording_key,
-		       terminated_by, termination_reason, last_reported_at
+		       terminated_by, termination_reason, last_reported_at, end_inferred
 		FROM sessions WHERE id = $1`, id).Scan(
 		&v.ID, &v.UserEmail, &v.AssetID, &v.AssetHostname, &v.Principal,
 		&v.Protocol, &v.Origin, &v.OriginReason, &v.State, &v.StartedAt,
 		&v.EndedAt, &v.ClientIP, &v.Fidelity, &v.RecordingBytes,
 		&v.CommandCount, &v.ExitCode, &v.ChainHead, &v.RiskFlags, &v.ReportedBy,
-		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason, &v.LastReportedAt)
+		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason, &v.LastReportedAt,
+		&v.EndInferred)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}

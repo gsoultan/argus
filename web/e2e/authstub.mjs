@@ -53,7 +53,7 @@ const session = (/** @type {Record<string, unknown>} */ o) => ({
   origin: 'brokered', clientIp: '103.20.1.5', fidelity: 'pty',
   recordingBytes: 4096, commandCount: null, accessRequestId: null,
   chainHead: 'c0ffee', recordingKey: 'recordings/2026-09-20/delivered.cast',
-  riskFlags: [], endedAt: null, ...o,
+  riskFlags: [], endedAt: null, endInferred: false, ...o,
 })
 
 const SESSIONS = [
@@ -67,6 +67,8 @@ const SESSIONS = [
   // scope, this row is what makes the test notice.
   session({ id: 's-direct-old', state: 'closed', origin: 'direct', startedAt: ago(9_000), endedAt: ago(8_990), lastReportedAt: ago(8_990), silent: false, riskFlags: ['bypassed-gateway'] }),
   session({ id: 's-closed-1', state: 'closed', startedAt: ago(400), endedAt: ago(360), lastReportedAt: ago(360), silent: false }),
+  // Closed by the control plane after a day of silence, at its last sighting.
+  session({ id: 's-inferred-end', state: 'closed', startedAt: ago(9_900), endedAt: ago(8_400), lastReportedAt: ago(8_400), silent: false, endInferred: true }),
   // Sealed, with real recorded bytes, and the artefact still on the gateway
   // that produced it. 44 sessions in the dev control plane are like this.
   session({ id: 's-closed-2', state: 'closed', startedAt: ago(800), endedAt: ago(790), lastReportedAt: ago(790), silent: false, recordingKey: null }),

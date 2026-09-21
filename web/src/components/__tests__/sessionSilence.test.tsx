@@ -5,6 +5,11 @@ import { renderWithProviders as ui } from '~/test/render'
 import { api } from '~/lib/api'
 import { EPOCH } from '~/lib/seed'
 
+// Against EPOCH, not Date.now(): with no control plane configured the console
+// measures relative times from the fixture's frozen clock, which is what these
+// components will be reading.
+const at = (minsAgo: number) => new Date(EPOCH - minsAgo * 60_000).toISOString()
+
 /**
  * The console used to read `state === 'active'` as "running now".
  *
@@ -77,16 +82,13 @@ describe('the fleet counters', () => {
  * running -- the oldest at 310 hours -- on the Overview and in two tables.
  */
 describe('how long a session ran', () => {
-  // Against EPOCH, not Date.now(): with no control plane configured the
-  // console measures relative times from the fixture's frozen clock, which is
-  // what these components will be reading.
-  const at = (minsAgo: number) => new Date(EPOCH - minsAgo * 60_000).toISOString()
   const base = {
     startedAt: at(90),
     endedAt: null as string | null,
     state: 'active' as const,
     silent: false,
     lastReportedAt: at(0),
+    endInferred: false,
   }
 
   it('counts to now only while the session is actually running', () => {
@@ -153,5 +155,45 @@ describe('a recording that has not reached object storage', () => {
   it('says nothing about a session still running', () => {
     ui(<ArtefactPending session={{ state: 'active', recordingKey: null }} />)
     expect(screen.queryByLabelText('Recording not in object storage')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * An end the control plane deduced is not a clean logout.
+ *
+ * A session whose gateway never came back is closed at its last sighting, so
+ * its `endedAt` is a lower bound rather than a reported end. Rendered as a
+ * plain figure it would say the session ran exactly that long, which is the
+ * overstatement the silent case already avoids.
+ */
+describe('a session Argus closed on its gateway\'s behalf', () => {
+  const closed = {
+    startedAt: at(200),
+    endedAt: at(140),
+    state: 'closed' as const,
+    silent: false,
+    lastReportedAt: at(140),
+    endInferred: true,
+  }
+
+  it('is not shown as an ordinary close', () => {
+    ui(<SessionStateBadge state="closed" endInferred lastReportedAt={at(140)} />)
+    expect(screen.getByText('ended (inferred)')).toBeInTheDocument()
+  })
+
+  it('leaves a genuinely reported close alone', () => {
+    ui(<SessionStateBadge state="closed" endInferred={false} lastReportedAt={at(140)} />)
+    expect(screen.getByText('closed')).toBeInTheDocument()
+    expect(screen.queryByText('ended (inferred)')).not.toBeInTheDocument()
+  })
+
+  it('gives a duration that reads as a floor', () => {
+    ui(<SessionDuration session={closed} />)
+    expect(screen.getByText('1h 0m+')).toBeInTheDocument()
+  })
+
+  it('gives a plain figure when the end was actually reported', () => {
+    ui(<SessionDuration session={{ ...closed, endInferred: false }} />)
+    expect(screen.getByText('1h 0m')).toBeInTheDocument()
   })
 })

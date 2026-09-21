@@ -207,6 +207,7 @@ function Sessions() {
                   state={s.state}
                   silent={s.silent}
                   lastReportedAt={s.lastReportedAt}
+                  endInferred={s.endInferred}
                 />
               </Table.Td>
               <Table.Td>

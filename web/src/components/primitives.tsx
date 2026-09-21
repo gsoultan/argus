@@ -2,7 +2,8 @@ import {
   Badge, Box, Card, CopyButton, Group, Skeleton, Text, ThemeIcon, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import {
-  IconAlertTriangle, IconCertificate, IconCheck, IconChevronRight, IconCloudOff,
+  IconAlertTriangle, IconCertificate, IconCheck, IconChevronRight, IconClockQuestion,
+  IconCloudOff,
   IconCopy, IconDoorExit, IconKey, IconLock, IconPlayerRecordFilled,
   IconPlugConnected, IconPlugConnectedX, IconRouteAltLeft, IconShieldCheck,
   IconShieldOff,
@@ -87,14 +88,29 @@ export function SessionDuration({
   session,
   dimmed = true,
 }: {
-  session: Pick<Session, 'startedAt' | 'endedAt' | 'state' | 'silent' | 'lastReportedAt'>
+  session: Pick<
+    Session,
+    'startedAt' | 'endedAt' | 'state' | 'silent' | 'lastReportedAt' | 'endInferred'
+  >
   dimmed?: boolean
 }) {
   const text = (v: string) => (
     <Text size="xs" c={dimmed ? 'dimmed' : undefined}>{v}</Text>
   )
 
-  if (session.endedAt) return text(duration(session.startedAt, session.endedAt))
+  if (session.endedAt) {
+    // A deduced end is a lower bound: the session ran at least this long and
+    // stopped at some unknown point after it. Rendering it as a plain figure
+    // would be the same overstatement the silent case already avoids.
+    if (session.endInferred) {
+      return (
+        <Tooltip label="At least this long. Argus closed the session at its last sighting; the real end was never observed.">
+          {text(`${duration(session.startedAt, session.endedAt)}+`)}
+        </Tooltip>
+      )
+    }
+    return text(duration(session.startedAt, session.endedAt))
+  }
 
   if (session.state !== 'active') {
     return (
@@ -176,10 +192,12 @@ export function SessionStateBadge({
   state,
   silent,
   lastReportedAt,
+  endInferred,
 }: {
   state: SessionState
   silent?: boolean
   lastReportedAt?: string | null
+  endInferred?: boolean
 }) {
   if (state === 'active' && silent) {
     return (
@@ -200,6 +218,19 @@ export function SessionStateBadge({
       >
         live
       </Badge>
+    )
+  }
+  if (state === 'closed' && endInferred) {
+    return (
+      <Tooltip
+        label={`No gateway reported this session for a day, so Argus closed it at ${relTime(lastReportedAt ?? null)} — the last moment it was seen alive. It ran at least that long; the actual end was never observed.`}
+        multiline
+        maw={320}
+      >
+        <Badge color="slate" leftSection={<IconClockQuestion size={11} />}>
+          ended (inferred)
+        </Badge>
+      </Tooltip>
     )
   }
   const map = { closed: 'slate', terminated: 'rose', rejected: 'rose' } as const

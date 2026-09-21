@@ -195,6 +195,30 @@ of them for the length of the upgrade. The terminate audit entry records the
 *authorisation*, not the outcome, deliberately: "an operator who tried to stop a
 session and could not is a more urgent finding than one who succeeded."
 
+## Closing a session whose gateway never came back
+
+Silence made the fifteen stuck `active` rows *visible*; nothing resolved them,
+so the unknown count only grew. `CloseAbandonedSessions` runs on the control
+plane's existing 30-second sweep and closes anything unreported for
+`SessionAbandonedAfter` (24 hours, against the 3-minute silence threshold --
+the gap is the point).
+
+**The end time written is `last_reported_at`, never `now()`.** That is the last
+moment the session was observed alive; it ended at some unknown point at or
+after it. `end_inferred` (migration 014) keeps a deduced end apart from a
+reported one, because a closed session with an end time otherwise reads as a
+clean logout and an auditor could not tell which it was.
+
+The console carries it through: the badge says `ended (inferred)` rather than
+`closed`, and the duration is suffixed `+` because it is a floor. One audit
+event per closed session, not one per sweep -- an auditor asking what became of
+session X has to find the answer under X.
+
+**This was the user's call, made against my recommendation.** I argued for
+leaving them permanently unknown: Argus never observed an end, so it should
+never record one. They chose auto-close, so the design puts everything into
+making the inference unmistakable as inference rather than into avoiding it.
+
 ## Environment hazard on this machine
 
 `panmail-dev-postgres` also publishes host port **5433**, colliding with
