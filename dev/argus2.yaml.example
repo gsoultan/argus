@@ -18,6 +18,8 @@ listen: "127.0.0.1:2223"
 host_key: "keys/gateway_host"
 authorized_keys: "authorized_keys"
 inventory: "inventory.json"
+# See argus.yaml: a credential is a name resolved inside this directory.
+vault_dir: "vault"
 host_key_store: "data/gw2/hostkeys.json"
 recording_dir: "data/gw2/recordings"
 # Development only: the target was just built, so nothing has pinned its key

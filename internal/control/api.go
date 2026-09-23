@@ -152,10 +152,21 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/grant", a.user(a.getGrant))
 
 	// Console read surface. Paths match what web/src/lib/api.ts already calls.
-	mux.HandleFunc("GET /api/v1/stats", a.user(a.getStats))
-	mux.HandleFunc("GET /api/v1/assets", a.user(a.getAssets))
-	mux.HandleFunc("GET /api/v1/sessions", a.user(a.getSessions))
-	mux.HandleFunc("GET /api/v1/sessions/{id}", a.user(a.getSession))
+	mux.HandleFunc("GET /api/v1/stats", a.getStats)
+
+	// The inventory. Reading it is filtered by role rather than gated on one:
+	// an ordinary account sees the assets assigned to it. Every write is
+	// admin-or-owner and lands in the audit chain. See asset_routes.go.
+	mux.HandleFunc("GET /api/v1/assets", a.getAssets)
+	mux.HandleFunc("POST /api/v1/assets", a.postAssetCreate)
+	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
+	mux.HandleFunc("GET /api/v1/users", a.getUsers)
+	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
+	mux.HandleFunc("GET /api/v1/sessions", a.getSessions)
+	mux.HandleFunc("GET /api/v1/sessions/{id}", a.getSession)
 	mux.HandleFunc("GET /api/v1/audit", a.user(a.getAudit))
 	mux.HandleFunc("GET /api/v1/coverage", a.user(a.getCoverage))
 	mux.HandleFunc("GET /api/v1/discovered", a.user(a.getDiscovered))
@@ -189,6 +200,10 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/hostkeys/pin", a.reporter(a.getHostKeyPin))
 	// Gateways read policy through the machine credential, never the console's.
 	mux.HandleFunc("GET /api/v1/gateway/policy", a.reporter(a.getGatewayPolicy))
+	// And the inventory: which hosts this gateway brokers, and who is assigned
+	// to them. Names the credential in the gateway's own vault, never carries
+	// credential material.
+	mux.HandleFunc("GET /api/v1/gateway/inventory", a.reporter(a.getInventory))
 	mux.HandleFunc("POST /api/v1/hostkeys/pin", a.reporter(a.postHostKeyPin))
 
 }
@@ -282,7 +297,8 @@ func (a *API) cors(next http.Handler) http.Handler {
 			if allowed == origin && origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Methods",
+					"GET, POST, PATCH, PUT, DELETE, OPTIONS")
 				// Without this the browser silently hides the header and the
 				// console cannot tell an intact recording from a tampered one —
 				// the verdict is sent, read as null, and shown as nothing.
@@ -304,8 +320,28 @@ func (a *API) cors(next http.Handler) http.Handler {
 
 /* ── Console handlers ────────────────────────────────────────────────────── */
 
-func (a *API) getStats(w http.ResponseWriter, r *http.Request, _ string) {
-	st, err := a.store.Stats(r.Context())
+// getStats serves the Overview's counters, about whatever the caller can see.
+//
+// Scoped rather than gated: an operator gets the same page about their own
+// hosts and sessions. Every figure on it is then true of something they can act
+// on, and it agrees with the asset list and the session list below it -- which
+// are filtered by the same rule.
+func (a *API) getStats(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var (
+		st  FleetStats
+		err error
+	)
+	if seesWholeFleet(sess.Role) {
+		st, err = a.store.Stats(r.Context())
+	} else {
+		st, err = a.store.StatsFor(r.Context(), sess.Email)
+	}
 	if err != nil {
 		a.fail(w, "stats", err)
 		return
@@ -313,22 +349,27 @@ func (a *API) getStats(w http.ResponseWriter, r *http.Request, _ string) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-func (a *API) getAssets(w http.ResponseWriter, r *http.Request, _ string) {
-	assets, err := a.store.Assets(r.Context())
-	if err != nil {
-		a.fail(w, "assets", err)
+func (a *API) getSessions(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	writeJSON(w, http.StatusOK, assets)
-}
 
-func (a *API) getSessions(w http.ResponseWriter, r *http.Request, _ string) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	sessions, err := a.store.Sessions(r.Context(), SessionFilter{
+	filter := SessionFilter{
 		State:  r.URL.Query().Get("state"),
 		Origin: r.URL.Query().Get("origin"),
 		Limit:  limit,
-	})
+	}
+	// Who else is on which host and when is the same reconnaissance the asset
+	// list is filtered to prevent, and it is not less sensitive for being in a
+	// different table.
+	if !seesWholeFleet(sess.Role) {
+		filter.UserEmail = sess.Email
+	}
+
+	sessions, err := a.store.Sessions(r.Context(), filter)
 	if err != nil {
 		a.fail(w, "sessions", err)
 		return
@@ -336,13 +377,22 @@ func (a *API) getSessions(w http.ResponseWriter, r *http.Request, _ string) {
 	writeJSON(w, http.StatusOK, sessions)
 }
 
-func (a *API) getSession(w http.ResponseWriter, r *http.Request, _ string) {
+func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
+	auth, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
 	sess, err := a.store.Session(r.Context(), r.PathValue("id"))
 	if err != nil {
 		a.fail(w, "session", err)
 		return
 	}
-	if sess == nil {
+	// Not found, rather than forbidden, for someone else's session. A 403 would
+	// confirm the id names a real session and who it belongs to, which is most
+	// of what the recording would have told them.
+	if sess == nil || (!seesWholeFleet(auth.Role) && !strings.EqualFold(sess.UserEmail, auth.Email)) {
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
 	}
@@ -492,7 +542,24 @@ func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hostname is required")
 		return
 	}
-	if err := a.store.UpsertAsset(r.Context(), in); err != nil {
+	err := a.store.UpsertAsset(r.Context(), in)
+	if errors.Is(err, ErrConsoleOwned) {
+		// Not a failure. A gateway publishes its file inventory at start-up so
+		// a file-driven deployment appears here without anyone retyping it, and
+		// the console owns the row the moment an administrator edits it. Said
+		// out loud at both ends, because "my edits keep reverting" and "my
+		// inventory file is being ignored" are the same event seen from two
+		// sides, and neither is diagnosable in silence.
+		a.log.Info("ignored a published asset the console owns",
+			"hostname", in.Hostname,
+			"detail", "this host is edited in the console; the file entry no longer applies")
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "skipped",
+			"warning": "this asset is managed from the console; the published entry was ignored",
+		})
+		return
+	}
+	if err != nil {
 		a.fail(w, "report asset", err)
 		return
 	}

@@ -70,7 +70,8 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		ActorEmail: sess.Email,
 		Target:     hostname,
 		Detail: "Enrolled discovered host " + hostname + " as a managed asset. " +
-			"No principals were granted; they must be added deliberately.",
+			"No principals were granted and nobody is assigned to it; both are " +
+			"added deliberately, from the asset itself.",
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}

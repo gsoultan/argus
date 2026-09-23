@@ -83,11 +83,15 @@ func (a *API) kernelEvidenceWaived(r *http.Request, target string) (bool, string
 	return true, why
 }
 
-// authorizePrincipal applies the elevation rules.
+// authorizePrincipal decides one session: assignment first, then elevation.
+//
+// The gateway asks when its own synced inventory does not already show the
+// person assigned, and always for an elevated principal. So this is the single
+// place both paths get their answer from, which is the point: the rules for who
+// may reach a host live here, or the browser and ssh(1) drift into two products
+// with two different ideas of who is allowed.
 func (a *API) authorizePrincipal(r *http.Request, email, target, principal string) (Authorization, error) {
-	if !isElevated(principal) {
-		return Authorization{Allowed: true}, nil
-	}
+	elevated := isElevated(principal)
 
 	// Admins are exempt, as they are on the browser path, because someone has
 	// to be able to act when the approval chain itself is broken. Their
@@ -95,6 +99,9 @@ func (a *API) authorizePrincipal(r *http.Request, email, target, principal strin
 	// exemption is audited here rather than left implicit.
 	if acct, err := a.store.Account(r.Context(), email); err == nil {
 		if acct.Role == "admin" || acct.Role == "owner" {
+			if !elevated {
+				return Authorization{Allowed: true}, nil
+			}
 			detail := "Allowed a session as " + principal + " by role " + acct.Role +
 				", with no access request. Admins are exempt so the approval " +
 				"chain being broken cannot lock everyone out."
@@ -121,6 +128,18 @@ func (a *API) authorizePrincipal(r *http.Request, email, target, principal strin
 			a.auditElevation(r, email, target, detail)
 			return Authorization{Allowed: true, KernelEvidenceWaived: waived}, nil
 		}
+	}
+
+	// An ordinary principal is decided by assignment.
+	//
+	// Elevated ones fall through to the rules below instead, where an approved
+	// access request is required outright — a grant names one person, one host
+	// and one principal and expires, so it is strictly narrower than an
+	// assignment and there is nothing an assignment could add. Checking
+	// assignment first would also move the refusal, and with it the audit
+	// entry, away from the reason the session was actually refused.
+	if !elevated {
+		return a.authorizeAssignment(r, email, target, principal)
 	}
 
 	// Kernel evidence, when the policy insists on it for elevated sessions.
@@ -195,6 +214,54 @@ func (a *API) authorizePrincipal(r *http.Request, email, target, principal strin
 	a.auditElevation(r, email, target,
 		"Allowed a session as "+principal+" under an approved access request, until "+until+".")
 	return Authorization{Allowed: true, ExpiresAt: expires}, nil
+}
+
+// authorizeAssignment decides an ordinary principal.
+//
+// An approved access request counts as well as an assignment: it is narrower —
+// one host, one principal, and it expires — so a product that refused it here
+// would have no just-in-time access at all, and the only answer to "I need this
+// host for an hour" would be a permanent assignment.
+//
+// The refusal is audited. Unlike the console, this endpoint is reached only by
+// a gateway holding the machine credential, so the entries cannot be produced
+// at will by anyone off the network, and "X was refused Y on Z" is exactly what
+// an investigation is looking for.
+func (a *API) authorizeAssignment(
+	r *http.Request, email, target, principal string,
+) (Authorization, error) {
+	assigned, err := a.store.AssignmentAllows(r.Context(), email, target, principal)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if assigned {
+		return Authorization{Allowed: true}, nil
+	}
+
+	granted, expires, err := a.store.ActiveGrant(r.Context(), email, target, principal)
+	if err != nil {
+		return Authorization{}, err
+	}
+	if granted {
+		a.log.Info("session authorised by grant rather than assignment",
+			"email", email, "principal", principal, "target", target, "expires", expires)
+		return Authorization{Allowed: true, ExpiresAt: expires}, nil
+	}
+
+	a.log.Warn("session refused: not assigned",
+		"email", email, "principal", principal, "target", target)
+	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action:     "session.refused_unassigned",
+		Severity:   "notice",
+		ActorEmail: email,
+		Target:     target,
+		Detail: "Refused a session as " + principal +
+			": this host is not assigned to them and no approved access request covers it.",
+	}); aerr != nil {
+		a.log.Error("audit append failed", "error", aerr)
+	}
+	return Authorization{Reason: email + " is not assigned " + target + " as " + principal +
+		"; an administrator assigns a host, or an approved access request covers it temporarily"}, nil
 }
 
 // auditElevation records that elevated access was granted.

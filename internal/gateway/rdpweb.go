@@ -68,6 +68,18 @@ func (s *Server) handleRDPWeb(cfg WebConfig) http.HandlerFunc {
 			http.Error(w, "principal not permitted on this host", http.StatusForbidden)
 			return
 		}
+		// And who the host was assigned to. The ticket was issued by the control
+		// plane, which checked this already; checked again here because a
+		// gateway that trusts a ticket to have been issued correctly has made
+		// the signature the whole control. Same call the SSH path makes, so the
+		// two cannot come to different conclusions.
+		if _, aerr := s.authorize(user, principal, asset.Hostname); aerr != nil {
+			s.log.Warn("rdp session refused",
+				"principal", principal, "target", asset.Hostname, "user", user,
+				"error", aerr)
+			http.Error(w, aerr.Error(), http.StatusForbidden)
+			return
+		}
 
 		conn, wsErr := websocket.Accept(w, r, &websocket.AcceptOptions{
 			OriginPatterns: cfg.AllowedOrigins,

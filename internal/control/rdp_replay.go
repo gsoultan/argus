@@ -34,6 +34,13 @@ func (a *API) getRDPReplay(w http.ResponseWriter, r *http.Request, actor string)
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
 	}
+	if !a.mayReadSession(r, sess) {
+		// Not found, rather than forbidden, for someone else's session. A 403
+		// would confirm the id names a real session and whose it is, which is
+		// most of what the artefact would have told them.
+		writeErr(w, http.StatusNotFound, "session not found")
+		return
+	}
 	if sess.Protocol != "rdp" {
 		writeErr(w, http.StatusBadRequest,
 			"this session is not a Remote Desktop recording")

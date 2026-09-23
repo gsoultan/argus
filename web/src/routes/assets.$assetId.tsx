@@ -1,9 +1,10 @@
+import { Suspense, lazy, useState } from 'react'
 import { Alert, Badge, Box, Button, Card, Code, Grid, Group, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconCertificate, IconHistory, IconPlugConnected, IconRefresh,
-  IconServer2, IconShieldCheck,
+  IconAlertTriangle, IconCertificate, IconHistory, IconPencil, IconPlugConnected,
+  IconRefresh, IconServer2, IconShieldCheck, IconUsers,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { run } from '~/lib/notify'
@@ -13,8 +14,16 @@ import {
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
-  assetQuery, sessionsQuery, usePinHostKey, useRotateCredential,
+  assetQuery, meQuery, sessionsQuery, usePinHostKey, useRotateCredential,
 } from '~/lib/queries'
+
+/** Opened only by an administrator, so their chunks are fetched only for one. */
+const AssetForm = lazy(() =>
+  import('~/components/AssetForm').then((m) => ({ default: m.AssetForm })),
+)
+const AssetAssignments = lazy(() =>
+  import('~/components/AssetAssignments').then((m) => ({ default: m.AssetAssignments })),
+)
 
 export const Route = createFileRoute('/assets/$assetId')({
   component: AssetDetail,
@@ -27,8 +36,14 @@ function AssetDetail() {
   const { assetId } = Route.useParams()
   const { data: asset } = useQuery(assetQuery(assetId))
   const { data: allSessions } = useQuery(sessionsQuery())
+  const { data: me } = useQuery(meQuery())
   const pin = usePinHostKey()
   const rotate = useRotateCredential()
+
+  const canEdit = me?.role === 'admin' || me?.role === 'owner'
+  const canSeeAssignments = canEdit || me?.role === 'auditor'
+  const [editing, setEditing] = useState(false)
+  const [assigning, setAssigning] = useState(false)
 
   if (!asset) {
     return (
@@ -82,16 +97,36 @@ function AssetDetail() {
         status={<HealthDot health={asset.health} />}
         description={`${asset.os} · ${asset.address}:${asset.port}`}
         actions={
-          !isCa ? (
-            <Button
-              variant="default"
-              leftSection={<IconRefresh size={14} />}
-              loading={rotate.isPending}
-              onClick={onRotate}
-            >
-              Rotate credential
-            </Button>
-          ) : null
+          <Group gap={SP.cozy}>
+            {canSeeAssignments && (
+              <Button
+                variant="default"
+                leftSection={<IconUsers size={14} />}
+                onClick={() => setAssigning(true)}
+              >
+                Who can reach it
+              </Button>
+            )}
+            {canEdit && (
+              <Button
+                variant="default"
+                leftSection={<IconPencil size={14} />}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </Button>
+            )}
+            {!isCa && (
+              <Button
+                variant="default"
+                leftSection={<IconRefresh size={14} />}
+                loading={rotate.isPending}
+                onClick={onRotate}
+              >
+                Rotate credential
+              </Button>
+            )}
+          </Group>
         }
       />
 
@@ -310,6 +345,20 @@ function AssetDetail() {
           </Grid.Col>
         </Grid>
       </PageBody>
+
+      <Suspense fallback={null}>
+        {editing && canEdit && (
+          <AssetForm opened={editing} onClose={() => setEditing(false)} asset={asset} />
+        )}
+        {assigning && canSeeAssignments && (
+          <AssetAssignments
+            asset={asset}
+            opened={assigning}
+            onClose={() => setAssigning(false)}
+            canEdit={Boolean(canEdit)}
+          />
+        )}
+      </Suspense>
     </Box>
   )
 }

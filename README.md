@@ -192,6 +192,96 @@ cosign verify-blob checksums.txt \
 sha256sum -c checksums.txt --ignore-missing
 ```
 
+## Adding an asset
+
+An administrator adds a host in the console; an operator sees the hosts assigned
+to them and nothing else. Both halves matter — a list of every host in the fleet
+is a map, whether or not the buttons on it work.
+
+**1. Put the credential on the gateway.** Argus stores its *name*, never the
+secret. For SSH, a private key at `<vault_dir>/<name>`; for Remote Desktop, a
+directory `<vault_dir>/<name>/` holding one file per principal, each containing
+that account's password. `vault_dir` is `/var/lib/argus/vault` in the packaged
+config. Keys are mode-checked at load: one readable by group or other is
+refused.
+
+Certificate mode skips this step entirely. With a CA configured and the target
+carrying `TrustedUserCAKeys`, the gateway mints a short-lived certificate per
+session and there is no standing credential to place, rotate or lose.
+
+**2. Add the asset.** Assets → **Add asset**. Hostname, address, protocol, and
+the principals Argus may broker a session as. That list is the authority, not
+the target's own `/etc/passwd`: a credential that happens to work on an account
+outside it is still refused.
+
+The credential field takes a name, not a path. Anything with a separator in it
+is rejected at both ends — an administrator who could type a path could point
+the gateway at any file it can read and have it used as a private key.
+
+**3. Assign it.** Nobody can reach a host until someone is assigned it, not even
+the person who added it. Open **Who can reach** on the asset, pick an account
+and the principals they may assume there. An assignment can never exceed the
+asset's own principal list, and removing a principal from the asset removes it
+from everyone assigned it.
+
+Assignment is permission to ask, not permission to have. An elevated principal —
+`root`, `Administrator`, anything the policy names — still needs an approved
+access request on the day, and an approved request is also the way to reach a
+host you were never assigned: narrower than an assignment, and it expires.
+
+Changes reach every gateway within a minute. Until then the gateway is working
+from the inventory it already had, deliberately: a control plane that cannot be
+reached must not be able to change what a gateway permits, in either direction.
+
+### What each role sees
+
+| | Assets page | Add, edit, retire | Assign | Connect | Sessions & recordings |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| owner, admin | the fleet | yes | yes | any host | all |
+| auditor | the fleet | no | no | no sessions at all | all |
+| operator | assigned hosts | no | no | assigned hosts | their own |
+
+The Overview is scoped the same way rather than hidden: an operator sees their
+assigned hosts and their own sessions, and the page says so. Someone else's
+session answers 404 rather than 403 — a 403 confirms the id names a real session
+and whose it is, which is most of what the recording would have told them.
+
+Admins and owners are exempt from assignment for the same reason they are exempt
+from the approval chain: someone has to be able to act when the chain itself is
+broken. Their sessions are recorded and flagged like everyone else's.
+
+### Where this is not enforced
+
+Two cases, stated rather than implied:
+
+- **A gateway with no control plane** runs on `inventory.json` alone. That file
+  carries no assignments, so the principal list is the whole control and any key
+  in `authorized_keys` can open any principal a host lists — which is how this
+  path has always worked. The gateway says so at start-up.
+- **The native RDP listener** authenticates nobody: the request is parsed from
+  an mstshash cookie and names a principal and a target, not a person. There is
+  no identity to hold an assignment, so it cannot be applied there. Elevated
+  principals are refused outright on that path, and the browser console is the
+  one that authenticates before it brokers.
+
+An existing file-driven deployment keeps working. Each gateway publishes its
+inventory at start-up, so those hosts appear in the console as ordinary assets;
+edit one there and the console owns it from then on, and later publishes leave
+it alone.
+
+### Upgrading an existing deployment
+
+**Assignment is enforced from the first start, and nobody is assigned yet.** On
+a deployment where operators previously reached any host in `inventory.json`,
+they will be refused until someone assigns them — admins and owners are exempt,
+so there is always a way in to do it.
+
+Argus will not guess the initial assignments. It could infer them from who has
+opened sessions before, and that would be a product deciding who is authorised
+by looking at who managed it in the past, which is the thing it exists to stop.
+Assign deliberately: the hosts appear in the console as soon as a gateway
+publishes them, and the Sessions page shows who has been using what.
+
 ## Connecting
 
 The browser terminal is the way in by default, at the gateway's `web` listener.

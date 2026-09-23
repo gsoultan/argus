@@ -12,7 +12,7 @@ import {
   SessionStateBadge, Target, absTime, bytes, now, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
-import { sessionsQuery } from '~/lib/queries'
+import { meQuery, sessionsQuery } from '~/lib/queries'
 import type { Session } from '~/types/domain'
 
 const FILTERS = ['all', 'active', 'silent', 'direct', 'flagged'] as const
@@ -53,6 +53,11 @@ const LIMIT = 120
 
 function Sessions() {
   const navigate = useNavigate()
+  const { data: me } = useQuery(meQuery())
+  // The list is filtered on the server by the same rule; this only decides how
+  // the page describes what it is showing.
+  const wholeFleet =
+    me?.role === 'admin' || me?.role === 'owner' || me?.role === 'auditor'
   const { data: sessions } = useQuery(sessionsQuery())
   const { show, since } = Route.useSearch()
   const filter = show ?? 'all'
@@ -106,7 +111,11 @@ function Sessions() {
     <Box>
       <PageHeader
         title="Sessions"
-        description="Every connection Argus knows about, live and historical. Open any row to replay it."
+        description={
+          wholeFleet
+            ? 'Every connection Argus knows about, live and historical. Open any row to replay it.'
+            : 'Your own sessions, live and historical. Open any row to replay it. Other people\u2019s sessions are an auditor\u2019s to review.'
+        }
       />
 
       <PageBody>

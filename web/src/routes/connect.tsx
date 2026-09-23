@@ -218,6 +218,25 @@ function Connect() {
           <Grid.Col span={{ base: 12, lg: 7 }}>
             <Stack gap="sm">
               <Step n={1} icon={IconServer2} title="Choose a host">
+                {/* An empty inventory and an empty *assignment* look identical
+                    in a searchable Select — it answers "no host by that name"
+                    to every query — and they need opposite responses. Saying
+                    which one this is turns a dead form into a next step. */}
+                {assets?.length === 0 && (
+                  <Alert
+                    variant="light"
+                    color="amber"
+                    icon={<IconInfoCircle size={16} />}
+                    title="No hosts are assigned to you"
+                    mb="xs"
+                  >
+                    <Text size={FS.meta} lh={1.5}>
+                      An administrator assigns the hosts you may reach, and which account
+                      you may assume on each. If you need one for a specific piece of work,
+                      raise an access request and have an approver decide it.
+                    </Text>
+                  </Alert>
+                )}
                 <Select
                   size="sm"
                   placeholder={assets ? 'Search the inventory' : 'Loading hosts…'}
@@ -257,6 +276,14 @@ function Connect() {
                 {!target ? (
                   <Text size={FS.meta} c="dimmed">
                     Pick a host first — the accounts you may assume depend on it.
+                  </Text>
+                ) : principals.length === 0 ? (
+                  // An asset can list no principals at all — enrolled from
+                  // Coverage and not finished, say. An empty radio group would
+                  // look like a page that had not loaded.
+                  <Text size={FS.meta} c="dimmed">
+                    This host permits no accounts you may assume. An administrator lists the
+                    accounts on the asset and assigns them.
                   </Text>
                 ) : (
                   <Radio.Group value={principal} onChange={setPrincipal}>

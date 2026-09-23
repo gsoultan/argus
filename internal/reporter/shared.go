@@ -155,6 +155,55 @@ func (c *Client) GatewayPolicy(ctx context.Context) (*GatewayPolicy, error) {
 	return &out, nil
 }
 
+// InventoryAssignment is one person's access to one asset.
+type InventoryAssignment struct {
+	Email      string   `json:"email"`
+	Principals []string `json:"principals"`
+}
+
+// InventoryAsset is one host as the control plane holds it.
+//
+// The credential is a name, resolved by the gateway inside its own vault
+// directory. Nothing in this struct is credential material and nothing in it
+// can name a file outside that directory — see gateway.vaultPath.
+type InventoryAsset struct {
+	Hostname       string                `json:"hostname"`
+	Address        string                `json:"address"`
+	Port           int                   `json:"port"`
+	Protocol       string                `json:"protocol"`
+	Principals     []string              `json:"principals"`
+	CredentialMode string                `json:"credential_mode"`
+	CredentialRef  string                `json:"credential_ref"`
+	Domain         string                `json:"domain,omitempty"`
+	Assignments    []InventoryAssignment `json:"assignments"`
+}
+
+// Inventory is what a gateway brokers, and for whom.
+type Inventory struct {
+	GeneratedAt time.Time        `json:"generatedAt"`
+	Assets      []InventoryAsset `json:"assets"`
+	// Unrestricted are accounts assignment does not gate: admins and owners.
+	// Carried so ssh(1) and the browser console apply the same exemption.
+	Unrestricted []string `json:"unrestricted"`
+}
+
+// Inventory fetches the assets this gateway may broker and who is assigned to
+// them.
+//
+// An error is returned rather than an empty inventory, and the caller keeps
+// what it already had. An empty one would read as "every asset was deleted",
+// which on a network blip would take the whole fleet offline.
+func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("no control plane configured")
+	}
+	var out Inventory
+	if err := c.call(ctx, http.MethodGet, "/api/v1/gateway/inventory", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Authorization is the control plane's answer about one session.
 type Authorization struct {
 	Allowed   bool       `json:"allowed"`

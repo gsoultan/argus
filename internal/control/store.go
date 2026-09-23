@@ -359,6 +359,14 @@ type SessionFilter struct {
 	State  string
 	Origin string
 	Limit  int
+	// UserEmail restricts the list to one person's sessions.
+	//
+	// Set for any role that does not see the whole fleet. An operator who could
+	// list every session could read who else is on which host and when, which
+	// is the same reconnaissance the asset list is filtered to prevent — and it
+	// would leave the Overview counting sessions the page below could explain
+	// and the operator could not.
+	UserEmail string
 }
 
 // Sessions lists sessions, newest first.
@@ -386,6 +394,7 @@ func (s *Store) Sessions(ctx context.Context, f SessionFilter) ([]Session, error
 	rows, err := session.New().
 		WhereIf(f.State != "", session.State.Eq(f.State)).
 		WhereIf(f.Origin != "", session.Origin.Eq(f.Origin)).
+		WhereIf(f.UserEmail != "", session.UserEmail.Eq(f.UserEmail)).
 		Order(session.StartedAt.Desc()).
 		Limit(int64(limit)).
 		All(ctx, pgxdrv.Pool{P: s.pool}, nil)
@@ -495,13 +504,27 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 
 // Asset mirrors the console's Asset type.
 type Asset struct {
-	ID                   string     `json:"id"`
-	Hostname             string     `json:"hostname"`
-	Address              string     `json:"address"`
-	Port                 int        `json:"port"`
-	OS                   string     `json:"os"`
-	Tags                 []string   `json:"tags"`
-	GroupName            string     `json:"groupName"`
+	ID       string `json:"id"`
+	Hostname string `json:"hostname"`
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	// Protocol is "ssh" or "rdp". The column has existed since 005; the console
+	// read surface never returned it, so every host arrived at the browser
+	// looking like SSH — including the Windows ones, on the page whose only job
+	// is to open the right kind of session.
+	Protocol  string   `json:"protocol"`
+	OS        string   `json:"os"`
+	Tags      []string `json:"tags"`
+	GroupName string   `json:"groupName"`
+	// Source is "console" or "gateway": who owns this row. A gateway publishing
+	// its file inventory must not overwrite what an administrator typed here.
+	Source string `json:"source"`
+	// CredentialRef names the credential inside the gateway's vault directory.
+	// A name, never a path — see 015_asset_assignments.sql.
+	CredentialRef string `json:"credentialRef"`
+	// Domain is the Windows domain for an RDP asset. Empty means the account is
+	// local to the host.
+	Domain               string     `json:"domain"`
 	CredentialMode       string     `json:"credentialMode"`
 	CredentialRotatedAt  *time.Time `json:"credentialRotatedAt"`
 	RotationIntervalDays *int       `json:"rotationIntervalDays"`
@@ -517,7 +540,20 @@ type Asset struct {
 	UnmanagedKeyCount    int        `json:"unmanagedKeyCount"`
 }
 
-// UpsertAsset registers or updates an asset by hostname.
+// ErrConsoleOwned means a gateway tried to publish over a row an administrator
+// entered in the console.
+//
+// Not a failure: it is the rule working. The gateway keeps publishing its file
+// inventory so a file-driven deployment appears without anyone retyping it, and
+// the console stays the authority the moment someone edits a host there.
+var ErrConsoleOwned = errors.New("this asset is managed from the console")
+
+// UpsertAsset registers or updates an asset by hostname, on behalf of a gateway.
+//
+// Returns ErrConsoleOwned when the row belongs to the console, having changed
+// nothing. Said out loud rather than swallowed: an administrator whose edits
+// keep being overwritten, or a gateway whose inventory is quietly ignored, both
+// need to know which of the two is happening.
 func (s *Store) UpsertAsset(ctx context.Context, a Asset) error {
 	if a.Tags == nil {
 		a.Tags = []string{}
@@ -528,36 +564,42 @@ func (s *Store) UpsertAsset(ctx context.Context, a Asset) error {
 	if a.Port == 0 {
 		a.Port = 22
 	}
-	_, err := s.pool.Exec(ctx, `
+	if a.Protocol == "" {
+		a.Protocol = "ssh"
+	}
+	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO assets (hostname, address, port, os, tags, group_name,
 			credential_mode, host_key_state, host_key_fingerprint,
-			host_key_pinned_at, health, principals)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			host_key_pinned_at, health, principals, protocol, source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'gateway')
 		ON CONFLICT (hostname) DO UPDATE SET
 			address              = EXCLUDED.address,
 			port                 = EXCLUDED.port,
 			os                   = COALESCE(NULLIF(EXCLUDED.os,''), assets.os),
 			principals           = EXCLUDED.principals,
 			credential_mode      = EXCLUDED.credential_mode,
+			protocol             = EXCLUDED.protocol,
 			host_key_state       = EXCLUDED.host_key_state,
 			host_key_fingerprint = COALESCE(EXCLUDED.host_key_fingerprint, assets.host_key_fingerprint),
 			host_key_pinned_at   = COALESCE(EXCLUDED.host_key_pinned_at, assets.host_key_pinned_at),
-			updated_at           = now()`,
+			updated_at           = now()
+		WHERE assets.source <> 'console'`,
 		a.Hostname, a.Address, a.Port, a.OS, a.Tags, a.GroupName,
 		a.CredentialMode, a.HostKeyState, a.HostKeyFingerprint,
-		a.HostKeyPinnedAt, a.Health, a.Principals)
-	return err
+		a.HostKeyPinnedAt, a.Health, a.Principals, a.Protocol)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConsoleOwned
+	}
+	return nil
 }
 
-// Assets lists the inventory.
+// Assets lists the inventory an administrator sees: every live asset.
 func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, hostname, address, port, os, tags, group_name,
-		       credential_mode, credential_rotated_at, rotation_interval_days,
-		       host_key_state, host_key_fingerprint, host_key_pinned_at,
-		       health, last_checked_at, principals,
-		       agent_state, agent_last_seen_at, bypass_posture, unmanaged_key_count
-		FROM assets ORDER BY hostname`)
+	rows, err := s.pool.Query(ctx, assetSelect+`
+		WHERE a.archived_at IS NULL ORDER BY a.hostname`)
 	if err != nil {
 		return nil, err
 	}
@@ -565,13 +607,8 @@ func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
 
 	out := []Asset{}
 	for rows.Next() {
-		var a Asset
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.Address, &a.Port, &a.OS,
-			&a.Tags, &a.GroupName, &a.CredentialMode, &a.CredentialRotatedAt,
-			&a.RotationIntervalDays, &a.HostKeyState, &a.HostKeyFingerprint,
-			&a.HostKeyPinnedAt, &a.Health, &a.LastCheckedAt, &a.Principals,
-			&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture,
-			&a.UnmanagedKeyCount); err != nil {
+		a, err := scanAsset(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -865,14 +902,66 @@ type FleetStats struct {
 	AgentsStale              int `json:"agentsStale"`
 }
 
+// StatsFor computes the same counters as Stats, about one person's hosts.
+//
+// The Overview described the fleet to everyone: an operator assigned two hosts
+// was shown thirteen, with a headline about hosts they cannot reach and had no
+// way to act on. Scoped, every figure on the page is still true and is now
+// about them -- and it agrees with the asset list and the session list, which
+// are filtered the same way.
+//
+// Sessions and requests are their own; assets are the ones assigned to them.
+// Deliberately not "assets they have ever connected to": the question the page
+// answers is what they can reach now.
+func (s *Store) StatsFor(ctx context.Context, email string) (FleetStats, error) {
+	var st FleetStats
+	err := s.pool.QueryRow(ctx, `
+		WITH mine AS (
+		  SELECT a.* FROM assets a
+		    JOIN asset_assignments g ON g.asset_id = a.id
+		   WHERE a.archived_at IS NULL AND g.user_email = lower($2)
+		)
+		SELECT
+		  (SELECT count(*) FROM mine),
+		  (SELECT count(*) FROM mine WHERE health = 'unreachable'),
+		  (SELECT count(*) FROM mine WHERE host_key_state <> 'pinned'),
+		  (SELECT count(*) FROM sessions
+		     WHERE lower(user_email) = lower($2)
+		       AND state = 'active' AND last_reported_at >  now() - $1::interval),
+		  (SELECT count(*) FROM sessions
+		     WHERE lower(user_email) = lower($2)
+		       AND state = 'active' AND last_reported_at <= now() - $1::interval),
+		  (SELECT count(*) FROM sessions
+		     WHERE lower(user_email) = lower($2)
+		       AND started_at > now() - interval '24 hours'),
+		  (SELECT count(*) FROM access_requests
+		     WHERE lower(requester_email) = lower($2) AND state = 'pending'),
+		  (SELECT count(*) FROM mine
+		     WHERE credential_rotated_at IS NOT NULL
+		       AND rotation_interval_days IS NOT NULL
+		       AND credential_rotated_at < now() - (rotation_interval_days || ' days')::interval),
+		  (SELECT count(*) FROM mine WHERE credential_mode <> 'ca-certificate'),
+		  (SELECT count(*) FROM sessions
+		     WHERE lower(user_email) = lower($2)
+		       AND origin = 'direct' AND started_at > now() - interval '24 hours'),
+		  (SELECT count(*) FROM mine WHERE bypass_posture = 'open'),
+		  (SELECT count(*) FROM mine WHERE agent_state = 'stale')`,
+		fmt.Sprintf("%d seconds", int(SessionSilenceThreshold.Seconds())), email).
+		Scan(&st.AssetsTotal, &st.AssetsUnreachable, &st.HostKeysUnpinned,
+			&st.SessionsActive, &st.SessionsSilent, &st.SessionsToday, &st.RequestsPending,
+			&st.CredentialsOverdue, &st.StandingCredentialAssets,
+			&st.SessionsDirectToday, &st.AssetsUnmonitored, &st.AgentsStale)
+	return st, err
+}
+
 // Stats computes the dashboard counters in one round trip.
 func (s *Store) Stats(ctx context.Context) (FleetStats, error) {
 	var st FleetStats
 	err := s.pool.QueryRow(ctx, `
 		SELECT
-		  (SELECT count(*) FROM assets),
-		  (SELECT count(*) FROM assets WHERE health = 'unreachable'),
-		  (SELECT count(*) FROM assets WHERE host_key_state <> 'pinned'),
+		  (SELECT count(*) FROM assets WHERE archived_at IS NULL),
+		  (SELECT count(*) FROM assets WHERE archived_at IS NULL AND health = 'unreachable'),
+		  (SELECT count(*) FROM assets WHERE archived_at IS NULL AND host_key_state <> 'pinned'),
 		  (SELECT count(*) FROM sessions
 		     WHERE state = 'active' AND last_reported_at >  now() - $1::interval),
 		  (SELECT count(*) FROM sessions
@@ -880,14 +969,16 @@ func (s *Store) Stats(ctx context.Context) (FleetStats, error) {
 		  (SELECT count(*) FROM sessions WHERE started_at > now() - interval '24 hours'),
 		  (SELECT count(*) FROM access_requests WHERE state = 'pending'),
 		  (SELECT count(*) FROM assets
-		     WHERE credential_rotated_at IS NOT NULL
+		     WHERE archived_at IS NULL
+		       AND credential_rotated_at IS NOT NULL
 		       AND rotation_interval_days IS NOT NULL
 		       AND credential_rotated_at < now() - (rotation_interval_days || ' days')::interval),
-		  (SELECT count(*) FROM assets WHERE credential_mode <> 'ca-certificate'),
+		  (SELECT count(*) FROM assets
+		     WHERE archived_at IS NULL AND credential_mode <> 'ca-certificate'),
 		  (SELECT count(*) FROM sessions
 		     WHERE origin = 'direct' AND started_at > now() - interval '24 hours'),
-		  (SELECT count(*) FROM assets WHERE bypass_posture = 'open'),
-		  (SELECT count(*) FROM assets WHERE agent_state = 'stale')`,
+		  (SELECT count(*) FROM assets WHERE archived_at IS NULL AND bypass_posture = 'open'),
+		  (SELECT count(*) FROM assets WHERE archived_at IS NULL AND agent_state = 'stale')`,
 		fmt.Sprintf("%d seconds", int(SessionSilenceThreshold.Seconds()))).
 		Scan(&st.AssetsTotal, &st.AssetsUnreachable, &st.HostKeysUnpinned,
 			&st.SessionsActive, &st.SessionsSilent, &st.SessionsToday, &st.RequestsPending,

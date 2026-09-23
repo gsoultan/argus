@@ -15,7 +15,7 @@ import {
   Target, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
-import { assetsQuery, requestsQuery, sessionsQuery, statsQuery } from '~/lib/queries'
+import { assetsQuery, meQuery, requestsQuery, sessionsQuery, statsQuery } from '~/lib/queries'
 
 export const Route = createFileRoute('/')({
   component: Overview,
@@ -24,6 +24,14 @@ export const Route = createFileRoute('/')({
 
 function Overview() {
   const navigate = useNavigate()
+  const { data: me } = useQuery(meQuery())
+  // Every figure on this page is scoped to what the signed-in account can see:
+  // an operator gets their assigned hosts and their own sessions. The numbers
+  // are right either way -- what changes is what they are about, and a page
+  // headed "fleet posture" while counting two hosts would be the wrong frame
+  // around the right data.
+  const wholeFleet =
+    me?.role === 'admin' || me?.role === 'owner' || me?.role === 'auditor'
   const { data: stats } = useQuery(statsQuery())
   // Filtered, not merely fetched. The query asks for `state = 'active'`, which
   // includes the sessions nothing has reported in minutes -- so a section
@@ -47,7 +55,11 @@ function Overview() {
     <Box>
       <PageHeader
         title="Overview"
-        description="Fleet posture and everything currently in flight."
+        description={
+          wholeFleet
+            ? 'Fleet posture and everything currently in flight.'
+            : 'The hosts assigned to you, and your own sessions. Fleet-wide posture is an administrator\u2019s view.'
+        }
       />
 
       <PageBody>
