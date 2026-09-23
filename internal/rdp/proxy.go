@@ -331,8 +331,30 @@ func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
 	// Authentication happens after pinning, never before. Delegating a
 	// credential to a host whose certificate does not match its pin would hand
 	// the password to whoever is actually answering.
-	if auth == nil || (selected != ProtocolHybrid && selected != ProtocolHybridEx) {
+	if selected != ProtocolHybrid && selected != ProtocolHybridEx {
 		return conn, nil, nil
+	}
+	// The server chose network level authentication and there is nobody to
+	// perform it. Returning the connection would hand back something that
+	// negotiated NLA and then skipped it -- Connect's contract is that
+	// everything establishing trust has already run, and here it has not.
+	//
+	// Not reachable from the gateway today: it asks for ProtocolSSL whenever it
+	// has no credential, including on the CredSSP retry. Found by pointing the
+	// integration test at a real Windows host with nil and getting a usable
+	// connection back with no error.
+	if auth == nil {
+		conn.Close()
+		// hostname is empty for a dial by address; naming something is the
+		// difference between a usable error and a sentence starting with a
+		// space.
+		who := hostname
+		if who == "" {
+			who = address
+		}
+		return nil, nil, fmt.Errorf(
+			"%s negotiated %s but no authenticator was supplied",
+			who, ProtocolName(selected))
 	}
 
 	// The binding covers the SubjectPublicKeyInfo of the certificate on this

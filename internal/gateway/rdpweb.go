@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -176,6 +178,7 @@ func (s *Server) dialRDP(asset Asset, principal string, log *slog.Logger) (
 	var auth *credssp.Authenticator
 	var logon rdp.LogonInfo
 
+	noCredential := false
 	password, cerr := credentialFor(asset, principal)
 	switch {
 	case cerr == nil:
@@ -185,8 +188,16 @@ func (s *Server) dialRDP(asset Asset, principal string, log *slog.Logger) (
 		}}
 		logon = rdp.LogonInfo{Domain: asset.Domain, User: principal, Password: password}
 	case errors.Is(cerr, ErrNoCredential):
-		log.Warn("no vaulted credential; the user will meet a logon screen",
-			"principal", principal)
+		// Only where the host allows TLS-only. A Windows host with network
+		// level authentication required -- which is the hardened default, and
+		// what a customer of this product is likely to have -- refuses that
+		// outright, and there is no logon screen to reach.
+		log.Warn("no vaulted credential; falling back to TLS",
+			"principal", principal,
+			"detail", "the user meets a logon screen only if this host permits "+
+				"TLS-only; one requiring network level authentication will refuse "+
+				"the connection instead")
+		noCredential = true
 		protocol = rdp.ProtocolSSL
 	default:
 		return nil, 0, cerr
@@ -203,6 +214,16 @@ func (s *Server) dialRDP(asset Asset, principal string, log *slog.Logger) (
 			protocol = rdp.ProtocolSSL
 			conn, result, err = rdp.DialTargetWithAuth(asset.Addr(), asset.Hostname,
 				protocol, s.cfg.HostKeys, 15*time.Second, nil)
+		}
+		// Name the remedy. Without a credential Argus can only ask for
+		// TLS-only, and a host requiring NLA refuses that -- so the session is
+		// not merely unreachable, it is unreachable until somebody vaults a
+		// credential for this asset. The bare protocol error says none of that.
+		if err != nil && noCredential && strings.Contains(err.Error(), "network level authentication") {
+			return nil, 0, fmt.Errorf(
+				"%s requires network level authentication and no credential is "+
+					"vaulted for %s: add one for this asset, or the host must be "+
+					"configured to allow TLS-only connections", asset.Hostname, principal)
 		}
 		if err != nil {
 			return nil, 0, err
