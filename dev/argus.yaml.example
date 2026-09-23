@@ -2,6 +2,10 @@ listen: "127.0.0.1:2222"
 host_key: "keys/gateway_host"
 authorized_keys: "authorized_keys"
 inventory: "inventory.json"
+# Credentials a host added in the console can name. The console sends a name;
+# the gateway resolves it in here and refuses anything with a separator in it,
+# so nothing typed in a browser can point at a file outside this directory.
+vault_dir: "vault"
 host_key_store: "data/hostkeys.json"
 recording_dir: "data/recordings"
 # Development only: the target was just built, so nothing has pinned its key

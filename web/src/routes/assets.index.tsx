@@ -1,8 +1,12 @@
-import { useState } from 'react'
-import { Box, Button, Group, Select, Table, Text, TextInput, Tooltip } from '@mantine/core'
+import { Suspense, lazy, useState } from 'react'
+import {
+  ActionIcon, Box, Button, Group, Select, Table, Text, TextInput, Tooltip,
+} from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconSearch, IconServer2, IconShieldLock, IconX } from '@tabler/icons-react'
+import {
+  IconPencil, IconPlus, IconSearch, IconServer2, IconShieldLock, IconUsers, IconX,
+} from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import {
@@ -10,10 +14,24 @@ import {
   relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
-import { assetsQuery, groupsQuery } from '~/lib/queries'
+import { assetsQuery, groupsQuery, meQuery } from '~/lib/queries'
 import type { Asset, CredentialMode } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
+
+/**
+ * Loaded on demand.
+ *
+ * Both pull in Mantine's overlay and its focus trap, and both are opened only
+ * by an administrator. An operator visiting their own list of hosts should not
+ * download the dialogs for editing a fleet they cannot edit.
+ */
+const AssetForm = lazy(() =>
+  import('~/components/AssetForm').then((m) => ({ default: m.AssetForm })),
+)
+const AssetAssignments = lazy(() =>
+  import('~/components/AssetAssignments').then((m) => ({ default: m.AssetAssignments })),
+)
 
 /**
  * Filters live in the URL.
@@ -111,6 +129,17 @@ function Assets() {
   const setSearch = (patch: Partial<AssetSearch>) =>
     void navigate({ to: '/assets', search: (prev) => ({ ...prev, ...patch }), replace: true })
 
+  const { data: me } = useQuery(meQuery())
+  // Editing the fleet is the administrator's; an auditor may look at who is
+  // assigned but change nothing. The control plane enforces both — this only
+  // keeps the console from offering a button that would be refused.
+  const canEdit = me?.role === 'admin' || me?.role === 'owner'
+  const canSeeAssignments = canEdit || me?.role === 'auditor'
+
+  const [editing, setEditing] = useState<Asset | undefined>()
+  const [formOpen, setFormOpen] = useState(false)
+  const [assigning, setAssigning] = useState<Asset | undefined>()
+
   const { data: groups } = useQuery(groupsQuery())
   const { data: assets } = useQuery(
     assetsQuery({
@@ -137,16 +166,33 @@ function Assets() {
     <Box>
       <PageHeader
         title="Assets"
-        description="Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified."
+        description={
+          canSeeAssignments
+            ? 'Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified.'
+            : 'The hosts assigned to you, and the accounts you may assume on each. Anything else needs an approved access request.'
+        }
         actions={
-          // Says what this page cannot answer. The inventory lists the hosts
-          // Argus manages, so a machine nobody enrolled is invisible here by
-          // construction — which is the question Coverage exists for.
-          <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
-            <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
-              Coverage
-            </ButtonLink>
-          </Tooltip>
+          <Group gap={SP.cozy}>
+            {/* Says what this page cannot answer. The inventory lists the hosts
+                Argus manages, so a machine nobody enrolled is invisible here by
+                construction — which is the question Coverage exists for. */}
+            <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
+              <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
+                Coverage
+              </ButtonLink>
+            </Tooltip>
+            {canEdit && (
+              <Button
+                leftSection={<IconPlus size={14} />}
+                onClick={() => {
+                  setEditing(undefined)
+                  setFormOpen(true)
+                }}
+              >
+                Add asset
+              </Button>
+            )}
+          </Group>
         }
       />
 
@@ -238,7 +284,11 @@ function Assets() {
           minWidth={980}
           loading={assets === undefined}
           isEmpty={assets?.length === 0}
-          columns={['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated']}
+          columns={
+            canSeeAssignments
+              ? ['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated', '']
+              : ['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated']
+          }
           empty={
             <EmptyState
               icon={IconServer2}
@@ -246,16 +296,29 @@ function Assets() {
               description={
                 filtered
                   ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'
-                  : 'The inventory is empty. Enrol a host from Coverage, or add one with argus-control assets add.'
+                  : canEdit
+                    ? 'The inventory is empty. Add a host here, or enrol one Coverage has already found running an agent.'
+                    : 'No hosts are assigned to you. An administrator assigns one, or an approved access request covers it temporarily.'
               }
               action={
                 filtered ? (
                   <Button variant="light" onClick={clear}>
                     Clear filters
                   </Button>
+                ) : canEdit ? (
+                  <Button
+                    variant="light"
+                    leftSection={<IconPlus size={14} />}
+                    onClick={() => {
+                      setEditing(undefined)
+                      setFormOpen(true)
+                    }}
+                  >
+                    Add asset
+                  </Button>
                 ) : (
-                  <ButtonLink variant="light" to="/coverage">
-                    Go to Coverage
+                  <ButtonLink variant="light" to="/requests">
+                    Request access
                   </ButtonLink>
                 )
               }
@@ -300,10 +363,59 @@ function Assets() {
                   </Text>
                 )}
               </Table.Td>
+              {canSeeAssignments && (
+                // Stops the row's own navigation: these open a panel about this
+                // host rather than taking you away from it.
+                <Table.Td align="right" onClick={(e) => e.stopPropagation()}>
+                  <Group gap={SP.tight} justify="flex-end" wrap="nowrap">
+                    <Tooltip label="Who can reach this host">
+                      <ActionIcon
+                        variant="subtle"
+                        color="slate"
+                        aria-label={`Who can reach ${a.hostname}`}
+                        onClick={() => setAssigning(a)}
+                      >
+                        <IconUsers size={14} />
+                      </ActionIcon>
+                    </Tooltip>
+                    {canEdit && (
+                      <Tooltip label="Edit this asset">
+                        <ActionIcon
+                          variant="subtle"
+                          color="slate"
+                          aria-label={`Edit ${a.hostname}`}
+                          onClick={() => {
+                            setEditing(a)
+                            setFormOpen(true)
+                          }}
+                        >
+                          <IconPencil size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                  </Group>
+                </Table.Td>
+              )}
             </Table.Tr>
           ))}
         </DataTable>
       </PageBody>
+
+      {/* Rendered only while open, so the chunk is fetched the first time an
+          administrator actually opens one. */}
+      <Suspense fallback={null}>
+        {formOpen && canEdit && (
+          <AssetForm opened={formOpen} onClose={() => setFormOpen(false)} asset={editing} />
+        )}
+        {assigning && canSeeAssignments && (
+          <AssetAssignments
+            asset={assigning}
+            opened={Boolean(assigning)}
+            onClose={() => setAssigning(undefined)}
+            canEdit={Boolean(canEdit)}
+          />
+        )}
+      </Suspense>
     </Box>
   )
 }

@@ -85,6 +85,23 @@ func _assertAssetShape(m m0.Asset) {
 		m.AgentHostname,
 		m.DiscoveredBy,
 		m.Protocol,
+		m.Source,
+		m.CredentialRef,
+		m.Domain,
+		m.ArchivedAt,
+	}
+}
+
+// _assertAssetAssignmentShape fails to compile if m0.AssetAssignment gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertAssetAssignmentShape(m m0.AssetAssignment) {
+	type shape m0.AssetAssignment
+	_ = shape{
+		m.Asset,
+		m.UserEmail,
+		m.Principals,
+		m.GrantedBy,
+		m.GrantedAt,
 	}
 }
 

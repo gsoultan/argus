@@ -45,6 +45,10 @@ type Row struct {
 	AgentHostname        runtime.Null[string]
 	DiscoveredBy         runtime.Null[string]
 	Protocol             string
+	Source               string
+	CredentialRef        string
+	Domain               string
+	ArchivedAt           runtime.Null[time.Time]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -82,7 +86,7 @@ const (
 	opNotExists runtime.Op = 26
 )
 
-const nCols = 25
+const nCols = 29
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -357,6 +361,34 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.Protocol
 		q.ns++
+	case 25:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Source
+		q.ns++
+	case 26:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.CredentialRef
+		q.ns++
+	case 27:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Domain
+		q.ns++
+	case 28:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.ArchivedAt.V
+		q.ntm++
 	}
 }
 
@@ -541,6 +573,10 @@ var (
 	AgentHostname        = NullTextCol{22}
 	DiscoveredBy         = NullTextCol{23}
 	Protocol             = TextCol{24}
+	Source               = TextCol{25}
+	CredentialRef        = TextCol{26}
+	Domain               = TextCol{27}
+	ArchivedAt           = NullTimeCol{28}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1015,6 +1051,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 25:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 26:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 27:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1181,6 +1238,34 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 25:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 26:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 27:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 28:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1414,8 +1499,46 @@ func (q Query) ProtocolLike(v string) Query          { return q.Where(Protocol.L
 func (q Query) ProtocolILike(v string) Query         { return q.Where(Protocol.ILike(v)) }
 func (q Query) ProtocolIn(v ...string) Query         { return q.Where(Protocol.In(v...)) }
 func (q Query) ProtocolNotIn(v ...string) Query      { return q.Where(Protocol.NotIn(v...)) }
+func (q Query) SourceEq(v string) Query              { return q.Where(Source.Eq(v)) }
+func (q Query) SourceNotEq(v string) Query           { return q.Where(Source.NotEq(v)) }
+func (q Query) SourceGt(v string) Query              { return q.Where(Source.Gt(v)) }
+func (q Query) SourceGte(v string) Query             { return q.Where(Source.Gte(v)) }
+func (q Query) SourceLt(v string) Query              { return q.Where(Source.Lt(v)) }
+func (q Query) SourceLte(v string) Query             { return q.Where(Source.Lte(v)) }
+func (q Query) SourceLike(v string) Query            { return q.Where(Source.Like(v)) }
+func (q Query) SourceILike(v string) Query           { return q.Where(Source.ILike(v)) }
+func (q Query) SourceIn(v ...string) Query           { return q.Where(Source.In(v...)) }
+func (q Query) SourceNotIn(v ...string) Query        { return q.Where(Source.NotIn(v...)) }
+func (q Query) CredentialRefEq(v string) Query       { return q.Where(CredentialRef.Eq(v)) }
+func (q Query) CredentialRefNotEq(v string) Query    { return q.Where(CredentialRef.NotEq(v)) }
+func (q Query) CredentialRefGt(v string) Query       { return q.Where(CredentialRef.Gt(v)) }
+func (q Query) CredentialRefGte(v string) Query      { return q.Where(CredentialRef.Gte(v)) }
+func (q Query) CredentialRefLt(v string) Query       { return q.Where(CredentialRef.Lt(v)) }
+func (q Query) CredentialRefLte(v string) Query      { return q.Where(CredentialRef.Lte(v)) }
+func (q Query) CredentialRefLike(v string) Query     { return q.Where(CredentialRef.Like(v)) }
+func (q Query) CredentialRefILike(v string) Query    { return q.Where(CredentialRef.ILike(v)) }
+func (q Query) CredentialRefIn(v ...string) Query    { return q.Where(CredentialRef.In(v...)) }
+func (q Query) CredentialRefNotIn(v ...string) Query { return q.Where(CredentialRef.NotIn(v...)) }
+func (q Query) DomainEq(v string) Query              { return q.Where(Domain.Eq(v)) }
+func (q Query) DomainNotEq(v string) Query           { return q.Where(Domain.NotEq(v)) }
+func (q Query) DomainGt(v string) Query              { return q.Where(Domain.Gt(v)) }
+func (q Query) DomainGte(v string) Query             { return q.Where(Domain.Gte(v)) }
+func (q Query) DomainLt(v string) Query              { return q.Where(Domain.Lt(v)) }
+func (q Query) DomainLte(v string) Query             { return q.Where(Domain.Lte(v)) }
+func (q Query) DomainLike(v string) Query            { return q.Where(Domain.Like(v)) }
+func (q Query) DomainILike(v string) Query           { return q.Where(Domain.ILike(v)) }
+func (q Query) DomainIn(v ...string) Query           { return q.Where(Domain.In(v...)) }
+func (q Query) DomainNotIn(v ...string) Query        { return q.Where(Domain.NotIn(v...)) }
+func (q Query) ArchivedAtEq(v time.Time) Query       { return q.Where(ArchivedAt.Eq(v)) }
+func (q Query) ArchivedAtNotEq(v time.Time) Query    { return q.Where(ArchivedAt.NotEq(v)) }
+func (q Query) ArchivedAtGt(v time.Time) Query       { return q.Where(ArchivedAt.Gt(v)) }
+func (q Query) ArchivedAtGte(v time.Time) Query      { return q.Where(ArchivedAt.Gte(v)) }
+func (q Query) ArchivedAtLt(v time.Time) Query       { return q.Where(ArchivedAt.Lt(v)) }
+func (q Query) ArchivedAtLte(v time.Time) Query      { return q.Where(ArchivedAt.Lte(v)) }
+func (q Query) ArchivedAtIsNull() Query              { return q.Where(ArchivedAt.IsNull()) }
+func (q Query) ArchivedAtIsNotNull() Query           { return q.Where(ArchivedAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol" FROM "assets"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at" FROM "assets"`
 const countPrefix = `SELECT count(*) FROM "assets"`
 const existsPrefix = `SELECT 1 FROM "assets"`
 const existsSuffix = ` LIMIT 1`
@@ -1602,6 +1725,30 @@ var orderTable = [nCols][4]string{
 		"\"protocol\" ASC NULLS FIRST",
 		"\"protocol\" DESC NULLS LAST",
 	},
+	{ // source
+		"\"source\"",
+		"\"source\" DESC",
+		"\"source\" ASC NULLS FIRST",
+		"\"source\" DESC NULLS LAST",
+	},
+	{ // credential_ref
+		"\"credential_ref\"",
+		"\"credential_ref\" DESC",
+		"\"credential_ref\" ASC NULLS FIRST",
+		"\"credential_ref\" DESC NULLS LAST",
+	},
+	{ // domain
+		"\"domain\"",
+		"\"domain\" DESC",
+		"\"domain\" ASC NULLS FIRST",
+		"\"domain\" DESC NULLS LAST",
+	},
+	{ // archived_at
+		"\"archived_at\"",
+		"\"archived_at\" DESC",
+		"\"archived_at\" ASC NULLS FIRST",
+		"\"archived_at\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1632,6 +1779,10 @@ var identTable = [nCols]string{
 	"\"agent_hostname\"",
 	"\"discovered_by\"",
 	"\"protocol\"",
+	"\"source\"",
+	"\"credential_ref\"",
+	"\"domain\"",
+	"\"archived_at\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1664,7 +1815,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [25][27]runtime.Frag{
+var fragTable = [29][27]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2390,6 +2541,122 @@ var fragTable = [25][27]runtime.Frag{
 		{},
 		{},
 	},
+	{ // source
+		{}, // opNone
+		{A: "\"source\" = $", B: ""},
+		{A: "\"source\" <> $", B: ""},
+		{A: "\"source\" > $", B: ""},
+		{A: "\"source\" >= $", B: ""},
+		{A: "\"source\" < $", B: ""},
+		{A: "\"source\" <= $", B: ""},
+		{A: "\"source\" LIKE $", B: ""},
+		{A: "\"source\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"source\" = ANY($", B: ")"},
+		{A: "\"source\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // credential_ref
+		{}, // opNone
+		{A: "\"credential_ref\" = $", B: ""},
+		{A: "\"credential_ref\" <> $", B: ""},
+		{A: "\"credential_ref\" > $", B: ""},
+		{A: "\"credential_ref\" >= $", B: ""},
+		{A: "\"credential_ref\" < $", B: ""},
+		{A: "\"credential_ref\" <= $", B: ""},
+		{A: "\"credential_ref\" LIKE $", B: ""},
+		{A: "\"credential_ref\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"credential_ref\" = ANY($", B: ")"},
+		{A: "\"credential_ref\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // domain
+		{}, // opNone
+		{A: "\"domain\" = $", B: ""},
+		{A: "\"domain\" <> $", B: ""},
+		{A: "\"domain\" > $", B: ""},
+		{A: "\"domain\" >= $", B: ""},
+		{A: "\"domain\" < $", B: ""},
+		{A: "\"domain\" <= $", B: ""},
+		{A: "\"domain\" LIKE $", B: ""},
+		{A: "\"domain\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"domain\" = ANY($", B: ")"},
+		{A: "\"domain\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // archived_at
+		{}, // opNone
+		{A: "\"archived_at\" = $", B: ""},
+		{A: "\"archived_at\" <> $", B: ""},
+		{A: "\"archived_at\" > $", B: ""},
+		{A: "\"archived_at\" >= $", B: ""},
+		{A: "\"archived_at\" < $", B: ""},
+		{A: "\"archived_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"archived_at\" IS NULL", B: ""},
+		{A: "\"archived_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2577,6 +2844,10 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.AgentHostname = runtime.NullText(rv[22], sl)
 	r.DiscoveredBy = runtime.NullText(rv[23], sl)
 	r.Protocol = sl.Str(rv[24])
+	r.Source = sl.Str(rv[25])
+	r.CredentialRef = sl.Str(rv[26])
+	r.Domain = sl.Str(rv[27])
+	r.ArchivedAt = runtime.Nullable(rv[28], runtime.Timestamptz)
 	return decErr
 }
 
@@ -2722,6 +2993,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 25:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 26:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 27:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2818,6 +3101,22 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 25:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 26:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 27:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 28:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		}
 	}
 	b.vals = v
@@ -2955,7 +3254,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol"`
+const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at"`
 
 const updatePrefix = `UPDATE "assets" SET `
 const deletePrefix = `DELETE FROM "assets"`
@@ -2986,9 +3285,13 @@ const (
 	dAgentHostname        uint64 = 1 << 20
 	dDiscoveredBy         uint64 = 1 << 21
 	dProtocol             uint64 = 1 << 22
+	dSource               uint64 = 1 << 23
+	dCredentialRef        uint64 = 1 << 24
+	dDomain               uint64 = 1 << 25
+	dArchivedAt           uint64 = 1 << 26
 )
 
-const nUpdatable = 23
+const nUpdatable = 27
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3015,6 +3318,10 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"agent_hostname\" = $", B: ""},         // agent_hostname
 	{A: "\"discovered_by\" = $", B: ""},          // discovered_by
 	{A: "\"protocol\" = $", B: ""},               // protocol
+	{A: "\"source\" = $", B: ""},                 // source
+	{A: "\"credential_ref\" = $", B: ""},         // credential_ref
+	{A: "\"domain\" = $", B: ""},                 // domain
+	{A: "\"archived_at\" = $", B: ""},            // archived_at
 }
 
 // pkFrags addresses one row.
@@ -3051,9 +3358,13 @@ const (
 	iAgentHostname        uint64 = 1 << 22
 	iDiscoveredBy         uint64 = 1 << 23
 	iProtocol             uint64 = 1 << 24
+	iSource               uint64 = 1 << 25
+	iCredentialRef        uint64 = 1 << 26
+	iDomain               uint64 = 1 << 27
+	iArchivedAt           uint64 = 1 << 28
 )
 
-const nInsertable = 25
+const nInsertable = 29
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3082,6 +3393,10 @@ var insCols = [nInsertable]string{
 	"\"agent_hostname\"",
 	"\"discovered_by\"",
 	"\"protocol\"",
+	"\"source\"",
+	"\"credential_ref\"",
+	"\"domain\"",
+	"\"archived_at\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3090,7 +3405,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 
 const insPlaceholder = "$"
 const insPrefix = "INSERT INTO \"assets\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3285,6 +3600,33 @@ func (m *Mut) SetDiscoveredByNull() {
 func (m *Mut) SetProtocol(v string) {
 	m.row.Protocol = v
 	m.dirty |= dProtocol
+}
+
+func (m *Mut) SetSource(v string) {
+	m.row.Source = v
+	m.dirty |= dSource
+}
+
+func (m *Mut) SetCredentialRef(v string) {
+	m.row.CredentialRef = v
+	m.dirty |= dCredentialRef
+}
+
+func (m *Mut) SetDomain(v string) {
+	m.row.Domain = v
+	m.dirty |= dDomain
+}
+
+func (m *Mut) SetArchivedAt(v time.Time) {
+	m.row.ArchivedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dArchivedAt
+}
+
+// SetArchivedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetArchivedAtNull() {
+	m.row.ArchivedAt = runtime.Null[time.Time]{}
+	m.dirty |= dArchivedAt
 }
 
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
@@ -3486,6 +3828,33 @@ func (n *Ins) SetProtocol(v string) {
 	n.set |= iProtocol
 }
 
+func (n *Ins) SetSource(v string) {
+	n.row.Source = v
+	n.set |= iSource
+}
+
+func (n *Ins) SetCredentialRef(v string) {
+	n.row.CredentialRef = v
+	n.set |= iCredentialRef
+}
+
+func (n *Ins) SetDomain(v string) {
+	n.row.Domain = v
+	n.set |= iDomain
+}
+
+func (n *Ins) SetArchivedAt(v time.Time) {
+	n.row.ArchivedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iArchivedAt
+}
+
+// SetArchivedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetArchivedAtNull() {
+	n.row.ArchivedAt = runtime.Null[time.Time]{}
+	n.set |= iArchivedAt
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3533,7 +3902,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 23)
+	set := make([]string, 0, 27)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -3605,6 +3974,18 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<24) != 0 {
 			set = append(set, "protocol")
 		}
+		if mask&(1<<25) != 0 {
+			set = append(set, "source")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "credential_ref")
+		}
+		if mask&(1<<27) != 0 {
+			set = append(set, "domain")
+		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "archived_at")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -3672,6 +4053,18 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<24) != 0 {
 			set = append(set, "protocol")
 		}
+		if mask&(1<<25) != 0 {
+			set = append(set, "source")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "credential_ref")
+		}
+		if mask&(1<<27) != 0 {
+			set = append(set, "domain")
+		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "archived_at")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -3738,6 +4131,18 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<24) != 0 {
 			set = append(set, "protocol")
+		}
+		if mask&(1<<25) != 0 {
+			set = append(set, "source")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "credential_ref")
+		}
+		if mask&(1<<27) != 0 {
+			set = append(set, "domain")
+		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "archived_at")
 		}
 	}
 	return set
@@ -3830,6 +4235,10 @@ var assignFor = map[string]string{
 	"agent_hostname":         "\"agent_hostname\" = EXCLUDED.\"agent_hostname\"",
 	"discovered_by":          "\"discovered_by\" = EXCLUDED.\"discovered_by\"",
 	"protocol":               "\"protocol\" = EXCLUDED.\"protocol\"",
+	"source":                 "\"source\" = EXCLUDED.\"source\"",
+	"credential_ref":         "\"credential_ref\" = EXCLUDED.\"credential_ref\"",
+	"domain":                 "\"domain\" = EXCLUDED.\"domain\"",
+	"archived_at":            "\"archived_at\" = EXCLUDED.\"archived_at\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3923,6 +4332,14 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.DiscoveredBy.Arg())
 		case 24:
 			args = append(args, n.row.Protocol)
+		case 25:
+			args = append(args, n.row.Source)
+		case 26:
+			args = append(args, n.row.CredentialRef)
+		case 27:
+			args = append(args, n.row.Domain)
+		case 28:
+			args = append(args, n.row.ArchivedAt.Arg())
 		}
 	}
 	var out Row
@@ -3960,7 +4377,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 29)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -3986,6 +4403,10 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.AgentHostname.Arg())
 	args = append(args, r.DiscoveredBy.Arg())
 	args = append(args, r.Protocol)
+	args = append(args, r.Source)
+	args = append(args, r.CredentialRef)
+	args = append(args, r.Domain)
+	args = append(args, r.ArchivedAt.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4037,13 +4458,17 @@ var copyCols = []string{
 	"agent_hostname",
 	"discovered_by",
 	"protocol",
+	"source",
+	"credential_ref",
+	"domain",
+	"archived_at",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [25]any
+	buf  [29]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4086,6 +4511,10 @@ func (s *rowSource) Values() []any {
 	s.buf[22] = r.AgentHostname.Ptr()
 	s.buf[23] = r.DiscoveredBy.Ptr()
 	s.buf[24] = &r.Protocol
+	s.buf[25] = &r.Source
+	s.buf[26] = &r.CredentialRef
+	s.buf[27] = &r.Domain
+	s.buf[28] = r.ArchivedAt.Ptr()
 	return s.buf[:]
 }
 
@@ -4141,8 +4570,12 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 22
 	mask |= 1 << 23
 	mask |= 1 << 24
+	mask |= 1 << 25
+	mask |= 1 << 26
+	mask |= 1 << 27
+	mask |= 1 << 28
 	st := stmtForInsert(mask, 0)
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 29)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4168,6 +4601,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.AgentHostname.Arg())
 	args = append(args, r.DiscoveredBy.Arg())
 	args = append(args, r.Protocol)
+	args = append(args, r.Source)
+	args = append(args, r.CredentialRef)
+	args = append(args, r.Domain)
+	args = append(args, r.ArchivedAt.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4251,6 +4688,14 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.DiscoveredBy.Arg())
 		case 24:
 			args = append(args, n.row.Protocol)
+		case 25:
+			args = append(args, n.row.Source)
+		case 26:
+			args = append(args, n.row.CredentialRef)
+		case 27:
+			args = append(args, n.row.Domain)
+		case 28:
+			args = append(args, n.row.ArchivedAt.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4339,6 +4784,14 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.DiscoveredBy.Arg())
 		case 22:
 			args = append(args, m.row.Protocol)
+		case 23:
+			args = append(args, m.row.Source)
+		case 24:
+			args = append(args, m.row.CredentialRef)
+		case 25:
+			args = append(args, m.row.Domain)
+		case 26:
+			args = append(args, m.row.ArchivedAt.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4440,6 +4893,14 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.DiscoveredBy.Arg())
 		case 22:
 			args = append(args, m.row.Protocol)
+		case 23:
+			args = append(args, m.row.Source)
+		case 24:
+			args = append(args, m.row.CredentialRef)
+		case 25:
+			args = append(args, m.row.Domain)
+		case 26:
+			args = append(args, m.row.ArchivedAt.Arg())
 		}
 	}
 	args = append(args, m.row.ID)

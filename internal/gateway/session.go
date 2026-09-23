@@ -98,23 +98,40 @@ type Session struct {
 	evidenceWaived bool
 }
 
-// authorizeElevated refuses an elevated principal without an approval on file.
+// authorize decides whether this person may open this session, and reports
+// whether kernel evidence was waived for it.
 //
-// The console has always said elevated access needs an approved request, and
-// the browser terminal has always enforced it. This path -- the one a product
-// that leads with "Linux SSH first" is actually used through -- enforced
-// nothing: it checked authorized_keys and the asset's principal list, then
-// dialled the target as root. Where a key is injected for root, which is the
-// entire point of credential injection, that session opened.
+// Two questions, one answer, because they are decided in the same place. The
+// console has always said elevated access needs an approved request, and the
+// browser terminal has always enforced it; this path -- the one a product that
+// leads with "Linux SSH first" is actually used through -- enforced nothing. It
+// checked authorized_keys and the asset's principal list, then dialled the
+// target as root. Assignment is the newer half: the principal list says which
+// accounts Argus can broker on a host, and never said for whom.
+//
+// The synced inventory answers the common case without a round trip. Anything
+// it cannot answer -- an elevated principal, or a person it does not show as
+// assigned -- goes to the control plane, which also knows about approved access
+// requests and is a minute fresher than this copy.
 //
 // Refusals here are fail-closed by design. A control plane that cannot be
 // reached is exactly the moment someone would like root with no approval on
-// file, so an unanswerable question is not a yes. Ordinary principals are
-// unaffected either way: they need no approval, so an outage does not stop
-// anyone doing their job.
-func (s *Server) authorizeElevated(user, principal, hostname string) (bool, error) {
-	if !s.policy().IsElevated(principal) {
-		return false, nil
+// file, so an unanswerable question is not a yes.
+func (s *Server) authorize(user, principal, hostname string) (bool, error) {
+	elevated := s.policy().IsElevated(principal)
+	inv := s.cfg.Inventory
+
+	if !elevated {
+		if inv == nil || !inv.EnforcesAssignment() {
+			// Standalone, on a file inventory. There are no assignments to
+			// check and never were; the principal list is the whole control,
+			// as it has always been here. Said at start-up rather than per
+			// session -- see the log line in cmd/argus-gateway.
+			return false, nil
+		}
+		if inv.Unrestricted(user) || inv.Assigned(hostname, user, principal) {
+			return false, nil
+		}
 	}
 
 	rep := s.cfg.Reporter
@@ -122,6 +139,13 @@ func (s *Server) authorizeElevated(user, principal, hostname string) (bool, erro
 		// Standalone. Say so loudly rather than silently allowing it: a gateway
 		// with no control plane has no approvals to consult, and pretending
 		// otherwise is how this control went missing in the first place.
+		if !elevated {
+			s.log.Error("refusing a session: nobody assigned this host and there is no control plane to ask",
+				"user", user, "principal", principal, "target", hostname)
+			return false, fmt.Errorf("you are not assigned %s as %s, and this gateway "+
+				"cannot reach a control plane to check for an approved request",
+				hostname, principal)
+		}
 		s.log.Error("refusing an elevated session: no control plane to ask",
 			"user", user, "principal", principal, "target", hostname,
 			"detail", "configure `control` so approvals can be checked")
@@ -133,8 +157,14 @@ func (s *Server) authorizeElevated(user, principal, hostname string) (bool, erro
 	defer cancel()
 	auth, err := rep.Authorize(ctx, user, hostname, principal)
 	if err != nil {
-		s.log.Error("refusing an elevated session: the control plane could not be asked",
-			"user", user, "principal", principal, "target", hostname, "error", err)
+		s.log.Error("refusing a session: the control plane could not be asked",
+			"user", user, "principal", principal, "target", hostname,
+			"elevated", elevated, "error", err)
+		if !elevated {
+			return false, fmt.Errorf("you are not assigned %s as %s, and the control "+
+				"plane could not be reached to check for an approved request",
+				hostname, principal)
+		}
 		return false, fmt.Errorf("opening a session as %s needs an approved access request, "+
 			"and the control plane could not be reached to check", principal)
 	}
@@ -143,12 +173,14 @@ func (s *Server) authorizeElevated(user, principal, hostname string) (bool, erro
 		if reason == "" {
 			reason = "opening a session as " + principal + " needs an approved access request"
 		}
-		s.log.Warn("elevated session refused",
-			"user", user, "principal", principal, "target", hostname, "reason", reason)
+		s.log.Warn("session refused",
+			"user", user, "principal", principal, "target", hostname,
+			"elevated", elevated, "reason", reason)
 		return false, fmt.Errorf("%s", reason)
 	}
-	s.log.Info("elevated session authorised",
-		"user", user, "principal", principal, "target", hostname, "expires", auth.ExpiresAt)
+	s.log.Info("session authorised by the control plane",
+		"user", user, "principal", principal, "target", hostname,
+		"elevated", elevated, "expires", auth.ExpiresAt)
 	return auth.KernelEvidenceWaived, nil
 }
 
@@ -190,10 +222,10 @@ func (s *Server) Dial(user, principal, targetName, remoteAddr string) (*Session,
 		return nil, fmt.Errorf("principal %q is not permitted on %s", principal, asset.Hostname)
 	}
 
-	// Being listed is permission to ask, not permission to have. An elevated
-	// principal needs an approved access request behind it, which only the
-	// control plane can answer.
-	evidenceWaived, err := s.authorizeElevated(user, principal, asset.Hostname)
+	// Being listed is permission to ask, not permission to have. Who was
+	// assigned this host, and whether an elevated principal has an approval
+	// behind it, are the control plane's to answer.
+	evidenceWaived, err := s.authorize(user, principal, asset.Hostname)
 	if err != nil {
 		return nil, err
 	}

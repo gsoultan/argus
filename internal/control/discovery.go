@@ -181,13 +181,17 @@ func (s *Store) EnrolHost(ctx context.Context, hostname, actor string) (string, 
 	}
 
 	var id string
+	// Owned by the console from here on. Enrolling is an administrator deciding
+	// this host is ours to manage, so a gateway publishing a file entry for the
+	// same name must not quietly write over what they do with it next.
 	err = tx.QueryRow(ctx, `
 		INSERT INTO assets (hostname, address, port, os, agent_hostname,
 		                    agent_state, agent_last_seen_at, discovered_by,
-		                    host_key_state, principals)
-		VALUES ($1,$2,$3,$4,$5,'healthy',now(),$6,'unpinned','{}')
+		                    host_key_state, principals, source)
+		VALUES ($1,$2,$3,$4,$5,'healthy',now(),$6,'unpinned','{}','console')
 		ON CONFLICT (hostname) DO UPDATE SET
 			agent_hostname = EXCLUDED.agent_hostname,
+			source         = 'console',
 			updated_at     = now()
 		RETURNING id::text`,
 		assetName, address, port, os, hostname, actor).Scan(&id)

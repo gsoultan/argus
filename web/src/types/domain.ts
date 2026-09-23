@@ -20,6 +20,12 @@ export interface User {
   role: UserRole
   mfaEnrolled: boolean
   lastSeenAt: ISOTime | null
+  /**
+   * Revoked rather than deleted. The audit log refers to people by address, so
+   * an account is disabled and kept — and a disabled one must not be offered as
+   * somewhere to assign a host.
+   */
+  disabled?: boolean
 }
 
 /* ── Assets ──────────────────────────────────────────────────────────────── */
@@ -89,11 +95,71 @@ export interface Asset {
   bypassPosture: BypassPosture
   /** Keys in authorized_keys that Argus did not issue — each is a way in. */
   unmanagedKeyCount: number
-  /** Accounts on the target that Argus can broker a session as. */
+  /**
+   * Accounts on the target that Argus can broker a session as.
+   *
+   * An administrator sees the host's whole list. Everyone else sees the
+   * accounts they were assigned — the control plane narrows it before sending
+   * it, so this is what the person can actually use rather than what exists.
+   */
   principals: string[]
+  /**
+   * Who owns this row: `console` if an administrator entered or edited it here,
+   * `gateway` if it arrived from an inventory file. A gateway publish never
+   * overwrites a console-owned asset.
+   */
+  source?: 'console' | 'gateway'
+  /**
+   * The credential the gateway injects, named rather than pathed: it is
+   * resolved inside the gateway's own vault directory. Empty for
+   * `ca-certificate`, where there is no standing credential at all.
+   */
+  credentialRef?: string
+  /** Windows domain for an RDP asset. Empty means the account is local. */
+  domain?: string
   /** Null when credentialMode is 'ca-certificate' — nothing to rotate. */
   credentialRotatedAt: ISOTime | null
   rotationIntervalDays: number | null
+}
+
+/**
+ * One person's access to one asset.
+ *
+ * Explicit rather than computed from a group: the question an auditor asks is
+ * "who can reach pay-01 as ops", and it should have one answer rather than a
+ * union to reconstruct.
+ */
+export interface AssetAssignment {
+  assetId: UUID
+  hostname: string
+  userEmail: string
+  /** The accounts this person may assume there. Empty is not a state: it is a removal. */
+  principals: string[]
+  grantedBy: string
+  grantedAt: ISOTime
+}
+
+/**
+ * What the console submits to create or edit an asset.
+ *
+ * Deliberately not `Asset`. Host-key state, agent liveness, posture and
+ * unmanaged key counts are observed by something that looked; letting the
+ * console write them would let an administrator declare a host verified rather
+ * than have it verified.
+ */
+export interface AssetInput {
+  hostname: string
+  address: string
+  port?: number
+  protocol?: AssetProtocol
+  os?: string
+  tags?: string[]
+  groupName?: string
+  principals: string[]
+  credentialMode?: CredentialMode
+  credentialRef?: string
+  domain?: string
+  rotationIntervalDays?: number | null
 }
 
 export interface AssetGroup {

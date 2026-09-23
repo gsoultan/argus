@@ -110,13 +110,18 @@ func TestARefusedElevationIsStillAudited(t *testing.T) {
 	}
 }
 
-// An ordinary principal needs no approval and writes no elevation entry, or
-// the chain fills with noise and the interesting lines are lost in it.
+// An ordinary principal on an assigned host needs no approval and writes no
+// elevation entry, or the chain fills with noise and the interesting lines are
+// lost in it.
+//
+// Assignment is what makes it ordinary now: an unassigned host is refused, and
+// that refusal is audited under its own action. See assignment_test.go.
 func TestAnOrdinaryPrincipalIsNotAudited(t *testing.T) {
 	a, s := authorizeAPI(t)
 	email := unique("ordinary") + "@corp.example"
+	asset := assignedAsset(t, s, email, "ops")
 
-	if got := askAuthorize(t, a, email, "db-01.example", "ops"); !got.Allowed {
+	if got := askAuthorize(t, a, email, asset.Hostname, "ops"); !got.Allowed {
 		t.Fatalf("an ordinary principal was refused: %s", got.Reason)
 	}
 	if action, _ := lastElevationAudit(t, s, email); action != "" {
