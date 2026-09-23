@@ -213,3 +213,42 @@ credentials given). What it established:
 **Still not measured:** the mstsc `cookie_len` truncation from PR #34. That
 needs a Windows *client* connecting to the Argus gateway, not a Windows target.
 A host that can run mstsc against a reachable gateway would close it.
+
+## NTLM: the MIC Windows requires, and Argus did not send
+
+Dumping a real server's CHALLENGE (`192.168.101.91`, 2026-09-23) showed an
+**MsvAvTimestamp** AV pair. MS-NLMP 3.1.5.1.2 makes the MIC mandatory whenever
+that is present, and every current Windows sends it. `ntlm.go` said outright
+"The MIC is omitted".
+
+So Argus sent an AUTHENTICATE no modern Windows can validate. The server could
+not reject it cleanly either: the connection hung for ninety seconds and was
+reset, with nothing explaining why. **RDP brokering to a current Windows host
+has therefore never worked**, and no existing test could show it -- they are all
+built from recorded bytes that share the same wrong assumption.
+
+`IPG01\user` was also a red herring: `smbutil status` reports
+`Workgroup: IPG01, Server: HO-IPI-DGM-002`. A local account needs the *computer*
+name as the NTLM domain. With that corrected the exchange reached AUTHENTICATE
+instead of failing at CHALLENGE.
+
+**The fix is on `fix/ntlm-sends-the-mic-windows-requires` and is NOT live
+verified.** It is spec-correct and unit-tested -- the test recomputes the MIC the
+way a server will and checks that altering any of the three messages changes it
+-- but the host stopped accepting CredSSP part-way through the work. It still
+completes X.224 and TLS; it aborts the moment a NEGOTIATE arrives inside TLS,
+before any credential is sent, so this is connection- or service-level blocking
+rather than account lockout. A probe that had succeeded earlier reproduced the
+failure, which is how I know it is the server and not the change.
+
+**To finish:** restart the host's Remote Desktop service (or wait it out), then
+
+    ARGUS_TEST_RDP_TARGET=<host>:3389 ARGUS_TEST_RDP_DOMAIN=<COMPUTERNAME> \
+    ARGUS_TEST_RDP_USER=<user> ARGUS_TEST_RDP_PASSWORD=<pass> \
+    go test ./internal/rdp/ -run Target -v
+
+Pace attempts: the host tolerates very few before it starts refusing.
+
+**Next candidate if the MIC is not sufficient:** there is no
+`MsvAvChannelBindings` support either, which Extended Protection for
+Authentication requires. Test it as a separate change.
