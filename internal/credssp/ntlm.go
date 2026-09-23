@@ -246,8 +246,70 @@ type Credentials struct {
 
 // BuildAuthenticate builds the third NTLM message and returns the exported
 // session key, which every later CredSSP step encrypts under.
+// AV_PAIR identifiers from MS-NLMP 2.2.2.1.
+const (
+	avEOL   uint16 = 0
+	avFlags uint16 = 6
+)
+
+// avFlagMICPresent is the bit that tells the server a MIC is attached.
+const avFlagMICPresent uint32 = 0x00000002
+
+// micOffset is where the MIC sits in AUTHENTICATE_MESSAGE: signature, message
+// type, six field descriptors, the flags and the version all precede it.
+const micOffset = 8 + 4 + 6*8 + 4 + 8
+
+// withMICFlag returns the server's AV pairs with MsvAvFlags carrying the
+// MIC-present bit.
+//
+// MS-NLMP 3.1.5.1.2: a client that attaches a MIC must say so here, and the
+// server checks this to decide whether to look for one. Setting the bit without
+// sending a MIC, or the reverse, both fail.
+func withMICFlag(info []byte) []byte {
+	out := make([]byte, 0, len(info)+8)
+	rest := info
+	for len(rest) >= 4 {
+		id := binary.LittleEndian.Uint16(rest[0:2])
+		n := int(binary.LittleEndian.Uint16(rest[2:4]))
+		if 4+n > len(rest) {
+			break
+		}
+		switch {
+		case id == avFlags && n == 4:
+			// Preserve whatever else the server asked for.
+			v := binary.LittleEndian.Uint32(rest[4:8]) | avFlagMICPresent
+			out = binary.LittleEndian.AppendUint16(out, avFlags)
+			out = binary.LittleEndian.AppendUint16(out, 4)
+			out = binary.LittleEndian.AppendUint32(out, v)
+		case id == avEOL:
+			// Insert before the terminator, which must stay last.
+			out = binary.LittleEndian.AppendUint16(out, avFlags)
+			out = binary.LittleEndian.AppendUint16(out, 4)
+			out = binary.LittleEndian.AppendUint32(out, avFlagMICPresent)
+			out = append(out, rest...)
+			return out
+		default:
+			out = append(out, rest[:4+n]...)
+		}
+		rest = rest[4+n:]
+	}
+	// No terminator found: the list was malformed, and returning it unchanged
+	// lets the server reject it rather than having this invent a shape.
+	return info
+}
+
+// BuildAuthenticate assembles AUTHENTICATE_MESSAGE, including the MIC.
+//
+// negotiate and challenge are the two preceding messages exactly as they went
+// over the wire. The MIC is an HMAC over all three, so a byte re-encoded rather
+// than retained produces a MIC the server computes differently and rejects.
+//
+// The MIC used to be omitted. MS-NLMP 3.1.5.1.2 makes it mandatory whenever the
+// CHALLENGE carries an MsvAvTimestamp, which every current Windows sends -- so
+// against a real server Argus sent an AUTHENTICATE the server could not
+// validate, and the connection hung for ninety seconds and was reset.
 func BuildAuthenticate(c Challenge, creds Credentials, clientChallenge []byte,
-	timestamp uint64) (msg, exportedSessionKey []byte, err error) {
+	timestamp uint64, negotiate, challenge []byte) (msg, exportedSessionKey []byte, err error) {
 
 	if len(clientChallenge) != 8 {
 		return nil, nil, errors.New("client challenge must be eight bytes")
@@ -258,8 +320,12 @@ func BuildAuthenticate(c Challenge, creds Credentials, clientChallenge []byte,
 	}
 
 	responseKey := NTOWFv2(creds.User, creds.Password, creds.Domain)
+	// The AV pairs the response is computed over are the server's, plus the
+	// flag announcing the MIC. They go into the response verbatim, so this has
+	// to happen before the response is built rather than to a copy afterwards.
+	targetInfo := withMICFlag(c.TargetInfo)
 	ntResponse, sessionBaseKey := NTLMv2Response(
-		responseKey, c.ServerChallenge, clientChallenge, timestamp, c.TargetInfo)
+		responseKey, c.ServerChallenge, clientChallenge, timestamp, targetInfo)
 
 	// With NTLMv2 the key exchange key is the session base key.
 	keyExchangeKey := sessionBaseKey
@@ -285,7 +351,7 @@ func BuildAuthenticate(c Challenge, creds Credentials, clientChallenge []byte,
 	user := utf16le(creds.User)
 	workstation := utf16le(creds.Workstation)
 
-	const headerLen = 64 + 8 // fixed header plus version
+	const headerLen = micOffset + 16 // fixed header, version, MIC
 	offset := headerLen
 	type field struct{ data []byte }
 	fields := []field{{lmResponse}, {ntResponse}, {domain}, {user},
@@ -310,11 +376,21 @@ func BuildAuthenticate(c Challenge, creds Credentials, clientChallenge []byte,
 	msg = binary.LittleEndian.AppendUint32(msg, flags)
 	msg = append(msg, 6, 1, 0, 0, 0, 0, 0, 15) // version
 
-	// The MIC is omitted, so the header is exactly headerLen and the offsets
-	// computed above are correct.
+	// The MIC is computed over this message with the field zeroed, so it is
+	// written as zeros first and patched once the payload is in place.
+	msg = append(msg, make([]byte, 16)...)
 	for _, f := range fields {
 		msg = append(msg, f.data...)
 	}
+
+	// HMAC-MD5 over the three messages in order, keyed with the exported
+	// session key. MS-NLMP 3.1.5.1.2.
+	mac := hmac.New(md5.New, exportedSessionKey)
+	mac.Write(negotiate)
+	mac.Write(challenge)
+	mac.Write(msg)
+	copy(msg[micOffset:micOffset+16], mac.Sum(nil))
+
 	return msg, exportedSessionKey, nil
 }
 

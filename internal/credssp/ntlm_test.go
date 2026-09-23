@@ -2,6 +2,8 @@ package credssp
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -236,7 +238,7 @@ func TestAuthenticateProducesAParseableMessage(t *testing.T) {
 	creds := Credentials{Domain: mslabDomain, User: mslabUser,
 		Password: mslabPassword, Workstation: "COMPUTER"}
 
-	msg, sessionKey, err := BuildAuthenticate(c, creds, mustHex(t, "aaaaaaaaaaaaaaaa"), 0)
+	msg, sessionKey, err := BuildAuthenticate(c, creds, mustHex(t, "aaaaaaaaaaaaaaaa"), 0, nil, nil)
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -282,7 +284,7 @@ func TestAuthenticateSendsNoLMResponse(t *testing.T) {
 		ServerChallenge: mustHex(t, "0123456789abcdef"),
 	}
 	msg, _, err := BuildAuthenticate(c, Credentials{User: "u", Password: "p"},
-		mustHex(t, "aaaaaaaaaaaaaaaa"), 0)
+		mustHex(t, "aaaaaaaaaaaaaaaa"), 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,12 +298,12 @@ func TestAuthenticateSendsNoLMResponse(t *testing.T) {
 
 func TestAuthenticateRejectsBadChallenges(t *testing.T) {
 	good := Challenge{ServerChallenge: mustHex(t, "0123456789abcdef")}
-	if _, _, err := BuildAuthenticate(good, Credentials{}, []byte{1, 2, 3}, 0); err == nil {
+	if _, _, err := BuildAuthenticate(good, Credentials{}, []byte{1, 2, 3}, 0, nil, nil); err == nil {
 		t.Error("a short client challenge was accepted")
 	}
 	short := Challenge{ServerChallenge: []byte{1, 2}}
 	if _, _, err := BuildAuthenticate(short, Credentials{},
-		mustHex(t, "aaaaaaaaaaaaaaaa"), 0); err == nil {
+		mustHex(t, "aaaaaaaaaaaaaaaa"), 0, nil, nil); err == nil {
 		t.Error("a short server challenge was accepted")
 	}
 }
@@ -331,7 +333,7 @@ func TestSessionKeysAreNotPredictable(t *testing.T) {
 	seen := map[string]bool{}
 	for range 16 {
 		_, key, err := BuildAuthenticate(c, Credentials{User: "u", Password: "p"},
-			mustHex(t, "aaaaaaaaaaaaaaaa"), 0)
+			mustHex(t, "aaaaaaaaaaaaaaaa"), 0, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,3 +370,109 @@ func TestUTF16LE(t *testing.T) {
 }
 
 func unixEpoch() time.Time { return time.Unix(0, 0).UTC() }
+
+// The MIC is mandatory whenever the CHALLENGE carries a timestamp, which every
+// current Windows sends. Omitting it produced an AUTHENTICATE the server could
+// not validate: against a real host the connection hung for ninety seconds and
+// was then reset, with no error explaining why.
+func TestAuthenticateCarriesAMICOverAllThreeMessages(t *testing.T) {
+	negotiate := Negotiate()
+	// A CHALLENGE with a timestamp AV pair, which is what makes the MIC
+	// mandatory, plus the terminator.
+	var info []byte
+	info = binary.LittleEndian.AppendUint16(info, 7) // MsvAvTimestamp
+	info = binary.LittleEndian.AppendUint16(info, 8)
+	info = append(info, make([]byte, 8)...)
+	info = binary.LittleEndian.AppendUint16(info, 0) // EOL
+	info = binary.LittleEndian.AppendUint16(info, 0)
+
+	c := Challenge{
+		Flags:           NegotiateUnicode | NegotiateNTLM | NegotiateTargetInfo,
+		ServerChallenge: mustHex(t, "0123456789abcdef"),
+		TargetInfo:      info,
+	}
+	challenge := []byte("a stand-in for the raw challenge message")
+
+	msg, key, err := BuildAuthenticate(c, Credentials{User: "u", Password: "p"},
+		mustHex(t, "aaaaaaaaaaaaaaaa"), 0, negotiate, challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg) < micOffset+16 {
+		t.Fatalf("message is %d bytes, too short to hold a MIC", len(msg))
+	}
+
+	mic := append([]byte(nil), msg[micOffset:micOffset+16]...)
+	if bytes.Equal(mic, make([]byte, 16)) {
+		t.Fatal("the MIC field is all zeros; nothing was computed")
+	}
+
+	// Recompute it the way the server will: over the same three messages with
+	// this field zeroed.
+	zeroed := append([]byte(nil), msg...)
+	copy(zeroed[micOffset:micOffset+16], make([]byte, 16))
+	mac := hmac.New(md5.New, key)
+	mac.Write(negotiate)
+	mac.Write(challenge)
+	mac.Write(zeroed)
+	if want := mac.Sum(nil); !hmac.Equal(mic, want) {
+		t.Errorf("MIC does not verify\n got %x\nwant %x", mic, want)
+	}
+
+	// And any of the three messages differing must change it, or it is not
+	// binding the exchange to anything.
+	mac = hmac.New(md5.New, key)
+	mac.Write(negotiate)
+	mac.Write([]byte("a different challenge"))
+	mac.Write(zeroed)
+	if hmac.Equal(mic, mac.Sum(nil)) {
+		t.Error("the MIC is unchanged by a different challenge")
+	}
+}
+
+// The server checks this bit to decide whether to look for a MIC at all, so
+// sending one without announcing it fails exactly as omitting it does.
+func TestTargetInfoAnnouncesTheMIC(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []uint16 // id, len pairs, terminated by EOL
+	}{
+		{"no existing flags pair", []uint16{7, 8, 0, 0}},
+		{"an existing flags pair", []uint16{6, 4, 0, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var info []byte
+			for i := 0; i+1 < len(tc.in); i += 2 {
+				info = binary.LittleEndian.AppendUint16(info, tc.in[i])
+				info = binary.LittleEndian.AppendUint16(info, tc.in[i+1])
+				info = append(info, make([]byte, tc.in[i+1])...)
+			}
+			out := withMICFlag(info)
+
+			var found bool
+			rest := out
+			for len(rest) >= 4 {
+				id := binary.LittleEndian.Uint16(rest[0:2])
+				n := int(binary.LittleEndian.Uint16(rest[2:4]))
+				if id == avFlags && n == 4 {
+					if v := binary.LittleEndian.Uint32(rest[4:8]); v&avFlagMICPresent == 0 {
+						t.Errorf("flags pair is 0x%08x, without the MIC bit", v)
+					}
+					found = true
+				}
+				if id == avEOL {
+					// The terminator has to stay last or the server stops
+					// reading before whatever follows it.
+					if len(rest) != 4 {
+						t.Errorf("%d bytes follow the terminator", len(rest)-4)
+					}
+					break
+				}
+				rest = rest[4+n:]
+			}
+			if !found {
+				t.Error("no MsvAvFlags pair in the result")
+			}
+		})
+	}
+}
