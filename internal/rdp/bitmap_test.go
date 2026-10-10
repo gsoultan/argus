@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// Order codes the hand-built RLE below uses (MS-RDPEGDI 2.2.2.5.1). The decoder
+// lives in package pixels; these tests drive it through ParseBitmapUpdate.
+const (
+	regularBGRun       = 0x00
+	regularColourRun   = 0x03
+	regularColourImage = 0x04
+)
+
 // bitmapRect assembles one rectangle the way a server sends it.
 func bitmapRect(t testing.TB, x, y, w, h, bpp int, compressed bool, body []byte) []byte {
 	t.Helper()
@@ -56,14 +64,16 @@ func TestRawBitmapIsFlippedToTopDown(t *testing.T) {
 	if r.X != 10 || r.Y != 20 || r.Width != 1 || r.Height != 2 {
 		t.Errorf("geometry = %d,%d %dx%d", r.X, r.Y, r.Width, r.Height)
 	}
-	// Top row on screen must be blue, bottom red.
+	// Top row on screen must be blue, bottom red -- in RGBA, the order a
+	// canvas ImageData reads. These were asserted as BGRA, which is what the
+	// decoder produced, and every red on a remote desktop drew as blue.
 	top := r.Pixels[0:4]
 	bottom := r.Pixels[4:8]
-	if !bytes.Equal(top, []byte{0xFF, 0x00, 0x00, 0xFF}) {
-		t.Errorf("top pixel BGRA = %v, want blue", top)
+	if !bytes.Equal(top, []byte{0x00, 0x00, 0xFF, 0xFF}) {
+		t.Errorf("top pixel RGBA = %v, want blue", top)
 	}
-	if !bytes.Equal(bottom, []byte{0x00, 0x00, 0xFF, 0xFF}) {
-		t.Errorf("bottom pixel BGRA = %v, want red", bottom)
+	if !bytes.Equal(bottom, []byte{0xFF, 0x00, 0x00, 0xFF}) {
+		t.Errorf("bottom pixel RGBA = %v, want red", bottom)
 	}
 }
 
@@ -77,7 +87,7 @@ func TestRGB565WhiteIsFullyWhite(t *testing.T) {
 	}
 	px := rects[0].Pixels
 	if px[0] != 0xFF || px[1] != 0xFF || px[2] != 0xFF {
-		t.Errorf("white decoded as BGR %02x%02x%02x, want ffffff", px[0], px[1], px[2])
+		t.Errorf("white decoded as RGB %02x%02x%02x, want ffffff", px[0], px[1], px[2])
 	}
 	if px[3] != 0xFF {
 		t.Errorf("alpha = %02x, want ff", px[3])
@@ -100,11 +110,12 @@ func TestRLEColourImageAndRun(t *testing.T) {
 		t.Fatalf("ParseBitmapUpdate: %v", err)
 	}
 	px := rects[0].Pixels
+	// The wire is BGR; the output is RGBA.
 	want := []byte{
-		0x11, 0x22, 0x33, 0xFF,
-		0x44, 0x55, 0x66, 0xFF,
-		0x77, 0x88, 0x99, 0xFF,
-		0x77, 0x88, 0x99, 0xFF,
+		0x33, 0x22, 0x11, 0xFF,
+		0x66, 0x55, 0x44, 0xFF,
+		0x99, 0x88, 0x77, 0xFF,
+		0x99, 0x88, 0x77, 0xFF,
 	}
 	if !bytes.Equal(px, want) {
 		t.Errorf("pixels =\n %v\nwant\n %v", px, want)
@@ -126,10 +137,10 @@ func TestRLEBackgroundRunCopiesTheRowAbove(t *testing.T) {
 	}
 	px := rects[0].Pixels
 	// Bottom-up: decoded row 1 lands on screen row 0.
-	if !bytes.Equal(px[0:4], []byte{0xAA, 0xBB, 0xCC, 0xFF}) {
+	if !bytes.Equal(px[0:4], []byte{0xCC, 0xBB, 0xAA, 0xFF}) {
 		t.Errorf("copied pixel = %v", px[0:4])
 	}
-	if !bytes.Equal(px[8:12], []byte{0xAA, 0xBB, 0xCC, 0xFF}) {
+	if !bytes.Equal(px[8:12], []byte{0xCC, 0xBB, 0xAA, 0xFF}) {
 		t.Errorf("source pixel = %v", px[8:12])
 	}
 }

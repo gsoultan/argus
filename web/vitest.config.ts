@@ -9,6 +9,10 @@ export default defineConfig({
   resolve: {
     alias: { '~': new URL('./src', import.meta.url).pathname },
   },
+  // The RDP pixel decoder is a .wasm file, which vite.config.ts never needs to
+  // name -- the build emits it as an asset by its URL. Its test imports it
+  // ?inline, which needs telling that .wasm is an asset and not a module.
+  assetsInclude: ['**/*.wasm'],
   test: {
     environment: 'jsdom',
     // The console is gated behind LoginGate whenever a control plane is

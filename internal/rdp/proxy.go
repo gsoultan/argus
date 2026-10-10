@@ -503,13 +503,13 @@ func (s *Session) shadow(frame []byte) {
 	rea := s.rea
 	s.mu.Unlock()
 
-	rects, err := DecodePDU(rea, frame)
-	if err != nil || len(rects) == 0 {
+	bitmaps, err := ParsePDU(rea, frame)
+	if err != nil || len(bitmaps) == 0 {
 		return
 	}
 	batch := make([]byte, 0, 4096)
-	for _, r := range rects {
-		batch = append(batch, EncodeRect(r)...)
+	for _, b := range bitmaps {
+		batch = append(batch, EncodeBitmap(b)...)
 	}
 	hub.Broadcast(batch)
 }

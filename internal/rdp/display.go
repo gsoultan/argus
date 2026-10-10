@@ -27,6 +27,9 @@ const (
 	FrameReady uint8 = 3
 	// FrameClosed says the session ended.
 	FrameClosed uint8 = 4
+	// FrameEncoded carries one rectangle as the target sent it, for the
+	// browser to decode. See EncodeBitmap.
+	FrameEncoded uint8 = 5
 )
 
 // Fast-Path update codes (MS-RDPBCGR 2.2.9.1.2.1).
@@ -61,6 +64,37 @@ func EncodeRect(r Rect) []byte {
 	binary.LittleEndian.PutUint16(out[6:8], uint16(r.Width))
 	binary.LittleEndian.PutUint16(out[8:10], uint16(r.Height))
 	copy(out[FrameHeaderSize:], r.Pixels)
+	return out
+}
+
+// EncodeBitmap serialises one rectangle without decoding it.
+//
+// The twelve-byte header matches EncodeRect's, with two fields it leaves
+// unused put to work:
+//
+//	offset 0   type        FrameEncoded
+//	       1   format      colour depth in the low seven bits; 0x80 = RLE
+//	       2   x, y, width, height  (uint16 LE each)
+//	      10   length      bytes of data that follow (uint16 LE)
+//	      12   data        padded with zeros to a multiple of four
+//
+// RDP's own bitmapLength field is sixteen bits, so length always fits. The
+// padding keeps every following frame four-byte aligned, which the worker
+// relies on for raw RGBA frames sharing a message with these.
+func EncodeBitmap(b Bitmap) []byte {
+	padded := (len(b.Data) + 3) &^ 3
+	out := make([]byte, FrameHeaderSize+padded)
+	out[0] = FrameEncoded
+	out[1] = byte(b.BPP) & 0x7F
+	if b.Compressed {
+		out[1] |= 0x80
+	}
+	binary.LittleEndian.PutUint16(out[2:4], uint16(b.X))
+	binary.LittleEndian.PutUint16(out[4:6], uint16(b.Y))
+	binary.LittleEndian.PutUint16(out[6:8], uint16(b.Width))
+	binary.LittleEndian.PutUint16(out[8:10], uint16(b.Height))
+	binary.LittleEndian.PutUint16(out[10:12], uint16(len(b.Data)))
+	copy(out[FrameHeaderSize:], b.Data)
 	return out
 }
 
@@ -105,6 +139,16 @@ func NewReassembler() *Reassembler {
 // update as a failure would end sessions over content the gateway has no
 // opinion about.
 func (r *Reassembler) Feed(pdu []byte) ([]Rect, error) {
+	bitmaps, err := r.FeedBitmaps(pdu)
+	if err != nil || len(bitmaps) == 0 {
+		return nil, err
+	}
+	return decodeAll(bitmaps)
+}
+
+// FeedBitmaps is Feed without the decoding: it returns the rectangles as the
+// target sent them.
+func (r *Reassembler) FeedBitmaps(pdu []byte) ([]Bitmap, error) {
 	if len(pdu) < 2 || pdu[0]&actionMask == actionX224 {
 		return nil, nil
 	}
@@ -179,12 +223,12 @@ func (r *Reassembler) Feed(pdu []byte) ([]Rect, error) {
 }
 
 // decode reads a bitmap update's payload.
-func (r *Reassembler) decode(data []byte) ([]Rect, error) {
+func (r *Reassembler) decode(data []byte) ([]Bitmap, error) {
 	if len(data) < 2 {
 		return nil, nil
 	}
 	if binary.LittleEndian.Uint16(data[:2]) != updateTypeBitmap {
 		return nil, nil
 	}
-	return ParseBitmapUpdate(data[2:])
+	return ParseBitmaps(data[2:])
 }
