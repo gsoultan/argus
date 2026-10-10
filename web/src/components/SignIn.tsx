@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import {
-  Alert, Box, Button, Center, Group, Paper, PasswordInput, Stack, Text,
+  Alert, Box, Button, Center, Paper, PasswordInput, Stack, Text,
   TextInput,
 } from '@mantine/core'
-import { IconAlertTriangle, IconKey, IconShieldLock } from '@tabler/icons-react'
+import { IconAlertTriangle, IconKey } from '@tabler/icons-react'
 import {
   passwordLogin, verifyMFA, type Identity,
 } from '~/lib/live'
-import { FS, SP } from '~/theme'
+import { FS } from '~/theme'
+import { Logo } from '~/components/Logo'
 
 /**
  * The sign-in screen.
@@ -197,37 +198,13 @@ function ErrorNote({ children }: { children: React.ReactNode }) {
   )
 }
 
-/**
- * The mark, matching the shell's.
- *
- * Azure rather than the verification green: this is the product's identity,
- * and teal is reserved for things Argus has actually checked.
- */
+/** The mark, matching the shell's. */
 function Brand() {
   return (
     <>
-      <Group gap={SP.cozy} mb="md" wrap="nowrap">
-        <Box
-          w={32}
-          h={32}
-          className="grid place-items-center shrink-0"
-          style={{
-            borderRadius: 8,
-            background: 'linear-gradient(140deg, var(--color-brand-bright), #1b4ec4)',
-            boxShadow: '0 0 18px rgba(37, 99, 235, 0.35)',
-          }}
-        >
-          <IconShieldLock size={18} color="#fff" stroke={2.4} />
-        </Box>
-        <Box>
-          <Text fw={700} size={FS.body} lh={1.15} style={{ letterSpacing: '0.04em' }}>
-            ARGUS
-          </Text>
-          <Text size={FS.micro} c="dimmed" lh={1.15} style={{ letterSpacing: '0.09em' }}>
-            PRIVILEGED ACCESS
-          </Text>
-        </Box>
-      </Group>
+      <Box mb="md">
+        <Logo size={32} />
+      </Box>
       <Text size={FS.meta} c="dimmed" mb="lg" lh={1.55}>
         Every action here is attributed to a person, so there is no anonymous
         access — not even read-only.

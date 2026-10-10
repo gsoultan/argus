@@ -8,7 +8,7 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 // an air-gapped network, and a third-party font request from a PAM console
 // leaks which operator is looking at it and when. Variable weights ship as one
 // file per family, so this costs two requests, both precached by the worker.
-import '@fontsource-variable/inter'
+import '@fontsource-variable/ibm-plex-sans'
 import '@fontsource-variable/jetbrains-mono'
 import { theme } from '~/theme'
 import { ErrorState } from '~/components/ErrorState'

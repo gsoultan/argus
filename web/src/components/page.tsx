@@ -53,7 +53,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <Box className="argus-pagehead" px="lg" py="sm">
+    <Box className="argus-pagehead" px={{ base: 'md', sm: 'xl' }} py="md">
       {crumbs && crumbs.length > 0 && (
         <Group gap={SP.tight} mb={SP.snug} wrap="nowrap" aria-label="Breadcrumb">
           {crumbs.map((c, i) => (
@@ -63,23 +63,16 @@ export function PageHeader({
                 <Text
                   component={Link}
                   to={c.to}
-                  size={FS.micro}
+                  size={FS.meta}
                   c="dimmed"
-                  fw={600}
-                  tt="uppercase"
-                  style={{ letterSpacing: '0.07em', textDecoration: 'none' }}
+                  fw={500}
+                  style={{ textDecoration: 'none' }}
                   className="hover:underline"
                 >
                   {c.label}
                 </Text>
               ) : (
-                <Text
-                  size={FS.micro}
-                  c="dimmed"
-                  fw={600}
-                  tt="uppercase"
-                  style={{ letterSpacing: '0.07em' }}
-                >
+                <Text size={FS.meta} c="dimmed" fw={500}>
                   {c.label}
                 </Text>
               )}
@@ -97,7 +90,7 @@ export function PageHeader({
             {status}
           </Group>
           {description && (
-            <Text size={FS.body} c="dimmed" mt={SP.tight} maw={720} lh={1.5}>
+            <Text size="sm" c="dimmed" mt={SP.tight} maw={680} lh={1.5}>
               {description}
             </Text>
           )}
@@ -115,8 +108,8 @@ export function PageHeader({
 /** The body of every page. One padding value, defined once. */
 export function PageBody({ children }: { children: ReactNode }) {
   return (
-    <Box p="lg">
-      <Stack gap="md">{children}</Stack>
+    <Box px={{ base: 'md', sm: 'xl' }} py="lg">
+      <Stack gap="lg">{children}</Stack>
     </Box>
   )
 }
@@ -193,7 +186,7 @@ export function SectionCard({
             {badge}
           </Group>
           {description && (
-            <Text size={FS.micro} c="dimmed" mt={SP.tight} lh={1.5}>
+            <Text size={FS.meta} c="dimmed" mt={SP.tight} lh={1.5}>
               {description}
             </Text>
           )}

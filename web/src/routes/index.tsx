@@ -1,12 +1,11 @@
 import {
-  Alert, Badge, Box, Grid, Group, Progress, ScrollArea, Skeleton, Stack, Table, Text,
-  Tooltip,
+  Badge, Box, Grid, Group, Progress, ScrollArea, Skeleton, Stack, Table, Text, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconArrowRight, IconCertificate, IconCircleCheck,
-  IconClipboardCheck, IconDoorExit, IconShieldOff, IconTerminal2,
+  IconCirclePlus, IconClipboardCheck, IconDoorExit, IconShieldOff, IconTerminal2,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -15,7 +14,8 @@ import {
   Target, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
-import { assetsQuery, requestsQuery, sessionsQuery, statsQuery } from '~/lib/queries'
+import { assetsQuery, coverageQuery, requestsQuery, sessionsQuery, statsQuery } from '~/lib/queries'
+import { Attention, ConnectHero, plural } from '~/components/overview'
 
 export const Route = createFileRoute('/')({
   component: Overview,
@@ -42,6 +42,8 @@ function Overview() {
     : 0
   const needsAttention =
     assets?.filter((a) => a.health !== 'reachable' || a.hostKeyState !== 'pinned') ?? []
+  const { data: cov } = useQuery(coverageQuery())
+  const waiting = cov?.unreviewedHosts
 
   return (
     <Box>
@@ -51,126 +53,79 @@ function Overview() {
       />
 
       <PageBody>
-        {/* Recording coverage comes first. An unverified host is a risk you can
-            see; an unmonitored one is a session you will never hear about. */}
-        {(stats?.assetsUnmonitored ?? 0) > 0 && (
-          <Alert
-            color="rose"
-            icon={<IconDoorExit size={17} />}
-            title={`${stats?.assetsUnmonitored} host${stats?.assetsUnmonitored === 1 ? '' : 's'} would not record a bypass`}
-          >
-            {/* Text and actions share a row rather than stacking.
-                Two sentences, too: the paragraph that used to be here lives on
-                Coverage, where you act on it. A dashboard states the finding and
-                hands over — repeating the full explanation on both, over a badge
-                row of its own, is what pushed the fleet counters off a laptop
-                screen. Capped at a readable measure instead of running the full
-                width of a 1600px window. */}
-            <Group justify="space-between" align="flex-start" gap="md">
-              <Text size={FS.body} lh={1.5} maw={720} style={{ flex: '1 1 300px', minWidth: 0 }}>
-                No agent and no lockdown: anyone with a standing key can reach sshd on port 22
-                and Argus will never know the session happened. Your recording coverage is not
-                the fleet — only the part of it that chooses to use the gateway.
-              </Text>
-              <Group gap="xs">
-                {(stats?.agentsStale ?? 0) > 0 && (
-                  <Badge color="rose" variant="filled">
-                    {stats?.agentsStale} agent{stats?.agentsStale === 1 ? '' : 's'} went silent
-                  </Badge>
-                )}
-                {(stats?.sessionsDirectToday ?? 0) > 0 && (
-                  <Badge color="rose" variant="outline">
-                    {stats?.sessionsDirectToday} direct session(s) in 24h
-                  </Badge>
-                )}
-                {/* Coverage, not Assets. This said "Review coverage" and went to
-                    the inventory table, which lists hosts but answers nothing
-                    about whether an agent is reporting from each one. */}
-                <ButtonLink
-                  size="compact-xs"
-                  variant="light"
-                  color="rose"
-                  to="/coverage"
-                  rightSection={<IconArrowRight size={12} />}
-                >
-                  Review coverage
-                </ButtonLink>
-              </Group>
-            </Group>
-          </Alert>
-        )}
+        <ConnectHero assets={assets} />
 
-        {/* Host-key problems are the one thing that must never be buried in a
-            table — Argus terminates SSH, so an unverified target means nobody
-            verified it. */}
-        {changed.length > 0 && (
-          <Alert
-            color="rose"
-            icon={<IconAlertTriangle size={17} />}
-            title={`${changed.length} host key${changed.length > 1 ? 's' : ''} changed`}
-          >
-            <Group justify="space-between" align="flex-start" gap="md">
-              <Text size={FS.body} lh={1.5} maw={720} style={{ flex: '1 1 300px', minWidth: 0 }}>
-                The presented key no longer matches the pin, so Argus is refusing connections.
-                Either {changed.length > 1 ? 'these hosts were' : 'this host was'} rebuilt, or
-                something is intercepting the connection — verify out of band before re-pinning.
-              </Text>
-              <Group gap="xs">
-                {changed.slice(0, 4).map((a) => (
-                  <Badge key={a.id} color="rose" variant="outline" className="argus-digest">
-                    {a.hostname.split('.')[0]}
-                  </Badge>
-                ))}
-                {/* The count is of changed keys specifically, and the inventory
-                    can now be asked for exactly that set. */}
-                <ButtonLink
-                  size="compact-xs"
-                  variant="light"
-                  color="rose"
-                  to="/assets"
-                  search={{ hostKey: 'changed' }}
-                  rightSection={<IconArrowRight size={12} />}
-                >
-                  Review hosts
-                </ButtonLink>
-              </Group>
-            </Group>
-          </Alert>
-        )}
-
-        {/* Amber, below the rose alerts: nobody is being attacked, but the
-            console has lost track of a session and the number above it is
-            smaller than it looks. Fifteen of these accumulated unnoticed in
-            dev, the oldest holding for nineteen days, because every one of
-            them was being counted as live. */}
-        {(stats?.sessionsSilent ?? 0) > 0 && (
-          <Alert
-            color="amber"
-            icon={<IconAlertTriangle size={17} />}
-            title={`${stats!.sessionsSilent} session${stats!.sessionsSilent > 1 ? 's' : ''} unaccounted for`}
-          >
-            <Group justify="space-between" align="flex-start" gap="md">
-              <Text size={FS.body} lh={1.5} maw={720} style={{ flex: '1 1 300px', minWidth: 0 }}>
-                {stats!.sessionsSilent > 1 ? 'These are' : 'This is'} recorded as active, but
-                no gateway has reported {stats!.sessionsSilent > 1 ? 'them' : 'it'} in minutes
-                — most likely a gateway was killed rather than drained, so the end was never
-                reported. Argus cannot tell that apart from a session still running somewhere
-                it has lost contact with, so {stats!.sessionsSilent > 1 ? 'they are' : 'it is'}
-                {' '}no longer counted as live.
-              </Text>
-              <ButtonLink
-                size="compact-xs"
-                variant="light"
-                color="amber"
-                to="/sessions"
-                search={{ show: 'silent' }}
-                rightSection={<IconArrowRight size={12} />}
-              >
-                Review sessions
-              </ButtonLink>
-            </Group>
-          </Alert>
-        )}
+        <Attention
+          items={[
+            // Recording coverage comes first. An unverified host is a risk you
+            // can see; an unmonitored one is a session you will never hear about.
+            (stats?.assetsUnmonitored ?? 0) > 0 && {
+              key: 'unmonitored',
+              tone: 'rose' as const,
+              icon: IconDoorExit,
+              // Says what can go wrong, not the mechanism: "no agent watching"
+              // left people asking what an agent was and why it mattered.
+              title: `${plural(stats!.assetsUnmonitored, 'server is', 'servers are')} not recorded if someone logs in directly`,
+              detail:
+                'Sessions opened through Argus are always recorded. These servers have no Argus agent running, so a login straight to the server, for example ssh from a laptop, leaves no trace. Install the agent on them to close the gap.' +
+                ((stats?.agentsStale ?? 0) > 0
+                  ? ` ${plural(stats!.agentsStale, 'agent has', 'agents have')} also stopped reporting.`
+                  : ''),
+              // Coverage, not Assets: the inventory lists hosts but answers
+              // nothing about whether an agent is reporting from each one.
+              action: { label: 'Review coverage', to: '/coverage' as const },
+            },
+            // Host-key problems must never be buried in a table: Argus
+            // terminates SSH, so an unverified target means nobody verified it.
+            changed.length > 0 && {
+              key: 'hostkey',
+              tone: 'rose' as const,
+              icon: IconAlertTriangle,
+              title: `${plural(changed.length, 'server', 'servers')} presented a different host key`,
+              detail: `Argus is refusing connections to ${changed
+                .slice(0, 3)
+                .map((a) => a.hostname.split('.')[0])
+                .join(', ')}${changed.length > 3 ? ' and others' : ''}. Check it was rebuilt before trusting the new key.`,
+              action: {
+                label: 'Review hosts',
+                to: '/assets' as const,
+                search: { hostKey: 'changed' as const },
+              },
+            },
+            (waiting ?? 0) > 0 && {
+              key: 'waiting',
+              tone: 'amber' as const,
+              icon: IconCirclePlus,
+              title: `${plural(waiting!, 'new server is', 'new servers are')} waiting for approval`,
+              detail: 'Its agent has checked in. Nobody can connect to it until an admin approves it.',
+              action: { label: 'Approve servers', to: '/assets/add' as const },
+            },
+            (stats?.requestsPending ?? 0) > 0 && {
+              key: 'requests',
+              tone: 'amber' as const,
+              icon: IconClipboardCheck,
+              title: `${plural(stats!.requestsPending, 'access request needs', 'access requests need')} a decision`,
+              detail: 'Someone is waiting to connect until an approver says yes or no.',
+              action: { label: 'Review requests', to: '/requests' as const },
+            },
+            // Nobody is being attacked, but the console has lost track of a
+            // session, so the live count is smaller than it looks.
+            (stats?.sessionsSilent ?? 0) > 0 && {
+              key: 'silent',
+              tone: 'amber' as const,
+              icon: IconAlertTriangle,
+              title: `${plural(stats!.sessionsSilent, 'session is', 'sessions are')} unaccounted for`,
+              detail:
+                'Recorded as active, but no gateway has reported on them in minutes. Most likely a gateway stopped without saying the session ended.',
+              action: {
+                label: 'Review sessions',
+                to: '/sessions' as const,
+                search: { show: 'silent' as const },
+              },
+            },
+          ]}
+          loading={!stats}
+        />
 
         {/* Every tile below lands on exactly the set it counted.
             They all linked unfiltered before, so clicking "2 live sessions"

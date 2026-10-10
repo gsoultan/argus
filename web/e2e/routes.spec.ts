@@ -4,7 +4,8 @@ import { watchErrors } from './helpers'
 const ROUTES: Array<[string, string]> = [
   ['/', 'Overview'],
   ['/sessions', 'Sessions'],
-  ['/assets', 'Assets'],
+  ['/assets', 'Servers'],
+  ['/assets/add', 'Add a server'],
   ['/requests', 'Access requests'],
   ['/audit', 'Audit log'],
   ['/users', 'Users & roles'],
@@ -31,18 +32,18 @@ test('the designed fonts actually load', async ({ page }) => {
   // Force both families to be used, then wait for the loads they trigger.
   await page.evaluate(async () => {
     await Promise.all([
-      document.fonts.load('13px "Inter Variable"', 'Argus'),
+      document.fonts.load('13px "IBM Plex Sans Variable"', 'Argus'),
       document.fonts.load('12px "JetBrains Mono Variable"', 'SHA256:'),
     ])
   })
   const loaded = await page.evaluate(() =>
     [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family),
   )
-  expect(loaded, `loaded faces: ${loaded.join(', ') || 'none'}`).toContain('Inter Variable')
+  expect(loaded, `loaded faces: ${loaded.join(', ') || 'none'}`).toContain('IBM Plex Sans Variable')
   expect(loaded, `loaded faces: ${loaded.join(', ') || 'none'}`).toContain('JetBrains Mono Variable')
   // And the page is rendered with them, not merely able to be.
   const body = await page.evaluate(() => getComputedStyle(document.body).fontFamily)
-  expect(body).toContain('Inter Variable')
+  expect(body).toContain('IBM Plex Sans Variable')
 })
 
 test('the audit chain verifies in the browser', async ({ page }) => {

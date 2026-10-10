@@ -217,8 +217,10 @@ function Sessions() {
               <Table.Td>
                 <Group gap={SP.snug} wrap="nowrap">
                   <Target principal={s.principal} hostname={s.assetHostname} />
+                  {/* An acronym, so uppercase in the text itself now that
+                      badges no longer uppercase everything by CSS. */}
                   <Badge size="xs" variant="outline" color="slate">
-                    {s.protocol}
+                    {s.protocol.toUpperCase()}
                   </Badge>
                 </Group>
               </Table.Td>
