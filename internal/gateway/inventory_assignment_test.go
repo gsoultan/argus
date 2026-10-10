@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -276,11 +277,13 @@ func TestAMissingCacheIsNotAnError(t *testing.T) {
 
 /* ── Failing safe ────────────────────────────────────────────────────────── */
 
-type failingFetcher struct{ calls int }
+// failingFetcher counts its calls atomically: the sync loop calls it from its
+// own goroutine while the test reads the count.
+type failingFetcher struct{ calls atomic.Int32 }
 
 func (f *failingFetcher) Enabled() bool { return true }
 func (f *failingFetcher) Inventory(_ context.Context) (*reporter.Inventory, error) {
-	f.calls++
+	f.calls.Add(1)
 	return nil, errors.New("control plane unreachable")
 }
 
@@ -292,16 +295,21 @@ func TestAFailedSyncKeepsTheInventoryInForce(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &failingFetcher{}
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		SyncInventory(ctx, inv, f, t.TempDir(), "", quiet())
 	}()
 	// One fetch happens immediately; cancel before the ticker fires again.
-	for i := 0; i < 100 && f.calls == 0; i++ {
+	for i := 0; i < 100 && f.calls.Load() == 0; i++ {
 		time.Sleep(time.Millisecond)
 	}
 	cancel()
+	// Wait for the loop to return, so nothing below reads the inventory while
+	// the sync could still be writing it.
+	<-done
 
-	if f.calls == 0 {
+	if f.calls.Load() == 0 {
 		t.Fatal("the sync never asked")
 	}
 	if inv.Count() != before {
