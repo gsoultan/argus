@@ -18,6 +18,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
+import { Route as AssetsAddRouteImport } from './routes/assets.add'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 
@@ -66,6 +67,11 @@ const AssetsAssetIdRoute = AssetsAssetIdRouteImport.update({
   path: '/assets/$assetId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssetsAddRoute = AssetsAddRouteImport.update({
+  id: '/assets/add',
+  path: '/assets/add',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SessionsIndexRoute = SessionsIndexRouteImport.update({
   id: '/sessions/',
   path: '/sessions/',
@@ -86,6 +92,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
+  '/assets/add': typeof AssetsAddRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
+  '/assets/add': typeof AssetsAddRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets': typeof AssetsIndexRoute
   '/sessions': typeof SessionsIndexRoute
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
+  '/assets/add': typeof AssetsAddRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
@@ -128,6 +137,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/assets/$assetId'
+    | '/assets/add'
     | '/sessions/$sessionId'
     | '/assets/'
     | '/sessions/'
@@ -141,6 +151,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/assets/$assetId'
+    | '/assets/add'
     | '/sessions/$sessionId'
     | '/assets'
     | '/sessions'
@@ -154,6 +165,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/assets/$assetId'
+    | '/assets/add'
     | '/sessions/$sessionId'
     | '/assets/'
     | '/sessions/'
@@ -168,6 +180,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
+  AssetsAddRoute: typeof AssetsAddRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   AssetsIndexRoute: typeof AssetsIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
@@ -238,6 +251,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssetsAssetIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assets/add': {
+      id: '/assets/add'
+      path: '/assets/add'
+      fullPath: '/assets/add'
+      preLoaderRoute: typeof AssetsAddRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sessions/': {
       id: '/sessions/'
       path: '/sessions'
@@ -264,6 +284,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
+  AssetsAddRoute: AssetsAddRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   AssetsIndexRoute: AssetsIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,

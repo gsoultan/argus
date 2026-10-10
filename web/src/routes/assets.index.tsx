@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Box, Button, Group, Select, Table, Text, TextInput, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconSearch, IconServer2, IconShieldLock, IconX } from '@tabler/icons-react'
+import { IconCirclePlus, IconSearch, IconServer2, IconShieldLock, IconX } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import {
@@ -136,17 +136,24 @@ function Assets() {
   return (
     <Box>
       <PageHeader
-        title="Assets"
+        title="Servers"
         description="Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified."
         actions={
           // Says what this page cannot answer. The inventory lists the hosts
           // Argus manages, so a machine nobody enrolled is invisible here by
           // construction — which is the question Coverage exists for.
-          <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
-            <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
-              Coverage
+          <>
+            <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
+              <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
+                Coverage
+              </ButtonLink>
+            </Tooltip>
+            {/* Adding a server is something you do to this list, so it is a
+                button here rather than a separate menu item. */}
+            <ButtonLink to="/assets/add" leftSection={<IconCirclePlus size={14} />}>
+              Add a server
             </ButtonLink>
-          </Tooltip>
+          </>
         }
       />
 
@@ -242,7 +249,7 @@ function Assets() {
           empty={
             <EmptyState
               icon={IconServer2}
-              title="No assets match."
+              title="No servers match."
               description={
                 filtered
                   ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'

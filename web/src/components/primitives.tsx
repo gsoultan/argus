@@ -616,13 +616,14 @@ export function Stat({
       // its colour from a set other than the one it displays is exactly the
       // kind of thing worth asserting -- Coverage did it for a while.
       data-tone={tone}
-      style={warn ? { borderColor: 'var(--color-pending)' } : undefined}
+      // The figure carries the warning, not the frame. Four amber-bordered
+      // tiles in a row made a quiet morning look like an incident.
     >
       <Group justify="space-between" wrap="nowrap" align="flex-start" gap="sm">
         <Box style={{ minWidth: 0 }}>
           <Group gap={4} wrap="nowrap">
-            <Text size={FS.micro} c="dimmed" fw={700} style={{ letterSpacing: '0.08em' }}>
-              {label.toUpperCase()}
+            <Text size={FS.meta} c="dimmed" fw={500}>
+              {label}
             </Text>
             {interactive && (
               <IconChevronRight size={11} className="argus-stat-chevron" opacity={0.45} />
@@ -636,14 +637,14 @@ export function Stat({
             </Text>
           )}
           {sub && (
-            <Text size={FS.micro} c="dimmed" mt={4} lh={1.45}>
+            <Text size={FS.meta} c="dimmed" mt={4} lh={1.45}>
               {sub}
             </Text>
           )}
         </Box>
         {Icon && (
-          <ThemeIcon variant="light" color={color} size={32} radius="md">
-            <Icon size={17} stroke={1.7} />
+          <ThemeIcon variant="light" color={warn ? color : 'slate'} size={30} radius="md">
+            <Icon size={16} stroke={1.7} />
           </ThemeIcon>
         )}
       </Group>

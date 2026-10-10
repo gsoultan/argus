@@ -127,7 +127,7 @@ function expectWithin(what: string, w: Weight, codeBudget: number) {
 
   expect(
     w.fontFiles,
-    `${what} fetched ${w.fontFiles} font files. Two is Inter and JetBrains Mono, `
+    `${what} fetched ${w.fontFiles} font files. Two is IBM Plex Sans and JetBrains Mono, `
       + 'latin. More means a non-latin subset is being pulled eagerly.',
   ).toBe(FONT_FILES)
 }

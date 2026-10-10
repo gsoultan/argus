@@ -33,7 +33,7 @@ function AssetDetail() {
   if (!asset) {
     return (
       <Box>
-        <PageHeader crumbs={[{ label: 'Assets', to: '/assets' }]} title="Asset not found" />
+        <PageHeader crumbs={[{ label: 'Servers', to: '/assets' }]} title="Asset not found" />
         <PageBody>
           <Card>
             <EmptyState
@@ -75,7 +75,7 @@ function AssetDetail() {
     <Box>
       <PageHeader
         crumbs={[
-          { label: 'Assets', to: '/assets' },
+          { label: 'Servers', to: '/assets' },
           { label: asset.hostname.split('.')[0] ?? asset.hostname },
         ]}
         title={asset.hostname}

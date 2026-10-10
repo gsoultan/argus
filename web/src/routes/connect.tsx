@@ -40,7 +40,13 @@ const RDPScreen = lazy(() =>
  * empty dropdown is the worst version of that trade in the application. The
  * host Select says it is loading instead.
  */
-export const Route = createFileRoute('/connect')({ component: Connect })
+export const Route = createFileRoute('/connect')({
+  component: Connect,
+  // `?host=` preselects a server, so a "Connect" button anywhere else in the
+  // console lands here one step from a terminal instead of at an empty form.
+  validateSearch: (s: Record<string, unknown>): { host?: string } =>
+    typeof s.host === 'string' && s.host ? { host: s.host } : {},
+})
 
 const DEFAULT_GATEWAY = GATEWAY_URL
 
@@ -53,7 +59,8 @@ function Connect() {
   const [gateway, setGateway] = useState(DEFAULT_GATEWAY)
   const [requesting, setRequesting] = useState(false)
   const [denied, setDenied] = useState<string>()
-  const [target, setTarget] = useState<string | null>(null)
+  const { host } = Route.useSearch()
+  const [target, setTarget] = useState<string | null>(host ?? null)
   const [principal, setPrincipal] = useState('ops')
   // Shown by default only when the console has no control plane to get an
   // address from — that is the one case where the user has to supply it.
@@ -116,7 +123,7 @@ function Connect() {
   if (session) {
     const isRDP = session.protocol === 'rdp'
     return (
-      <Box h="calc(100vh - 52px)" style={{ display: 'flex', flexDirection: 'column' }}>
+      <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
           crumbs={[{ label: 'Connect', to: '/connect' }, { label: session.target }]}
           title={isRDP ? 'Remote Desktop' : 'Terminal'}
@@ -200,7 +207,7 @@ function Connect() {
     <Box>
       <PageHeader
         title="Connect"
-        description="Open a session from the browser. For anyone who cannot use a native client — contractors on locked-down machines, auditors, on-call from a borrowed laptop."
+        description="Pick a server and an account, and the session opens here in the browser: a terminal for SSH, a desktop for Remote Desktop."
       />
 
       <PageBody>
@@ -307,17 +314,26 @@ function Connect() {
 
           <Grid.Col span={{ base: 12, lg: 5 }}>
             <Stack gap="sm">
-              <Alert color="sky" icon={<IconInfoCircle size={16} />} title="Same controls as ssh(1)">
-                <Text size={FS.body} lh={1.5}>
-                  A browser session is not a lesser-controlled one. It goes through the same
-                  gateway code path: the principal is checked against the inventory, the
-                  target's host key is verified against its pin, the credential is injected so
-                  you never see it, and the session is recorded to the same hash-chained
-                  artefact. No credential is entered here — the console asks the control plane
-                  for a single-use ticket scoped to that host and account, which expires in a
-                  minute and cannot be reused.
-                </Text>
-              </Alert>
+              {/* Plain words first. The earlier panel was one paragraph of
+                  gateway internals (principals, pins, hash-chained artefacts)
+                  that answered a question a security reviewer asks, not the
+                  one a person about to connect has. */}
+              <Card padding="md">
+                <Text fw={600} size="sm" mb={SP.snug}>What happens when you connect</Text>
+                <Stack gap={SP.snug}>
+                  {[
+                    'Argus checks you are allowed on that server as that account.',
+                    'It signs in for you. You never see or type a password or key.',
+                    'It checks the server is the one it was last time, so nothing can pose as it.',
+                    'The whole session is recorded, the same as one opened with ssh.',
+                  ].map((line) => (
+                    <Group key={line} gap={SP.cozy} wrap="nowrap" align="flex-start">
+                      <IconInfoCircle size={15} style={{ marginTop: 2, flexShrink: 0, opacity: 0.55 }} />
+                      <Text size={FS.body} c="dimmed" lh={1.5}>{line}</Text>
+                    </Group>
+                  ))}
+                </Stack>
+              </Card>
 
               <Card style={{ borderStyle: 'dashed' }}>
                 <Group gap={SP.cozy} mb={SP.snug}>
