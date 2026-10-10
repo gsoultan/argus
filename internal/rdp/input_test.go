@@ -40,7 +40,7 @@ func TestKeyEventDirection(t *testing.T) {
 	if n != 1 {
 		t.Errorf("numEvents = %d", n)
 	}
-	if body[0]&0xE0>>5&keyRelease != 0 {
+	if body[0]>>5 != inputEventScancode || body[0]&keyRelease != 0 {
 		t.Error("a key-down carried the release flag")
 	}
 	if body[1] != 0x1E {
@@ -49,7 +49,7 @@ func TestKeyEventDirection(t *testing.T) {
 
 	up, _ := EncodeInput(InputEvent{Kind: "key", Scancode: 0x1E, Down: false})
 	_, body = decodeInput(t, up)
-	if body[0]>>5&keyRelease == 0 {
+	if body[0]>>5 != inputEventScancode || body[0]&keyRelease == 0 {
 		t.Error("a key-up did not carry the release flag")
 	}
 }
@@ -71,7 +71,7 @@ func TestExtendedKeysCarryTheirFlag(t *testing.T) {
 
 	pdu, _ := EncodeInput(InputEvent{Kind: "key", Scancode: home, Extended: true, Down: true})
 	_, body := decodeInput(t, pdu)
-	if body[0]>>5&keyExtended == 0 {
+	if body[0]>>5 != inputEventScancode || body[0]&keyExtended == 0 {
 		t.Error("the extended flag was lost")
 	}
 }
@@ -99,6 +99,9 @@ func TestMouseButtons(t *testing.T) {
 			t.Fatalf("button %d: %v", browser, err)
 		}
 		_, body := decodeInput(t, pdu)
+		if body[0]>>5 != inputEventMouse {
+			t.Errorf("button %d went out as event code %d, not a mouse event", browser, body[0]>>5)
+		}
 		flags := binary.LittleEndian.Uint16(body[1:3])
 		if flags&want == 0 {
 			t.Errorf("browser button %d gave flags %#x, want %#x set", browser, flags, want)
@@ -157,8 +160,8 @@ func TestSyncEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, body := decodeInput(t, pdu)
-	if body[0]&0x1F != inputEventSync {
-		t.Errorf("event code = %#x, want sync", body[0]&0x1F)
+	if body[0]>>5 != inputEventSync || len(body) != 1 {
+		t.Errorf("event = % x, want a lone sync header", body)
 	}
 }
 

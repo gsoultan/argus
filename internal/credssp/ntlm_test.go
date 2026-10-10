@@ -368,3 +368,13 @@ func TestUTF16LE(t *testing.T) {
 }
 
 func unixEpoch() time.Time { return time.Unix(0, 0).UTC() }
+
+// FreeRDP refuses a NEGOTIATE without REQUEST_TARGET before it will send a
+// challenge, so every WinPR-based target failed at the first message.
+func TestNegotiateRequestsTheTarget(t *testing.T) {
+	msg := Negotiate()
+	flags := binary.LittleEndian.Uint32(msg[12:16])
+	if flags&RequestTarget == 0 {
+		t.Errorf("negotiate flags %#08x lack REQUEST_TARGET", flags)
+	}
+}
