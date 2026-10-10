@@ -39,7 +39,32 @@ const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
  * control plane would put a second service on the path of every keystroke.
  */
 export const GATEWAY_URL: string =
-  import.meta.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8081'
+  runtimeGatewayURL() ?? import.meta.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8081'
+
+/**
+ * The gateway address the serving control plane configured, if any.
+ *
+ * A packaged console is built once and installed everywhere, so an address
+ * baked in at build time is right for nobody. argus-control serves
+ * /console-config.js with `console.gateway_url` from its config; the copy in
+ * public/ sets nothing, which leaves development and fixture builds as they were.
+ */
+function runtimeGatewayURL(): string | undefined {
+  return runtimeConfig()?.gatewayUrl || undefined
+}
+
+function runtimeConfig(): { gatewayUrl?: string; version?: string } | undefined {
+  return (globalThis as { __ARGUS__?: { gatewayUrl?: string; version?: string } }).__ARGUS__
+}
+
+/**
+ * The serving control plane's release, when it is one ("0.2.0", not "dev"),
+ * so the agent it offers to install matches it.
+ */
+export function controlPlaneVersion(): string | undefined {
+  const v = runtimeConfig()?.version?.replace(/^v/, '')
+  return v && /^\d+\.\d+\.\d+/.test(v) ? v : undefined
+}
 
 export function isConfigured(): boolean {
   return RAW_BASE !== ''

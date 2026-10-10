@@ -20,6 +20,10 @@ before:
   hooks:
     - go mod tidy
     - go vet ./...
+    # The console ships inside argus-control. Built same-origin (VITE_CONTROL_URL=/)
+    # because the control plane serves it and the session cookie depends on it;
+    # the gateway address comes from console.gateway_url at run time.
+    - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn"
 
 builds:
   - id: argus-gateway
@@ -177,6 +181,10 @@ nfpms:
     contents:
       - src: packaging/systemd/argus-control.service
         dst: /lib/systemd/system/argus-control.service
+      # The web console, served by argus-control (console.dir).
+      - src: web/dist-release/
+        dst: /usr/share/argus/console
+        type: tree
       # Installed, not enabled: `systemctl enable --now argus-backup.timer`.
       - src: packaging/systemd/argus-backup.service
         dst: /lib/systemd/system/argus-backup.service

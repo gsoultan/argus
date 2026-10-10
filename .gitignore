@@ -93,5 +93,6 @@ web/playwright-report/
 test-results/
 playwright-report/
 web/dist-live/
+web/dist-release/
 # Reference build for e2e/cascade.spec.ts -- never shipped, rebuilt per run.
 web/dist-monolith/

@@ -74,6 +74,10 @@ type API struct {
 	Enroll EnrollTrust
 	// agentCreds caches per-host agent credential lookups.
 	agentCreds agentCredCache
+
+	// Console serves the built web console on the console surface. Nil serves
+	// the API alone, as before it existed. See console.go.
+	Console http.Handler
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -188,6 +192,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording/link", a.user(a.presignRecording))
 	mux.HandleFunc("GET /api/v1/policy", a.user(a.getPolicy))
 	mux.HandleFunc("POST /api/v1/policy", a.postPolicy)
+
+	// The console itself, for every GET no route above claims.
+	if a.Console != nil {
+		mux.Handle("GET /", a.Console)
+	}
 
 	// Agent enrollment. Minting a token and revoking an agent are admin
 	// decisions and land in the audit chain; see enrollment_routes.go.

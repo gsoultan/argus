@@ -48,6 +48,11 @@ jobs:
           ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
         run: go test -race -timeout 5m ./...
 
+      # The console is built into argus-control's package.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 

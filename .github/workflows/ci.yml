@@ -307,6 +307,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # argus-control's package carries the built console.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
@@ -397,6 +402,10 @@ jobs:
           done
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz || {
             sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
+
+          # The console ships in the package and is served same-origin.
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep -q '<div id="root">'
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q gatewayUrl
 
           # The first administrator, as the guide says.
           printf 'ci-admin-password-0123456789\n' | sudo sh -c \

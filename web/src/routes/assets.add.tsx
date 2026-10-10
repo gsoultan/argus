@@ -12,7 +12,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { Mono, relTime } from '~/components/primitives'
-import { controlPlaneHost, isConfigured } from '~/lib/live'
+import { controlPlaneHost, controlPlaneVersion, isConfigured } from '~/lib/live'
 import { run } from '~/lib/notify'
 import type { EnrollToken } from '~/lib/live'
 import {
@@ -48,9 +48,10 @@ type Arch = 'amd64' | 'arm64'
 
 /**
  * Prefilled, and editable beside the commands: the agent should match the
- * control plane it reports to, which the console cannot ask about.
+ * control plane it reports to. A packaged control plane says which release it
+ * is; a development one does not, and gets the first release.
  */
-const DEFAULT_VERSION = '0.1.0'
+const DEFAULT_VERSION = controlPlaneVersion() ?? '0.1.0'
 
 function AddServer() {
   const [distro, setDistro] = useState<Distro>('deb')
@@ -304,6 +305,7 @@ function EnrolledAgents() {
                   size="xs"
                   variant="subtle"
                   color="red"
+                  style={{ flexShrink: 0 }}
                   onClick={() => setConfirming({ id: a.id, hostname: a.hostname })}
                 >
                   Revoke

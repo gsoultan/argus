@@ -77,6 +77,17 @@ type config struct {
 	// Alerts tells administrators, by email or Telegram, every time somebody
 	// opens a session. Omit for none.
 	Alerts *alertsConfig `yaml:"alerts"`
+	// Console serves the web console from this process. Omit to serve the API
+	// alone, as every deployment did before the console shipped in a package.
+	Console *consoleConfig `yaml:"console"`
+}
+
+type consoleConfig struct {
+	// Dir is where the package installs the built console.
+	Dir string `yaml:"dir"`
+	// GatewayURL is where browsers reach argus-gateway's web listener, for the
+	// terminal. Without it the Connect page asks for the address.
+	GatewayURL string `yaml:"gateway_url"`
 }
 
 type alertsConfig struct {
@@ -272,6 +283,22 @@ func run() error {
 
 	api := control.NewAPI(store, log)
 	api.Alerts = alerts
+	if cfg.Console != nil && cfg.Console.Dir != "" {
+		h, err := control.NewConsoleHandler(control.ConsoleConfig{
+			Dir: cfg.Console.Dir, GatewayURL: cfg.Console.GatewayURL, Version: version,
+		})
+		if err != nil {
+			return err
+		}
+		// Assigned only when built: a nil *consoleHandler in the interface
+		// field would be a non-nil handler that panics.
+		api.Console = h
+		if cfg.Console.GatewayURL == "" {
+			log.Warn("console.gateway_url is not set",
+				"detail", "the console's terminal, live view and termination cannot reach the gateway until it is set")
+		}
+		log.Info("serving the console", "dir", cfg.Console.Dir)
+	}
 	api.SetThrottles(throttles)
 	api.SetStorage(storageClient)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
@@ -546,6 +573,9 @@ func loadConfig(path string) (config, error) {
 				*f = filepath.Join(base, *f)
 			}
 		}
+	}
+	if cfg.Console != nil && cfg.Console.Dir != "" && !filepath.IsAbs(cfg.Console.Dir) {
+		cfg.Console.Dir = filepath.Join(base, cfg.Console.Dir)
 	}
 
 	if cfg.ReporterToken == "" {
