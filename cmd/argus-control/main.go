@@ -421,6 +421,23 @@ func run() error {
 		// token still has to get past, and it does not become optional because
 		// a listener happens to be strict.
 		api.RequirePeerCert = cfg.TLS.ClientCAFile != ""
+
+		// What an enrolling agent is handed to trust this process. The pin is
+		// of the certificate this process serves, so it means nothing when a
+		// proxy in front presents another -- there the agent uses the system
+		// trust store, or a --control-ca it is given.
+		if !cfg.BehindTLSProxy {
+			certFile := cfg.TLS.CertFile
+			api.Enroll.Pin = func() (string, error) { return tlsconfig.PinFile(certFile) }
+		}
+		// The internal CA, which in the packaged layout signs this process's
+		// certificate as well as the fleet's. Public, so handing it over costs
+		// nothing; the agent checks it verifies this server before keeping it.
+		if cfg.TLS.ClientCAFile != "" {
+			if api.Enroll.CAPEM, err = os.ReadFile(cfg.TLS.ClientCAFile); err != nil {
+				return fmt.Errorf("read client_ca_file: %w", err)
+			}
+		}
 	}
 
 	stop := make(chan os.Signal, 1)

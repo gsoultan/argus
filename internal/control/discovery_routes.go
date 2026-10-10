@@ -151,6 +151,9 @@ func (a *API) postFacts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "hostname is required")
 		return
 	}
+	if !a.mayReportFor(w, r, in.Hostname) {
+		return
+	}
 	if err := a.store.RecordFacts(r.Context(), in.Hostname, in.HostFacts); err != nil {
 		a.fail(w, "record facts", err)
 		return

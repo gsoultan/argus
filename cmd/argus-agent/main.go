@@ -10,8 +10,9 @@
 //	argus-agent daemon    # runs as root: owns recordings, scans posture, heartbeats
 //	argus-agent shim      # runs as the connecting user, invoked by sshd ForceCommand
 //
-// Plus two helpers:
+// Plus three helpers:
 //
+//	argus-agent enroll    # exchange a token from the console for this host's credential
 //	argus-agent scan      # one-shot posture report
 //	argus-agent install   # print the sshd_config needed to enable recording
 package main
@@ -53,6 +54,8 @@ func main() {
 		os.Exit(runProbe())
 	case "install":
 		os.Exit(runInstall(os.Args[2:]))
+	case "enroll", "enrol":
+		os.Exit(runEnroll(os.Args[2:]))
 	case "--version", "version":
 		fmt.Printf("argus-agent %s\n", version)
 	default:
@@ -64,6 +67,7 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `argus-agent — Argus host agent
 
+  argus-agent enroll    exchange a token from the console for this host's credential
   argus-agent daemon    own recordings, scan posture, heartbeat (run as root)
   argus-agent shim      wrap one session (invoked by sshd ForceCommand)
   argus-agent scan      report how reachable this host is without Argus
@@ -81,8 +85,9 @@ func runDaemon(args []string) int {
 	beatEvery := fs.Duration("heartbeat-interval", 30*time.Second, "how often to report liveness")
 	shimPath := fs.String("shim", "/usr/libexec/argus-shim", "path sshd invokes")
 	stateDir := fs.String("state", "/var/lib/argus", "where posture and heartbeat are written")
-	controlURL := fs.String("control-url", "", "argus-control base URL; empty runs standalone")
-	controlToken := fs.String("control-token", "", "reporter token")
+	controlURL := fs.String("control-url", "",
+		"argus-control base URL; empty uses the enrollment in --state, or runs standalone")
+	controlToken := fs.String("control-token", "", "reporter token (unenrolled agents only)")
 	controlCA := fs.String("control-ca", "", "CA that signed the control plane's certificate")
 	controlCert := fs.String("control-cert", "", "client certificate presented to the control plane")
 	controlKey := fs.String("control-key", "", "key for --control-cert")
@@ -94,6 +99,39 @@ func runDaemon(args []string) int {
 	defer cancel()
 
 	var clientTLS *tls.Config
+
+	// An enrolled agent reports with its own credential. Flags still win, so
+	// a deployment configured the old way keeps working through an upgrade.
+	if *controlURL == "" {
+		enr, err := agent.LoadEnrollment(*stateDir)
+		if err != nil {
+			log.Error("enrollment could not be read", "error", err)
+			return 1
+		}
+		if enr != nil {
+			*controlURL, *controlToken = enr.ControlURL, enr.Credential
+			if clientTLS, err = enr.TLS(); err != nil {
+				log.Error("enrollment TLS configuration failed", "error", err)
+				return 1
+			}
+			if enr.Pin != "" {
+				log.Warn("trusting the control plane by its key pin",
+					"detail", "reports will stop when its key changes; re-enroll with "+
+						"--control-ca to trust its CA instead")
+			}
+			if h, _ := os.Hostname(); !strings.EqualFold(h, enr.Hostname) {
+				// The control plane will refuse every report: the credential
+				// may speak only for the name it was issued to.
+				log.Error("this host was enrolled under another name",
+					"enrolled_as", enr.Hostname, "hostname", h,
+					"detail", "reports will be refused; revoke it in the console and enroll again")
+			}
+		} else if *controlToken == "" {
+			log.Warn("not enrolled: running standalone",
+				"detail", "sessions are recorded on this host but not reported; "+
+					"run argus-agent enroll with a token from the console")
+		}
+	}
 	if *controlCA != "" || *controlCert != "" {
 		var terr error
 		clientTLS, terr = tlsconfig.Client(tlsconfig.ClientOptions{
@@ -487,5 +525,47 @@ func runProbe() int {
 	fmt.Printf("  fidelity  %s\n", execlog.FidelityEBPF)
 	fmt.Println("  Commands are observed at execve, so a recording shows what ran")
 	fmt.Println("  rather than what the terminal displayed.")
+	return 0
+}
+
+func runEnroll(args []string) int {
+	fs := flag.NewFlagSet("enroll", flag.ExitOnError)
+	controlURL := fs.String("control-url", "", "argus-control base URL, as this host reaches it (https://)")
+	token := fs.String("token", "", "single-use enrollment token from the console")
+	pin := fs.String("pin", "", "sha256 pin of the control plane's key, shown beside the token")
+	ca := fs.String("control-ca", "", "CA that signed the control plane's certificate; overrides --pin")
+	hostname := fs.String("hostname", "", "name to enroll as; defaults to this host's name")
+	stateDir := fs.String("state", "/var/lib/argus", "where the enrollment is kept")
+	force := fs.Bool("force", false, "replace an existing enrollment (revoke the old one first)")
+	_ = fs.Parse(args)
+
+	if os.Geteuid() != 0 {
+		fmt.Fprintln(os.Stderr, "argus-agent enroll: run as root -- the credential must not be readable by the users it records")
+		return 1
+	}
+	// A token on the command line lands in shell history; reading it from the
+	// environment is offered for anyone who would rather it did not.
+	if *token == "" {
+		*token = os.Getenv("ARGUS_ENROLL_TOKEN")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	enr, err := agent.Enroll(ctx, agent.EnrollOptions{
+		ControlURL: *controlURL, Token: *token, Pin: *pin, CAFile: *ca,
+		Hostname: *hostname, StateDir: *stateDir, Force: *force,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus-agent enroll: %v\n", err)
+		return 1
+	}
+	fmt.Printf("enrolled as %s with %s\n", enr.Hostname, enr.ControlURL)
+	switch {
+	case enr.CAFile != "":
+		fmt.Printf("trusting the control plane through %s\n", enr.CAFile)
+	case enr.Pin != "":
+		fmt.Println("WARNING: trusting the control plane by its key alone. Reports will stop\n" +
+			"when its key changes. Re-enroll with --control-ca to trust its CA instead.")
+	}
+	fmt.Println("start it with: systemctl enable --now argus-agent")
 	return 0
 }

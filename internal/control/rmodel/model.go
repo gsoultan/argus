@@ -83,6 +83,46 @@ func (m *Agent) Schema(t *storm.Table) {
 	t.Index(&m.Hostname).Where("exec_tracing").Named("agents_exec_tracing_idx")
 }
 
+// AgentEnrollmentToken is table agent_enrollment_tokens: a short-lived,
+// single-use token an administrator hands to whoever installs an agent.
+type AgentEnrollmentToken struct {
+	ID         [16]byte
+	TokenHash  string
+	Hostname   string
+	CreatedBy  string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	UsedAt     *time.Time
+	UsedByHost *string
+}
+
+func (m *AgentEnrollmentToken) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Hostname).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.UniqueNamed("agent_enrollment_tokens_token_hash_key", &m.TokenHash)
+}
+
+// AgentCredential is table agent_credentials: what one enrolled agent reports
+// with, bound to its hostname.
+type AgentCredential struct {
+	ID         [16]byte
+	Hostname   string
+	SecretHash string
+	Token      AgentEnrollmentToken
+	CreatedAt  time.Time
+	RevokedAt  *time.Time
+	RevokedBy  *string
+}
+
+func (m *AgentCredential) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Token).ConstraintName("agent_credentials_token_id_fkey")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.UniqueNamed("agent_credentials_secret_hash_key", &m.SecretHash)
+	t.Index(storm.Lower(&m.Hostname)).Unique().Where("revoked_at IS NULL").Named("agent_credentials_live_host_idx")
+}
+
 // Asset is table assets.
 type Asset struct {
 	storm.Model
@@ -369,6 +409,8 @@ func All() []any {
 	return []any{
 		&AccessRequest{},
 		&Agent{},
+		&AgentCredential{},
+		&AgentEnrollmentToken{},
 		&Asset{},
 		&AssetAssignment{},
 		&AuditEvent{},
