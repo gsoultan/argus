@@ -83,12 +83,17 @@ func (s *Server) handleRDPWeb(cfg WebConfig) http.HandlerFunc {
 		// gateway buffer on its say-so.
 		conn.SetReadLimit(64 << 10)
 
-		s.runRDPWeb(r.Context(), conn, user, principal, asset)
+		// A console from before the browser could decode RDP itself does not
+		// ask, and gets the decoded frames it understands. The console is a
+		// PWA that updates when its user agrees to, so for a while after a
+		// gateway upgrade some of them are always older than it.
+		encoded := r.URL.Query().Get("frames") == "encoded"
+		s.runRDPWeb(r.Context(), conn, user, principal, asset, encoded)
 	}
 }
 
 func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
-	user, principal string, asset Asset) {
+	user, principal string, asset Asset, encoded bool) {
 
 	sess := &rdp.Session{
 		ID:        newRDPSessionID(),
@@ -142,7 +147,7 @@ func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
 		s.pumpRDPInput(ctx, conn, client, log)
 	}()
 
-	err = s.pumpRDPFrames(ctx, conn, client, sess.Hub())
+	err = s.pumpRDPFrames(ctx, conn, client, sess.Hub(), encoded)
 
 	head, closeErr := sess.Close()
 	s.untrackRDPWeb(sess)
@@ -289,23 +294,36 @@ func (s *Server) openRDPWebRecording(sess *rdp.Session, asset Asset, client *rdp
 }
 
 // pumpRDPFrames reads screen updates and writes them to the browser.
+//
+// encoded forwards each rectangle as the target sent it, for the browser to
+// decode; otherwise the gateway decodes it to RGBA first, at sixteen to fifty
+// times the bytes.
 func (s *Server) pumpRDPFrames(ctx context.Context, conn *websocket.Conn,
-	client *rdp.Client, hub *live.Hub) error {
+	client *rdp.Client, hub *live.Hub, encoded bool) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		rects, err := client.Next()
+		bitmaps, err := client.NextBitmaps()
 		if err != nil {
 			return err
 		}
-		if len(rects) == 0 {
+		if len(bitmaps) == 0 {
 			continue
 		}
 
 		batch := make([]byte, 0, 4096)
-		for _, r := range rects {
-			frame := rdp.EncodeRect(r)
+		for _, b := range bitmaps {
+			var frame []byte
+			if encoded {
+				frame = rdp.EncodeBitmap(b)
+			} else {
+				r, derr := b.Decode()
+				if derr != nil {
+					return derr
+				}
+				frame = rdp.EncodeRect(r)
+			}
 			// Flushed before it grows large enough to stall the socket; a
 			// full-screen repaint otherwise arrives as one message and the
 			// whole session appears to freeze rather than one frame lagging.

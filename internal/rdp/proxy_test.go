@@ -432,8 +432,8 @@ func TestProxiedSessionBroadcastsToViewers(t *testing.T) {
 		if len(got) < FrameHeaderSize {
 			t.Fatalf("broadcast %d bytes", len(got))
 		}
-		if got[0] != FrameBitmap {
-			t.Errorf("frame type = %d", got[0])
+		if got[0] != FrameEncoded {
+			t.Errorf("frame type = %d, want the encoded bitmap the browser decodes", got[0])
 		}
 		if x := int(got[2]) | int(got[3])<<8; x != 4 {
 			t.Errorf("x = %d, want 4", x)
