@@ -109,6 +109,10 @@ type Asset struct {
 	AgentHostname        *string
 	DiscoveredBy         *string
 	Protocol             string
+	Source               string
+	CredentialRef        string
+	Domain               string
+	ArchivedAt           *time.Time
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -128,6 +132,29 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.UniqueNamed("assets_hostname_key", &m.Hostname)
 	t.Index(&m.AgentHostname).Unique().Where("agent_hostname IS NOT NULL").Named("assets_agent_hostname_idx")
 	t.Index(&m.Protocol).Named("assets_protocol_idx")
+	t.Col(&m.Source).Default("'gateway'::text")
+	t.Col(&m.CredentialRef).Default("''::text")
+	t.Col(&m.Domain).Default("''::text")
+	t.Index(&m.Hostname).Where("archived_at IS NULL").Named("assets_live_idx")
+}
+
+// AssetAssignment is table asset_assignments: who may reach which host, as whom.
+type AssetAssignment struct {
+	Asset      Asset
+	UserEmail  string
+	Principals []string
+	GrantedBy  string
+	GrantedAt  time.Time
+}
+
+func (m *AssetAssignment) Schema(t *storm.Table) {
+	t.Col(&m.Asset).ConstraintName("asset_assignments_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Principals).Default("'{}'::text[]")
+	t.Col(&m.GrantedBy).Default("''::text")
+	t.Col(&m.GrantedAt).Default("now()")
+	t.Index(&m.UserEmail).Named("asset_assignments_user_idx")
+	t.Index(&m.Asset).Named("asset_assignments_asset_idx")
 }
 
 // AuditEvent is table audit_events.
@@ -343,6 +370,7 @@ func All() []any {
 		&AccessRequest{},
 		&Agent{},
 		&Asset{},
+		&AssetAssignment{},
 		&AuditEvent{},
 		&GatewayPolicy{},
 		&HostKeyPin{},

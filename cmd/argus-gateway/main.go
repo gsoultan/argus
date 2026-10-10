@@ -47,6 +47,17 @@ type config struct {
 	HostKey        string `yaml:"host_key"`
 	AuthorizedKeys string `yaml:"authorized_keys"`
 	Inventory      string `yaml:"inventory"`
+	// VaultDir holds the credentials an asset entered in the console can name.
+	//
+	// The control plane sends a credential *name*; the gateway resolves it in
+	// here and refuses anything with a separator in it. Without this directory
+	// a console-created asset on an injected credential cannot be brokered at
+	// all, which is a clearer failure than resolving it somewhere surprising.
+	VaultDir string `yaml:"vault_dir"`
+	// InventoryCache is where the last synced inventory is kept, so a restart
+	// during a control-plane outage is a delay rather than a lockout. Defaults
+	// beside the host-key store.
+	InventoryCache string `yaml:"inventory_cache"`
 	HostKeyStore   string `yaml:"host_key_store"`
 	RecordingDir   string `yaml:"recording_dir"`
 	// TrustOnFirstUse pins an unknown host's key on first contact. Convenient
@@ -180,6 +191,27 @@ func run() error {
 	inv, err := gateway.LoadInventory(cfg.Inventory)
 	if err != nil {
 		return err
+	}
+
+	// Where the inventory comes from, and therefore what is enforced.
+	//
+	// With a control plane the console owns the inventory: it says which hosts
+	// exist and who is assigned to them, and an unassigned session is refused.
+	// Without one the gateway runs on the file alone, which carries no
+	// assignments — so the principal list is the whole control, exactly as it
+	// has always been on this path. That is a real difference in what is
+	// enforced, so it is stated at start-up rather than left to be discovered.
+	controlled := cfg.Control != nil && cfg.Control.URL != ""
+	if controlled {
+		inv.UnderControlPlane()
+		if gateway.LoadInventoryCache(inv, inventoryCachePath(cfg), cfg.VaultDir, log) {
+			log.Info("inventory restored from cache while the first sync completes")
+		}
+	} else {
+		log.Warn("no control plane configured: assignments are not enforced",
+			"detail", "any key in authorized_keys may open any principal the inventory "+
+				"file lists; configure `control` to have the console decide who reaches what",
+			"inventory", cfg.Inventory, "assets", inv.Count())
 	}
 
 	keys, err := hostkey.Open(cfg.HostKeyStore, cfg.TrustOnFirstUse)
@@ -442,11 +474,19 @@ func run() error {
 		}
 	}()
 
-	// Publish the inventory so the console's credential-mode counts reflect
-	// what the gateway actually does, rather than a field nobody sets.
+	// Publish the file inventory, then follow the console's.
+	//
+	// The publish is what carries a file-driven deployment into the console
+	// without anyone retyping it: every host in inventory.json appears as an
+	// asset, and the control plane refuses to overwrite any row an
+	// administrator has since edited there. It runs before the first sync and
+	// in the same goroutine so the order is not a race — an asset published
+	// after the fetch would be missing from the inventory that fetch returned,
+	// and would stay missing for a whole interval.
 	if rep != nil {
 		go func() {
-			for _, a := range inv.Unique() {
+			published := inv.Unique()
+			for _, a := range published {
 				mode := a.CredentialMode
 				if mode == "" {
 					mode = "injected-key"
@@ -455,19 +495,32 @@ func run() error {
 					"hostname":       a.Hostname,
 					"address":        a.Address,
 					"port":           a.Port,
+					"protocol":       a.Proto(),
 					"principals":     a.Principals,
 					"credentialMode": mode,
 					"hostKeyState":   "unpinned",
 					"health":         "reachable",
 				})
 			}
+			if len(published) > 0 {
+				log.Info("published the file inventory to the control plane",
+					"assets", len(published),
+					"detail", "hosts an administrator has edited in the console keep their console values")
+			}
+			gateway.SyncInventory(ctx, inv, rep, cfg.VaultDir, inventoryCachePath(cfg), log)
 		}()
 	}
 
 	log.Info("argus-gateway starting",
 		"version", version,
 		"listen", cfg.Listen,
-		"recordings", cfg.RecordingDir)
+		"recordings", cfg.RecordingDir,
+		// Which inventory is in force, and whether assignment is enforced, are
+		// the two facts that decide who can reach what. They belong in the line
+		// an operator reads first.
+		"inventory", inv.Source(),
+		"assets", inv.Count(),
+		"assignments_enforced", inv.EnforcesAssignment())
 
 	// Listen in the background so a signal and a listener failure can be told
 	// apart. Waiting on Listen alone cannot distinguish "we are shutting down"
@@ -508,6 +561,22 @@ func run() error {
 	}
 }
 
+// inventoryCachePath is where the last synced inventory is kept.
+//
+// Beside the host-key store by default: both are state the gateway rebuilds
+// from the control plane but must survive a restart without it, and a
+// deployment that has already given /var/lib/argus to one should not have to
+// name a second directory for the other.
+func inventoryCachePath(cfg config) string {
+	if cfg.InventoryCache != "" {
+		return cfg.InventoryCache
+	}
+	if cfg.HostKeyStore == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(cfg.HostKeyStore), "inventory-cache.json")
+}
+
 func loadConfig(path string) (config, error) {
 	cfg := config{
 		Listen:       "0.0.0.0:2222",
@@ -536,7 +605,7 @@ func loadConfig(path string) (config, error) {
 	base := filepath.Dir(path)
 	relative := []*string{
 		&cfg.HostKey, &cfg.AuthorizedKeys, &cfg.Inventory,
-		&cfg.HostKeyStore, &cfg.RecordingDir,
+		&cfg.HostKeyStore, &cfg.RecordingDir, &cfg.VaultDir, &cfg.InventoryCache,
 	}
 	if cfg.Web != nil && cfg.Web.TLS != nil {
 		relative = append(relative, &cfg.Web.TLS.CertFile, &cfg.Web.TLS.KeyFile)

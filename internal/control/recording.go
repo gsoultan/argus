@@ -37,6 +37,13 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
 	}
+	if !a.mayReadSession(r, sess) {
+		// Not found, rather than forbidden, for someone else's session. A 403
+		// would confirm the id names a real session and whose it is, which is
+		// most of what the artefact would have told them.
+		writeErr(w, http.StatusNotFound, "session not found")
+		return
+	}
 	if sess.RecordingKey == nil || *sess.RecordingKey == "" {
 		writeErr(w, http.StatusNotFound,
 			"recording is not in object storage; it exists only on the host that produced it")
@@ -115,6 +122,13 @@ func (a *API) presignRecording(w http.ResponseWriter, r *http.Request, actor str
 	id := r.PathValue("id")
 	sess, err := a.store.Session(r.Context(), id)
 	if err != nil || sess == nil {
+		writeErr(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if !a.mayReadSession(r, sess) {
+		// Not found, rather than forbidden, for someone else's session. A 403
+		// would confirm the id names a real session and whose it is, which is
+		// most of what the artefact would have told them.
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
 	}

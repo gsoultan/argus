@@ -148,6 +148,17 @@ func (a *API) handleTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Assignment decides who may reach a host at all.
+	//
+	// The principal list on an asset says which accounts Argus can broker
+	// there; it never said *for whom*, so until assignments existed every
+	// signed-in account could open a session on every host in the inventory by
+	// naming it. Admins and owners are exempt for the same reason they are
+	// exempt from the grant check below.
+	if !a.assignmentPermits(w, r, sess.Role, sess.Email, in.Target, in.Principal) {
+		return
+	}
+
 	// Elevated principals require a grant, so root cannot be reached by typing
 	// it into a form field. Admins are exempt because someone has to be able to
 	// act when the approval chain itself is broken — and their sessions are

@@ -16,7 +16,41 @@
 listen: "127.0.0.1:2222"
 host_key: "/etc/argus/ssh/gateway_host_key"
 authorized_keys: "/etc/argus/ssh/authorized_keys"
+# The inventory a gateway starts from.
+#
+# With `control` configured below, the console owns the inventory: it decides
+# which hosts exist and who is assigned to them, and this file is published once
+# at start-up so an existing file-driven deployment appears in the console
+# without anyone retyping it. A host an administrator has since edited there
+# keeps its console values.
+#
+# Without a control plane the gateway runs on this file alone. That carries no
+# assignments, so the principal list is the whole control and any key in
+# authorized_keys can open any principal a host lists. The gateway says so at
+# start-up rather than leaving it to be discovered.
 inventory: "/etc/argus/inventory.json"
+
+# Credentials a host added in the console can name.
+#
+# The control plane sends a credential *name* and never credential material;
+# the gateway resolves it in here. A name with a separator or a `..` in it is
+# refused outright, so an administrator with a console cannot make this daemon
+# read a file outside this directory -- which is the difference between "add an
+# asset" and "read anything root can".
+#
+# One file per SSH asset holding the private key to inject, or one directory per
+# RDP asset holding a file per principal. Mode-checked at load: a key readable
+# by group or other is refused.
+vault_dir: "/var/lib/argus/vault"
+
+# The last inventory the control plane served.
+#
+# Restored at start-up so a gateway that restarts during a control-plane outage
+# still knows who is assigned what. Without it the outage becomes a lockout
+# rather than a delay: with no assignments known, every session has to be
+# refused. Holds no credential material.
+inventory_cache: "/var/lib/argus/inventory-cache.json"
+
 host_key_store: "/var/lib/argus/hostkeys.json"
 recording_dir: "/var/lib/argus/recordings"
 

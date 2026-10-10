@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 )
 
 // Asset is a host Argus can broker a session to.
@@ -26,6 +28,13 @@ type Asset struct {
 	// Ignored when CredentialMode is "ca-certificate" — there is no standing
 	// credential in that mode, which is the entire advantage of it.
 	KeyPath string `json:"key_path"`
+
+	// CredentialRef names the credential in this gateway's vault directory, as
+	// the control plane holds it: a name, never a path. It is resolved into
+	// KeyPath or CredentialDir when an inventory is synced, so everything below
+	// this line works the same whether the asset came from a file or the
+	// console. An entry that tries to leave the vault is dropped, loudly.
+	CredentialRef string `json:"credential_ref,omitempty"`
 
 	// CredentialMode is "injected-key" (default) or "ca-certificate".
 	//
@@ -101,9 +110,29 @@ func (a Asset) AllowsPrincipal(principal string) bool {
 	return false
 }
 
-// Inventory resolves target names to assets.
+// Inventory resolves target names to assets, and people to what they may open.
+//
+// Swappable under a lock rather than replaced wholesale, so the control plane
+// can update it while sessions are being opened: every caller holds a *Inventory
+// for the life of the process and always reads the current contents. An
+// interface field here would be worse, not better — a nil *Inventory inside a
+// non-nil interface is the trap that made four storage guards go dead at once.
 type Inventory struct {
+	mu     sync.RWMutex
 	assets map[string]Asset
+	// assignments is hostname -> lowercased email -> principals.
+	assignments map[string]map[string][]string
+	// unrestricted are the accounts assignment does not gate: admins and
+	// owners, as the control plane reports them. The console exempts them for
+	// the same reason, and a gateway that did not would refuse on ssh(1) what
+	// the browser allows.
+	unrestricted map[string]bool
+	// controlled means the control plane is the authority on this inventory.
+	// Set when the gateway is configured to sync, not when a sync first
+	// succeeds: otherwise an outage at start-up would silently downgrade the
+	// gateway to "no assignments known, so nobody is restricted".
+	controlled bool
+	source     string
 }
 
 // LoadInventory reads assets from a JSON file.
@@ -127,22 +156,93 @@ func LoadInventory(path string) (*Inventory, error) {
 		}
 	}
 
-	inv := &Inventory{assets: make(map[string]Asset, len(assets)*2)}
+	inv := &Inventory{source: "file"}
+	inv.Replace(assets, nil, nil, "file")
+	return inv, nil
+}
+
+// NewInventory returns an empty inventory for a gateway that will be told its
+// contents by the control plane.
+func NewInventory() *Inventory {
+	inv := &Inventory{}
+	inv.Replace(nil, nil, nil, "empty")
+	return inv
+}
+
+// Replace swaps the whole inventory atomically.
+//
+// Assignments and unrestricted accounts arrive with the assets they belong to,
+// because a set of assets and a set of assignments from different moments would
+// be a third thing that was never true.
+func (i *Inventory) Replace(
+	assets []Asset, assignments map[string]map[string][]string,
+	unrestricted []string, source string,
+) {
+	index := make(map[string]Asset, len(assets)*2)
 	for _, a := range assets {
-		inv.assets[a.Hostname] = a
+		index[a.Hostname] = a
 		// Also index the short name, so `ssh ops:pay-01@gw` works as well as
 		// the fully qualified form.
 		if short, _, found := strings.Cut(a.Hostname, "."); found {
-			if _, clash := inv.assets[short]; !clash {
-				inv.assets[short] = a
+			if _, clash := index[short]; !clash {
+				index[short] = a
 			}
 		}
 	}
-	return inv, nil
+	exempt := make(map[string]bool, len(unrestricted))
+	for _, e := range unrestricted {
+		exempt[strings.ToLower(e)] = true
+	}
+	if assignments == nil {
+		assignments = map[string]map[string][]string{}
+	}
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.assets = index
+	i.assignments = assignments
+	i.unrestricted = exempt
+	i.source = source
+}
+
+// UnderControlPlane marks this inventory as the control plane's to fill.
+//
+// From here on an unassigned session is refused rather than waved through, even
+// before the first sync lands — see the comment on the field.
+func (i *Inventory) UnderControlPlane() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.controlled = true
+}
+
+// EnforcesAssignment reports whether this gateway checks who a host was
+// assigned to, as opposed to only which principals it permits.
+func (i *Inventory) EnforcesAssignment() bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.controlled
+}
+
+// Source says where the current contents came from, for the log line that tells
+// an operator which inventory is in force.
+func (i *Inventory) Source() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.source
+}
+
+// Unrestricted reports whether assignment does not gate this account.
+func (i *Inventory) Unrestricted(email string) bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.unrestricted[strings.ToLower(email)]
 }
 
 // Resolve looks up a target by hostname or short name.
 func (i *Inventory) Resolve(target string) (Asset, error) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
 	a, ok := i.assets[target]
 	if !ok {
 		// Deliberately does not list known hosts: an unauthenticated-ish error
@@ -153,8 +253,11 @@ func (i *Inventory) Resolve(target string) (Asset, error) {
 }
 
 // Unique returns each asset once, since the map indexes both the full and
-// short hostname.
+// short hostname. Sorted, so a publish or a log line is stable between runs.
 func (i *Inventory) Unique() []Asset {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
 	seen := map[string]bool{}
 	var out []Asset
 	for _, a := range i.assets {
@@ -164,14 +267,46 @@ func (i *Inventory) Unique() []Asset {
 		seen[a.Hostname] = true
 		out = append(out, a)
 	}
+	sort.Slice(out, func(x, y int) bool { return out[x].Hostname < out[y].Hostname })
 	return out
 }
 
 // Count reports how many distinct assets are loaded.
 func (i *Inventory) Count() int {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
 	seen := map[string]struct{}{}
 	for _, a := range i.assets {
 		seen[a.Hostname] = struct{}{}
 	}
 	return len(seen)
+}
+
+// Assigned reports whether this person was assigned this principal on this
+// host, according to the last inventory that arrived.
+//
+// A false answer is not a refusal on its own: the caller asks the control plane,
+// which also knows about approved access requests and is a minute fresher. This
+// exists so the common case — an assigned person opening an assigned host —
+// costs nothing.
+func (i *Inventory) Assigned(hostname, email, principal string) bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
+	asset, ok := i.assets[hostname]
+	if !ok {
+		return false
+	}
+	// The assignment is keyed by the stored hostname, so a short-name target
+	// has to be resolved to it first or `ssh ops:pay-01@gw` would never match
+	// an assignment made against pay-01.example.com.
+	for _, p := range i.assignments[asset.Hostname][strings.ToLower(email)] {
+		if p == principal {
+			// The asset's own list still bounds it: a principal removed from
+			// the host must not survive in an assignment that still names it.
+			return asset.AllowsPrincipal(principal)
+		}
+	}
+	return false
 }

@@ -2,12 +2,15 @@ import type { ChainInput } from '~/workers/chain.worker'
 import type {
   AccessRequest,
   Asset,
+  AssetAssignment,
+  AssetInput,
   AuditEvent,
   Coverage,
   DiscoveredHost,
   FleetStats,
   GatewayPolicy,
   Session,
+  User,
 } from '~/types/domain'
 
 /**
@@ -445,6 +448,75 @@ export async function coverage(): Promise<Coverage | null> {
   return get<Coverage>('/api/v1/coverage')
 }
 
+/* ── The inventory, as an administrator edits it ─────────────────────────── */
+
+/**
+ * Adds a host to the inventory.
+ *
+ * The control plane validates and is the authority on what it will accept, so
+ * its refusal is shown verbatim rather than replaced with something friendlier
+ * — "the credential is a name inside the gateway's vault, not a path" is the
+ * useful part, and no client-side message could have said it.
+ */
+export async function createAsset(input: AssetInput): Promise<Asset> {
+  return post<Asset>('/api/v1/assets', input)
+}
+
+export async function updateAsset(id: string, input: AssetInput): Promise<Asset> {
+  return send<Asset>('PATCH', `/api/v1/assets/${encodeURIComponent(id)}`, input)
+}
+
+/** Retires an asset. Its sessions and audit history are kept. */
+export async function archiveAsset(id: string): Promise<void> {
+  await send('DELETE', `/api/v1/assets/${encodeURIComponent(id)}`)
+}
+
+export async function assetAssignments(id: string): Promise<AssetAssignment[]> {
+  if (!isConfigured()) return []
+  return get<AssetAssignment[]>(`/api/v1/assets/${encodeURIComponent(id)}/assignments`)
+}
+
+/** Assigns a host to a person. An empty principal list removes the assignment. */
+export async function setAssetAssignment(
+  id: string,
+  email: string,
+  principals: string[],
+): Promise<AssetAssignment[]> {
+  return send<AssetAssignment[]>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/assignments`, {
+    email,
+    principals,
+  })
+}
+
+export async function removeAssetAssignment(id: string, email: string): Promise<void> {
+  await send(
+    'DELETE',
+    `/api/v1/assets/${encodeURIComponent(id)}/assignments/${encodeURIComponent(email)}`,
+  )
+}
+
+/**
+ * The verbs POST does not cover.
+ *
+ * Same contract as post(): the body carries `error` on a refusal and it is
+ * surfaced unchanged. A DELETE answers with a small JSON object rather than
+ * 204, so there is always something to read.
+ */
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  const parsed = (await res.json()) as T & { error?: string }
+  if (!res.ok) throw new Error(parsed.error ?? `request failed (${res.status})`)
+  return parsed
+}
+
 /** Promotes a discovered host into a managed asset. Grants no principals. */
 export async function enrolHost(hostname: string): Promise<{ assetId: string }> {
   return post<{ assetId: string }>(
@@ -560,6 +632,15 @@ export const live = {
 
   stats: () => get<FleetStats>('/api/v1/stats'),
   assets: () => get<Asset[]>('/api/v1/assets'),
+
+  /**
+   * The accounts that exist, for deciding who to assign a host to.
+   *
+   * The Users page showed the fixture against a live deployment until this
+   * existed: real names, real roles, none of them the ones you had actually
+   * created.
+   */
+  users: () => get<User[]>('/api/v1/users'),
 
   sessions: (state?: string, origin?: string) => {
     const q = new URLSearchParams()

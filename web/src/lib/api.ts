@@ -3,12 +3,18 @@ import {
   sessions, users,
 } from '~/lib/seed'
 import {
+  archiveAsset as archiveOnControlPlane,
+  assetAssignments,
+  createAsset as createOnControlPlane,
   createRequest,
   decideRequest,
   gatewayPolicy,
   GATEWAY_URL,
   isConfigured,
   live,
+  removeAssetAssignment,
+  setAssetAssignment,
+  updateAsset as updateOnControlPlane,
   whoami,
   saveGatewayPolicy,
   terminateRDPSession as terminateRDPOnGateway,
@@ -16,7 +22,8 @@ import {
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
 import type {
-  AccessRequest, Asset, AssetGroup, FleetStats, GatewayPolicy, Session, User,
+  AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, FleetStats,
+  GatewayPolicy, Session, User,
 } from '~/types/domain'
 
 /**
@@ -50,6 +57,46 @@ const db = {
   requests: [...accessRequests],
   sessions: [...sessions],
   policy: { ...DEFAULT_POLICY },
+  /** assetId -> assignments, for the fixture. The control plane holds the real ones. */
+  assignments: new Map<string, AssetAssignment[]>(),
+}
+
+/**
+ * Builds a fixture asset from what an administrator typed.
+ *
+ * Everything observed rather than entered starts at its honest value: a host
+ * nobody has verified is unpinned, and a host with no agent has none. A fixture
+ * that invented a pinned key would make the console look better than the
+ * product is.
+ */
+function fixtureAsset(input: AssetInput): Asset {
+  return {
+    id: crypto.randomUUID(),
+    hostname: input.hostname,
+    address: input.address || input.hostname,
+    port: input.port ?? (input.protocol === 'rdp' ? 3389 : 22),
+    protocol: input.protocol ?? 'ssh',
+    os: input.os ?? '',
+    tags: input.tags ?? [],
+    groupId: groups[0]?.id ?? 'ungrouped',
+    source: 'console',
+    credentialMode:
+      input.credentialMode ?? (input.protocol === 'rdp' ? 'injected-password' : 'injected-key'),
+    credentialRef: input.credentialRef ?? '',
+    domain: input.domain ?? '',
+    hostKeyState: 'unpinned',
+    hostKeyFingerprint: null,
+    hostKeyPinnedAt: null,
+    health: 'reachable',
+    lastCheckedAt: new Date().toISOString(),
+    agentState: 'absent',
+    agentLastSeenAt: null,
+    bypassPosture: 'open',
+    unmanagedKeyCount: 0,
+    principals: input.principals,
+    credentialRotatedAt: null,
+    rotationIntervalDays: input.rotationIntervalDays ?? null,
+  }
 }
 
 export interface AssetQuery {
@@ -141,8 +188,10 @@ export const api = {
   },
 
   async users(): Promise<User[]> {
-    await latency()
-    return users
+    return live.orFallback(live.users, async () => {
+      await latency()
+      return users
+    })
   },
 
   async stats(): Promise<FleetStats> {
@@ -184,9 +233,104 @@ export const api = {
     })
   },
 
+  /**
+   * One asset.
+   *
+   * Found in the list rather than fetched by id, so it inherits the list's
+   * filtering exactly: an operator who is not assigned a host cannot reach its
+   * detail page by guessing the id, without that rule having to be written a
+   * second time on a second endpoint.
+   */
   async asset(id: string): Promise<Asset | undefined> {
-    await latency(70)
-    return db.assets.find((a) => a.id === id)
+    const source = await live.orFallback(live.assets, async () => {
+      await latency(70)
+      return db.assets
+    })
+    return source.find((a) => a.id === id)
+  },
+
+  /* ── The inventory, as an administrator edits it ───────────────────────── */
+
+  async createAsset(input: AssetInput): Promise<Asset> {
+    if (isConfigured()) return createOnControlPlane(input)
+    await latency(400)
+    const asset = fixtureAsset(input)
+    db.assets = [asset, ...db.assets]
+    return asset
+  },
+
+  async updateAsset(id: string, input: AssetInput): Promise<Asset> {
+    if (isConfigured()) return updateOnControlPlane(id, input)
+    await latency(400)
+    const existing = db.assets.find((a) => a.id === id)
+    if (!existing) throw new Error('asset not found')
+    const next = { ...fixtureAsset(input), id, hostKeyState: existing.hostKeyState }
+    db.assets = db.assets.map((a) => (a.id === id ? next : a))
+    return next
+  },
+
+  /** Retires an asset. Sessions and audit history keep pointing at it. */
+  async archiveAsset(id: string): Promise<void> {
+    if (isConfigured()) {
+      await archiveOnControlPlane(id)
+      return
+    }
+    await latency(300)
+    db.assets = db.assets.filter((a) => a.id !== id)
+    db.assignments.delete(id)
+  },
+
+  async assignments(id: string): Promise<AssetAssignment[]> {
+    if (isConfigured()) return assetAssignments(id)
+    await latency(120)
+    return db.assignments.get(id) ?? []
+  },
+
+  /** An empty principal list is a removal, not an assignment of nothing. */
+  async setAssignment(
+    id: string,
+    email: string,
+    principals: string[],
+  ): Promise<AssetAssignment[]> {
+    if (isConfigured()) return setAssetAssignment(id, email, principals)
+    await latency(300)
+    const asset = db.assets.find((a) => a.id === id)
+    if (!asset) throw new Error('asset not found')
+    const unknown = principals.find((p) => !asset.principals.includes(p))
+    if (unknown) {
+      throw new Error(
+        `${asset.hostname} does not permit the principal "${unknown}"; add it to the asset first`,
+      )
+    }
+    const rest = (db.assignments.get(id) ?? []).filter((g) => g.userEmail !== email)
+    const next =
+      principals.length === 0
+        ? rest
+        : [
+            ...rest,
+            {
+              assetId: id,
+              hostname: asset.hostname,
+              userEmail: email,
+              principals,
+              grantedBy: currentUser.email,
+              grantedAt: new Date().toISOString(),
+            },
+          ]
+    db.assignments.set(id, next)
+    return next
+  },
+
+  async removeAssignment(id: string, email: string): Promise<void> {
+    if (isConfigured()) {
+      await removeAssetAssignment(id, email)
+      return
+    }
+    await latency(200)
+    db.assignments.set(
+      id,
+      (db.assignments.get(id) ?? []).filter((g) => g.userEmail !== email),
+    )
   },
 
   /** Pin the currently-presented host key. The MITM's most important control. */

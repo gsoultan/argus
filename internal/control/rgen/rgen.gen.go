@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
+	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
 	"github.com/gsoultan/argus/internal/control/rgen/user"
@@ -29,7 +30,8 @@ var FlushOrder = map[string]int{
 	"schema_migrations": 7,
 	"sessions":          8,
 	"users":             9,
-	"recovery_codes":    10,
+	"asset_assignments": 10,
+	"recovery_codes":    11,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -42,6 +44,123 @@ func NewUnit() *runtime.Unit { return runtime.NewUnit(FlushOrder) }
 // reaching it: an error, never a partial result. Override per plan with
 // ChildLimit.
 const defaultChildLimit = 1 << 20
+
+// AssetAssignmentWithAssetRow is asset_assignments with its Asset loaded.
+type AssetAssignmentWithAssetRow struct {
+	assetassignment.Row
+	Asset asset.Row
+}
+
+type AssetAssignmentWithAssetQuery struct {
+	q assetassignment.Query
+}
+
+// AssetAssignmentWithAsset starts the plan.
+func AssetAssignmentWithAsset() AssetAssignmentWithAssetQuery {
+	return AssetAssignmentWithAssetQuery{q: assetassignment.New()}
+}
+
+func (p AssetAssignmentWithAssetQuery) Where(ps ...assetassignment.Pred) AssetAssignmentWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p AssetAssignmentWithAssetQuery) WhereIf(cond bool, pr assetassignment.Pred) AssetAssignmentWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p AssetAssignmentWithAssetQuery) Any(ps ...assetassignment.Pred) AssetAssignmentWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p AssetAssignmentWithAssetQuery) Not(pr assetassignment.Pred) AssetAssignmentWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p AssetAssignmentWithAssetQuery) NotAny(ps ...assetassignment.Pred) AssetAssignmentWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p AssetAssignmentWithAssetQuery) Order(ts ...assetassignment.Sort) AssetAssignmentWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p AssetAssignmentWithAssetQuery) Limit(n int64) AssetAssignmentWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p AssetAssignmentWithAssetQuery) Offset(n int64) AssetAssignmentWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p AssetAssignmentWithAssetQuery) After(r AssetAssignmentWithAssetRow) AssetAssignmentWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p AssetAssignmentWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p AssetAssignmentWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]AssetAssignmentWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]AssetAssignmentWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = AssetAssignmentWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "asset_assignments", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
 
 // RecoveryCodeWithUserRow is recovery_codes with its User loaded.
 type RecoveryCodeWithUserRow struct {

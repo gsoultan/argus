@@ -6,7 +6,7 @@ import {
   enrolHost,
   ignoreHost,
 } from '~/lib/live'
-import type { AccessRequest, Session } from '~/types/domain'
+import type { AccessRequest, AssetInput, Session } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -167,5 +167,70 @@ export function useDecideRequest() {
       void qc.invalidateQueries({ queryKey: ['requests'] })
       void qc.invalidateQueries({ queryKey: qk.stats })
     },
+  })
+}
+
+/* ── The inventory ───────────────────────────────────────────────────────── */
+
+export const assignmentsQuery = (assetId: string) =>
+  queryOptions({
+    queryKey: ['assignments', assetId],
+    queryFn: () => api.assignments(assetId),
+  })
+
+/**
+ * Everything the inventory touches, invalidated together.
+ *
+ * Assignment changes what each person sees in `assets`, and an edit changes the
+ * fleet counts on the Overview. Refreshing one and not the others is how a
+ * console ends up showing two different answers to the same question on two
+ * pages.
+ */
+function invalidateInventory(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ['assets'] })
+  void qc.invalidateQueries({ queryKey: ['asset'] })
+  void qc.invalidateQueries({ queryKey: ['assignments'] })
+  void qc.invalidateQueries({ queryKey: qk.stats })
+}
+
+export function useCreateAsset() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AssetInput) => api.createAsset(input),
+    onSuccess: () => invalidateInventory(qc),
+  })
+}
+
+export function useUpdateAsset() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; input: AssetInput }) => api.updateAsset(v.id, v.input),
+    onSuccess: () => invalidateInventory(qc),
+  })
+}
+
+export function useArchiveAsset() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.archiveAsset(id),
+    onSuccess: () => invalidateInventory(qc),
+  })
+}
+
+export function useSetAssignment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { assetId: string; email: string; principals: string[] }) =>
+      api.setAssignment(v.assetId, v.email, v.principals),
+    onSuccess: () => invalidateInventory(qc),
+  })
+}
+
+export function useRemoveAssignment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { assetId: string; email: string }) =>
+      api.removeAssignment(v.assetId, v.email),
+    onSuccess: () => invalidateInventory(qc),
   })
 }
