@@ -28,7 +28,7 @@ export interface RDPScreenProps {
  * A Remote Desktop session in a canvas.
  *
  * The main thread does one thing: blit finished ImageBitmaps into a canvas.
- * Decoding happens in the gateway, image construction happens in a worker, and
+ * Decoding and image construction happen in a worker (rdp.worker.ts), and
  * neither touches this thread — so input latency does not depend on how busy
  * the remote desktop is.
  *
@@ -145,6 +145,10 @@ export function RDPScreen({
         url.searchParams.set('principal', principal)
       }
       url.searchParams.set('ticket', ticket)
+      // Screen updates as the target sent them, for the worker to decode. An
+      // older gateway ignores this and sends decoded frames, which the worker
+      // still draws.
+      url.searchParams.set('frames', 'encoded')
 
       const ws = new WebSocket(url.toString())
       // Without this the socket yields Blobs, and every frame would cost an

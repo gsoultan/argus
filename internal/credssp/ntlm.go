@@ -47,6 +47,7 @@ var ntlmSignature = [8]byte{'N', 'T', 'L', 'M', 'S', 'S', 'P', 0}
 // Negotiate flags (MS-NLMP 2.2.2.5). Only those Argus sets or checks.
 const (
 	NegotiateUnicode         uint32 = 0x00000001
+	RequestTarget            uint32 = 0x00000004
 	NegotiateSign            uint32 = 0x00000010
 	NegotiateSeal            uint32 = 0x00000020
 	NegotiateNTLM            uint32 = 0x00000200
@@ -139,7 +140,11 @@ func NTLMv2Response(responseKey, serverChallenge, clientChallenge []byte,
 // and a server that would accept them will also accept v2, so there is no
 // compatibility gained by leaving the door open.
 func Negotiate() []byte {
-	flags := NegotiateUnicode | NegotiateNTLM | NegotiateAlwaysSign |
+	// RequestTarget asks the server to name its domain in the challenge.
+	// Windows answers either way; FreeRDP's NTLM refuses a negotiate without
+	// it outright, so a target behind FreeRDP or anything built on WinPR never
+	// got as far as a challenge.
+	flags := NegotiateUnicode | RequestTarget | NegotiateNTLM | NegotiateAlwaysSign |
 		NegotiateExtendedSession | NegotiateSign | NegotiateSeal |
 		NegotiateKeyExchange | Negotiate128 | Negotiate56 | NegotiateVersion
 

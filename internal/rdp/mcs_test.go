@@ -3,6 +3,7 @@ package rdp
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"testing"
 )
@@ -221,4 +222,18 @@ func FuzzParseSendDataIndication(f *testing.F) {
 		_, _ = ParseChannelJoinConfirm(b)
 		_, _ = ParseConnectResponse(b)
 	})
+}
+
+// FreeRDP reads BER integers of at most four bytes and refused the Connect
+// Initial when 65535 went out as five. Minimal is what every client sends.
+func TestBERIntegersAreMinimal(t *testing.T) {
+	cases := map[int]string{
+		0x7F: "02017f", 0x80: "02020080", 0xFFFF: "020300ffff",
+		0x7FFFFF: "02037fffff", 0x800000: "020400800000",
+	}
+	for v, want := range cases {
+		if got := hex.EncodeToString(berInteger(v)); got != want {
+			t.Errorf("berInteger(%#x) = %s, want %s", v, got, want)
+		}
+	}
 }

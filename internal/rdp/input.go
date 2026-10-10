@@ -80,7 +80,7 @@ func EncodeInput(e InputEvent) ([]byte, error) {
 		if e.Extended {
 			flags |= keyExtended
 		}
-		body = []byte{inputEventScancode | flags<<5, e.Scancode}
+		body = []byte{eventHeader(inputEventScancode, flags), e.Scancode}
 
 	case "mouse":
 		body = pointerEvent(pointerMove, e.X, e.Y)
@@ -118,7 +118,10 @@ func EncodeInput(e InputEvent) ([]byte, error) {
 	case "sync":
 		// Sent when focus returns, so a modifier released while the window was
 		// in the background does not stay stuck down on the target.
-		body = []byte{inputEventSync, 0, 0, 0, 0}
+		// The toggle states ride in the header's flags, all clear here; the
+		// event is the header and nothing else. The four padding bytes this
+		// once carried were read by the server as the next event.
+		body = []byte{eventHeader(inputEventSync, 0)}
 
 	default:
 		return nil, fmt.Errorf("unknown input kind %q", e.Kind)
@@ -126,6 +129,15 @@ func EncodeInput(e InputEvent) ([]byte, error) {
 
 	return fastPathInputPDU(body), nil
 }
+
+// eventHeader packs a Fast-Path input event header (MS-RDPBCGR 2.2.8.1.2.2):
+// the event code in the top three bits, its flags in the low five.
+//
+// This was the other way round. A key-down has neither code nor flags, so it
+// survived, and nothing else did: a key release arrived as a mouse event, a
+// mouse event as a key release, and FreeRDP dropped the connection on the
+// first one. Windows was no more forgiving, only quieter about it.
+func eventHeader(code, flags byte) byte { return code<<5 | flags&0x1F }
 
 func pointerEvent(flags uint16, x, y int) []byte {
 	// Coordinates are unsigned 16-bit. A negative value from a pointer that
@@ -144,7 +156,7 @@ func pointerEvent(flags uint16, x, y int) []byte {
 	}
 
 	b := make([]byte, 7)
-	b[0] = inputEventMouse
+	b[0] = eventHeader(inputEventMouse, 0)
 	binary.LittleEndian.PutUint16(b[1:3], flags)
 	binary.LittleEndian.PutUint16(b[3:5], uint16(x))
 	binary.LittleEndian.PutUint16(b[5:7], uint16(y))
