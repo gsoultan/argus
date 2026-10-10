@@ -570,7 +570,7 @@ function SessionDetail() {
                           py={SP.snug}
                           style={{
                             borderTop: '1px solid var(--color-line)',
-                            background: active ? 'rgba(37, 99, 235, 0.10)' : undefined,
+                            background: active ? 'rgba(108, 116, 240, 0.12)' : undefined,
                             borderLeft: active
                               ? '2px solid var(--color-brand-bright)'
                               : '2px solid transparent',

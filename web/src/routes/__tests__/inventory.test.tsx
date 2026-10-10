@@ -8,7 +8,7 @@ import type { User } from '~/types/domain'
 /**
  * The inventory is an administrator's to edit, and an operator's to be given.
  *
- * Both halves matter. A console that offers an operator an "Add asset" button
+ * Both halves matter. A console that offers an operator an "Add by hand" button
  * the control plane will refuse is lying about what they can do; a console that
  * shows an operator every host in the fleet has handed them the map whether or
  * not the buttons work.
@@ -23,23 +23,26 @@ afterEach(() => {
 })
 
 describe('who may edit the inventory', () => {
+  // The longer timeout is for the first render in this file, which pays for
+  // loading the Servers page and Mantine's modal code; on CI that alone took
+  // most of the default five seconds.
   it('offers an administrator a way to add a host', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await screen.findByRole('button', { name: /add asset/i })).toBeInTheDocument()
-  })
+    expect(await screen.findByRole('button', { name: /add by hand/i })).toBeInTheDocument()
+  }, 15_000)
 
   it('offers an operator none', async () => {
     signedInAs('operator')
     await renderRoute('/assets')
-    await screen.findByRole('heading', { name: 'Assets' })
-    expect(screen.queryByRole('button', { name: /add asset/i })).not.toBeInTheDocument()
+    await screen.findByRole('heading', { name: 'Servers' })
+    expect(screen.queryByRole('button', { name: /add by hand/i })).not.toBeInTheDocument()
   })
 
   it('tells an operator the list is what they were assigned', async () => {
     signedInAs('operator')
     await renderRoute('/assets')
-    expect(await screen.findByText(/hosts assigned to you/i)).toBeInTheDocument()
+    expect(await screen.findByText(/servers assigned to you/i)).toBeInTheDocument()
   })
 
   // An auditor answers "who can reach this host", so the panel is theirs to

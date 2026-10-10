@@ -1,6 +1,12 @@
 /**
  * Turns the gateway's binary display frames into ImageBitmaps.
  *
+ * Screen updates arrive as the target sent them -- RDP's run-length encoding,
+ * usually -- and are expanded here by the gateway's own decoder compiled to
+ * WebAssembly (cmd/argus-pixels-wasm). Expanding them in the gateway and
+ * sending RGBA cost sixteen to fifty times the bytes, which is what a slow link
+ * felt as lag.
+ *
  * All of it runs off the main thread, which is the point. Decoding a screen
  * update means allocating a buffer the size of the rectangle and handing it to
  * the image decoder; doing that on the main thread stalls rendering and input
@@ -16,11 +22,14 @@
  *    detached, so the same pixels are never resident twice.
  */
 
+import { loadPixels, type PixelsModule } from '~/lib/rdpPixels'
+
 /** Frame types, matching internal/rdp/display.go. */
 const FRAME_BITMAP = 1
 const FRAME_RESIZE = 2
 const FRAME_READY = 3
 const FRAME_CLOSED = 4
+const FRAME_ENCODED = 5
 
 /** The header is 12 bytes so pixels start 4-byte aligned. */
 const HEADER = 12
@@ -40,15 +49,33 @@ export type RDPWorkerResponse =
   | { type: 'closed' }
   | { type: 'error'; message: string }
 
-self.onmessage = async (ev: MessageEvent<ArrayBuffer>) => {
+/** The decoder, fetched once per worker and shared by every frame. */
+const pixels: Promise<PixelsModule> = loadPixels(
+  fetch(new URL('./rdp-pixels.wasm', import.meta.url)),
+)
+
+/**
+ * Messages are handled strictly in order.
+ *
+ * Each one awaits createImageBitmap, and an async onmessage lets the next
+ * message start while the last is still waiting -- so a later update could be
+ * posted, and drawn, before an earlier one, leaving stale pixels on screen
+ * until something repainted them.
+ */
+let queue: Promise<void> = Promise.resolve()
+
+self.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
   const buf = ev.data
+  queue = queue.then(() => handle(buf))
+}
+
+async function handle(buf: ArrayBuffer) {
   if (!(buf instanceof ArrayBuffer) || buf.byteLength < HEADER) return
 
   const view = new DataView(buf)
-  const rects: DisplayRect[] = []
-  // The bitmaps are what gets transferred; the source ArrayBuffer stays here
-  // and is collected.
-  const transfer: Transferable[] = []
+  // Started together and awaited together: createImageBitmap is the slow part,
+  // and a dozen of them in flight at once finish sooner than one after another.
+  const pending: Array<Promise<DisplayRect>> = []
 
   let at = 0
   try {
@@ -62,8 +89,31 @@ self.onmessage = async (ev: MessageEvent<ArrayBuffer>) => {
       const width = view.getUint16(at + 6, true)
       const height = view.getUint16(at + 8, true)
 
+      if (kind === FRAME_ENCODED) {
+        const format = view.getUint8(at + 1)
+        const length = view.getUint16(at + 10, true)
+        const padded = (length + 3) & ~3
+        if (at + HEADER + padded > buf.byteLength) {
+          post({ type: 'error', message: 'display frame is truncated' })
+          return
+        }
+        const rgba = (await pixels).decode(new Uint8Array(buf, at + HEADER, length), width, height, format)
+        at += HEADER + padded
+        if (!rgba) {
+          // One bad rectangle leaves a stale patch until it is next painted.
+          // Ending the session over it would lose the operator's work for a
+          // cosmetic fault.
+          continue
+        }
+        pending.push(bitmapRect(new ImageData(rgba, width, height), x, y))
+        continue
+      }
+
       if (kind !== FRAME_BITMAP) {
         at += HEADER
+        // Whatever was drawn before this frame is delivered before it, so a
+        // close never overtakes the last paint.
+        await flush(pending)
         switch (kind) {
           case FRAME_RESIZE:
             post({ type: 'resize', width, height })
@@ -89,21 +139,30 @@ self.onmessage = async (ev: MessageEvent<ArrayBuffer>) => {
 
       // A view, not a copy. createImageBitmap reads it synchronously into the
       // bitmap, so the underlying buffer is free immediately afterwards.
-      const pixels = new Uint8ClampedArray(buf, at + HEADER, bytes)
-      const bitmap = await createImageBitmap(new ImageData(pixels, width, height))
-      rects.push({ x, y, width, height, bitmap })
-      transfer.push(bitmap)
+      const raw = new Uint8ClampedArray(buf, at + HEADER, bytes)
+      pending.push(bitmapRect(new ImageData(raw, width, height), x, y))
 
       at += HEADER + bytes
     }
+
+    await flush(pending)
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
-    return
   }
+}
 
-  if (rects.length > 0) {
-    post({ type: 'rects', rects }, transfer)
-  }
+/** Posts the rectangles decoded so far and empties the list. */
+async function flush(pending: Array<Promise<DisplayRect>>) {
+  if (pending.length === 0) return
+  const rects = await Promise.all(pending.splice(0))
+  // The bitmaps are what gets transferred; the source ArrayBuffer stays here
+  // and is collected.
+  post({ type: 'rects', rects }, rects.map((r) => r.bitmap))
+}
+
+async function bitmapRect(image: ImageData, x: number, y: number): Promise<DisplayRect> {
+  const bitmap = await createImageBitmap(image)
+  return { x, y, width: image.width, height: image.height, bitmap }
 }
 
 function post(msg: RDPWorkerResponse, transfer: Transferable[] = []) {

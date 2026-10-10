@@ -26,20 +26,29 @@ import { createTheme, type MantineColorsTuple, rem } from '@mantine/core'
  * like a bolted-on product next to every other badge.
  */
 
-/** Neutral. Blue-tinted (hue ~217) so it belongs to the same family as azure. */
+/**
+ * Neutral. Graphite with only a trace of cool tint.
+ *
+ * The earlier ramp leaned hard into navy, so every surface, border and line of
+ * secondary text was blue and the brand had nothing to stand out against. A
+ * quieter neutral is what lets the one brand colour and the four semantic ones
+ * read as signals again.
+ */
 const slate: MantineColorsTuple = [
-  '#eff4fb', '#dee7f3', '#c5d2e6', '#a3b3cc', '#7d8ea9',
-  '#5b6b85', '#404f66', '#212c40', '#161f2f', '#0f1724',
+  '#f1f3f6', '#e1e5eb', '#c8ced8', '#a6afbd', '#8a94a5',
+  '#626b7a', '#464e5b', '#262c36', '#1a1f27', '#13171d',
 ]
 
 /**
- * Brand. Deep enough that a filled button carries white text at 5.2:1, and far
- * enough from `sky` in both hue and lightness that a solid azure control is
- * never mistaken for a light "live" badge.
+ * Brand: an indigo "iris", for the watchman the product is named after.
+ *
+ * The name stays `azure` so no call site changes. The hue moved off pure blue
+ * because the old brand sat right next to `sky` ("live"), so a primary button
+ * and a live-session badge read as the same colour. White on shade 6 is 5.0:1.
  */
 const azure: MantineColorsTuple = [
-  '#eaf2ff', '#d5e4ff', '#abc8ff', '#7ba8ff', '#5089fb',
-  '#3272f2', '#2563eb', '#1b4ec4', '#163d97', '#102a68',
+  '#eef0ff', '#dfe2ff', '#bfc5ff', '#9ca4fd', '#8089f8',
+  '#6c74f0', '#5a61e0', '#4a50c2', '#3b3f9c', '#2b2d70',
 ]
 
 const teal: MantineColorsTuple = [
@@ -89,7 +98,7 @@ export const FS = {
   /** Headline figure on a dashboard stat card. */
   figure: rem(27),
   /** Page title in PageHeader — matches headings.h2. */
-  title: rem(19),
+  title: rem(22),
   /** The 404 numeral, and nothing else. */
   display: rem(42),
 } as const
@@ -114,15 +123,16 @@ export const SP = {
 
 export const theme = createTheme({
   primaryColor: 'azure',
-  // 6 in both schemes: white on azure.6 is 5.2:1, where the lighter shade this
-  // used to pick in dark mode left button labels at 4.0:1.
+  // 6 in both schemes: white on azure.6 is 5.0:1, where a lighter shade would
+  // leave button labels short of AA.
   primaryShade: { light: 6, dark: 6 },
   colors: { slate, azure, teal, amber, rose, sky, dark: slate },
 
-  // "Inter Variable" is the family @fontsource-variable/inter registers. The
-  // theme previously asked for "Inter", which no stylesheet ever defined, so
-  // every surface silently fell back to the system font and the designed
-  // typography never rendered anywhere.
+  // IBM Plex Sans, from @fontsource-variable/ibm-plex-sans. An engineering face
+  // with open, distinct letterforms (Il1, 0O) that holds up at the small sizes
+  // this console lives at, and sits naturally beside JetBrains Mono, which
+  // carries every hostname and digest. The family name must match what the
+  // package registers, or every surface silently falls back to the system font.
   fontFamily: 'var(--font-sans)',
   fontFamilyMonospace: 'var(--font-mono)',
 
@@ -189,6 +199,8 @@ export const theme = createTheme({
     // `size="xs"` appeared on all but a handful of the console's controls. As a
     // default it is one decision instead of ~120, and a new control is
     // consistent by omission rather than by remembering.
+    // The few controls a page is *for* (Connect, Add a server) ask for `sm`
+    // explicitly, so the main action is never the same size as a filter.
     Button: { defaultProps: { size: 'xs' } },
     TextInput: { defaultProps: { size: 'xs' } },
     PasswordInput: { defaultProps: { size: 'xs' } },
@@ -218,15 +230,15 @@ export const theme = createTheme({
         horizontalSpacing: 'md',
         highlightOnHover: true,
         stripedColor: 'rgba(255, 255, 255, 0.022)',
-        highlightOnHoverColor: 'rgba(37, 99, 235, 0.07)',
+        highlightOnHoverColor: 'rgba(108, 116, 240, 0.08)',
       },
       styles: {
+        // Sentence case. Uppercase headers on every table made each list read
+        // as shouting, and are slower to scan than the words they spell.
         th: {
-          fontSize: FS.digest,
-          textTransform: 'uppercase',
-          letterSpacing: '0.05em',
+          fontSize: FS.meta,
           color: 'var(--mantine-color-slate-4)',
-          fontWeight: 600,
+          fontWeight: 500,
           whiteSpace: 'nowrap',
         },
       },
@@ -240,7 +252,13 @@ export const theme = createTheme({
         // "BROKE…", which is the single distinction the Origin column exists
         // to make. Wide tables already sit in a Table.ScrollContainer, so the
         // cost of not truncating is a horizontal scrollbar — not a lost signal.
-        label: { overflow: 'visible', textOverflow: 'clip' },
+        //
+        // Sentence case and normal weight, too: Mantine's uppercase bold badge
+        // turned a row of statuses into a row of alarms.
+        label: {
+          overflow: 'visible', textOverflow: 'clip', textTransform: 'none',
+          fontWeight: 500, letterSpacing: 0,
+        },
         root: { whiteSpace: 'nowrap' },
       },
     },

@@ -432,8 +432,8 @@ func TestProxiedSessionBroadcastsToViewers(t *testing.T) {
 		if len(got) < FrameHeaderSize {
 			t.Fatalf("broadcast %d bytes", len(got))
 		}
-		if got[0] != FrameBitmap {
-			t.Errorf("frame type = %d", got[0])
+		if got[0] != FrameEncoded {
+			t.Errorf("frame type = %d, want the encoded bitmap the browser decodes", got[0])
 		}
 		if x := int(got[2]) | int(got[3])<<8; x != 4 {
 			t.Errorf("x = %d, want 4", x)
@@ -592,4 +592,48 @@ func TestHandshakeRecordsHowMuchOfTheCookieArrived(t *testing.T) {
 	if out := buf.String(); !strings.Contains(out, "cookie_len=13") {
 		t.Errorf("the refusal did not record the cookie length; log was:\n%s", out)
 	}
+}
+
+// A target that selects network level authentication, with nobody to perform
+// it, must not yield a connection.
+//
+// `auth == nil` short-circuited before the check on what was actually
+// negotiated, so this returned a TLS connection that had negotiated NLA and
+// then skipped it -- reported as success, with a nil CredSSP result the caller
+// had no reason to inspect. Connect's contract is that everything establishing
+// trust has already run; here nothing had.
+//
+// Not reachable from the gateway, which asks for ProtocolSSL whenever it has no
+// credential, including on the CredSSP retry. Found by pointing the opt-in
+// integration test at a real Windows host and getting a usable connection back.
+func TestDialTargetRefusesNLAWithNoAuthenticator(t *testing.T) {
+	addr, _ := fakeTarget(t, ProtocolHybrid)
+
+	conn, result, err := DialTargetWithAuth(
+		addr, "win-01", ProtocolHybrid, &stubPinner{}, 5*time.Second, nil)
+	if err == nil {
+		conn.Close()
+		t.Fatalf("accepted a target that selected NLA with no authenticator "+
+			"(credssp result %+v); nothing authenticated", result)
+	}
+	if !strings.Contains(err.Error(), "no authenticator") {
+		t.Errorf("error does not name the reason: %v", err)
+	}
+	// And the socket is not left behind for a caller that ignored the error.
+	if conn != nil {
+		t.Error("returned a connection alongside the error")
+	}
+}
+
+// The short-circuit is still right when the target did not choose NLA: a
+// TLS-only session has nothing for an authenticator to do.
+func TestDialTargetAllowsNoAuthenticatorWithoutNLA(t *testing.T) {
+	addr, _ := fakeTarget(t, ProtocolSSL)
+
+	conn, _, err := DialTargetWithAuth(
+		addr, "win-01", ProtocolSSL, &stubPinner{}, 5*time.Second, nil)
+	if err != nil {
+		t.Fatalf("a TLS-only target needs no authenticator: %v", err)
+	}
+	conn.Close()
 }

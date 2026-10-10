@@ -5,7 +5,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconPencil, IconPlus, IconSearch, IconServer2, IconShieldLock, IconUsers, IconX,
+  IconCirclePlus, IconPencil, IconPlus, IconSearch, IconServer2, IconShieldLock, IconUsers, IconX,
 } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -165,11 +165,11 @@ function Assets() {
   return (
     <Box>
       <PageHeader
-        title="Assets"
+        title="Servers"
         description={
           canSeeAssignments
             ? 'Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified.'
-            : 'The hosts assigned to you, and the accounts you may assume on each. Anything else needs an approved access request.'
+            : 'The servers assigned to you, and the accounts you may use on each. Anything else needs an approved access request.'
         }
         actions={
           <Group gap={SP.cozy}>
@@ -181,17 +181,25 @@ function Assets() {
                 Coverage
               </ButtonLink>
             </Tooltip>
+            {/* Entering a server's details by hand, for one with no agent
+                yet. Only someone who may edit the inventory sees it. */}
             {canEdit && (
               <Button
+                variant="default"
                 leftSection={<IconPlus size={14} />}
                 onClick={() => {
                   setEditing(undefined)
                   setFormOpen(true)
                 }}
               >
-                Add asset
+                Add by hand
               </Button>
             )}
+            {/* Installing the agent, which then shows up for approval: the
+                usual way a server joins. */}
+            <ButtonLink to="/assets/add" leftSection={<IconCirclePlus size={14} />}>
+              Add a server
+            </ButtonLink>
           </Group>
         }
       />
@@ -292,12 +300,12 @@ function Assets() {
           empty={
             <EmptyState
               icon={IconServer2}
-              title="No assets match."
+              title="No servers match."
               description={
                 filtered
                   ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'
                   : canEdit
-                    ? 'The inventory is empty. Add a host here, or enrol one Coverage has already found running an agent.'
+                    ? 'There are no servers yet. Add one by installing the agent, or enter its details by hand.'
                     : 'No hosts are assigned to you. An administrator assigns one, or an approved access request covers it temporarily.'
               }
               action={
@@ -306,16 +314,9 @@ function Assets() {
                     Clear filters
                   </Button>
                 ) : canEdit ? (
-                  <Button
-                    variant="light"
-                    leftSection={<IconPlus size={14} />}
-                    onClick={() => {
-                      setEditing(undefined)
-                      setFormOpen(true)
-                    }}
-                  >
-                    Add asset
-                  </Button>
+                  <ButtonLink variant="light" to="/assets/add" leftSection={<IconCirclePlus size={14} />}>
+                    Add a server
+                  </ButtonLink>
                 ) : (
                   <ButtonLink variant="light" to="/requests">
                     Request access

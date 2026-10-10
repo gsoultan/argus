@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { renderRoute } from '~/test/renderRoute'
+import { assets, sessions } from '~/lib/seed'
 
 /**
  * Smoke coverage for every route.
@@ -14,7 +15,8 @@ import { renderRoute } from '~/test/renderRoute'
 const ROUTES: Array<[path: string, heading: string]> = [
   ['/', 'Overview'],
   ['/sessions', 'Sessions'],
-  ['/assets', 'Assets'],
+  ['/assets', 'Servers'],
+  ['/assets/add', 'Add a server'],
   ['/requests', 'Access requests'],
   ['/audit', 'Audit log'],
   ['/users', 'Users & roles'],
@@ -33,12 +35,13 @@ describe('every route mounts', () => {
 describe('overview', () => {
   it('shows fleet counters once the fixture resolves', async () => {
     await renderRoute('/')
-    expect(await screen.findByText('LIVE SESSIONS')).toBeInTheDocument()
-    expect(screen.getByText('PENDING APPROVALS')).toBeInTheDocument()
-    expect(screen.getByText('UNVERIFIED HOSTS')).toBeInTheDocument()
+    // Twice: the counter, and the table of them further down.
+    expect((await screen.findAllByText('Live sessions')).length).toBeGreaterThan(0)
+    expect(screen.getByText('Pending approvals')).toBeInTheDocument()
+    expect(screen.getByText('Unverified hosts')).toBeInTheDocument()
     // The coverage gap leads the page: an unmonitored host is a session nobody
     // will ever hear about, which outranks one you can see and fix.
-    expect(screen.getByText('BYPASSED GATEWAY')).toBeInTheDocument()
+    expect(screen.getByText('Bypassed gateway')).toBeInTheDocument()
   })
 })
 
@@ -114,7 +117,7 @@ describe('assets', () => {
     await renderRoute('/assets')
     const search = await screen.findByPlaceholderText(/filter by hostname/i)
     fireEvent.change(search, { target: { value: 'zzz-not-a-host' } })
-    expect(await screen.findByText('No assets match.')).toBeInTheDocument()
+    expect(await screen.findByText('No servers match.')).toBeInTheDocument()
   })
 })
 
@@ -144,11 +147,69 @@ describe('unknown routes', () => {
  * still point where they always did.
  */
 describe('navigation', () => {
-  it('groups its destinations under named sections', async () => {
+  it('leads with connecting to a server, as a button above the menu', async () => {
     await renderRoute('/')
-    for (const section of ['Operate', 'Fleet', 'Governance']) {
-      expect(await screen.findByText(section)).toBeInTheDocument()
-    }
+    const nav = await screen.findByRole('navigation')
+    const links = within(nav).getAllByRole('link')
+    expect(links[0]).toHaveTextContent('Connect to a server')
+    expect(links[0]).toHaveAttribute('href', '/connect')
+  })
+
+  it('says what each everyday page is for, under its name', async () => {
+    await renderRoute('/')
+    const nav = await screen.findByRole('navigation')
+    expect(within(nav).getByText('Add and manage servers')).toBeInTheDocument()
+    expect(within(nav).getByText('Live and recorded')).toBeInTheDocument()
+  })
+
+  /**
+   * Admin pages are a minority of visits. Folded, they stop competing with the
+   * four everyday ones, but they must open by themselves on one of their own
+   * pages, or a deep link to the audit log would land with no menu item lit.
+   */
+  it('keeps admin pages folded until they are wanted', async () => {
+    await renderRoute('/')
+    const nav = await screen.findByRole('navigation')
+    expect(within(nav).queryByRole('link', { name: /audit log/i })).not.toBeInTheDocument()
+    fireEvent.click(within(nav).getByRole('button', { name: /admin/i }))
+    expect(within(nav).getByRole('link', { name: /audit log/i })).toBeInTheDocument()
+  })
+
+  it('opens the admin section by itself on one of its pages', async () => {
+    await renderRoute('/audit')
+    const nav = await screen.findByRole('navigation')
+    expect(await within(nav).findByRole('link', { name: /audit log/i })).toHaveAttribute('data-active')
+  })
+
+  /** Adding a server is part of Servers, so Servers stays lit while doing it. */
+  it('lights exactly one item, and Servers while adding one', async () => {
+    await renderRoute('/assets/add')
+    await screen.findByRole('heading', { name: 'Add a server' })
+    const nav = screen.getByRole('navigation')
+    const current = within(nav)
+      .getAllByRole('link')
+      .filter((a) => a.hasAttribute('data-active'))
+    expect(current).toHaveLength(1)
+    expect(current[0]).toHaveTextContent('Servers')
+  })
+})
+
+describe('add a server', () => {
+  it('gives the install commands with the control plane flags filled in', async () => {
+    await renderRoute('/assets/add')
+    expect(await screen.findByText(/sudo dpkg -i argus-agent_/)).toBeInTheDocument()
+    expect(screen.getByText(/--control-token \$\{ARGUS_REPORTER_TOKEN\}/)).toBeInTheDocument()
+  })
+
+  /**
+   * The waiting list is the one part of this page that could be faked to look
+   * finished. With no control plane nothing can check in, and it says so rather
+   * than listing sample servers as if their agents had reported.
+   */
+  it('shows no servers waiting when there is no control plane to report to', async () => {
+    await renderRoute('/assets/add')
+    expect(await screen.findByText(/no agent can\s+check in to it/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
   })
 })
 
@@ -181,6 +242,34 @@ describe('empty states', () => {
   })
 })
 
+describe('sessions by server', () => {
+  /**
+   * "What happened on this server" had no direct answer: the search box
+   * matched hostnames as a substring of everything else in the row.
+   */
+  it('narrows the table and the counts to one server from the URL', async () => {
+    const host = sessions[0]!.assetHostname
+    const others = sessions.find((s) => s.assetHostname !== host)!.assetHostname
+    await renderRoute(`/sessions?host=${encodeURIComponent(host)}`)
+    expect((await screen.findAllByDisplayValue(host)).length).toBeGreaterThan(0)
+    const table = screen.getByRole('table')
+    expect(within(table).getAllByText(host.split('.')[0]!, { exact: false }).length).toBeGreaterThan(0)
+    expect(within(table).queryByText(others, { exact: false })).not.toBeInTheDocument()
+  })
+
+  it('says which server came up empty', async () => {
+    await renderRoute('/sessions?host=nowhere.example')
+    expect(await screen.findByText(/no session on nowhere\.example/i)).toBeInTheDocument()
+  })
+
+  it('is one click from a server\'s own page', async () => {
+    const asset = assets.find((a) => sessions.some((s) => s.assetId === a.id))!
+    await renderRoute(`/assets/${asset.id}`)
+    const link = await screen.findByRole('link', { name: /all sessions on this server/i })
+    expect(link.getAttribute('href')).toContain(`host=${encodeURIComponent(asset.hostname)}`)
+  })
+})
+
 describe('command palette', () => {
   it('opens on the keyboard and reaches a host by name from any page', async () => {
     await renderRoute('/')
@@ -189,7 +278,9 @@ describe('command palette', () => {
     const input = await screen.findByPlaceholderText(/search pages, hosts/i)
     fireEvent.change(input, { target: { value: 'db-01' } })
 
-    expect(await screen.findByText('db-01.data.northwind.id')).toBeInTheDocument()
+    // Within the palette: the Overview's own server picker lists the same name.
+    const palette = await screen.findByRole('dialog')
+    expect(await within(palette).findByText('db-01.data.northwind.id')).toBeInTheDocument()
   })
 })
 
@@ -206,7 +297,7 @@ describe('command palette', () => {
 describe('assets and coverage', () => {
   it('filters the inventory from the URL, so a finding can be linked to', async () => {
     await renderRoute('/assets?agent=stale')
-    await screen.findByRole('heading', { name: 'Assets' })
+    await screen.findByRole('heading', { name: 'Servers' })
 
     // Every row the filter admits says the agent went quiet. The badge reads
     // "silent" -- the word the operator sees for a stale agent.
@@ -219,7 +310,7 @@ describe('assets and coverage', () => {
     // A hand-edited URL must not put the table into a state with no visible
     // cause -- rows filtered by something none of the selects can display.
     await renderRoute('/assets?agent=not-a-state')
-    await screen.findByRole('heading', { name: 'Assets' })
+    await screen.findByRole('heading', { name: 'Servers' })
     expect(await screen.findAllByText('no agent')).not.toHaveLength(0)
   })
 
@@ -227,7 +318,7 @@ describe('assets and coverage', () => {
     await renderRoute('/assets')
     // Scoped to the page header: the sidebar links to Coverage from every page,
     // and what is under test is that this page points at it too.
-    const heading = await screen.findByRole('heading', { name: 'Assets' })
+    const heading = await screen.findByRole('heading', { name: 'Servers' })
     const header = heading.closest('.argus-pagehead')
     expect(header).not.toBeNull()
     const link = within(header as HTMLElement).getByRole('link', { name: /coverage/i })

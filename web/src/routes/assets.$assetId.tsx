@@ -7,6 +7,7 @@ import {
   IconRefresh, IconServer2, IconShieldCheck, IconUsers,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
+import { ButtonLink } from '~/components/links'
 import { run } from '~/lib/notify'
 import {
   ArtefactPending, CredentialBadge, Digest, Field, FidelityBadge, HealthDot,
@@ -48,7 +49,7 @@ function AssetDetail() {
   if (!asset) {
     return (
       <Box>
-        <PageHeader crumbs={[{ label: 'Assets', to: '/assets' }]} title="Asset not found" />
+        <PageHeader crumbs={[{ label: 'Servers', to: '/assets' }]} title="Asset not found" />
         <PageBody>
           <Card>
             <EmptyState
@@ -90,7 +91,7 @@ function AssetDetail() {
     <Box>
       <PageHeader
         crumbs={[
-          { label: 'Assets', to: '/assets' },
+          { label: 'Servers', to: '/assets' },
           { label: asset.hostname.split('.')[0] ?? asset.hostname },
         ]}
         title={asset.hostname}
@@ -281,6 +282,18 @@ function AssetDetail() {
               icon={IconHistory}
               flush
               badge={<Badge size="xs" variant="light" color="slate">{history.length}</Badge>}
+              // This card shows the latest twelve; the Sessions page has the
+              // rest, already narrowed to this server.
+              action={
+                <ButtonLink
+                  size="compact-xs"
+                  variant="subtle"
+                  to="/sessions"
+                  search={{ host: asset.hostname }}
+                >
+                  All sessions on this server
+                </ButtonLink>
+              }
             >
               <Table.ScrollContainer minWidth={640} type="native">
                 <Table>

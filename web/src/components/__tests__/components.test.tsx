@@ -129,7 +129,7 @@ describe('Stat', () => {
    */
   it('does not report a count it does not have as zero', () => {
     const { container } = ui(<Stat label="Hosts outside the inventory" value={undefined} />)
-    expect(screen.getByText('HOSTS OUTSIDE THE INVENTORY')).toBeInTheDocument()
+    expect(screen.getByText('Hosts outside the inventory')).toBeInTheDocument()
     expect(screen.queryByText('0')).not.toBeInTheDocument()
     expect(container.querySelector('.mantine-Skeleton-root')).toBeInTheDocument()
   })

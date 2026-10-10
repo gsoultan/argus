@@ -1,6 +1,7 @@
 package rdp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 )
@@ -190,4 +191,35 @@ func FuzzReassemblerFeed(f *testing.F) {
 			}
 		}
 	})
+}
+
+// The encoded frame is what the browser decodes, so its layout is a contract
+// with web/src/workers/rdp.worker.ts and the WebAssembly decoder behind it.
+func TestEncodeBitmap(t *testing.T) {
+	b := Bitmap{X: 3, Y: 4, Width: 5, Height: 6, BPP: 16, Compressed: true,
+		Data: []byte{1, 2, 3, 4, 5}}
+	got := EncodeBitmap(b)
+
+	if got[0] != FrameEncoded {
+		t.Errorf("type = %d", got[0])
+	}
+	if got[1] != 0x80|16 {
+		t.Errorf("format = %#x, want RLE at 16 bpp", got[1])
+	}
+	for i, want := range []uint16{3, 4, 5, 6, 5} {
+		if v := binary.LittleEndian.Uint16(got[2+2*i:]); v != want {
+			t.Errorf("field %d = %d, want %d", i, v, want)
+		}
+	}
+	if len(got) != FrameHeaderSize+8 {
+		t.Errorf("length = %d, want the data padded to a multiple of four", len(got))
+	}
+	if !bytes.Equal(got[FrameHeaderSize:FrameHeaderSize+5], b.Data) {
+		t.Error("data was not carried as sent")
+	}
+
+	raw := EncodeBitmap(Bitmap{Width: 1, Height: 1, BPP: 24, Data: []byte{1, 2, 3}})
+	if raw[1] != 24 {
+		t.Errorf("an uncompressed bitmap's format = %#x, want 24 with no RLE bit", raw[1])
+	}
 }

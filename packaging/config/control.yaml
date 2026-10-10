@@ -52,3 +52,22 @@ session_ttl: 8h
 ticket_ttl: 60s
 agent_stale_after: 90s
 log_level: "info"
+
+# Tell administrators every time somebody opens a session, by email, Telegram,
+# or both. Sessions that went around Argus (logged in to the server directly,
+# seen only by the host agent) are alerted too, and say so. Alerts are queued
+# and sent in the background; a slow mail server never holds up a session.
+# Remove the comment marks from the channels you want.
+#
+# alerts:
+#   email:
+#     host: "smtp.example.com"
+#     port: 587                     # 465 for implicit TLS; others must offer STARTTLS
+#     username: "argus@example.com"
+#     password: "${file:/etc/argus/smtp-password}"
+#     from: "argus@example.com"
+#     to: ["security@example.com"]
+#   telegram:
+#     # From @BotFather. Add the bot to the group first, then use the group's id.
+#     bot_token: "${file:/etc/argus/telegram-bot-token}"
+#     chat_ids: ["-1001234567890"]

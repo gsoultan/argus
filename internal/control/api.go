@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
+	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
 	"github.com/gsoultan/argus/internal/tlsconfig"
 )
@@ -63,6 +64,9 @@ type API struct {
 	// SessionTTL and TicketTTL default sensibly; see sessionTTL/ticketTTL.
 	SessionTTL time.Duration
 	TicketTTL  time.Duration
+
+	// Alerts tells administrators when a session starts. Nil sends nothing.
+	Alerts *notify.Dispatcher
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -440,9 +444,25 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	if in.StartedAt.IsZero() {
 		in.StartedAt = time.Now().UTC()
 	}
-	if err := a.store.UpsertSession(r.Context(), in); err != nil {
+	created, err := a.store.RecordSession(r.Context(), in)
+	if err != nil {
 		a.fail(w, "report session", err)
 		return
+	}
+	// Only on the report that created the row: the gateway and the agent both
+	// report every session, and keep reporting it while it runs. Queued, not
+	// sent, so a slow mail server cannot hold up the reporter.
+	if created {
+		a.Alerts.SessionStarted(notify.SessionStarted{
+			ID:        in.ID,
+			UserEmail: in.UserEmail,
+			Host:      in.AssetHostname,
+			Principal: in.Principal,
+			Protocol:  in.Protocol,
+			Origin:    in.Origin,
+			ClientIP:  in.ClientIP,
+			StartedAt: in.StartedAt,
+		})
 	}
 
 	// A recording that cannot support the fidelity it claims.

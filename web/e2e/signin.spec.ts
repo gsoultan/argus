@@ -46,7 +46,7 @@ test('signing in renders the console rather than an error boundary', async ({ pa
   // banner belongs to a control plane that stopped answering; a banner shown
   // when one is answering fine is noise that teaches people to ignore it.
   await expect(page.getByText(/nothing below is your fleet/)).toBeHidden()
-  await expect(page.locator('header .mantine-Badge-root').first()).toHaveText('localhost:5511')
+  await expect(page.locator('.argus-source-title')).toHaveText('localhost:5511')
 })
 
 test('the session survives a reload', async ({ page }) => {
@@ -75,7 +75,7 @@ test('a refused password says so instead of doing nothing', async ({ page }) => 
 })
 
 /**
- * The header badge reports which data is on screen: the control plane's host
+ * The source line reports which data is on screen: the control plane's host
  * once one has answered, `Local fixture` when none is configured, and a warning
  * if a configured one goes quiet. Between those it must not guess — claiming a
  * connection that has not been proven is the same class of mistake as the
@@ -110,9 +110,9 @@ test.describe('the data-source badge', () => {
 
     await page.goto('/connect', { waitUntil: 'commit' })
 
-    // Scoped to the header badge: `getByText` matches substrings, and the
-    // fallback banner's title carries the host too.
-    const badge = page.locator('header .mantine-Badge-root').first()
+    // Scoped to the source line at the foot of the sidebar: `getByText`
+    // matches substrings, and the fallback banner's title carries the host too.
+    const badge = page.locator('.argus-source-title')
     await expect(badge).toHaveText(/^Connecting/)
     // And once something answers, it names what it reached.
     await expect(badge).toHaveText('localhost:5511', { timeout: 15_000 })
@@ -144,7 +144,7 @@ test.describe('the data-source badge', () => {
     await page.route('**/api/v1/**', (route) => route.abort())
     await page.reload()
 
-    await expect(page.locator('header .mantine-Badge-root').first()).toHaveText('Not answering')
+    await expect(page.locator('.argus-source-title')).toHaveText('Not answering')
 
     // And says it at the size of the problem. The corner badge alone left the
     // page underneath announcing "13 hosts would not record a bypass", three
@@ -188,7 +188,7 @@ test.describe('coverage links land on exactly what they counted', () => {
     expect(counted, 'the stub fleet should have hosts with an open posture').toBeGreaterThan(0)
 
     await page.getByRole('link', { name: /show these hosts/i }).click()
-    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
     await expect(
       page.locator('tbody tr[role="link"]'),
       `The alert counted ${counted} hosts; its link selects a different set.`,
@@ -209,7 +209,7 @@ test.describe('coverage links land on exactly what they counted', () => {
     await page.goto('/')
     await signIn(page)
 
-    const counted = await claim(page, /sessions? unaccounted for/)
+    const counted = await claim(page, /sessions? (?:is |are )?unaccounted for/)
     expect(counted, 'the stub log should have silent sessions').toBeGreaterThan(0)
 
     await page.getByRole('link', { name: /review sessions/i }).click()
@@ -273,7 +273,7 @@ test.describe('coverage links land on exactly what they counted', () => {
     await page.goto('/')
     await signIn(page)
 
-    const tile = page.locator('.argus-stat', { hasText: 'LIVE SESSIONS' })
+    const tile = page.locator('.argus-stat', { hasText: 'Live sessions' })
     await expect(tile).toContainText(/\d/)
     const claimed = Number((await tile.innerText()).match(/\n\s*(\d+)/)?.[1])
     expect(claimed).toBeGreaterThan(0)
@@ -318,11 +318,11 @@ test.describe('coverage links land on exactly what they counted', () => {
    * 24-hour window.
    */
   const TILES = [
-    { label: 'LIVE SESSIONS', heading: 'Sessions', rows: 'tbody tr' },
-    { label: 'UNVERIFIED HOSTS', heading: 'Assets', rows: 'tbody tr' },
-    { label: 'BYPASSED GATEWAY', heading: 'Sessions', rows: 'tbody tr' },
+    { label: 'Live sessions', heading: 'Sessions', rows: 'tbody tr' },
+    { label: 'Unverified hosts', heading: 'Servers', rows: 'tbody tr' },
+    { label: 'Bypassed gateway', heading: 'Sessions', rows: 'tbody tr' },
     // Requests are cards, not a table.
-    { label: 'PENDING APPROVALS', heading: 'Access requests', rows: '.argus-request' },
+    { label: 'Pending approvals', heading: 'Access requests', rows: '.argus-request' },
   ]
 
   for (const t of TILES) {
@@ -408,7 +408,7 @@ test.describe('coverage links land on exactly what they counted', () => {
     expect(counted, 'the stub fleet should have hosts on a standing credential').toBeGreaterThan(0)
 
     await card.getByRole('link', { name: /show these hosts/i }).click()
-    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
     await expect(
       page.locator('tbody tr[role="link"]'),
       `The card counted ${counted} hosts; its link selects a different set.`,
@@ -576,7 +576,7 @@ test.describe('coverage links land on exactly what they counted', () => {
     expect(quiet, 'the stub fleet should have stale agents').toBeGreaterThan(0)
 
     await card.click()
-    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
     await expect(
       page.locator('tbody tr[role="link"]'),
       `The card counted ${quiet} quiet agents; its link selects a different set.`,

@@ -301,6 +301,16 @@ func (c *Client) finalize() error {
 // Returns no rectangles and no error for traffic that is not a bitmap update,
 // so a caller loops on it without having to know what else the server sends.
 func (c *Client) Next() ([]Rect, error) {
+	bitmaps, err := c.NextBitmaps()
+	if err != nil || len(bitmaps) == 0 {
+		return nil, err
+	}
+	return decodeAll(bitmaps)
+}
+
+// NextBitmaps is Next without the decoding, for a caller that forwards the
+// rectangles to something that decodes them itself.
+func (c *Client) NextBitmaps() ([]Bitmap, error) {
 	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
 		return nil, err
 	}
@@ -311,7 +321,7 @@ func (c *Client) Next() ([]Rect, error) {
 	if c.tap != nil {
 		c.tap(frame)
 	}
-	return DecodePDU(c.rea, frame)
+	return ParsePDU(c.rea, frame)
 }
 
 // DecodePDU turns one PDU into screen rectangles.
@@ -324,6 +334,16 @@ func (c *Client) Next() ([]Rect, error) {
 // Returns no rectangles and no error for traffic that is not a screen update,
 // so a caller loops on it without having to know what else a server sends.
 func DecodePDU(rea *Reassembler, frame []byte) ([]Rect, error) {
+	bitmaps, err := ParsePDU(rea, frame)
+	if err != nil || len(bitmaps) == 0 {
+		return nil, err
+	}
+	return decodeAll(bitmaps)
+}
+
+// ParsePDU is DecodePDU without the decoding: the rectangles a PDU carries,
+// with their headers checked and their pixel data as the target sent it.
+func ParsePDU(rea *Reassembler, frame []byte) ([]Bitmap, error) {
 	if len(frame) == 0 {
 		return nil, nil
 	}
@@ -359,12 +379,12 @@ func DecodePDU(rea *Reassembler, frame []byte) ([]Rect, error) {
 			if binary.LittleEndian.Uint16(sd.Body[0:2]) != updateTypeBitmap {
 				return nil, nil
 			}
-			return ParseBitmapUpdate(sd.Body[2:])
+			return ParseBitmaps(sd.Body[2:])
 		}
 		return nil, nil
 	}
 
-	return rea.Feed(frame)
+	return rea.FeedBitmaps(frame)
 }
 
 // Send delivers one input event to the target.

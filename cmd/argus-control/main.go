@@ -31,6 +31,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
+	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
 	"github.com/gsoultan/argus/internal/tlsconfig"
 )
@@ -73,6 +74,42 @@ type config struct {
 	SessionTTL time.Duration    `yaml:"session_ttl"`
 	TicketTTL  time.Duration    `yaml:"ticket_ttl"`
 	LogLevel   string           `yaml:"log_level"`
+	// Alerts tells administrators, by email or Telegram, every time somebody
+	// opens a session. Omit for none.
+	Alerts *alertsConfig `yaml:"alerts"`
+}
+
+type alertsConfig struct {
+	Email    *notify.EmailConfig    `yaml:"email"`
+	Telegram *notify.TelegramConfig `yaml:"telegram"`
+}
+
+// alertSenders builds a sender per configured channel.
+//
+// A channel that is present but incomplete stops start-up rather than being
+// skipped: an administrator who configured alerts believes they will hear
+// about every session, and a typo that silently turned that off would leave
+// them believing it.
+func alertSenders(cfg *alertsConfig) ([]notify.Sender, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	var out []notify.Sender
+	if cfg.Email != nil {
+		e, err := notify.NewEmail(*cfg.Email)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if cfg.Telegram != nil {
+		t, err := notify.NewTelegram(*cfg.Telegram, &http.Client{Timeout: 15 * time.Second})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, nil
 }
 
 type rateLimitConfig struct {
@@ -215,7 +252,21 @@ func run() error {
 				"if a load balancer terminates connections in front of this")
 	}
 
+	senders, err := alertSenders(cfg.Alerts)
+	if err != nil {
+		return err
+	}
+	alerts := notify.NewDispatcher(senders, cfg.ConsoleURL, log)
+	if alerts != nil {
+		names := make([]string, len(senders))
+		for i, s := range senders {
+			names[i] = s.Name()
+		}
+		log.Info("session alerts on", "channels", names)
+	}
+
 	api := control.NewAPI(store, log)
+	api.Alerts = alerts
 	api.SetThrottles(throttles)
 	api.SetStorage(storageClient)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
@@ -434,6 +485,9 @@ func run() error {
 		for range listeners {
 			<-served
 		}
+		// After the listeners, so an alert for a report that arrived during
+		// the drain is still sent.
+		alerts.Close(shutdownCtx)
 		log.Info("shutdown complete")
 		return nil
 	}

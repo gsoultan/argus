@@ -185,3 +185,31 @@ either side drifts:
 testable against a chain carrying a server's hashes -- an end-to-end browser
 test cannot reach this path, because `VITE_CONTROL_URL` is baked at build time
 and the e2e bundle runs against the fixture.
+
+## Testing RDP against a real Windows host
+
+Everything else in `internal/rdp` is tested against pipes and hand-built
+frames, which proves the parsing and proves nothing about whether Windows
+agrees. `internal/rdp/target_integration_test.go` is opt-in:
+
+    ARGUS_TEST_RDP_TARGET=<host>:3389 go test ./internal/rdp/ -run Target -v
+
+A host was available on 2026-09-23 at `192.168.101.91` (RDP and WinRM open, no
+credentials given). What it established:
+
+- **The host requires NLA**, which is the hardened Windows default and what a
+  customer of this product is likely to have. A TLS-only dial is refused
+  outright -- so `ErrNoCredential`'s "the user will meet a logon screen" was a
+  promise that cannot be kept there. The gateway now names the remedy: vault a
+  credential for the asset, or permit TLS-only on the host.
+- **`DialTargetWithAuth` returned a usable connection when the server selected
+  NLA and `auth` was nil.** `auth == nil` short-circuited *before* the check on
+  what was negotiated, so a caller got a TLS connection that had negotiated NLA
+  and skipped it, reported as success with a nil CredSSP result. Now an error.
+  Not reachable from the gateway -- it asks for `ProtocolSSL` whenever it has no
+  credential, including on the CredSSP retry -- but the library contract was
+  wrong and only a real server showed it.
+
+**Still not measured:** the mstsc `cookie_len` truncation from PR #34. That
+needs a Windows *client* connecting to the Argus gateway, not a Windows target.
+A host that can run mstsc against a reachable gateway would close it.

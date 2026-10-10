@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -93,12 +95,17 @@ func (s *Server) handleRDPWeb(cfg WebConfig) http.HandlerFunc {
 		// gateway buffer on its say-so.
 		conn.SetReadLimit(64 << 10)
 
-		s.runRDPWeb(r.Context(), conn, user, principal, asset)
+		// A console from before the browser could decode RDP itself does not
+		// ask, and gets the decoded frames it understands. The console is a
+		// PWA that updates when its user agrees to, so for a while after a
+		// gateway upgrade some of them are always older than it.
+		encoded := r.URL.Query().Get("frames") == "encoded"
+		s.runRDPWeb(r.Context(), conn, user, principal, asset, encoded)
 	}
 }
 
 func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
-	user, principal string, asset Asset) {
+	user, principal string, asset Asset, encoded bool) {
 
 	sess := &rdp.Session{
 		ID:        newRDPSessionID(),
@@ -152,7 +159,7 @@ func (s *Server) runRDPWeb(ctx context.Context, conn *websocket.Conn,
 		s.pumpRDPInput(ctx, conn, client, log)
 	}()
 
-	err = s.pumpRDPFrames(ctx, conn, client, sess.Hub())
+	err = s.pumpRDPFrames(ctx, conn, client, sess.Hub(), encoded)
 
 	head, closeErr := sess.Close()
 	s.untrackRDPWeb(sess)
@@ -188,6 +195,7 @@ func (s *Server) dialRDP(asset Asset, principal string, log *slog.Logger) (
 	var auth *credssp.Authenticator
 	var logon rdp.LogonInfo
 
+	noCredential := false
 	password, cerr := credentialFor(asset, principal)
 	switch {
 	case cerr == nil:
@@ -197,8 +205,16 @@ func (s *Server) dialRDP(asset Asset, principal string, log *slog.Logger) (
 		}}
 		logon = rdp.LogonInfo{Domain: asset.Domain, User: principal, Password: password}
 	case errors.Is(cerr, ErrNoCredential):
-		log.Warn("no vaulted credential; the user will meet a logon screen",
-			"principal", principal)
+		// Only where the host allows TLS-only. A Windows host with network
+		// level authentication required -- which is the hardened default, and
+		// what a customer of this product is likely to have -- refuses that
+		// outright, and there is no logon screen to reach.
+		log.Warn("no vaulted credential; falling back to TLS",
+			"principal", principal,
+			"detail", "the user meets a logon screen only if this host permits "+
+				"TLS-only; one requiring network level authentication will refuse "+
+				"the connection instead")
+		noCredential = true
 		protocol = rdp.ProtocolSSL
 	default:
 		return nil, 0, cerr
@@ -215,6 +231,16 @@ func (s *Server) dialRDP(asset Asset, principal string, log *slog.Logger) (
 			protocol = rdp.ProtocolSSL
 			conn, result, err = rdp.DialTargetWithAuth(asset.Addr(), asset.Hostname,
 				protocol, s.cfg.HostKeys, 15*time.Second, nil)
+		}
+		// Name the remedy. Without a credential Argus can only ask for
+		// TLS-only, and a host requiring NLA refuses that -- so the session is
+		// not merely unreachable, it is unreachable until somebody vaults a
+		// credential for this asset. The bare protocol error says none of that.
+		if err != nil && noCredential && strings.Contains(err.Error(), "network level authentication") {
+			return nil, 0, fmt.Errorf(
+				"%s requires network level authentication and no credential is "+
+					"vaulted for %s: add one for this asset, or the host must be "+
+					"configured to allow TLS-only connections", asset.Hostname, principal)
 		}
 		if err != nil {
 			return nil, 0, err
@@ -280,23 +306,36 @@ func (s *Server) openRDPWebRecording(sess *rdp.Session, asset Asset, client *rdp
 }
 
 // pumpRDPFrames reads screen updates and writes them to the browser.
+//
+// encoded forwards each rectangle as the target sent it, for the browser to
+// decode; otherwise the gateway decodes it to RGBA first, at sixteen to fifty
+// times the bytes.
 func (s *Server) pumpRDPFrames(ctx context.Context, conn *websocket.Conn,
-	client *rdp.Client, hub *live.Hub) error {
+	client *rdp.Client, hub *live.Hub, encoded bool) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		rects, err := client.Next()
+		bitmaps, err := client.NextBitmaps()
 		if err != nil {
 			return err
 		}
-		if len(rects) == 0 {
+		if len(bitmaps) == 0 {
 			continue
 		}
 
 		batch := make([]byte, 0, 4096)
-		for _, r := range rects {
-			frame := rdp.EncodeRect(r)
+		for _, b := range bitmaps {
+			var frame []byte
+			if encoded {
+				frame = rdp.EncodeBitmap(b)
+			} else {
+				r, derr := b.Decode()
+				if derr != nil {
+					return derr
+				}
+				frame = rdp.EncodeRect(r)
+			}
 			// Flushed before it grows large enough to stall the socket; a
 			// full-screen repaint otherwise arrives as one message and the
 			// whole session appears to freeze rather than one frame lagging.

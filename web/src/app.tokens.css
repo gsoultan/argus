@@ -12,29 +12,30 @@
 /* ---------------------------------------------------------------------------
    Surfaces, brand and semantics.
 
-   Four elevations, blue-tinted to match the azure brand rather than sitting
-   grey underneath it: void (the page) < surface (cards, header, navbar) <
-   raised (inset panels, code, hover) < line (borders).
+   Four elevations in graphite: void (the page) < surface (cards, header,
+   navbar) < raised (inset panels, code, hover) < line (borders). Neutral on
+   purpose, so the brand and the four semantic colours are the only things on
+   screen with a hue.
 
    `--color-brand` is the only colour a control may use. The four semantic
    colours below it are reserved for meaning — verified / pending / denied /
    live — and nothing decorative is allowed to spend them. See src/theme.
    --------------------------------------------------------------------------- */
 @theme {
-  --color-void: #080d16;
-  --color-surface: #0f1724;
-  --color-raised: #161f2f;
-  --color-line: #212c40;
+  --color-void: #0d1014;
+  --color-surface: #13171d;
+  --color-raised: #1a1f27;
+  --color-line: #262c36;
 
-  --color-brand: #2563eb;
-  --color-brand-bright: #5089fb;
+  --color-brand: #5a61e0;
+  --color-brand-bright: #8089f8;
 
   --color-verified: #2dd4a7;
   --color-pending: #f0b429;
   --color-denied: #f4576b;
   --color-live: #38bdf8;
 
-  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+  --font-sans: 'IBM Plex Sans Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
 }
@@ -83,7 +84,7 @@ body {
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #33425c; }
+::-webkit-scrollbar-thumb:hover { background: #3a4250; }
 
 /* Table row striping and hover live in the theme, as `stripedColor` and
    `highlightOnHoverColor` props. They were declared here as CSS variables and
@@ -124,11 +125,109 @@ body {
   opacity: 0.9;
 }
 
+/* Sidebar items: a label and one line saying what the page is for. Set at
+   reading size, because the menu is how people find their way around. */
+.argus-navlink {
+  padding: 7px 10px;
+}
+.argus-navlink .mantine-NavLink-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+.argus-navlink .mantine-NavLink-description {
+  font-size: 12px;
+  color: var(--mantine-color-slate-4);
+  margin-top: 1px;
+}
+.argus-navlink:not([data-active]) .mantine-NavLink-section {
+  color: var(--mantine-color-slate-4);
+}
+.argus-navlink[data-active] .mantine-NavLink-description {
+  color: var(--mantine-color-azure-2);
+}
+
+.argus-navsection {
+  border-radius: 6px;
+}
+.argus-navsection:hover {
+  background: var(--color-raised);
+}
+
+/* The Overview's server picker: the one place the console raises its voice.
+   A brand-tinted surface rather than a gradient wash, so it reads as "start
+   here" without competing with the warnings below it. */
+.argus-hero {
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgba(108, 116, 240, 0.16), transparent 55%),
+    var(--color-surface) !important;
+  border-color: rgba(108, 116, 240, 0.35) !important;
+}
+
+/* One finding per row. The tone shows in the icon and a 2px edge, not in a
+   full-bleed red background. */
+.argus-attention {
+  border-top: 1px solid var(--color-line);
+  box-shadow: inset 2px 0 0 transparent;
+}
+.argus-attention[data-tone='rose'] { box-shadow: inset 2px 0 0 var(--color-denied); }
+.argus-attention[data-tone='amber'] { box-shadow: inset 2px 0 0 var(--color-pending); }
+
+/* Numbered steps on Add a server, joined by a rule so they read as one path. */
+.argus-step-n {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mantine-color-azure-2);
+  background: rgba(108, 116, 240, 0.14);
+  border: 1px solid rgba(108, 116, 240, 0.4);
+}
+.argus-step-rule {
+  flex: 1;
+  width: 1px;
+  margin-top: 6px;
+  background: var(--color-line);
+}
+
+/* "Listening for new servers": the page's one piece of ambient motion, because
+   it is the one place where something is genuinely about to happen. */
+.argus-pulse {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--color-live);
+  animation: argus-pulse 1.8s ease-out infinite;
+}
+@keyframes argus-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.55); }
+  100% { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0); }
+}
+
+/* Commands people copy into a terminal on the server. Selecting the text by
+   hand must still work, so it is a <pre>, not an input. */
+.argus-cmd {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 0;
+  padding: 12px 52px 12px 14px;
+  border-radius: 8px;
+  background: var(--color-void);
+  border: 1px solid var(--color-line);
+  color: var(--mantine-color-slate-1);
+}
+
 /* Page headers stay put while a long table scrolls under them, so the title,
    breadcrumb and the actions that operate on the page never scroll away. */
 .argus-pagehead {
   position: sticky;
-  top: var(--app-shell-header-offset, 52px);
+  top: var(--app-shell-header-offset, 56px);
   z-index: 3;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-line);

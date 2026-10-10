@@ -119,7 +119,7 @@ export function AssetForm({
     <Modal
       opened={opened}
       onClose={onClose}
-      title={asset ? `Edit ${asset.hostname}` : 'Add an asset'}
+      title={asset ? `Edit ${asset.hostname}` : 'Add a server by hand'}
       size="lg"
     >
       <Stack gap="sm">
@@ -241,7 +241,7 @@ export function AssetForm({
             loading={pending}
             disabled={!form.hostname.trim() || form.principals.length === 0}
           >
-            {asset ? 'Save' : 'Add asset'}
+            {asset ? 'Save' : 'Add server'}
           </Button>
         </Group>
       </Stack>

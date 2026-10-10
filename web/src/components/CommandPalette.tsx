@@ -7,7 +7,7 @@ import type { IconProps } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 import { assetsQuery, sessionsQuery, usersQuery } from '~/lib/queries'
 import { FS, SP } from '~/theme'
-import { NAV_SECTIONS } from '~/components/nav'
+import { ALL_PAGES } from '~/components/nav'
 
 /**
  * Jump to anything from anywhere.
@@ -48,8 +48,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
     const needle = q.trim().toLowerCase()
     const out: Item[] = []
 
-    const pages = NAV_SECTIONS.flatMap((s) => s.items)
-    for (const p of pages) {
+    for (const p of ALL_PAGES) {
       if (needle && !p.label.toLowerCase().includes(needle)) continue
       out.push({
         id: `page:${p.to}`,

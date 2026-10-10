@@ -52,7 +52,7 @@ test('the worker precaches the shell and nothing else', async ({ browserName }) 
   ).toEqual([])
 
   // @fontsource ships a subset per script, and exactly two render this console:
-  // Inter and JetBrains Mono, plain latin. weight.spec.ts asserts a first visit
+  // IBM Plex Sans and JetBrains Mono, plain latin. weight.spec.ts asserts a first visit
   // fetches those two, so storing any more is storing what nobody asked for.
   //
   // `latin-ext` is the one to watch. The pattern was `*latin*`, which matched it
