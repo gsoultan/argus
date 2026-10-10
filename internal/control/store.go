@@ -284,15 +284,27 @@ func silent(state string, lastReportedAt time.Time) bool {
 // reported twice: the gateway reports it when it opens, and the host agent
 // reports it independently. Reconciling on the session id keeps one row.
 func (s *Store) UpsertSession(ctx context.Context, in Session) error {
+	_, err := s.RecordSession(ctx, in)
+	return err
+}
+
+// RecordSession is UpsertSession, and also says whether this report created
+// the row.
+//
+// The gateway and the host agent each report the same session, and both keep
+// reporting it while it runs. Only the first report is news; anything that
+// reacts to a session starting -- an alert to an administrator -- must react
+// once, not once per report.
+func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, err error) {
 	// Resolve the asset by hostname so a reporter never needs to know its id.
 	var assetID *string
 	var id string
-	err := s.pool.QueryRow(ctx,
+	err = s.pool.QueryRow(ctx,
 		`SELECT id::text FROM assets WHERE hostname = $1`, in.AssetHostname).Scan(&id)
 	if err == nil {
 		assetID = &id
 	} else if err != pgx.ErrNoRows {
-		return fmt.Errorf("resolve asset: %w", err)
+		return false, fmt.Errorf("resolve asset: %w", err)
 	}
 
 	if in.RiskFlags == nil {
@@ -317,7 +329,7 @@ func (s *Store) UpsertSession(ctx context.Context, in Session) error {
 		in.EndedAt = &now
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	err = s.pool.QueryRow(ctx, `
 		INSERT INTO sessions (
 			id, user_email, asset_id, asset_hostname, principal, protocol,
 			origin, origin_reason, state, started_at, ended_at, client_ip,
@@ -342,16 +354,20 @@ func (s *Store) UpsertSession(ctx context.Context, in Session) error {
 			-- session nothing has said anything about for hours is not running
 			-- and has not ended; it is unknown, and this is what lets the
 			-- console say so instead of showing it live for nineteen days.
-			last_reported_at   = now()`,
+			last_reported_at   = now()
+		-- xmax is zero only on a row this statement inserted; an ON CONFLICT
+		-- update sets it. One round trip, and no race between "does it exist"
+		-- and "insert it" when the gateway and the agent report at once.
+		RETURNING (xmax = 0)`,
 		in.ID, in.UserEmail, assetID, in.AssetHostname, in.Principal, in.Protocol,
 		in.Origin, in.OriginReason, in.State, in.StartedAt, in.EndedAt, in.ClientIP,
 		in.Fidelity, in.RecordingBytes, in.CommandCount, in.ExitCode, in.ChainHead,
 		in.RiskFlags, in.ReportedBy, nullIfEmpty(in.RecordingPath),
-		in.TerminatedBy, in.TerminationReason)
+		in.TerminatedBy, in.TerminationReason).Scan(&created)
 	if err != nil {
-		return fmt.Errorf("upsert session: %w", err)
+		return false, fmt.Errorf("upsert session: %w", err)
 	}
-	return nil
+	return created, nil
 }
 
 // SessionFilter narrows a session query.
