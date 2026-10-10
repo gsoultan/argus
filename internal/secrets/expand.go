@@ -14,6 +14,7 @@
 package secrets
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -45,11 +46,16 @@ func (m *Missing) Error() string {
 // All failures are collected before returning, so someone bringing up a new
 // deployment sees every missing variable at once instead of rediscovering them
 // one restart at a time.
+//
+// References inside YAML comments are left alone. The packaged configs show
+// examples there, and resolving them made the shipped control.yaml refuse to
+// start until someone created the smtp-password file a commented-out example
+// named.
 func Expand(data []byte) ([]byte, error) {
 	var missing []string
 	seen := map[string]bool{}
 
-	out := reference.ReplaceAllFunc(data, func(match []byte) []byte {
+	expandValue := func(match []byte) []byte {
 		groups := reference.FindSubmatch(match)
 		name := string(groups[1])
 		hasDefault := len(groups) > 2 && bytesNonNil(groups[2])
@@ -67,12 +73,43 @@ func Expand(data []byte) ([]byte, error) {
 			return match
 		}
 		return []byte(value)
-	})
+	}
+
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	out := make([]byte, 0, len(data))
+	for _, line := range lines {
+		i := commentStart(line)
+		out = append(out, reference.ReplaceAllFunc(line[:i], expandValue)...)
+		out = append(out, line[i:]...)
+	}
 
 	if len(missing) > 0 {
 		return nil, &Missing{Names: missing}
 	}
 	return out, nil
+}
+
+// commentStart is where a YAML comment begins on this line, or len(line). A
+// '#' starts one at the start of the line or after whitespace, outside quotes;
+// "http://h/#x" and a#b are values.
+func commentStart(line []byte) int {
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote == '"' && c == '\\':
+			i++ // an escaped character, possibly a quote
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			return i
+		}
+	}
+	return len(line)
 }
 
 // resolve looks up one reference.

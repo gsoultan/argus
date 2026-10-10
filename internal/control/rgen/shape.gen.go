@@ -57,6 +57,37 @@ func _assertAgentShape(m m0.Agent) {
 	}
 }
 
+// _assertAgentCredentialShape fails to compile if m0.AgentCredential gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertAgentCredentialShape(m m0.AgentCredential) {
+	type shape m0.AgentCredential
+	_ = shape{
+		m.ID,
+		m.Hostname,
+		m.SecretHash,
+		m.Token,
+		m.CreatedAt,
+		m.RevokedAt,
+		m.RevokedBy,
+	}
+}
+
+// _assertAgentEnrollmentTokenShape fails to compile if m0.AgentEnrollmentToken gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertAgentEnrollmentTokenShape(m m0.AgentEnrollmentToken) {
+	type shape m0.AgentEnrollmentToken
+	_ = shape{
+		m.ID,
+		m.TokenHash,
+		m.Hostname,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.ExpiresAt,
+		m.UsedAt,
+		m.UsedByHost,
+	}
+}
+
 // _assertAssetShape fails to compile if m0.Asset gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertAssetShape(m m0.Asset) {

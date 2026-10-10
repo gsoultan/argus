@@ -422,6 +422,15 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("rdp: %w", err)
 		}
+		// A reduction in what is enforced is never silent. The native listener
+		// learns a principal and a target from the mstshash cookie and nothing
+		// about the person, so neither assignment nor the console's sign-in
+		// applies on it. The browser console is the RDP path that does.
+		log.Warn("the native RDP listener authenticates nobody",
+			"addr", cfg.RDP.Listen,
+			"detail", "assignments are not enforced on it and elevated principals are "+
+				"refused outright; remove the rdp block to serve RDP only through the "+
+				"browser console, which signs people in first")
 		go func() {
 			// A failure here is fatal to RDP but not to SSH: brokered Linux
 			// access should not stop because a Windows listener could not bind.

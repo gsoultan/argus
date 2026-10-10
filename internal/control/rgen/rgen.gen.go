@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gsoultan/argus/internal/control/rgen/agentcredential"
+	"github.com/gsoultan/argus/internal/control/rgen/agentenrollmenttoken"
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
@@ -20,18 +22,20 @@ import (
 // runtime code inspects a schema and no constraint has to be deferred for
 // a graph write to succeed.
 var FlushOrder = map[string]int{
-	"access_requests":   0,
-	"agents":            1,
-	"assets":            2,
-	"audit_events":      3,
-	"gateway_policy":    4,
-	"host_key_pins":     5,
-	"redeemed_tickets":  6,
-	"schema_migrations": 7,
-	"sessions":          8,
-	"users":             9,
-	"asset_assignments": 10,
-	"recovery_codes":    11,
+	"access_requests":         0,
+	"agent_enrollment_tokens": 1,
+	"agents":                  2,
+	"assets":                  3,
+	"audit_events":            4,
+	"gateway_policy":          5,
+	"host_key_pins":           6,
+	"redeemed_tickets":        7,
+	"schema_migrations":       8,
+	"sessions":                9,
+	"users":                   10,
+	"agent_credentials":       11,
+	"asset_assignments":       12,
+	"recovery_codes":          13,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -44,6 +48,123 @@ func NewUnit() *runtime.Unit { return runtime.NewUnit(FlushOrder) }
 // reaching it: an error, never a partial result. Override per plan with
 // ChildLimit.
 const defaultChildLimit = 1 << 20
+
+// AgentCredentialWithTokenRow is agent_credentials with its Token loaded.
+type AgentCredentialWithTokenRow struct {
+	agentcredential.Row
+	Token agentenrollmenttoken.Row
+}
+
+type AgentCredentialWithTokenQuery struct {
+	q agentcredential.Query
+}
+
+// AgentCredentialWithToken starts the plan.
+func AgentCredentialWithToken() AgentCredentialWithTokenQuery {
+	return AgentCredentialWithTokenQuery{q: agentcredential.New()}
+}
+
+func (p AgentCredentialWithTokenQuery) Where(ps ...agentcredential.Pred) AgentCredentialWithTokenQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p AgentCredentialWithTokenQuery) WhereIf(cond bool, pr agentcredential.Pred) AgentCredentialWithTokenQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p AgentCredentialWithTokenQuery) Any(ps ...agentcredential.Pred) AgentCredentialWithTokenQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p AgentCredentialWithTokenQuery) Not(pr agentcredential.Pred) AgentCredentialWithTokenQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p AgentCredentialWithTokenQuery) NotAny(ps ...agentcredential.Pred) AgentCredentialWithTokenQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p AgentCredentialWithTokenQuery) Order(ts ...agentcredential.Sort) AgentCredentialWithTokenQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p AgentCredentialWithTokenQuery) Limit(n int64) AgentCredentialWithTokenQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p AgentCredentialWithTokenQuery) Offset(n int64) AgentCredentialWithTokenQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p AgentCredentialWithTokenQuery) After(r AgentCredentialWithTokenRow) AgentCredentialWithTokenQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p AgentCredentialWithTokenQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p AgentCredentialWithTokenQuery) All(ctx context.Context, ex runtime.Executor) ([]AgentCredentialWithTokenRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]AgentCredentialWithTokenRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = AgentCredentialWithTokenRow{Row: r}
+		key := r.TokenID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := agentenrollmenttoken.New().Unordered().
+		Where(agentenrollmenttoken.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].TokenID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "agent_credentials", "agent_enrollment_tokens")
+		}
+		out[i].Token = targets[j]
+	}
+	return out, nil
+}
 
 // AssetAssignmentWithAssetRow is asset_assignments with its Asset loaded.
 type AssetAssignmentWithAssetRow struct {

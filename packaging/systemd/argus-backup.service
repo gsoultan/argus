@@ -1,0 +1,51 @@
+[Unit]
+Description=Argus backup: audit chain, database and recordings
+Documentation=https://github.com/gsoultan/argus/blob/main/docs/install.md#backups
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Runs once per timer firing and exits. Not exec: there is nothing to wait for
+# after start, and the timer needs to know when it has finished.
+Type=oneshot
+User=argus
+Group=argus
+EnvironmentFile=-/etc/argus/control.env
+# Overrides for this unit alone -- ARGUS_BACKUP_DIR, ARGUS_BACKUP_KEEP.
+EnvironmentFile=-/etc/argus/backup.env
+Environment=ARGUS_BACKUP_DIR=/var/backups/argus
+Environment=ARGUS_BACKUP_KEEP=14
+ExecStart=/usr/bin/argus-control --config /etc/argus/control.yaml \
+    backup run -out ${ARGUS_BACKUP_DIR} -keep ${ARGUS_BACKUP_KEEP}
+# A large bucket on a first run takes a while; a hung one should still end.
+TimeoutStartSec=6h
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @obsolete
+SystemCallArchitectures=native
+# Where backups go. Move it with ARGUS_BACKUP_DIR in backup.env and add the new
+# path here with a drop-in; ProtectSystem=strict makes everything else read-only.
+ReadWritePaths=/var/backups/argus

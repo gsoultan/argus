@@ -39,7 +39,32 @@ const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
  * control plane would put a second service on the path of every keystroke.
  */
 export const GATEWAY_URL: string =
-  import.meta.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8081'
+  runtimeGatewayURL() ?? import.meta.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8081'
+
+/**
+ * The gateway address the serving control plane configured, if any.
+ *
+ * A packaged console is built once and installed everywhere, so an address
+ * baked in at build time is right for nobody. argus-control serves
+ * /console-config.js with `console.gateway_url` from its config; the copy in
+ * public/ sets nothing, which leaves development and fixture builds as they were.
+ */
+function runtimeGatewayURL(): string | undefined {
+  return runtimeConfig()?.gatewayUrl || undefined
+}
+
+function runtimeConfig(): { gatewayUrl?: string; version?: string } | undefined {
+  return (globalThis as { __ARGUS__?: { gatewayUrl?: string; version?: string } }).__ARGUS__
+}
+
+/**
+ * The serving control plane's release, when it is one ("0.2.0", not "dev"),
+ * so the agent it offers to install matches it.
+ */
+export function controlPlaneVersion(): string | undefined {
+  const v = runtimeConfig()?.version?.replace(/^v/, '')
+  return v && /^\d+\.\d+\.\d+/.test(v) ? v : undefined
+}
 
 export function isConfigured(): boolean {
   return RAW_BASE !== ''
@@ -523,6 +548,40 @@ export async function enrolHost(hostname: string): Promise<{ assetId: string }> 
     `/api/v1/discovered/${encodeURIComponent(hostname)}/enrol`,
     {},
   )
+}
+
+/** A single-use token for one agent install. The secret is shown once. */
+export interface EnrollToken {
+  id: string
+  token: string
+  hostname?: string
+  expiresAt: string
+  /** sha256 pin of the control plane's key; absent behind a TLS proxy. */
+  pin?: string
+}
+
+/** Makes an enrollment token. Admin or owner; audited by the control plane. */
+export async function createEnrollToken(hostname: string): Promise<EnrollToken> {
+  return post<EnrollToken>('/api/v1/agents/enroll-tokens', hostname ? { hostname } : {})
+}
+
+/** An enrolled agent's credential, without the secret. */
+export interface EnrolledAgent {
+  id: string
+  hostname: string
+  enrolledAt: string
+  enrolledBy: string
+  revokedAt?: string
+  revokedBy?: string
+}
+
+export async function enrolledAgents(): Promise<EnrolledAgent[]> {
+  return get<EnrolledAgent[]>('/api/v1/agents')
+}
+
+/** Withdraws one agent's credential. Its past reports are untouched. */
+export async function revokeAgent(id: string): Promise<void> {
+  await post(`/api/v1/agents/${encodeURIComponent(id)}/revoke`, {})
 }
 
 /** Records a deliberate decision not to manage a host. The note is required. */

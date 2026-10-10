@@ -137,19 +137,24 @@ so a half-built backend never breaks `make dev` for someone working on the UI.
 
 ## Installing
 
+**[docs/install.md](docs/install.md) is the production install, step by step:**
+certificates, the database, the first administrator, backups, the gateway,
+enrolling agents and upgrading. What follows is the reference behind it.
+
 Linux only — the gateway and control plane are servers, and the agent has to
 read another user's `authorized_keys` and own recordings the recorded user
 cannot touch. None of that means anything elsewhere.
 
 Releases publish `.deb`, `.rpm` and `.apk` for amd64 and arm64, built by
-GoReleaser in CI. Three packages, because the agent goes on every managed host
-while the gateway and control plane go on a handful of servers:
+GoReleaser in CI. Separate packages, because the agent goes on every managed
+host while the gateway and control plane go on a handful of servers:
 
 | Package | Installed on |
 |---|---|
 | `argus-agent` | every managed host |
 | `argus-gateway` | the bastion servers |
 | `argus-control` | the control plane servers |
+| `argus-verify` | anywhere recordings are checked: gateways, the control plane, an auditor's machine |
 
 ```sh
 sudo dpkg -i argus-agent_<version>_linux_amd64.deb    # Debian / Ubuntu
@@ -178,9 +183,13 @@ session. Recordings are `0700 root:root` for that reason.
 
 The systemd units are hardened rather than merely present — `ProtectSystem=strict`,
 an empty `CapabilityBoundingSet` for the two that need none, and a syscall
-filter. The agent keeps exactly one capability, `CAP_DAC_READ_SEARCH`, because
-its posture scan reads other users' `authorized_keys`; it uses
-`ProtectHome=read-only` rather than `yes` for the same reason.
+filter. The agent keeps three capabilities: `CAP_DAC_READ_SEARCH`, because its
+posture scan reads other users' `authorized_keys` (it uses
+`ProtectHome=read-only` rather than `yes` for the same reason), and `CAP_BPF`
+with `CAP_PERFMON`, which load the probe that records commands as the kernel
+saw them. Its syscall filter allows `bpf` and `perf_event_open` for that probe,
+and returns `EPERM` for anything else it refuses rather than killing the agent,
+because a dead agent makes sshd refuse every login on the host.
 
 ### Verifying a download
 

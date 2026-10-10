@@ -1,19 +1,24 @@
 import {
   ActionIcon, Alert, Badge, Box, Button, Card, CopyButton, Grid, Group, Loader, Modal,
-  SegmentedControl, Stack, Switch, Text, TextInput, Textarea, ThemeIcon, Tooltip,
+  SegmentedControl, Stack, Text, TextInput, Textarea, ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconCheck, IconCircleCheck, IconCopy, IconEye, IconInfoCircle, IconServer2, IconUserCheck,
+  IconCheck, IconCircleCheck, IconCopy, IconEye, IconInfoCircle, IconKey, IconServer2,
+  IconUserCheck,
 } from '@tabler/icons-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { Mono, relTime } from '~/components/primitives'
-import { controlPlaneHost, isConfigured } from '~/lib/live'
+import { controlPlaneHost, controlPlaneVersion, isConfigured } from '~/lib/live'
 import { run } from '~/lib/notify'
-import { discoveredQuery, meQuery, useEnrolHost, useIgnoreHost } from '~/lib/queries'
+import type { EnrollToken } from '~/lib/live'
+import {
+  discoveredQuery, enrolledAgentsQuery, meQuery, useCreateEnrollToken, useEnrolHost,
+  useIgnoreHost, useRevokeAgent,
+} from '~/lib/queries'
 import type { DiscoveredHost } from '~/types/domain'
 import { FS, SP } from '~/theme'
 
@@ -43,9 +48,10 @@ type Arch = 'amd64' | 'arm64'
 
 /**
  * Prefilled, and editable beside the commands: the agent should match the
- * control plane it reports to, which the console cannot ask about.
+ * control plane it reports to. A packaged control plane says which release it
+ * is; a development one does not, and gets the first release.
  */
-const DEFAULT_VERSION = '0.1.0'
+const DEFAULT_VERSION = controlPlaneVersion() ?? '0.1.0'
 
 function AddServer() {
   const [distro, setDistro] = useState<Distro>('deb')
@@ -54,10 +60,8 @@ function AddServer() {
   const [controlURL, setControlURL] = useState(
     isConfigured() ? `https://${controlPlaneHost()}` : '',
   )
-  const [mtls, setMTLS] = useState(true)
 
   const install = useMemo(() => installCommand(distro, arch, version), [distro, arch, version])
-  const configure = useMemo(() => configureCommand(controlURL, mtls), [controlURL, mtls])
 
   return (
     <Box>
@@ -113,34 +117,10 @@ function AddServer() {
 
               <Step
                 n={2}
-                title="Point it at Argus"
-                detail="Tells the agent where to report, and how to prove it is allowed to."
+                title="Enroll it"
+                detail="Gives this server its own credential, so it can report as itself and nothing else."
               >
-                <Group gap="md" mb="sm" align="flex-end" wrap="wrap">
-                  <TextInput
-                    size="xs"
-                    label="Control plane address, as the server reaches it"
-                    placeholder="https://argus-control.example.com:8080"
-                    value={controlURL}
-                    onChange={(e) => setControlURL(e.currentTarget.value.trim())}
-                    style={{ flex: '1 1 320px' }}
-                  />
-                  <Switch
-                    size="sm"
-                    checked={mtls}
-                    onChange={(e) => setMTLS(e.currentTarget.checked)}
-                    label="Client certificate"
-                    mb={6}
-                  />
-                </Group>
-                <Command text={configure} />
-                <Text size={FS.meta} c="dimmed" mt={SP.snug} lh={1.55}>
-                  Replace <Mono>PASTE-REPORTER-TOKEN</Mono> with <Mono>ARGUS_REPORTER_TOKEN</Mono>{' '}
-                  from <Mono>/etc/argus/control.env</Mono> on the control plane. The console
-                  never holds that secret, so it cannot fill it in for you.
-                  {mtls &&
-                    ' With a client certificate on, copy the CA and a certificate issued for this server into /etc/argus/tls/ first.'}
-                </Text>
+                <EnrollStep controlURL={controlURL} setControlURL={setControlURL} />
               </Step>
 
               <Step
@@ -168,11 +148,194 @@ function AddServer() {
           </Grid.Col>
 
           <Grid.Col span={{ base: 12, lg: 4 }}>
-            <HowItWorks />
+            <Stack gap="lg">
+              <HowItWorks />
+              <EnrolledAgents />
+            </Stack>
           </Grid.Col>
         </Grid>
       </PageBody>
     </Box>
+  )
+}
+
+/**
+ * Step 2: a single-use token, and the command that spends it.
+ *
+ * This step used to tell the operator to copy the gateways' reporter token onto
+ * every server -- one secret, identical everywhere, so root on any server could
+ * report as any other. Now each server gets a token that works once, for an
+ * hour, and buys a credential that speaks only for that server.
+ */
+function EnrollStep({
+  controlURL, setControlURL,
+}: {
+  controlURL: string
+  setControlURL: (v: string) => void
+}) {
+  const { data: me } = useQuery(meQuery())
+  const canMint = me?.role === 'admin' || me?.role === 'owner'
+  const mint = useCreateEnrollToken()
+  const [hostname, setHostname] = useState('')
+  const [tok, setTok] = useState<EnrollToken | null>(null)
+
+  const make = async () => {
+    await run(async () => setTok(await mint.mutateAsync(hostname.trim())), {
+      failure: 'No enrollment token was made',
+    })
+  }
+
+  return (
+    <Stack gap="sm">
+      <Group gap="md" align="flex-end" wrap="wrap">
+        <TextInput
+          size="xs"
+          label="Control plane address, as the server reaches it"
+          placeholder="https://argus-control.example.com:8080"
+          value={controlURL}
+          onChange={(e) => setControlURL(e.currentTarget.value.trim())}
+          style={{ flex: '1 1 280px' }}
+        />
+        <TextInput
+          size="xs"
+          label="Only for this hostname (optional)"
+          placeholder="Any hostname"
+          value={hostname}
+          onChange={(e) => setHostname(e.currentTarget.value)}
+          style={{ flex: '1 1 180px' }}
+        />
+        {isConfigured() ? (
+          <Tooltip label="Making a token needs the admin or owner role" disabled={canMint}>
+            <Button
+              size="xs"
+              leftSection={<IconKey size={14} />}
+              disabled={!canMint}
+              loading={mint.isPending}
+              onClick={() => void make()}
+            >
+              {tok ? 'Make another token' : 'Make a token'}
+            </Button>
+          </Tooltip>
+        ) : null}
+      </Group>
+
+      {!isConfigured() && (
+        <Alert color="amber" icon={<IconInfoCircle size={16} />}>
+          <Text size={FS.body} lh={1.5}>
+            This console is running on sample data with no control plane, so it cannot make
+            an enrollment token. The command below shows its shape.
+          </Text>
+        </Alert>
+      )}
+
+      <Command text={enrollCommand(controlURL, tok)} />
+
+      <Text size={FS.meta} c="dimmed" lh={1.55}>
+        {tok ? (
+          <>
+            The token works once, until {new Date(tok.expiresAt).toLocaleTimeString()}
+            {tok.hostname ? `, and only for ${tok.hostname}` : ''}. It is not shown again.
+            {!tok.pin &&
+              ' This control plane sits behind a TLS proxy, so the server checks its certificate the usual way; add --control-ca if that certificate is from an internal CA.'}
+          </>
+        ) : (
+          <>
+            Make a token, then run this on the server. It works once and expires in an hour,
+            so it is safe to paste into a terminal.
+          </>
+        )}{' '}
+        To keep it out of shell history, set <Mono>ARGUS_ENROLL_TOKEN</Mono> instead of
+        passing <Mono>--token</Mono>.
+      </Text>
+    </Stack>
+  )
+}
+
+/**
+ * Every server able to write evidence, and the way to stop one.
+ *
+ * Admin-only on the control plane, so it is only drawn for someone who can
+ * read it. Revoked ones stay listed: which credential vouched for a past
+ * session is part of reading that session.
+ */
+function EnrolledAgents() {
+  const { data: me } = useQuery(meQuery())
+  const isAdmin = me?.role === 'admin' || me?.role === 'owner'
+  const { data: agents } = useQuery({ ...enrolledAgentsQuery(), enabled: isConfigured() && isAdmin })
+  const revoke = useRevokeAgent()
+  const [confirming, setConfirming] = useState<{ id: string; hostname: string } | null>(null)
+
+  if (!isConfigured() || !isAdmin) return null
+
+  const doRevoke = async () => {
+    if (!confirming) return
+    const ok = await run(() => revoke.mutateAsync(confirming.id), {
+      success: ['Revoked', `${confirming.hostname} can no longer report`],
+      failure: `${confirming.hostname} was not revoked`,
+    })
+    if (ok) setConfirming(null)
+  }
+
+  return (
+    <Card padding="lg">
+      <Text component="h2" fw={600} size="md" style={{ margin: 0 }} mb="sm">
+        Enrolled servers
+      </Text>
+      {!agents || agents.length === 0 ? (
+        <Text size={FS.body} c="dimmed" lh={1.5}>
+          No server has enrolled yet. Servers set up with the gateways' shared reporter token
+          still report, but are not listed here; enroll them to give each its own credential.
+        </Text>
+      ) : (
+        <Stack gap="xs">
+          {agents.map((a) => (
+            <Group key={a.id} justify="space-between" wrap="nowrap" gap="sm">
+              <Box style={{ minWidth: 0 }}>
+                <Text ff="monospace" size="sm" fw={500} truncate>{a.hostname}</Text>
+                <Text size={FS.meta} c="dimmed">
+                  {a.revokedAt
+                    ? `Revoked ${relTime(a.revokedAt)} by ${a.revokedBy}`
+                    : `Enrolled ${relTime(a.enrolledAt)}, token by ${a.enrolledBy}`}
+                </Text>
+              </Box>
+              {a.revokedAt ? (
+                <Badge color="slate" size="sm">Revoked</Badge>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  color="red"
+                  style={{ flexShrink: 0 }}
+                  onClick={() => setConfirming({ id: a.id, hostname: a.hostname })}
+                >
+                  Revoke
+                </Button>
+              )}
+            </Group>
+          ))}
+        </Stack>
+      )}
+
+      <Modal
+        opened={confirming !== null}
+        onClose={() => setConfirming(null)}
+        title={`Revoke ${confirming?.hostname ?? ''}?`}
+      >
+        <Text size="sm" c="dimmed" mb="md">
+          Its agent keeps recording on the server, but the control plane refuses its reports
+          from now on. What it reported before is unchanged. To bring it back, make a new token
+          and run <Mono>argus-agent enroll --force</Mono> on it.
+        </Text>
+        <Group justify="flex-end">
+          <Button variant="default" size="sm" onClick={() => setConfirming(null)}>
+            Cancel
+          </Button>
+          <Button color="red" size="sm" loading={revoke.isPending} onClick={() => void doRevoke()}>
+            Revoke
+          </Button>
+        </Group>
+      </Modal>
+    </Card>
   )
 }
 
@@ -471,33 +634,15 @@ function installCommand(distro: Distro, arch: Arch, version: string): string {
 }
 
 /**
- * A systemd drop-in that adds the control-plane flags.
- *
- * The packaged unit runs the agent standalone. The token goes in agent.env,
- * which the unit already reads and which is 0600, and is referenced from the
- * unit rather than written into it: unit files are world-readable.
+ * The one command that enrolls a server. The pin lets the agent check it is
+ * talking to this control plane before it has a CA to check with.
  */
-function configureCommand(controlURL: string, mtls: boolean): string {
+function enrollCommand(controlURL: string, tok: EnrollToken | null): string {
   const url = controlURL || 'https://argus-control.example.com:8080'
-  const tls = mtls
-    ? ` \\
-    --control-ca /etc/argus/tls/ca.crt \\
-    --control-cert /etc/argus/tls/agent.crt \\
-    --control-key /etc/argus/tls/agent.key`
-    : ''
-  return `sudo mkdir -p /etc/systemd/system/argus-agent.service.d
-sudo tee /etc/systemd/system/argus-agent.service.d/control.conf >/dev/null <<'EOF'
-[Service]
-ExecStart=
-ExecStart=/usr/bin/argus-agent daemon \\
-    --shim /usr/bin/argus-agent \\
-    --socket /run/argus/collector.sock \\
-    --recordings /var/lib/argus/recordings \\
-    --state /var/lib/argus \\
-    --control-url ${url} \\
-    --control-token \${ARGUS_REPORTER_TOKEN}${tls}
-EOF
-echo 'ARGUS_REPORTER_TOKEN=PASTE-REPORTER-TOKEN' | sudo tee -a /etc/argus/agent.env >/dev/null`
+  const pin = tok?.pin ? ` \\\n    --pin ${tok.pin}` : ''
+  return `sudo argus-agent enroll \\
+    --control-url ${url}${pin} \\
+    --token ${tok?.token ?? 'MAKE-A-TOKEN-ABOVE'}`
 }
 
 /**

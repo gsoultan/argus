@@ -24,6 +24,14 @@ listen: "0.0.0.0:8080"
 database_url: "${ARGUS_DATABASE_URL}"
 console_url: ""
 
+# The web console. The package installs it; the control plane serves it on the
+# same address people sign in to, so the session cookie stays same-origin.
+# gateway_url is where browsers reach argus-gateway's web listener (terminal,
+# live view, termination) -- until it is set, the console can sign people in but cannot open a terminal.
+console:
+  dir: "/usr/share/argus/console"
+  gateway_url: ""
+
 tls:
   cert_file: "/etc/argus/tls/server.crt"
   key_file: "/etc/argus/tls/server.key"

@@ -62,6 +62,12 @@ export default defineConfig({
             urlPattern: ({ url }) => url.pathname.startsWith('/auth/'),
             handler: 'NetworkOnly',
           },
+          // Run-time settings from the control plane. A cached copy would
+          // keep an old gateway address after it was changed.
+          {
+            urlPattern: ({ url }) => url.pathname === '/console-config.js',
+            handler: 'NetworkOnly',
+          },
           // Fonts are immutable and content-hashed; a subset fetched once for
           // one operator's name should not be fetched again.
           {

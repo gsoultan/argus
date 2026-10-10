@@ -160,3 +160,50 @@ func TestRedact(t *testing.T) {
 		t.Error("Redact leaked the middle of the value")
 	}
 }
+
+// The packaged control.yaml documents references in comments. Resolving those
+// made the shipped default unable to start: a commented-out example is not a
+// secret the deployment needs.
+func TestCommentsAreNotResolved(t *testing.T) {
+	t.Setenv("ARGUS_TEST_SECRET", "s3cr3t-value")
+	in := "# from a mounted file with ${file:/run/secrets/name}.\n" +
+		"signing_secret: \"${ARGUS_TEST_SECRET}\" # not ${ARGUS_TEST_UNSET}\n" +
+		"#   password: \"${file:/etc/argus/smtp-password}\"\n" +
+		"  # indented: ${ARGUS_TEST_UNSET}\n" +
+		"url: \"http://h/#${ARGUS_TEST_SECRET}\"\n" +
+		"tag: '#${ARGUS_TEST_SECRET}'\n" +
+		"plain: a#${ARGUS_TEST_SECRET}\n"
+	out, err := Expand([]byte(in))
+	if err != nil {
+		t.Fatalf("a reference in a comment was resolved: %v", err)
+	}
+	want := "# from a mounted file with ${file:/run/secrets/name}.\n" +
+		"signing_secret: \"s3cr3t-value\" # not ${ARGUS_TEST_UNSET}\n" +
+		"#   password: \"${file:/etc/argus/smtp-password}\"\n" +
+		"  # indented: ${ARGUS_TEST_UNSET}\n" +
+		"url: \"http://h/#s3cr3t-value\"\n" +
+		"tag: '#s3cr3t-value'\n" +
+		"plain: a#s3cr3t-value\n"
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+}
+
+// The files the packages install must start with only the env file filled in.
+func TestShippedConfigsNeedOnlyTheirEnvFile(t *testing.T) {
+	for file, vars := range map[string][]string{
+		"control.yaml": {"ARGUS_DATABASE_URL", "ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
+		"gateway.yaml": {"ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
+	} {
+		for _, v := range vars {
+			t.Setenv(v, "set")
+		}
+		data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "config", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Expand(data); err != nil {
+			t.Errorf("%s: %v", file, err)
+		}
+	}
+}

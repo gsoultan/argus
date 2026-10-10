@@ -35,7 +35,8 @@ type API struct {
 	// real way to sign in, so a leftover dev token in a config file cannot walk
 	// past a password and a second factor.
 	StaticTokensDisabled bool
-	// ReporterToken authenticates gateways and agents.
+	// ReporterToken authenticates gateways. Agents enrolled since per-host
+	// credentials existed report with their own; see enrollment.go.
 	ReporterToken string
 	// AllowedOrigins for browser CORS.
 	AllowedOrigins []string
@@ -67,6 +68,16 @@ type API struct {
 
 	// Alerts tells administrators when a session starts. Nil sends nothing.
 	Alerts *notify.Dispatcher
+
+	// Enroll is what an agent is handed to trust this control plane when it
+	// enrolls. Zero means it relies on the system trust store.
+	Enroll EnrollTrust
+	// agentCreds caches per-host agent credential lookups.
+	agentCreds agentCredCache
+
+	// Console serves the built web console on the console surface. Nil serves
+	// the API alone, as before it existed. See console.go.
+	Console http.Handler
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -182,20 +193,41 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/policy", a.user(a.getPolicy))
 	mux.HandleFunc("POST /api/v1/policy", a.postPolicy)
 
+	// The console itself, for every GET no route above claims.
+	if a.Console != nil {
+		mux.Handle("GET /", a.Console)
+	}
+
+	// Agent enrollment. Minting a token and revoking an agent are admin
+	// decisions and land in the audit chain; see enrollment_routes.go.
+	mux.HandleFunc("POST /api/v1/agents/enroll-tokens", a.postEnrollToken)
+	mux.HandleFunc("GET /api/v1/agents", a.getAgentCredentials)
+	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", a.postRevokeAgent)
+
 }
 
 // registerFleet adds the routes a gateway or agent reaches.
 func (a *API) registerFleet(mux *http.ServeMux) {
-	// Reporter surface. Machine token only.
-	mux.HandleFunc("POST /api/v1/report/session", a.reporter(a.postSession))
+	// Reporter surface. Machine credentials only.
+	//
+	// Session, heartbeat and facts are what an agent sends, so they also take
+	// a per-host agent credential, bound to the host it reports for. Every
+	// other route here is a gateway's and takes the shared token alone: an
+	// agent has no business posting audit events, reading the inventory or
+	// redeeming tickets.
+	mux.HandleFunc("POST /api/v1/report/session", a.agentReporter(a.postSession))
 	// Asked by a gateway before it opens an elevated session. See
 	// authorize_routes.go for why the decision lives here and not there.
 	mux.HandleFunc("GET /api/v1/report/authorize", a.reporter(a.handleAuthorize))
 	// A gateway that retried a stranded upload, saying where it landed.
 	mux.HandleFunc("POST /api/v1/report/recording", a.reporter(a.handleRecordingStored))
-	mux.HandleFunc("POST /api/v1/report/heartbeat", a.reporter(a.postHeartbeat))
+	mux.HandleFunc("POST /api/v1/report/heartbeat", a.agentReporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
-	mux.HandleFunc("POST /api/v1/report/facts", a.reporter(a.postFacts))
+	mux.HandleFunc("POST /api/v1/report/facts", a.agentReporter(a.postFacts))
+
+	// The exchange that gives an agent its credential. Throttled like a
+	// sign-in: the token is the only thing it checks.
+	mux.HandleFunc("POST /api/v1/agents/enroll", a.limitLogin(a.postEnroll))
 	mux.HandleFunc("POST /api/v1/report/audit", a.reporter(a.postAudit))
 
 	// Shared state, so replay protection and host-key pins hold across every
@@ -441,6 +473,15 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "id and assetHostname are required")
 		return
 	}
+	if !a.mayReportFor(w, r, in.AssetHostname) {
+		return
+	}
+	if host := agentHost(r); host != "" {
+		// Said by the control plane, not the reporter: which credential
+		// vouched for this row is the part of the record a reporter must not
+		// be able to choose.
+		in.ReportedBy = "agent:" + host
+	}
 	if in.StartedAt.IsZero() {
 		in.StartedAt = time.Now().UTC()
 	}
@@ -531,6 +572,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Hostname == "" {
 		writeErr(w, http.StatusBadRequest, "hostname is required")
+		return
+	}
+	if !a.mayReportFor(w, r, in.Hostname) {
 		return
 	}
 	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
