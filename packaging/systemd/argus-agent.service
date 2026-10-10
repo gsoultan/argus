@@ -60,13 +60,21 @@ RemoveIPC=no
 # Reporting to the control plane, plus the local unix socket the shim uses.
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
-# Reading another user's authorized_keys needs DAC_READ_SEARCH. Nothing else is
-# required, so nothing else is retained.
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH
-AmbientCapabilities=CAP_DAC_READ_SEARCH
+# Reading another user's authorized_keys needs DAC_READ_SEARCH. Loading the
+# exec probe (kernel-observed commands) needs BPF and PERFMON, on kernels 5.8
+# and later; an older kernel refuses it and the agent records at PTY fidelity
+# and says so. Nothing else is retained.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON
 
-SystemCallFilter=@system-service
+# bpf and perf_event_open are outside @system-service, and the probe needs both:
+# without them the kernel killed the agent at its first bpf() call, before it
+# ever reported. A syscall the filter still refuses fails with EPERM instead of
+# killing the process -- a dead agent is not a safer agent, it is one that makes
+# sshd refuse every login on the host.
+SystemCallFilter=@system-service bpf perf_event_open
 SystemCallFilter=~@swap @reboot @obsolete
+SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 
 RuntimeDirectory=argus
