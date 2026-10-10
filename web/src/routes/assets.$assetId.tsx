@@ -6,6 +6,7 @@ import {
   IconServer2, IconShieldCheck,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
+import { ButtonLink } from '~/components/links'
 import { run } from '~/lib/notify'
 import {
   ArtefactPending, CredentialBadge, Digest, Field, FidelityBadge, HealthDot,
@@ -246,6 +247,18 @@ function AssetDetail() {
               icon={IconHistory}
               flush
               badge={<Badge size="xs" variant="light" color="slate">{history.length}</Badge>}
+              // This card shows the latest twelve; the Sessions page has the
+              // rest, already narrowed to this server.
+              action={
+                <ButtonLink
+                  size="compact-xs"
+                  variant="subtle"
+                  to="/sessions"
+                  search={{ host: asset.hostname }}
+                >
+                  All sessions on this server
+                </ButtonLink>
+              }
             >
               <Table.ScrollContainer minWidth={640} type="native">
                 <Table>
