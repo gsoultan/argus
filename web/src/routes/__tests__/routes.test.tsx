@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { renderRoute } from '~/test/renderRoute'
+import { assets, sessions } from '~/lib/seed'
 
 /**
  * Smoke coverage for every route.
@@ -178,6 +179,34 @@ describe('empty states', () => {
     fireEvent.change(search, { target: { value: 'no-such-host-anywhere' } })
     expect(await screen.findByText('No sessions match.')).toBeInTheDocument()
     expect(screen.getByText(/widen it, or clear the search/i)).toBeInTheDocument()
+  })
+})
+
+describe('sessions by server', () => {
+  /**
+   * "What happened on this server" had no direct answer: the search box
+   * matched hostnames as a substring of everything else in the row.
+   */
+  it('narrows the table and the counts to one server from the URL', async () => {
+    const host = sessions[0]!.assetHostname
+    const others = sessions.find((s) => s.assetHostname !== host)!.assetHostname
+    await renderRoute(`/sessions?host=${encodeURIComponent(host)}`)
+    expect((await screen.findAllByDisplayValue(host)).length).toBeGreaterThan(0)
+    const table = screen.getByRole('table')
+    expect(within(table).getAllByText(host.split('.')[0]!, { exact: false }).length).toBeGreaterThan(0)
+    expect(within(table).queryByText(others, { exact: false })).not.toBeInTheDocument()
+  })
+
+  it('says which server came up empty', async () => {
+    await renderRoute('/sessions?host=nowhere.example')
+    expect(await screen.findByText(/no session on nowhere\.example/i)).toBeInTheDocument()
+  })
+
+  it('is one click from a server\'s own page', async () => {
+    const asset = assets.find((a) => sessions.some((s) => s.assetId === a.id))!
+    await renderRoute(`/assets/${asset.id}`)
+    const link = await screen.findByRole('link', { name: /all sessions on this server/i })
+    expect(link.getAttribute('href')).toContain(`host=${encodeURIComponent(asset.hostname)}`)
   })
 })
 

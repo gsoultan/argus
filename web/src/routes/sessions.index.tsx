@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import {
-  Badge, Box, CloseButton, Group, SegmentedControl, Table, Text, TextInput, Tooltip,
+  Badge, Box, CloseButton, Group, SegmentedControl, Select, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconPlayerPlay, IconSearch, IconTerminal2 } from '@tabler/icons-react'
+import { IconPlayerPlay, IconSearch, IconServer2, IconTerminal2 } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import {
@@ -29,6 +29,16 @@ interface SessionSearch {
    * selected 2, just in the other direction.
    */
   since?: '24h'
+  /**
+   * One server's sessions, by hostname.
+   *
+   * The search box matched hostnames too, but as a substring of user, host,
+   * principal and IP at once, so "db-01" also caught "db-010" and anyone whose
+   * address happened to contain it. "What happened on this server" is the
+   * question people bring to this page most, and a server's own page links
+   * here with it.
+   */
+  host?: string
 }
 
 export const Route = createFileRoute('/sessions/')({
@@ -44,6 +54,7 @@ export const Route = createFileRoute('/sessions/')({
         ? (search.show as Filter)
         : undefined,
     since: search.since === '24h' ? '24h' : undefined,
+    host: typeof search.host === 'string' && search.host.length > 0 ? search.host : undefined,
   }),
   loader: ({ context }) => context.queryClient.ensureQueryData(sessionsQuery()),
 })
@@ -54,7 +65,7 @@ const LIMIT = 120
 function Sessions() {
   const navigate = useNavigate()
   const { data: sessions } = useQuery(sessionsQuery())
-  const { show, since } = Route.useSearch()
+  const { show, since, host } = Route.useSearch()
   const filter = show ?? 'all'
   const setSearchParams = (patch: Partial<SessionSearch>) =>
     void navigate({
@@ -73,11 +84,26 @@ function Sessions() {
   // the same set the table does. The Overview's "Live sessions" card disagreed
   // with the tile above it for precisely the opposite reason: it narrowed the
   // rows and badged the unnarrowed total.
+  //
+  // The server is applied here for the same reason: "Live (3)" should count
+  // this server's live sessions, not the fleet's.
   const scoped = useMemo(() => {
-    if (!sessions || since !== '24h') return sessions
-    const cutoff = now() - 24 * 60 * 60_000
-    return sessions.filter((s) => Date.parse(s.startedAt) > cutoff)
-  }, [sessions, since])
+    if (!sessions) return sessions
+    let out = sessions
+    if (since === '24h') {
+      const cutoff = now() - 24 * 60 * 60_000
+      out = out.filter((s) => Date.parse(s.startedAt) > cutoff)
+    }
+    if (host) out = out.filter((s) => s.assetHostname === host)
+    return out
+  }, [sessions, since, host])
+
+  // From the sessions themselves rather than the inventory, so a server that
+  // only ever saw direct logins, and so was never enrolled, can still be picked.
+  const hosts = useMemo(
+    () => [...new Set((sessions ?? []).map((s) => s.assetHostname))].sort(),
+    [sessions],
+  )
 
   const rows = useMemo(() => {
     let out: Session[] = scoped ?? []
@@ -100,7 +126,8 @@ function Sessions() {
   const silentCount = scoped?.filter((s) => s.state === 'active' && s.silent).length ?? 0
   const flaggedCount = scoped?.filter((s) => s.riskFlags.length > 0).length ?? 0
   const directCount = scoped?.filter((s) => s.origin === 'direct').length ?? 0
-  const filtered = filter !== 'all' || since === '24h' || search.trim().length > 0
+  const filtered =
+    filter !== 'all' || since === '24h' || Boolean(host) || search.trim().length > 0
 
   return (
     <Box>
@@ -125,6 +152,18 @@ function Sessions() {
             )
           }
         >
+          <Select
+            w={240}
+            aria-label="Server"
+            placeholder="All servers"
+            searchable
+            clearable
+            nothingFoundMessage="No sessions on a server by that name"
+            leftSection={<IconServer2 size={14} />}
+            value={host ?? null}
+            onChange={(v) => setSearchParams({ host: v ?? undefined })}
+            data={hosts}
+          />
           <TextInput
             w={300}
             placeholder="Filter by user, host, principal or client IP"
@@ -187,7 +226,9 @@ function Sessions() {
                 filtered
                   ? filter === 'silent'
                     ? 'Every active session has reported in recently. Nothing here is a good result.'
-                    : since === '24h'
+                    : host
+                      ? `No session on ${host} fits this filter. Clear the server to search every server.`
+                      : since === '24h'
                       ? 'Nothing in the last 24 hours fits this filter. Remove the window to search the whole log.'
                       : 'Nothing in the log fits this filter. Widen it, or clear the search to see everything.'
                   : 'No session has been brokered or reported yet. One appears here as soon as somebody connects.'
