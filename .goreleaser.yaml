@@ -88,6 +88,10 @@ archives:
       - README.md
       - src: packaging/systemd/*.service
         dst: systemd
+      - src: packaging/systemd/*.timer
+        dst: systemd
+      - src: docs/*
+        dst: docs
       - src: packaging/config/*
         dst: config
 
@@ -173,6 +177,11 @@ nfpms:
     contents:
       - src: packaging/systemd/argus-control.service
         dst: /lib/systemd/system/argus-control.service
+      # Installed, not enabled: `systemctl enable --now argus-backup.timer`.
+      - src: packaging/systemd/argus-backup.service
+        dst: /lib/systemd/system/argus-backup.service
+      - src: packaging/systemd/argus-backup.timer
+        dst: /lib/systemd/system/argus-backup.timer
       - src: packaging/config/control.yaml
         dst: /etc/argus/control.yaml
         type: config|noreplace

@@ -283,6 +283,22 @@ jobs:
   packaging:
     name: Packaging
     runs-on: ubuntu-latest
+    services:
+      # For the clean-install check below: a control plane that installs but
+      # cannot start against a real database has not been tested. 16 to
+      # match the runner's postgresql-client: pg_dump refuses a newer server.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: argus
+          POSTGRES_PASSWORD: argus
+          POSTGRES_DB: argus
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U argus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -341,6 +357,83 @@ jobs:
           sudo systemd-analyze verify /lib/systemd/system/argus-agent.service
           argus-agent scan --shim /usr/bin/argus-agent || true
 
+      - name: Install the control plane and gateway, start them, enroll an agent, back up
+        # The first production install is the wrong place to find out that
+        # only the agent package was ever installed. This does what
+        # docs/install.md tells an operator to do, on a clean runner, from the
+        # packages this build produced.
+        env:
+          PGURL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
+        run: |
+          set -euo pipefail
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client
+          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-gateway*linux_amd64.deb)
+          argus-control -version
+          argus-gateway -version || argus-gateway --version || true
+
+          for u in argus-control.service argus-gateway.service argus-backup.service argus-backup.timer; do
+            sudo systemd-analyze verify "/lib/systemd/system/$u"
+          done
+          [ "$(sudo stat -c '%a %U:%G' /var/backups/argus)" = "700 argus:argus" ]
+          [ "$(sudo stat -c '%a %U:%G' /etc/argus/control.env)" = "600 root:argus" ]
+          # Nothing starts on install.
+          ! systemctl is-active --quiet argus-control
+          ! systemctl is-enabled --quiet argus-backup.timer
+
+          # Certificates. A real install brings its own; see docs/install.md.
+          tmp=$(mktemp -d)
+          go run ./scripts/tools/gencerts "$tmp"
+          sudo install -o root -g argus -m 0640 "$tmp"/ca.crt "$tmp"/server.crt /etc/argus/tls/
+          sudo install -o root -g argus -m 0640 "$tmp"/server.key /etc/argus/tls/
+
+          secret=$(openssl rand -hex 32)
+          printf 'ARGUS_DATABASE_URL=%s\nARGUS_SIGNING_SECRET=%s\nARGUS_REPORTER_TOKEN=%s\n' \
+            "$PGURL" "$secret" "$(openssl rand -hex 32)" | sudo tee /etc/argus/control.env >/dev/null
+
+          sudo systemctl enable --now argus-control
+          for i in $(seq 1 30); do
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz && break
+            sleep 1
+          done
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz || {
+            sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
+
+          # The first administrator, as the guide says.
+          printf 'ci-admin-password-0123456789\n' | sudo sh -c \
+            'set -a; . /etc/argus/control.env; set +a; argus-control -config /etc/argus/control.yaml users add admin@ci.example --role admin'
+
+          # Enroll this runner's agent with a token from the console API.
+          c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
+          $c -X POST https://localhost:8080/auth/password \
+            -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
+          tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
+          sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
+          # Spent: the same token must not enroll a second time.
+          if sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" \
+               --token "$tok" --state "$tmp/again" --hostname other; then
+            echo "::error::a single-use enrollment token was accepted twice"; exit 1
+          fi
+          sudo systemctl start argus-agent
+          for i in $(seq 1 30); do
+            n=$(psql "$PGURL" -tAc "SELECT count(*) FROM agents WHERE lower(hostname) = lower('$(hostname)')")
+            [ "$n" = 1 ] && break
+            sleep 1
+          done
+          [ "$n" = 1 ] || { sudo journalctl -u argus-agent --no-pager | tail -30
+            echo "::error::the enrolled agent never reported"; exit 1; }
+
+          # A backup through the shipped unit, then proof that it restores.
+          sudo systemctl start argus-backup.service
+          sudo journalctl -u argus-backup --no-pager | tail -10
+          run=$(sudo ls /var/backups/argus | grep -E '^[0-9]{8}T' | tail -1)
+          sudo test -f "/var/backups/argus/$run/manifest.json"
+          psql "$PGURL" -c 'CREATE DATABASE argus_drill'
+          sudo sh -c 'set -a; . /etc/argus/control.env; set +a; argus-control \
+            -config /etc/argus/control.yaml backup verify \
+            -scratch-db "postgres://argus:argus@localhost:5433/argus_drill?sslmode=disable" \
+            /var/backups/argus/'"$run"
+
       - name: Confirm the shipped config does not expose the SSH port
         # A shipped default reaches every install that never edits the file,
         # which is most of them. The browser terminal is the intended way in
@@ -367,5 +460,6 @@ jobs:
             grep -q '^ProtectSystem=strict' "$unit"
             grep -q '^SystemCallArchitectures=native' "$unit"
             # notify types would hang: none of these implement sd_notify.
-            grep -q '^Type=exec' "$unit"
+            # oneshot is for units a timer runs to completion (backups).
+            grep -Eq '^Type=(exec|oneshot)$' "$unit"
           done

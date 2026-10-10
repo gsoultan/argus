@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly Argus backup
+Documentation=https://github.com/gsoultan/argus/blob/main/docs/install.md#backups
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+# Spread a fleet of control planes, and catch up after a night powered off.
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

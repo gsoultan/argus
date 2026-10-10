@@ -156,6 +156,11 @@ func run() error {
 		return runAuditVerify(configPath)
 	}
 
+	// `argus-control backup run|verify`: see backup.go.
+	if flag.NArg() >= 1 && flag.Arg(0) == "backup" {
+		return runBackup(configPath, flag.Args()[1:])
+	}
+
 	// `argus-control users add <email>` creates a local account. A deployment
 	// needs one before anyone can sign in, and seeding a default administrator
 	// with a known password would be shipping a backdoor.

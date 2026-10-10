@@ -18,6 +18,11 @@ install -d -o root -g argus -m 0750 /etc/argus/tls
 install -d -o root -g argus -m 0750 /etc/argus/ssh
 install -d -o argus -g argus -m 0700 /var/lib/argus
 install -d -o root -g root  -m 0700 /var/lib/argus/recordings
+# Backups hold the audit chain and every recording. Only the control plane's
+# account writes them; nobody else reads them.
+if [ -x /usr/bin/argus-control ]; then
+    install -d -o argus -g argus -m 0700 /var/backups/argus
+fi
 
 # Config may name a database, an issuer and internal hostnames. The env files
 # hold credentials outright.
@@ -50,6 +55,8 @@ first.
   2. Fill in the CHANGE-ME values in /etc/argus/*.env
   3. Review /etc/argus/*.yaml
   4. systemctl enable --now argus-<component>
+  5. On the control plane: systemctl enable --now argus-backup.timer
+     (needs pg_dump; prove a backup restores with `argus-control backup verify`)
 
 The agent additionally needs sshd configured to record sessions:
 

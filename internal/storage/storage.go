@@ -214,3 +214,26 @@ func LocalPath(dir, sessionID string) string {
 func LocalPathExt(dir, sessionID, ext string) string {
 	return filepath.Join(dir, sessionID+ext)
 }
+
+// Object is one stored recording, as a listing names it.
+type Object struct {
+	Key  string
+	Size int64
+}
+
+// List returns every object in the bucket. A backup copies all of them,
+// including any the database no longer names: an orphan is harmless to keep,
+// and deciding it is safe to drop is not a backup's call.
+func (c *Client) List(ctx context.Context) ([]Object, error) {
+	if c == nil {
+		return nil, ErrNotConfigured
+	}
+	var out []Object
+	for info := range c.mc.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{Recursive: true}) {
+		if info.Err != nil {
+			return nil, fmt.Errorf("list %s: %w", c.bucket, info.Err)
+		}
+		out = append(out, Object{Key: info.Key, Size: info.Size})
+	}
+	return out, nil
+}
