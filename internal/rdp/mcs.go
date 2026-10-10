@@ -65,12 +65,22 @@ func berTag(tag []byte, payload []byte) []byte {
 	return append(out, payload...)
 }
 
+// berInteger encodes a non-negative integer in the fewest bytes BER allows.
+//
+// Minimal matters, not just tidiness: anything from 0x8000 up used to go out as
+// five bytes, and FreeRDP reads at most four, so it refused the MCS Connect
+// Initial over the 65535 in maxMCSPDUsize. Windows accepted it, which is how it
+// went unnoticed.
 func berInteger(v int) []byte {
 	switch {
 	case v < 0x80:
 		return berTag([]byte{0x02}, []byte{byte(v)})
 	case v < 0x8000:
 		return berTag([]byte{0x02}, []byte{byte(v >> 8), byte(v)})
+	case v < 0x800000:
+		return berTag([]byte{0x02}, []byte{byte(v >> 16), byte(v >> 8), byte(v)})
+	case v < 0x80000000:
+		return berTag([]byte{0x02}, []byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
 	default:
 		return berTag([]byte{0x02}, []byte{0x00, byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
 	}
