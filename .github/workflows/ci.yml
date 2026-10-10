@@ -393,7 +393,9 @@ jobs:
           tmp=$(mktemp -d)
           go run ./scripts/tools/gencerts "$tmp"
           sudo install -o root -g argus -m 0640 "$tmp"/ca.crt "$tmp"/server.crt /etc/argus/tls/
-          sudo install -o root -g argus -m 0640 "$tmp"/server.key /etc/argus/tls/
+          # Private keys: readable by the service account and nobody else, or
+          # the control plane refuses to start.
+          sudo install -o argus -g argus -m 0600 "$tmp"/server.key /etc/argus/tls/
 
           secret=$(openssl rand -hex 32)
           printf 'ARGUS_DATABASE_URL=%s\nARGUS_SIGNING_SECRET=%s\nARGUS_REPORTER_TOKEN=%s\n' \

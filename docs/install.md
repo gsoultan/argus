@@ -67,6 +67,18 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
   -extfile <(printf "subjectAltName=DNS:argus.example.com\nextendedKeyUsage=serverAuth,clientAuth")
 ```
 
+Install them so the service account can read the private keys and nobody else
+can. The control plane and gateway refuse to start with a key that group or
+others can read:
+
+```sh
+sudo install -o root  -g argus -m 0640 server.crt ca.crt /etc/argus/tls/
+sudo install -o argus -g argus -m 0600 server.key /etc/argus/tls/
+# gateway only:
+sudo install -o root  -g argus -m 0640 client.crt /etc/argus/tls/
+sudo install -o argus -g argus -m 0600 client.key /etc/argus/tls/
+```
+
 Agents do not need a certificate. They prove who they are with a per-server
 credential (step 6), and they learn to trust an internal CA during enrollment.
 
