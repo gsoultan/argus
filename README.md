@@ -137,6 +137,10 @@ so a half-built backend never breaks `make dev` for someone working on the UI.
 
 ## Installing
 
+**[docs/install.md](docs/install.md) is the production install, step by step:**
+certificates, the database, the first administrator, backups, the gateway,
+enrolling agents and upgrading. What follows is the reference behind it.
+
 Linux only — the gateway and control plane are servers, and the agent has to
 read another user's `authorized_keys` and own recordings the recorded user
 cannot touch. None of that means anything elsewhere.
