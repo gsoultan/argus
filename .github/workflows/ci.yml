@@ -372,7 +372,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client
-          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-gateway*linux_amd64.deb)
+          # One host carrying all of them, as a small deployment does: no two
+          # packages may own the same file.
+          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-gateway*linux_amd64.deb) \
+            $(ls dist/argus-verify*linux_amd64.deb)
+          argus-verify -h >/dev/null 2>&1 || [ -x /usr/bin/argus-verify ]
           argus-control -version
           argus-gateway -version || argus-gateway --version || true
 

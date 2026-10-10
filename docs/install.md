@@ -11,6 +11,7 @@ until it passes.
 | Control plane and console | `argus-control` | one server (two behind a load balancer if you need it) | `8080/tcp` HTTPS: the console, the API, and what gateways and agents report to |
 | Gateway | `argus-gateway` | one or more bastion servers | `8081/tcp` HTTPS + WebSocket: the browser terminal. `2222/tcp` SSH, loopback until you open it |
 | Agent | `argus-agent` | every server people log in to | a local Unix socket only |
+| Verifier | `argus-verify` | gateways, the control plane, and any machine an auditor checks recordings on | nothing; it is a command |
 
 Browsers need to reach `8080` and `8081`. Gateways and agents need to reach
 `8080`. Gateways need to reach port 22 on the servers they front. Nothing needs
@@ -72,7 +73,7 @@ credential (step 6), and they learn to trust an internal CA during enrollment.
 ## 3. Control plane
 
 ```sh
-sudo apt install ./argus-control_<version>_linux_amd64.deb   # or rpm -i / apk add
+sudo apt install ./argus-control_<version>_linux_amd64.deb ./argus-verify_<version>_linux_amd64.deb   # or rpm -i / apk add
 ```
 
 Create the database and a role that owns it:
@@ -158,7 +159,7 @@ covers mistakes, not the loss of the server.
 ## 5. Gateway
 
 ```sh
-sudo apt install ./argus-gateway_<version>_linux_amd64.deb
+sudo apt install ./argus-gateway_<version>_linux_amd64.deb ./argus-verify_<version>_linux_amd64.deb
 sudo ssh-keygen -t ed25519 -N '' -f /etc/argus/ssh/gateway_host_key
 sudo chown argus:argus /etc/argus/ssh/gateway_host_key
 ```

@@ -146,14 +146,15 @@ read another user's `authorized_keys` and own recordings the recorded user
 cannot touch. None of that means anything elsewhere.
 
 Releases publish `.deb`, `.rpm` and `.apk` for amd64 and arm64, built by
-GoReleaser in CI. Three packages, because the agent goes on every managed host
-while the gateway and control plane go on a handful of servers:
+GoReleaser in CI. Separate packages, because the agent goes on every managed
+host while the gateway and control plane go on a handful of servers:
 
 | Package | Installed on |
 |---|---|
 | `argus-agent` | every managed host |
 | `argus-gateway` | the bastion servers |
 | `argus-control` | the control plane servers |
+| `argus-verify` | anywhere recordings are checked: gateways, the control plane, an auditor's machine |
 
 ```sh
 sudo dpkg -i argus-agent_<version>_linux_amd64.deb    # Debian / Ubuntu

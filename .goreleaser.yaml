@@ -134,17 +134,35 @@ nfpms:
       apk:
         dependencies: [openssh]
 
+  # ── Verifier: wherever recordings are checked ──────────────────────────────
+  # Its own package because the gateway and the control plane both want it and
+  # often share a host: two packages owning /usr/bin/argus-verify cannot both
+  # be installed. It has no service and no config, so an auditor can install
+  # it on a workstation that runs nothing else.
+  - id: argus-verify
+    package_name: argus-verify
+    ids: [argus-verify]
+    vendor: Argus
+    homepage: https://github.com/gsoultan/argus
+    maintainer: Argus Maintainers <noreply@example.com>
+    description: |
+      Argus recording verifier.
+      Checks a session recording's hash chain against its recorded head,
+      independently of the gateway and control plane that produced it.
+    license: Proprietary
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+
   # ── Gateway ────────────────────────────────────────────────────────────────
   - id: argus-gateway
     package_name: argus-gateway
-    ids: [argus-gateway, argus-verify]
+    ids: [argus-gateway]
     vendor: Argus
     homepage: https://github.com/gsoultan/argus
     maintainer: Argus Maintainers <noreply@example.com>
     description: |
       Argus SSH gateway.
-      Brokers, records and authorises privileged SSH sessions. Includes
-      argus-verify for checking a recording's hash chain independently.
+      Brokers, records and authorises privileged SSH sessions.
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
@@ -167,14 +185,14 @@ nfpms:
   # ── Control plane ──────────────────────────────────────────────────────────
   - id: argus-control
     package_name: argus-control
-    ids: [argus-control, argus-verify]
+    ids: [argus-control]
     vendor: Argus
     homepage: https://github.com/gsoultan/argus
     maintainer: Argus Maintainers <noreply@example.com>
     description: |
       Argus control plane.
       System of record for sessions, assets, agent liveness and the
-      hash-chained audit log. Includes argus-verify.
+      hash-chained audit log.
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
