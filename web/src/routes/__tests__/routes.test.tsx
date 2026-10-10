@@ -195,10 +195,28 @@ describe('navigation', () => {
 })
 
 describe('add a server', () => {
-  it('gives the install commands with the control plane flags filled in', async () => {
+  it('gives the install commands, then an enroll command', async () => {
     await renderRoute('/assets/add')
     expect(await screen.findByText(/sudo dpkg -i argus-agent_/)).toBeInTheDocument()
-    expect(screen.getByText(/--control-token \$\{ARGUS_REPORTER_TOKEN\}/)).toBeInTheDocument()
+    expect(screen.getByText(/sudo argus-agent enroll/)).toBeInTheDocument()
+  })
+
+  /**
+   * This page used to tell the operator to copy the gateways' reporter token
+   * onto every server, which let root on any server report as any other. The
+   * shared token must not come back as a step here.
+   */
+  it('never asks for the shared reporter token', async () => {
+    await renderRoute('/assets/add')
+    await screen.findByText(/sudo argus-agent enroll/)
+    expect(document.body.textContent).not.toMatch(/REPORTER[-_]TOKEN|--control-token/)
+  })
+
+  /** With no control plane there is nothing to mint a token on, and it says so. */
+  it('does not offer a token it cannot make', async () => {
+    await renderRoute('/assets/add')
+    expect(await screen.findByText(/cannot make\s+an enrollment token/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /make a token/i })).not.toBeInTheDocument()
   })
 
   /**

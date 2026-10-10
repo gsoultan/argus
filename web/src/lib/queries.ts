@@ -2,9 +2,13 @@ import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query
 import { api, type AssetQuery } from '~/lib/api'
 import {
   coverage as fetchCoverage,
+  createEnrollToken,
   discoveredHosts,
   enrolHost,
+  enrolledAgents,
+  revokeAgent,
   ignoreHost,
+  isConfigured,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, Session } from '~/types/domain'
 
@@ -125,6 +129,26 @@ export function useEnrolHost() {
   return useMutation({
     mutationFn: (hostname: string) => enrolHost(hostname),
     onSuccess: () => invalidateCoverage(qc),
+  })
+}
+
+export function useCreateEnrollToken() {
+  return useMutation({ mutationFn: (hostname: string) => createEnrollToken(hostname) })
+}
+
+export function enrolledAgentsQuery() {
+  return queryOptions({
+    queryKey: ['enrolled-agents'],
+    queryFn: enrolledAgents,
+    enabled: isConfigured(),
+  })
+}
+
+export function useRevokeAgent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => revokeAgent(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['enrolled-agents'] }),
   })
 }
 

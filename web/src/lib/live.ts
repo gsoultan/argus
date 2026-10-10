@@ -525,6 +525,40 @@ export async function enrolHost(hostname: string): Promise<{ assetId: string }> 
   )
 }
 
+/** A single-use token for one agent install. The secret is shown once. */
+export interface EnrollToken {
+  id: string
+  token: string
+  hostname?: string
+  expiresAt: string
+  /** sha256 pin of the control plane's key; absent behind a TLS proxy. */
+  pin?: string
+}
+
+/** Makes an enrollment token. Admin or owner; audited by the control plane. */
+export async function createEnrollToken(hostname: string): Promise<EnrollToken> {
+  return post<EnrollToken>('/api/v1/agents/enroll-tokens', hostname ? { hostname } : {})
+}
+
+/** An enrolled agent's credential, without the secret. */
+export interface EnrolledAgent {
+  id: string
+  hostname: string
+  enrolledAt: string
+  enrolledBy: string
+  revokedAt?: string
+  revokedBy?: string
+}
+
+export async function enrolledAgents(): Promise<EnrolledAgent[]> {
+  return get<EnrolledAgent[]>('/api/v1/agents')
+}
+
+/** Withdraws one agent's credential. Its past reports are untouched. */
+export async function revokeAgent(id: string): Promise<void> {
+  await post(`/api/v1/agents/${encodeURIComponent(id)}/revoke`, {})
+}
+
 /** Records a deliberate decision not to manage a host. The note is required. */
 export async function ignoreHost(hostname: string, note: string): Promise<void> {
   await post(`/api/v1/discovered/${encodeURIComponent(hostname)}/ignore`, { note })
