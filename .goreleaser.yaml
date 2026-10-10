@@ -152,6 +152,13 @@ nfpms:
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
+    # Releases up to 0.1.x shipped this binary inside argus-gateway and
+    # argus-control. Replaces lets dpkg hand the file over on upgrade instead
+    # of refusing it. Not for rpm, where it would mean Obsoletes and remove
+    # the gateway; there, upgrade the packages in one transaction.
+    overrides:
+      deb:
+        replaces: [argus-gateway, argus-control]
 
   # ── Gateway ────────────────────────────────────────────────────────────────
   - id: argus-gateway

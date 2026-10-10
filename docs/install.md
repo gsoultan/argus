@@ -228,7 +228,11 @@ sudo apt install ./argus-control_<new>_linux_amd64.deb
 sudo systemctl restart argus-control
 ```
 
-Upgrade the control plane first, then gateways, then agents. Migrations run when
+Upgrade the control plane first, then gateways, then agents. Since this
+release `argus-verify` is its own package; on a host upgraded from 0.1.x,
+install it in the same command as the server package, for example
+`sudo apt install ./argus-gateway_<new>_linux_amd64.deb ./argus-verify_<new>_linux_amd64.deb`
+(or one `rpm -U` with both files). Migrations run when
 the control plane starts and only ever add; take a backup first anyway
 (`systemctl start argus-backup.service`).
 
