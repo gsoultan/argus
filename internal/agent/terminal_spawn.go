@@ -64,6 +64,9 @@ type shellProc interface {
 	// Hangup ends the session; a shell still running after hangupWait is
 	// killed.
 	Hangup()
+	// Summary is what started the shell said about how it ended, after
+	// Wait; empty when there is nothing to add.
+	Summary() string
 }
 
 type loginAccount struct {
@@ -161,7 +164,8 @@ func spawnDirect(a loginAccount, tty *os.File, actor string) (shellProc, error) 
 	return &directProc{cmd: cmd, hold: hold, done: make(chan struct{})}, nil
 }
 
-func (p *directProc) Pid() int { return p.cmd.Process.Pid }
+func (p *directProc) Pid() int        { return p.cmd.Process.Pid }
+func (p *directProc) Summary() string { return "" }
 
 func (p *directProc) Release() error {
 	_, err := p.hold.Write([]byte("\n"))
@@ -202,6 +206,8 @@ const sessionFifoDir = "/run/argus/sessions"
 type systemdProc struct {
 	unit, fifo string
 	pid        int
+	// summary is what systemd-run said, for the log.
+	summary string
 
 	code int
 	done chan struct{}
@@ -228,10 +234,11 @@ func spawnSystemd(a loginAccount, tty *os.File, actor string) (shellProc, error)
 		return nil, err
 	}
 
-	// Not --quiet: the summary systemd-run prints when the unit finishes is
-	// where the shell's exit status is. Its own exit code does not carry it
-	// on every systemd version (255 returns 1 for any failure).
-	run := exec.Command("systemd-run", "--wait", "--collect",
+	// Not --collect: a unit that failed stays loaded until reset-failed,
+	// which is what lets its exit status be read once systemd-run returns.
+	// systemd-run's own exit code does not carry it on every version (255
+	// returned 1 for a shell that exited 7).
+	run := exec.Command("systemd-run", "--wait",
 		"--service-type=exec", "--unit="+unit,
 		"--uid="+a.name,
 		// A login: PAM account and session, limits, a logind session.
@@ -253,10 +260,18 @@ func spawnSystemd(a loginAccount, tty *os.File, actor string) (shellProc, error)
 	p := &systemdProc{unit: unit, fifo: fifo, done: make(chan struct{})}
 	go func() {
 		err := run.Wait()
+		p.summary = strings.TrimSpace(stderr.String())
 		p.code = exitCode(err)
-		if code, ok := unitExitStatus(stderr.String()); ok {
+		if code, ok := unitExitStatus(p.summary); ok {
 			p.code = code
 		}
+		out, _ := exec.Command("systemctl", "show", "--property=ExecMainCode,ExecMainStatus",
+			unit).Output()
+		if code, ok := execMainStatus(string(out)); ok {
+			p.code = code
+		}
+		// A failed unit stays until this; a successful one is gone already.
+		_ = exec.Command("systemctl", "reset-failed", unit).Run()
 		_ = os.Remove(fifo)
 		close(p.done)
 	}()
@@ -321,6 +336,11 @@ func (p *systemdProc) Wait() int {
 	return p.code
 }
 
+func (p *systemdProc) Summary() string {
+	<-p.done
+	return p.summary
+}
+
 // Hangup stops the unit: SIGTERM and SIGHUP to everything in it, then
 // SIGKILL after its stop timeout, which is hangupWait.
 func (p *systemdProc) Hangup() {
@@ -350,6 +370,37 @@ func unitExitStatus(summary string) (int, bool) {
 	// killed or dumped: by a signal, reported by name.
 	if sig := unix.SignalNum("SIG" + status); sig != 0 {
 		return 128 + int(sig), true
+	}
+	return 0, false
+}
+
+// execMainStatus reads `systemctl show -p ExecMainCode,ExecMainStatus`.
+// The code is the waitid one: 1 exited, 2 killed, 3 dumped; the status is
+// the exit status or the signal. A unit already collected shows code 0,
+// which only a successful one is.
+func execMainStatus(show string) (int, bool) {
+	var code, status = -1, -1
+	for _, line := range strings.Split(show, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			continue
+		}
+		switch k {
+		case "ExecMainCode":
+			code = n
+		case "ExecMainStatus":
+			status = n
+		}
+	}
+	switch {
+	case code == 1 && status >= 0:
+		return status, true
+	case (code == 2 || code == 3) && status > 0:
+		return 128 + status, true
 	}
 	return 0, false
 }

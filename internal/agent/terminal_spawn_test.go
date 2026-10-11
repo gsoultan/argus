@@ -23,3 +23,22 @@ func TestTheShellsExitStatusIsReadFromTheUnitSummary(t *testing.T) {
 		}
 	}
 }
+
+func TestTheShellsExitStatusIsReadFromTheUnit(t *testing.T) {
+	for _, c := range []struct {
+		show string
+		want int
+		ok   bool
+	}{
+		{"ExecMainCode=1\nExecMainStatus=7\n", 7, true},
+		{"ExecMainCode=2\nExecMainStatus=1\n", 129, true},
+		// Collected: only a successful unit is, and nothing can be said.
+		{"ExecMainCode=0\nExecMainStatus=0\n", 0, false},
+		{"", 0, false},
+	} {
+		got, ok := execMainStatus(c.show)
+		if got != c.want || ok != c.ok {
+			t.Errorf("%q: got %d %v, want %d %v", c.show, got, ok, c.want, c.ok)
+		}
+	}
+}

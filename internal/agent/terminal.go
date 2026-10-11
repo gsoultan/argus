@@ -217,6 +217,10 @@ func (t *tunnelShell) run(st tunnel.Stream, log *slog.Logger) {
 	}()
 
 	code := t.proc.Wait()
+	if sum := t.proc.Summary(); sum != "" {
+		log.Info("tunnel: session unit ended", "session", t.rec.ID(), "exit", code,
+			"systemd", sum)
+	}
 	t.exited.Store(true)
 	// The shell is gone; its terminal may still hold output it wrote last.
 	// A shell that left children holding the terminal open is hung up.
