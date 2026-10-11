@@ -11,7 +11,7 @@ until it passes.
 | Control plane and console | `argus-control` | one server (two behind a load balancer if you need it) | `8080/tcp` HTTPS: the console, the API, and what gateways and agents report to |
 | Gateway | `argus-gateway` | one or more bastion servers | `8081/tcp` HTTPS + WebSocket: the browser terminal. `2222/tcp` SSH, loopback until you open it |
 | Agent | `argus-agent` | every server people log in to | a local Unix socket only |
-| Verifier | `argus-verify` | gateways, the control plane, and any machine an auditor checks recordings on | nothing; it is a command |
+| Verifier | `argus-verify` | gateways, the control plane, and any machine an auditor checks recordings on, including macOS and Windows | nothing; it is a command |
 
 Browsers need to reach `8080` and `8081`. Gateways and agents need to reach
 `8080/tcp`; agents also use `8080/udp` when it is open (see below). Gateways
@@ -42,6 +42,25 @@ sha256sum -c checksums.txt --ignore-missing
 ```
 
 Both commands must succeed. A package that fails either is not ours.
+
+### macOS and Windows
+
+The control plane, the gateway and `argus-verify` are also released for macOS
+and Windows, as `argus_<version>_darwin_<arch>.tar.gz` and
+`argus_<version>_windows_<arch>.zip`. These are archives, not packages: nothing
+installs a service for you, and the console comes in the archive's `console`
+folder, so set `console.dir` in `control.yaml` to where you unpacked it. Use
+`shasum -a 256 -c` on macOS, or `Get-FileHash` in PowerShell, in place of
+`sha256sum`.
+
+On Windows, a private key file (TLS, CA, vaulted credentials) must be readable
+only by its owner, the account Argus runs as, SYSTEM and Administrators, just
+as on Linux it must be mode `600`. A key copied under `C:\ProgramData`
+inherits read access for every local user and is refused at startup; the error
+gives the `icacls` command that fixes it.
+
+The agent is Linux-only for now. macOS and Windows hosts cannot be recorded
+yet.
 
 ## 2. Certificates
 

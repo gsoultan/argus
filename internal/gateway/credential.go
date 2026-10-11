@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gsoultan/argus/internal/secrets"
 )
 
 // ErrNoCredential reports that no credential is vaulted for a principal.
@@ -32,16 +34,14 @@ func credentialFor(asset Asset, principal string) (string, error) {
 	}
 
 	path := filepath.Join(asset.CredentialDir, principal)
-	info, err := os.Stat(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("%w: %s", ErrNoCredential, path)
 	}
 	// A password every local account can read is not a vaulted credential. This
 	// is the kind of thing that is set up correctly and then loosened by a
 	// deployment script nobody re-reads.
-	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("credential %s is mode %04o; it must not be readable "+
-			"by group or others", path, info.Mode().Perm())
+	if err := secrets.CheckPrivate(path); err != nil {
+		return "", fmt.Errorf("credential refused: %w", err)
 	}
 
 	data, err := os.ReadFile(path)
