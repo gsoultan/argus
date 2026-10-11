@@ -223,13 +223,15 @@ Start the agent before adding the `sshd_config` lines. Once they are in, every
 login goes through the agent, and a login is refused while the agent is not
 running.
 
-### What the agent records
+### Which logins are recorded
 
-Each server's page in the console has **What the agent records**:
+Each server's page in the console has **Which logins are recorded**. Logins
+through Argus are always recorded; this decides what happens when someone
+logs in to the server directly, skipping Argus:
 
-- **Every login** (the default): direct sshd logins are recorded too, and
-  flagged as bypasses.
-- **Argus sessions only**: a login that does not come through Argus is let
+- **Record logins through Argus and direct logins** (the default): the direct
+  login is recorded too, and flagged as a bypass.
+- **Record logins through Argus only**: the direct login is let
   through unrecorded. It is still written to the audit log as a critical
   `session.direct_unrecorded` entry with the account, source address and time,
   and the user is told on login that it is not recorded.

@@ -1,4 +1,4 @@
-import { Alert, SegmentedControl, Stack, Text } from '@mantine/core'
+import { Alert, Radio, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle, IconVideo } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Field } from '~/components/primitives'
@@ -7,9 +7,18 @@ import { useSetRecordingScope } from '~/lib/queries'
 import { FS } from '~/theme'
 import type { Asset, RecordingScope } from '~/types/domain'
 
-const OPTIONS: { value: RecordingScope; label: string }[] = [
-  { value: 'every_login', label: 'Every login' },
-  { value: 'argus_only', label: 'Argus sessions only' },
+const OPTIONS: { value: RecordingScope; label: string; description: string }[] = [
+  {
+    value: 'every_login',
+    label: 'Record logins through Argus and direct logins',
+    description: 'Someone who logs in with their own key, skipping Argus, is recorded too.',
+  },
+  {
+    value: 'argus_only',
+    label: 'Record logins through Argus only',
+    description:
+      'Someone who skips Argus gets in unrecorded. The audit log still says who, from where and when.',
+  },
 ]
 
 /**
@@ -58,11 +67,11 @@ export function RecordingScopeCard({ asset, canEdit }: { asset: Asset; canEdit: 
       success:
         scope === 'argus_only'
           ? [
-              'Recording Argus sessions only',
+              'Recording logins through Argus only',
               `Direct logins to ${asset.hostname} will be let through unrecorded and reported as bypasses once the agent checks in.`,
             ]
           : [
-              'Recording every login',
+              'Recording logins through Argus and direct logins',
               `Direct logins to ${asset.hostname} will be recorded again once the agent checks in.`,
             ],
     })
@@ -70,20 +79,28 @@ export function RecordingScopeCard({ asset, canEdit }: { asset: Asset; canEdit: 
 
   return (
     <SectionCard
-      title="What the agent records"
+      title="Which logins are recorded"
       icon={IconVideo}
-      description="Sessions opened through Argus are always recorded. This decides what happens to a login that reaches the server some other way."
+      description="Logins through Argus are always recorded. This decides what happens when someone logs in to the server directly, skipping Argus."
     >
       <Stack gap="sm">
-        <SegmentedControl
+        <Radio.Group
           aria-label="Which logins the agent records"
-          size="xs"
-          fullWidth
-          data={OPTIONS}
           value={value}
           onChange={onChange}
-          disabled={!canEdit || set.isPending}
-        />
+        >
+          <Stack gap="xs">
+            {OPTIONS.map((o) => (
+              <Radio
+                key={o.value}
+                value={o.value}
+                label={o.label}
+                description={o.description}
+                disabled={!canEdit || set.isPending}
+              />
+            ))}
+          </Stack>
+        </Radio.Group>
         {value === 'argus_only' ? (
           <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />} p="xs">
             <Text size={FS.micro} lh={1.5}>
@@ -93,7 +110,7 @@ export function RecordingScopeCard({ asset, canEdit }: { asset: Asset; canEdit: 
           </Alert>
         ) : (
           <Text size={FS.micro} c="dimmed" lh={1.5}>
-            Direct logins are recorded too, and flagged as bypasses.
+            Direct logins are recorded, and flagged in the audit log as skipping Argus.
           </Text>
         )}
         <Field label="On the server">

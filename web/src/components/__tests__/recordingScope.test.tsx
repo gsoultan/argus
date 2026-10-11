@@ -24,7 +24,7 @@ describe('scopeConfirmation', () => {
       ...base, recordingScope: 'argus_only', agentRecordingScope: 'every_login',
     })
     expect(c.applied).toBe(false)
-    expect(c.text).toContain('Every login')
+    expect(c.text).toContain('direct logins')
   })
 
   it('confirms only when the agent reports the saved value', () => {
@@ -52,6 +52,6 @@ describe('RecordingScopeCard', () => {
   it('states what Argus-only gives up', () => {
     ui(<RecordingScopeCard asset={{ ...base, recordingScope: 'argus_only' }} canEdit />)
     expect(screen.getByText(/no replay/i)).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Argus sessions only' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /through Argus only/ })).toBeChecked()
   })
 })
