@@ -69,6 +69,13 @@ export type AgentState = 'healthy' | 'stale' | 'absent'
  */
 export type BypassPosture = 'enforced' | 'monitored' | 'open'
 
+/**
+ * Which logins the agent on a host records. `every_login` records direct sshd
+ * logins too; `argus_only` lets them through unrecorded and reports each one
+ * in the audit chain as a bypass.
+ */
+export type RecordingScope = 'every_login' | 'argus_only'
+
 /** Which protocol reaches an asset. Absent means SSH. */
 export type AssetProtocol = 'ssh' | 'rdp'
 
@@ -120,6 +127,14 @@ export interface Asset {
   /** Null when credentialMode is 'ca-certificate' — nothing to rotate. */
   credentialRotatedAt: ISOTime | null
   rotationIntervalDays: number | null
+  /** Set in the console. Absent from an older control plane, meaning every_login. */
+  recordingScope?: RecordingScope
+  /**
+   * What the agent said it is applying at its last check-in. Null until it
+   * says, which an agent older than the setting never does: null is
+   * "unconfirmed", never "applied".
+   */
+  agentRecordingScope?: RecordingScope | null
 }
 
 /**

@@ -14,6 +14,7 @@ import {
   live,
   removeAssetAssignment,
   setAssetAssignment,
+  setRecordingScope as setScopeOnControlPlane,
   updateAsset as updateOnControlPlane,
   whoami,
   saveGatewayPolicy,
@@ -23,7 +24,7 @@ import {
 import type { AuditPage } from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, FleetStats,
-  GatewayPolicy, Session, User,
+  GatewayPolicy, RecordingScope, Session, User,
 } from '~/types/domain'
 
 /**
@@ -265,6 +266,20 @@ export const api = {
     const existing = db.assets.find((a) => a.id === id)
     if (!existing) throw new Error('asset not found')
     const next = { ...fixtureAsset(input), id, hostKeyState: existing.hostKeyState }
+    db.assets = db.assets.map((a) => (a.id === id ? next : a))
+    return next
+  },
+
+  /**
+   * The fixture has no agent, so nothing confirms the change: the scope saved
+   * here stays unconfirmed, as it would on a host whose agent has not checked in.
+   */
+  async setRecordingScope(id: string, scope: RecordingScope): Promise<Asset> {
+    if (isConfigured()) return setScopeOnControlPlane(id, scope)
+    await latency(300)
+    const existing = db.assets.find((a) => a.id === id)
+    if (!existing) throw new Error('asset not found')
+    const next = { ...existing, recordingScope: scope }
     db.assets = db.assets.map((a) => (a.id === id ? next : a))
     return next
   },

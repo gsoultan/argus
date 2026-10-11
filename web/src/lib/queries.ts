@@ -10,7 +10,7 @@ import {
   ignoreHost,
   isConfigured,
 } from '~/lib/live'
-import type { AccessRequest, AssetInput, Session } from '~/types/domain'
+import type { AccessRequest, AssetInput, RecordingScope, Session } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -229,6 +229,15 @@ export function useUpdateAsset() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (v: { id: string; input: AssetInput }) => api.updateAsset(v.id, v.input),
+    onSuccess: () => invalidateInventory(qc),
+  })
+}
+
+export function useSetRecordingScope() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; scope: RecordingScope }) =>
+      api.setRecordingScope(v.id, v.scope),
     onSuccess: () => invalidateInventory(qc),
   })
 }

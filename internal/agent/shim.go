@@ -135,6 +135,28 @@ func RunShim(cfg ShimConfig) int {
 		return execSession(cfg, origCmd, nil)
 	}
 
+	// One decoder for the life of the connection: the decision and the final
+	// acknowledgement arrive on the same stream, and a second buffered reader
+	// would lose whatever the first had already read past.
+	dec := json.NewDecoder(bufio.NewReader(conn))
+	switch d := awaitDecision(conn, dec, decisionWait); {
+	case d.refused:
+		if !cfg.FailOpen {
+			fmt.Fprintln(os.Stderr, "argus: cannot start recording, refusing connection.")
+			return 1
+		}
+		fmt.Fprintln(os.Stderr,
+			"argus: WARNING — recording unavailable, this session is NOT being recorded.")
+		return execSession(cfg, origCmd, nil)
+	case d.skip:
+		// The host's recording scope, set in the console, not something the
+		// shim decided. Said to the user, because a login that is reported but
+		// not recorded should not look the same as one that is recorded.
+		fmt.Fprintf(os.Stderr, "argus: %s.\n", d.reason)
+		_ = conn.Close()
+		return execSession(cfg, origCmd, nil)
+	}
+
 	stream := newStream(conn, enc)
 	code := execSession(cfg, origCmd, stream)
 
@@ -142,12 +164,58 @@ func RunShim(cfg ShimConfig) int {
 	// Wait briefly for the daemon's acknowledgement so the chain head reaches
 	// the log before the process exits. Not fatal if it does not arrive.
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	var ack Ack
-	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&ack); err == nil && ack.ChainHead != "" {
+	var ack Reply
+	if err := dec.Decode(&ack); err == nil && len(ack.ChainHead) >= 12 {
 		fmt.Fprintf(os.Stderr, "\r\nargus: session %s recorded (chain %s…)\r\n",
 			ack.SessionID, ack.ChainHead[:12])
 	}
 	return code
+}
+
+// decisionWait bounds how long a login waits for the daemon's answer.
+//
+// A current daemon answers at once. One older than the decision message --
+// for the moments of an upgrade between the new shim landing and the daemon
+// restarting -- says nothing, and the wait is what that costs per login.
+const decisionWait = 2 * time.Second
+
+type decision struct {
+	// refused: the daemon could not open the recording, or went away.
+	refused bool
+	// skip: the daemon chose not to record this login, for reason.
+	skip   bool
+	reason string
+}
+
+// awaitDecision reads the daemon's answer to a start.
+//
+// Silence until the deadline is a daemon that predates the answer and is
+// recording, so it streams. A closed connection or an error is a recording
+// that did not open, and goes to the same fail-closed path as an unreachable
+// collector.
+func awaitDecision(conn net.Conn, dec *json.Decoder, wait time.Duration) decision {
+	_ = conn.SetReadDeadline(time.Now().Add(wait))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	var r Reply
+	if err := dec.Decode(&r); err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			return decision{}
+		}
+		return decision{refused: true}
+	}
+	switch {
+	case r.Error != "":
+		return decision{refused: true}
+	case r.Type == "decision" && !r.Record:
+		reason := r.Reason
+		if reason == "" {
+			reason = "this login is not recorded"
+		}
+		return decision{skip: true, reason: reason}
+	}
+	return decision{}
 }
 
 // stream serialises frames onto the collector connection.

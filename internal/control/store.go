@@ -554,6 +554,13 @@ type Asset struct {
 	AgentLastSeenAt      *time.Time `json:"agentLastSeenAt"`
 	BypassPosture        string     `json:"bypassPosture"`
 	UnmanagedKeyCount    int        `json:"unmanagedKeyCount"`
+	// RecordingScope is which logins the agent on this host records:
+	// ScopeEveryLogin or ScopeArgusOnly. Set in the console.
+	RecordingScope string `json:"recordingScope"`
+	// AgentRecordingScope is what the agent said it is applying at its last
+	// heartbeat. Nil until it says, which an agent older than the setting
+	// never does -- so nil is "unconfirmed", never "applied".
+	AgentRecordingScope *string `json:"agentRecordingScope"`
 }
 
 // ErrConsoleOwned means a gateway tried to publish over a row an administrator
@@ -639,21 +646,27 @@ func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
 // It also updates the asset's coverage fields, because "is this host being
 // watched" is a property of the host that the console needs to show, not
 // something an operator should have to join two views to work out.
+//
+// appliedScope is the recording scope the agent says it is enforcing, empty from
+// an agent too old to say. The scope returned is the one the console has set
+// for this host -- see effectiveScope for what happens when the hostname
+// matches more than one asset, or none.
 func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
-	activeSessions int, posture any, execTracing bool, execReason string) error {
+	activeSessions int, posture any, execTracing bool, execReason string,
+	appliedScope string) (string, error) {
 
 	var postureJSON []byte
 	if posture != nil {
 		b, err := json.Marshal(posture)
 		if err != nil {
-			return err
+			return ScopeEveryLogin, err
 		}
 		postureJSON = b
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return ScopeEveryLogin, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -670,7 +683,7 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 			exec_reason     = EXCLUDED.exec_reason,
 			updated_at      = now()`,
 		hostname, version, activeSessions, postureJSON, execTracing, execReason); err != nil {
-		return err
+		return ScopeEveryLogin, err
 	}
 
 	rating, unmanaged := postureSummary(posture)
@@ -678,36 +691,52 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	// Match on the inventory hostname, the explicit agent_hostname mapping, or
 	// the short name. An agent rarely knows the fully qualified name the
 	// inventory uses.
-	tag, err := tx.Exec(ctx, `
+	rows, err := tx.Query(ctx, `
 		UPDATE assets SET
-			agent_state         = 'healthy',
-			agent_last_seen_at  = now(),
-			bypass_posture      = COALESCE(NULLIF($2,''), bypass_posture),
-			unmanaged_key_count = COALESCE($3, unmanaged_key_count),
-			updated_at          = now()
+			agent_state           = 'healthy',
+			agent_last_seen_at    = now(),
+			bypass_posture        = COALESCE(NULLIF($2,''), bypass_posture),
+			unmanaged_key_count   = COALESCE($3, unmanaged_key_count),
+			agent_recording_scope = NULLIF($4,''),
+			updated_at            = now()
 		WHERE hostname = $1
 		   OR agent_hostname = $1
-		   OR split_part(hostname, '.', 1) = $1`, hostname, rating, unmanaged)
+		   OR split_part(hostname, '.', 1) = $1
+		RETURNING recording_scope`, hostname, rating, unmanaged, appliedScope)
 	if err != nil {
-		return err
+		return ScopeEveryLogin, err
 	}
-	matched := tag.RowsAffected() > 0
+	var scopes []string
+	for rows.Next() {
+		var sc string
+		if err := rows.Scan(&sc); err != nil {
+			rows.Close()
+			return ScopeEveryLogin, err
+		}
+		scopes = append(scopes, sc)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return ScopeEveryLogin, err
+	}
+	matched := len(scopes) > 0
+	scope := effectiveScope(scopes)
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE agents SET matched_asset = $2 WHERE hostname = $1`, hostname, matched); err != nil {
-		return err
+		return ScopeEveryLogin, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return err
+		return ScopeEveryLogin, err
 	}
 	if !matched {
 		// Not an error, but never silent: either the inventory is missing a
 		// host, or the mapping is wrong and this host's coverage is not being
 		// tracked at all.
-		return ErrAgentUnmatched
+		return scope, ErrAgentUnmatched
 	}
-	return nil
+	return scope, nil
 }
 
 // ErrAgentUnmatched means a heartbeat arrived from a host the inventory does not

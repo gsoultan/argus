@@ -49,6 +49,8 @@ type Row struct {
 	CredentialRef        string
 	Domain               string
 	ArchivedAt           runtime.Null[time.Time]
+	RecordingScope       string
+	AgentRecordingScope  runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -86,7 +88,7 @@ const (
 	opNotExists runtime.Op = 26
 )
 
-const nCols = 29
+const nCols = 31
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -389,6 +391,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.ArchivedAt.V
 		q.ntm++
+	case 29:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.RecordingScope
+		q.ns++
+	case 30:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.AgentRecordingScope.V
+		q.ns++
 	}
 }
 
@@ -577,6 +593,8 @@ var (
 	CredentialRef        = TextCol{26}
 	Domain               = TextCol{27}
 	ArchivedAt           = NullTimeCol{28}
+	RecordingScope       = TextCol{29}
+	AgentRecordingScope  = NullTextCol{30}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1072,6 +1090,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 29:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 30:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1266,6 +1298,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 29:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 30:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1465,80 +1511,104 @@ func (q Query) UnmanagedKeyCountIn(v ...int32) Query    { return q.Where(Unmanag
 func (q Query) UnmanagedKeyCountNotIn(v ...int32) Query {
 	return q.Where(UnmanagedKeyCount.NotIn(v...))
 }
-func (q Query) AgentHostnameEq(v string) Query       { return q.Where(AgentHostname.Eq(v)) }
-func (q Query) AgentHostnameNotEq(v string) Query    { return q.Where(AgentHostname.NotEq(v)) }
-func (q Query) AgentHostnameGt(v string) Query       { return q.Where(AgentHostname.Gt(v)) }
-func (q Query) AgentHostnameGte(v string) Query      { return q.Where(AgentHostname.Gte(v)) }
-func (q Query) AgentHostnameLt(v string) Query       { return q.Where(AgentHostname.Lt(v)) }
-func (q Query) AgentHostnameLte(v string) Query      { return q.Where(AgentHostname.Lte(v)) }
-func (q Query) AgentHostnameLike(v string) Query     { return q.Where(AgentHostname.Like(v)) }
-func (q Query) AgentHostnameILike(v string) Query    { return q.Where(AgentHostname.ILike(v)) }
-func (q Query) AgentHostnameIn(v ...string) Query    { return q.Where(AgentHostname.In(v...)) }
-func (q Query) AgentHostnameNotIn(v ...string) Query { return q.Where(AgentHostname.NotIn(v...)) }
-func (q Query) AgentHostnameIsNull() Query           { return q.Where(AgentHostname.IsNull()) }
-func (q Query) AgentHostnameIsNotNull() Query        { return q.Where(AgentHostname.IsNotNull()) }
-func (q Query) DiscoveredByEq(v string) Query        { return q.Where(DiscoveredBy.Eq(v)) }
-func (q Query) DiscoveredByNotEq(v string) Query     { return q.Where(DiscoveredBy.NotEq(v)) }
-func (q Query) DiscoveredByGt(v string) Query        { return q.Where(DiscoveredBy.Gt(v)) }
-func (q Query) DiscoveredByGte(v string) Query       { return q.Where(DiscoveredBy.Gte(v)) }
-func (q Query) DiscoveredByLt(v string) Query        { return q.Where(DiscoveredBy.Lt(v)) }
-func (q Query) DiscoveredByLte(v string) Query       { return q.Where(DiscoveredBy.Lte(v)) }
-func (q Query) DiscoveredByLike(v string) Query      { return q.Where(DiscoveredBy.Like(v)) }
-func (q Query) DiscoveredByILike(v string) Query     { return q.Where(DiscoveredBy.ILike(v)) }
-func (q Query) DiscoveredByIn(v ...string) Query     { return q.Where(DiscoveredBy.In(v...)) }
-func (q Query) DiscoveredByNotIn(v ...string) Query  { return q.Where(DiscoveredBy.NotIn(v...)) }
-func (q Query) DiscoveredByIsNull() Query            { return q.Where(DiscoveredBy.IsNull()) }
-func (q Query) DiscoveredByIsNotNull() Query         { return q.Where(DiscoveredBy.IsNotNull()) }
-func (q Query) ProtocolEq(v string) Query            { return q.Where(Protocol.Eq(v)) }
-func (q Query) ProtocolNotEq(v string) Query         { return q.Where(Protocol.NotEq(v)) }
-func (q Query) ProtocolGt(v string) Query            { return q.Where(Protocol.Gt(v)) }
-func (q Query) ProtocolGte(v string) Query           { return q.Where(Protocol.Gte(v)) }
-func (q Query) ProtocolLt(v string) Query            { return q.Where(Protocol.Lt(v)) }
-func (q Query) ProtocolLte(v string) Query           { return q.Where(Protocol.Lte(v)) }
-func (q Query) ProtocolLike(v string) Query          { return q.Where(Protocol.Like(v)) }
-func (q Query) ProtocolILike(v string) Query         { return q.Where(Protocol.ILike(v)) }
-func (q Query) ProtocolIn(v ...string) Query         { return q.Where(Protocol.In(v...)) }
-func (q Query) ProtocolNotIn(v ...string) Query      { return q.Where(Protocol.NotIn(v...)) }
-func (q Query) SourceEq(v string) Query              { return q.Where(Source.Eq(v)) }
-func (q Query) SourceNotEq(v string) Query           { return q.Where(Source.NotEq(v)) }
-func (q Query) SourceGt(v string) Query              { return q.Where(Source.Gt(v)) }
-func (q Query) SourceGte(v string) Query             { return q.Where(Source.Gte(v)) }
-func (q Query) SourceLt(v string) Query              { return q.Where(Source.Lt(v)) }
-func (q Query) SourceLte(v string) Query             { return q.Where(Source.Lte(v)) }
-func (q Query) SourceLike(v string) Query            { return q.Where(Source.Like(v)) }
-func (q Query) SourceILike(v string) Query           { return q.Where(Source.ILike(v)) }
-func (q Query) SourceIn(v ...string) Query           { return q.Where(Source.In(v...)) }
-func (q Query) SourceNotIn(v ...string) Query        { return q.Where(Source.NotIn(v...)) }
-func (q Query) CredentialRefEq(v string) Query       { return q.Where(CredentialRef.Eq(v)) }
-func (q Query) CredentialRefNotEq(v string) Query    { return q.Where(CredentialRef.NotEq(v)) }
-func (q Query) CredentialRefGt(v string) Query       { return q.Where(CredentialRef.Gt(v)) }
-func (q Query) CredentialRefGte(v string) Query      { return q.Where(CredentialRef.Gte(v)) }
-func (q Query) CredentialRefLt(v string) Query       { return q.Where(CredentialRef.Lt(v)) }
-func (q Query) CredentialRefLte(v string) Query      { return q.Where(CredentialRef.Lte(v)) }
-func (q Query) CredentialRefLike(v string) Query     { return q.Where(CredentialRef.Like(v)) }
-func (q Query) CredentialRefILike(v string) Query    { return q.Where(CredentialRef.ILike(v)) }
-func (q Query) CredentialRefIn(v ...string) Query    { return q.Where(CredentialRef.In(v...)) }
-func (q Query) CredentialRefNotIn(v ...string) Query { return q.Where(CredentialRef.NotIn(v...)) }
-func (q Query) DomainEq(v string) Query              { return q.Where(Domain.Eq(v)) }
-func (q Query) DomainNotEq(v string) Query           { return q.Where(Domain.NotEq(v)) }
-func (q Query) DomainGt(v string) Query              { return q.Where(Domain.Gt(v)) }
-func (q Query) DomainGte(v string) Query             { return q.Where(Domain.Gte(v)) }
-func (q Query) DomainLt(v string) Query              { return q.Where(Domain.Lt(v)) }
-func (q Query) DomainLte(v string) Query             { return q.Where(Domain.Lte(v)) }
-func (q Query) DomainLike(v string) Query            { return q.Where(Domain.Like(v)) }
-func (q Query) DomainILike(v string) Query           { return q.Where(Domain.ILike(v)) }
-func (q Query) DomainIn(v ...string) Query           { return q.Where(Domain.In(v...)) }
-func (q Query) DomainNotIn(v ...string) Query        { return q.Where(Domain.NotIn(v...)) }
-func (q Query) ArchivedAtEq(v time.Time) Query       { return q.Where(ArchivedAt.Eq(v)) }
-func (q Query) ArchivedAtNotEq(v time.Time) Query    { return q.Where(ArchivedAt.NotEq(v)) }
-func (q Query) ArchivedAtGt(v time.Time) Query       { return q.Where(ArchivedAt.Gt(v)) }
-func (q Query) ArchivedAtGte(v time.Time) Query      { return q.Where(ArchivedAt.Gte(v)) }
-func (q Query) ArchivedAtLt(v time.Time) Query       { return q.Where(ArchivedAt.Lt(v)) }
-func (q Query) ArchivedAtLte(v time.Time) Query      { return q.Where(ArchivedAt.Lte(v)) }
-func (q Query) ArchivedAtIsNull() Query              { return q.Where(ArchivedAt.IsNull()) }
-func (q Query) ArchivedAtIsNotNull() Query           { return q.Where(ArchivedAt.IsNotNull()) }
+func (q Query) AgentHostnameEq(v string) Query          { return q.Where(AgentHostname.Eq(v)) }
+func (q Query) AgentHostnameNotEq(v string) Query       { return q.Where(AgentHostname.NotEq(v)) }
+func (q Query) AgentHostnameGt(v string) Query          { return q.Where(AgentHostname.Gt(v)) }
+func (q Query) AgentHostnameGte(v string) Query         { return q.Where(AgentHostname.Gte(v)) }
+func (q Query) AgentHostnameLt(v string) Query          { return q.Where(AgentHostname.Lt(v)) }
+func (q Query) AgentHostnameLte(v string) Query         { return q.Where(AgentHostname.Lte(v)) }
+func (q Query) AgentHostnameLike(v string) Query        { return q.Where(AgentHostname.Like(v)) }
+func (q Query) AgentHostnameILike(v string) Query       { return q.Where(AgentHostname.ILike(v)) }
+func (q Query) AgentHostnameIn(v ...string) Query       { return q.Where(AgentHostname.In(v...)) }
+func (q Query) AgentHostnameNotIn(v ...string) Query    { return q.Where(AgentHostname.NotIn(v...)) }
+func (q Query) AgentHostnameIsNull() Query              { return q.Where(AgentHostname.IsNull()) }
+func (q Query) AgentHostnameIsNotNull() Query           { return q.Where(AgentHostname.IsNotNull()) }
+func (q Query) DiscoveredByEq(v string) Query           { return q.Where(DiscoveredBy.Eq(v)) }
+func (q Query) DiscoveredByNotEq(v string) Query        { return q.Where(DiscoveredBy.NotEq(v)) }
+func (q Query) DiscoveredByGt(v string) Query           { return q.Where(DiscoveredBy.Gt(v)) }
+func (q Query) DiscoveredByGte(v string) Query          { return q.Where(DiscoveredBy.Gte(v)) }
+func (q Query) DiscoveredByLt(v string) Query           { return q.Where(DiscoveredBy.Lt(v)) }
+func (q Query) DiscoveredByLte(v string) Query          { return q.Where(DiscoveredBy.Lte(v)) }
+func (q Query) DiscoveredByLike(v string) Query         { return q.Where(DiscoveredBy.Like(v)) }
+func (q Query) DiscoveredByILike(v string) Query        { return q.Where(DiscoveredBy.ILike(v)) }
+func (q Query) DiscoveredByIn(v ...string) Query        { return q.Where(DiscoveredBy.In(v...)) }
+func (q Query) DiscoveredByNotIn(v ...string) Query     { return q.Where(DiscoveredBy.NotIn(v...)) }
+func (q Query) DiscoveredByIsNull() Query               { return q.Where(DiscoveredBy.IsNull()) }
+func (q Query) DiscoveredByIsNotNull() Query            { return q.Where(DiscoveredBy.IsNotNull()) }
+func (q Query) ProtocolEq(v string) Query               { return q.Where(Protocol.Eq(v)) }
+func (q Query) ProtocolNotEq(v string) Query            { return q.Where(Protocol.NotEq(v)) }
+func (q Query) ProtocolGt(v string) Query               { return q.Where(Protocol.Gt(v)) }
+func (q Query) ProtocolGte(v string) Query              { return q.Where(Protocol.Gte(v)) }
+func (q Query) ProtocolLt(v string) Query               { return q.Where(Protocol.Lt(v)) }
+func (q Query) ProtocolLte(v string) Query              { return q.Where(Protocol.Lte(v)) }
+func (q Query) ProtocolLike(v string) Query             { return q.Where(Protocol.Like(v)) }
+func (q Query) ProtocolILike(v string) Query            { return q.Where(Protocol.ILike(v)) }
+func (q Query) ProtocolIn(v ...string) Query            { return q.Where(Protocol.In(v...)) }
+func (q Query) ProtocolNotIn(v ...string) Query         { return q.Where(Protocol.NotIn(v...)) }
+func (q Query) SourceEq(v string) Query                 { return q.Where(Source.Eq(v)) }
+func (q Query) SourceNotEq(v string) Query              { return q.Where(Source.NotEq(v)) }
+func (q Query) SourceGt(v string) Query                 { return q.Where(Source.Gt(v)) }
+func (q Query) SourceGte(v string) Query                { return q.Where(Source.Gte(v)) }
+func (q Query) SourceLt(v string) Query                 { return q.Where(Source.Lt(v)) }
+func (q Query) SourceLte(v string) Query                { return q.Where(Source.Lte(v)) }
+func (q Query) SourceLike(v string) Query               { return q.Where(Source.Like(v)) }
+func (q Query) SourceILike(v string) Query              { return q.Where(Source.ILike(v)) }
+func (q Query) SourceIn(v ...string) Query              { return q.Where(Source.In(v...)) }
+func (q Query) SourceNotIn(v ...string) Query           { return q.Where(Source.NotIn(v...)) }
+func (q Query) CredentialRefEq(v string) Query          { return q.Where(CredentialRef.Eq(v)) }
+func (q Query) CredentialRefNotEq(v string) Query       { return q.Where(CredentialRef.NotEq(v)) }
+func (q Query) CredentialRefGt(v string) Query          { return q.Where(CredentialRef.Gt(v)) }
+func (q Query) CredentialRefGte(v string) Query         { return q.Where(CredentialRef.Gte(v)) }
+func (q Query) CredentialRefLt(v string) Query          { return q.Where(CredentialRef.Lt(v)) }
+func (q Query) CredentialRefLte(v string) Query         { return q.Where(CredentialRef.Lte(v)) }
+func (q Query) CredentialRefLike(v string) Query        { return q.Where(CredentialRef.Like(v)) }
+func (q Query) CredentialRefILike(v string) Query       { return q.Where(CredentialRef.ILike(v)) }
+func (q Query) CredentialRefIn(v ...string) Query       { return q.Where(CredentialRef.In(v...)) }
+func (q Query) CredentialRefNotIn(v ...string) Query    { return q.Where(CredentialRef.NotIn(v...)) }
+func (q Query) DomainEq(v string) Query                 { return q.Where(Domain.Eq(v)) }
+func (q Query) DomainNotEq(v string) Query              { return q.Where(Domain.NotEq(v)) }
+func (q Query) DomainGt(v string) Query                 { return q.Where(Domain.Gt(v)) }
+func (q Query) DomainGte(v string) Query                { return q.Where(Domain.Gte(v)) }
+func (q Query) DomainLt(v string) Query                 { return q.Where(Domain.Lt(v)) }
+func (q Query) DomainLte(v string) Query                { return q.Where(Domain.Lte(v)) }
+func (q Query) DomainLike(v string) Query               { return q.Where(Domain.Like(v)) }
+func (q Query) DomainILike(v string) Query              { return q.Where(Domain.ILike(v)) }
+func (q Query) DomainIn(v ...string) Query              { return q.Where(Domain.In(v...)) }
+func (q Query) DomainNotIn(v ...string) Query           { return q.Where(Domain.NotIn(v...)) }
+func (q Query) ArchivedAtEq(v time.Time) Query          { return q.Where(ArchivedAt.Eq(v)) }
+func (q Query) ArchivedAtNotEq(v time.Time) Query       { return q.Where(ArchivedAt.NotEq(v)) }
+func (q Query) ArchivedAtGt(v time.Time) Query          { return q.Where(ArchivedAt.Gt(v)) }
+func (q Query) ArchivedAtGte(v time.Time) Query         { return q.Where(ArchivedAt.Gte(v)) }
+func (q Query) ArchivedAtLt(v time.Time) Query          { return q.Where(ArchivedAt.Lt(v)) }
+func (q Query) ArchivedAtLte(v time.Time) Query         { return q.Where(ArchivedAt.Lte(v)) }
+func (q Query) ArchivedAtIsNull() Query                 { return q.Where(ArchivedAt.IsNull()) }
+func (q Query) ArchivedAtIsNotNull() Query              { return q.Where(ArchivedAt.IsNotNull()) }
+func (q Query) RecordingScopeEq(v string) Query         { return q.Where(RecordingScope.Eq(v)) }
+func (q Query) RecordingScopeNotEq(v string) Query      { return q.Where(RecordingScope.NotEq(v)) }
+func (q Query) RecordingScopeGt(v string) Query         { return q.Where(RecordingScope.Gt(v)) }
+func (q Query) RecordingScopeGte(v string) Query        { return q.Where(RecordingScope.Gte(v)) }
+func (q Query) RecordingScopeLt(v string) Query         { return q.Where(RecordingScope.Lt(v)) }
+func (q Query) RecordingScopeLte(v string) Query        { return q.Where(RecordingScope.Lte(v)) }
+func (q Query) RecordingScopeLike(v string) Query       { return q.Where(RecordingScope.Like(v)) }
+func (q Query) RecordingScopeILike(v string) Query      { return q.Where(RecordingScope.ILike(v)) }
+func (q Query) RecordingScopeIn(v ...string) Query      { return q.Where(RecordingScope.In(v...)) }
+func (q Query) RecordingScopeNotIn(v ...string) Query   { return q.Where(RecordingScope.NotIn(v...)) }
+func (q Query) AgentRecordingScopeEq(v string) Query    { return q.Where(AgentRecordingScope.Eq(v)) }
+func (q Query) AgentRecordingScopeNotEq(v string) Query { return q.Where(AgentRecordingScope.NotEq(v)) }
+func (q Query) AgentRecordingScopeGt(v string) Query    { return q.Where(AgentRecordingScope.Gt(v)) }
+func (q Query) AgentRecordingScopeGte(v string) Query   { return q.Where(AgentRecordingScope.Gte(v)) }
+func (q Query) AgentRecordingScopeLt(v string) Query    { return q.Where(AgentRecordingScope.Lt(v)) }
+func (q Query) AgentRecordingScopeLte(v string) Query   { return q.Where(AgentRecordingScope.Lte(v)) }
+func (q Query) AgentRecordingScopeLike(v string) Query  { return q.Where(AgentRecordingScope.Like(v)) }
+func (q Query) AgentRecordingScopeILike(v string) Query { return q.Where(AgentRecordingScope.ILike(v)) }
+func (q Query) AgentRecordingScopeIn(v ...string) Query { return q.Where(AgentRecordingScope.In(v...)) }
+func (q Query) AgentRecordingScopeNotIn(v ...string) Query {
+	return q.Where(AgentRecordingScope.NotIn(v...))
+}
+func (q Query) AgentRecordingScopeIsNull() Query    { return q.Where(AgentRecordingScope.IsNull()) }
+func (q Query) AgentRecordingScopeIsNotNull() Query { return q.Where(AgentRecordingScope.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at" FROM "assets"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope" FROM "assets"`
 const countPrefix = `SELECT count(*) FROM "assets"`
 const existsPrefix = `SELECT 1 FROM "assets"`
 const existsSuffix = ` LIMIT 1`
@@ -1749,6 +1819,18 @@ var orderTable = [nCols][4]string{
 		"\"archived_at\" ASC NULLS FIRST",
 		"\"archived_at\" DESC NULLS LAST",
 	},
+	{ // recording_scope
+		"\"recording_scope\"",
+		"\"recording_scope\" DESC",
+		"\"recording_scope\" ASC NULLS FIRST",
+		"\"recording_scope\" DESC NULLS LAST",
+	},
+	{ // agent_recording_scope
+		"\"agent_recording_scope\"",
+		"\"agent_recording_scope\" DESC",
+		"\"agent_recording_scope\" ASC NULLS FIRST",
+		"\"agent_recording_scope\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1783,6 +1865,8 @@ var identTable = [nCols]string{
 	"\"credential_ref\"",
 	"\"domain\"",
 	"\"archived_at\"",
+	"\"recording_scope\"",
+	"\"agent_recording_scope\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1815,7 +1899,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [29][27]runtime.Frag{
+var fragTable = [31][27]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2657,6 +2741,64 @@ var fragTable = [29][27]runtime.Frag{
 		{},
 		{},
 	},
+	{ // recording_scope
+		{}, // opNone
+		{A: "\"recording_scope\" = $", B: ""},
+		{A: "\"recording_scope\" <> $", B: ""},
+		{A: "\"recording_scope\" > $", B: ""},
+		{A: "\"recording_scope\" >= $", B: ""},
+		{A: "\"recording_scope\" < $", B: ""},
+		{A: "\"recording_scope\" <= $", B: ""},
+		{A: "\"recording_scope\" LIKE $", B: ""},
+		{A: "\"recording_scope\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"recording_scope\" = ANY($", B: ")"},
+		{A: "\"recording_scope\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // agent_recording_scope
+		{}, // opNone
+		{A: "\"agent_recording_scope\" = $", B: ""},
+		{A: "\"agent_recording_scope\" <> $", B: ""},
+		{A: "\"agent_recording_scope\" > $", B: ""},
+		{A: "\"agent_recording_scope\" >= $", B: ""},
+		{A: "\"agent_recording_scope\" < $", B: ""},
+		{A: "\"agent_recording_scope\" <= $", B: ""},
+		{A: "\"agent_recording_scope\" LIKE $", B: ""},
+		{A: "\"agent_recording_scope\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"agent_recording_scope\" = ANY($", B: ")"},
+		{A: "\"agent_recording_scope\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"agent_recording_scope\" IS NULL", B: ""},
+		{A: "\"agent_recording_scope\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2848,6 +2990,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.CredentialRef = sl.Str(rv[26])
 	r.Domain = sl.Str(rv[27])
 	r.ArchivedAt = runtime.Nullable(rv[28], runtime.Timestamptz)
+	r.RecordingScope = sl.Str(rv[29])
+	r.AgentRecordingScope = runtime.NullText(rv[30], sl)
 	return decErr
 }
 
@@ -3005,6 +3149,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 29:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 30:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3117,6 +3269,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 29:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 30:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -3254,7 +3414,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at"`
+const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope"`
 
 const updatePrefix = `UPDATE "assets" SET `
 const deletePrefix = `DELETE FROM "assets"`
@@ -3289,9 +3449,11 @@ const (
 	dCredentialRef        uint64 = 1 << 24
 	dDomain               uint64 = 1 << 25
 	dArchivedAt           uint64 = 1 << 26
+	dRecordingScope       uint64 = 1 << 27
+	dAgentRecordingScope  uint64 = 1 << 28
 )
 
-const nUpdatable = 27
+const nUpdatable = 29
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3322,6 +3484,8 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"credential_ref\" = $", B: ""},         // credential_ref
 	{A: "\"domain\" = $", B: ""},                 // domain
 	{A: "\"archived_at\" = $", B: ""},            // archived_at
+	{A: "\"recording_scope\" = $", B: ""},        // recording_scope
+	{A: "\"agent_recording_scope\" = $", B: ""},  // agent_recording_scope
 }
 
 // pkFrags addresses one row.
@@ -3362,9 +3526,11 @@ const (
 	iCredentialRef        uint64 = 1 << 26
 	iDomain               uint64 = 1 << 27
 	iArchivedAt           uint64 = 1 << 28
+	iRecordingScope       uint64 = 1 << 29
+	iAgentRecordingScope  uint64 = 1 << 30
 )
 
-const nInsertable = 29
+const nInsertable = 31
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3397,6 +3563,8 @@ var insCols = [nInsertable]string{
 	"\"credential_ref\"",
 	"\"domain\"",
 	"\"archived_at\"",
+	"\"recording_scope\"",
+	"\"agent_recording_scope\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3405,7 +3573,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 
 const insPlaceholder = "$"
 const insPrefix = "INSERT INTO \"assets\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"recording_scope\", \"agent_recording_scope\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3627,6 +3795,23 @@ func (m *Mut) SetArchivedAt(v time.Time) {
 func (m *Mut) SetArchivedAtNull() {
 	m.row.ArchivedAt = runtime.Null[time.Time]{}
 	m.dirty |= dArchivedAt
+}
+
+func (m *Mut) SetRecordingScope(v string) {
+	m.row.RecordingScope = v
+	m.dirty |= dRecordingScope
+}
+
+func (m *Mut) SetAgentRecordingScope(v string) {
+	m.row.AgentRecordingScope = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dAgentRecordingScope
+}
+
+// SetAgentRecordingScopeNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetAgentRecordingScopeNull() {
+	m.row.AgentRecordingScope = runtime.Null[string]{}
+	m.dirty |= dAgentRecordingScope
 }
 
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
@@ -3855,6 +4040,23 @@ func (n *Ins) SetArchivedAtNull() {
 	n.set |= iArchivedAt
 }
 
+func (n *Ins) SetRecordingScope(v string) {
+	n.row.RecordingScope = v
+	n.set |= iRecordingScope
+}
+
+func (n *Ins) SetAgentRecordingScope(v string) {
+	n.row.AgentRecordingScope = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iAgentRecordingScope
+}
+
+// SetAgentRecordingScopeNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetAgentRecordingScopeNull() {
+	n.row.AgentRecordingScope = runtime.Null[string]{}
+	n.set |= iAgentRecordingScope
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3902,7 +4104,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 27)
+	set := make([]string, 0, 29)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -3986,6 +4188,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<28) != 0 {
 			set = append(set, "archived_at")
 		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "recording_scope")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "agent_recording_scope")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -4065,6 +4273,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<28) != 0 {
 			set = append(set, "archived_at")
 		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "recording_scope")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "agent_recording_scope")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -4143,6 +4357,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<28) != 0 {
 			set = append(set, "archived_at")
+		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "recording_scope")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "agent_recording_scope")
 		}
 	}
 	return set
@@ -4239,6 +4459,8 @@ var assignFor = map[string]string{
 	"credential_ref":         "\"credential_ref\" = EXCLUDED.\"credential_ref\"",
 	"domain":                 "\"domain\" = EXCLUDED.\"domain\"",
 	"archived_at":            "\"archived_at\" = EXCLUDED.\"archived_at\"",
+	"recording_scope":        "\"recording_scope\" = EXCLUDED.\"recording_scope\"",
+	"agent_recording_scope":  "\"agent_recording_scope\" = EXCLUDED.\"agent_recording_scope\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4340,6 +4562,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.Domain)
 		case 28:
 			args = append(args, n.row.ArchivedAt.Arg())
+		case 29:
+			args = append(args, n.row.RecordingScope)
+		case 30:
+			args = append(args, n.row.AgentRecordingScope.Arg())
 		}
 	}
 	var out Row
@@ -4377,7 +4603,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 29)
+	args := make([]any, 0, 31)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4407,6 +4633,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.CredentialRef)
 	args = append(args, r.Domain)
 	args = append(args, r.ArchivedAt.Arg())
+	args = append(args, r.RecordingScope)
+	args = append(args, r.AgentRecordingScope.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4462,13 +4690,15 @@ var copyCols = []string{
 	"credential_ref",
 	"domain",
 	"archived_at",
+	"recording_scope",
+	"agent_recording_scope",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [29]any
+	buf  [31]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4515,6 +4745,8 @@ func (s *rowSource) Values() []any {
 	s.buf[26] = &r.CredentialRef
 	s.buf[27] = &r.Domain
 	s.buf[28] = r.ArchivedAt.Ptr()
+	s.buf[29] = &r.RecordingScope
+	s.buf[30] = r.AgentRecordingScope.Ptr()
 	return s.buf[:]
 }
 
@@ -4574,8 +4806,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 26
 	mask |= 1 << 27
 	mask |= 1 << 28
+	mask |= 1 << 29
+	mask |= 1 << 30
 	st := stmtForInsert(mask, 0)
-	args := make([]any, 0, 29)
+	args := make([]any, 0, 31)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4605,6 +4839,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.CredentialRef)
 	args = append(args, r.Domain)
 	args = append(args, r.ArchivedAt.Arg())
+	args = append(args, r.RecordingScope)
+	args = append(args, r.AgentRecordingScope.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4696,6 +4932,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.Domain)
 		case 28:
 			args = append(args, n.row.ArchivedAt.Arg())
+		case 29:
+			args = append(args, n.row.RecordingScope)
+		case 30:
+			args = append(args, n.row.AgentRecordingScope.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4792,6 +5032,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.Domain)
 		case 26:
 			args = append(args, m.row.ArchivedAt.Arg())
+		case 27:
+			args = append(args, m.row.RecordingScope)
+		case 28:
+			args = append(args, m.row.AgentRecordingScope.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4901,6 +5145,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.Domain)
 		case 26:
 			args = append(args, m.row.ArchivedAt.Arg())
+		case 27:
+			args = append(args, m.row.RecordingScope)
+		case 28:
+			args = append(args, m.row.AgentRecordingScope.Arg())
 		}
 	}
 	args = append(args, m.row.ID)

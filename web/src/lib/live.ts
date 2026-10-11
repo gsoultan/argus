@@ -11,6 +11,7 @@ import type {
   GatewayPolicy,
   Session,
   User,
+  RecordingScope,
 } from '~/types/domain'
 
 /**
@@ -492,6 +493,13 @@ export async function updateAsset(id: string, input: AssetInput): Promise<Asset>
 }
 
 /** Retires an asset. Its sessions and audit history are kept. */
+/** Changes which logins the agent on a host records. Admin or owner; audited. */
+export async function setRecordingScope(id: string, scope: RecordingScope): Promise<Asset> {
+  return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/recording-scope`, {
+    recordingScope: scope,
+  })
+}
+
 export async function archiveAsset(id: string): Promise<void> {
   await send('DELETE', `/api/v1/assets/${encodeURIComponent(id)}`)
 }
