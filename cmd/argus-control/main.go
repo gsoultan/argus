@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
 
 	"github.com/gsoultan/argus/internal/secrets"
@@ -34,6 +36,7 @@ import (
 	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
 	"github.com/gsoultan/argus/internal/tlsconfig"
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 var version = "dev"
@@ -80,6 +83,17 @@ type config struct {
 	// Console serves the web console from this process. Omit to serve the API
 	// alone, as every deployment did before the console shipped in a package.
 	Console *consoleConfig `yaml:"console"`
+	// Tunnel is where agents hold their outbound connections. The HTTPS
+	// fallback is always served on `listen`; QUIC needs its own UDP address.
+	Tunnel *tunnelConfig `yaml:"tunnel"`
+}
+
+type tunnelConfig struct {
+	// QUICListen is a UDP address for agents' QUIC connections, typically the
+	// same port as `listen` (":8080"). Empty leaves QUIC off; agents then use
+	// the HTTPS fallback, which works but is less smooth on a lossy network.
+	// Needs `tls`: QUIC is always encrypted, with this process's certificate.
+	QUICListen string `yaml:"quic_listen"`
 }
 
 type consoleConfig struct {
@@ -282,6 +296,9 @@ func run() error {
 	}
 
 	api := control.NewAPI(store, log)
+	replica, _ := os.Hostname()
+	api.Tunnels = control.NewTunnelHub(store, log, replica)
+	defer api.Tunnels.Close()
 	api.Alerts = alerts
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
@@ -470,6 +487,33 @@ func run() error {
 				return fmt.Errorf("read client_ca_file: %w", err)
 			}
 		}
+	}
+
+	if cfg.Tunnel != nil && cfg.Tunnel.QUICListen != "" {
+		if cfg.TLS == nil {
+			return errors.New("tunnel.quic_listen needs `tls`: QUIC carries this " +
+				"process's certificate, and there is none configured")
+		}
+		qtls, err := tlsconfig.Server(tlsconfig.ServerOptions{
+			CertFile: cfg.TLS.CertFile, KeyFile: cfg.TLS.KeyFile, Log: log,
+		})
+		if err != nil {
+			return err
+		}
+		qtls.NextProtos = []string{tunnel.ALPN}
+		ln, err := quic.ListenAddr(cfg.Tunnel.QUICListen, qtls, tunnel.ServerQUICConfig())
+		if err != nil {
+			return fmt.Errorf("tunnel.quic_listen: %w", err)
+		}
+		defer ln.Close()
+		if udp, ok := ln.Addr().(*net.UDPAddr); ok {
+			api.Tunnels.QUICPort = udp.Port
+		}
+		go api.ServeQUIC(ctx, ln)
+		log.Info("agent tunnels: QUIC listening", "addr", ln.Addr())
+	} else {
+		log.Info("agent tunnels: QUIC is off; agents connect over HTTPS",
+			"detail", "set tunnel.quic_listen for smoother sessions on lossy networks")
 	}
 
 	stop := make(chan os.Signal, 1)

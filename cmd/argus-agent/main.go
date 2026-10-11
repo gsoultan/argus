@@ -34,6 +34,7 @@ import (
 	"github.com/gsoultan/argus/internal/execlog"
 	"github.com/gsoultan/argus/internal/reporter"
 	"github.com/gsoultan/argus/internal/tlsconfig"
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 var version = "dev"
@@ -91,6 +92,8 @@ func runDaemon(args []string) int {
 	controlCA := fs.String("control-ca", "", "CA that signed the control plane's certificate")
 	controlCert := fs.String("control-cert", "", "client certificate presented to the control plane")
 	controlKey := fs.String("control-key", "", "key for --control-cert")
+	useTunnel := fs.Bool("tunnel", true,
+		"hold an outbound connection to the control plane (enrolled agents only)")
 	_ = fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -152,6 +155,25 @@ func runDaemon(args []string) int {
 		rep.Drain(ctx)
 		rep.StartDrainLoop(ctx, 30*time.Second)
 		log.Info("reporting to control plane", "url", *controlURL)
+	}
+
+	// The tunnel: one outbound connection the control plane opens streams
+	// on, so this host needs no inbound port. Only for an enrolled agent: the
+	// control plane admits a tunnel on a per-host credential and never on the
+	// shared reporter token.
+	if *useTunnel && strings.HasPrefix(*controlToken, "argus-agent-") {
+		hostname, _ := os.Hostname()
+		go agent.RunTunnel(ctx, agent.TunnelConfig{
+			Dial: tunnel.DialOptions{
+				ControlURL: *controlURL,
+				Credential: *controlToken,
+				Hostname:   hostname,
+				Version:    version,
+				TLS:        clientTLS,
+			},
+			Services: agent.DefaultTunnelServices(),
+			Log:      log,
+		})
 	}
 
 	col := agent.NewCollector(*dir, log)

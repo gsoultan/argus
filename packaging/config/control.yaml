@@ -39,6 +39,13 @@ tls:
   # CA, so a leaked reporter token is not sufficient on its own.
   client_ca_file: "/etc/argus/tls/ca.crt"
 
+# Agents hold one outbound connection here, so managed servers need no inbound
+# port. Agents always connect over HTTPS on `listen`; with quic_listen they move
+# to QUIC on UDP, which keeps sessions smooth on a lossy network. Open the same
+# port for UDP in the firewall (8080/udp here). Needs `tls` above.
+tunnel:
+  quic_listen: "0.0.0.0:8080"
+
 signing_secret: "${ARGUS_SIGNING_SECRET}"
 reporter_token: "${ARGUS_REPORTER_TOKEN}"
 

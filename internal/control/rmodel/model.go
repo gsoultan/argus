@@ -113,6 +113,12 @@ type AgentCredential struct {
 	CreatedAt  time.Time
 	RevokedAt  *time.Time
 	RevokedBy  *string
+
+	TunnelTransport   *string
+	TunnelReplica     *string
+	TunnelConnectedAt *time.Time
+	TunnelSeenAt      *time.Time
+	TunnelRttUs       *int32
 }
 
 func (m *AgentCredential) Schema(t *storm.Table) {

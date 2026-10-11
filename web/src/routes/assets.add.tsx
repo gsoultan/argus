@@ -13,6 +13,7 @@ import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { Mono, relTime } from '~/components/primitives'
 import { controlPlaneHost, controlPlaneVersion, isConfigured } from '~/lib/live'
+import { TunnelBadge } from '~/components/TunnelStatus'
 import { run } from '~/lib/notify'
 import type { EnrollToken } from '~/lib/live'
 import {
@@ -301,15 +302,18 @@ function EnrolledAgents() {
               {a.revokedAt ? (
                 <Badge color="slate" size="sm">Revoked</Badge>
               ) : (
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  color="red"
-                  style={{ flexShrink: 0 }}
-                  onClick={() => setConfirming({ id: a.id, hostname: a.hostname })}
-                >
-                  Revoke
-                </Button>
+                <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+                  <TunnelBadge tunnel={a.tunnel} />
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    style={{ flexShrink: 0 }}
+                    onClick={() => setConfirming({ id: a.id, hostname: a.hostname })}
+                  >
+                    Revoke
+                  </Button>
+                </Group>
               )}
             </Group>
           ))}

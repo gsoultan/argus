@@ -20,13 +20,18 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID         [16]byte
-	Hostname   string
-	SecretHash string
-	TokenID    [16]byte
-	CreatedAt  time.Time
-	RevokedAt  runtime.Null[time.Time]
-	RevokedBy  runtime.Null[string]
+	ID                [16]byte
+	Hostname          string
+	SecretHash        string
+	TokenID           [16]byte
+	CreatedAt         time.Time
+	RevokedAt         runtime.Null[time.Time]
+	RevokedBy         runtime.Null[string]
+	TunnelTransport   runtime.Null[string]
+	TunnelReplica     runtime.Null[string]
+	TunnelConnectedAt runtime.Null[time.Time]
+	TunnelSeenAt      runtime.Null[time.Time]
+	TunnelRttUs       runtime.Null[int32]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -64,7 +69,7 @@ const (
 	opNotExists runtime.Op = 26
 )
 
-const nCols = 7
+const nCols = 12
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -74,14 +79,16 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs        [6]string
-	raws        [4][16]byte
-	tims        [4]time.Time
-	ns, nr, ntm uint8
+	strs            [6]string
+	nums            [6]int64
+	raws            [4][16]byte
+	tims            [4]time.Time
+	ns, nn, nr, ntm uint8
 
-	anyRaw   [3][][16]byte
-	anyStr   [3][]string
-	nar, nas uint8
+	anyRaw          [3][][16]byte
+	anyStr          [3][]string
+	anyI32          [3][]int32
+	nar, nas, nai32 uint8
 
 	// Order terms live in their own buffer and are appended to the stream
 	// after the predicate tree. Sharing one buffer would let a Where after
@@ -225,6 +232,41 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.RevokedBy.V
 		q.ns++
+	case 7:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.TunnelTransport.V
+		q.ns++
+	case 8:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.TunnelReplica.V
+		q.ns++
+	case 9:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.TunnelConnectedAt.V
+		q.ntm++
+	case 10:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.TunnelSeenAt.V
+		q.ntm++
+	case 11:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.TunnelRttUs.V)
+		q.nn++
 	}
 }
 
@@ -372,23 +414,30 @@ func (q Query) stream(buf *[21]runtime.Tok) []runtime.Tok {
 type Pred struct {
 	col    uint8
 	op     runtime.Op
+	num    int64
 	str    string
 	raw    [16]byte
 	tim    time.Time
 	anyRaw [][16]byte
 	anyStr []string
+	anyI32 []int32
 }
 
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID         = UUIDCol{0}
-	Hostname   = TextCol{1}
-	SecretHash = TextCol{2}
-	TokenID    = UUIDCol{3}
-	CreatedAt  = TimeCol{4}
-	RevokedAt  = NullTimeCol{5}
-	RevokedBy  = NullTextCol{6}
+	ID                = UUIDCol{0}
+	Hostname          = TextCol{1}
+	SecretHash        = TextCol{2}
+	TokenID           = UUIDCol{3}
+	CreatedAt         = TimeCol{4}
+	RevokedAt         = NullTimeCol{5}
+	RevokedBy         = NullTextCol{6}
+	TunnelTransport   = NullTextCol{7}
+	TunnelReplica     = NullTextCol{8}
+	TunnelConnectedAt = NullTimeCol{9}
+	TunnelSeenAt      = NullTimeCol{10}
+	TunnelRttUs       = NullInt32Col{11}
 )
 
 // UUIDCol addresses a uuid column.
@@ -507,6 +556,33 @@ func (h NullTextCol) In(v ...string) Pred { return Pred{col: h.c, op: opIn, anyS
 func (h NullTextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
 func (h NullTextCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTextCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullInt32Col addresses a int4 column.
+type NullInt32Col struct{ c uint8 }
+
+func (h NullInt32Col) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullInt32Col) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullInt32Col) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullInt32Col) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullInt32Col) Eq(v int32) Pred    { return Pred{col: h.c, op: opEq, num: int64(v)} }
+func (h NullInt32Col) NotEq(v int32) Pred { return Pred{col: h.c, op: opNotEq, num: int64(v)} }
+func (h NullInt32Col) Gt(v int32) Pred    { return Pred{col: h.c, op: opGt, num: int64(v)} }
+func (h NullInt32Col) Gte(v int32) Pred   { return Pred{col: h.c, op: opGte, num: int64(v)} }
+func (h NullInt32Col) Lt(v int32) Pred    { return Pred{col: h.c, op: opLt, num: int64(v)} }
+func (h NullInt32Col) Lte(v int32) Pred   { return Pred{col: h.c, op: opLte, num: int64(v)} }
+func (h NullInt32Col) In(v ...int32) Pred { return Pred{col: h.c, op: opIn, anyI32: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h NullInt32Col) NotIn(v ...int32) Pred { return Pred{col: h.c, op: opNotIn, anyI32: v} }
+func (h NullInt32Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
+func (h NullInt32Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -684,6 +760,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 7:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 8:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 11:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -738,67 +835,152 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 7:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 8:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 9:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 10:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 11:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) IDEq(v [16]byte) Query             { return q.Where(ID.Eq(v)) }
-func (q Query) IDNotEq(v [16]byte) Query          { return q.Where(ID.NotEq(v)) }
-func (q Query) IDIn(v ...[16]byte) Query          { return q.Where(ID.In(v...)) }
-func (q Query) IDNotIn(v ...[16]byte) Query       { return q.Where(ID.NotIn(v...)) }
-func (q Query) HostnameEq(v string) Query         { return q.Where(Hostname.Eq(v)) }
-func (q Query) HostnameNotEq(v string) Query      { return q.Where(Hostname.NotEq(v)) }
-func (q Query) HostnameGt(v string) Query         { return q.Where(Hostname.Gt(v)) }
-func (q Query) HostnameGte(v string) Query        { return q.Where(Hostname.Gte(v)) }
-func (q Query) HostnameLt(v string) Query         { return q.Where(Hostname.Lt(v)) }
-func (q Query) HostnameLte(v string) Query        { return q.Where(Hostname.Lte(v)) }
-func (q Query) HostnameLike(v string) Query       { return q.Where(Hostname.Like(v)) }
-func (q Query) HostnameILike(v string) Query      { return q.Where(Hostname.ILike(v)) }
-func (q Query) HostnameIn(v ...string) Query      { return q.Where(Hostname.In(v...)) }
-func (q Query) HostnameNotIn(v ...string) Query   { return q.Where(Hostname.NotIn(v...)) }
-func (q Query) SecretHashEq(v string) Query       { return q.Where(SecretHash.Eq(v)) }
-func (q Query) SecretHashNotEq(v string) Query    { return q.Where(SecretHash.NotEq(v)) }
-func (q Query) SecretHashGt(v string) Query       { return q.Where(SecretHash.Gt(v)) }
-func (q Query) SecretHashGte(v string) Query      { return q.Where(SecretHash.Gte(v)) }
-func (q Query) SecretHashLt(v string) Query       { return q.Where(SecretHash.Lt(v)) }
-func (q Query) SecretHashLte(v string) Query      { return q.Where(SecretHash.Lte(v)) }
-func (q Query) SecretHashLike(v string) Query     { return q.Where(SecretHash.Like(v)) }
-func (q Query) SecretHashILike(v string) Query    { return q.Where(SecretHash.ILike(v)) }
-func (q Query) SecretHashIn(v ...string) Query    { return q.Where(SecretHash.In(v...)) }
-func (q Query) SecretHashNotIn(v ...string) Query { return q.Where(SecretHash.NotIn(v...)) }
-func (q Query) TokenIDEq(v [16]byte) Query        { return q.Where(TokenID.Eq(v)) }
-func (q Query) TokenIDNotEq(v [16]byte) Query     { return q.Where(TokenID.NotEq(v)) }
-func (q Query) TokenIDIn(v ...[16]byte) Query     { return q.Where(TokenID.In(v...)) }
-func (q Query) TokenIDNotIn(v ...[16]byte) Query  { return q.Where(TokenID.NotIn(v...)) }
-func (q Query) CreatedAtEq(v time.Time) Query     { return q.Where(CreatedAt.Eq(v)) }
-func (q Query) CreatedAtNotEq(v time.Time) Query  { return q.Where(CreatedAt.NotEq(v)) }
-func (q Query) CreatedAtGt(v time.Time) Query     { return q.Where(CreatedAt.Gt(v)) }
-func (q Query) CreatedAtGte(v time.Time) Query    { return q.Where(CreatedAt.Gte(v)) }
-func (q Query) CreatedAtLt(v time.Time) Query     { return q.Where(CreatedAt.Lt(v)) }
-func (q Query) CreatedAtLte(v time.Time) Query    { return q.Where(CreatedAt.Lte(v)) }
-func (q Query) RevokedAtEq(v time.Time) Query     { return q.Where(RevokedAt.Eq(v)) }
-func (q Query) RevokedAtNotEq(v time.Time) Query  { return q.Where(RevokedAt.NotEq(v)) }
-func (q Query) RevokedAtGt(v time.Time) Query     { return q.Where(RevokedAt.Gt(v)) }
-func (q Query) RevokedAtGte(v time.Time) Query    { return q.Where(RevokedAt.Gte(v)) }
-func (q Query) RevokedAtLt(v time.Time) Query     { return q.Where(RevokedAt.Lt(v)) }
-func (q Query) RevokedAtLte(v time.Time) Query    { return q.Where(RevokedAt.Lte(v)) }
-func (q Query) RevokedAtIsNull() Query            { return q.Where(RevokedAt.IsNull()) }
-func (q Query) RevokedAtIsNotNull() Query         { return q.Where(RevokedAt.IsNotNull()) }
-func (q Query) RevokedByEq(v string) Query        { return q.Where(RevokedBy.Eq(v)) }
-func (q Query) RevokedByNotEq(v string) Query     { return q.Where(RevokedBy.NotEq(v)) }
-func (q Query) RevokedByGt(v string) Query        { return q.Where(RevokedBy.Gt(v)) }
-func (q Query) RevokedByGte(v string) Query       { return q.Where(RevokedBy.Gte(v)) }
-func (q Query) RevokedByLt(v string) Query        { return q.Where(RevokedBy.Lt(v)) }
-func (q Query) RevokedByLte(v string) Query       { return q.Where(RevokedBy.Lte(v)) }
-func (q Query) RevokedByLike(v string) Query      { return q.Where(RevokedBy.Like(v)) }
-func (q Query) RevokedByILike(v string) Query     { return q.Where(RevokedBy.ILike(v)) }
-func (q Query) RevokedByIn(v ...string) Query     { return q.Where(RevokedBy.In(v...)) }
-func (q Query) RevokedByNotIn(v ...string) Query  { return q.Where(RevokedBy.NotIn(v...)) }
-func (q Query) RevokedByIsNull() Query            { return q.Where(RevokedBy.IsNull()) }
-func (q Query) RevokedByIsNotNull() Query         { return q.Where(RevokedBy.IsNotNull()) }
+func (q Query) IDEq(v [16]byte) Query                    { return q.Where(ID.Eq(v)) }
+func (q Query) IDNotEq(v [16]byte) Query                 { return q.Where(ID.NotEq(v)) }
+func (q Query) IDIn(v ...[16]byte) Query                 { return q.Where(ID.In(v...)) }
+func (q Query) IDNotIn(v ...[16]byte) Query              { return q.Where(ID.NotIn(v...)) }
+func (q Query) HostnameEq(v string) Query                { return q.Where(Hostname.Eq(v)) }
+func (q Query) HostnameNotEq(v string) Query             { return q.Where(Hostname.NotEq(v)) }
+func (q Query) HostnameGt(v string) Query                { return q.Where(Hostname.Gt(v)) }
+func (q Query) HostnameGte(v string) Query               { return q.Where(Hostname.Gte(v)) }
+func (q Query) HostnameLt(v string) Query                { return q.Where(Hostname.Lt(v)) }
+func (q Query) HostnameLte(v string) Query               { return q.Where(Hostname.Lte(v)) }
+func (q Query) HostnameLike(v string) Query              { return q.Where(Hostname.Like(v)) }
+func (q Query) HostnameILike(v string) Query             { return q.Where(Hostname.ILike(v)) }
+func (q Query) HostnameIn(v ...string) Query             { return q.Where(Hostname.In(v...)) }
+func (q Query) HostnameNotIn(v ...string) Query          { return q.Where(Hostname.NotIn(v...)) }
+func (q Query) SecretHashEq(v string) Query              { return q.Where(SecretHash.Eq(v)) }
+func (q Query) SecretHashNotEq(v string) Query           { return q.Where(SecretHash.NotEq(v)) }
+func (q Query) SecretHashGt(v string) Query              { return q.Where(SecretHash.Gt(v)) }
+func (q Query) SecretHashGte(v string) Query             { return q.Where(SecretHash.Gte(v)) }
+func (q Query) SecretHashLt(v string) Query              { return q.Where(SecretHash.Lt(v)) }
+func (q Query) SecretHashLte(v string) Query             { return q.Where(SecretHash.Lte(v)) }
+func (q Query) SecretHashLike(v string) Query            { return q.Where(SecretHash.Like(v)) }
+func (q Query) SecretHashILike(v string) Query           { return q.Where(SecretHash.ILike(v)) }
+func (q Query) SecretHashIn(v ...string) Query           { return q.Where(SecretHash.In(v...)) }
+func (q Query) SecretHashNotIn(v ...string) Query        { return q.Where(SecretHash.NotIn(v...)) }
+func (q Query) TokenIDEq(v [16]byte) Query               { return q.Where(TokenID.Eq(v)) }
+func (q Query) TokenIDNotEq(v [16]byte) Query            { return q.Where(TokenID.NotEq(v)) }
+func (q Query) TokenIDIn(v ...[16]byte) Query            { return q.Where(TokenID.In(v...)) }
+func (q Query) TokenIDNotIn(v ...[16]byte) Query         { return q.Where(TokenID.NotIn(v...)) }
+func (q Query) CreatedAtEq(v time.Time) Query            { return q.Where(CreatedAt.Eq(v)) }
+func (q Query) CreatedAtNotEq(v time.Time) Query         { return q.Where(CreatedAt.NotEq(v)) }
+func (q Query) CreatedAtGt(v time.Time) Query            { return q.Where(CreatedAt.Gt(v)) }
+func (q Query) CreatedAtGte(v time.Time) Query           { return q.Where(CreatedAt.Gte(v)) }
+func (q Query) CreatedAtLt(v time.Time) Query            { return q.Where(CreatedAt.Lt(v)) }
+func (q Query) CreatedAtLte(v time.Time) Query           { return q.Where(CreatedAt.Lte(v)) }
+func (q Query) RevokedAtEq(v time.Time) Query            { return q.Where(RevokedAt.Eq(v)) }
+func (q Query) RevokedAtNotEq(v time.Time) Query         { return q.Where(RevokedAt.NotEq(v)) }
+func (q Query) RevokedAtGt(v time.Time) Query            { return q.Where(RevokedAt.Gt(v)) }
+func (q Query) RevokedAtGte(v time.Time) Query           { return q.Where(RevokedAt.Gte(v)) }
+func (q Query) RevokedAtLt(v time.Time) Query            { return q.Where(RevokedAt.Lt(v)) }
+func (q Query) RevokedAtLte(v time.Time) Query           { return q.Where(RevokedAt.Lte(v)) }
+func (q Query) RevokedAtIsNull() Query                   { return q.Where(RevokedAt.IsNull()) }
+func (q Query) RevokedAtIsNotNull() Query                { return q.Where(RevokedAt.IsNotNull()) }
+func (q Query) RevokedByEq(v string) Query               { return q.Where(RevokedBy.Eq(v)) }
+func (q Query) RevokedByNotEq(v string) Query            { return q.Where(RevokedBy.NotEq(v)) }
+func (q Query) RevokedByGt(v string) Query               { return q.Where(RevokedBy.Gt(v)) }
+func (q Query) RevokedByGte(v string) Query              { return q.Where(RevokedBy.Gte(v)) }
+func (q Query) RevokedByLt(v string) Query               { return q.Where(RevokedBy.Lt(v)) }
+func (q Query) RevokedByLte(v string) Query              { return q.Where(RevokedBy.Lte(v)) }
+func (q Query) RevokedByLike(v string) Query             { return q.Where(RevokedBy.Like(v)) }
+func (q Query) RevokedByILike(v string) Query            { return q.Where(RevokedBy.ILike(v)) }
+func (q Query) RevokedByIn(v ...string) Query            { return q.Where(RevokedBy.In(v...)) }
+func (q Query) RevokedByNotIn(v ...string) Query         { return q.Where(RevokedBy.NotIn(v...)) }
+func (q Query) RevokedByIsNull() Query                   { return q.Where(RevokedBy.IsNull()) }
+func (q Query) RevokedByIsNotNull() Query                { return q.Where(RevokedBy.IsNotNull()) }
+func (q Query) TunnelTransportEq(v string) Query         { return q.Where(TunnelTransport.Eq(v)) }
+func (q Query) TunnelTransportNotEq(v string) Query      { return q.Where(TunnelTransport.NotEq(v)) }
+func (q Query) TunnelTransportGt(v string) Query         { return q.Where(TunnelTransport.Gt(v)) }
+func (q Query) TunnelTransportGte(v string) Query        { return q.Where(TunnelTransport.Gte(v)) }
+func (q Query) TunnelTransportLt(v string) Query         { return q.Where(TunnelTransport.Lt(v)) }
+func (q Query) TunnelTransportLte(v string) Query        { return q.Where(TunnelTransport.Lte(v)) }
+func (q Query) TunnelTransportLike(v string) Query       { return q.Where(TunnelTransport.Like(v)) }
+func (q Query) TunnelTransportILike(v string) Query      { return q.Where(TunnelTransport.ILike(v)) }
+func (q Query) TunnelTransportIn(v ...string) Query      { return q.Where(TunnelTransport.In(v...)) }
+func (q Query) TunnelTransportNotIn(v ...string) Query   { return q.Where(TunnelTransport.NotIn(v...)) }
+func (q Query) TunnelTransportIsNull() Query             { return q.Where(TunnelTransport.IsNull()) }
+func (q Query) TunnelTransportIsNotNull() Query          { return q.Where(TunnelTransport.IsNotNull()) }
+func (q Query) TunnelReplicaEq(v string) Query           { return q.Where(TunnelReplica.Eq(v)) }
+func (q Query) TunnelReplicaNotEq(v string) Query        { return q.Where(TunnelReplica.NotEq(v)) }
+func (q Query) TunnelReplicaGt(v string) Query           { return q.Where(TunnelReplica.Gt(v)) }
+func (q Query) TunnelReplicaGte(v string) Query          { return q.Where(TunnelReplica.Gte(v)) }
+func (q Query) TunnelReplicaLt(v string) Query           { return q.Where(TunnelReplica.Lt(v)) }
+func (q Query) TunnelReplicaLte(v string) Query          { return q.Where(TunnelReplica.Lte(v)) }
+func (q Query) TunnelReplicaLike(v string) Query         { return q.Where(TunnelReplica.Like(v)) }
+func (q Query) TunnelReplicaILike(v string) Query        { return q.Where(TunnelReplica.ILike(v)) }
+func (q Query) TunnelReplicaIn(v ...string) Query        { return q.Where(TunnelReplica.In(v...)) }
+func (q Query) TunnelReplicaNotIn(v ...string) Query     { return q.Where(TunnelReplica.NotIn(v...)) }
+func (q Query) TunnelReplicaIsNull() Query               { return q.Where(TunnelReplica.IsNull()) }
+func (q Query) TunnelReplicaIsNotNull() Query            { return q.Where(TunnelReplica.IsNotNull()) }
+func (q Query) TunnelConnectedAtEq(v time.Time) Query    { return q.Where(TunnelConnectedAt.Eq(v)) }
+func (q Query) TunnelConnectedAtNotEq(v time.Time) Query { return q.Where(TunnelConnectedAt.NotEq(v)) }
+func (q Query) TunnelConnectedAtGt(v time.Time) Query    { return q.Where(TunnelConnectedAt.Gt(v)) }
+func (q Query) TunnelConnectedAtGte(v time.Time) Query   { return q.Where(TunnelConnectedAt.Gte(v)) }
+func (q Query) TunnelConnectedAtLt(v time.Time) Query    { return q.Where(TunnelConnectedAt.Lt(v)) }
+func (q Query) TunnelConnectedAtLte(v time.Time) Query   { return q.Where(TunnelConnectedAt.Lte(v)) }
+func (q Query) TunnelConnectedAtIsNull() Query           { return q.Where(TunnelConnectedAt.IsNull()) }
+func (q Query) TunnelConnectedAtIsNotNull() Query        { return q.Where(TunnelConnectedAt.IsNotNull()) }
+func (q Query) TunnelSeenAtEq(v time.Time) Query         { return q.Where(TunnelSeenAt.Eq(v)) }
+func (q Query) TunnelSeenAtNotEq(v time.Time) Query      { return q.Where(TunnelSeenAt.NotEq(v)) }
+func (q Query) TunnelSeenAtGt(v time.Time) Query         { return q.Where(TunnelSeenAt.Gt(v)) }
+func (q Query) TunnelSeenAtGte(v time.Time) Query        { return q.Where(TunnelSeenAt.Gte(v)) }
+func (q Query) TunnelSeenAtLt(v time.Time) Query         { return q.Where(TunnelSeenAt.Lt(v)) }
+func (q Query) TunnelSeenAtLte(v time.Time) Query        { return q.Where(TunnelSeenAt.Lte(v)) }
+func (q Query) TunnelSeenAtIsNull() Query                { return q.Where(TunnelSeenAt.IsNull()) }
+func (q Query) TunnelSeenAtIsNotNull() Query             { return q.Where(TunnelSeenAt.IsNotNull()) }
+func (q Query) TunnelRttUsEq(v int32) Query              { return q.Where(TunnelRttUs.Eq(v)) }
+func (q Query) TunnelRttUsNotEq(v int32) Query           { return q.Where(TunnelRttUs.NotEq(v)) }
+func (q Query) TunnelRttUsGt(v int32) Query              { return q.Where(TunnelRttUs.Gt(v)) }
+func (q Query) TunnelRttUsGte(v int32) Query             { return q.Where(TunnelRttUs.Gte(v)) }
+func (q Query) TunnelRttUsLt(v int32) Query              { return q.Where(TunnelRttUs.Lt(v)) }
+func (q Query) TunnelRttUsLte(v int32) Query             { return q.Where(TunnelRttUs.Lte(v)) }
+func (q Query) TunnelRttUsIn(v ...int32) Query           { return q.Where(TunnelRttUs.In(v...)) }
+func (q Query) TunnelRttUsNotIn(v ...int32) Query        { return q.Where(TunnelRttUs.NotIn(v...)) }
+func (q Query) TunnelRttUsIsNull() Query                 { return q.Where(TunnelRttUs.IsNull()) }
+func (q Query) TunnelRttUsIsNotNull() Query              { return q.Where(TunnelRttUs.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by" FROM "agent_credentials"`
+const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us" FROM "agent_credentials"`
 const countPrefix = `SELECT count(*) FROM "agent_credentials"`
 const existsPrefix = `SELECT 1 FROM "agent_credentials"`
 const existsSuffix = ` LIMIT 1`
@@ -877,6 +1059,36 @@ var orderTable = [nCols][4]string{
 		"\"revoked_by\" ASC NULLS FIRST",
 		"\"revoked_by\" DESC NULLS LAST",
 	},
+	{ // tunnel_transport
+		"\"tunnel_transport\"",
+		"\"tunnel_transport\" DESC",
+		"\"tunnel_transport\" ASC NULLS FIRST",
+		"\"tunnel_transport\" DESC NULLS LAST",
+	},
+	{ // tunnel_replica
+		"\"tunnel_replica\"",
+		"\"tunnel_replica\" DESC",
+		"\"tunnel_replica\" ASC NULLS FIRST",
+		"\"tunnel_replica\" DESC NULLS LAST",
+	},
+	{ // tunnel_connected_at
+		"\"tunnel_connected_at\"",
+		"\"tunnel_connected_at\" DESC",
+		"\"tunnel_connected_at\" ASC NULLS FIRST",
+		"\"tunnel_connected_at\" DESC NULLS LAST",
+	},
+	{ // tunnel_seen_at
+		"\"tunnel_seen_at\"",
+		"\"tunnel_seen_at\" DESC",
+		"\"tunnel_seen_at\" ASC NULLS FIRST",
+		"\"tunnel_seen_at\" DESC NULLS LAST",
+	},
+	{ // tunnel_rtt_us
+		"\"tunnel_rtt_us\"",
+		"\"tunnel_rtt_us\" DESC",
+		"\"tunnel_rtt_us\" ASC NULLS FIRST",
+		"\"tunnel_rtt_us\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -889,6 +1101,11 @@ var identTable = [nCols]string{
 	"\"created_at\"",
 	"\"revoked_at\"",
 	"\"revoked_by\"",
+	"\"tunnel_transport\"",
+	"\"tunnel_replica\"",
+	"\"tunnel_connected_at\"",
+	"\"tunnel_seen_at\"",
+	"\"tunnel_rtt_us\"",
 }
 
 var lowering = runtime.Lowering{
@@ -921,7 +1138,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [7][27]runtime.Frag{
+var fragTable = [12][27]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1125,6 +1342,151 @@ var fragTable = [7][27]runtime.Frag{
 		{},
 		{},
 	},
+	{ // tunnel_transport
+		{}, // opNone
+		{A: "\"tunnel_transport\" = $", B: ""},
+		{A: "\"tunnel_transport\" <> $", B: ""},
+		{A: "\"tunnel_transport\" > $", B: ""},
+		{A: "\"tunnel_transport\" >= $", B: ""},
+		{A: "\"tunnel_transport\" < $", B: ""},
+		{A: "\"tunnel_transport\" <= $", B: ""},
+		{A: "\"tunnel_transport\" LIKE $", B: ""},
+		{A: "\"tunnel_transport\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_transport\" = ANY($", B: ")"},
+		{A: "\"tunnel_transport\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_transport\" IS NULL", B: ""},
+		{A: "\"tunnel_transport\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // tunnel_replica
+		{}, // opNone
+		{A: "\"tunnel_replica\" = $", B: ""},
+		{A: "\"tunnel_replica\" <> $", B: ""},
+		{A: "\"tunnel_replica\" > $", B: ""},
+		{A: "\"tunnel_replica\" >= $", B: ""},
+		{A: "\"tunnel_replica\" < $", B: ""},
+		{A: "\"tunnel_replica\" <= $", B: ""},
+		{A: "\"tunnel_replica\" LIKE $", B: ""},
+		{A: "\"tunnel_replica\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_replica\" = ANY($", B: ")"},
+		{A: "\"tunnel_replica\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_replica\" IS NULL", B: ""},
+		{A: "\"tunnel_replica\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // tunnel_connected_at
+		{}, // opNone
+		{A: "\"tunnel_connected_at\" = $", B: ""},
+		{A: "\"tunnel_connected_at\" <> $", B: ""},
+		{A: "\"tunnel_connected_at\" > $", B: ""},
+		{A: "\"tunnel_connected_at\" >= $", B: ""},
+		{A: "\"tunnel_connected_at\" < $", B: ""},
+		{A: "\"tunnel_connected_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_connected_at\" IS NULL", B: ""},
+		{A: "\"tunnel_connected_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // tunnel_seen_at
+		{}, // opNone
+		{A: "\"tunnel_seen_at\" = $", B: ""},
+		{A: "\"tunnel_seen_at\" <> $", B: ""},
+		{A: "\"tunnel_seen_at\" > $", B: ""},
+		{A: "\"tunnel_seen_at\" >= $", B: ""},
+		{A: "\"tunnel_seen_at\" < $", B: ""},
+		{A: "\"tunnel_seen_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_seen_at\" IS NULL", B: ""},
+		{A: "\"tunnel_seen_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // tunnel_rtt_us
+		{}, // opNone
+		{A: "\"tunnel_rtt_us\" = $", B: ""},
+		{A: "\"tunnel_rtt_us\" <> $", B: ""},
+		{A: "\"tunnel_rtt_us\" > $", B: ""},
+		{A: "\"tunnel_rtt_us\" >= $", B: ""},
+		{A: "\"tunnel_rtt_us\" < $", B: ""},
+		{A: "\"tunnel_rtt_us\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_rtt_us\" = ANY($", B: ")"},
+		{A: "\"tunnel_rtt_us\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_rtt_us\" IS NULL", B: ""},
+		{A: "\"tunnel_rtt_us\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1287,16 +1649,23 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.CreatedAt = runtime.Timestamptz(rv[4])
 	r.RevokedAt = runtime.Nullable(rv[5], runtime.Timestamptz)
 	r.RevokedBy = runtime.NullText(rv[6], sl)
+	r.TunnelTransport = runtime.NullText(rv[7], sl)
+	r.TunnelReplica = runtime.NullText(rv[8], sl)
+	r.TunnelConnectedAt = runtime.Nullable(rv[9], runtime.Timestamptz)
+	r.TunnelSeenAt = runtime.Nullable(rv[10], runtime.Timestamptz)
+	r.TunnelRttUs = runtime.Nullable(rv[11], runtime.Int4)
 	return nil
 }
 
 type binder struct {
 	vals   []any
 	strs   [6]string
+	nums   [6]int64
 	raws   [4][16]byte
 	tims   [4]time.Time
 	anyRaw [3][][16]byte
 	anyStr [3][]string
+	anyI32 [3][]int32
 	limit  int64
 	offset int64
 }
@@ -1327,6 +1696,9 @@ func putBinder(b *binder) {
 	for i := range b.anyStr {
 		b.anyStr[i] = nil
 	}
+	for i := range b.anyI32 {
+		b.anyI32[i] = nil
+	}
 	binders.Put(b)
 }
 
@@ -1335,7 +1707,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nr, ntm, nar, nas uint8
+	var ns, nn, nr, ntm, nar, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1371,6 +1743,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 7:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 8:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 11:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
 			}
 			continue
 		}
@@ -1403,6 +1787,26 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 7:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 8:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 9:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 10:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 11:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
 		}
 	}
 	b.vals = v
@@ -1540,7 +1944,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by"`
+const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us"`
 
 const updatePrefix = `UPDATE "agent_credentials" SET `
 const deletePrefix = `DELETE FROM "agent_credentials"`
@@ -1548,24 +1952,34 @@ const deletePrefix = `DELETE FROM "agent_credentials"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dHostname   uint64 = 1 << 0
-	dSecretHash uint64 = 1 << 1
-	dTokenID    uint64 = 1 << 2
-	dCreatedAt  uint64 = 1 << 3
-	dRevokedAt  uint64 = 1 << 4
-	dRevokedBy  uint64 = 1 << 5
+	dHostname          uint64 = 1 << 0
+	dSecretHash        uint64 = 1 << 1
+	dTokenID           uint64 = 1 << 2
+	dCreatedAt         uint64 = 1 << 3
+	dRevokedAt         uint64 = 1 << 4
+	dRevokedBy         uint64 = 1 << 5
+	dTunnelTransport   uint64 = 1 << 6
+	dTunnelReplica     uint64 = 1 << 7
+	dTunnelConnectedAt uint64 = 1 << 8
+	dTunnelSeenAt      uint64 = 1 << 9
+	dTunnelRttUs       uint64 = 1 << 10
 )
 
-const nUpdatable = 6
+const nUpdatable = 11
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"hostname\" = $", B: ""},    // hostname
-	{A: "\"secret_hash\" = $", B: ""}, // secret_hash
-	{A: "\"token_id\" = $", B: ""},    // token_id
-	{A: "\"created_at\" = $", B: ""},  // created_at
-	{A: "\"revoked_at\" = $", B: ""},  // revoked_at
-	{A: "\"revoked_by\" = $", B: ""},  // revoked_by
+	{A: "\"hostname\" = $", B: ""},            // hostname
+	{A: "\"secret_hash\" = $", B: ""},         // secret_hash
+	{A: "\"token_id\" = $", B: ""},            // token_id
+	{A: "\"created_at\" = $", B: ""},          // created_at
+	{A: "\"revoked_at\" = $", B: ""},          // revoked_at
+	{A: "\"revoked_by\" = $", B: ""},          // revoked_by
+	{A: "\"tunnel_transport\" = $", B: ""},    // tunnel_transport
+	{A: "\"tunnel_replica\" = $", B: ""},      // tunnel_replica
+	{A: "\"tunnel_connected_at\" = $", B: ""}, // tunnel_connected_at
+	{A: "\"tunnel_seen_at\" = $", B: ""},      // tunnel_seen_at
+	{A: "\"tunnel_rtt_us\" = $", B: ""},       // tunnel_rtt_us
 }
 
 // pkFrags addresses one row.
@@ -1577,16 +1991,21 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID         uint64 = 1 << 0
-	iHostname   uint64 = 1 << 1
-	iSecretHash uint64 = 1 << 2
-	iTokenID    uint64 = 1 << 3
-	iCreatedAt  uint64 = 1 << 4
-	iRevokedAt  uint64 = 1 << 5
-	iRevokedBy  uint64 = 1 << 6
+	iID                uint64 = 1 << 0
+	iHostname          uint64 = 1 << 1
+	iSecretHash        uint64 = 1 << 2
+	iTokenID           uint64 = 1 << 3
+	iCreatedAt         uint64 = 1 << 4
+	iRevokedAt         uint64 = 1 << 5
+	iRevokedBy         uint64 = 1 << 6
+	iTunnelTransport   uint64 = 1 << 7
+	iTunnelReplica     uint64 = 1 << 8
+	iTunnelConnectedAt uint64 = 1 << 9
+	iTunnelSeenAt      uint64 = 1 << 10
+	iTunnelRttUs       uint64 = 1 << 11
 )
 
-const nInsertable = 7
+const nInsertable = 12
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1597,6 +2016,11 @@ var insCols = [nInsertable]string{
 	"\"created_at\"",
 	"\"revoked_at\"",
 	"\"revoked_by\"",
+	"\"tunnel_transport\"",
+	"\"tunnel_replica\"",
+	"\"tunnel_connected_at\"",
+	"\"tunnel_seen_at\"",
+	"\"tunnel_rtt_us\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1605,7 +2029,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 
 const insPlaceholder = "$"
 const insPrefix = "INSERT INTO \"agent_credentials\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1682,6 +2106,66 @@ func (m *Mut) SetRevokedByNull() {
 	m.dirty |= dRevokedBy
 }
 
+func (m *Mut) SetTunnelTransport(v string) {
+	m.row.TunnelTransport = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dTunnelTransport
+}
+
+// SetTunnelTransportNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTunnelTransportNull() {
+	m.row.TunnelTransport = runtime.Null[string]{}
+	m.dirty |= dTunnelTransport
+}
+
+func (m *Mut) SetTunnelReplica(v string) {
+	m.row.TunnelReplica = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dTunnelReplica
+}
+
+// SetTunnelReplicaNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTunnelReplicaNull() {
+	m.row.TunnelReplica = runtime.Null[string]{}
+	m.dirty |= dTunnelReplica
+}
+
+func (m *Mut) SetTunnelConnectedAt(v time.Time) {
+	m.row.TunnelConnectedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dTunnelConnectedAt
+}
+
+// SetTunnelConnectedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTunnelConnectedAtNull() {
+	m.row.TunnelConnectedAt = runtime.Null[time.Time]{}
+	m.dirty |= dTunnelConnectedAt
+}
+
+func (m *Mut) SetTunnelSeenAt(v time.Time) {
+	m.row.TunnelSeenAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dTunnelSeenAt
+}
+
+// SetTunnelSeenAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTunnelSeenAtNull() {
+	m.row.TunnelSeenAt = runtime.Null[time.Time]{}
+	m.dirty |= dTunnelSeenAt
+}
+
+func (m *Mut) SetTunnelRttUs(v int32) {
+	m.row.TunnelRttUs = runtime.Null[int32]{V: v, Valid: true}
+	m.dirty |= dTunnelRttUs
+}
+
+// SetTunnelRttUsNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTunnelRttUsNull() {
+	m.row.TunnelRttUs = runtime.Null[int32]{}
+	m.dirty |= dTunnelRttUs
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -1756,6 +2240,66 @@ func (n *Ins) SetRevokedByNull() {
 	n.set |= iRevokedBy
 }
 
+func (n *Ins) SetTunnelTransport(v string) {
+	n.row.TunnelTransport = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iTunnelTransport
+}
+
+// SetTunnelTransportNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTunnelTransportNull() {
+	n.row.TunnelTransport = runtime.Null[string]{}
+	n.set |= iTunnelTransport
+}
+
+func (n *Ins) SetTunnelReplica(v string) {
+	n.row.TunnelReplica = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iTunnelReplica
+}
+
+// SetTunnelReplicaNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTunnelReplicaNull() {
+	n.row.TunnelReplica = runtime.Null[string]{}
+	n.set |= iTunnelReplica
+}
+
+func (n *Ins) SetTunnelConnectedAt(v time.Time) {
+	n.row.TunnelConnectedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iTunnelConnectedAt
+}
+
+// SetTunnelConnectedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTunnelConnectedAtNull() {
+	n.row.TunnelConnectedAt = runtime.Null[time.Time]{}
+	n.set |= iTunnelConnectedAt
+}
+
+func (n *Ins) SetTunnelSeenAt(v time.Time) {
+	n.row.TunnelSeenAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iTunnelSeenAt
+}
+
+// SetTunnelSeenAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTunnelSeenAtNull() {
+	n.row.TunnelSeenAt = runtime.Null[time.Time]{}
+	n.set |= iTunnelSeenAt
+}
+
+func (n *Ins) SetTunnelRttUs(v int32) {
+	n.row.TunnelRttUs = runtime.Null[int32]{V: v, Valid: true}
+	n.set |= iTunnelRttUs
+}
+
+// SetTunnelRttUsNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTunnelRttUsNull() {
+	n.row.TunnelRttUs = runtime.Null[int32]{}
+	n.set |= iTunnelRttUs
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -1803,7 +2347,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 6)
+	set := make([]string, 0, 11)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -1824,6 +2368,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<6) != 0 {
 			set = append(set, "revoked_by")
 		}
+		if mask&(1<<7) != 0 {
+			set = append(set, "tunnel_transport")
+		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "tunnel_replica")
+		}
+		if mask&(1<<9) != 0 {
+			set = append(set, "tunnel_connected_at")
+		}
+		if mask&(1<<10) != 0 {
+			set = append(set, "tunnel_seen_at")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "tunnel_rtt_us")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -1839,6 +2398,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<6) != 0 {
 			set = append(set, "revoked_by")
+		}
+		if mask&(1<<7) != 0 {
+			set = append(set, "tunnel_transport")
+		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "tunnel_replica")
+		}
+		if mask&(1<<9) != 0 {
+			set = append(set, "tunnel_connected_at")
+		}
+		if mask&(1<<10) != 0 {
+			set = append(set, "tunnel_seen_at")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "tunnel_rtt_us")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -1858,6 +2432,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<6) != 0 {
 			set = append(set, "revoked_by")
+		}
+		if mask&(1<<7) != 0 {
+			set = append(set, "tunnel_transport")
+		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "tunnel_replica")
+		}
+		if mask&(1<<9) != 0 {
+			set = append(set, "tunnel_connected_at")
+		}
+		if mask&(1<<10) != 0 {
+			set = append(set, "tunnel_seen_at")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "tunnel_rtt_us")
 		}
 	}
 	return set
@@ -1927,12 +2516,17 @@ func joinAssign(set []string) string {
 }
 
 var assignFor = map[string]string{
-	"hostname":    "\"hostname\" = EXCLUDED.\"hostname\"",
-	"secret_hash": "\"secret_hash\" = EXCLUDED.\"secret_hash\"",
-	"token_id":    "\"token_id\" = EXCLUDED.\"token_id\"",
-	"created_at":  "\"created_at\" = EXCLUDED.\"created_at\"",
-	"revoked_at":  "\"revoked_at\" = EXCLUDED.\"revoked_at\"",
-	"revoked_by":  "\"revoked_by\" = EXCLUDED.\"revoked_by\"",
+	"hostname":            "\"hostname\" = EXCLUDED.\"hostname\"",
+	"secret_hash":         "\"secret_hash\" = EXCLUDED.\"secret_hash\"",
+	"token_id":            "\"token_id\" = EXCLUDED.\"token_id\"",
+	"created_at":          "\"created_at\" = EXCLUDED.\"created_at\"",
+	"revoked_at":          "\"revoked_at\" = EXCLUDED.\"revoked_at\"",
+	"revoked_by":          "\"revoked_by\" = EXCLUDED.\"revoked_by\"",
+	"tunnel_transport":    "\"tunnel_transport\" = EXCLUDED.\"tunnel_transport\"",
+	"tunnel_replica":      "\"tunnel_replica\" = EXCLUDED.\"tunnel_replica\"",
+	"tunnel_connected_at": "\"tunnel_connected_at\" = EXCLUDED.\"tunnel_connected_at\"",
+	"tunnel_seen_at":      "\"tunnel_seen_at\" = EXCLUDED.\"tunnel_seen_at\"",
+	"tunnel_rtt_us":       "\"tunnel_rtt_us\" = EXCLUDED.\"tunnel_rtt_us\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -1990,6 +2584,16 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.RevokedAt.Arg())
 		case 6:
 			args = append(args, n.row.RevokedBy.Arg())
+		case 7:
+			args = append(args, n.row.TunnelTransport.Arg())
+		case 8:
+			args = append(args, n.row.TunnelReplica.Arg())
+		case 9:
+			args = append(args, n.row.TunnelConnectedAt.Arg())
+		case 10:
+			args = append(args, n.row.TunnelSeenAt.Arg())
+		case 11:
+			args = append(args, n.row.TunnelRttUs.Arg())
 		}
 	}
 	var out Row
@@ -2027,7 +2631,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 7)
+	args := make([]any, 0, 12)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -2035,6 +2639,11 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.CreatedAt)
 	args = append(args, r.RevokedAt.Arg())
 	args = append(args, r.RevokedBy.Arg())
+	args = append(args, r.TunnelTransport.Arg())
+	args = append(args, r.TunnelReplica.Arg())
+	args = append(args, r.TunnelConnectedAt.Arg())
+	args = append(args, r.TunnelSeenAt.Arg())
+	args = append(args, r.TunnelRttUs.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2068,13 +2677,18 @@ var copyCols = []string{
 	"created_at",
 	"revoked_at",
 	"revoked_by",
+	"tunnel_transport",
+	"tunnel_replica",
+	"tunnel_connected_at",
+	"tunnel_seen_at",
+	"tunnel_rtt_us",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [7]any
+	buf  [12]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2099,6 +2713,11 @@ func (s *rowSource) Values() []any {
 	s.buf[4] = &r.CreatedAt
 	s.buf[5] = r.RevokedAt.Ptr()
 	s.buf[6] = r.RevokedBy.Ptr()
+	s.buf[7] = r.TunnelTransport.Ptr()
+	s.buf[8] = r.TunnelReplica.Ptr()
+	s.buf[9] = r.TunnelConnectedAt.Ptr()
+	s.buf[10] = r.TunnelSeenAt.Ptr()
+	s.buf[11] = r.TunnelRttUs.Ptr()
 	return s.buf[:]
 }
 
@@ -2136,8 +2755,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 4
 	mask |= 1 << 5
 	mask |= 1 << 6
+	mask |= 1 << 7
+	mask |= 1 << 8
+	mask |= 1 << 9
+	mask |= 1 << 10
+	mask |= 1 << 11
 	st := stmtForInsert(mask, 0)
-	args := make([]any, 0, 7)
+	args := make([]any, 0, 12)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -2145,6 +2769,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.CreatedAt)
 	args = append(args, r.RevokedAt.Arg())
 	args = append(args, r.RevokedBy.Arg())
+	args = append(args, r.TunnelTransport.Arg())
+	args = append(args, r.TunnelReplica.Arg())
+	args = append(args, r.TunnelConnectedAt.Arg())
+	args = append(args, r.TunnelSeenAt.Arg())
+	args = append(args, r.TunnelRttUs.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2192,6 +2821,16 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.RevokedAt.Arg())
 		case 6:
 			args = append(args, n.row.RevokedBy.Arg())
+		case 7:
+			args = append(args, n.row.TunnelTransport.Arg())
+		case 8:
+			args = append(args, n.row.TunnelReplica.Arg())
+		case 9:
+			args = append(args, n.row.TunnelConnectedAt.Arg())
+		case 10:
+			args = append(args, n.row.TunnelSeenAt.Arg())
+		case 11:
+			args = append(args, n.row.TunnelRttUs.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2246,6 +2885,16 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.RevokedAt.Arg())
 		case 5:
 			args = append(args, m.row.RevokedBy.Arg())
+		case 6:
+			args = append(args, m.row.TunnelTransport.Arg())
+		case 7:
+			args = append(args, m.row.TunnelReplica.Arg())
+		case 8:
+			args = append(args, m.row.TunnelConnectedAt.Arg())
+		case 9:
+			args = append(args, m.row.TunnelSeenAt.Arg())
+		case 10:
+			args = append(args, m.row.TunnelRttUs.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2313,6 +2962,16 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.RevokedAt.Arg())
 		case 5:
 			args = append(args, m.row.RevokedBy.Arg())
+		case 6:
+			args = append(args, m.row.TunnelTransport.Arg())
+		case 7:
+			args = append(args, m.row.TunnelReplica.Arg())
+		case 8:
+			args = append(args, m.row.TunnelConnectedAt.Arg())
+		case 9:
+			args = append(args, m.row.TunnelSeenAt.Arg())
+		case 10:
+			args = append(args, m.row.TunnelRttUs.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
