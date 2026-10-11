@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 /*
@@ -226,7 +228,10 @@ func spawnSystemd(a loginAccount, tty *os.File, actor string) (shellProc, error)
 		return nil, err
 	}
 
-	run := exec.Command("systemd-run", "--quiet", "--wait", "--collect",
+	// Not --quiet: the summary systemd-run prints when the unit finishes is
+	// where the shell's exit status is. Its own exit code does not carry it
+	// on every systemd version (255 returns 1 for any failure).
+	run := exec.Command("systemd-run", "--wait", "--collect",
 		"--service-type=exec", "--unit="+unit,
 		"--uid="+a.name,
 		// A login: PAM account and session, limits, a logind session.
@@ -240,15 +245,18 @@ func spawnSystemd(a loginAccount, tty *os.File, actor string) (shellProc, error)
 		"--setenv=ARGUS_SESSION_FOR="+actor,
 		"/bin/sh", "-c", launcher, a.shell, fifo)
 	var stderr bytes.Buffer
-	run.Stderr = &stderr
+	run.Stdout, run.Stderr = &stderr, &stderr
 	if err := run.Start(); err != nil {
 		_ = os.Remove(fifo)
 		return nil, fmt.Errorf("cannot start a session unit: %w", err)
 	}
 	p := &systemdProc{unit: unit, fifo: fifo, done: make(chan struct{})}
 	go func() {
-		// systemd-run --wait exits with the service's exit status.
-		p.code = exitCode(run.Wait())
+		err := run.Wait()
+		p.code = exitCode(err)
+		if code, ok := unitExitStatus(stderr.String()); ok {
+			p.code = code
+		}
 		_ = os.Remove(fifo)
 		close(p.done)
 	}()
@@ -317,6 +325,33 @@ func (p *systemdProc) Wait() int {
 // SIGKILL after its stop timeout, which is hangupWait.
 func (p *systemdProc) Hangup() {
 	_ = exec.Command("systemctl", "stop", "--no-block", p.unit).Run()
+}
+
+// unitExitStatus reads the main process's status from the summary
+// systemd-run --wait prints: "Main processes terminated with:
+// code=exited/status=7", or code=killed/status=HUP for a signal.
+func unitExitStatus(summary string) (int, bool) {
+	_, after, ok := strings.Cut(summary, "code=")
+	if !ok {
+		return 0, false
+	}
+	how, rest, ok := strings.Cut(after, "/status=")
+	if !ok {
+		return 0, false
+	}
+	status := rest
+	if i := strings.IndexAny(rest, " \n\r,"); i >= 0 {
+		status = rest[:i]
+	}
+	if how == "exited" {
+		n, err := strconv.Atoi(status)
+		return n, err == nil
+	}
+	// killed or dumped: by a signal, reported by name.
+	if sig := unix.SignalNum("SIG" + status); sig != 0 {
+		return 128 + int(sig), true
+	}
+	return 0, false
 }
 
 func exitCode(err error) int {
