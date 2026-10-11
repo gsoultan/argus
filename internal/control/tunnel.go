@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -49,6 +50,9 @@ type TunnelHub struct {
 	// QUICPort is advertised to agents on the HTTPS fallback; zero when
 	// this replica does not listen for QUIC.
 	QUICPort int
+	// GrantKey signs session grants; see tunnel.Grant. Nil when there is
+	// no signing secret, and then no session opens through a tunnel.
+	GrantKey ed25519.PrivateKey
 
 	mu     sync.Mutex
 	byCred map[string]*liveTunnel
@@ -264,6 +268,9 @@ func (a *API) handleTunnelUpgrade(w http.ResponseWriter, r *http.Request) {
 	if a.Tunnels.QUICPort > 0 {
 		resp += tunnel.QUICHeader + ": " + strconv.Itoa(a.Tunnels.QUICPort) + "\r\n"
 	}
+	if k := a.Tunnels.grantKeyPublic(); k != "" {
+		resp += tunnel.GrantKeyHeader + ": " + k + "\r\n"
+	}
 	if _, err := buf.WriteString(resp + "\r\n"); err != nil || buf.Flush() != nil {
 		_ = conn.Close()
 		return
@@ -320,7 +327,8 @@ func (a *API) admitQUIC(ctx context.Context, sess tunnel.Session) {
 		refuse("this agent is enrolled as " + host + " and may only connect as that host")
 		return
 	}
-	if err := tunnel.WriteJSON(st, tunnel.Answer{OK: true}); err != nil {
+	if err := tunnel.WriteJSON(st, tunnel.Answer{OK: true,
+		GrantKey: a.Tunnels.grantKeyPublic()}); err != nil {
 		_ = sess.Close()
 		return
 	}

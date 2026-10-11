@@ -161,8 +161,18 @@ func runDaemon(args []string) int {
 	// on, so this host needs no inbound port. Only for an enrolled agent: the
 	// control plane admits a tunnel on a per-host credential and never on the
 	// shared reporter token.
+	col := agent.NewCollector(*dir, log)
 	if *useTunnel && strings.HasPrefix(*controlToken, "argus-agent-") {
 		hostname, _ := os.Hostname()
+		services := agent.DefaultTunnelServices()
+		// Browser sessions open here, as the account, recorded by this
+		// daemon before anything is shown.
+		services[agent.TerminalService] = agent.Terminal(agent.TerminalConfig{
+			Collector: col,
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			Hostname:  hostname,
+			Log:       log,
+		})
 		go agent.RunTunnel(ctx, agent.TunnelConfig{
 			Dial: tunnel.DialOptions{
 				ControlURL: *controlURL,
@@ -171,12 +181,12 @@ func runDaemon(args []string) int {
 				Version:    version,
 				TLS:        clientTLS,
 			},
-			Services: agent.DefaultTunnelServices(),
+			Services: services,
 			Log:      log,
+			GrantPin: agent.NewGrantPin(*stateDir),
 		})
 	}
 
-	col := agent.NewCollector(*dir, log)
 	col.OnUnrecorded = func(m agent.SessionStart) {
 		// The daemon's own hostname, not the shim's: the shim runs as the
 		// user who logged in, and the credential this reports with only
@@ -197,9 +207,16 @@ func runDaemon(args []string) int {
 		// becomes visible, not where it becomes real.
 		appendJSONL(*stateDir+"/sessions.jsonl", rec, log)
 
+		// A session through the tunnel is attributed to the person the
+		// control plane signed it for; a login through sshd only to the
+		// local account.
+		who := rec.Principal + "@" + rec.Hostname
+		if rec.Actor != "" {
+			who = rec.Actor
+		}
 		rep.Session(ctx, map[string]any{
 			"id":             rec.ID,
-			"userEmail":      rec.Principal + "@" + rec.Hostname,
+			"userEmail":      who,
 			"assetHostname":  rec.Hostname,
 			"principal":      rec.Principal,
 			"protocol":       "ssh",

@@ -37,6 +37,9 @@ type Collector struct {
 	// handle() blocked on a read, and without a way to close it a shutdown
 	// waits for a shell nobody is going to exit.
 	conns map[net.Conn]struct{}
+	// hangups ends each session the agent opened itself through the tunnel,
+	// for the same reason: those have no shim connection to close.
+	hangups map[string]func()
 
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
@@ -80,6 +83,9 @@ type SessionRecord struct {
 	// Commands counts kernel-observed executions, and is zero for a PTY-only
 	// recording rather than a guess derived from terminal output.
 	Commands int `json:"commands"`
+	// Actor is who a tunnel session was opened for, from the signed grant.
+	// Empty for a login through sshd, where only the local account is known.
+	Actor string `json:"actor,omitempty"`
 }
 
 type activeSession struct {
@@ -221,14 +227,21 @@ func (c *Collector) CloseWithin(d time.Duration) error {
 		for conn := range c.conns {
 			open = append(open, conn)
 		}
+		hangups := make([]func(), 0, len(c.hangups))
+		for _, h := range c.hangups {
+			hangups = append(hangups, h)
+		}
 		active := len(c.active)
 		c.mu.Unlock()
 
-		c.log.Warn("shims still attached at the end of the drain window; "+
+		c.log.Warn("sessions still open at the end of the drain window; "+
 			"disconnecting them so their recordings are sealed",
-			"shims", len(open), "sessions", active, "drain", d)
+			"shims", len(open), "tunnel_sessions", len(hangups), "sessions", active, "drain", d)
 		for _, conn := range open {
 			_ = conn.Close()
+		}
+		for _, h := range hangups {
+			h()
 		}
 		if !waitGroup(&c.wg, sealGrace) {
 			c.log.Error("recordings did not finish sealing within the grace period",
@@ -506,6 +519,7 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 		Path:       sess.path,
 		Fidelity:   sess.fidelity(c.Exec),
 		Commands:   sess.commandCount(),
+		Actor:      sess.start.Actor,
 	}
 
 	c.log.Info("recording sealed",

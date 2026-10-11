@@ -14,7 +14,7 @@ Read this file first, then only the memory a task actually needs.
 | [design-system](design-system.md) | Any visual or component change |
 | [pwa-and-service-worker](pwa-and-service-worker.md) | Caching, offline, auth redirects, releases |
 | [gateway-policy](gateway-policy.md) | SSH channel policy, forwarding, recording guarantees |
-| [agent-tunnel](agent-tunnel.md) | The agent's outbound QUIC/HTTPS connection, services, admission |
+| [agent-tunnel](agent-tunnel.md) | The agent's outbound QUIC/HTTPS connection, services, admission, browser sessions through it |
 | [recording-scope](recording-scope.md) | Which logins the agent records (through Argus only, or direct too) |
 | [inventory-and-assignment](inventory-and-assignment.md) | Assets, who may reach them, and how a gateway learns both |
 | [browser-checks](browser-checks.md) | Playwright suite, memory ceilings, how to measure |

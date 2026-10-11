@@ -74,6 +74,10 @@ type SessionStart struct {
 	// OriginReason explains how Origin was decided, so an operator reviewing a
 	// flagged session can see whether it rested on proof or on a fallback.
 	OriginReason string `json:"origin_reason,omitempty"`
+	// Actor is the person a session opened through the tunnel is for, from
+	// the control plane's signed grant. Never set by a shim: a shim runs as
+	// the user being recorded, and could claim to be anyone.
+	Actor string `json:"-"`
 }
 
 // Frame is one chunk of session data.
