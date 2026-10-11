@@ -176,6 +176,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/assets", a.postAssetCreate)
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/recording-scope", a.putRecordingScope)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
@@ -222,6 +223,7 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	// A gateway that retried a stranded upload, saying where it landed.
 	mux.HandleFunc("POST /api/v1/report/recording", a.reporter(a.handleRecordingStored))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.agentReporter(a.postHeartbeat))
+	mux.HandleFunc("POST /api/v1/report/login", a.agentReporter(a.postLogin))
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/facts", a.agentReporter(a.postFacts))
 
@@ -565,6 +567,10 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// whether the kernel probe is loaded; ExecReason says why not.
 		ExecTracing bool   `json:"exec_tracing"`
 		ExecReason  string `json:"exec_reason"`
+		// RecordingScope is what the agent is applying now, so the console
+		// can show whether a change has reached the host. Absent from an
+		// agent older than the setting.
+		RecordingScope string `json:"recording_scope"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -577,8 +583,17 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !a.mayReportFor(w, r, in.Hostname) {
 		return
 	}
-	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
-		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason)
+	switch in.RecordingScope {
+	case "", ScopeEveryLogin, ScopeArgusOnly:
+	default:
+		writeErr(w, http.StatusBadRequest, "recording_scope must be every_login or argus_only")
+		return
+	}
+	// The reply carries the scope the console has set: the heartbeat is the
+	// one call every agent already makes, so a change reaches the host within
+	// one interval without a second poll per host.
+	scope, err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
+		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.RecordingScope)
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,
@@ -586,6 +601,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"inventory or set its agent_hostname")
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status": "ok", "warning": "no matching asset; coverage not tracked",
+			"recording_scope": scope,
 		})
 		return
 	}
@@ -593,7 +609,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "heartbeat", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "recording_scope": scope})
 }
 
 func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {

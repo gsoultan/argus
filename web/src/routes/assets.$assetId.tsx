@@ -7,6 +7,7 @@ import {
   IconRefresh, IconServer2, IconShieldCheck, IconUsers,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
+import { RecordingScopeCard } from '~/components/RecordingScope'
 import { ButtonLink } from '~/components/links'
 import { run } from '~/lib/notify'
 import {
@@ -263,6 +264,8 @@ function AssetDetail() {
                   </Field>
                 </Stack>
               </SectionCard>
+
+              <RecordingScopeCard asset={asset} canEdit={canEdit} />
 
               <SectionCard
                 title="Connect"

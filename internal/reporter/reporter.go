@@ -12,6 +12,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -99,6 +100,29 @@ func (c *Client) Heartbeat(ctx context.Context, v any) {
 	c.post(ctx, "/api/v1/report/heartbeat", v)
 }
 
+// HeartbeatReply is what the control plane answers a heartbeat with.
+type HeartbeatReply struct {
+	Status string `json:"status"`
+	// RecordingScope is the console's setting for this host. Empty from a
+	// control plane older than the setting.
+	RecordingScope string `json:"recording_scope"`
+}
+
+// HeartbeatWithReply reports like Heartbeat and returns the control plane's
+// answer. ok is false when it was not delivered (and was spooled), so the
+// caller keeps whatever it last heard rather than acting on a zero value.
+func (c *Client) HeartbeatWithReply(ctx context.Context, v any) (reply HeartbeatReply, ok bool) {
+	ok = c.postInto(ctx, "/api/v1/report/heartbeat", v, &reply)
+	return reply, ok
+}
+
+// Login reports a login the agent let through without recording it. Spooled
+// like a session when the control plane is down: it is the only trace that
+// login leaves.
+func (c *Client) Login(ctx context.Context, v any) {
+	c.post(ctx, "/api/v1/report/login", v)
+}
+
 // Facts reports what a host is: its OS, addresses, SSH ports and login
 // accounts. Sent on a slower cadence than the heartbeat because these change on
 // a reboot, not every thirty seconds.
@@ -123,22 +147,29 @@ type spoolEntry struct {
 }
 
 func (c *Client) post(ctx context.Context, path string, v any) {
+	c.postInto(ctx, path, v, nil)
+}
+
+// postInto delivers a report, decoding the reply into out when it is non-nil,
+// and spools it when delivery fails. It reports whether it was delivered.
+func (c *Client) postInto(ctx context.Context, path string, v any, out any) bool {
 	if !c.Enabled() {
-		return
+		return false
 	}
 	body, err := json.Marshal(v)
 	if err != nil {
 		c.log.Error("marshal report", "path", path, "error", err)
-		return
+		return false
 	}
-	if err := c.send(ctx, path, body); err != nil {
+	if err := c.sendInto(ctx, path, body, out); err != nil {
 		c.log.Warn("control plane unreachable, spooling report",
 			"path", path, "error", err)
 		c.spool(spoolEntry{Path: path, Body: body, At: time.Now().UTC()})
 		c.noteFailure(err)
-		return
+		return false
 	}
 	c.noteSuccess()
+	return true
 }
 
 // DefaultMaxSpoolBytes bounds the undelivered-report file.
@@ -205,6 +236,10 @@ func (c *Client) noteSuccessLocked() {
 }
 
 func (c *Client) send(ctx context.Context, path string, body []byte) error {
+	return c.sendInto(ctx, path, body, nil)
+}
+
+func (c *Client) sendInto(ctx context.Context, path string, body []byte, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
@@ -221,6 +256,12 @@ func (c *Client) send(ctx context.Context, path string, body []byte) error {
 
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("control plane returned %d", resp.StatusCode)
+	}
+	if out != nil {
+		// Bounded: a reply is a few fields, and a control plane that is not
+		// one must not be able to make the agent buffer without limit.
+		// Delivered either way; an undecodable reply just leaves out as it was.
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(out)
 	}
 	return nil
 }

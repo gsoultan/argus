@@ -34,7 +34,7 @@ const assetSelect = `
 	       a.host_key_state, a.host_key_fingerprint, a.host_key_pinned_at,
 	       a.health, a.last_checked_at, a.principals,
 	       a.agent_state, a.agent_last_seen_at, a.bypass_posture,
-	       a.unmanaged_key_count
+	       a.unmanaged_key_count, a.recording_scope, a.agent_recording_scope
 	FROM assets a`
 
 func scanAsset(rows pgx.Rows) (Asset, error) {
@@ -44,7 +44,8 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.CredentialMode, &a.CredentialRotatedAt, &a.RotationIntervalDays,
 		&a.HostKeyState, &a.HostKeyFingerprint, &a.HostKeyPinnedAt,
 		&a.Health, &a.LastCheckedAt, &a.Principals,
-		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount)
+		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
+		&a.RecordingScope, &a.AgentRecordingScope)
 	return a, err
 }
 

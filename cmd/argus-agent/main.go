@@ -155,6 +155,21 @@ func runDaemon(args []string) int {
 	}
 
 	col := agent.NewCollector(*dir, log)
+	col.OnUnrecorded = func(m agent.SessionStart) {
+		// The daemon's own hostname, not the shim's: the shim runs as the
+		// user who logged in, and the credential this reports with only
+		// speaks for this host anyway.
+		hostname, _ := os.Hostname()
+		rep.Login(ctx, map[string]any{
+			"hostname":    hostname,
+			"principal":   m.Principal,
+			"client_addr": m.ClientAddr,
+			"command":     m.Command,
+			"origin":      m.Origin,
+			"scope":       agent.ScopeArgusOnly,
+			"at":          time.Now().UTC(),
+		})
+	}
 	col.OnSession = func(rec agent.SessionRecord) {
 		// Always keep the local copy. The control plane is where a session
 		// becomes visible, not where it becomes real.
@@ -246,14 +261,27 @@ func runDaemon(args []string) int {
 				"drift":          p.Drift,
 			}
 		}
-		rep.Heartbeat(ctx, map[string]any{
+		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
 			"active_sessions": col.ActiveCount(),
 			"posture":         posture,
 			"exec_tracing":    execCtx.Tracer != nil,
 			"exec_reason":     execCtx.Reason,
+			"recording_scope": col.Scope(),
 		})
+		// Only a delivered reply changes the scope. An unreachable control
+		// plane leaves the last setting in place -- the console's, not a
+		// default chosen by an outage -- and a control plane that does not
+		// send one is every_login, which is what it has always meant.
+		if ok {
+			next := agent.ParseScope(reply.RecordingScope)
+			if prev := col.Scope(); next != prev {
+				log.Warn("recording scope changed by the console",
+					"from", prev, "to", next)
+			}
+			col.SetScope(next)
+		}
 	})
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so

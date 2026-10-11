@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsoultan/argus/internal/execlog"
@@ -40,6 +41,16 @@ type Collector struct {
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
 	OnSession func(SessionRecord)
+
+	// OnUnrecorded is called for a direct login let through without recording
+	// under ScopeArgusOnly. The daemon reports it; nil in standalone mode,
+	// where nothing can set that scope in the first place.
+	OnUnrecorded func(SessionStart)
+
+	// scope is the console's recording scope, as of the last heartbeat. The
+	// zero value is every_login, so an agent that has not heard from the
+	// control plane records everything.
+	scope atomic.Value // RecordingScope
 
 	// Exec attributes kernel-observed executions to sessions. Nil, or holding
 	// no probe, on hosts without kernel support — the collector behaves
@@ -92,6 +103,17 @@ type activeSession struct {
 	// execLost which is one that arrived and could not be written. Different
 	// causes, same consequence for what the artefact can claim.
 	execDropped uint64
+}
+
+// SetScope applies the recording scope the control plane sent.
+func (c *Collector) SetScope(s RecordingScope) { c.scope.Store(ParseScope(string(s))) }
+
+// Scope is the recording scope in force.
+func (c *Collector) Scope() RecordingScope {
+	if s, ok := c.scope.Load().(RecordingScope); ok {
+		return s
+	}
+	return ScopeEveryLogin
 }
 
 // NewCollector builds a collector writing recordings into dir.
@@ -289,12 +311,36 @@ func (c *Collector) handle(conn net.Conn) {
 				c.log.Warn("duplicate start on one connection")
 				return
 			}
+			// Only a direct login is ever let through, and only when the
+			// console asked for it. A brokered one is an Argus session, and
+			// an origin the shim could not decide is treated as direct by
+			// the detector already -- so nothing here widens what skips.
+			if m.Origin == Direct && c.Scope() == ScopeArgusOnly {
+				c.log.Warn("DIRECT LOGIN — let through unrecorded by the host's recording scope",
+					"principal", m.Principal,
+					"client", m.ClientAddr,
+					"command", m.Command,
+					"detail", "this host records Argus sessions only; the login is reported as a bypass")
+				_ = json.NewEncoder(conn).Encode(Decision{
+					Type:   "decision",
+					Record: false,
+					Reason: "this server records sessions opened through Argus only; " +
+						"this login is not recorded, and it has been reported",
+				})
+				if c.OnUnrecorded != nil {
+					c.OnUnrecorded(m)
+				}
+				return
+			}
 			sess, err = c.open(m)
 			if err != nil {
 				c.log.Error("cannot open recording", "error", err)
 				_ = json.NewEncoder(conn).Encode(Ack{Error: err.Error()})
 				return
 			}
+			_ = json.NewEncoder(conn).Encode(Decision{
+				Type: "decision", Record: true, SessionID: sess.id,
+			})
 			// A bypass is the event the agent exists to catch. Log it loudly at
 			// the moment it happens, not only when the session ends — a long
 			// session should not delay the alarm.

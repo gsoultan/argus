@@ -98,6 +98,53 @@ type Ack struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// Decision is the daemon's answer to a start, sent before the shim runs
+// anything, so the shim knows whether to stream the session or step aside.
+//
+// A daemon older than this message sends nothing until the session ends; the
+// shim treats that silence as "record", which is what that daemon does.
+type Decision struct {
+	Type   string `json:"type"` // always "decision"
+	Record bool   `json:"record"`
+	// SessionID is set when Record is true.
+	SessionID string `json:"session_id,omitempty"`
+	// Reason is said to the user when Record is false.
+	Reason string `json:"reason,omitempty"`
+}
+
+// Reply is anything the daemon sends a shim: a Decision, or an Ack, which has
+// no type and carries Error when the recording could not be opened.
+type Reply struct {
+	Type      string `json:"type"`
+	Record    bool   `json:"record"`
+	SessionID string `json:"session_id"`
+	Reason    string `json:"reason"`
+	ChainHead string `json:"chain_head"`
+	Error     string `json:"error"`
+}
+
+// RecordingScope is which logins the agent records, as set in the console.
+type RecordingScope string
+
+const (
+	// ScopeEveryLogin records every sshd login, through Argus or not. The
+	// default, and what the agent does until the control plane says otherwise.
+	ScopeEveryLogin RecordingScope = "every_login"
+	// ScopeArgusOnly records sessions that came through Argus and lets a
+	// direct login through unrecorded -- reported, so never unseen.
+	ScopeArgusOnly RecordingScope = "argus_only"
+)
+
+// ParseScope reads a scope from the control plane. Anything it does not
+// recognise is every_login: a value this agent cannot interpret must not be
+// what turns recording off.
+func ParseScope(s string) RecordingScope {
+	if RecordingScope(s) == ScopeArgusOnly {
+		return ScopeArgusOnly
+	}
+	return ScopeEveryLogin
+}
+
 // envelope is used to peek at a message's type before full decoding.
 type envelope struct {
 	Type string `json:"type"`
