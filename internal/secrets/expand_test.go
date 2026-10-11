@@ -207,3 +207,24 @@ func TestShippedConfigsNeedOnlyTheirEnvFile(t *testing.T) {
 		}
 	}
 }
+
+// Windows paths carry spaces, parentheses and the ~ of a short name; the
+// runner's temp dir is C:\Users\RUNNER~1\..., and a reference to a file under
+// it was left unexpanded.
+func TestExpandsFromAFileWhosePathHasSpacesAndShortNames(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Program Files (x86)", "RUNNER~1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "token")
+	if err := os.WriteFile(path, []byte("token-from-file\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Expand([]byte(`reporter_token: "${file:` + path + `}"`))
+	if err != nil {
+		t.Fatalf("Expand: %v", err)
+	}
+	if string(out) != `reporter_token: "token-from-file"` {
+		t.Errorf("got %q", out)
+	}
+}

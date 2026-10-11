@@ -24,10 +24,13 @@ import (
 
 // reference matches ${NAME}, ${NAME:-default} and ${file:/path}.
 //
+// A path may hold what Windows paths do: a drive colon, backslashes, spaces,
+// parentheses ("Program Files (x86)") and the ~ of a short name (RUNNER~1).
+//
 // Deliberately narrow: no nesting, no command substitution, no arithmetic. This
 // resolves references, it is not a shell, and a config file is not a place to
 // be executing anything.
-var reference = regexp.MustCompile(`\$\{([A-Za-z0-9_:./\\-]+?)(?::-(.*?))?\}`)
+var reference = regexp.MustCompile(`\$\{([A-Za-z0-9_:./\\~() -]+?)(?::-(.*?))?\}`)
 
 // Missing lists references that could not be resolved.
 type Missing struct {
