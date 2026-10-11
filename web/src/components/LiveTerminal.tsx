@@ -8,10 +8,11 @@ import '@xterm/xterm/css/xterm.css'
 /**
  * Live browser terminal.
  *
- * Connects to the gateway's WebSocket endpoint and renders a real shell. The
- * session is brokered through exactly the same path as ssh(1) — same principal
- * check, same host-key pin, same credential injection, same recording — so a
- * session opened here is not a lesser-controlled one.
+ * Connects to a WebSocket endpoint and renders a real shell: the control
+ * plane's, which relays to the server's own agent through its tunnel, or a
+ * gateway's. Both speak the same protocol, and both open the session only on
+ * a ticket the control plane issued after its checks, so a session opened
+ * here is not a lesser-controlled one.
  *
  * This exists for the cases a native client cannot cover: a contractor on a
  * locked-down laptop, an auditor who needs to look without being issued a key,
@@ -21,7 +22,8 @@ import '@xterm/xterm/css/xterm.css'
 export type TerminalState = 'connecting' | 'live' | 'closed' | 'error'
 
 export interface LiveTerminalProps {
-  gatewayUrl: string
+  /** The WebSocket endpoint as an http(s) URL; see terminalEndpoint. */
+  endpoint: string
   /**
    * Fetches a ticket for this connection.
    *
@@ -47,7 +49,7 @@ interface ServerMessage {
 }
 
 export function LiveTerminal({
-  gatewayUrl,
+  endpoint,
   getTicket,
   target,
   principal,
@@ -120,7 +122,7 @@ export function LiveTerminal({
         return
       }
 
-      const url = new URL('/ws/session', gatewayUrl)
+      const url = new URL(endpoint, window.location.href)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       url.searchParams.set('target', target)
       url.searchParams.set('principal', principal)
@@ -131,6 +133,10 @@ export function LiveTerminal({
       url.searchParams.set('ticket', ticket)
 
       ws = new WebSocket(url.toString())
+      // Output arrives as binary frames from the control plane: written to
+      // the terminal as bytes, so a character split across two frames is
+      // decoded whole rather than replaced.
+      ws.binaryType = 'arraybuffer'
       wsRef.current = ws
       attach(ws)
     })()
@@ -139,6 +145,10 @@ export function LiveTerminal({
     ws.onopen = () => term.writeln('\x1b[2mconnecting…\x1b[0m')
 
     ws.onmessage = (ev) => {
+      if (ev.data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(ev.data))
+        return
+      }
       let msg: ServerMessage
       try {
         msg = JSON.parse(ev.data as string) as ServerMessage
@@ -216,7 +226,7 @@ export function LiveTerminal({
     }
     // Reconnecting on every prop change would drop a live shell mid-command.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gatewayUrl, target, principal])
+  }, [endpoint, target, principal])
 
   return (
     <Stack gap={0} h="100%">

@@ -561,6 +561,9 @@ type Asset struct {
 	// heartbeat. Nil until it says, which an agent older than the setting
 	// never does -- so nil is "unconfirmed", never "applied".
 	AgentRecordingScope *string `json:"agentRecordingScope"`
+	// TunnelConnected is whether this host's agent holds a live tunnel, by
+	// the database's clock, so the console can open sessions through it.
+	TunnelConnected bool `json:"tunnelConnected"`
 }
 
 // ErrConsoleOwned means a gateway tried to publish over a row an administrator

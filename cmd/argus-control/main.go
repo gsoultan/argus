@@ -299,6 +299,14 @@ func run() error {
 	replica, _ := os.Hostname()
 	api.Tunnels = control.NewTunnelHub(store, log, replica)
 	defer api.Tunnels.Close()
+	// Sessions through an agent's tunnel are authorised by a grant signed
+	// with a key derived from the signing secret, so every replica holds the
+	// same one and an existing configuration needs nothing new.
+	if cfg.SigningSecret != "" {
+		if api.Tunnels.GrantKey, err = tunnel.GrantKeyFromSecret(cfg.SigningSecret); err != nil {
+			return err
+		}
+	}
 	api.Alerts = alerts
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{

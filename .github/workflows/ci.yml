@@ -451,6 +451,43 @@ jobs:
           [ "$tr" = quic ] || { sudo journalctl -u argus-agent -u argus-control --no-pager | grep -i tunnel | tail -30
             echo "::error::the agent's tunnel never came up over QUIC (got '$tr')"; exit 1; }
 
+          # A browser session through the tunnel, opened the way the console
+          # opens one: a ticket from the console API, relayed by the control
+          # plane, checked and opened by the agent as a real account. It writes
+          # to its home directory, which the agent's own unit sees read-only,
+          # so this fails if the shell inherited the agent's sandbox.
+          sudo useradd -m -s /bin/bash argusdrill
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$(hostname)\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          # Built, not `go run`: go run exits 1 for any non-zero status, and
+          # the status is part of what is checked.
+          go build -o "$tmp/termdrill" ./scripts/tools/termdrill
+          set +e
+          out=$("$tmp/termdrill" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$(hostname)" -principal argusdrill \
+            -input $'id -un; touch ~/through-argus; exit 7\n' 2>"$tmp/term.err")
+          code=$?
+          set -e
+          cat "$tmp/term.err"
+          [ "$code" = 7 ] && grep -q argusdrill <<<"$out" || {
+            echo "$out"; sudo journalctl -u argus-agent --no-pager | tail -30
+            echo "::error::a session through the tunnel did not run as the account (exit $code)"; exit 1; }
+          [ "$(sudo stat -c %U /home/argusdrill/through-argus)" = argusdrill ] || {
+            echo "::error::the session could not write to its own home: it inherited the agent's sandbox"; exit 1; }
+          sid=$(sed -n 's/^session=//p' "$tmp/term.err")
+          sudo grep -q through-argus "/var/lib/argus/recordings/$sid.cast" || {
+            echo "::error::the recording on the host does not hold the session"; exit 1; }
+          for i in $(seq 1 30); do
+            who=$(psql "$PGURL" -tAc "SELECT user_email FROM sessions WHERE id = '$sid'::uuid")
+            [ -n "$who" ] && break
+            sleep 1
+          done
+          [ "$who" = admin@ci.example ] || {
+            echo "::error::the session was reported as '$who', not the person it was opened for"; exit 1; }
+          n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'terminal.opened'
+                AND actor_email = 'admin@ci.example' AND target = '$(hostname)' AND detail LIKE '%$sid%'")
+          [ "$n" = 1 ] || { echo "::error::no audit entry for the session"; exit 1; }
+
           # A backup through the shipped unit, then proof that it restores.
           sudo systemctl start argus-backup.service
           sudo journalctl -u argus-backup --no-pager | tail -10

@@ -165,6 +165,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/password/change", a.handleChangePassword)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
 	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
+	// The browser terminal through an agent's tunnel; see terminal.go.
+	mux.HandleFunc("GET /api/v1/terminal", a.handleTerminal)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
 	mux.HandleFunc("GET /api/v1/requests", a.user(a.getRequests))

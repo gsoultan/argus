@@ -40,10 +40,13 @@ func ServerQUICConfig() *quic.Config { return quicConfig(2) }
 // Generous, because every session is a stream, and still a bound.
 func clientQUICConfig() *quic.Config { return quicConfig(256) }
 
-type quicSession struct{ c *quic.Conn }
+type quicSession struct {
+	c        *quic.Conn
+	grantKey string
+}
 
 // NewQUICSession wraps an established QUIC connection.
-func NewQUICSession(c *quic.Conn) Session { return quicSession{c} }
+func NewQUICSession(c *quic.Conn) Session { return quicSession{c: c} }
 
 func (s quicSession) OpenStream(ctx context.Context) (Stream, error) {
 	return s.c.OpenStreamSync(ctx)
@@ -57,6 +60,7 @@ func (s quicSession) Done() <-chan struct{} { return s.c.Context().Done() }
 func (s quicSession) Close() error          { return s.c.CloseWithError(0, "closed") }
 func (s quicSession) Transport() Transport  { return TransportQUIC }
 func (s quicSession) RemoteAddr() net.Addr  { return s.c.RemoteAddr() }
+func (s quicSession) GrantKey() string      { return s.grantKey }
 
 /* ── yamux over an HTTP upgrade ──────────────────────────────────────────── */
 
@@ -70,8 +74,9 @@ func yamuxConfig() *yamux.Config {
 }
 
 type muxSession struct {
-	s    *yamux.Session
-	conn net.Conn
+	s        *yamux.Session
+	conn     net.Conn
+	grantKey string
 }
 
 // NewServerMux runs the control plane's side of a hijacked upgrade.
@@ -102,6 +107,7 @@ func (m muxSession) Done() <-chan struct{} { return m.s.CloseChan() }
 func (m muxSession) Close() error          { return m.s.Close() }
 func (m muxSession) Transport() Transport  { return TransportUpgrade }
 func (m muxSession) RemoteAddr() net.Addr  { return m.conn.RemoteAddr() }
+func (m muxSession) GrantKey() string      { return m.grantKey }
 
 /* ── The agent's side ────────────────────────────────────────────────────── */
 
@@ -131,33 +137,37 @@ func DialQUIC(ctx context.Context, o DialOptions, port int) (Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := NewQUICSession(c)
-	if err := hello(ctx, s, o); err != nil {
+	s := quicSession{c: c}
+	key, err := hello(ctx, s, o)
+	if err != nil {
 		_ = s.Close()
 		return nil, err
 	}
+	s.grantKey = key
 	return s, nil
 }
 
-func hello(ctx context.Context, s Session, o DialOptions) error {
+// hello says who this agent is and returns the grant key the control plane
+// answers with.
+func hello(ctx context.Context, s Session, o DialOptions) (string, error) {
 	st, err := s.OpenStream(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer st.Close()
 	_ = st.SetDeadline(time.Now().Add(HeaderTimeout))
 	if err := WriteJSON(st, Hello{Credential: o.Credential, Hostname: o.Hostname,
 		Version: o.Version}); err != nil {
-		return err
+		return "", err
 	}
 	var a Answer
 	if err := ReadJSON(st, &a); err != nil {
-		return err
+		return "", err
 	}
 	if !a.OK {
-		return ErrRefused{Reason: a.Error}
+		return "", ErrRefused{Reason: a.Error}
 	}
-	return nil
+	return a.GrantKey, nil
 }
 
 // DialUpgrade connects through the control plane's HTTPS listener. It
@@ -234,7 +244,7 @@ func DialUpgrade(ctx context.Context, o DialOptions) (Session, int, error) {
 		_ = conn.Close()
 		return nil, 0, err
 	}
-	return muxSession{s: s, conn: conn}, quicPort, nil
+	return muxSession{s: s, conn: conn, grantKey: resp.Header.Get(GrantKeyHeader)}, quicPort, nil
 }
 
 func clientTLS(base *tls.Config, serverName string) *tls.Config {

@@ -76,17 +76,27 @@ type Session interface {
 	Close() error
 	Transport() Transport
 	RemoteAddr() net.Addr
+	// GrantKey is the control plane's grant key as it sent it when the
+	// session opened, on the agent's side; empty on the control plane's.
+	GrantKey() string
 }
 
 // Header opens every stream. Service is the only field the agent acts on.
 type Header struct {
 	Service string `json:"service"`
+	// Grant is the control plane's signed permission, for a service that
+	// opens a session. See Grant.
+	Grant string `json:"grant,omitempty"`
 }
 
 // Answer is the agent's reply to a Header, before any service bytes.
 type Answer struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+	// Session is the recording's id, for a service that opened one.
+	Session string `json:"session,omitempty"`
+	// GrantKey answers a QUIC hello with the control plane's grant key.
+	GrantKey string `json:"grant_key,omitempty"`
 }
 
 // Hello is the first message on a QUIC session, from the agent. The HTTPS
@@ -146,30 +156,36 @@ func ReadJSON(r io.Reader, v any) error {
 
 // Open opens a stream to service and waits for the agent to accept it.
 func Open(ctx context.Context, s Session, service string) (Stream, error) {
+	st, _, err := OpenWith(ctx, s, Header{Service: service})
+	return st, err
+}
+
+// OpenWith opens a stream with a full header and returns the agent's answer.
+func OpenWith(ctx context.Context, s Session, h Header) (Stream, Answer, error) {
 	st, err := s.OpenStream(ctx)
 	if err != nil {
-		return nil, err
+		return nil, Answer{}, err
 	}
 	deadline := time.Now().Add(HeaderTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
 	_ = st.SetDeadline(deadline)
-	if err := WriteJSON(st, Header{Service: service}); err != nil {
+	if err := WriteJSON(st, h); err != nil {
 		_ = st.Close()
-		return nil, err
+		return nil, Answer{}, err
 	}
 	var a Answer
 	if err := ReadJSON(st, &a); err != nil {
 		_ = st.Close()
-		return nil, err
+		return nil, Answer{}, err
 	}
 	if !a.OK {
 		_ = st.Close()
-		return nil, ErrRefused{Reason: a.Error}
+		return nil, a, ErrRefused{Reason: a.Error}
 	}
 	_ = st.SetDeadline(time.Time{})
-	return st, nil
+	return st, a, nil
 }
 
 // Ping measures the round trip to the agent through its "ping" service.

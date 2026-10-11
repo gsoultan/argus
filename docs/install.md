@@ -225,6 +225,20 @@ you can. Nothing needs to reach the server for this. To take a
 server's access away, revoke it there. The control plane stops accepting its reports at
 once (within 30 seconds on any other control plane replica).
 
+Once the tunnel is connected, **Connect** opens SSH sessions to that server
+through its agent, with no gateway involved. The control plane checks you may
+open the session and signs a one-minute grant for that server, that account
+and you; the agent checks the signature itself, starts the account's login
+shell as a normal login (in its own systemd unit, with a PAM session), and
+records it on the server before anything reaches your browser. The recording
+and the audit log name you, not only the account. Servers whose agent is not
+connected still go through the gateway.
+
+The agent trusts the first grant key the control plane sends and keeps it in
+`/var/lib/argus/grant-key.pub`. The key is derived from `signing_secret`, so
+if you change that secret on purpose, delete the file on each agent and
+restart it; until then those agents refuse sessions and say why in their log.
+
 Start the agent before adding the `sshd_config` lines. Once they are in, every
 login goes through the agent, and a login is refused while the agent is not
 running.

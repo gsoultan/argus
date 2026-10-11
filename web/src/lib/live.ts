@@ -72,6 +72,22 @@ export function isConfigured(): boolean {
 }
 
 /**
+ * Where a browser terminal connects.
+ *
+ * Through the server's own agent when it holds a tunnel to the control plane:
+ * the control plane relays, and the agent opens and records the session on
+ * the server. Otherwise through the gateway, for servers not yet moved over.
+ */
+export function terminalEndpoint(viaAgent: boolean, gatewayUrl: string): string {
+  if (viaAgent) return `${BASE}/api/v1/terminal`
+  try {
+    return new URL('/ws/session', gatewayUrl).toString()
+  } catch {
+    return ''
+  }
+}
+
+/**
  * What this console is pointed at, for display in the header.
  *
  * Same-origin is the supported shape, so in the usual deployment this is the

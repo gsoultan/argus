@@ -135,6 +135,11 @@ export interface Asset {
    * "unconfirmed", never "applied".
    */
   agentRecordingScope?: RecordingScope | null
+  /**
+   * Whether the server's agent holds a live tunnel to the control plane, so
+   * a session can open through it. Absent from an older control plane.
+   */
+  tunnelConnected?: boolean
 }
 
 /**

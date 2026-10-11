@@ -12,7 +12,7 @@ import {
 import { PageBody, PageHeader } from '~/components/page'
 import type { TerminalState } from '~/components/LiveTerminal'
 import { assetsQuery } from '~/lib/queries'
-import { GATEWAY_URL, isConfigured, terminalTicket } from '~/lib/live'
+import { GATEWAY_URL, isConfigured, terminalEndpoint, terminalTicket } from '~/lib/live'
 import { HostKeyBadge } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 
@@ -66,7 +66,7 @@ function Connect() {
   // address from — that is the one case where the user has to supply it.
   const [showGateway, setShowGateway] = useState(!isConfigured())
   const [session, setSession] = useState<
-    { target: string; principal: string; protocol: 'ssh' | 'rdp' } | null
+    { target: string; principal: string; protocol: 'ssh' | 'rdp'; viaAgent: boolean } | null
   >(null)
   const [state, setState] = useState<TerminalState>('connecting')
   const [detail, setDetail] = useState<string>()
@@ -90,6 +90,10 @@ function Connect() {
 
   const selected = assets?.find((a) => a.hostname === target)
   const isRDPTarget = selected?.protocol === 'rdp'
+  // SSH opens through the server's own agent whenever it is connected; the
+  // gateway is only for servers whose agent is not. Remote Desktop is still
+  // the gateway's.
+  const viaAgent = !isRDPTarget && selected?.tunnelConnected === true
 
   // Memoised so the effect below depends on the contents rather than on a fresh
   // array identity, which the `??` default produced on every single render.
@@ -138,7 +142,9 @@ function Connect() {
           description={
             isRDP
               ? 'Brokered through the gateway — same policy, certificate pinning and recording as a desktop client.'
-              : 'Brokered through the gateway — same policy, host-key verification and recording as ssh(1).'
+              : session.viaAgent
+                ? 'Opened on the server by its Argus agent, which records it there before anything reaches you.'
+                : 'Brokered through the gateway — same policy, host-key verification and recording as ssh(1).'
           }
           actions={
             <Button
@@ -169,7 +175,7 @@ function Connect() {
               />
             ) : (
               <LiveTerminal
-                gatewayUrl={gateway}
+                endpoint={terminalEndpoint(session.viaAgent, gateway)}
                 getTicket={getTicket}
                 target={session.target}
                 principal={session.principal}
@@ -200,7 +206,7 @@ function Connect() {
     // Handed to the terminal rather than discarded — this ticket is the
     // authorisation the user just obtained.
     heldTicket.current = res.ticket
-    setSession({ target, principal, protocol: selected?.protocol ?? 'ssh' })
+    setSession({ target, principal, protocol: selected?.protocol ?? 'ssh', viaAgent })
   }
 
   return (
@@ -323,13 +329,15 @@ function Connect() {
               <Group justify="space-between" align="center">
                 <Text size={FS.micro} c="dimmed">
                   {target
-                    ? `Opens ${principal}@${target.split('.')[0]} through the gateway.`
+                    ? `Opens ${principal}@${target.split('.')[0]} ${
+                        viaAgent ? "through the server's Argus agent" : 'through the gateway'
+                      }.`
                     : 'Nothing is sent until you choose a host.'}
                 </Text>
                 <Button
                   size="sm"
                   leftSection={<IconPlugConnected size={15} />}
-                  disabled={!target || !gateway}
+                  disabled={!target || (!viaAgent && !gateway)}
                   loading={requesting}
                   onClick={onConnect}
                 >
@@ -348,12 +356,20 @@ function Connect() {
               <Card padding="md">
                 <Text fw={600} size="sm" mb={SP.snug}>What happens when you connect</Text>
                 <Stack gap={SP.snug}>
-                  {[
-                    'Argus checks you are allowed on that server as that account.',
-                    'It signs in for you. You never see or type a password or key.',
-                    'It checks the server is the one it was last time, so nothing can pose as it.',
-                    'The whole session is recorded, the same as one opened with ssh.',
-                  ].map((line) => (
+                  {(viaAgent
+                    ? [
+                        'Argus checks you are allowed on that server as that account.',
+                        "The server's own agent checks Argus's signature, then signs you in. No password or key is involved.",
+                        'Nothing reaches the server except through the agent it enrolled, so nothing can pose as it.',
+                        'The agent records the whole session on the server before you see any of it.',
+                      ]
+                    : [
+                        'Argus checks you are allowed on that server as that account.',
+                        'It signs in for you. You never see or type a password or key.',
+                        'It checks the server is the one it was last time, so nothing can pose as it.',
+                        'The whole session is recorded, the same as one opened with ssh.',
+                      ]
+                  ).map((line) => (
                     <Group key={line} gap={SP.cozy} wrap="nowrap" align="flex-start">
                       <IconInfoCircle size={15} style={{ marginTop: 2, flexShrink: 0, opacity: 0.55 }} />
                       <Text size={FS.body} c="dimmed" lh={1.5}>{line}</Text>
@@ -381,7 +397,9 @@ function Connect() {
               {/* Advanced, and collapsed once a control plane supplies the
                   address. It only has to be typed when there is no control
                   plane to ask, which is also the only time it is editable
-                  usefully. */}
+                  usefully. Not shown at all for a server reached through its
+                  agent, which never touches a gateway. */}
+              {!viaAgent && (
               <Card>
                 <Group justify="space-between" wrap="nowrap">
                   <Group gap={SP.cozy}>
@@ -413,6 +431,7 @@ function Connect() {
                   </Text>
                 )}
               </Card>
+              )}
             </Stack>
           </Grid.Col>
         </Grid>
