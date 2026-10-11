@@ -14,8 +14,9 @@ until it passes.
 | Verifier | `argus-verify` | gateways, the control plane, and any machine an auditor checks recordings on | nothing; it is a command |
 
 Browsers need to reach `8080` and `8081`. Gateways and agents need to reach
-`8080`. Gateways need to reach port 22 on the servers they front. Nothing needs
-to reach an agent.
+`8080/tcp`; agents also use `8080/udp` when it is open (see below). Gateways
+need to reach port 22 on the servers they front. Nothing needs to reach an
+agent.
 
 You also need:
 
@@ -215,7 +216,12 @@ hostname. The pin is the control plane's key, so the very first connection
 cannot be intercepted; if the control plane's certificate is from an internal
 CA, the agent keeps that CA and survives a certificate renewal.
 
-The server appears under **Enrolled agents** on the same page. To take a
+The server appears under **Enrolled agents** on the same page, with its
+tunnel: the one outbound connection the agent holds to the control plane. It
+says **Connected** with the measured round trip when the agent is on QUIC, and
+**Connected over HTTPS** when UDP to the control plane is blocked. Both work;
+QUIC is smoother on a lossy network, so open `8080/udp` on the control plane if
+you can. Nothing needs to reach the server for this. To take a
 server's access away, revoke it there. The control plane stops accepting its reports at
 once (within 30 seconds on any other control plane replica).
 
@@ -275,6 +281,15 @@ In particular, a control plane installed before the console shipped has no
 console:
   dir: "/usr/share/argus/console"
   gateway_url: "https://bastion.example.com:8081"
+```
+
+A control plane upgraded from an earlier release has no `tunnel:` block, so
+agents connect over HTTPS only. Add this to `control.yaml` for QUIC, and open
+the port for UDP:
+
+```yaml
+tunnel:
+  quic_listen: "0.0.0.0:8080"
 ```
 
 Restart `argus-agent` after upgrading it (`sudo systemctl restart

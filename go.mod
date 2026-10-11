@@ -7,8 +7,10 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/gsoultan/storm v0.6.6
+	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/minio/minio-go/v7 v7.3.0
+	github.com/quic-go/quic-go v0.63.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.56.0
 	golang.org/x/sys v0.47.0

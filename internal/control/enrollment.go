@@ -85,6 +85,9 @@ type AgentCredential struct {
 	EnrolledBy string     `json:"enrolledBy"`
 	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
 	RevokedBy  string     `json:"revokedBy,omitempty"`
+	// Tunnel is whether the agent's outbound connection is up, as of its
+	// last ping from whichever replica holds it.
+	Tunnel TunnelState `json:"tunnel"`
 }
 
 // newSecret returns prefix followed by 256 random bits.
@@ -233,7 +236,9 @@ func whyEnrollRefused(ctx context.Context, tx pgx.Tx, token, hostname string) er
 func (s *Store) AgentCredentials(ctx context.Context) ([]AgentCredential, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id::text, c.hostname, c.created_at, t.created_by,
-		       c.revoked_at, COALESCE(c.revoked_by, '')
+		       c.revoked_at, COALESCE(c.revoked_by, ''),
+		       c.tunnel_transport, c.tunnel_replica, c.tunnel_connected_at,
+		       c.tunnel_seen_at, c.tunnel_rtt_us, now()
 		  FROM agent_credentials c
 		  JOIN agent_enrollment_tokens t ON t.id = c.token_id
 		 ORDER BY c.revoked_at IS NOT NULL, lower(c.hostname), c.created_at DESC`)
@@ -243,10 +248,22 @@ func (s *Store) AgentCredentials(ctx context.Context) ([]AgentCredential, error)
 	defer rows.Close()
 	out := []AgentCredential{}
 	for rows.Next() {
-		var c AgentCredential
+		var (
+			c                  AgentCredential
+			transport, replica *string
+			connected, seen    *time.Time
+			rtt                *int32
+			now                time.Time
+		)
 		if err := rows.Scan(&c.ID, &c.Hostname, &c.EnrolledAt, &c.EnrolledBy,
-			&c.RevokedAt, &c.RevokedBy); err != nil {
+			&c.RevokedAt, &c.RevokedBy,
+			&transport, &replica, &connected, &seen, &rtt, &now); err != nil {
 			return nil, err
+		}
+		// The database's clock, not this process's: seen times are written
+		// by whichever replica holds the tunnel, and replicas' clocks drift.
+		if c.RevokedAt == nil {
+			c.Tunnel = tunnelStateFrom(transport, replica, connected, seen, rtt, now)
 		}
 		out = append(out, c)
 	}

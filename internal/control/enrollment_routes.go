@@ -196,6 +196,9 @@ func (a *API) postRevokeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.agentCreds.forget(id)
+	if a.Tunnels != nil {
+		a.Tunnels.Revoked(id)
+	}
 
 	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action:     "agent.revoked",

@@ -16,6 +16,7 @@ import (
 	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
 	"github.com/gsoultan/argus/internal/tlsconfig"
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 // API serves the console and receives reports from gateways and agents.
@@ -74,6 +75,11 @@ type API struct {
 	Enroll EnrollTrust
 	// agentCreds caches per-host agent credential lookups.
 	agentCreds agentCredCache
+
+	// Tunnels holds the agents' outbound connections on this replica. Nil
+	// when the process was built without them, as tests do; the upgrade
+	// route then says so rather than failing.
+	Tunnels *TunnelHub
 
 	// Console serves the built web console on the console surface. Nil serves
 	// the API alone, as before it existed. See console.go.
@@ -224,6 +230,7 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/report/recording", a.reporter(a.handleRecordingStored))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.agentReporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/login", a.agentReporter(a.postLogin))
+	mux.HandleFunc("GET "+tunnel.UpgradePath, a.handleTunnelUpgrade)
 	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/facts", a.agentReporter(a.postFacts))
 

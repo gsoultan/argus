@@ -573,6 +573,17 @@ export async function createEnrollToken(hostname: string): Promise<EnrollToken> 
   return post<EnrollToken>('/api/v1/agents/enroll-tokens', hostname ? { hostname } : {})
 }
 
+/** An agent's outbound connection to the control plane, as of its last ping. */
+export interface AgentTunnel {
+  connected: boolean
+  transport?: 'quic' | 'tcp'
+  replica?: string
+  connectedAt?: string
+  seenAt?: string
+  /** Last measured round trip through the tunnel. */
+  rttMillis?: number
+}
+
 /** An enrolled agent's credential, without the secret. */
 export interface EnrolledAgent {
   id: string
@@ -581,6 +592,8 @@ export interface EnrolledAgent {
   enrolledBy: string
   revokedAt?: string
   revokedBy?: string
+  /** Absent from a control plane older than tunnels. */
+  tunnel?: AgentTunnel
 }
 
 export async function enrolledAgents(): Promise<EnrolledAgent[]> {
