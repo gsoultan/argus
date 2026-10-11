@@ -99,6 +99,40 @@ jobs:
         # every change is cheap insurance.
         run: go test -run=Fuzz -fuzz=FuzzParsePTYRequest -fuzztime=60s ./internal/gateway/
 
+  # The control plane, gateway and verifier ship for macOS and Windows too.
+  # Cross-compiling proves they build; this proves they start, and that the
+  # private-key check reads Windows access lists rather than mode bits that
+  # mean nothing there.
+  portable:
+    name: Go on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test what the portable binaries depend on
+        run: >
+          go test -count=1
+          ./internal/secrets/... ./internal/hashchain/... ./internal/recorder/...
+          ./internal/tunnel/... ./cmd/argus-verify/...
+      - name: Build and start each binary
+        run: |
+          set -euo pipefail
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          for c in argus-control argus-gateway argus-verify; do
+            go build -o "bin/$c$ext" "./cmd/$c"
+            "./bin/$c$ext" -version
+          done
+
   ebpf:
     name: Kernel probe
     runs-on: ubuntu-latest

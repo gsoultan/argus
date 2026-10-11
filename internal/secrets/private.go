@@ -23,6 +23,10 @@ import (
 // containers and init systems routinely run as a uid that differs from the
 // file's owner, and refusing on that would break more correct deployments than
 // it would catch bad ones.
+//
+// On Windows the mode bits say nothing about who can read a file -- Go reports
+// 0666 for any writable file -- so there the file's access list is read
+// instead; see private_windows.go.
 func CheckPrivate(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -31,11 +35,7 @@ func CheckPrivate(path string) error {
 	if info.IsDir() {
 		return fmt.Errorf("%s is a directory, expected a private key file", path)
 	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		return fmt.Errorf("%s is mode %04o; a private key must not be readable "+
-			"by group or others (chmod 600 %s)", path, perm, path)
-	}
-	return nil
+	return ownerOnly(path, info)
 }
 
 // ReadPrivate is ReadFile with the mode check first.

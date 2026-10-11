@@ -1,8 +1,17 @@
-# GoReleaser builds Argus for Linux and packages it for deb, rpm and apk.
+# GoReleaser builds Argus and packages it.
 #
-# Linux only, deliberately. The gateway and control plane are servers, and the
-# agent has to read another user's authorized_keys and own recordings the
-# recorded user cannot touch — none of which means anything off Linux.
+#   argus-control, argus-gateway, argus-verify   Linux, macOS and Windows
+#   argus-agent                                  Linux only, for now
+#
+# The servers and the verifier are portable Go, so they ship for all three: an
+# auditor checks recordings on whatever their workstation runs, and the control
+# plane can be tried on a laptop before it goes on a server. Only Linux gets
+# deb, rpm and apk packages and systemd units; macOS and Windows get archives.
+#
+# The agent stays Linux-only until its macOS and Windows ports land. It hooks
+# sshd, reads accounts from /etc/passwd, traces the kernel and starts shells
+# through systemd. A build for another system would compile and then record
+# less than it claims, which for this product is worse than not shipping it.
 #
 # Packages are split rather than shipped as one bundle: the agent goes on every
 # managed host, potentially thousands, while the gateway and control plane go on
@@ -26,7 +35,8 @@ before:
     - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn"
 
 builds:
-  - id: argus-gateway
+  - &gateway
+    id: argus-gateway
     main: ./cmd/argus-gateway
     binary: argus-gateway
     env: [CGO_ENABLED=0]
@@ -43,7 +53,8 @@ builds:
       - -X main.date={{.CommitDate}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  - id: argus-control
+  - &control
+    id: argus-control
     main: ./cmd/argus-control
     binary: argus-control
     env: [CGO_ENABLED=0]
@@ -71,7 +82,8 @@ builds:
       - -X main.date={{.CommitDate}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  - id: argus-verify
+  - &verify
+    id: argus-verify
     main: ./cmd/argus-verify
     binary: argus-verify
     env: [CGO_ENABLED=0]
@@ -82,6 +94,19 @@ builds:
       - -s -w
       - -X main.version={{.Version}}
     mod_timestamp: "{{ .CommitTimestamp }}"
+
+  # The same three servers for macOS and Windows. Separate build ids so their
+  # archives can leave out what only means something on Linux: the agent, its
+  # config and the systemd units.
+  - <<: *gateway
+    id: argus-gateway-portable
+    goos: [darwin, windows]
+  - <<: *control
+    id: argus-control-portable
+    goos: [darwin, windows]
+  - <<: *verify
+    id: argus-verify-portable
+    goos: [darwin, windows]
 
 archives:
   - id: default
@@ -98,6 +123,27 @@ archives:
         dst: docs
       - src: packaging/config/*
         dst: config
+
+  - id: portable
+    ids: [argus-gateway-portable, argus-control-portable, argus-verify-portable]
+    formats: [tar.gz]
+    # Explorer opens a zip with a double click; a tar.gz needs a tool.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - src: docs/*
+        dst: docs
+      - src: packaging/config/control.yaml
+        dst: config/control.yaml
+      - src: packaging/config/gateway.yaml
+        dst: config/gateway.yaml
+      # No package installs the console here, so the archive carries it: point
+      # console.dir at this folder.
+      - src: web/dist-release
+        dst: console
 
 nfpms:
   # ── Agent: installed on every managed host ─────────────────────────────────
@@ -290,6 +336,10 @@ release:
     # Alpine
     sudo apk add --allow-untrusted argus-agent_{{ .Version }}_linux_amd64.apk
     ```
+
+    On macOS and Windows, unpack `argus_{{ .Version }}_darwin_<arch>.tar.gz` or
+    `argus_{{ .Version }}_windows_<arch>.zip`: the control plane, gateway and
+    verifier, with the console in `console/`. The agent is Linux-only.
 
     Nothing starts on install. These services need certificates, secrets and an
     inventory first, and a package that starts a half-configured privileged

@@ -3,6 +3,7 @@ package tunnel
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +70,15 @@ func TestAnAlteredGrantIsRefused(t *testing.T) {
 	if _, err := v.Verify(pub(k), forged+"."+sig); err == nil {
 		t.Fatal("a payload with someone else's signature was honoured")
 	}
-	if _, err := v.Verify(pub(k), body+"."+sig[:len(sig)-2]+"AA"); err == nil {
+	// Flip a bit of the decoded signature. Overwriting the last characters
+	// with fixed text was a no-op for the signatures that already ended in
+	// them, about one run in 256.
+	raw, err := base64.RawURLEncoding.DecodeString(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw[0] ^= 1
+	if _, err := v.Verify(pub(k), body+"."+base64.RawURLEncoding.EncodeToString(raw)); err == nil {
 		t.Fatal("a damaged signature was honoured")
 	}
 }
