@@ -59,8 +59,8 @@ as on Linux it must be mode `600`. A key copied under `C:\ProgramData`
 inherits read access for every local user and is refused at startup; the error
 gives the `icacls` command that fixes it.
 
-The agent is Linux-only for now. macOS and Windows hosts cannot be recorded
-yet.
+The macOS archive also carries the agent; see [macOS servers](#macos-servers).
+The Windows agent is not out yet, so Windows hosts cannot be recorded yet.
 
 ## 2. Certificates
 
@@ -261,6 +261,30 @@ restart it; until then those agents refuse sessions and say why in their log.
 Start the agent before adding the `sshd_config` lines. Once they are in, every
 login goes through the agent, and a login is refused while the agent is not
 running.
+
+### macOS servers
+
+The agent for macOS is in `argus_<version>_darwin_<arch>.tar.gz`, with its
+launchd job in `launchd/`. As root:
+
+```sh
+install -m 0755 argus-agent /usr/local/bin/argus-agent
+install -m 0644 launchd/com.argus.agent.plist /Library/LaunchDaemons/
+argus-agent enroll --control-url https://argus.example.com:8080 \
+    --pin sha256/... --token argus-enrol-...
+launchctl bootstrap system /Library/LaunchDaemons/com.argus.agent.plist
+argus-agent install    # sshd_config lines; Remote Login must be on for direct logins
+```
+
+It works as on Linux, with these differences:
+
+- State and recordings are in `/var/db/argus`, the socket in
+  `/var/run/argus`, and the log in `/var/log/argus-agent.log`.
+- Accounts come from Directory Services (`dscl`), not `/etc/passwd`.
+- Sessions through the console start the account's login shell directly, as
+  root's child, without a PAM session.
+- There is no kernel command tracing on macOS, so recordings are terminal
+  output only, and each session says so in the console.
 
 ### Which logins are recorded
 

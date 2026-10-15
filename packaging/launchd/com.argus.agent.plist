@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Argus host agent on macOS. Install as root:
+
+    install -m 0755 argus-agent /usr/local/bin/argus-agent
+    install -m 0644 com.argus.agent.plist /Library/LaunchDaemons/
+    launchctl bootstrap system /Library/LaunchDaemons/com.argus.agent.plist
+
+  Runs as root for the same reason as on Linux: the shim runs as whoever
+  logged in, and if the daemon were not root they could edit the record of
+  their own session.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.argus.agent</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/argus-agent</string>
+		<string>daemon</string>
+	</array>
+	<key>UserName</key>
+	<string>root</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restarted whenever it exits: a stopped agent makes sshd refuse logins. -->
+	<key>KeepAlive</key>
+	<true/>
+	<!-- Longer than the collector's drain (30s) plus its seal grace (10s), so
+	     launchd never kills it part-way through sealing open recordings. -->
+	<key>ExitTimeOut</key>
+	<integer>75</integer>
+	<key>StandardOutPath</key>
+	<string>/var/log/argus-agent.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/argus-agent.log</string>
+</dict>
+</plist>

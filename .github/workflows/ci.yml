@@ -124,6 +124,9 @@ jobs:
           go test -count=1
           ./internal/secrets/... ./internal/hashchain/... ./internal/recorder/...
           ./internal/tunnel/... ./cmd/argus-verify/...
+      - name: Test the agent
+        if: runner.os == 'macOS'
+        run: go test -count=1 ./internal/agent/... ./cmd/argus-agent/...
       - name: Build and start each binary
         run: |
           set -euo pipefail
@@ -132,6 +135,116 @@ jobs:
             go build -o "bin/$c$ext" "./cmd/$c"
             "./bin/$c$ext" -version
           done
+
+  # The Linux drill in Packaging, on a Mac: the agent installed as a launchd
+  # daemon, enrolled, holding its tunnel, opening a browser session as a real
+  # account and recording it on the host.
+  macos-agent:
+    name: Agent on macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start PostgreSQL
+        run: |
+          set -euo pipefail
+          brew install --quiet postgresql@17
+          pg=$(brew --prefix postgresql@17)/bin
+          echo "$pg" >> "$GITHUB_PATH"
+          "$pg/initdb" -D "$RUNNER_TEMP/pg" -U argus --auth=trust >/dev/null
+          "$pg/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" -o "-p 5433" start
+          "$pg/createdb" -h localhost -p 5433 -U argus argus
+      - name: Install the agent, enroll it, open a session through it
+        env:
+          PGURL: postgres://argus@localhost:5433/argus?sslmode=disable
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          go build -o "$tmp/argus-control" ./cmd/argus-control
+          go build -o "$tmp/argus-agent" ./cmd/argus-agent
+          go build -o "$tmp/termdrill" ./scripts/tools/termdrill
+          go run ./scripts/tools/gencerts "$tmp"
+          chmod 600 "$tmp/server.key"
+
+          # The shipped config, pointed at this runner's files.
+          sed -e "s#/etc/argus/tls/#$tmp/#" -e 's#dir: "/usr/share/argus/console"#dir: ""#' \
+            packaging/config/control.yaml > "$tmp/control.yaml"
+          export ARGUS_DATABASE_URL="$PGURL" ARGUS_SIGNING_SECRET=$(openssl rand -hex 32) \
+            ARGUS_REPORTER_TOKEN=$(openssl rand -hex 32)
+          "$tmp/argus-control" -config "$tmp/control.yaml" >"$tmp/control.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz && break
+            sleep 1
+          done
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz || { tail -50 "$tmp/control.log"; exit 1; }
+          printf 'ci-admin-password-0123456789\n' | \
+            "$tmp/argus-control" -config "$tmp/control.yaml" users add admin@ci.example --role admin
+
+          # Installed as the archive's launchd job says to.
+          sudo install -m 0755 "$tmp/argus-agent" /usr/local/bin/argus-agent
+          sudo install -m 0644 packaging/launchd/com.argus.agent.plist /Library/LaunchDaemons/
+          plutil -lint /Library/LaunchDaemons/com.argus.agent.plist
+
+          c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
+          $c -X POST https://localhost:8080/auth/password \
+            -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
+          tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
+          sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
+          sudo launchctl bootstrap system /Library/LaunchDaemons/com.argus.agent.plist
+
+          host=$(hostname)
+          for i in $(seq 1 30); do
+            tr=$(psql "$PGURL" -tAc "SELECT tunnel_transport FROM agent_credentials
+                 WHERE lower(hostname) = lower('$host') AND revoked_at IS NULL
+                   AND tunnel_rtt_us IS NOT NULL")
+            [ -n "$tr" ] && break
+            sleep 1
+          done
+          [ -n "$tr" ] || { sudo tail -40 /var/log/argus-agent.log; tail -20 "$tmp/control.log"
+            echo "::error::the agent's tunnel never came up"; exit 1; }
+          echo "tunnel over $tr"
+
+          # The Mac's account directory is where the agent must find people.
+          n=$(psql "$PGURL" -tAc "SELECT count(*) FROM agents WHERE lower(hostname) = lower('$host')")
+          [ "$n" = 1 ] || { echo "::error::the agent never reported"; exit 1; }
+
+          sudo sysadminctl -addUser argusdrill -password "$(openssl rand -hex 16)" -shell /bin/zsh
+          sudo createhomedir -c -u argusdrill >/dev/null
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          set +e
+          out=$("$tmp/termdrill" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill \
+            -input $'id -un; echo "shell=$SHELL"; touch ~/through-argus; exit 7\n' 2>"$tmp/term.err")
+          code=$?
+          set -e
+          cat "$tmp/term.err"; echo "$out"
+          [ "$code" = 7 ] && grep -q argusdrill <<<"$out" || {
+            sudo tail -40 /var/log/argus-agent.log
+            echo "::error::a session through the tunnel did not run as the account (exit $code)"; exit 1; }
+          # The shell came from Directory Services, not /etc/passwd.
+          grep -q 'shell=/bin/zsh' <<<"$out" || {
+            echo "::error::the session did not get the account's login shell"; exit 1; }
+          [ "$(sudo stat -f %Su /Users/argusdrill/through-argus)" = argusdrill ]
+          sid=$(sed -n 's/^session=//p' "$tmp/term.err")
+          sudo grep -q through-argus "/var/db/argus/recordings/$sid.cast" || {
+            echo "::error::the recording on the host does not hold the session"; exit 1; }
+          [ "$(sudo stat -f '%Lp %Su' /var/db/argus/recordings)" = "700 root" ]
+          for i in $(seq 1 30); do
+            who=$(psql "$PGURL" -tAc "SELECT user_email FROM sessions WHERE id = '$sid'::uuid")
+            [ -n "$who" ] && break
+            sleep 1
+          done
+          [ "$who" = admin@ci.example ] || {
+            echo "::error::the session was reported as '$who', not the person it was opened for"; exit 1; }
+
+          # Stopping it through launchd seals and exits cleanly.
+          sudo launchctl bootout system/com.argus.agent
+          sudo tail -5 /var/log/argus-agent.log
 
   ebpf:
     name: Kernel probe

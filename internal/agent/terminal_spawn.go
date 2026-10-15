@@ -146,7 +146,7 @@ func spawnDirect(a loginAccount, tty *os.File, actor string) (shellProc, error) 
 	cmd.Dir = a.home
 	cmd.Env = []string{
 		"HOME=" + a.home, "USER=" + a.name, "LOGNAME=" + a.name, "SHELL=" + a.shell,
-		"TERM=xterm-256color", "LANG=C.UTF-8",
+		"TERM=xterm-256color", "LANG=" + sessionLang,
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"ARGUS_SESSION_FOR=" + actor,
 	}
