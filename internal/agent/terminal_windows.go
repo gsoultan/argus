@@ -105,6 +105,7 @@ type windowsProc struct {
 	pid               int
 	token             windows.Token
 	profile           windows.Handle
+	desktop           *sessionDesktop
 
 	waitOnce sync.Once
 	code     int
@@ -173,14 +174,17 @@ func spawnConsoleShell(pty *conPTY, token windows.Token, profile windows.Handle,
 		*(*unsafe.Pointer)(unsafe.Pointer(&pty.hpc)), unsafe.Sizeof(pty.hpc)); err != nil {
 		return nil, err
 	}
+	desktop, err := newSessionDesktop(token)
+	if err != nil {
+		return nil, err
+	}
 	si := windows.StartupInfoEx{ProcThreadAttributeList: attrs.List()}
 	si.Cb = uint32(unsafe.Sizeof(si))
-	// An empty desktop, not none: the account gets a window station of its
-	// own instead of the service's, which it may not open.
-	si.Desktop = windows.StringToUTF16Ptr("")
+	si.Desktop = windows.StringToUTF16Ptr(desktop.Name)
 
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
+		desktop.Close()
 		return nil, err
 	}
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
@@ -188,6 +192,7 @@ func spawnConsoleShell(pty *conPTY, token windows.Token, profile windows.Handle,
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
 		windows.CloseHandle(job)
+		desktop.Close()
 		return nil, err
 	}
 
@@ -200,15 +205,19 @@ func spawnConsoleShell(pty *conPTY, token windows.Token, profile windows.Handle,
 			windows.CREATE_UNICODE_ENVIRONMENT,
 		envBlock(env), windows.StringToUTF16Ptr(home), &si.StartupInfo, &pi); err != nil {
 		windows.CloseHandle(job)
+		desktop.Close()
 		return nil, err
 	}
-	p := &windowsProc{proc: pi.Process, thread: pi.Thread, job: job,
+	p := &windowsProc{proc: pi.Process, thread: pi.Thread, job: job, desktop: desktop,
 		pid: int(pi.ProcessId), token: token, profile: profile, done: make(chan struct{})}
 	if err := windows.AssignProcessToJobObject(job, pi.Process); err != nil {
 		// Not contained, so not started: ending it later could miss what
-		// it started.
-		p.Abort()
-		p.Wait()
+		// it started. The token and profile are the caller's to release.
+		_ = windows.TerminateProcess(pi.Process, 255)
+		windows.CloseHandle(job)
+		windows.CloseHandle(pi.Thread)
+		windows.CloseHandle(pi.Process)
+		desktop.Close()
 		return nil, err
 	}
 	return p, nil
@@ -260,12 +269,15 @@ func (p *windowsProc) Wait() int {
 		if err := windows.GetExitCodeProcess(p.proc, &code); err != nil {
 			code = 255
 		}
-		p.code = int(code)
+		// An NTSTATUS such as 0xC0000142 is negative as the int32 it is,
+		// which is how Windows tools show it and what an INT column holds.
+		p.code = int(int32(code))
 		// Closing the job ends whatever the shell left running: nobody is
 		// watching it any more.
 		windows.CloseHandle(p.job)
 		windows.CloseHandle(p.thread)
 		windows.CloseHandle(p.proc)
+		p.desktop.Close()
 		unloadProfile(p.token, p.profile)
 		p.token.Close()
 		close(p.done)

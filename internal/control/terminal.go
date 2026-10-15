@@ -36,8 +36,9 @@ intact rather than replaced.
 */
 
 // terminalOpenWait bounds how long the agent has to verify the grant, open
-// the recording and start the shell.
-const terminalOpenWait = 15 * time.Second
+// the recording and start the shell. A Windows account's first session
+// creates its profile, which took 17 seconds on a CI runner.
+const terminalOpenWait = 60 * time.Second
 
 // handleTerminal serves GET /api/v1/terminal.
 func (a *API) handleTerminal(w http.ResponseWriter, r *http.Request) {
