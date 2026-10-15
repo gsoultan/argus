@@ -287,6 +287,9 @@ jobs:
           PGURL: postgres://argus@localhost:5433/argus?sslmode=disable
         run: |
           set -euo pipefail
+          # Windows' curl asks the CA for revocation status, which a private
+          # CA has nowhere to publish; the certificate itself is still checked.
+          curl() { command curl --ssl-no-revoke "$@"; }
           tmp=$(cygpath -m "$RUNNER_TEMP")/drill
           mkdir -p "$tmp"
           go build -o "$tmp/argus-control.exe" ./cmd/argus-control
