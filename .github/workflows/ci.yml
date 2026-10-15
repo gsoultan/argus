@@ -352,7 +352,9 @@ jobs:
 
           # A local account that has never logged on: its profile is made by
           # the session, as an interactive logon would make it.
-          net user argusdrill "Dr1ll-$(openssl rand -hex 8)" /add >/dev/null
+          # Under 15 characters: net asks before setting a longer password,
+          # and there is nobody to answer.
+          net user argusdrill "Dr1ll-$(openssl rand -hex 4)" /add >/dev/null
           tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
             -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
           set +e
