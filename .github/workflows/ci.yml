@@ -208,9 +208,13 @@ jobs:
             echo "::error::the agent's tunnel never came up"; exit 1; }
           echo "tunnel over $tr"
 
-          # The Mac's account directory is where the agent must find people.
-          n=$(psql "$PGURL" -tAc "SELECT count(*) FROM agents WHERE lower(hostname) = lower('$host')")
-          [ "$n" = 1 ] || { echo "::error::the agent never reported"; exit 1; }
+          # The tunnel can come up before the first report lands.
+          for i in $(seq 1 30); do
+            n=$(psql "$PGURL" -tAc "SELECT count(*) FROM agents WHERE lower(hostname) = lower('$host')")
+            [ "$n" = 1 ] && break
+            sleep 1
+          done
+          [ "$n" = 1 ] || { sudo tail -40 /var/log/argus-agent.log; echo "::error::the agent never reported"; exit 1; }
 
           sudo sysadminctl -addUser argusdrill -password "$(openssl rand -hex 16)" -shell /bin/zsh
           sudo createhomedir -c -u argusdrill >/dev/null
