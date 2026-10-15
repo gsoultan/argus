@@ -61,11 +61,15 @@ func TestAMacsLoginAccountsComeFromTheDirectory(t *testing.T) {
 	}
 }
 
-// On macOS this runs dscl; on Linux it reads /etc/passwd.
+// On macOS this runs dscl, on Windows it lists the local accounts, on Linux
+// it reads /etc/passwd -- which a minimal container may lack.
 func TestTheSystemAccountDatabaseReads(t *testing.T) {
 	f, err := openPasswd(systemPasswd)
-	if err != nil {
+	if err != nil && systemPasswd != "" {
 		t.Skipf("no account database here: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer f.Close()
 	b, _ := io.ReadAll(f)

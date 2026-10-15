@@ -61,8 +61,8 @@ as on Linux it must be mode `600`. A key copied under `C:\ProgramData`
 inherits read access for every local user and is refused at startup; the error
 gives the `icacls` command that fixes it.
 
-The macOS archive also carries the agent; see [macOS servers](#macos-servers).
-The Windows agent is not out yet, so Windows hosts cannot be recorded yet.
+Both archives also carry the agent; see [macOS servers](#macos-servers) and
+[Windows servers](#windows-servers).
 
 ## 2. Certificates
 
@@ -253,6 +253,47 @@ It works as on Linux, with these differences:
 - Sessions through the console start the account's login shell directly, as
   root's child, without a PAM session.
 - There is no kernel command tracing on macOS, so recordings are terminal
+  output only, and each session says so in the console.
+
+### Windows servers
+
+The agent for Windows is `argus-agent.exe` in
+`argus_<version>_windows_<arch>.zip`. In an elevated PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force 'C:\Program Files\Argus' | Out-Null
+Copy-Item argus-agent.exe 'C:\Program Files\Argus\'
+cd 'C:\Program Files\Argus'
+.\argus-agent.exe enroll --control-url https://argus.example.com:8080 `
+    --pin sha256/... --token argus-enrol-...
+.\argus-agent.exe service install
+```
+
+`service install` registers the `argus-agent` service to start at boot as
+LocalSystem, restarts it if it fails, and starts it. `service stop`,
+`service start` and `service uninstall` do what they say.
+
+It works as on Linux, with these differences:
+
+- State, recordings and the log (`agent.log`) are in `C:\ProgramData\Argus`,
+  which the agent restricts to SYSTEM and Administrators before writing
+  anything there.
+- A session from the console runs as the local account on a Windows
+  pseudoconsole, with the account's profile loaded (it is created on the
+  account's first session). The shell is OpenSSH's `DefaultShell` if one is
+  set, otherwise `cmd.exe`. The agent logs the account on without its
+  password (Windows' S4U logon), so the session cannot reach network shares as
+  the account, the same limit an OpenSSH key login has.
+- A local administrator's session gets the filtered, non-elevated token
+  Windows gives every network logon of a local account (remote UAC), so
+  commands that need elevation fail in it.
+- Only local accounts can be opened for now. A domain account (`CORP\ana`,
+  `ana@corp.example`) is refused.
+- Direct logins through Windows' OpenSSH server are **not refused yet**: the
+  sshd hook is not ported, `argus-agent install` says so, and
+  `argus-agent scan` reports the host as open while sshd accepts them. Until
+  that lands, stop the `sshd` service.
+- There is no kernel command tracing on Windows, so recordings are terminal
   output only, and each session says so in the console.
 
 ### Direct logins are refused

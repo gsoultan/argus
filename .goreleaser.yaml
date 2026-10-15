@@ -1,18 +1,16 @@
 # GoReleaser builds Argus and packages it.
 #
 #   argus-control, argus-gateway, argus-verify   Linux, macOS and Windows
-#   argus-agent                                  Linux and macOS; Windows next
+#   argus-agent                                  Linux, macOS and Windows
 #
 # The servers and the verifier are portable Go, so they ship for all three: an
 # auditor checks recordings on whatever their workstation runs, and the control
 # plane can be tried on a laptop before it goes on a server. Only Linux gets
 # deb, rpm and apk packages and systemd units; macOS and Windows get archives,
-# and the macOS one carries the agent's launchd job.
-#
-# The Windows agent is not shipped until it is ported: the agent hooks sshd,
-# starts login shells on a pty and owns its recordings as root, none of which
-# carries over as is. A build that compiled and then recorded less than it
-# claims would be worse, for this product, than not shipping one.
+# and the macOS one carries the agent's launchd job. The Windows agent
+# installs itself as a service (argus-agent service install). It records
+# sessions opened through the console; direct sshd logins are not hooked on
+# Windows yet, and the agent says so rather than claiming them.
 #
 # Packages are split rather than shipped as one bundle: the agent goes on every
 # managed host, potentially thousands, while the gateway and control plane go on
@@ -112,7 +110,7 @@ builds:
     id: argus-agent-darwin
     goos: [darwin]
 
-  # Windows: the three servers. The Windows agent is not ported yet.
+  # Windows: the three servers and the agent.
   - <<: *gateway
     id: argus-gateway-windows
     goos: [windows]
@@ -121,6 +119,9 @@ builds:
     goos: [windows]
   - <<: *verify
     id: argus-verify-windows
+    goos: [windows]
+  - <<: *agent
+    id: argus-agent-windows
     goos: [windows]
 
 archives:
@@ -160,7 +161,7 @@ archives:
         dst: launchd/com.argus.agent.plist
 
   - id: windows
-    ids: [argus-gateway-windows, argus-control-windows, argus-verify-windows]
+    ids: [argus-gateway-windows, argus-control-windows, argus-verify-windows, argus-agent-windows]
     # Explorer opens a zip with a double click; a tar.gz needs a tool.
     formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -374,7 +375,8 @@ release:
     On macOS and Windows, unpack `argus_{{ .Version }}_darwin_<arch>.tar.gz` or
     `argus_{{ .Version }}_windows_<arch>.zip`: the control plane, gateway and
     verifier, with the console in `console/`. The macOS archive also carries the
-    agent and its launchd job in `launchd/`. The Windows agent is not out yet.
+    agent and its launchd job in `launchd/`; the Windows archive carries the
+    agent, which installs itself with `argus-agent service install`.
 
     Nothing starts on install. These services need certificates, secrets and an
     inventory first, and a package that starts a half-configured privileged

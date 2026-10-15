@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/creack/pty"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -87,7 +84,7 @@ func Terminal(cfg TerminalConfig) TunnelService {
 
 type tunnelShell struct {
 	proc shellProc
-	ptmx *os.File
+	term terminalIO
 	rec  *TunnelRecording
 
 	hangOnce sync.Once
@@ -96,38 +93,26 @@ type tunnelShell struct {
 	exited atomic.Bool
 }
 
+// A session's terminal starts at this size; the browser resizes it at once.
+const startCols, startRows = 80, 24
+
 func startTerminal(cfg TerminalConfig, g tunnel.Grant) (*tunnelShell, error) {
-	acct, err := lookupAccount(g.Principal)
+	term, proc, principal, err := openShell(cfg, g)
 	if err != nil {
 		return nil, err
 	}
 
-	ptmx, tty, err := pty.Open()
-	if err != nil {
-		return nil, fmt.Errorf("cannot allocate a terminal: %w", err)
-	}
-	// The account owns its terminal, as it would after an sshd login, so
-	// programs that reopen it by name work.
-	_ = tty.Chown(acct.uid, acct.gid)
-	_ = pty.Setsize(ptmx, &pty.Winsize{Cols: 80, Rows: 24})
-	proc, err := spawnShell(cfg.Spawn, acct, tty, g.Email)
-	_ = tty.Close()
-	if err != nil {
-		_ = ptmx.Close()
-		return nil, err
-	}
-
-	t := &tunnelShell{proc: proc, ptmx: ptmx}
+	t := &tunnelShell{proc: proc, term: term}
 	rec, err := cfg.Collector.StartRecording(SessionStart{
 		Type:       "start",
-		Principal:  acct.name,
+		Principal:  principal,
 		ClientAddr: g.ClientAddr,
 		Origin:     Brokered,
 		OriginReason: "opened through the Argus tunnel on a session grant signed by " +
 			"the control plane",
 		TTY:       true,
-		Cols:      80,
-		Rows:      24,
+		Cols:      startCols,
+		Rows:      startRows,
 		Hostname:  cfg.Hostname,
 		StartedAt: time.Now().UTC(),
 		PID:       proc.Pid(),
@@ -137,7 +122,7 @@ func startTerminal(cfg TerminalConfig, g tunnel.Grant) (*tunnelShell, error) {
 		// The shell was never released: nothing ran, so nothing went
 		// unrecorded.
 		proc.Abort()
-		_ = ptmx.Close()
+		_ = term.Close()
 		proc.Wait()
 		return nil, fmt.Errorf("the session could not be recorded, so it was not opened: %w", err)
 	}
@@ -159,7 +144,7 @@ func startTerminal(cfg TerminalConfig, g tunnel.Grant) (*tunnelShell, error) {
 // nobody is watching.
 func (t *tunnelShell) hangup() {
 	t.hangOnce.Do(func() {
-		_ = t.ptmx.Close()
+		_ = t.term.Close()
 		if !t.exited.Load() {
 			t.proc.Hangup()
 		}
@@ -174,7 +159,7 @@ func (t *tunnelShell) run(st tunnel.Stream, log *slog.Logger) {
 		defer close(outputDone)
 		buf := make([]byte, 32<<10)
 		for {
-			n, err := t.ptmx.Read(buf)
+			n, err := t.term.Read(buf)
 			if n > 0 {
 				// Recorded before it is shown: what the person saw is in the
 				// chain, or they did not see it.
@@ -210,12 +195,12 @@ func (t *tunnelShell) run(st tunnel.Stream, log *slog.Logger) {
 						"session", t.rec.ID(), "error", rerr)
 					return
 				}
-				if _, werr := t.ptmx.Write(p); werr != nil {
+				if _, werr := t.term.Write(p); werr != nil {
 					return
 				}
 			case tunnel.FrameResize:
 				if cols, rows, ok := tunnel.ParseResize(p); ok {
-					_ = pty.Setsize(t.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+					_ = t.term.Resize(cols, rows)
 					_ = t.rec.Resize(cols, rows)
 				}
 			}

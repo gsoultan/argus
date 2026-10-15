@@ -154,7 +154,7 @@ func NewCollector(dir string, log *slog.Logger) *Collector {
 
 // Listen serves the unix socket at path until Close.
 func (c *Collector) Listen(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := prepareSocketDir(filepath.Dir(path)); err != nil {
 		return fmt.Errorf("create socket dir: %w", err)
 	}
 	// A stale socket from an unclean shutdown would otherwise make every
@@ -181,12 +181,11 @@ func (c *Collector) Listen(path string) error {
 	}
 
 	// Any local user must be able to connect — their session is what we are
-	// recording. Confidentiality comes from the daemon owning the output, not
-	// from restricting who may speak to it.
-	if err := os.Chmod(path, 0o666); err != nil {
-		return fmt.Errorf("chmod socket: %w", err)
+	// recording. See openSocket.
+	if err := openSocket(path); err != nil {
+		return err
 	}
-	if err := os.MkdirAll(c.dir, 0o700); err != nil {
+	if err := ProtectStateDir(c.dir); err != nil {
 		return fmt.Errorf("create recording dir: %w", err)
 	}
 

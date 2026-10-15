@@ -79,7 +79,7 @@ type ScanConfig struct {
 // DefaultScanConfig returns production paths.
 func DefaultScanConfig(shimPath string) ScanConfig {
 	return ScanConfig{
-		SSHDConfig:          "/etc/ssh/sshd_config",
+		SSHDConfig:          sshdConfigPath,
 		PasswdFile:          systemPasswd,
 		ManagedFingerprints: map[string]bool{},
 		ShimPath:            shimPath,
@@ -123,7 +123,10 @@ func scanSSHDConfig(p *Posture, cfg ScanConfig) error {
 
 		switch strings.ToLower(key) {
 		case "forcecommand":
-			if strings.Contains(value, cfg.ShimPath) || strings.Contains(value, "argus") {
+			// An empty ShimPath (Windows, where there is no recorder to
+			// point at) is contained in every string, so it matches nothing.
+			if (cfg.ShimPath != "" && strings.Contains(value, cfg.ShimPath)) ||
+				strings.Contains(value, "argus") {
 				p.ShimInstalled = true
 			} else {
 				// Someone replaced the recorder with something else. That is
@@ -164,6 +167,14 @@ func scanAuthorizedKeys(cfg ScanConfig) ([]UnmanagedKey, error) {
 			if err != nil {
 				continue // absent or unreadable is normal for most accounts
 			}
+			found = append(found, keys...)
+		}
+	}
+	// Windows' OpenSSH reads administrators' keys from one shared file, not
+	// their homes.
+	if adminKeysFile != "" {
+		if keys, err := parseAuthorizedKeysFile(adminKeysFile, "Administrators",
+			cfg.ManagedFingerprints); err == nil {
 			found = append(found, keys...)
 		}
 	}
@@ -218,7 +229,7 @@ func readAccounts(passwdFile string) ([]account, error) {
 	var out []account
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		fields := strings.Split(sc.Text(), ":")
+		fields := passwdFields(sc.Text())
 		if len(fields) < 7 {
 			continue
 		}

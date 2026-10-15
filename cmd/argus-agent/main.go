@@ -25,9 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent"
@@ -40,6 +38,9 @@ import (
 var version = "dev"
 
 func main() {
+	if code, ok := runAsService(); ok {
+		os.Exit(code)
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -60,6 +61,8 @@ func main() {
 		os.Exit(runInstall(os.Args[2:]))
 	case "enroll", "enrol":
 		os.Exit(runEnroll(os.Args[2:]))
+	case "service":
+		os.Exit(runService(os.Args[2:]))
 	case "--version", "version":
 		fmt.Printf("argus-agent %s\n", version)
 	default:
@@ -77,6 +80,7 @@ func usage() {
   argus-agent scan      report how reachable this host is without Argus
   argus-agent probe     report whether this kernel can observe command execution
   argus-agent install   print the sshd_config required to enable recording
+  argus-agent service   install|uninstall|start|stop the Windows service
 
 `)
 }
@@ -100,6 +104,15 @@ func runDaemon(args []string) int {
 	_ = fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	// Before anything is written there: on Windows a new directory is
+	// readable by every local user until it is locked down.
+	for _, d := range []string{*stateDir, *dir} {
+		if err := agent.ProtectStateDir(d); err != nil {
+			log.Error("cannot make the agent's directory private", "dir", d, "error", err)
+			return 1
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -399,8 +412,7 @@ func runDaemon(args []string) int {
 		})
 	})
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	stopReq := stopRequests()
 
 	log.Info("argus-agent starting", "version", version, "socket", *socket)
 	listenErr := make(chan error, 1)
@@ -414,7 +426,7 @@ func runDaemon(args []string) int {
 			return 1
 		}
 		return 0
-	case <-sig:
+	case <-stopReq:
 		// Handled here rather than in a goroutine. Close shuts the socket
 		// first, so Listen returns immediately -- and returning on that exited
 		// the agent through the middle of its own drain, losing the seal on
@@ -513,7 +525,13 @@ func runScan(args []string) int {
 
 	if rating == "open" {
 		fmt.Print("\nThis host is UNMONITORED. A direct connection to port 22 would\n" +
-			"leave no trace. Run `argus-agent install` to see what to change.\n")
+			"leave no trace.")
+		if shimSupported {
+			fmt.Print(" Run `argus-agent install` to see what to change.\n")
+		} else {
+			fmt.Print(" Recording direct logins is not available on this platform\n" +
+				"yet: stop sshd, or allow it only from the gateway.\n")
+		}
 		return 1
 	}
 	return 0
@@ -525,6 +543,12 @@ func runInstall(args []string) int {
 	gatewayKeys := fs.String("gateway-keys", "/etc/argus/gateway_keys", "gateway public keys")
 	_ = fs.Parse(args)
 
+	if !shimSupported {
+		fmt.Fprintln(os.Stderr, "argus-agent install: direct SSH logins cannot be recorded "+
+			"on this platform yet. Sessions opened from the Argus console are recorded; "+
+			"to leave no unrecorded way in, stop sshd or allow it only from the gateway.")
+		return 1
+	}
 	fmt.Printf(`# Argus host recording — append to /etc/ssh/sshd_config, then:
 #   %s
 #
@@ -653,8 +677,9 @@ func runEnroll(args []string) int {
 	force := fs.Bool("force", false, "replace an existing enrollment (revoke the old one first)")
 	_ = fs.Parse(args)
 
-	if os.Geteuid() != 0 {
-		fmt.Fprintln(os.Stderr, "argus-agent enroll: run as root -- the credential must not be readable by the users it records")
+	if !isPrivileged() {
+		fmt.Fprintln(os.Stderr, "argus-agent enroll: run as "+privilegedName+
+			" -- the credential must not be readable by the users it records")
 		return 1
 	}
 	// A token on the command line lands in shell history; reading it from the

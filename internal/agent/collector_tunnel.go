@@ -2,7 +2,6 @@ package agent
 
 import (
 	"errors"
-	"os"
 
 	"github.com/gsoultan/argus/internal/recorder"
 )
@@ -35,7 +34,7 @@ func (c *Collector) StartRecording(m SessionStart, hangup func()) (*TunnelRecord
 
 	// Listen makes the directory for sshd logins; a host can take a tunnel
 	// session before its first one.
-	if err := os.MkdirAll(c.dir, 0o700); err != nil {
+	if err := ProtectStateDir(c.dir); err != nil {
 		c.wg.Done()
 		return nil, err
 	}
