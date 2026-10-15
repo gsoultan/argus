@@ -366,7 +366,7 @@ jobs:
           set -e
           cat "$tmp/term.err"; echo "$out"
           [ "$code" = 7 ] && grep -qi '\\argusdrill' <<<"$out" || {
-            tail -40 "$log"
+            sleep 30; tail -40 "$log"
             echo "::error::a session through the tunnel did not run as the account (exit $code)"; exit 1; }
           owner=$(powershell -NoProfile -Command "(Get-Acl 'C:\Users\argusdrill\through-argus').Owner")
           grep -qi 'argusdrill' <<<"$owner" || {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -88,6 +89,15 @@ func (c *conPTY) Close() error {
 	return nil
 }
 
+// slowStep logs a step that is taking long enough to threaten the control
+// plane's wait for the session, so a slow or stuck one is visible.
+func slowStep(log *slog.Logger, what, account string) func() {
+	t := time.AfterFunc(5*time.Second, func() {
+		log.Warn("tunnel: a session is slow to open", "step", what, "account", account)
+	})
+	return func() { t.Stop() }
+}
+
 /* ── The shell ───────────────────────────────────────────────────────────── */
 
 type windowsProc struct {
@@ -102,12 +112,20 @@ type windowsProc struct {
 }
 
 func openShell(cfg TerminalConfig, g tunnel.Grant) (terminalIO, shellProc, string, error) {
+	log := cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	done := slowStep(log, "logging the account on", g.Principal)
 	token, err := s4uToken(g.Principal)
+	done()
 	if err != nil {
 		return nil, nil, "", err
 	}
 	user, _, _ := splitAccount(g.Principal)
+	done = slowStep(log, "loading the account's profile", user)
 	profile, err := loadProfile(token, user)
+	done()
 	if err != nil {
 		token.Close()
 		return nil, nil, "", fmt.Errorf("cannot load the profile of %s: %w", user, err)
@@ -118,7 +136,9 @@ func openShell(cfg TerminalConfig, g tunnel.Grant) (terminalIO, shellProc, strin
 		token.Close()
 		return nil, nil, "", err
 	}
+	done = slowStep(log, "starting the shell", user)
 	proc, err := spawnConsoleShell(pty, token, profile, g.Email)
+	done()
 	_ = consoleIn.Close()
 	_ = consoleOut.Close()
 	if err != nil {
