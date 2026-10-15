@@ -303,6 +303,35 @@ func TestASessionNamesTheCredentialThatReportedIt(t *testing.T) {
 	}
 }
 
+// A Windows shell that fails to start exits with an NTSTATUS such as
+// 0xC0000142, past the INT column. The insert failed with a 500 the agent
+// retried for ever; it is now refused as the reporter's mistake, and the
+// signed form is stored.
+func TestAnExitCodePastThirtyTwoBitsIsRefusedNotAServerError(t *testing.T) {
+	_, s, h, _ := enrollAPI(t)
+	host := unique("enr-exit")
+	cred, _ := enrolled(t, s, h, host)
+	var id string
+	_ = s.pool.QueryRow(context.Background(), `SELECT gen_random_uuid()::text`).Scan(&id)
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(), `DELETE FROM sessions WHERE id::text = $1`, id)
+	})
+	body := func(code string) string {
+		return `{"id":"` + id + `","assetHostname":"` + host + `","principal":"ana",` +
+			`"state":"closed","exitCode":` + code + `}`
+	}
+	if w := do(t, h, http.MethodPost, "/api/v1/report/session", cred, body("3221225794")); w.Code != http.StatusBadRequest {
+		t.Fatalf("unsigned NTSTATUS: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, h, http.MethodPost, "/api/v1/report/session", cred, body("-1073741502")); w.Code != http.StatusOK {
+		t.Fatalf("signed NTSTATUS: %d %s", w.Code, w.Body)
+	}
+	got, err := s.Session(context.Background(), id)
+	if err != nil || got.ExitCode == nil || *got.ExitCode != -1073741502 {
+		t.Fatalf("stored %+v, %v", got.ExitCode, err)
+	}
+}
+
 func TestARevokedCredentialIsRefusedAtOnce(t *testing.T) {
 	_, s, h, admin := enrollAPI(t)
 	host := unique("enr-revoke")
