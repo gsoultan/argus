@@ -27,10 +27,11 @@ import (
 	"time"
 )
 
-// SocketPath is where the collector listens. Mode 0666 because any user with
-// shell access must be able to connect — the daemon's ownership of the output,
-// not the socket's permissions, is what protects the recording.
-const SocketPath = "/run/argus/collector.sock"
+// SocketPath is where the collector listens (see paths_*.go). Mode 0666
+// because any user with shell access must be able to connect — the daemon's
+// ownership of the output, not the socket's permissions, is what protects the
+// recording.
+const SocketPath = socketPath
 
 // Origin records whether a session was brokered or bypassed the gateway.
 type Origin string

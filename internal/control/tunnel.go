@@ -83,22 +83,37 @@ func (h *TunnelHub) admit(credID, host string, sess tunnel.Session) {
 		since: time.Now().UTC().Truncate(time.Microsecond)}
 
 	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
+	closed := h.closed
+	h.mu.Unlock()
+	if closed {
 		_ = sess.Close()
 		return
 	}
+	// The database is told before the tunnel can be found here. Published
+	// first, the tunnel could be used, and the old one's disconnection
+	// clear the row, while the console still said the host was offline.
+	if err := h.store.tunnelConnected(context.Background(), credID,
+		string(sess.Transport()), h.Replica, t.since); err != nil {
+		h.log.Error("tunnel: recording the connection failed", "host", host, "error", err)
+	}
+
+	h.mu.Lock()
 	old := h.byCred[credID]
+	if h.closed || (old != nil && old.since.After(t.since)) {
+		// Closing, or a newer connection from the same agent was admitted
+		// while this one was being recorded. The row is cleared only if it
+		// is still this connection's.
+		h.mu.Unlock()
+		_ = sess.Close()
+		_ = h.store.tunnelDisconnected(context.Background(), credID, t.since)
+		return
+	}
 	h.byCred[credID] = t
 	h.byHost[t.host] = t
 	h.mu.Unlock()
 
 	if old != nil {
 		_ = old.sess.Close()
-	}
-	if err := h.store.tunnelConnected(context.Background(), credID,
-		string(sess.Transport()), h.Replica, t.since); err != nil {
-		h.log.Error("tunnel: recording the connection failed", "host", host, "error", err)
 	}
 	h.log.Info("tunnel: agent connected", "host", host,
 		"transport", sess.Transport(), "remote", sess.RemoteAddr())
@@ -344,7 +359,11 @@ func (s *Store) tunnelConnected(ctx context.Context, credID, transport, replica 
 		UPDATE agent_credentials SET
 			tunnel_transport = $2, tunnel_replica = $3,
 			tunnel_connected_at = $4, tunnel_seen_at = now(), tunnel_rtt_us = NULL
-		 WHERE id::text = $1`, credID, transport, replica, since)
+		 WHERE id::text = $1
+		   -- Two connections admitted at once on this replica: the newer
+		   -- one is kept, whichever is recorded last.
+		   AND (tunnel_replica IS DISTINCT FROM $3 OR tunnel_connected_at IS NULL
+		        OR tunnel_connected_at < $4)`, credID, transport, replica, since)
 	return err
 }
 

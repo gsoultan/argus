@@ -81,11 +81,11 @@ func usage() {
 func runDaemon(args []string) int {
 	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
 	socket := fs.String("socket", agent.SocketPath, "unix socket to listen on")
-	dir := fs.String("recordings", "/var/lib/argus/recordings", "where recordings are written")
+	dir := fs.String("recordings", agent.DefaultRecordingsDir, "where recordings are written")
 	scanEvery := fs.Duration("scan-interval", 5*time.Minute, "how often to scan posture")
 	beatEvery := fs.Duration("heartbeat-interval", 30*time.Second, "how often to report liveness")
-	shimPath := fs.String("shim", "/usr/libexec/argus-shim", "path sshd invokes")
-	stateDir := fs.String("state", "/var/lib/argus", "where posture and heartbeat are written")
+	shimPath := fs.String("shim", agent.DefaultShimPath, "path sshd invokes")
+	stateDir := fs.String("state", agent.DefaultStateDir, "where posture and heartbeat are written")
 	controlURL := fs.String("control-url", "",
 		"argus-control base URL; empty uses the enrollment in --state, or runs standalone")
 	controlToken := fs.String("control-token", "", "reporter token (unenrolled agents only)")
@@ -425,7 +425,7 @@ func runShim(args []string) int {
 
 func runScan(args []string) int {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
-	shimPath := fs.String("shim", "/usr/libexec/argus-shim", "path sshd should invoke")
+	shimPath := fs.String("shim", agent.DefaultShimPath, "path sshd should invoke")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	_ = fs.Parse(args)
 
@@ -474,12 +474,12 @@ func runScan(args []string) int {
 
 func runInstall(args []string) int {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	shimPath := fs.String("shim", "/usr/libexec/argus-shim", "path sshd will invoke")
+	shimPath := fs.String("shim", agent.DefaultShimPath, "path sshd will invoke")
 	gatewayKeys := fs.String("gateway-keys", "/etc/argus/gateway_keys", "gateway public keys")
 	_ = fs.Parse(args)
 
 	fmt.Printf(`# Argus host recording — append to /etc/ssh/sshd_config, then:
-#   sshd -t && systemctl reload sshd
+#   %s
 #
 # ForceCommand makes sshd run the recorder for EVERY session, including one
 # opened with a standing key that never touched the gateway. That is the point:
@@ -501,7 +501,7 @@ ExposeAuthInfo yes
 
 # Verify with:
 #   argus-agent scan
-`, *shimPath, *gatewayKeys)
+`, reloadSSHDHint, *shimPath, *gatewayKeys)
 	return 0
 }
 
@@ -602,7 +602,7 @@ func runEnroll(args []string) int {
 	pin := fs.String("pin", "", "sha256 pin of the control plane's key, shown beside the token")
 	ca := fs.String("control-ca", "", "CA that signed the control plane's certificate; overrides --pin")
 	hostname := fs.String("hostname", "", "name to enroll as; defaults to this host's name")
-	stateDir := fs.String("state", "/var/lib/argus", "where the enrollment is kept")
+	stateDir := fs.String("state", agent.DefaultStateDir, "where the enrollment is kept")
 	force := fs.Bool("force", false, "replace an existing enrollment (revoke the old one first)")
 	_ = fs.Parse(args)
 
@@ -633,6 +633,6 @@ func runEnroll(args []string) int {
 		fmt.Println("WARNING: trusting the control plane by its key alone. Reports will stop\n" +
 			"when its key changes. Re-enroll with --control-ca to trust its CA instead.")
 	}
-	fmt.Println("start it with: systemctl enable --now argus-agent")
+	fmt.Println("start it with: " + startHint)
 	return 0
 }

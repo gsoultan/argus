@@ -527,10 +527,11 @@ func loginShell() string {
 	return "/bin/sh"
 }
 
-// shellFromPasswd reads the login shell from /etc/passwd. user.Current does not
-// expose it, and $SHELL is not set by sshd for non-interactive invocations.
+// shellFromPasswd reads the login shell from the account database (see
+// openPasswd). user.Current does not expose it, and $SHELL is not set by sshd
+// for non-interactive invocations.
 func shellFromPasswd(username string) string {
-	f, err := os.Open("/etc/passwd")
+	f, err := openPasswd(systemPasswd)
 	if err != nil {
 		return ""
 	}

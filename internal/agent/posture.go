@@ -80,7 +80,7 @@ type ScanConfig struct {
 func DefaultScanConfig(shimPath string) ScanConfig {
 	return ScanConfig{
 		SSHDConfig:          "/etc/ssh/sshd_config",
-		PasswdFile:          "/etc/passwd",
+		PasswdFile:          systemPasswd,
 		ManagedFingerprints: map[string]bool{},
 		ShimPath:            shimPath,
 	}
@@ -207,11 +207,11 @@ type account struct {
 	home string
 }
 
-// readAccounts returns login-capable accounts from /etc/passwd.
+// readAccounts returns login-capable accounts; see openPasswd.
 func readAccounts(passwdFile string) ([]account, error) {
-	f, err := os.Open(passwdFile)
+	f, err := openPasswd(passwdFile)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", passwdFile, err)
+		return nil, fmt.Errorf("read accounts: %w", err)
 	}
 	defer f.Close()
 

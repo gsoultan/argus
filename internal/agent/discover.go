@@ -55,10 +55,10 @@ type DiscoverConfig struct {
 // DefaultDiscoverConfig reads the usual locations.
 func DefaultDiscoverConfig() DiscoverConfig {
 	return DiscoverConfig{
-		OSRelease:  "/etc/os-release",
-		Passwd:     "/etc/passwd",
+		OSRelease:  osReleasePath,
+		Passwd:     systemPasswd,
 		Shells:     "/etc/shells",
-		MachineID:  "/etc/machine-id",
+		MachineID:  machineIDPath,
 		SSHDConfig: "/etc/ssh/sshd_config",
 	}
 }
@@ -80,8 +80,13 @@ func Discover(cfg DiscoverConfig) Facts {
 	}
 	if b, err := os.ReadFile(cfg.MachineID); err == nil {
 		f.MachineID = strings.TrimSpace(string(b))
+	} else if cfg.MachineID == "" {
+		f.MachineID = platformMachineID()
 	}
 	f.OS = osName(cfg.OSRelease)
+	if f.OS == "" && cfg.OSRelease == "" {
+		f.OS = platformOSName()
+	}
 	f.Addresses = addresses()
 	f.Accounts = loginAccounts(cfg.Passwd, cfg.Shells)
 	return f
@@ -179,7 +184,7 @@ func sshPorts(path string) []int {
 func loginAccounts(passwdPath, shellsPath string) []string {
 	valid := validShells(shellsPath)
 
-	file, err := os.Open(passwdPath)
+	file, err := openPasswd(passwdPath)
 	if err != nil {
 		return nil
 	}

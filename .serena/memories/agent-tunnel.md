@@ -70,3 +70,16 @@ credential by hostname, 90s = `tunnelFreshFor`, asserted in a test).
 Not yet: the recording still reaches the control plane only at the end (live
 chunk streaming is next), and a tunnel held by another replica is "not
 connected" from this one.
+
+## macOS (step 6)
+
+Same code, three seams (`internal/agent/paths_*.go`, `accounts*.go`,
+`host_*.go`): paths under `/var/db/argus` and `/var/run/argus` (SIP makes
+`/usr/libexec` read-only, so the shim is `/usr/local/bin/argus-agent`);
+accounts from `dscl` turned into passwd lines by `dsclToPasswd`, so every
+reader (posture, discovery, shim shell, tunnel lookup) goes through
+`openPasswd` and they cannot disagree; machine id and OS from `ioreg` and
+`sw_vers`. No systemd, so tunnel sessions are direct children of the root
+launchd daemon (no sandbox to escape there, no PAM session). No kernel
+tracing: execlog's non-Linux probe reports why. launchd job in
+`packaging/launchd/`. The "Agent on macOS" CI job is the install drill.

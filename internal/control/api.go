@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -482,6 +483,13 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.ID == "" || in.AssetHostname == "" {
 		writeErr(w, http.StatusBadRequest, "id and assetHostname are required")
+		return
+	}
+	// The column is a 32-bit integer. Out of range, the insert failed with
+	// a 500 the agent retried for ever, and the session never appeared.
+	if in.ExitCode != nil && (*in.ExitCode < math.MinInt32 || *in.ExitCode > math.MaxInt32) {
+		writeErr(w, http.StatusBadRequest, "exitCode must fit in 32 bits; "+
+			"report a Windows status such as 0xC0000142 as the signed value it is")
 		return
 	}
 	if !a.mayReportFor(w, r, in.AssetHostname) {

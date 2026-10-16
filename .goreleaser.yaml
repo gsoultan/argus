@@ -1,17 +1,18 @@
 # GoReleaser builds Argus and packages it.
 #
 #   argus-control, argus-gateway, argus-verify   Linux, macOS and Windows
-#   argus-agent                                  Linux only, for now
+#   argus-agent                                  Linux and macOS; Windows next
 #
 # The servers and the verifier are portable Go, so they ship for all three: an
 # auditor checks recordings on whatever their workstation runs, and the control
 # plane can be tried on a laptop before it goes on a server. Only Linux gets
-# deb, rpm and apk packages and systemd units; macOS and Windows get archives.
+# deb, rpm and apk packages and systemd units; macOS and Windows get archives,
+# and the macOS one carries the agent's launchd job.
 #
-# The agent stays Linux-only until its macOS and Windows ports land. It hooks
-# sshd, reads accounts from /etc/passwd, traces the kernel and starts shells
-# through systemd. A build for another system would compile and then record
-# less than it claims, which for this product is worse than not shipping it.
+# The Windows agent is not shipped until it is ported: the agent hooks sshd,
+# starts login shells on a pty and owns its recordings as root, none of which
+# carries over as is. A build that compiled and then recorded less than it
+# claims would be worse, for this product, than not shipping one.
 #
 # Packages are split rather than shipped as one bundle: the agent goes on every
 # managed host, potentially thousands, while the gateway and control plane go on
@@ -68,7 +69,8 @@ builds:
       - -X main.date={{.CommitDate}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  - id: argus-agent
+  - &agent
+    id: argus-agent
     main: ./cmd/argus-agent
     binary: argus-agent
     env: [CGO_ENABLED=0]
@@ -95,18 +97,31 @@ builds:
       - -X main.version={{.Version}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  # The same three servers for macOS and Windows. Separate build ids so their
-  # archives can leave out what only means something on Linux: the agent, its
-  # config and the systemd units.
+  # macOS: the three servers and the agent. Separate build ids from Linux so
+  # each system's archive carries only what means something there.
   - <<: *gateway
-    id: argus-gateway-portable
-    goos: [darwin, windows]
+    id: argus-gateway-darwin
+    goos: [darwin]
   - <<: *control
-    id: argus-control-portable
-    goos: [darwin, windows]
+    id: argus-control-darwin
+    goos: [darwin]
   - <<: *verify
-    id: argus-verify-portable
-    goos: [darwin, windows]
+    id: argus-verify-darwin
+    goos: [darwin]
+  - <<: *agent
+    id: argus-agent-darwin
+    goos: [darwin]
+
+  # Windows: the three servers. The Windows agent is not ported yet.
+  - <<: *gateway
+    id: argus-gateway-windows
+    goos: [windows]
+  - <<: *control
+    id: argus-control-windows
+    goos: [windows]
+  - <<: *verify
+    id: argus-verify-windows
+    goos: [windows]
 
 archives:
   - id: default
@@ -124,13 +139,30 @@ archives:
       - src: packaging/config/*
         dst: config
 
-  - id: portable
-    ids: [argus-gateway-portable, argus-control-portable, argus-verify-portable]
+  - id: darwin
+    ids: [argus-gateway-darwin, argus-control-darwin, argus-verify-darwin, argus-agent-darwin]
     formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - src: docs/*
+        dst: docs
+      - src: packaging/config/control.yaml
+        dst: config/control.yaml
+      - src: packaging/config/gateway.yaml
+        dst: config/gateway.yaml
+      # No package installs the console here, so the archive carries it: point
+      # console.dir at this folder.
+      - src: web/dist-release
+        dst: console
+      # The agent's launchd job; see the comment inside it for installing.
+      - src: packaging/launchd/com.argus.agent.plist
+        dst: launchd/com.argus.agent.plist
+
+  - id: windows
+    ids: [argus-gateway-windows, argus-control-windows, argus-verify-windows]
     # Explorer opens a zip with a double click; a tar.gz needs a tool.
-    format_overrides:
-      - goos: windows
-        formats: [zip]
+    formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
@@ -339,7 +371,8 @@ release:
 
     On macOS and Windows, unpack `argus_{{ .Version }}_darwin_<arch>.tar.gz` or
     `argus_{{ .Version }}_windows_<arch>.zip`: the control plane, gateway and
-    verifier, with the console in `console/`. The agent is Linux-only.
+    verifier, with the console in `console/`. The macOS archive also carries the
+    agent and its launchd job in `launchd/`. The Windows agent is not out yet.
 
     Nothing starts on install. These services need certificates, secrets and an
     inventory first, and a package that starts a half-configured privileged

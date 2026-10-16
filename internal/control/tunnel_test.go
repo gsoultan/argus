@@ -260,6 +260,34 @@ func TestAnAgentMovesToQUICWhenOffered(t *testing.T) {
 	}
 }
 
+// Two connections from one agent recorded out of order on the same replica:
+// the newer one stays recorded. Another replica's connection always wins, as
+// that is where the agent went.
+func TestTheNewerConnectionStaysRecorded(t *testing.T) {
+	e := newTunnelEnv(t)
+	host := unique("tun-order")
+	_, id := enrolled(t, e.store, e.h, host)
+	ctx := context.Background()
+	older := time.Now().UTC().Truncate(time.Microsecond)
+	newer := older.Add(time.Millisecond)
+
+	if err := e.store.tunnelConnected(ctx, id, "quic", "test-replica", newer); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.tunnelConnected(ctx, id, "tcp", "test-replica", older); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.listed(t, host).Tunnel; got.Transport != "quic" {
+		t.Fatalf("an older connection recorded last replaced the newer: %+v", got)
+	}
+	if err := e.store.tunnelConnected(ctx, id, "tcp", "other-replica", older); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.listed(t, host).Tunnel; got.Transport != "tcp" || got.Replica != "other-replica" {
+		t.Fatalf("a connection on another replica was not recorded: %+v", got)
+	}
+}
+
 // A replica that stopped pinging is not believed.
 func TestAStaleTunnelIsListedAsDown(t *testing.T) {
 	tr, rep := "quic", "gone-replica"
