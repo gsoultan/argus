@@ -6,15 +6,33 @@ import (
 	"strconv"
 )
 
-// getRequests lists access requests.
-func (a *API) getRequests(w http.ResponseWriter, r *http.Request, _ string) {
+// getRequests lists access requests: the whole queue for whoever decides or
+// audits them, and only their own for everyone else. The queue carries other
+// people's addresses, hosts and reasons, which an operator asking for a
+// server has no business reading.
+func (a *API) getRequests(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	requester := ""
+	if !seesRequestQueue(sess.Role) {
+		requester = sess.Email
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	reqs, err := a.store.Requests(r.Context(), r.URL.Query().Get("state"), limit)
+	reqs, err := a.store.Requests(r.Context(), r.URL.Query().Get("state"), requester, limit)
 	if err != nil {
 		a.fail(w, "requests", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, reqs)
+}
+
+// seesRequestQueue is whether role reads everyone's requests: the roles that
+// may decide them, and the auditor who reads everything.
+func seesRequestQueue(role string) bool {
+	return role == "approver" || seesWholeFleet(role)
 }
 
 // postRequest creates one.

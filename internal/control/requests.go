@@ -132,8 +132,9 @@ func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy
 	return out, tx.Commit(ctx)
 }
 
-// Requests lists access requests, newest first.
-func (s *Store) Requests(ctx context.Context, state string, limit int) ([]AccessRequest, error) {
+// Requests lists access requests, newest first. A non-empty requester narrows
+// it to that person's own.
+func (s *Store) Requests(ctx context.Context, state, requester string, limit int) ([]AccessRequest, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -143,7 +144,8 @@ func (s *Store) Requests(ctx context.Context, state string, limit int) ([]Access
 		       decision_note, expires_at, break_glass
 		FROM access_requests
 		WHERE ($1 = '' OR state = $1)
-		ORDER BY created_at DESC LIMIT $2`, state, limit)
+		  AND ($3 = '' OR lower(requester_email) = lower($3))
+		ORDER BY created_at DESC LIMIT $2`, state, limit, requester)
 	if err != nil {
 		return nil, err
 	}

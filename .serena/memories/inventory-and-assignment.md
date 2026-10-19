@@ -121,3 +121,11 @@ the page's own buttons.
   the servers the control plane sent, which for someone with none is nothing;
   the next step is their admin. Letting people request hosts they cannot see
   needs a server-side "requestable" list, which does not exist yet.
+
+## Access-request visibility
+`GET /api/v1/requests` sends the whole queue only to `seesRequestQueue` roles
+(approver, admin, owner, auditor); everyone else gets their own requests
+(`Store.Requests` requester filter). It used to send everyone's addresses,
+hosts and break-glass reasons to any signed-in account. The console titles the
+page "My access requests" for them and shows Approve/Deny only to deciders, and
+never on the decider's own request (the API refuses self-approval).
