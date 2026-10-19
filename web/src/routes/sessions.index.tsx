@@ -175,7 +175,7 @@ function Sessions() {
           />
           <TextInput
             w={300}
-            placeholder="Filter by user, host, principal or client IP"
+            placeholder="Filter by person, server, account or IP address"
             leftSection={<IconSearch size={14} />}
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}

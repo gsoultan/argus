@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as CoverageRouteImport } from './routes/coverage'
+import { Route as MineRouteImport } from './routes/mine'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as UsersRouteImport } from './routes/users'
@@ -40,6 +41,11 @@ const ConnectRoute = ConnectRouteImport.update({
 const CoverageRoute = CoverageRouteImport.update({
   id: '/coverage',
   path: '/coverage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MineRoute = MineRouteImport.update({
+  id: '/mine',
+  path: '/mine',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RequestsRoute = RequestsRouteImport.update({
@@ -88,6 +94,7 @@ export interface FileRoutesByFullPath {
   '/audit': typeof AuditRoute
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
+  '/mine': typeof MineRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/audit': typeof AuditRoute
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
+  '/mine': typeof MineRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/audit': typeof AuditRoute
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
+  '/mine': typeof MineRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -133,6 +142,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/connect'
     | '/coverage'
+    | '/mine'
     | '/requests'
     | '/settings'
     | '/users'
@@ -147,6 +157,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/connect'
     | '/coverage'
+    | '/mine'
     | '/requests'
     | '/settings'
     | '/users'
@@ -161,6 +172,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/connect'
     | '/coverage'
+    | '/mine'
     | '/requests'
     | '/settings'
     | '/users'
@@ -176,6 +188,7 @@ export interface RootRouteChildren {
   AuditRoute: typeof AuditRoute
   ConnectRoute: typeof ConnectRoute
   CoverageRoute: typeof CoverageRoute
+  MineRoute: typeof MineRoute
   RequestsRoute: typeof RequestsRoute
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
@@ -214,6 +227,13 @@ declare module '@tanstack/react-router' {
       path: '/coverage'
       fullPath: '/coverage'
       preLoaderRoute: typeof CoverageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mine': {
+      id: '/mine'
+      path: '/mine'
+      fullPath: '/mine'
+      preLoaderRoute: typeof MineRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/requests': {
@@ -280,6 +300,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuditRoute: AuditRoute,
   ConnectRoute: ConnectRoute,
   CoverageRoute: CoverageRoute,
+  MineRoute: MineRoute,
   RequestsRoute: RequestsRoute,
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,

@@ -62,7 +62,7 @@ function Requests() {
     <Box>
       <PageHeader
         title="Access requests"
-        description="Time-bounded, justified, and approved by someone other than the requester. Grants expire on their own — nothing to remember to revoke."
+        description="Ask for temporary access to a server, or decide on someone else\u2019s request. Someone other than you approves it, and access ends by itself when the time is up."
         actions={
           <Button leftSection={<IconPlus size={14} />} onClick={newModal.open}>
             Request access
@@ -327,14 +327,14 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
     })) ?? []
 
   return (
-    <Modal opened={opened} onClose={close} title="Request privileged access" size="lg">
+    <Modal opened={opened} onClose={close} title="Request access" size="lg">
       <form onSubmit={onSubmit}>
         <Stack gap="md">
           <MultiSelect
             size="sm"
-            label="Target hosts"
-            description="Request only what the task needs — broad scope gets denied."
-            placeholder="Search hosts"
+            label="Servers"
+            description="Pick only the servers the task needs. Asking for many at once usually gets denied."
+            placeholder="Type a server name"
             searchable
             clearable
             maxDropdownHeight={240}
@@ -346,7 +346,7 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
           />
 
           <Radio.Group
-            label="Connect as"
+            label="Log in as"
             value={value.principal}
             onChange={(v) => set('principal', v)}
           >
@@ -386,8 +386,8 @@ function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => 
 
           <Textarea
             size="sm"
-            label="Justification"
-            description="Reference the incident or change ticket. This is what the approver sees and what the audit log keeps."
+            label="Why do you need it?"
+            description="Mention the incident or change ticket if there is one. The approver reads this, and it is kept in the audit log."
             placeholder="INC-4471 — settlement worker stuck in retry loop, need to inspect queue depth on the primary."
             minRows={3}
             autosize

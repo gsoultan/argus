@@ -44,8 +44,13 @@ export const Route = createFileRoute('/connect')({
   component: Connect,
   // `?host=` preselects a server, so a "Connect" button anywhere else in the
   // console lands here one step from a terminal instead of at an empty form.
-  validateSearch: (s: Record<string, unknown>): { host?: string } =>
-    typeof s.host === 'string' && s.host ? { host: s.host } : {},
+  // `?as=` preselects the account too, for the "log in as" buttons on My
+  // servers. It is only a preselection: an account the server does not list
+  // for this person is dropped below, and the control plane decides either way.
+  validateSearch: (s: Record<string, unknown>): { host?: string; as?: string } => ({
+    ...(typeof s.host === 'string' && s.host ? { host: s.host } : {}),
+    ...(typeof s.as === 'string' && s.as ? { as: s.as } : {}),
+  }),
 })
 
 const DEFAULT_GATEWAY = GATEWAY_URL
@@ -59,9 +64,9 @@ function Connect() {
   const [gateway, setGateway] = useState(DEFAULT_GATEWAY)
   const [requesting, setRequesting] = useState(false)
   const [denied, setDenied] = useState<string>()
-  const { host } = Route.useSearch()
+  const { host, as } = Route.useSearch()
   const [target, setTarget] = useState<string | null>(host ?? null)
-  const [principal, setPrincipal] = useState('ops')
+  const [principal, setPrincipal] = useState(as ?? 'ops')
   // Shown by default only when the console has no control plane to get an
   // address from — that is the one case where the user has to supply it.
   const [showGateway, setShowGateway] = useState(!isConfigured())
@@ -105,9 +110,14 @@ function Connect() {
   // A principal carried over from the previously selected host may not exist on
   // this one. Left alone, the radio group shows nothing selected and Connect
   // sends an account the target does not have.
+  //
+  // Not before the list has arrived, though: until then `principals` is the
+  // placeholder, and a `?as=root` would be thrown away for not being in it.
+  const loaded = assets !== undefined
   useEffect(() => {
+    if (!loaded) return
     setPrincipal((p) => (principals.includes(p) ? p : (principals[0] ?? 'ops')))
-  }, [principals])
+  }, [principals, loaded])
 
   const getTicket = useCallback(async () => {
     if (!session) return null
@@ -230,7 +240,7 @@ function Connect() {
               choices that actually matter. */}
           <Grid.Col span={{ base: 12, lg: 7 }}>
             <Stack gap="sm">
-              <Step n={1} icon={IconServer2} title="Choose a host">
+              <Step n={1} icon={IconServer2} title="Choose a server">
                 {/* An empty inventory and an empty *assignment* look identical
                     in a searchable Select — it answers "no host by that name"
                     to every query — and they need opposite responses. Saying
@@ -252,7 +262,7 @@ function Connect() {
                 )}
                 <Select
                   size="sm"
-                  placeholder={assets ? 'Search the inventory' : 'Loading hosts…'}
+                  placeholder={assets ? 'Type a server name' : 'Loading servers…'}
                   // An enabled, searchable, empty Select reports "No host by
                   // that name" for every query while the inventory is still on
                   // its way, which is a wrong answer rather than a slow one.
@@ -288,15 +298,14 @@ function Connect() {
               <Step n={2} icon={IconUser} title="Choose an account" disabled={!target}>
                 {!target ? (
                   <Text size={FS.meta} c="dimmed">
-                    Pick a host first — the accounts you may assume depend on it.
+                    Pick a server first. The accounts you can use depend on it.
                   </Text>
                 ) : principals.length === 0 ? (
                   // An asset can list no principals at all — enrolled from
                   // Coverage and not finished, say. An empty radio group would
                   // look like a page that had not loaded.
                   <Text size={FS.meta} c="dimmed">
-                    This host permits no accounts you may assume. An administrator lists the
-                    accounts on the asset and assigns them.
+                    You have no account on this server yet. Ask an admin to add one for you.
                   </Text>
                 ) : (
                   <Radio.Group value={principal} onChange={setPrincipal}>

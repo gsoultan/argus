@@ -25,7 +25,7 @@ const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
 import {
-  NAV_SECTIONS, PRIMARY_ACTION, isActive, type NavCounts, type NavSection,
+  PRIMARY_ACTION, isActive, navFor, type NavCounts, type NavSection,
 } from '~/components/nav'
 import { ButtonLink } from '~/components/links'
 import { Logo } from '~/components/Logo'
@@ -324,7 +324,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
         <AppShell.Section grow component={ScrollArea} px="sm" pb="xs">
           <Stack gap="md" pt={SP.tight}>
-            {NAV_SECTIONS.map((section, si) => (
+            {navFor(me?.role).map((section, si) => (
               <NavSectionView
                 key={section.label ?? si}
                 section={section}

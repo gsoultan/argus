@@ -1,9 +1,11 @@
 import {
   IconCirclePlus, IconClipboardCheck, IconFileDescription, IconHome2, IconPlugConnected,
-  IconServer2, IconSettings, IconShieldCheck, IconTerminal2, IconUsers,
+  IconServer2, IconServerBolt, IconSettings, IconShieldCheck, IconTerminal2, IconUsers,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
+import { seesWholeFleet } from '~/lib/roles'
+import type { UserRole } from '~/types/domain'
 
 /**
  * The console's menu, in one place.
@@ -22,6 +24,13 @@ import type { ComponentType } from 'react'
  * Adding a server is a button on the Servers page and the Overview, rather than
  * a menu entry of its own: it is something you do to the list of servers, not a
  * separate place. Paths are unchanged, so every bookmark and deep link works.
+ *
+ * **The menu follows the role.** An operator was shown the same ten entries as
+ * an owner -- fleet posture, the whole inventory, coverage, users -- and had to
+ * work out which of them were about the two servers they could actually use.
+ * Now someone who is only given servers sees *My servers* and the pages about
+ * their own work, and nothing else. This is what is shown, not what is allowed:
+ * the control plane scopes every list on its own, and a typed URL still lands.
  */
 
 export interface NavItem {
@@ -33,6 +42,8 @@ export interface NavItem {
   badge?: (s: NavCounts) => number
   /** `sky` for work in progress, `amber` for work waiting on a person. */
   badgeColor?: 'sky' | 'amber'
+  /** Shown only to roles that are sent the whole fleet. Omitted means everyone. */
+  fleet?: boolean
 }
 
 export interface NavCounts {
@@ -47,6 +58,8 @@ export interface NavSection {
   label?: string
   /** Folded away until opened, or until the current page is inside it. */
   collapsible?: boolean
+  /** Shown only to roles that are sent the whole fleet. Omitted means everyone. */
+  fleet?: boolean
   items: NavItem[]
 }
 
@@ -66,12 +79,21 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Overview',
         icon: IconHome2,
         blurb: 'What needs you now',
+        // Someone who is only given servers lands on My servers instead.
+        fleet: true,
+      },
+      {
+        to: '/mine',
+        label: 'My servers',
+        icon: IconServerBolt,
+        blurb: 'Servers you can connect to',
       },
       {
         to: '/assets',
         label: 'Servers',
         icon: IconServer2,
         blurb: 'Add and manage servers',
+        fleet: true,
         // Servers whose agent checked in and that nobody has approved yet.
         badge: (s) => s.serversWaiting,
         badgeColor: 'amber',
@@ -97,6 +119,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: 'Admin',
     collapsible: true,
+    fleet: true,
     items: [
       {
         to: '/coverage',
@@ -135,14 +158,29 @@ export const NAV_SECTIONS: NavSection[] = [
  */
 export const ALL_PAGES: NavItem[] = [
   PRIMARY_ACTION,
-  ...NAV_SECTIONS.flatMap((s) => s.items),
+  ...NAV_SECTIONS.flatMap((s) => s.items.map((i) => (s.fleet ? { ...i, fleet: true } : i))),
   {
     to: '/assets/add',
     label: 'Add a server',
     icon: IconCirclePlus,
     blurb: 'Install the agent and approve the server',
+    fleet: true,
   },
 ]
+
+/** The palette's pages for this role, by the same rule as the menu. */
+export function pagesFor(role: UserRole | undefined): NavItem[] {
+  return seesWholeFleet(role) ? ALL_PAGES : ALL_PAGES.filter((p) => !p.fleet)
+}
+
+/** The menu as this role should see it. An unknown role gets the narrower one. */
+export function navFor(role: UserRole | undefined): NavSection[] {
+  const whole = seesWholeFleet(role)
+  return NAV_SECTIONS.filter((s) => whole || !s.fleet).map((s) => ({
+    ...s,
+    items: s.items.filter((i) => whole || !i.fleet),
+  }))
+}
 
 /** True when `pathname` is `to` or a page below it. `/` matches only itself. */
 export function isActive(pathname: string, to: string): boolean {

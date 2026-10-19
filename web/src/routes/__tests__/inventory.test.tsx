@@ -65,12 +65,12 @@ describe('what the pages say they are about', () => {
     expect(await screen.findByText(/fleet posture/i)).toBeInTheDocument()
   })
 
-  // The counters are scoped on the server for this role, so a page headed
-  // "fleet posture" would be the wrong frame around the right numbers.
-  it('frames it as their own for an operator', async () => {
+  // Fleet posture is the wrong page to open on for someone who was only given
+  // servers: they land on the servers instead.
+  it('sends an operator to their own servers', async () => {
     signedInAs('operator')
     await renderRoute('/')
-    expect(await screen.findByText(/hosts assigned to you/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
     expect(screen.queryByText(/fleet posture/i)).not.toBeInTheDocument()
   })
 
