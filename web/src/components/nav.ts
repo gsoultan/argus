@@ -4,7 +4,7 @@ import {
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
-import { seesWholeFleet } from '~/lib/roles'
+import { canSee, type Audience } from '~/lib/roles'
 import type { UserRole } from '~/types/domain'
 
 /**
@@ -28,9 +28,11 @@ import type { UserRole } from '~/types/domain'
  * **The menu follows the role.** An operator was shown the same ten entries as
  * an owner -- fleet posture, the whole inventory, coverage, users -- and had to
  * work out which of them were about the two servers they could actually use.
- * Now someone who is only given servers sees *My servers* and the pages about
- * their own work, and nothing else. This is what is shown, not what is allowed:
- * the control plane scopes every list on its own, and a typed URL still lands.
+ * Now someone who is only given servers sees *My servers* and nothing else --
+ * an approver also keeps Access requests, which is their job -- and Users &
+ * roles is an administrator's alone. The control plane still scopes every list
+ * on its own; the routes behind these entries also send a role that is not
+ * their audience back to My servers (`guard` in lib/roles.ts).
  */
 
 export interface NavItem {
@@ -42,8 +44,8 @@ export interface NavItem {
   badge?: (s: NavCounts) => number
   /** `sky` for work in progress, `amber` for work waiting on a person. */
   badgeColor?: 'sky' | 'amber'
-  /** Shown only to roles that are sent the whole fleet. Omitted means everyone. */
-  fleet?: boolean
+  /** Who it is shown to; see `Audience`. Omitted means everyone. */
+  audience?: Audience
 }
 
 export interface NavCounts {
@@ -58,8 +60,8 @@ export interface NavSection {
   label?: string
   /** Folded away until opened, or until the current page is inside it. */
   collapsible?: boolean
-  /** Shown only to roles that are sent the whole fleet. Omitted means everyone. */
-  fleet?: boolean
+  /** Who the whole section is shown to; see `Audience`. */
+  audience?: Audience
   items: NavItem[]
 }
 
@@ -80,7 +82,7 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: IconHome2,
         blurb: 'What needs you now',
         // Someone who is only given servers lands on My servers instead.
-        fleet: true,
+        audience: 'fleet',
       },
       {
         to: '/mine',
@@ -93,7 +95,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Servers',
         icon: IconServer2,
         blurb: 'Add and manage servers',
-        fleet: true,
+        audience: 'fleet',
         // Servers whose agent checked in and that nobody has approved yet.
         badge: (s) => s.serversWaiting,
         badgeColor: 'amber',
@@ -103,6 +105,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Sessions',
         icon: IconTerminal2,
         blurb: 'Live and recorded',
+        audience: 'fleet',
         badge: (s) => s.sessionsActive,
         badgeColor: 'sky',
       },
@@ -111,6 +114,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Access requests',
         icon: IconClipboardCheck,
         blurb: 'Ask for or grant access',
+        audience: 'approvers',
         badge: (s) => s.requestsPending,
         badgeColor: 'amber',
       },
@@ -119,7 +123,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: 'Admin',
     collapsible: true,
-    fleet: true,
+    audience: 'fleet',
     items: [
       {
         to: '/coverage',
@@ -141,6 +145,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Users & roles',
         icon: IconUsers,
         blurb: 'Who can do what',
+        audience: 'admin',
       },
       {
         to: '/settings',
@@ -157,29 +162,29 @@ export const NAV_SECTIONS: NavSection[] = [
  * by a button rather than a menu item.
  */
 export const ALL_PAGES: NavItem[] = [
-  PRIMARY_ACTION,
-  ...NAV_SECTIONS.flatMap((s) => s.items.map((i) => (s.fleet ? { ...i, fleet: true } : i))),
+  { ...PRIMARY_ACTION, audience: 'fleet' },
+  // A section's audience narrows each of its items, so the palette never offers
+  // a page the menu hides.
+  ...NAV_SECTIONS.flatMap((s) => s.items.map((i) => (s.audience && !i.audience ? { ...i, audience: s.audience } : i))),
   {
     to: '/assets/add',
     label: 'Add a server',
     icon: IconCirclePlus,
     blurb: 'Install the agent and approve the server',
-    fleet: true,
+    audience: 'admin',
   },
 ]
 
 /** The palette's pages for this role, by the same rule as the menu. */
 export function pagesFor(role: UserRole | undefined): NavItem[] {
-  return seesWholeFleet(role) ? ALL_PAGES : ALL_PAGES.filter((p) => !p.fleet)
+  return ALL_PAGES.filter((p) => canSee(role, p.audience))
 }
 
-/** The menu as this role should see it. An unknown role gets the narrower one. */
+/** The menu as this role should see it. An unknown role gets the narrowest. */
 export function navFor(role: UserRole | undefined): NavSection[] {
-  const whole = seesWholeFleet(role)
-  return NAV_SECTIONS.filter((s) => whole || !s.fleet).map((s) => ({
-    ...s,
-    items: s.items.filter((i) => whole || !i.fleet),
-  }))
+  return NAV_SECTIONS.filter((s) => canSee(role, s.audience))
+    .map((s) => ({ ...s, items: s.items.filter((i) => canSee(role, i.audience)) }))
+    .filter((s) => s.items.length > 0)
 }
 
 /** True when `pathname` is `to` or a page below it. `/` matches only itself. */

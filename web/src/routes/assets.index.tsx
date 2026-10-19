@@ -18,6 +18,7 @@ import { assetsQuery, groupsQuery, meQuery } from '~/lib/queries'
 import type { Asset, CredentialMode } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
+import { guard } from '~/lib/guard'
 
 /**
  * Loaded on demand.
@@ -85,6 +86,7 @@ const str = (v: unknown): string | undefined =>
   typeof v === 'string' && v.length > 0 ? v : undefined
 
 export const Route = createFileRoute('/assets/')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: Assets,
   // Unrecognised values are dropped rather than passed through, so a
   // hand-edited URL cannot put the table into a state the controls cannot show.

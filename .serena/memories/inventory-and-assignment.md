@@ -103,10 +103,14 @@ artefacts. Everyone else gets their assigned hosts and their own sessions.
 ## My servers -- what someone who was only given servers sees
 
 `/mine` (2026-10-19) lists exactly what `/api/v1/assets` returned, as cards
-with a status, the accounts they hold, and Connect. Operators and approvers
-land there from `/`, and the menu hides the fleet pages for them (`fleet` in
-`nav.ts`, `seesWholeFleet` in `lib/roles.ts` mirroring the Go rule). That is
-presentation only; the server's scoping is the control.
+with a status, the accounts they hold, and Connect. The owner asked that an
+ordinary user's console be *only* My servers: the menu shows nothing else to an
+operator (an approver also keeps Access requests), the header drops search,
+live counters and the Connect button, and fleet pages send them back to `/mine`
+in `beforeLoad` (`guard` in `lib/guard.ts`, audiences in `lib/roles.ts`). Users
+& roles is admin/owner only, auditors included out. All presentation; the
+server's scoping is the control. `/requests` and `/connect` stay reachable from
+the page's own buttons.
 
 - **Status is the last check, never a promise.** Only `blocked` (SSH, host key
   changed) disables Connect, because that is the one case Argus refuses.

@@ -137,14 +137,26 @@ describe('temporary access', () => {
 })
 
 describe('the menu follows the role', () => {
-  it('shows an operator their servers and none of the fleet pages', async () => {
+  // Asked for in so many words: an ordinary user's console is My servers, and
+  // nothing else.
+  it('shows an operator My servers and nothing else', async () => {
     signedInAs('operator')
     await renderRoute('/mine')
     const nav = await screen.findByRole('navigation')
     await within(nav).findByRole('link', { name: /my servers/i })
-    expect(within(nav).queryByRole('link', { name: /^Overview/ })).not.toBeInTheDocument()
-    expect(within(nav).queryByRole('link', { name: /^Servers/ })).not.toBeInTheDocument()
+    expect(within(nav).getAllByRole('link')).toHaveLength(1)
     expect(within(nav).queryByRole('button', { name: /admin/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /connect to a server/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument()
+  })
+
+  // The request queue is an approver's job, so it stays theirs.
+  it('keeps Access requests for an approver', async () => {
+    signedInAs('approver')
+    await renderRoute('/mine')
+    const nav = await screen.findByRole('navigation')
+    await within(nav).findByRole('link', { name: /access requests/i })
+    expect(within(nav).getAllByRole('link')).toHaveLength(2)
   })
 
   it('shows an administrator all of it', async () => {
@@ -153,7 +165,28 @@ describe('the menu follows the role', () => {
     const nav = await screen.findByRole('navigation')
     expect(await within(nav).findByRole('link', { name: /^Overview/ })).toBeInTheDocument()
     expect(within(nav).getByRole('link', { name: /^Servers/ })).toBeInTheDocument()
-    expect(within(nav).getByRole('button', { name: /admin/i })).toBeInTheDocument()
+    fireEvent.click(within(nav).getByRole('button', { name: /admin/i }))
+    expect(within(nav).getByRole('link', { name: /users & roles/i })).toBeInTheDocument()
+  })
+
+  // People and roles are an administrator's page. An auditor reads the fleet
+  // but has nothing to do there.
+  it('keeps Users & roles from an auditor, in the menu and at its address', async () => {
+    signedInAs('auditor')
+    await renderRoute('/mine')
+    const nav = await screen.findByRole('navigation')
+    fireEvent.click(await within(nav).findByRole('button', { name: /admin/i }))
+    expect(within(nav).getByRole('link', { name: /audit log/i })).toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /users & roles/i })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['/', 'operator'], ['/assets', 'operator'], ['/assets/add', 'auditor'], ['/sessions', 'approver'],
+    ['/coverage', 'operator'], ['/audit', 'operator'], ['/settings', 'operator'], ['/users', 'auditor'],
+  ] as const)('sends %s to My servers for an %s', async (path, role) => {
+    signedInAs(role)
+    await renderRoute(path)
+    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
   })
 })
 

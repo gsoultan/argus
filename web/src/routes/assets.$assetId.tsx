@@ -18,6 +18,7 @@ import { FS, SP } from '~/theme'
 import {
   assetQuery, meQuery, sessionsQuery, usePinHostKey, useRotateCredential,
 } from '~/lib/queries'
+import { guard } from '~/lib/guard'
 
 /** Opened only by an administrator, so their chunks are fetched only for one. */
 const AssetForm = lazy(() =>
@@ -28,6 +29,7 @@ const AssetAssignments = lazy(() =>
 )
 
 export const Route = createFileRoute('/assets/$assetId')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: AssetDetail,
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(assetQuery(params.assetId)),
