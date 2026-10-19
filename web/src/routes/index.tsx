@@ -16,8 +16,16 @@ import {
 import { FS, SP } from '~/theme'
 import { assetsQuery, coverageQuery, meQuery, requestsQuery, sessionsQuery, statsQuery } from '~/lib/queries'
 import { Attention, ConnectHero, plural } from '~/components/overview'
+import { seesWholeFleet } from '~/lib/roles'
+import { guard } from '~/lib/guard'
 
 export const Route = createFileRoute('/')({
+  // Someone who is only given servers lands on them. The Overview is fleet
+  // posture -- coverage, pins, other people's requests -- and for an operator
+  // it was a page of figures about two hosts standing between them and the
+  // Connect button. A failed identity lookup stays here: the sign-in gate and
+  // the page's own error state are better placed to say what went wrong.
+  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: Overview,
   loader: ({ context }) => context.queryClient.ensureQueryData(statsQuery()),
 })
@@ -30,8 +38,7 @@ function Overview() {
   // are right either way -- what changes is what they are about, and a page
   // headed "fleet posture" while counting two hosts would be the wrong frame
   // around the right data.
-  const wholeFleet =
-    me?.role === 'admin' || me?.role === 'owner' || me?.role === 'auditor'
+  const wholeFleet = seesWholeFleet(me?.role)
   const { data: stats } = useQuery(statsQuery())
   // Filtered, not merely fetched. The query asks for `state = 'active'`, which
   // includes the sessions nothing has reported in minutes -- so a section

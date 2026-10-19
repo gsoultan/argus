@@ -32,17 +32,13 @@ describe('who may edit the inventory', () => {
     expect(await screen.findByRole('button', { name: /add by hand/i })).toBeInTheDocument()
   }, 15_000)
 
-  it('offers an operator none', async () => {
+  // The inventory is not an operator's page at all: their console is My
+  // servers, so a typed address lands there instead of on a read-only copy.
+  it('sends an operator to their own servers instead', async () => {
     signedInAs('operator')
     await renderRoute('/assets')
-    await screen.findByRole('heading', { name: 'Servers' })
+    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /add by hand/i })).not.toBeInTheDocument()
-  })
-
-  it('tells an operator the list is what they were assigned', async () => {
-    signedInAs('operator')
-    await renderRoute('/assets')
-    expect(await screen.findByText(/servers assigned to you/i)).toBeInTheDocument()
   })
 
   // An auditor answers "who can reach this host", so the panel is theirs to
@@ -65,19 +61,19 @@ describe('what the pages say they are about', () => {
     expect(await screen.findByText(/fleet posture/i)).toBeInTheDocument()
   })
 
-  // The counters are scoped on the server for this role, so a page headed
-  // "fleet posture" would be the wrong frame around the right numbers.
-  it('frames it as their own for an operator', async () => {
+  // Fleet posture is the wrong page to open on for someone who was only given
+  // servers: they land on the servers instead.
+  it('sends an operator to their own servers', async () => {
     signedInAs('operator')
     await renderRoute('/')
-    expect(await screen.findByText(/hosts assigned to you/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
     expect(screen.queryByText(/fleet posture/i)).not.toBeInTheDocument()
   })
 
-  it('says whose sessions the Sessions page is showing', async () => {
+  it('keeps an operator on My servers rather than the session log', async () => {
     signedInAs('operator')
     await renderRoute('/sessions')
-    expect(await screen.findByText(/your own sessions/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
   })
 })
 

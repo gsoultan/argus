@@ -22,6 +22,7 @@ import {
 } from '~/lib/queries'
 import type { DiscoveredHost } from '~/types/domain'
 import { FS, SP } from '~/theme'
+import { guard } from '~/lib/guard'
 
 /**
  * Adding a server, start to finish, on one page.
@@ -42,7 +43,10 @@ import { FS, SP } from '~/theme'
  * agent to report to, so the waiting list says that instead of showing sample
  * servers as if they had checked in.
  */
-export const Route = createFileRoute('/assets/add')({ component: AddServer })
+export const Route = createFileRoute('/assets/add')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
+  component: AddServer,
+})
 
 type Distro = 'deb' | 'rpm' | 'apk'
 type Arch = 'amd64' | 'arm64'

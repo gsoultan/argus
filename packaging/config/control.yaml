@@ -69,8 +69,9 @@ agent_stale_after: 90s
 log_level: "info"
 
 # Tell administrators every time somebody opens a session, by email, Telegram,
-# or both. Sessions that went around Argus (logged in to the server directly,
-# seen only by the host agent) are alerted too, and say so. Alerts are queued
+# a phone push notification (Firebase Cloud Messaging), or any mix. Sessions
+# that went around Argus (logged in to the server directly, seen only by the
+# host agent) are alerted too, and say so. Alerts are queued
 # and sent in the background; a slow mail server never holds up a session.
 # Remove the comment marks from the channels you want.
 #
@@ -86,3 +87,10 @@ log_level: "info"
 #     # From @BotFather. Add the bot to the group first, then use the group's id.
 #     bot_token: "${file:/etc/argus/telegram-bot-token}"
 #     chat_ids: ["-1001234567890"]
+#   fcm:
+#     # A service account key from Firebase (Project settings > Service accounts),
+#     # owned by the argus user and mode 0600. Push goes to the topic your app
+#     # subscribes to, and/or to individual device registration tokens.
+#     credentials_file: "/etc/argus/fcm-service-account.json"
+#     topic: "argus-sessions"
+#     # tokens: ["<device registration token>"]

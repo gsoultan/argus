@@ -23,6 +23,7 @@ const ROUTES: Array<[path: string, heading: string]> = [
   ['/settings', 'Settings'],
   ['/coverage', 'Coverage'],
   ['/connect', 'Connect'],
+  ['/mine', 'My servers'],
 ]
 
 describe('every route mounts', () => {
@@ -64,7 +65,7 @@ describe('sessions', () => {
 
   it('filters by the search box', async () => {
     await renderRoute('/sessions')
-    const search = await screen.findByPlaceholderText(/filter by user, host/i)
+    const search = await screen.findByPlaceholderText(/filter by person, server/i)
     fireEvent.change(search, { target: { value: 'no-such-host-anywhere' } })
     expect(await screen.findByText('No sessions match.')).toBeInTheDocument()
   })
@@ -186,11 +187,14 @@ describe('navigation', () => {
     await renderRoute('/assets/add')
     await screen.findByRole('heading', { name: 'Add a server' })
     const nav = screen.getByRole('navigation')
+    // Servers is an administrator's entry, so it appears once the identity
+    // lookup says this is one.
+    await within(nav).findByRole('link', { name: /^Servers/ })
     const current = within(nav)
       .getAllByRole('link')
       .filter((a) => a.hasAttribute('data-active'))
     expect(current).toHaveLength(1)
-    expect(current[0]).toHaveTextContent('Servers')
+    expect(current[0]).toHaveTextContent(/^Servers/)
   })
 })
 
@@ -253,7 +257,7 @@ describe('empty states', () => {
    */
   it('say what to do next, not only that there is nothing', async () => {
     await renderRoute('/sessions')
-    const search = await screen.findByPlaceholderText(/filter by user, host/i)
+    const search = await screen.findByPlaceholderText(/filter by person, server/i)
     fireEvent.change(search, { target: { value: 'no-such-host-anywhere' } })
     expect(await screen.findByText('No sessions match.')).toBeInTheDocument()
     expect(screen.getByText(/widen it, or clear the search/i)).toBeInTheDocument()

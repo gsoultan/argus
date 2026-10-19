@@ -8,8 +8,10 @@ import { Mono, Stat, relTime } from '~/components/primitives'
 import { usersQuery } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 import type { UserRole } from '~/types/domain'
+import { guard } from '~/lib/guard'
 
 export const Route = createFileRoute('/users')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
   component: Users,
   loader: ({ context }) => context.queryClient.ensureQueryData(usersQuery()),
 })

@@ -77,8 +77,9 @@ type config struct {
 	SessionTTL time.Duration    `yaml:"session_ttl"`
 	TicketTTL  time.Duration    `yaml:"ticket_ttl"`
 	LogLevel   string           `yaml:"log_level"`
-	// Alerts tells administrators, by email or Telegram, every time somebody
-	// opens a session. Omit for none.
+	// Alerts tells administrators, by email, Telegram or a push notification
+	// through Firebase Cloud Messaging, every time somebody opens a session.
+	// Omit for none.
 	Alerts *alertsConfig `yaml:"alerts"`
 	// Console serves the web console from this process. Omit to serve the API
 	// alone, as every deployment did before the console shipped in a package.
@@ -107,6 +108,7 @@ type consoleConfig struct {
 type alertsConfig struct {
 	Email    *notify.EmailConfig    `yaml:"email"`
 	Telegram *notify.TelegramConfig `yaml:"telegram"`
+	FCM      *notify.FCMConfig      `yaml:"fcm"`
 }
 
 // alertSenders builds a sender per configured channel.
@@ -133,6 +135,13 @@ func alertSenders(cfg *alertsConfig) ([]notify.Sender, error) {
 			return nil, err
 		}
 		out = append(out, t)
+	}
+	if cfg.FCM != nil {
+		f, err := notify.NewFCM(*cfg.FCM, &http.Client{Timeout: 15 * time.Second})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
 	}
 	return out, nil
 }

@@ -16,6 +16,7 @@ import { FS, SP } from '~/theme'
 import { coverageQuery, discoveredQuery, useEnrolHost, useIgnoreHost } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import type { DiscoveredHost } from '~/types/domain'
+import { guard } from '~/lib/guard'
 
 /**
  * No loader, deliberately — see the note on `/connect`.
@@ -25,7 +26,10 @@ import type { DiscoveredHost } from '~/types/domain'
  * for as long as the request was in flight. `Stat` renders a skeleton for a
  * count it does not have, which fixes that without blanking the console.
  */
-export const Route = createFileRoute('/coverage')({ component: CoverageView })
+export const Route = createFileRoute('/coverage')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
+  component: CoverageView,
+})
 
 /**
  * Answers "does Argus actually see everything?".

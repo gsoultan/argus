@@ -5,9 +5,10 @@ import { useQuery } from '@tanstack/react-query'
 import { IconCornerDownLeft, IconSearch } from '@tabler/icons-react'
 import type { IconProps } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
-import { assetsQuery, sessionsQuery, usersQuery } from '~/lib/queries'
+import { assetsQuery, meQuery, sessionsQuery, usersQuery } from '~/lib/queries'
+import { seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
-import { ALL_PAGES } from '~/components/nav'
+import { pagesFor } from '~/components/nav'
 
 /**
  * Jump to anything from anywhere.
@@ -42,13 +43,16 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
   // for a search index nobody has asked for yet.
   const { data: assets } = useQuery({ ...assetsQuery({}), enabled: opened })
   const { data: sessions } = useQuery({ ...sessionsQuery(), enabled: opened })
-  const { data: users } = useQuery({ ...usersQuery(), enabled: opened })
+  const { data: me } = useQuery(meQuery())
+  const whole = seesWholeFleet(me?.role)
+  // People are an administrator's page; nobody else is offered it in the menu.
+  const { data: users } = useQuery({ ...usersQuery(), enabled: opened && whole })
 
   const items = useMemo<Item[]>(() => {
     const needle = q.trim().toLowerCase()
     const out: Item[] = []
 
-    for (const p of ALL_PAGES) {
+    for (const p of pagesFor(me?.role)) {
       if (needle && !p.label.toLowerCase().includes(needle)) continue
       out.push({
         id: `page:${p.to}`,
@@ -69,7 +73,12 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
           label: a.hostname,
           hint: `${a.address}:${a.port} · ${a.os}`,
           kind: 'Host',
-          go: () => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }),
+          // Someone who is only given servers wants a terminal, not the
+          // administration page for the host.
+          go: () =>
+            whole
+              ? navigate({ to: '/assets/$assetId', params: { assetId: a.id } })
+              : navigate({ to: '/connect', search: { host: a.hostname } }),
         })
       }
 
@@ -101,7 +110,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
     }
 
     return out
-  }, [q, assets, sessions, users, navigate])
+  }, [q, assets, sessions, users, navigate, me?.role, whole])
 
   // The highlighted row must never point past the end of a list that just got
   // shorter because another character was typed.

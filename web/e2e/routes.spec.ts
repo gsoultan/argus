@@ -12,6 +12,7 @@ const ROUTES: Array<[string, string]> = [
   ['/settings', 'Settings'],
   ['/coverage', 'Coverage'],
   ['/connect', 'Connect'],
+  ['/mine', 'My servers'],
 ]
 
 for (const [path, heading] of ROUTES) {

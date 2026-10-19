@@ -99,3 +99,25 @@ artefacts. Everyone else gets their assigned hosts and their own sessions.
   said.
 - **`Stats` excludes archived assets** on both paths. A retired host that still
   counted would be an Overview reporting hosts no gateway will broker.
+
+## My servers -- what someone who was only given servers sees
+
+`/mine` (2026-10-19) lists exactly what `/api/v1/assets` returned, as cards
+with a status, the accounts they hold, and Connect. The owner asked that an
+ordinary user's console be *only* My servers: the menu shows nothing else to an
+operator (an approver also keeps Access requests), the header drops search,
+live counters and the Connect button, and fleet pages send them back to `/mine`
+in `beforeLoad` (`guard` in `lib/guard.ts`, audiences in `lib/roles.ts`). Users
+& roles is admin/owner only, auditors included out. All presentation; the
+server's scoping is the control. `/requests` and `/connect` stay reachable from
+the page's own buttons.
+
+- **Status is the last check, never a promise.** Only `blocked` (SSH, host key
+  changed) disables Connect, because that is the one case Argus refuses.
+- **Approved grants are shown separately**, because the asset list is
+  assignments only and a granted host is often absent from it. A grant for an
+  account already held on that host is not shown twice.
+- **The empty state does not point at the request form.** That form offers only
+  the servers the control plane sent, which for someone with none is nothing;
+  the next step is their admin. Letting people request hosts they cannot see
+  needs a server-side "requestable" list, which does not exist yet.

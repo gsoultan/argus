@@ -18,8 +18,10 @@ import { auditQuery } from '~/lib/queries'
 import { AUDIT_CEILING } from '~/lib/live'
 import { useAuditChain } from '~/lib/useWorkers'
 import type { AuditSeverity } from '~/types/domain'
+import { guard } from '~/lib/guard'
 
 export const Route = createFileRoute('/audit')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: Audit,
   loader: ({ context }) => context.queryClient.ensureQueryData(auditQuery()),
 })

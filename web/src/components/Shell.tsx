@@ -13,6 +13,7 @@ import {
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
+import { canSee, seesWholeFleet } from '~/lib/roles'
 /**
  * Loaded on first open.
  *
@@ -25,7 +26,7 @@ const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
 import {
-  NAV_SECTIONS, PRIMARY_ACTION, isActive, type NavCounts, type NavSection,
+  PRIMARY_ACTION, isActive, navFor, type NavCounts, type NavSection,
 } from '~/components/nav'
 import { ButtonLink } from '~/components/links'
 import { Logo } from '~/components/Logo'
@@ -106,6 +107,12 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const stats = statsQuery_.data
   const source = dataSource(statsQuery_.isPending)
   const { data: cov } = useQuery(coverageQuery())
+  // Someone who was only given servers gets a console that is a list of their
+  // servers: no search across the fleet, no live-session counters, and no
+  // Connect button beside a page that is already one per server. An approver
+  // keeps the request bell, because the queue is their job.
+  const whole = seesWholeFleet(me?.role)
+  const approves = canSee(me?.role, 'approvers')
 
   // Both directions count as a gap: an unmanaged host and a managed host with
   // no agent are each somewhere a privileged session goes unrecorded.
@@ -123,14 +130,14 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   // a table, a filter or the replay player.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+      if (whole && e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         palette.toggle()
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [palette])
+  }, [palette, whole])
 
   // Closing the drawer on navigation: on a phone the overlay otherwise stays up
   // over the page it just took you to.
@@ -172,7 +179,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
           {/* A search field rather than an icon: the shortcut is discoverable
               only if something on screen says it exists. */}
-          <UnstyledButton
+          {whole ? <UnstyledButton
             onClick={palette.open}
             visibleFrom="md"
             aria-label="Search pages, hosts, sessions and people"
@@ -194,20 +201,22 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 ⌘K
               </Badge>
             </Group>
-          </UnstyledButton>
+          </UnstyledButton> : <Box style={{ flex: 1 }} />}
 
           <Group gap="xs" wrap="nowrap">
-            <ActionIcon
-              hiddenFrom="md"
-              variant="subtle"
-              color="slate"
-              aria-label="Search"
-              onClick={palette.open}
-            >
-              <IconSearch size={17} />
-            </ActionIcon>
+            {whole && (
+              <ActionIcon
+                hiddenFrom="md"
+                variant="subtle"
+                color="slate"
+                aria-label="Search"
+                onClick={palette.open}
+              >
+                <IconSearch size={17} />
+              </ActionIcon>
+            )}
 
-            {stats && stats.sessionsActive > 0 && (
+            {whole && stats && stats.sessionsActive > 0 && (
               <Tooltip label={`${stats.sessionsActive} sessions in progress right now`}>
                 <Badge
                   color="sky"
@@ -231,7 +240,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 were counted as live until now — fifteen of them in dev, one for
                 nineteen days — which is exactly the number an operator glances
                 at to decide whether anything is happening. */}
-            {stats && stats.sessionsSilent > 0 && (
+            {whole && stats && stats.sessionsSilent > 0 && (
               <Tooltip
                 label={`${stats.sessionsSilent} ${stats.sessionsSilent === 1 ? 'session is' : 'sessions are'} recorded as active but have not been reported in minutes. Their gateway most likely went away without reporting the end. Sessions › Unknown.`}
                 multiline
@@ -243,7 +252,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               </Tooltip>
             )}
 
-            <Indicator
+            {approves && <Indicator
               disabled={!stats?.requestsPending}
               label={stats?.requestsPending}
               size={15}
@@ -259,7 +268,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               >
                 <IconBell size={17} />
               </ActionIcon>
-            </Indicator>
+            </Indicator>}
 
             <Menu position="bottom-end" width={220} withArrow>
               <Menu.Target>
@@ -309,7 +318,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
         {/* The reason most people open the console, as a button rather than
             one list item among many. */}
-        <Box px="sm" pb="sm">
+        {whole && <Box px="sm" pb="sm">
           <ButtonLink
             to={PRIMARY_ACTION.to as never}
             fullWidth
@@ -320,11 +329,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           >
             {PRIMARY_ACTION.label}
           </ButtonLink>
-        </Box>
+        </Box>}
 
         <AppShell.Section grow component={ScrollArea} px="sm" pb="xs">
           <Stack gap="md" pt={SP.tight}>
-            {NAV_SECTIONS.map((section, si) => (
+            {navFor(me?.role).map((section, si) => (
               <NavSectionView
                 key={section.label ?? si}
                 section={section}

@@ -14,6 +14,7 @@ import {
 import { FS, SP } from '~/theme'
 import { meQuery, sessionsQuery } from '~/lib/queries'
 import type { Session } from '~/types/domain'
+import { guard } from '~/lib/guard'
 
 const FILTERS = ['all', 'active', 'silent', 'direct', 'flagged'] as const
 type Filter = (typeof FILTERS)[number]
@@ -42,6 +43,7 @@ interface SessionSearch {
 }
 
 export const Route = createFileRoute('/sessions/')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: Sessions,
   // In the URL rather than in component state, so "the sessions nobody is
   // reporting" is a place that can be linked to -- the Overview alert and the
@@ -175,7 +177,7 @@ function Sessions() {
           />
           <TextInput
             w={300}
-            placeholder="Filter by user, host, principal or client IP"
+            placeholder="Filter by person, server, account or IP address"
             leftSection={<IconSearch size={14} />}
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}

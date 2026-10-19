@@ -17,8 +17,10 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import { isConfigured } from '~/lib/live'
 import { FS, SP } from '~/theme'
 import type { GatewayPolicy, PolicyKey } from '~/types/domain'
+import { guard } from '~/lib/guard'
 
 export const Route = createFileRoute('/settings')({
+  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: Settings,
   loader: ({ context }) => context.queryClient.ensureQueryData(policyQuery()),
 })

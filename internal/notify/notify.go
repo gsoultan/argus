@@ -4,8 +4,8 @@
 // Every session is recorded and lands in the console, but a console is
 // something you have to go and look at. An administrator who wants to know the
 // moment somebody is on a production host -- at three in the morning, or when
-// the somebody went around the gateway -- needs it pushed to them: an email, or
-// a Telegram message on their phone.
+// the somebody went around the gateway -- needs it pushed to them: an email, a
+// Telegram message, or a push notification on their phone through Firebase.
 //
 // Delivery never sits in the path of the session itself. A report is accepted,
 // stored and answered first; the alert is queued and sent by a worker. A slow
@@ -39,7 +39,7 @@ type SessionStarted struct {
 
 // Sender delivers one message to one channel.
 type Sender interface {
-	// Name identifies the channel in logs: "email" or "telegram".
+	// Name identifies the channel in logs: "email", "telegram" or "fcm".
 	Name() string
 	Send(ctx context.Context, subject, body string) error
 }
