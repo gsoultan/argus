@@ -136,6 +136,46 @@ describe('temporary access', () => {
   })
 })
 
+describe('asking for more', () => {
+  const pending = (email: string): AccessRequest => ({
+    id: `r-${email}`,
+    requesterId: 'u',
+    assetIds: [],
+    justification: 'rotating the replica after the failover',
+    durationMinutes: 60,
+    createdAt: new Date(EPOCH - 5 * 60_000).toISOString(),
+    decidedAt: null,
+    decidedByEmail: null,
+    decisionNote: null,
+    breakGlass: false,
+    state: 'pending',
+    requesterEmail: email,
+    assetHostnames: ['batch-09.prod.northwind.id'],
+    principal: 'root',
+    expiresAt: null,
+  })
+
+  // The API refuses an operator's decision, so an Approve button there would
+  // be a control that cannot work.
+  it('shows an operator their own requests, without buttons they cannot use', async () => {
+    signedInAs('operator', MINE, [pending(currentUser.email)])
+    await renderRoute('/mine')
+    fireEvent.click(await screen.findByRole('link', { name: /request more access/i }))
+    expect(await screen.findByRole('heading', { name: 'My access requests' })).toBeInTheDocument()
+    expect(await screen.findByText('Waiting for an approver.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /deny/i })).not.toBeInTheDocument()
+  })
+
+  it('lets an approver decide someone else’s request but not their own', async () => {
+    signedInAs('approver', MINE, [pending('someone.else@northwind.id'), pending(currentUser.email)])
+    await renderRoute('/requests')
+    expect(await screen.findByRole('heading', { name: 'Access requests' })).toBeInTheDocument()
+    expect(await screen.findAllByRole('button', { name: /approve/i })).toHaveLength(1)
+    expect(screen.getByText('Waiting for an approver.')).toBeInTheDocument()
+  })
+})
+
 describe('the menu follows the role', () => {
   // Asked for in so many words: an ordinary user's console is My servers, and
   // nothing else.

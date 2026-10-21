@@ -170,7 +170,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/terminal", a.handleTerminal)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
-	mux.HandleFunc("GET /api/v1/requests", a.user(a.getRequests))
+	mux.HandleFunc("GET /api/v1/requests", a.getRequests)
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
 	mux.HandleFunc("GET /api/v1/grant", a.user(a.getGrant))

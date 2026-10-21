@@ -15,8 +15,9 @@ import { Mono, RequestStateBadge, absTime, relTime } from '~/components/primitiv
 import { FS, SP } from '~/theme'
 import { notifyError, notifyWarn } from '~/lib/notify'
 import {
-  assetsQuery, requestsQuery, useCreateRequest, useDecideRequest,
+  assetsQuery, meQuery, requestsQuery, useCreateRequest, useDecideRequest,
 } from '~/lib/queries'
+import { canSee } from '~/lib/roles'
 import type { AccessRequest } from '~/types/domain'
 
 export const Route = createFileRoute('/requests')({
@@ -57,12 +58,20 @@ function Requests() {
   const [tab, setTab] = useState<'pending' | 'all'>('pending')
   const { data: requests } = useQuery(requestsQuery(tab === 'pending' ? 'pending' : undefined))
   const [newOpen, newModal] = useDisclosure(false)
+  const { data: me } = useQuery(meQuery())
+  // Whoever can decide requests is sent the whole queue; everyone else is sent
+  // their own (the control plane narrows it), so the page talks to each.
+  const decides = canSee(me?.role, 'approvers')
 
   return (
     <Box>
       <PageHeader
-        title="Access requests"
-        description="Ask for temporary access to a server, or decide on someone else\u2019s request. Someone other than you approves it, and access ends by itself when the time is up."
+        title={decides ? 'Access requests' : 'My access requests'}
+        description={
+          decides
+            ? 'Ask for temporary access to a server, or decide on someone else\u2019s request. Someone other than you approves it, and access ends by itself when the time is up.'
+            : 'Ask for temporary access to a server. An approver decides, and the access ends by itself when the time is up. Approved servers show on My servers under Temporary access.'
+        }
         actions={
           <Button leftSection={<IconPlus size={14} />} onClick={newModal.open}>
             Request access
@@ -87,23 +96,37 @@ function Requests() {
             value={tab}
             onChange={(v) => setTab(v as 'pending' | 'all')}
             data={[
-              { label: 'Queue', value: 'pending' },
+              { label: decides ? 'Queue' : 'Waiting', value: 'pending' },
               { label: 'History', value: 'all' },
             ]}
           />
         </Toolbar>
 
         <Stack gap="sm">
-          {requests?.map((r) => <RequestCard key={r.id} request={r} />)}
+          {requests?.map((r) => (
+            <RequestCard
+              key={r.id}
+              request={r}
+              // The control plane refuses a decision from anyone else, and
+              // refuses anyone deciding their own, so neither gets the buttons.
+              canDecide={decides && r.requesterEmail.toLowerCase() !== me?.email.toLowerCase()}
+            />
+          ))}
           {requests?.length === 0 && (
             <Card>
               <EmptyState
                 icon={IconClipboardCheck}
-                title={tab === 'pending' ? 'Nothing waiting for a decision.' : 'No requests yet.'}
+                title={
+                  !decides
+                    ? tab === 'pending' ? 'None of your requests are waiting.' : 'You have not asked for access yet.'
+                    : tab === 'pending' ? 'Nothing waiting for a decision.' : 'No requests yet.'
+                }
                 description={
-                  tab === 'pending'
-                    ? 'Every request has been decided. Approved grants expire on their own when their window closes.'
-                    : 'Nobody has asked for privileged access. Requests filed here are what the audit log records a decision against.'
+                  !decides
+                    ? 'Press Request access to ask for a server or an account you do not have. An approver will decide.'
+                    : tab === 'pending'
+                      ? 'Every request has been decided. Approved grants expire on their own when their window closes.'
+                      : 'Nobody has asked for privileged access. Requests filed here are what the audit log records a decision against.'
                 }
                 action={
                   <Button
@@ -125,7 +148,7 @@ function Requests() {
   )
 }
 
-function RequestCard({ request: r }: { request: AccessRequest }) {
+function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDecide: boolean }) {
   const decide = useDecideRequest()
   const [note, setNote] = useState('')
   const [expanded, setExpanded] = useState(false)
@@ -218,7 +241,13 @@ function RequestCard({ request: r }: { request: AccessRequest }) {
         </Box>
       )}
 
-      {pending && (
+      {pending && !canDecide && (
+        <Box pt="xs" style={{ borderTop: '1px solid var(--color-line)' }}>
+          <Text size={FS.micro} c="dimmed">Waiting for an approver.</Text>
+        </Box>
+      )}
+
+      {pending && canDecide && (
         <Box pt="sm" style={{ borderTop: '1px solid var(--color-line)' }}>
           {expanded && (
             <Textarea
