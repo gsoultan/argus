@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { theme } from '~/theme'
@@ -124,6 +124,21 @@ describe('LoginGate', () => {
       expect(await screen.findByLabelText(/setup token/i)).toBeInTheDocument()
       expect(screen.getByText(/sudo cat \/var\/lib\/argus\/setup-token/)).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /create administrator/i })).toBeDisabled()
+    })
+
+    // A generated password nobody saw is one nobody saved, so it is shown,
+    // and the repeat field is filled rather than asking for it retyped.
+    it('generates a password into both fields and shows it', async () => {
+      vi.stubGlobal('fetch', respond({ complete: false, available: true }))
+      await renderGate()
+
+      fireEvent.click(await screen.findByRole('button', { name: /generate password/i }))
+      const pw = screen.getByLabelText(/^password/i) as HTMLInputElement
+      const again = screen.getByLabelText(/repeat password/i) as HTMLInputElement
+      expect(pw.value).toMatch(/^[A-Za-z2-9]{6}(-[A-Za-z2-9]{6}){3}$/)
+      expect(again.value).toBe(pw.value)
+      expect(pw.type).toBe('text')
+      expect(screen.getByRole('button', { name: /copy password/i })).toBeInTheDocument()
     })
 
     // A closed setup must not look like a form that is about to work.
