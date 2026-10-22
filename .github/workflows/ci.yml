@@ -661,6 +661,9 @@ jobs:
           sudo grep -E '^ARGUS_(SIGNING_SECRET|REPORTER_TOKEN)=' /etc/argus/control.env \
             | sudo tee /etc/argus/gateway.env >/dev/null
           sudo sed -i 's#https://argus-control.example.com:8080#https://localhost:8080#' /etc/argus/gateway.yaml
+          # Its own state directory: /var/lib/argus is the agent's, root's on
+          # a host carrying both, and the gateway runs as argus.
+          [ "$(sudo stat -c '%a %U:%G' /var/lib/argus-gateway)" = "700 argus:argus" ]
           sudo systemctl enable --now argus-gateway
           for i in $(seq 1 30); do
             sudo journalctl -u argus-gateway --no-pager | grep 'inventory synced' >/dev/null && break

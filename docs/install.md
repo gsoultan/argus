@@ -359,6 +359,12 @@ tunnel:
   quic_listen: "0.0.0.0:8080"
 ```
 
+A gateway installed from this release keeps its state (recordings, host key
+pins, vaulted credentials) in `/var/lib/argus-gateway`, apart from the agent's
+`/var/lib/argus`, which is root's. An upgraded gateway keeps the paths in its
+existing `gateway.yaml`; to move, stop it, move those files and change the
+paths to match `gateway.yaml.dpkg-dist` (or `.rpmnew`).
+
 Restart `argus-agent` after upgrading it (`sudo systemctl restart
 argus-agent`). Until it restarts, each login waits about two seconds for an
 answer the old daemon does not send, then is recorded as before.
