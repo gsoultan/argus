@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gsoultan/argus/internal/credssp"
 )
 
 // Everything else in this package is tested against pipes and hand-built
@@ -84,4 +86,88 @@ func TestTargetNeverYieldsLegacyRDPSecurity(t *testing.T) {
 		t.Fatal("asking for standard RDP security succeeded; it must always be refused")
 	}
 	t.Logf("refused as expected: %v", err)
+}
+
+// rdpCredentials returns an authenticator for the target, or skips.
+//
+// Environment only, never a file. These are somebody's real domain credentials
+// and a checked-in fixture is how they end up somewhere they should not be.
+//
+//	ARGUS_TEST_RDP_DOMAIN=EXAMPLE ARGUS_TEST_RDP_USER=someone \
+//	ARGUS_TEST_RDP_PASSWORD=... go test ./internal/rdp/ -run Target -v
+func rdpCredentials(t *testing.T) *credssp.Authenticator {
+	t.Helper()
+	user := os.Getenv("ARGUS_TEST_RDP_USER")
+	pass := os.Getenv("ARGUS_TEST_RDP_PASSWORD")
+	if user == "" || pass == "" {
+		t.Skip("set ARGUS_TEST_RDP_USER and ARGUS_TEST_RDP_PASSWORD to run the authenticated path")
+	}
+	return &credssp.Authenticator{Credentials: credssp.Credentials{
+		Domain:      os.Getenv("ARGUS_TEST_RDP_DOMAIN"),
+		User:        user,
+		Password:    pass,
+		Workstation: "ARGUS",
+	}}
+}
+
+// CredSSP against a real Windows server, end to end.
+//
+// Everything in internal/credssp is tested against recorded byte sequences,
+// which proves the encoding and proves nothing about whether Windows accepts
+// it: NTLM's flag negotiation, the MIC, the version-5 nonce-bound public key
+// binding and the TSRequest framing all have to be right simultaneously, and a
+// fixture only ever asserts that they match what was captured once.
+func TestTargetCompletesCredSSP(t *testing.T) {
+	addr := rdpTarget(t)
+	auth := rdpCredentials(t)
+
+	conn, result, err := DialTargetWithAuth(addr, "", ProtocolHybrid, nil, 15*time.Second, auth)
+	if err != nil {
+		t.Fatalf("credssp against a real server: %v", err)
+	}
+	defer conn.Close()
+
+	if result == nil {
+		t.Fatal("authenticated with no result to record")
+	}
+	t.Logf("credssp version %d, legacy binding %v", result.Version, result.LegacyBinding)
+	if result.Version < 2 {
+		t.Errorf("version %d is below anything a current Windows should agree to", result.Version)
+	}
+	// Worth knowing rather than failing on: the gateway already flags it onto
+	// the session record, because the pre-version-5 binding is not nonce-bound.
+	if result.LegacyBinding {
+		t.Logf("NOTE: this target used the pre-version-5 binding")
+	}
+}
+
+// The whole client sequence on an authenticated connection.
+//
+// GCC, MCS, licensing, capability exchange and the finalization handshake --
+// none of which has ever run against a real server. Each is tested here against
+// hand-built frames, which is exactly the kind of test that agrees with its own
+// assumptions.
+func TestTargetCompletesTheClientSequence(t *testing.T) {
+	addr := rdpTarget(t)
+	auth := rdpCredentials(t)
+
+	conn, _, err := DialTargetWithAuth(addr, "", ProtocolHybrid, nil, 20*time.Second, auth)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	client, err := Connect(conn, ClientConfig{
+		Width: 1024, Height: 768, Depth: 16,
+		SelectedProtocol: ProtocolHybrid,
+		ReadTimeout:      20 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("client sequence against a real server: %v", err)
+	}
+	w, h := client.Size()
+	t.Logf("session established: %dx%d", w, h)
+	if w <= 0 || h <= 0 {
+		t.Errorf("negotiated a %dx%d desktop", w, h)
+	}
 }

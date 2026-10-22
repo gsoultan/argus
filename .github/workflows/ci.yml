@@ -60,7 +60,11 @@ jobs:
         # -race is the point of running these in CI: the concurrency tests
         # around ticket redemption and audit chaining are exactly where a data
         # race would hide.
-        run: go test -race -timeout 5m $(go list ./... | grep -v '/node_modules/')
+        #
+        # -count=1 because these tests also migrate the service database that
+        # the drift check below reads. A cached result runs nothing, so a PR that
+        # leaves internal/control alone would hand that check an empty database.
+        run: go test -race -count=1 -timeout 5m $(go list ./... | grep -v '/node_modules/')
 
       - name: Confirm the database tests actually ran
         env:
@@ -68,7 +72,9 @@ jobs:
         # A skipped suite passes. Without this check, losing the database
         # service would silently shrink coverage instead of failing.
         run: |
-          out=$(go test -run TestRedeemTicketIsAtomic -v ./internal/control/ 2>&1)
+          # -count=1: a cached result prints no SKIP line, so it would pass
+          # this check without the database ever being reached.
+          out=$(go test -count=1 -run TestRedeemTicketIsAtomic -v ./internal/control/ 2>&1)
           echo "$out"
           if echo "$out" | grep -q -- "--- SKIP"; then
             echo "::error::control-plane tests skipped; the database was not reachable"
@@ -270,9 +276,12 @@ jobs:
             echo "::error::runner kernel has no BTF; CO-RE relocations cannot resolve"
             exit 1
           }
-          test -d /sys/kernel/tracing/events/sched/sched_process_exec ||
+          # Checked as root, as the tests run. Where tracefs is readable by
+          # root only, an unprivileged test -d fails on a runner that can load
+          # the probe perfectly well, and then tries to mount it a second time.
+          sudo test -d /sys/kernel/tracing/events/sched/sched_process_exec ||
             sudo mount -t tracefs nodev /sys/kernel/tracing
-          test -d /sys/kernel/tracing/events/sched/sched_process_exec || {
+          sudo test -d /sys/kernel/tracing/events/sched/sched_process_exec || {
             echo "::error::sched tracepoints are unavailable on this runner"
             exit 1
           }
@@ -393,7 +402,9 @@ jobs:
         id: playwright-browsers
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('web/bun.lock') }}
+          # ImageOS too: WebKit is built per distribution release, so a build
+          # cached on one Ubuntu will not launch when ubuntu-latest moves on.
+          key: playwright-${{ runner.os }}-${{ env.ImageOS }}-${{ hashFiles('web/bun.lock') }}
 
       # The browsers are cached; the system libraries they link against are not,
       # because they are apt packages outside that path. So a hit still installs
@@ -434,22 +445,6 @@ jobs:
   packaging:
     name: Packaging
     runs-on: ubuntu-latest
-    services:
-      # For the clean-install check below: a control plane that installs but
-      # cannot start against a real database has not been tested. 16 to
-      # match the runner's postgresql-client: pg_dump refuses a newer server.
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: argus
-          POSTGRES_PASSWORD: argus
-          POSTGRES_DB: argus
-        ports: ["5433:5432"]
-        options: >-
-          --health-cmd "pg_isready -U argus"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -523,6 +518,21 @@ jobs:
         run: |
           set -euo pipefail
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client
+          # The database for the clean-install check: a control plane that
+          # installs but cannot start against a real one has not been tested.
+          # Its major version is the runner's postgresql-client's, started
+          # here rather than as a service so it follows the image: pg_dump
+          # refuses a newer server, and pg_restore writes settings an older
+          # one rejects (17's transaction_timeout broke this against 16).
+          pgmajor=$(pg_dump --version | grep -oE '[0-9]+' | head -n1)
+          docker run -d --name argus-pg -p 5433:5432 \
+            -e POSTGRES_USER=argus -e POSTGRES_PASSWORD=argus -e POSTGRES_DB=argus \
+            "postgres:${pgmajor}-alpine" >/dev/null
+          for _ in $(seq 1 60); do
+            pg_isready -q -h localhost -p 5433 -U argus && break
+            sleep 1
+          done
+          pg_isready -h localhost -p 5433 -U argus
           # One host carrying all of them, as a small deployment does: no two
           # packages may own the same file.
           sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-gateway*linux_amd64.deb) \

@@ -65,7 +65,11 @@ func (a *Authenticator) Authenticate(conn io.ReadWriter) (Result, error) {
 	}
 
 	// 1. NEGOTIATE
-	if err := writeRequest(conn, Request{Version: Version, NegoToken: Negotiate()}); err != nil {
+	// Retained, not rebuilt: the MIC is an HMAC over these exact bytes, and a
+	// second call to Negotiate() would be a different message if anything in it
+	// ever became variable.
+	negotiate := Negotiate()
+	if err := writeRequest(conn, Request{Version: Version, NegoToken: negotiate}); err != nil {
 		return Result{}, fmt.Errorf("send negotiate: %w", err)
 	}
 
@@ -96,7 +100,7 @@ func (a *Authenticator) Authenticate(conn io.ReadWriter) (Result, error) {
 		return Result{}, err
 	}
 	auth, sessionKey, err := BuildAuthenticate(challenge, a.Credentials,
-		clientChallenge, Timestamp(now()))
+		clientChallenge, Timestamp(now()), negotiate, resp.NegoToken)
 	if err != nil {
 		return Result{}, err
 	}
