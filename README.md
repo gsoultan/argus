@@ -210,7 +210,7 @@ is a map, whether or not the buttons on it work.
 **1. Put the credential on the gateway.** Argus stores its *name*, never the
 secret. For SSH, a private key at `<vault_dir>/<name>`; for Remote Desktop, a
 directory `<vault_dir>/<name>/` holding one file per principal, each containing
-that account's password. `vault_dir` is `/var/lib/argus/vault` in the packaged
+that account's password. `vault_dir` is `/var/lib/argus-gateway/vault` in the packaged
 config. Keys are mode-checked at load: one readable by group or other is
 refused.
 

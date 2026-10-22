@@ -41,7 +41,7 @@ inventory: "/etc/argus/inventory.json"
 # One file per SSH asset holding the private key to inject, or one directory per
 # RDP asset holding a file per principal. Mode-checked at load: a key readable
 # by group or other is refused.
-vault_dir: "/var/lib/argus/vault"
+vault_dir: "/var/lib/argus-gateway/vault"
 
 # The last inventory the control plane served.
 #
@@ -49,10 +49,10 @@ vault_dir: "/var/lib/argus/vault"
 # still knows who is assigned what. Without it the outage becomes a lockout
 # rather than a delay: with no assignments known, every session has to be
 # refused. Holds no credential material.
-inventory_cache: "/var/lib/argus/inventory-cache.json"
+inventory_cache: "/var/lib/argus-gateway/inventory-cache.json"
 
-host_key_store: "/var/lib/argus/hostkeys.json"
-recording_dir: "/var/lib/argus/recordings"
+host_key_store: "/var/lib/argus-gateway/hostkeys.json"
+recording_dir: "/var/lib/argus-gateway/recordings"
 
 # Pin target host keys out of band and leave this off, so even the first
 # connection to a host is protected. Turning it on accepts whatever a host
@@ -82,7 +82,7 @@ ca:
 control:
   url: "https://argus-control.example.com:8080"
   token: "${ARGUS_REPORTER_TOKEN}"
-  spool: "/var/lib/argus/report-spool.jsonl"
+  spool: "/var/lib/argus-gateway/report-spool.jsonl"
   ca_file: "/etc/argus/tls/ca.crt"
   # Presenting a client certificate is what lets the control plane attribute a
   # report to this gateway rather than to whoever holds the shared token.

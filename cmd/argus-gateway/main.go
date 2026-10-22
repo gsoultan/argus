@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -188,20 +189,25 @@ func run() error {
 		Level: parseLevel(cfg.LogLevel),
 	}))
 
-	inv, err := gateway.LoadInventory(cfg.Inventory)
-	if err != nil {
-		return err
-	}
-
 	// Where the inventory comes from, and therefore what is enforced.
 	//
 	// With a control plane the console owns the inventory: it says which hosts
 	// exist and who is assigned to them, and an unassigned session is refused.
-	// Without one the gateway runs on the file alone, which carries no
-	// assignments — so the principal list is the whole control, exactly as it
-	// has always been on this path. That is a real difference in what is
-	// enforced, so it is stated at start-up rather than left to be discovered.
+	// The file is then only a seed for a deployment that predates the console,
+	// so a fresh install without one starts empty. Without a control plane the
+	// gateway runs on the file alone, which carries no assignments — so the
+	// principal list is the whole control, exactly as it has always been on
+	// this path. That is a real difference in what is enforced, so it is
+	// stated at start-up rather than left to be discovered.
 	controlled := cfg.Control != nil && cfg.Control.URL != ""
+	inv, err := gateway.LoadInventory(cfg.Inventory)
+	if controlled && errors.Is(err, os.ErrNotExist) {
+		log.Info("no inventory file; the console supplies the inventory", "inventory", cfg.Inventory)
+		inv, err = gateway.NewInventory(), nil
+	}
+	if err != nil {
+		return err
+	}
 	if controlled {
 		inv.UnderControlPlane()
 		if gateway.LoadInventoryCache(inv, inventoryCachePath(cfg), cfg.VaultDir, log) {

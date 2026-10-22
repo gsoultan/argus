@@ -54,7 +54,13 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @obsolete
 SystemCallArchitectures=native
 
-ReadWritePaths=/var/lib/argus
+# Its own state directory. /var/lib/argus belongs to the agent, which runs as
+# root and takes that directory over (StateDirectory) on any host carrying
+# both; its recordings directory is root's from the start. -/var/lib/argus
+# stays writable for gateways upgraded with a config that still points there.
+StateDirectory=argus-gateway
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/argus-gateway -/var/lib/argus
 
 [Install]
 WantedBy=multi-user.target

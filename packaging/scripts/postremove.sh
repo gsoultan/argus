@@ -7,8 +7,10 @@ fi
 # Recordings, pins and the report spool are deliberately left in place.
 # Uninstalling the software must never destroy the evidence it produced —
 # that is exactly what someone covering their tracks would reach for.
-if [ -d /var/lib/argus ]; then
-    echo "Argus data kept at /var/lib/argus (recordings, host key pins, spooled reports)."
-    echo "Remove it deliberately if you are sure: rm -rf /var/lib/argus"
-fi
+for d in /var/lib/argus /var/lib/argus-gateway; do
+    if [ -d "$d" ]; then
+        echo "Argus data kept at $d (recordings, host key pins, spooled reports)."
+        echo "Remove it deliberately if you are sure: rm -rf $d"
+    fi
+done
 exit 0

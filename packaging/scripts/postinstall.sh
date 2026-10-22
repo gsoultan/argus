@@ -18,6 +18,10 @@ install -d -o root -g argus -m 0750 /etc/argus/tls
 install -d -o root -g argus -m 0750 /etc/argus/ssh
 install -d -o argus -g argus -m 0700 /var/lib/argus
 install -d -o root -g root  -m 0700 /var/lib/argus/recordings
+# The gateway keeps its state apart from the agent's, which is root's.
+if [ -x /usr/bin/argus-gateway ]; then
+    install -d -o argus -g argus -m 0700 /var/lib/argus-gateway
+fi
 # Backups hold the audit chain and every recording. Only the control plane's
 # account writes them; nobody else reads them.
 if [ -x /usr/bin/argus-control ]; then

@@ -193,8 +193,18 @@ covers mistakes, not the loss of the server.
 ```sh
 sudo apt install ./argus-gateway_<version>_linux_amd64.deb ./argus-verify_<version>_linux_amd64.deb
 sudo ssh-keygen -t ed25519 -N '' -f /etc/argus/ssh/gateway_host_key
-sudo chown argus:argus /etc/argus/ssh/gateway_host_key
+sudo argus-gateway ca init /etc/argus/ssh/argus_ca
+sudo chown argus:argus /etc/argus/ssh/gateway_host_key /etc/argus/ssh/argus_ca
 ```
+
+The second key is the gateway's SSH certificate authority, which signs a
+short-lived certificate per session for hosts set to `ca-certificate`. The
+gateway will not start without both keys.
+
+There is no inventory file to write: with `control.url` set, the console
+supplies the servers and who may reach them. `/etc/argus/ssh/authorized_keys`
+is only for native `ssh` clients (see `listen` below); until it lists someone,
+none can sign in, which is what you want while the listener is loopback-only.
 
 In `/etc/argus/gateway.env`, set the same `ARGUS_SIGNING_SECRET` and
 `ARGUS_REPORTER_TOKEN` as the control plane. In `/etc/argus/gateway.yaml`:
@@ -348,6 +358,12 @@ the port for UDP:
 tunnel:
   quic_listen: "0.0.0.0:8080"
 ```
+
+A gateway installed from this release keeps its state (recordings, host key
+pins, vaulted credentials) in `/var/lib/argus-gateway`, apart from the agent's
+`/var/lib/argus`, which is root's. An upgraded gateway keeps the paths in its
+existing `gateway.yaml`; to move, stop it, move those files and change the
+paths to match `gateway.yaml.dpkg-dist` (or `.rpmnew`).
 
 Restart `argus-agent` after upgrading it (`sudo systemctl restart
 argus-agent`). Until it restarts, each login waits about two seconds for an
