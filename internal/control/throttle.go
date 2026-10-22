@@ -102,6 +102,7 @@ func (a *API) limitLogin(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		key := a.throttles.resolver.Key(r)
+		a.noticeUntrustedProxy(r, key)
 
 		// A client already over the failure budget is refused before the work
 		// is done, so a brute force costs them a request and us nothing.
@@ -162,6 +163,37 @@ func (a *API) RecordAuthSuccess(r *http.Request) {
 		return
 	}
 	a.throttles.failures.Reset(a.throttles.resolver.Key(r))
+}
+
+// noticeUntrustedProxy says once when sign-ins arrive through a proxy whose
+// forwarding headers are being ignored. Behind a Cloudflare Tunnel with no
+// trusted_proxies, every person shares the connector's address, so one
+// person's mistyped passwords lock everyone out -- and nothing else would say
+// why.
+func (a *API) noticeUntrustedProxy(r *http.Request, key string) {
+	if !proxied(r) || key != ratelimit.PeerIP(r.RemoteAddr) {
+		return
+	}
+	a.proxyNotice.Do(func() {
+		a.log.Warn("sign-ins are arriving through a proxy whose forwarding headers are ignored",
+			"peer", key,
+			"detail", "every client behind it shares one rate limit and is recorded as "+key+
+				"; add it to rate_limit.trusted_proxies (127.0.0.1/32 and ::1/128 for a "+
+				"cloudflared on this host)")
+	})
+}
+
+// clientAddr is who a request came from, as far as this process can tell.
+//
+// The same answer the limits use, so a session record, a sign-in log line and
+// a throttle all name the same address. Behind a proxy -- a Cloudflare Tunnel
+// most often, whose connector reaches this process over loopback -- the peer
+// is the proxy, and every person would otherwise be recorded as 127.0.0.1.
+func (a *API) clientAddr(r *http.Request) string {
+	if a.throttles != nil {
+		return a.throttles.resolver.Key(r)
+	}
+	return ratelimit.PeerIP(r.RemoteAddr)
 }
 
 func (a *API) refuse(w http.ResponseWriter, r *http.Request, key string,

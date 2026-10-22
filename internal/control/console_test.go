@@ -91,3 +91,19 @@ func TestAConfiguredConsoleDirectoryMustHoldAConsole(t *testing.T) {
 		t.Error("a gateway address with no scheme was accepted")
 	}
 }
+
+// Behind a Cloudflare Tunnel the console's hostname carries no agent traffic,
+// so "Add a server" has to be told where servers enrol instead.
+func TestConsoleConfigCarriesTheFleetAddress(t *testing.T) {
+	h, err := NewConsoleHandler(ConsoleConfig{Dir: consoleDir(t), FleetURL: "https://argus-internal.example:8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := consoleGet(t, h, "/console-config.js")
+	if !strings.Contains(w.Body.String(), `"fleetUrl":"https://argus-internal.example:8080"`) {
+		t.Errorf("config: %s", w.Body)
+	}
+	if _, err := NewConsoleHandler(ConsoleConfig{Dir: consoleDir(t), FleetURL: "http://argus:8080"}); err == nil {
+		t.Error("a plain-HTTP fleet address was accepted; agents only enrol over HTTPS")
+	}
+}

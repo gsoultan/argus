@@ -12,7 +12,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { Mono, relTime } from '~/components/primitives'
-import { controlPlaneHost, controlPlaneVersion, isConfigured } from '~/lib/live'
+import { controlPlaneVersion, fleetURL, isConfigured } from '~/lib/live'
 import { TunnelBadge } from '~/components/TunnelStatus'
 import { run } from '~/lib/notify'
 import type { EnrollToken } from '~/lib/live'
@@ -62,9 +62,7 @@ function AddServer() {
   const [distro, setDistro] = useState<Distro>('deb')
   const [arch, setArch] = useState<Arch>('amd64')
   const [version, setVersion] = useState(DEFAULT_VERSION)
-  const [controlURL, setControlURL] = useState(
-    isConfigured() ? `https://${controlPlaneHost()}` : '',
-  )
+  const [controlURL, setControlURL] = useState(fleetURL)
 
   const install = useMemo(() => installCommand(distro, arch, version), [distro, arch, version])
 

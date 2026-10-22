@@ -19,6 +19,7 @@ import (
 	"github.com/gsoultan/argus/internal/live"
 	"github.com/gsoultan/argus/internal/rdp"
 	"github.com/gsoultan/argus/internal/storage"
+	"github.com/gsoultan/argus/internal/wskeep"
 )
 
 // maxBatchBytes bounds one WebSocket message of screen rectangles.
@@ -91,6 +92,8 @@ func (s *Server) handleRDPWeb(cfg WebConfig) http.HandlerFunc {
 			return
 		}
 		defer conn.CloseNow()
+		// Idle sessions look dead to a proxy in front; see wskeep.
+		go wskeep.Run(r.Context(), conn)
 		// Input messages are small; the limit exists so a client cannot make the
 		// gateway buffer on its say-so.
 		conn.SetReadLimit(64 << 10)

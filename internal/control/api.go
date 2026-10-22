@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
@@ -42,6 +43,10 @@ type API struct {
 	ReporterToken string
 	// AllowedOrigins for browser CORS.
 	AllowedOrigins []string
+	// BehindTLSProxy says browsers reach this process over HTTPS that
+	// something in front terminates, so it sends what an HTTPS response
+	// should even though the connection it sees is plain.
+	BehindTLSProxy bool
 
 	// startedAt backs the uptime this process reports about itself.
 	startedAt time.Time
@@ -85,6 +90,11 @@ type API struct {
 	// Console serves the built web console on the console surface. Nil serves
 	// the API alone, as before it existed. See console.go.
 	Console http.Handler
+
+	// setup is the first-run page's one-time token; see setup.go.
+	setup setupGate
+	// proxyNotice logs an ignored proxy once; see noticeUntrustedProxy.
+	proxyNotice sync.Once
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -165,6 +175,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/mfa/confirm", a.handleMFAConfirm)
 	mux.HandleFunc("POST /auth/password/change", a.handleChangePassword)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
+	// First run: the first account, once, with a token read from the host.
+	mux.HandleFunc("GET /auth/setup", a.handleSetupStatus)
+	mux.HandleFunc("POST /auth/setup", a.limitLogin(a.handleSetup))
 	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
 	// The browser terminal through an agent's tunnel; see terminal.go.
 	mux.HandleFunc("GET /api/v1/terminal", a.handleTerminal)
@@ -260,10 +273,13 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 // console, on every response including errors.
 func (a *API) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS != nil {
+		if r.TLS != nil || a.BehindTLSProxy {
 			// Only over TLS: sending HSTS on a plaintext response is
 			// meaningless, and setting it during a local HTTP session would
 			// pin the browser to HTTPS for a host that cannot serve it.
+			// Behind a proxy that terminates TLS -- a Cloudflare Tunnel, a
+			// load balancer -- this process sees plain HTTP while the browser
+			// is on HTTPS, which is exactly where the header belongs.
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")

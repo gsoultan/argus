@@ -20,8 +20,14 @@ test.use({ serviceWorkers: 'block' })
 
 /** JS + CSS, compressed. */
 const BUDGET_KB = {
-  /** The first screen. 233.6 kB when this was set. */
-  overview: 250,
+  /**
+   * The first screen. 233.6 kB when this was set, and 249.8 kB by the time the
+   * first-run setup page landed, which bought 1.0 kB: the page itself, eager,
+   * because it renders above the router. Lazy cost 3.4 kB instead -- it shares
+   * Alert, Stack, Center and the icon factory with the shell, and splitting
+   * those into chunks of their own cost more than the page did.
+   */
+  overview: 253,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most

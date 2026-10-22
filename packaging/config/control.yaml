@@ -21,8 +21,22 @@ listen: "0.0.0.0:8080"
 # instead of per route, because nothing on it is a browser.
 #
 # console_listen: "127.0.0.1:8080"
+#
+# Behind a Cloudflare Tunnel this is the address cloudflared points at, for
+# example "127.0.0.1:8090", while `listen` stays where gateways and agents
+# reach it directly. See "Through a Cloudflare Tunnel" in docs/install.md.
 database_url: "${ARGUS_DATABASE_URL}"
+# The address people open the console at, such as https://argus.example.com.
+# Alerts link to it, and the first-run log line names <console_url>/setup.
 console_url: ""
+
+# First run. While no account exists, the console offers /setup to create the
+# first administrator, guarded by a one-time token this process writes to
+# setup_token_file (readable by the argus user alone). It closes for good once
+# any account exists. Set web_setup: false to leave `argus-control users add`
+# as the only way to create the first account.
+# web_setup: true
+# setup_token_file: "/var/lib/argus/setup-token"
 
 # The web console. The package installs it; the control plane serves it on the
 # same address people sign in to, so the session cookie stays same-origin.
@@ -31,6 +45,10 @@ console_url: ""
 console:
   dir: "/usr/share/argus/console"
   gateway_url: ""
+  # Where servers reach the control plane, when that is not the console's own
+  # address (behind a Cloudflare Tunnel, for one). "Add a server" puts it in
+  # the enrollment command. Empty means the console's address.
+  # fleet_url: "https://argus-internal.example.com:8080"
 
 tls:
   cert_file: "/etc/argus/tls/server.crt"
@@ -62,6 +80,10 @@ rate_limit:
   # Argus. Trusting a forwarding header otherwise lets a client both evade its
   # own limit and throttle someone else.
   # trusted_proxies: ["10.0.0.0/8"]
+  #
+  # Behind a Cloudflare Tunnel whose cloudflared runs on this host, trust
+  # loopback; the client's address is then read from CF-Connecting-IP.
+  # trusted_proxies: ["127.0.0.1/32", "::1/128"]
 
 session_ttl: 8h
 ticket_ttl: 60s

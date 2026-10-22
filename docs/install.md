@@ -144,7 +144,27 @@ Migrations run on start. There is no separate migrate step.
 
 ### The first administrator
 
-Nothing is seeded. Create the first account on the control plane host:
+Nothing is seeded. On a fresh install the control plane offers a setup page,
+guarded by a one-time token it writes on its own host:
+
+```sh
+journalctl -u argus-control -n 20       # "no accounts yet: finish setup in the browser"
+sudo cat /var/lib/argus/setup-token
+```
+
+Open `https://argus.example.com:8080/setup` (the sign-in screen links to it),
+paste the token, and choose the administrator's email and password. The page
+works once: as soon as any account exists it closes for good, the token is
+deleted, and `user.created` is in the audit log with the address it came from.
+Disabling accounts later does not reopen it.
+
+The token is what keeps the page from belonging to whoever finds it first, so
+it is never printed in the log, only the path of the file that holds it. Each
+restart before setup is finished writes a new one. To turn the page off, set
+`web_setup: false` in `control.yaml`.
+
+Or create the first account on the host instead, which works whether or not
+the page is on:
 
 ```sh
 sudo sh -c 'set -a; . /etc/argus/control.env; set +a
@@ -152,8 +172,10 @@ sudo sh -c 'set -a; . /etc/argus/control.env; set +a
 ```
 
 The `set -a` line loads the secrets the config refers to, the same way systemd
-does for the service. The password is read without echo. Open `https://argus.example.com:8080`, sign
-in, and enrol a second factor when the console asks.
+does for the service. The password is read without echo.
+
+Either way, sign in at `https://argus.example.com:8080` and enrol a second
+factor when the console asks.
 
 ## 4. Backups
 
@@ -322,6 +344,152 @@ administrator who made it.
    replay should show what you typed.
 4. Under **Audit**, the session, the enrollment and your sign-in are listed.
 
+## Through a Cloudflare Tunnel
+
+The console and its API can be published through a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/),
+so people reach `https://argus.example.com` with no inbound port open on the
+control plane. Gateways and agents cannot use the same tunnel (see
+[What cannot go through the tunnel](#what-cannot-go-through-the-tunnel)), so
+the control plane gives the two audiences separate listeners: the tunnel gets
+the console, and the fleet keeps reaching `8080` directly.
+
+### Control plane
+
+In `/etc/argus/control.yaml`:
+
+```yaml
+listen: "0.0.0.0:8080"              # unchanged: gateways and agents, TLS and mTLS, QUIC
+console_listen: "127.0.0.1:8090"    # the console, for cloudflared only
+console_url: "https://argus.example.com"
+
+console:
+  dir: "/usr/share/argus/console"
+  gateway_url: "https://bastion.example.com"         # see "The browser terminal" below
+  fleet_url: "https://argus-internal.example.com:8080"  # what servers enrol against
+
+rate_limit:
+  # cloudflared reaches the console over loopback. Trusting loopback makes the
+  # control plane read each person's address from CF-Connecting-IP, which
+  # Cloudflare sets and a client cannot. Without it every sign-in, session and
+  # audit entry says 127.0.0.1, and one person's mistyped passwords lock
+  # everyone out of the console for an hour.
+  trusted_proxies: ["127.0.0.1/32", "::1/128"]
+```
+
+Leave `behind_tls_proxy` unset here. The console listener still serves TLS
+with `server.crt`, so cookies are already `Secure` and HSTS is already sent,
+and setting it would stop enrollment pinning the control plane's certificate.
+It is only for a control plane with no `tls:` block at all, which then cannot
+offer QUIC or check gateways' client certificates either.
+
+`fleet_url` matters because "Add a server" otherwise writes the address the
+console was opened at into the enrollment command, and agents cannot enrol
+through the tunnel.
+
+Restart and check the new listener answers locally:
+
+```sh
+sudo systemctl restart argus-control
+journalctl -u argus-control -n 20     # "argus-control listening (TLS)" surface=console addr=127.0.0.1:8090
+curl -fsS --cacert /etc/argus/tls/ca.crt --resolve argus-internal.example.com:8090:127.0.0.1 \
+  https://argus-internal.example.com:8090/healthz
+```
+
+### cloudflared
+
+Create the tunnel and route the hostnames to it as Cloudflare describes
+(`cloudflared tunnel create argus`, then `cloudflared tunnel route dns argus
+argus.example.com` and the same for `bastion.example.com`). Then
+`/etc/cloudflared/config.yml` on the control plane host:
+
+```yaml
+tunnel: <tunnel id>
+credentials-file: /etc/cloudflared/<tunnel id>.json
+
+ingress:
+  # The console and its API, including the WebSockets the terminal uses.
+  - hostname: argus.example.com
+    service: https://localhost:8090
+    originRequest:
+      # A name on server.crt, and the CA that signed it. Without these,
+      # cloudflared refuses the internal certificate; noTLSVerify would work
+      # too, and would let anything on this host answer for Argus.
+      originServerName: argus-internal.example.com
+      caPool: /etc/argus/tls/ca.crt
+
+  # The gateway's web listener, if it runs on this host. Otherwise run a
+  # second cloudflared on the gateway with this entry.
+  - hostname: bastion.example.com
+    service: https://localhost:8081
+    originRequest:
+      originServerName: bastion-internal.example.com
+      caPool: /etc/argus/tls/ca.crt
+
+  - service: http_status:404
+```
+
+`caPool` must be readable by the user cloudflared runs as; copy `ca.crt` next
+to the config if that is not root or a member of `argus`. If `server.crt` is
+from a public CA, drop both `originRequest` settings.
+
+```sh
+sudo cloudflared service install
+sudo systemctl restart cloudflared
+curl -fsS https://argus.example.com/healthz          # {"status":"ok"}
+curl -s -o /dev/null -w '%{http_code}\n' https://argus.example.com/stats   # 404
+```
+
+`/stats` answers loopback callers only, and a request that arrives with
+Cloudflare's or any proxy's forwarding headers is not treated as one, so the
+second command must say `404`. A fresh install's `/setup` page works through
+the tunnel and still needs the token from the host.
+
+WebSockets need nothing extra. Cloudflare closes a WebSocket that carries
+nothing for about 100 seconds, so the control plane and the gateway ping every
+open terminal and live view every 30 seconds to keep an idle shell open.
+
+### The browser terminal
+
+**Connect** reaches a server one of two ways. Through its agent's tunnel, the
+terminal is a WebSocket to the control plane itself, so it already goes through
+`argus.example.com`. Through a gateway, the browser connects to
+`console.gateway_url` directly, which is why the example gives the gateway's
+web listener its own hostname.
+
+For that, on the gateway:
+
+- `web.allowed_origins` in `gateway.yaml` must list `https://argus.example.com`,
+  the console's origin as the browser sees it, with no port.
+- The gateway records the address its web listener sees, so behind a tunnel
+  sessions opened through it name the tunnel connector, not the person. The
+  person is still named; their network address is not. Sessions through the
+  agent's tunnel record the real address.
+
+### Cloudflare Access
+
+An Access application in front of `argus.example.com` adds Cloudflare's sign-in
+ahead of Argus's own. It does not replace it: Argus still asks for its password
+and second factor and attributes everything to its own account. The console
+calls `bastion.example.com` from another origin, so if you put that hostname
+behind Access too, its preflight requests must be allowed through and the
+Access cookie must be valid for both names. The simplest working setup is
+Access on the console's hostname only.
+
+### What cannot go through the tunnel
+
+A Cloudflare Tunnel carries HTTP and WebSocket traffic from browsers. Three
+things Argus does are not that:
+
+| Traffic | Why it cannot use the tunnel | Instead |
+|---|---|---|
+| Agents' connection to the control plane | On QUIC it is UDP, which a public hostname does not carry. Its HTTPS fallback upgrades the connection to a protocol of its own, and Cloudflare forwards only WebSocket upgrades. | Keep `8080/tcp` and `8080/udp` reachable from your servers: open them only to their addresses, or put them on a private network (WireGuard, Tailscale, a VPC). Cloudflare's private networking (WARP Connector on the servers) can carry both, but is not something we have tested. |
+| Gateways' and agents' reports | The control plane requires the reporter's client certificate on these routes, and Cloudflare terminates TLS, so the certificate never arrives. | The same direct `listen` address as above. This is why the console and the fleet have separate listeners. |
+| Native `ssh` to the gateway (`2222/tcp`) | SSH is not HTTP. | Users run `cloudflared access ssh` as their `ProxyCommand` against an `ssh://localhost:2222` ingress rule, which works with any SSH client. The gateway then sees every client as the connector's address. Or keep using the browser terminal, which needs none of this. |
+
+The native RDP listener is a preview that authenticates nobody, so do not
+publish it through anything.
+
 ## Upgrading
 
 Install the new packages over the old ones and restart:
@@ -368,6 +536,9 @@ paths to match `gateway.yaml.dpkg-dist` (or `.rpmnew`).
 Restart `argus-agent` after upgrading it (`sudo systemctl restart
 argus-agent`). Until it restarts, each login waits about two seconds for an
 answer the old daemon does not send, then is recorded as before.
+
+A control plane that already has accounts never offers the setup page, so an
+upgrade changes nothing about how people sign in.
 
 Agents that report with the shared reporter token keep working. Move them to
 their own credential by enrolling each one (step 6) and removing

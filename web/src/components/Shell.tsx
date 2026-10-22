@@ -13,6 +13,9 @@ import {
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
+// Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
+// of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
+import { Setup } from '~/components/Setup'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 /**
  * Loaded on first open.
@@ -85,6 +88,11 @@ function LoginGate({ children }: { children: React.ReactNode }) {
   }
 
   if (!identity.authenticated) {
+    // First-run setup is the one page nobody can be signed in for. Read from
+    // the location rather than the router: this gate sits above the routes.
+    if (window.location.pathname === '/setup' && !identity.unreachable) {
+      return <Setup />
+    }
     return <SignIn identity={identity} onSignedIn={handleSignedIn} />
   }
 

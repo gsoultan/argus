@@ -131,12 +131,25 @@ export function SignIn({ identity, onSignedIn }: {
             {identity.passwordEnabled && identity.accountsExist === false && (
               <Alert color="sky" variant="light" icon={<IconKey size={16} />} mb="md">
                 <Text size="xs">
-                  No accounts exist yet. Create the first one on the host running the
-                  control plane:
+                  No accounts exist yet.{' '}
+                  {identity.setupAvailable
+                    ? 'Create the first one in the browser, with the one-time token the control plane wrote on its host, or on that host with:'
+                    : 'Create the first one on the host running the control plane:'}
                 </Text>
                 <Text size={FS.digest} ff="monospace" mt={6} c="slate.2">
                   argus-control users add you@example.com --role admin
                 </Text>
+                {identity.setupAvailable && (
+                  <Button
+                    component="a"
+                    href="/setup"
+                    size="xs"
+                    mt="sm"
+                    fullWidth
+                  >
+                    Set up Argus
+                  </Button>
+                )}
               </Alert>
             )}
             {identity.passwordEnabled && identity.accountsExist !== false && (
@@ -190,7 +203,7 @@ export function SignIn({ identity, onSignedIn }: {
   )
 }
 
-function ErrorNote({ children }: { children: React.ReactNode }) {
+export function ErrorNote({ children }: { children: React.ReactNode }) {
   return (
     <Alert color="rose" variant="light" mb="md" icon={<IconAlertTriangle size={15} />}>
       <Text size="xs">{children}</Text>
@@ -199,7 +212,7 @@ function ErrorNote({ children }: { children: React.ReactNode }) {
 }
 
 /** The mark, matching the shell's. */
-function Brand() {
+export function Brand() {
   return (
     <>
       <Box mb="md">

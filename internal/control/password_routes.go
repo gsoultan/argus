@@ -56,7 +56,7 @@ func (a *API) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		// the address exists but the password is wrong hands them half the
 		// answer, and hands a scanner the user list.
 		a.log.Warn("password sign-in refused", "email", in.Email,
-			"client", clientOf(r))
+			"client", a.clientAddr(r))
 		a.RecordAuthFailure(r)
 		a.auditAuth(r, "auth.password_failed", "warning", in.Email,
 			"A password sign-in was refused.")
@@ -144,7 +144,7 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !verified {
-		a.log.Warn("second factor refused", "email", acct.Email, "client", clientOf(r))
+		a.log.Warn("second factor refused", "email", acct.Email, "client", a.clientAddr(r))
 		a.RecordAuthFailure(r)
 		a.auditAuth(r, "auth.mfa_failed", "warning", acct.Email,
 			"A second factor was refused after a correct password.")
@@ -271,14 +271,6 @@ func (a *API) auditAuth(r *http.Request, action, severity, actor, detail string)
 	}); err != nil {
 		a.log.Error("audit append failed", "error", err)
 	}
-}
-
-func clientOf(r *http.Request) string {
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return host
 }
 
 func itoa(n int) string {
