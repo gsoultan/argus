@@ -13,6 +13,9 @@ import {
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
+// Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
+// of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
+import { Setup } from '~/components/Setup'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 /**
  * Loaded on first open.
@@ -25,11 +28,6 @@ import { canSee, seesWholeFleet } from '~/lib/roles'
 const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
-/**
- * First-run setup, loaded only at /setup. Every deployment meets it once, so
- * it has no business in every cold load after that.
- */
-const Setup = lazy(() => import('~/components/Setup').then((m) => ({ default: m.Setup })))
 import {
   PRIMARY_ACTION, isActive, navFor, type NavCounts, type NavSection,
 } from '~/components/nav'
@@ -93,11 +91,7 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     // First-run setup is the one page nobody can be signed in for. Read from
     // the location rather than the router: this gate sits above the routes.
     if (window.location.pathname === '/setup' && !identity.unreachable) {
-      return (
-        <Suspense fallback={<Center h="100vh"><Loader size="sm" color="azure" /></Center>}>
-          <Setup />
-        </Suspense>
-      )
+      return <Setup />
     }
     return <SignIn identity={identity} onSignedIn={handleSignedIn} />
   }
