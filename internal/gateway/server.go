@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -116,6 +117,11 @@ func NewServer(cfg Config) (*Server, error) {
 	authorized, err := loadAuthorizedKeys(cfg.AuthorizedKeysPath)
 	if err != nil {
 		return nil, err
+	}
+	if len(authorized) == 0 {
+		cfg.Log.Info("no authorized keys: native SSH clients cannot sign in",
+			"detail", "the browser terminal does not use this listener; add keys to allow ssh(1)",
+			"authorized_keys", cfg.AuthorizedKeysPath)
 	}
 
 	s := &Server{cfg: cfg, log: cfg.Log, sessions: map[string]*Session{},
@@ -748,16 +754,28 @@ func loadHostKey(path string) (ssh.Signer, error) {
 }
 
 // loadAuthorizedKeys maps fingerprint -> user identity.
+//
+// A missing file, or one with only blank lines and comments, is no keys: the
+// SSH listener is loopback-only by default and the browser terminal does not
+// use it, so a fresh install has nobody to list yet. That refuses every
+// native client, which is the safe reading. A file with content and no key
+// that parses is still an error: that is a damaged file, not an empty one.
 func loadAuthorizedKeys(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]string{}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read authorized keys %s: %w", path, err)
 	}
 
 	keys := map[string]string{}
-	for len(data) > 0 {
+	for len(bytes.TrimSpace(stripComments(data))) > 0 {
 		pub, comment, _, rest, err := ssh.ParseAuthorizedKey(data)
 		if err != nil {
+			if len(keys) == 0 {
+				return nil, fmt.Errorf("no usable keys in %s", path)
+			}
 			break
 		}
 		// The comment is the user identity. Every audit event is attributed to
@@ -770,8 +788,18 @@ func loadAuthorizedKeys(path string) (map[string]string, error) {
 		keys[ssh.FingerprintSHA256(pub)] = comment
 		data = rest
 	}
-	if len(keys) == 0 {
-		return nil, fmt.Errorf("no usable keys in %s", path)
-	}
 	return keys, nil
+}
+
+// stripComments drops the lines of an authorized_keys file that
+// ssh.ParseAuthorizedKey skips: blank ones and those starting with #.
+func stripComments(data []byte) []byte {
+	var out []byte
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if t := bytes.TrimSpace(line); len(t) > 0 && t[0] != '#' {
+			out = append(out, t...)
+			out = append(out, '\n')
+		}
+	}
+	return out
 }

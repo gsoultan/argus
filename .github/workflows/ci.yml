@@ -649,6 +649,28 @@ jobs:
                 AND actor_email = 'admin@ci.example' AND target = '$(hostname)' AND detail LIKE '%$sid%'")
           [ "$n" = 1 ] || { echo "::error::no audit entry for the session"; exit 1; }
 
+          # The gateway, as step 5 of docs/install.md has it. Until this was
+          # here, a gateway installed by the guide had never been started, and
+          # it would not: it wanted an inventory file and an authorized key the
+          # guide never mentions.
+          sudo install -o root -g argus -m 0640 "$tmp"/client.crt /etc/argus/tls/
+          sudo install -o argus -g argus -m 0600 "$tmp"/client.key /etc/argus/tls/
+          sudo ssh-keygen -q -t ed25519 -N '' -f /etc/argus/ssh/gateway_host_key
+          sudo argus-gateway ca init /etc/argus/ssh/argus_ca >/dev/null
+          sudo chown argus:argus /etc/argus/ssh/gateway_host_key /etc/argus/ssh/argus_ca
+          sudo grep -E '^ARGUS_(SIGNING_SECRET|REPORTER_TOKEN)=' /etc/argus/control.env \
+            | sudo tee /etc/argus/gateway.env >/dev/null
+          sudo sed -i 's#https://argus-control.example.com:8080#https://localhost:8080#' /etc/argus/gateway.yaml
+          sudo systemctl enable --now argus-gateway
+          for i in $(seq 1 30); do
+            sudo journalctl -u argus-gateway --no-pager | grep 'inventory synced' >/dev/null && break
+            sleep 1
+          done
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8081/healthz >/dev/null &&
+            sudo journalctl -u argus-gateway --no-pager | grep 'inventory synced' >/dev/null || {
+            sudo journalctl -u argus-gateway --no-pager | tail -30
+            echo "::error::the gateway installed by the guide did not start and sync from the control plane"; exit 1; }
+
           # A backup through the shipped unit, then proof that it restores.
           sudo systemctl start argus-backup.service
           sudo journalctl -u argus-backup --no-pager | tail -10
