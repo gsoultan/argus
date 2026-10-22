@@ -38,7 +38,10 @@ func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 			}
 		}
 	}
-	if a.StaticTokensDisabled {
+	// Setup finishing in this process counts too. The check that refuses to
+	// start with tokens alongside an account runs at start-up, and the account
+	// the setup page just made did not exist then.
+	if a.StaticTokensDisabled || a.setup.done.Load() {
 		return auth.Session{}, false
 	}
 	email, ok := a.UserTokens[bearer(r)]
@@ -86,10 +89,19 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		if a.signer != nil {
 			accounts, _ = a.store.AnyAccountExists(r.Context())
 		}
+		// setupAvailable sends a fresh install to /setup instead of to a
+		// command, when this process is offering it.
+		setup := false
+		if a.signer != nil && !accounts {
+			if st, err := a.setupState(r.Context()); err == nil {
+				setup = st.Available
+			}
+		}
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
 			"authenticated":   false,
 			"passwordEnabled": a.signer != nil,
 			"accountsExist":   accounts,
+			"setupAvailable":  setup,
 		})
 		return
 	}

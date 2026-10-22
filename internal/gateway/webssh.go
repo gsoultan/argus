@@ -16,6 +16,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/recorder"
+	"github.com/gsoultan/argus/internal/wskeep"
 )
 
 // WebConfig configures the browser-terminal endpoint.
@@ -227,6 +228,8 @@ func (s *Server) handleWebSession(cfg WebConfig) http.HandlerFunc {
 		// screenful of a large paste.
 		conn.SetReadLimit(1 << 20)
 		defer conn.CloseNow()
+		// Idle sessions look dead to a proxy in front; see wskeep.
+		go wskeep.Run(r.Context(), conn)
 
 		s.runWebTerminal(r.Context(), conn, user, principal, target, r.RemoteAddr)
 	}

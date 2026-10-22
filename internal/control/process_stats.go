@@ -59,7 +59,7 @@ func (a *API) processStats() ProcessStats {
 
 // handleProcessStats serves the numbers to a loopback caller.
 func (a *API) handleProcessStats(w http.ResponseWriter, r *http.Request) {
-	if !isLoopbackAddr(r.RemoteAddr) {
+	if !isLoopbackAddr(r.RemoteAddr) || proxied(r) {
 		http.NotFound(w, r)
 		return
 	}
@@ -78,4 +78,19 @@ func isLoopbackAddr(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// proxied reports a request that a proxy forwarded on someone else's behalf.
+//
+// A tunnel connector such as cloudflared usually runs on this host and reaches
+// it over loopback, so to a check on the peer address alone every visitor from
+// the internet is a local caller. The headers such a proxy adds are what tell
+// the two apart; a genuinely local caller has no reason to send them.
+func proxied(r *http.Request) bool {
+	for _, h := range []string{"CF-Connecting-IP", "CF-Ray", "X-Forwarded-For", "Forwarded", "X-Real-IP"} {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
 }

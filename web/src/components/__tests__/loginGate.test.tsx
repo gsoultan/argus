@@ -91,6 +91,59 @@ describe('LoginGate', () => {
     expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
   })
 
+  it('sends a fresh install to /setup when the control plane offers it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      json(401, {
+        authenticated: false, passwordEnabled: true, accountsExist: false, setupAvailable: true,
+      }),
+    ))
+    await renderGate()
+
+    const link = await screen.findByRole('link', { name: /set up argus/i })
+    expect(link).toHaveAttribute('href', '/setup')
+  })
+
+  describe('at /setup', () => {
+    beforeEach(() => window.history.pushState({}, '', '/setup'))
+    afterEach(() => window.history.pushState({}, '', '/'))
+
+    const respond = (setup: unknown) =>
+      vi.fn((url: string) => Promise.resolve(url.endsWith('/auth/setup')
+        ? json(200, setup)
+        : json(401, { authenticated: false, passwordEnabled: true, accountsExist: false }),
+      ))
+
+    // The token is the part that keeps this page from belonging to whoever
+    // finds it first, so the form must ask for it and say where it is.
+    it('asks for the token and says which file on the host holds it', async () => {
+      vi.stubGlobal('fetch', respond({
+        complete: false, available: true, tokenFile: '/var/lib/argus/setup-token',
+      }))
+      await renderGate()
+
+      expect(await screen.findByLabelText(/setup token/i)).toBeInTheDocument()
+      expect(screen.getByText(/sudo cat \/var\/lib\/argus\/setup-token/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /create administrator/i })).toBeDisabled()
+    })
+
+    // A closed setup must not look like a form that is about to work.
+    it('draws no form once setup is complete', async () => {
+      vi.stubGlobal('fetch', respond({ complete: true, available: false }))
+      await renderGate()
+
+      expect(await screen.findByText(/setup is complete/i)).toBeInTheDocument()
+      expect(screen.queryByLabelText(/setup token/i)).not.toBeInTheDocument()
+    })
+
+    it('points at the host when the browser path is not offered', async () => {
+      vi.stubGlobal('fetch', respond({ complete: false, available: false }))
+      await renderGate()
+
+      expect(await screen.findByText(/not offering setup in the browser/i)).toBeInTheDocument()
+      expect(screen.queryByLabelText(/setup token/i)).not.toBeInTheDocument()
+    })
+  })
+
   // The signed-in path is not asserted here: past the gate the whole shell
   // renders, nav links and all, which needs a router. The route tests cover
   // that. What this file covers is the branch an unauthenticated operator

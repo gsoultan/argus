@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/gsoultan/argus/internal/tunnel"
+	"github.com/gsoultan/argus/internal/wskeep"
 )
 
 /*
@@ -74,7 +74,7 @@ func (a *API) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	defer conn.CloseNow()
 	conn.SetReadLimit(1 << 20)
 
-	a.relayTerminal(r.Context(), conn, t.Email, target, principal, clientIP(r))
+	a.relayTerminal(r.Context(), conn, t.Email, target, principal, a.clientAddr(r))
 }
 
 // originPatterns turns the CORS allow-list into websocket host patterns.
@@ -90,14 +90,6 @@ func originPatterns(allowed []string) []string {
 		}
 	}
 	return out
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 type terminalMessage struct {
@@ -169,6 +161,8 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 	if sendJSON(terminalMessage{Type: "ready", Session: answer.Session}) != nil {
 		return
 	}
+	// Idle shells look dead to the proxy in front; see wskeep.
+	go wskeep.Run(ctx, conn)
 
 	// Writes to the stream come from the browser loop only, so frames
 	// cannot interleave. When the browser goes, the stream is closed, which

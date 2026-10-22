@@ -47,7 +47,7 @@ func (r *ClientResolver) Key(req *http.Request) string {
 	// Only believe a forwarding header when the connection itself came from a
 	// proxy we trust.
 	if r != nil && len(r.TrustedProxies) > 0 && r.trusted(peer) {
-		if fwd := forwardedFor(req); fwd != "" {
+		if fwd := r.forwardedFor(req); fwd != "" {
 			return fwd
 		}
 	}
@@ -69,16 +69,35 @@ func (r *ClientResolver) trusted(ipStr string) bool {
 
 // forwardedFor reads the client address a trusted proxy recorded.
 //
-// The leftmost entry is the original client; anything after it was added by
-// intermediaries. A client can prepend entries, but since this is only reached
-// for connections from a trusted proxy, that proxy is expected to have
-// overwritten rather than appended.
-func forwardedFor(req *http.Request) string {
+// CF-Connecting-IP comes first. Cloudflare sets it to the address its edge
+// saw and overwrites whatever the client sent, so behind a Cloudflare Tunnel
+// it is the one header the client cannot choose -- whereas Cloudflare
+// *appends* to an X-Forwarded-For the client supplied, which makes that
+// header's leftmost entry the attacker's to write.
+//
+// X-Forwarded-For is therefore read from the right: each proxy appends the
+// address it received the connection from, so walking back past the proxies
+// this resolver trusts lands on the first address none of them vouches for
+// being a proxy, which is the client. Reading the leftmost entry instead was
+// correct only behind a proxy that overwrites the header, and let a client
+// behind an appending one name any address it liked.
+func (r *ClientResolver) forwardedFor(req *http.Request) string {
+	if h := strings.TrimSpace(req.Header.Get("CF-Connecting-IP")); h != "" && net.ParseIP(h) != nil {
+		return h
+	}
 	if h := req.Header.Get("X-Forwarded-For"); h != "" {
-		first, _, _ := strings.Cut(h, ",")
-		first = strings.TrimSpace(first)
-		if net.ParseIP(first) != nil {
-			return first
+		hops := strings.Split(h, ",")
+		for i := len(hops) - 1; i >= 0; i-- {
+			hop := strings.TrimSpace(hops[i])
+			if net.ParseIP(hop) == nil {
+				// A malformed hop means the chain cannot be followed past
+				// it; stop rather than guess at what is further left.
+				break
+			}
+			if i > 0 && r.trusted(hop) {
+				continue
+			}
+			return hop
 		}
 	}
 	// RFC 7239, as emitted by some proxies: for=192.0.2.1

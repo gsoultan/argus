@@ -35,6 +35,11 @@ type ConsoleConfig struct {
 	// Version is this control plane's, so "Add a server" can offer the agent
 	// package that matches it rather than whatever was current at build time.
 	Version string
+	// FleetURL is where servers reach this control plane, when that is not
+	// where browsers do. Behind a Cloudflare Tunnel the console's address
+	// carries no agent traffic, and "Add a server" would otherwise offer an
+	// enrollment command pointed at it.
+	FleetURL string
 }
 
 // consoleHandler serves the console's files, with the SPA's fallback to
@@ -66,8 +71,13 @@ func NewConsoleHandler(cfg ConsoleConfig) (http.Handler, error) {
 		// gateway, over fetch and WebSocket both.
 		connect = append(connect, u.Scheme+"://"+u.Host, ws+"://"+u.Host)
 	}
+	if cfg.FleetURL != "" {
+		if u, err := url.Parse(cfg.FleetURL); err != nil || u.Host == "" || u.Scheme != "https" {
+			return nil, fmt.Errorf("console.fleet_url %q is not an https URL", cfg.FleetURL)
+		}
+	}
 	cfgJSON, _ := json.Marshal(map[string]string{
-		"gatewayUrl": cfg.GatewayURL, "version": cfg.Version,
+		"gatewayUrl": cfg.GatewayURL, "version": cfg.Version, "fleetUrl": cfg.FleetURL,
 	})
 	return &consoleHandler{
 		dir:    cfg.Dir,

@@ -232,3 +232,41 @@ func TestPeerIPHandlesIPv6(t *testing.T) {
 		t.Errorf("PeerIP = %q", got)
 	}
 }
+
+// Behind Cloudflare the client's own X-Forwarded-For survives with the real
+// address appended, so the leftmost entry is whatever the client wrote. Read
+// that way, one header let a client rotate its way past the failure budget.
+func TestAppendedForwardedForCannotBeForged(t *testing.T) {
+	r, _ := NewClientResolver([]string{"127.0.0.1/32"})
+	got := r.Key(request("127.0.0.1:50000", map[string]string{
+		"X-Forwarded-For": "10.9.9.9, 198.51.100.20",
+	}))
+	if got != "198.51.100.20" {
+		t.Errorf("key = %q, want the address the proxy appended", got)
+	}
+}
+
+// CF-Connecting-IP is overwritten by Cloudflare's edge, so it wins over a
+// forwarding chain the client could have started.
+func TestCloudflareConnectingIPIsPreferred(t *testing.T) {
+	r, _ := NewClientResolver([]string{"127.0.0.1/32"})
+	got := r.Key(request("127.0.0.1:50000", map[string]string{
+		"CF-Connecting-IP": "198.51.100.20",
+		"X-Forwarded-For":  "10.9.9.9, 198.51.100.21",
+	}))
+	if got != "198.51.100.20" {
+		t.Errorf("key = %q, want CF-Connecting-IP", got)
+	}
+}
+
+// From a peer that is not a trusted proxy, CF-Connecting-IP is just another
+// header the client typed.
+func TestCloudflareHeaderIgnoredFromUntrustedPeer(t *testing.T) {
+	r, _ := NewClientResolver([]string{"127.0.0.1/32"})
+	got := r.Key(request("198.51.100.7:1234", map[string]string{
+		"CF-Connecting-IP": "10.0.0.1",
+	}))
+	if got != "198.51.100.7" {
+		t.Errorf("key = %q — an untrusted peer forged its address", got)
+	}
+}

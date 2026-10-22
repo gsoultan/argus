@@ -10,6 +10,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/rdp"
+	"github.com/gsoultan/argus/internal/wskeep"
 )
 
 // handleRDPShadow attaches a read-only viewer to a Remote Desktop session.
@@ -47,6 +48,8 @@ func (s *Server) handleRDPShadow(cfg WebConfig) http.HandlerFunc {
 			return
 		}
 		defer conn.CloseNow()
+		// Idle sessions look dead to a proxy in front; see wskeep.
+		go wskeep.Run(r.Context(), conn)
 
 		s.log.Info("rdp shadow attached",
 			"session", id, "viewer", viewer, "subject", sess.User,

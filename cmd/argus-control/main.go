@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -71,6 +72,14 @@ type config struct {
 	// still be Secure in that case, even though this process speaks plain HTTP.
 	BehindTLSProxy bool  `yaml:"behind_tls_proxy"`
 	SecureCookies  *bool `yaml:"secure_cookies"`
+	// WebSetup offers the console's /setup page while no account exists.
+	// Default on; false leaves `argus-control users add` as the only way to
+	// make the first one.
+	WebSetup *bool `yaml:"web_setup"`
+	// SetupTokenFile is where the one-time setup token is written. Empty
+	// means /var/lib/argus/setup-token when that directory exists, which the
+	// packaged unit can write, and beside the config file otherwise.
+	SetupTokenFile string `yaml:"setup_token_file"`
 	// RateLimit bounds the authentication surface. Omit for defaults, which
 	// are already appropriate — a person never reaches them, a script does.
 	RateLimit  *rateLimitConfig `yaml:"rate_limit"`
@@ -103,6 +112,10 @@ type consoleConfig struct {
 	// GatewayURL is where browsers reach argus-gateway's web listener, for the
 	// terminal. Without it the Connect page asks for the address.
 	GatewayURL string `yaml:"gateway_url"`
+	// FleetURL is where servers reach the control plane, when it is not the
+	// console's own address -- behind a Cloudflare Tunnel, for one. "Add a
+	// server" puts it in the enrollment command.
+	FleetURL string `yaml:"fleet_url"`
 }
 
 type alertsConfig struct {
@@ -320,6 +333,7 @@ func run() error {
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
 			Dir: cfg.Console.Dir, GatewayURL: cfg.Console.GatewayURL, Version: version,
+			FleetURL: cfg.Console.FleetURL,
 		})
 		if err != nil {
 			return err
@@ -378,8 +392,12 @@ func run() error {
 	} else {
 		api.StaticTokensDisabled = true
 	}
+	if signer != nil && (cfg.WebSetup == nil || *cfg.WebSetup) {
+		offerSetup(ctx, store, api, setupTokenPath(cfg.SetupTokenFile, configPath), cfg.ConsoleURL, log)
+	}
 	api.ReporterToken = cfg.ReporterToken
 	api.AllowedOrigins = cfg.AllowedOrigins
+	api.BehindTLSProxy = cfg.BehindTLSProxy
 
 	// Sweep for agents that stopped reporting. This is what turns "someone
 	// killed the agent" from an invisible event into a visible one.
@@ -645,6 +663,77 @@ func loadConfig(path string) (config, error) {
 		return cfg, fmt.Errorf("config %s: reporter_token is required", path)
 	}
 	return cfg, nil
+}
+
+// setupTokenPath decides where the one-time setup token goes.
+func setupTokenPath(configured, configPath string) string {
+	if configured != "" {
+		return configured
+	}
+	// The packaged unit runs with ProtectSystem=strict and may write only
+	// here, and /etc/argus is not the place for something the service writes.
+	if info, err := os.Stat("/var/lib/argus"); err == nil && info.IsDir() {
+		return "/var/lib/argus/setup-token"
+	}
+	return filepath.Join(filepath.Dir(configPath), "setup-token")
+}
+
+// offerSetup opens the console's /setup page when nobody has an account yet.
+//
+// The token goes in a file only this process's user can read, never in the
+// log: logs are shipped off hosts, and whoever reads the token first owns the
+// deployment. A failure here costs the browser path and nothing else -- the
+// control plane still starts, and `users add` still works.
+func offerSetup(ctx context.Context, store *control.Store, api *control.API,
+	path, consoleURL string, log *slog.Logger) {
+	complete, err := store.SetupComplete(ctx)
+	if err != nil {
+		log.Warn("could not tell whether setup is complete; the setup page is off", "error", err)
+		return
+	}
+	if complete {
+		// Remove a token a previous run left behind once `users add` made the
+		// first account instead.
+		_ = os.Remove(path)
+		return
+	}
+	token, err := control.NewSetupToken()
+	if err != nil {
+		log.Warn("the setup page is off", "error", err)
+		return
+	}
+	if err := writeSetupToken(path, token); err != nil {
+		log.Warn("could not write the setup token; the setup page is off",
+			"file", path, "error", err,
+			"fix", "set setup_token_file to a path this user can write, or run `argus-control users add`")
+		return
+	}
+	api.OfferSetup(token, path)
+	where := "/setup on the console"
+	if consoleURL != "" {
+		where = strings.TrimRight(consoleURL, "/") + "/setup"
+	}
+	log.Info("no accounts yet: finish setup in the browser",
+		"open", where, "token_file", path,
+		"detail", "the page asks for the token in that file; it works once, and "+
+			"`argus-control users add` works too")
+}
+
+// writeSetupToken writes the token readable by this user alone. The old file
+// goes first: rewriting an existing file keeps its mode, which may be wider.
+func writeSetupToken(path, token string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(token + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func parseLevel(s string) slog.Level {

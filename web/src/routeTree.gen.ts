@@ -16,6 +16,7 @@ import { Route as CoverageRouteImport } from './routes/coverage'
 import { Route as MineRouteImport } from './routes/mine'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
@@ -58,6 +59,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -97,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/mine': typeof MineRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -112,6 +119,7 @@ export interface FileRoutesByTo {
   '/mine': typeof MineRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -128,6 +136,7 @@ export interface FileRoutesById {
   '/mine': typeof MineRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -145,6 +154,7 @@ export interface FileRouteTypes {
     | '/mine'
     | '/requests'
     | '/settings'
+    | '/setup'
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
@@ -160,6 +170,7 @@ export interface FileRouteTypes {
     | '/mine'
     | '/requests'
     | '/settings'
+    | '/setup'
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
@@ -175,6 +186,7 @@ export interface FileRouteTypes {
     | '/mine'
     | '/requests'
     | '/settings'
+    | '/setup'
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
@@ -191,6 +203,7 @@ export interface RootRouteChildren {
   MineRoute: typeof MineRoute
   RequestsRoute: typeof RequestsRoute
   SettingsRoute: typeof SettingsRoute
+  SetupRoute: typeof SetupRoute
   UsersRoute: typeof UsersRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
@@ -250,6 +263,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/users': {
       id: '/users'
       path: '/users'
@@ -303,6 +323,7 @@ const rootRouteChildren: RootRouteChildren = {
   MineRoute: MineRoute,
   RequestsRoute: RequestsRoute,
   SettingsRoute: SettingsRoute,
+  SetupRoute: SetupRoute,
   UsersRoute: UsersRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,

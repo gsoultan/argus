@@ -54,8 +54,23 @@ function runtimeGatewayURL(): string | undefined {
   return runtimeConfig()?.gatewayUrl || undefined
 }
 
-function runtimeConfig(): { gatewayUrl?: string; version?: string } | undefined {
-  return (globalThis as { __ARGUS__?: { gatewayUrl?: string; version?: string } }).__ARGUS__
+interface RuntimeConfig { gatewayUrl?: string; version?: string; fleetUrl?: string }
+
+function runtimeConfig(): RuntimeConfig | undefined {
+  return (globalThis as { __ARGUS__?: RuntimeConfig }).__ARGUS__
+}
+
+/**
+ * Where servers reach the control plane, for the enrollment command.
+ *
+ * Usually the address this console was loaded from. Not behind a Cloudflare
+ * Tunnel: there the console's hostname carries browsers only, agents cannot
+ * enrol through it, and `console.fleet_url` names the address they can.
+ */
+export function fleetURL(): string {
+  const configured = runtimeConfig()?.fleetUrl
+  if (configured) return configured.replace(/\/$/, '')
+  return isConfigured() ? `https://${controlPlaneHost()}` : ''
 }
 
 /**
@@ -123,6 +138,8 @@ export interface Identity {
   passwordEnabled?: boolean
   /** False on a fresh install, where nobody can sign in yet. */
   accountsExist?: boolean
+  /** True when a fresh install is offering its /setup page. */
+  setupAvailable?: boolean
   /** Whether the signed-in account has a second factor. */
   mfaEnrolled?: boolean
 }
@@ -202,6 +219,37 @@ export async function whoami(): Promise<Identity> {
     // No response at all: wrong address, wrong scheme, or nothing listening.
     return { authenticated: false, unreachable: true }
   }
+}
+
+/** Where first-run setup stands, as GET /auth/setup reports it. */
+export interface SetupStatus {
+  /** An account exists, so there is nothing to set up. */
+  complete: boolean
+  /** This control plane will accept the setup form. */
+  available: boolean
+  /** Where on the host the one-time token was written. */
+  tokenFile?: string
+}
+
+export async function setupStatus(): Promise<SetupStatus> {
+  const res = await fetch(`${BASE}/auth/setup`, { credentials: 'include' })
+  const parsed = (await res.json()) as SetupStatus & { error?: string }
+  if (!res.ok) throw new Error(parsed.error ?? `request failed (${res.status})`)
+  return parsed
+}
+
+/**
+ * Creates the first account, which is an administrator. Refused without the
+ * token the control plane wrote on its host, and refused for good once any
+ * account exists.
+ */
+export async function completeSetup(input: {
+  token: string
+  email: string
+  displayName: string
+  password: string
+}): Promise<{ email: string; role: string }> {
+  return post<{ email: string; role: string }>('/auth/setup', input)
 }
 
 export async function logout(): Promise<void> {

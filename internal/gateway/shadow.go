@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/gsoultan/argus/internal/auth"
+	"github.com/gsoultan/argus/internal/wskeep"
 )
 
 // shadowFrame is one asciicast line as the console receives it.
@@ -62,6 +63,8 @@ func (s *Server) handleShadow(cfg WebConfig) http.HandlerFunc {
 			return
 		}
 		defer conn.CloseNow()
+		// Idle sessions look dead to a proxy in front; see wskeep.
+		go wskeep.Run(r.Context(), conn)
 
 		s.log.Info("shadow attached",
 			"session", id, "viewer", viewer, "subject", sess.User,
