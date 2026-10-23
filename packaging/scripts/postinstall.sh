@@ -26,6 +26,9 @@ fi
 # account writes them; nobody else reads them.
 if [ -x /usr/bin/argus-control ]; then
     install -d -o argus -g argus -m 0700 /var/backups/argus
+    # The control plane's configuration, secrets and certificates, apart from
+    # the agent's /var/lib/argus, which the agent's unit makes root's.
+    install -d -o argus -g argus -m 0700 /var/lib/argus-control
 fi
 
 # Config may name a database, an issuer and internal hostnames. The env files
@@ -58,7 +61,7 @@ first.
 On the control plane, start it and finish setup in the browser:
 
   systemctl enable --now argus-control
-  open https://<this host>:8080/setup      # asks for: sudo cat /var/lib/argus/setup-token
+  open https://<this host>:8080/setup      # asks for: sudo cat /var/lib/argus-control/setup-token
   systemctl enable --now argus-backup.timer
 
 Everything else is under Settings in the console. Every server people log

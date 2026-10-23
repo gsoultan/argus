@@ -95,7 +95,7 @@ describe('LoginGate', () => {
   // nobody can use, and the address follows so a reload stays there.
   it('sends a fresh install straight to /setup when the control plane offers it', async () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.endsWith('/auth/setup')
-      ? json(200, { complete: false, available: true, tokenFile: '/var/lib/argus/setup-token' })
+      ? json(200, { complete: false, available: true, tokenFile: '/var/lib/argus-control/setup-token' })
       : json(401, {
         authenticated: false, passwordEnabled: true, accountsExist: false, setupAvailable: true,
       }))))
@@ -113,7 +113,7 @@ describe('LoginGate', () => {
     window.history.pushState({}, '', '/assets')
     vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.endsWith('/auth/setup')
       ? json(200, { complete: false, available: true, mode: 'install', port: 8080, hostname: 'argus.example.com',
-        tokenFile: '/var/lib/argus/setup-token' })
+        tokenFile: '/var/lib/argus-control/setup-token' })
       : json(401, {
         authenticated: false, passwordEnabled: true, accountsExist: false, setupAvailable: true,
         installing: true,
@@ -150,12 +150,12 @@ describe('LoginGate', () => {
     // finds it first, so the form must ask for it and say where it is.
     it('asks for the token and says which file on the host holds it', async () => {
       vi.stubGlobal('fetch', respond({
-        complete: false, available: true, tokenFile: '/var/lib/argus/setup-token',
+        complete: false, available: true, tokenFile: '/var/lib/argus-control/setup-token',
       }))
       await renderGate()
 
       expect(await screen.findByLabelText(/setup token/i)).toBeInTheDocument()
-      expect(screen.getByText(/sudo cat \/var\/lib\/argus\/setup-token/)).toBeInTheDocument()
+      expect(screen.getByText(/sudo cat \/var\/lib\/argus-control\/setup-token/)).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /create administrator/i })).toBeDisabled()
     })
 

@@ -347,7 +347,7 @@ export function TokenStep({ tokenFile, token, setToken, onError }: {
   setToken: (t: string) => void
   onError: (msg: string) => void
 }) {
-  const command = `sudo cat ${tokenFile ?? '/var/lib/argus/setup-token'}`
+  const command = `sudo cat ${tokenFile ?? '/var/lib/argus-control/setup-token'}`
   // Paste, never generate. The token proves the person filling this in can
   // read a file on the host; one made in this browser would prove nothing.
   const paste = async () => {

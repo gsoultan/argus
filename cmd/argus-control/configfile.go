@@ -18,10 +18,14 @@ import (
 /*
 Where the configuration lives.
 
-The packaged service may write to /var/lib/argus and nowhere else
+The packaged service may write to /var/lib/argus-control and nowhere else
 (ProtectSystem=strict), and the configuration is now something it writes: first
 by the setup page, then by the console's Settings page. So the packaged unit
-reads /var/lib/argus/control.yaml, with its secrets and certificates beside it.
+reads /var/lib/argus-control/control.yaml, with its secrets and certificates beside it.
+
+Not /var/lib/argus: that is the agent's, and the agent's unit makes it root's
+whenever it starts, which on a host carrying both would lock the control plane
+out of its own configuration.
 
 A deployment from before that has its settings in /etc/argus/control.yaml.
 That file goes on being read for as long as the managed one does not exist; the
@@ -31,7 +35,7 @@ package manager upgrading an edited one keeps it rather than renaming it away.
 */
 
 const (
-	packagedStateDir = "/var/lib/argus"
+	packagedStateDir = "/var/lib/argus-control"
 	legacyConfigPath = "/etc/argus/control.yaml"
 )
 

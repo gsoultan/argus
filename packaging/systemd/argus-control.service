@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=exec
 User=argus
 Group=argus
-ExecStart=/usr/bin/argus-control --config /var/lib/argus/control.yaml
+ExecStart=/usr/bin/argus-control --config /var/lib/argus-control/control.yaml
 Restart=on-failure
 RestartSec=5s
 
@@ -18,7 +18,7 @@ RestartSec=5s
 TimeoutStopSec=45s
 
 # The configuration is written by the setup page and the console's Settings
-# page, beside its secrets in /var/lib/argus, the one place this unit may
+# page, beside its secrets in /var/lib/argus-control, the one place this unit may
 # write. With nothing there yet it serves only the setup page, and a
 # configuration from before then in /etc/argus/control.yaml is still read.
 # control.env is for a configuration that refers to ${VAR}s.
@@ -55,7 +55,7 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @obsolete
 SystemCallArchitectures=native
 
-ReadWritePaths=/var/lib/argus
+ReadWritePaths=/var/lib/argus-control
 
 [Install]
 WantedBy=multi-user.target

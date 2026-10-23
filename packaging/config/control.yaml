@@ -2,10 +2,10 @@
 #
 # Nothing to edit here. On first start the control plane serves its setup page
 # at https://<this host>:8080/setup, and writes its configuration to
-# /var/lib/argus/control.yaml from what you enter there; change settings later
+# /var/lib/argus-control/control.yaml from what you enter there; change settings later
 # from the console's Settings page.
 #
-# This file is read only when it holds settings and /var/lib/argus/control.yaml
+# This file is read only when it holds settings and /var/lib/argus-control/control.yaml
 # does not exist, which is how a control plane installed before setup moved
 # into the console keeps working. The first save from the Settings page moves
 # its settings across, and from then on this file is not read.

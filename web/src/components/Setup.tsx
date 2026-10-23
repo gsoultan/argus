@@ -102,7 +102,7 @@ function SetupForm({ tokenFile, onCreated }: {
   const mismatch = repeat.length > 0 && repeat !== password
   const ready = token.trim() && email.trim() && [...password].length >= MIN_PASSWORD &&
     password === repeat
-  const command = `sudo cat ${tokenFile ?? '/var/lib/argus/setup-token'}`
+  const command = `sudo cat ${tokenFile ?? '/var/lib/argus-control/setup-token'}`
 
   // Shown, not hidden: a password nobody saw is one nobody saved. Filling the
   // repeat field too is the point -- retyping 27 random characters to prove

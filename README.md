@@ -204,7 +204,7 @@ sudo systemctl enable --now argus-control
 and open `https://<that host>:8080`. With no configuration yet, the control
 plane serves only its setup page and sends every address there. The page asks
 for the one-time token the control plane wrote on its host
-(`sudo cat /var/lib/argus/setup-token`), the PostgreSQL database, the
+(`sudo cat /var/lib/argus-control/setup-token`), the PostgreSQL database, the
 addresses people and servers use, a certificate if you have one, and the first
 administrator. The control plane writes its own configuration, secrets and
 certificates from that, and starts. There is no YAML or env file to edit.
@@ -222,9 +222,9 @@ Where things live, for backups and the curious:
 
 | Path | Holds |
 |---|---|
-| `/var/lib/argus/control.yaml` | the configuration, written by setup and Settings |
-| `/var/lib/argus/secrets/` | the database URL, signing secret, reporter token and alert credentials, one owner-only file each |
-| `/var/lib/argus/tls/` | the control plane's own CA and server certificate, renewed automatically |
+| `/var/lib/argus-control/control.yaml` | the configuration, written by setup and Settings |
+| `/var/lib/argus-control/secrets/` | the database URL, signing secret, reporter token and alert credentials, one owner-only file each |
+| `/var/lib/argus-control/tls/` | the control plane's own CA and server certificate, renewed automatically |
 
 A control plane installed before this keeps reading `/etc/argus/control.yaml`
 until the first save from Settings moves its settings across.
@@ -233,7 +233,7 @@ Every server people log in to needs the agent: it opens, records and refuses
 sessions there. Agents enroll from **Servers > Add a server**, which hands you
 the one command to run on each server; then `sudo systemctl enable --now argus-agent`.
 
-Uninstalling leaves `/var/lib/argus` in place. Removing the software must never
+Uninstalling leaves `/var/lib/argus` and `/var/lib/argus-control` in place. Removing the software must never
 destroy the evidence it produced — that is precisely what someone covering
 their tracks would reach for.
 

@@ -557,16 +557,16 @@ jobs:
           tmp=$(mktemp -d)
           sudo systemctl enable --now argus-control
           for i in $(seq 1 30); do
-            sudo test -s /var/lib/argus/setup-token && break
+            sudo test -s /var/lib/argus-control/setup-token && break
             sleep 1
           done
-          sudo cat /var/lib/argus/tls/ca.crt > "$tmp/ca.crt" || {
+          sudo cat /var/lib/argus-control/tls/ca.crt > "$tmp/ca.crt" || {
             sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
           # Every page goes to /setup until it is done.
           to=$(curl -s -o /dev/null -w '%{redirect_url}' --cacert "$tmp/ca.crt" https://localhost:8080/assets)
           [ "$to" = https://localhost:8080/setup ] || { echo "::error::first run did not send /assets to /setup (got '$to')"; exit 1; }
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep -q '<div id="root">'
-          tok=$(sudo cat /var/lib/argus/setup-token)
+          tok=$(sudo cat /var/lib/argus-control/setup-token)
           jq -n --arg tok "$tok" '{token: $tok,
               database: {host: "localhost", port: 5433, name: "argus", user: "argus", password: "argus", sslMode: "disable"},
               consoleUrl: "https://localhost:8080", fleetUrl: "", port: 8080, quic: true,
@@ -581,10 +581,10 @@ jobs:
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' || {
             sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
           # What setup wrote is the service's own, and nobody else's.
-          [ "$(sudo stat -c '%a %U' /var/lib/argus/control.yaml)" = "600 argus" ]
-          [ "$(sudo stat -c '%a %U' /var/lib/argus/secrets/signing-secret)" = "600 argus" ]
-          [ "$(sudo stat -c '%a %U' /var/lib/argus/tls/ca.key)" = "600 argus" ]
-          ! sudo test -e /var/lib/argus/setup-token
+          [ "$(sudo stat -c '%a %U' /var/lib/argus-control/control.yaml)" = "600 argus" ]
+          [ "$(sudo stat -c '%a %U' /var/lib/argus-control/secrets/signing-secret)" = "600 argus" ]
+          [ "$(sudo stat -c '%a %U' /var/lib/argus-control/tls/ca.key)" = "600 argus" ]
+          ! sudo test -e /var/lib/argus-control/setup-token
 
           # The console ships in the package and is served same-origin.
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep -q '<div id="root">'

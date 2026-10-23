@@ -77,7 +77,7 @@ type config struct {
 	// make the first one.
 	WebSetup *bool `yaml:"web_setup,omitempty"`
 	// SetupTokenFile is where the one-time setup token is written. Empty
-	// means /var/lib/argus/setup-token when that directory exists, which the
+	// means /var/lib/argus-control/setup-token when that directory exists, which the
 	// packaged unit can write, and beside the config file otherwise.
 	SetupTokenFile string `yaml:"setup_token_file,omitempty"`
 	// RateLimit bounds the authentication surface. Omit for defaults, which
@@ -820,8 +820,8 @@ func setupTokenPath(configured, configPath string) string {
 	}
 	// The packaged unit runs with ProtectSystem=strict and may write only
 	// here, and /etc/argus is not the place for something the service writes.
-	if info, err := os.Stat("/var/lib/argus"); err == nil && info.IsDir() {
-		return "/var/lib/argus/setup-token"
+	if info, err := os.Stat(packagedStateDir); err == nil && info.IsDir() {
+		return filepath.Join(packagedStateDir, "setup-token")
 	}
 	return filepath.Join(filepath.Dir(configPath), "setup-token")
 }

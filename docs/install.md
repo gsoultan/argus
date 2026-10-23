@@ -67,7 +67,7 @@ The Windows agent is not out yet, so Windows hosts cannot be recorded yet.
 ## 2. Certificates
 
 Nothing to do unless you want your own. On first start the control plane makes
-a small certificate authority in `/var/lib/argus/tls/`, issues its own server
+a small certificate authority in `/var/lib/argus-control/tls/`, issues its own server
 certificate from it, and renews that certificate before it expires. Agents
 learn to trust the CA when they enroll.
 
@@ -95,7 +95,7 @@ Start the control plane. With no configuration it serves only its setup page:
 ```sh
 sudo systemctl enable --now argus-control
 journalctl -u argus-control -n 5          # "argus-control is not set up yet: finish setup in the browser"
-sudo cat /var/lib/argus/setup-token
+sudo cat /var/lib/argus-control/setup-token
 ```
 
 Open `https://argus.example.com:8080`. Every address goes to `/setup`, which
@@ -112,10 +112,10 @@ asks for, in order:
 4. **Certificate**: the control plane's own, or yours.
 5. **The first administrator**: email, name and password.
 
-**Finish setup** writes `/var/lib/argus/control.yaml`, the secrets beside it in
-`/var/lib/argus/secrets/` (the database URL, a fresh signing secret and
+**Finish setup** writes `/var/lib/argus-control/control.yaml`, the secrets beside it in
+`/var/lib/argus-control/secrets/` (the database URL, a fresh signing secret and
 reporter token, each readable by the `argus` account alone), and the
-certificates in `/var/lib/argus/tls/`. The control plane then restarts on
+certificates in `/var/lib/argus-control/tls/`. The control plane then restarts on
 them in the same process, and `control.installed` and `user.created` are the
 first entries in the audit log, with the address setup came from.
 
@@ -123,7 +123,7 @@ Sign in and enrol a second factor when the console asks. Check it from the
 host:
 
 ```sh
-curl -fsS --cacert /var/lib/argus/tls/ca.crt https://argus.example.com:8080/healthz   # {"status":"ok"}
+curl -fsS --cacert /var/lib/argus-control/tls/ca.crt https://argus.example.com:8080/healthz   # {"status":"ok"}
 ```
 
 Migrations run on start. There is no separate migrate step.
@@ -152,7 +152,7 @@ entry in the audit log naming what changed.
 
 The commands on the host still work and need no environment to load:
 `sudo argus-control users list`, `users add`, `users disable`, `audit verify`
-and `backup run|verify` all read `/var/lib/argus/control.yaml`.
+and `backup run|verify` all read `/var/lib/argus-control/control.yaml`.
 
 ## 4. Backups
 
@@ -321,7 +321,7 @@ reissued to cover the new names when you save.
 
 ```sh
 journalctl -u argus-control -n 20     # "argus-control listening (TLS)" surface=console addr=127.0.0.1:8090
-curl -fsS --cacert /var/lib/argus/tls/ca.crt --resolve argus-internal.example.com:8090:127.0.0.1 \
+curl -fsS --cacert /var/lib/argus-control/tls/ca.crt --resolve argus-internal.example.com:8090:127.0.0.1 \
   https://argus-internal.example.com:8090/healthz
 ```
 
@@ -349,7 +349,7 @@ ingress:
       # cloudflared refuses the internal certificate; noTLSVerify would work
       # too, and would let anything on this host answer for Argus.
       originServerName: argus-internal.example.com
-      caPool: /var/lib/argus/tls/ca.crt
+      caPool: /var/lib/argus-control/tls/ca.crt
 
   - service: http_status:404
 ```
@@ -426,9 +426,9 @@ the control plane starts and only ever add; take a backup first anyway
 Your edited files in `/etc/argus` are kept. A control plane installed before
 setup moved into the console goes on reading `/etc/argus/control.yaml` and the
 variables in `/etc/argus/control.env`, and every setting appears under
-**Settings**. The first save there writes `/var/lib/argus/control.yaml`, which
+**Settings**. The first save there writes `/var/lib/argus-control/control.yaml`, which
 is read from then on. Secrets already referenced from `control.env` stay
-there; a secret you change from Settings moves to `/var/lib/argus/secrets/`.
+there; a secret you change from Settings moves to `/var/lib/argus-control/secrets/`.
 A control plane from before the console shipped, or before agents' tunnels,
 gets both by saving Settings once: the console is found where the package
 installs it, and **Addresses > QUIC** turns the tunnel's UDP listener on.

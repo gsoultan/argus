@@ -20,7 +20,7 @@ func (f *fakeInstaller) Install(context.Context, InstallRequest, string) (Instal
 }
 
 func installServer(inst *fakeInstaller) http.Handler {
-	return NewInstallHandler(InstallOptions{Token: "the-token", TokenFile: "/var/lib/argus/setup-token",
+	return NewInstallHandler(InstallOptions{Token: "the-token", TokenFile: "/var/lib/argus-control/setup-token",
 		Port: 8080, Installer: inst})
 }
 

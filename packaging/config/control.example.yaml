@@ -42,7 +42,7 @@ console_url: ""
 # any account exists. Set web_setup: false to leave `argus-control users add`
 # as the only way to create the first account.
 # web_setup: true
-# setup_token_file: "/var/lib/argus/setup-token"
+# setup_token_file: "/var/lib/argus-control/setup-token"
 
 # The web console. The package installs it; the control plane serves it on the
 # same address people sign in to, so the session cookie stays same-origin.
