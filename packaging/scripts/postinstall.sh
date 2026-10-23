@@ -55,12 +55,17 @@ cat <<'MSG'
 Argus installed. Nothing has been started — these services need configuration
 first.
 
-  1. Put certificates in /etc/argus/tls/
-  2. Fill in the CHANGE-ME values in /etc/argus/*.env
-  3. Review /etc/argus/*.yaml
-  4. systemctl enable --now argus-<component>
-  5. On the control plane: systemctl enable --now argus-backup.timer
-     (needs pg_dump; prove a backup restores with `argus-control backup verify`)
+On the control plane, start it and finish setup in the browser:
+
+  systemctl enable --now argus-control
+  open https://<this host>:8080/setup      # asks for: sudo cat /var/lib/argus/setup-token
+  systemctl enable --now argus-backup.timer
+
+Everything else, including the files a gateway needs, is under Settings in
+the console.
+
+On a gateway: put the files from Settings > Gateways in /etc/argus, then
+  systemctl enable --now argus-gateway
 
 The agent additionally needs sshd configured to record sessions:
 

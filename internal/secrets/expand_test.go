@@ -161,7 +161,7 @@ func TestRedact(t *testing.T) {
 	}
 }
 
-// The packaged control.yaml documents references in comments. Resolving those
+// The example control.yaml documents references in comments. Resolving those
 // made the shipped default unable to start: a commented-out example is not a
 // secret the deployment needs.
 func TestCommentsAreNotResolved(t *testing.T) {
@@ -192,8 +192,8 @@ func TestCommentsAreNotResolved(t *testing.T) {
 // The files the packages install must start with only the env file filled in.
 func TestShippedConfigsNeedOnlyTheirEnvFile(t *testing.T) {
 	for file, vars := range map[string][]string{
-		"control.yaml": {"ARGUS_DATABASE_URL", "ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
-		"gateway.yaml": {"ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
+		"control.example.yaml": {"ARGUS_DATABASE_URL", "ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
+		"gateway.yaml":         {"ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
 	} {
 		for _, v := range vars {
 			t.Setenv(v, "set")

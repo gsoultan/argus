@@ -28,12 +28,12 @@ import (
 
 // Config describes an S3-compatible endpoint.
 type Config struct {
-	Endpoint  string `yaml:"endpoint"`
-	AccessKey string `yaml:"access_key"`
-	SecretKey string `yaml:"secret_key"`
-	Bucket    string `yaml:"bucket"`
-	UseSSL    bool   `yaml:"use_ssl"`
-	Region    string `yaml:"region"`
+	Endpoint  string `yaml:"endpoint,omitempty"`
+	AccessKey string `yaml:"access_key,omitempty"`
+	SecretKey string `yaml:"secret_key,omitempty"`
+	Bucket    string `yaml:"bucket,omitempty"`
+	UseSSL    bool   `yaml:"use_ssl,omitempty"`
+	Region    string `yaml:"region,omitempty"`
 }
 
 // Client uploads and retrieves recordings.

@@ -43,7 +43,7 @@ import (
 var version = "dev"
 
 type config struct {
-	Listen string `yaml:"listen"`
+	Listen string `yaml:"listen,omitempty"`
 	// ConsoleListen optionally moves the human surface to its own address.
 	//
 	// Empty, which is the default, means one listener serves everything --
@@ -52,50 +52,50 @@ type config struct {
 	// only what a person signs in to. That lets the console be bound somewhere
 	// narrow without taking the fleet's reporting with it, which is the reason
 	// `listen` cannot simply be moved to loopback.
-	ConsoleListen  string            `yaml:"console_listen"`
-	DatabaseURL    string            `yaml:"database_url"`
-	AllowedOrigins []string          `yaml:"allowed_origins"`
-	UserTokens     map[string]string `yaml:"user_tokens"`
-	ReporterToken  string            `yaml:"reporter_token"`
+	ConsoleListen  string            `yaml:"console_listen,omitempty"`
+	DatabaseURL    string            `yaml:"database_url,omitempty"`
+	AllowedOrigins []string          `yaml:"allowed_origins,omitempty"`
+	UserTokens     map[string]string `yaml:"user_tokens,omitempty"`
+	ReporterToken  string            `yaml:"reporter_token,omitempty"`
 	// AgentStaleAfter is how long an agent may be silent before the fleet is
 	// told. Short on purpose: silence is how a killed agent looks.
-	AgentStaleAfter time.Duration   `yaml:"agent_stale_after"`
-	Storage         *storage.Config `yaml:"storage"`
+	AgentStaleAfter time.Duration   `yaml:"agent_stale_after,omitempty"`
+	Storage         *storage.Config `yaml:"storage,omitempty"`
 	// SigningSecret signs session cookies and terminal tickets. Shared with the
 	// gateway so it can verify tickets without calling back.
-	SigningSecret string `yaml:"signing_secret"`
-	ConsoleURL    string `yaml:"console_url"`
+	SigningSecret string `yaml:"signing_secret,omitempty"`
+	ConsoleURL    string `yaml:"console_url,omitempty"`
 	// TLS serves the API over HTTPS. Strongly recommended: session cookies,
 	// recordings and the audit log all cross this listener.
-	TLS *tlsConfig `yaml:"tls"`
+	TLS *tlsConfig `yaml:"tls,omitempty"`
 	// BehindTLSProxy marks that something in front terminates TLS. Cookies must
 	// still be Secure in that case, even though this process speaks plain HTTP.
-	BehindTLSProxy bool  `yaml:"behind_tls_proxy"`
-	SecureCookies  *bool `yaml:"secure_cookies"`
+	BehindTLSProxy bool  `yaml:"behind_tls_proxy,omitempty"`
+	SecureCookies  *bool `yaml:"secure_cookies,omitempty"`
 	// WebSetup offers the console's /setup page while no account exists.
 	// Default on; false leaves `argus-control users add` as the only way to
 	// make the first one.
-	WebSetup *bool `yaml:"web_setup"`
+	WebSetup *bool `yaml:"web_setup,omitempty"`
 	// SetupTokenFile is where the one-time setup token is written. Empty
 	// means /var/lib/argus/setup-token when that directory exists, which the
 	// packaged unit can write, and beside the config file otherwise.
-	SetupTokenFile string `yaml:"setup_token_file"`
+	SetupTokenFile string `yaml:"setup_token_file,omitempty"`
 	// RateLimit bounds the authentication surface. Omit for defaults, which
 	// are already appropriate — a person never reaches them, a script does.
-	RateLimit  *rateLimitConfig `yaml:"rate_limit"`
-	SessionTTL time.Duration    `yaml:"session_ttl"`
-	TicketTTL  time.Duration    `yaml:"ticket_ttl"`
-	LogLevel   string           `yaml:"log_level"`
+	RateLimit  *rateLimitConfig `yaml:"rate_limit,omitempty"`
+	SessionTTL time.Duration    `yaml:"session_ttl,omitempty"`
+	TicketTTL  time.Duration    `yaml:"ticket_ttl,omitempty"`
+	LogLevel   string           `yaml:"log_level,omitempty"`
 	// Alerts tells administrators, by email, Telegram or a push notification
 	// through Firebase Cloud Messaging, every time somebody opens a session.
 	// Omit for none.
-	Alerts *alertsConfig `yaml:"alerts"`
+	Alerts *alertsConfig `yaml:"alerts,omitempty"`
 	// Console serves the web console from this process. Omit to serve the API
 	// alone, as every deployment did before the console shipped in a package.
-	Console *consoleConfig `yaml:"console"`
+	Console *consoleConfig `yaml:"console,omitempty"`
 	// Tunnel is where agents hold their outbound connections. The HTTPS
 	// fallback is always served on `listen`; QUIC needs its own UDP address.
-	Tunnel *tunnelConfig `yaml:"tunnel"`
+	Tunnel *tunnelConfig `yaml:"tunnel,omitempty"`
 }
 
 type tunnelConfig struct {
@@ -103,25 +103,25 @@ type tunnelConfig struct {
 	// same port as `listen` (":8080"). Empty leaves QUIC off; agents then use
 	// the HTTPS fallback, which works but is less smooth on a lossy network.
 	// Needs `tls`: QUIC is always encrypted, with this process's certificate.
-	QUICListen string `yaml:"quic_listen"`
+	QUICListen string `yaml:"quic_listen,omitempty"`
 }
 
 type consoleConfig struct {
 	// Dir is where the package installs the built console.
-	Dir string `yaml:"dir"`
+	Dir string `yaml:"dir,omitempty"`
 	// GatewayURL is where browsers reach argus-gateway's web listener, for the
 	// terminal. Without it the Connect page asks for the address.
-	GatewayURL string `yaml:"gateway_url"`
+	GatewayURL string `yaml:"gateway_url,omitempty"`
 	// FleetURL is where servers reach the control plane, when it is not the
 	// console's own address -- behind a Cloudflare Tunnel, for one. "Add a
 	// server" puts it in the enrollment command.
-	FleetURL string `yaml:"fleet_url"`
+	FleetURL string `yaml:"fleet_url,omitempty"`
 }
 
 type alertsConfig struct {
-	Email    *notify.EmailConfig    `yaml:"email"`
-	Telegram *notify.TelegramConfig `yaml:"telegram"`
-	FCM      *notify.FCMConfig      `yaml:"fcm"`
+	Email    *notify.EmailConfig    `yaml:"email,omitempty"`
+	Telegram *notify.TelegramConfig `yaml:"telegram,omitempty"`
+	FCM      *notify.FCMConfig      `yaml:"fcm,omitempty"`
 }
 
 // alertSenders builds a sender per configured channel.
@@ -163,19 +163,19 @@ type rateLimitConfig struct {
 	// TrustedProxies are networks whose X-Forwarded-For is believed. Leave
 	// empty when reached directly: trusting a header the client sets lets an
 	// attacker both evade their own limit and throttle somebody else.
-	TrustedProxies   []string `yaml:"trusted_proxies"`
-	LoginPerMinute   int      `yaml:"login_per_minute"`
-	FailuresPerHour  int      `yaml:"failures_per_hour"`
-	TicketsPerMinute int      `yaml:"tickets_per_minute"`
+	TrustedProxies   []string `yaml:"trusted_proxies,omitempty"`
+	LoginPerMinute   int      `yaml:"login_per_minute,omitempty"`
+	FailuresPerHour  int      `yaml:"failures_per_hour,omitempty"`
+	TicketsPerMinute int      `yaml:"tickets_per_minute,omitempty"`
 }
 
 type tlsConfig struct {
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
+	CertFile string `yaml:"cert_file,omitempty"`
+	KeyFile  string `yaml:"key_file,omitempty"`
 	// ClientCAFile enables mutual TLS on the reporter endpoints, so a gateway
 	// or agent proves which host it is rather than only that it holds a token
 	// identical on every host.
-	ClientCAFile string `yaml:"client_ca_file"`
+	ClientCAFile string `yaml:"client_ca_file,omitempty"`
 }
 
 func main() {
@@ -186,9 +186,11 @@ func main() {
 }
 
 func run() error {
-	var configPath string
+	var configPath, setupListen string
 	var showVersion bool
-	flag.StringVar(&configPath, "config", "control.yaml", "path to config file")
+	flag.StringVar(&configPath, "config", "", "path to config file (default "+defaultConfigPath()+")")
+	flag.StringVar(&setupListen, "setup-listen", ":8080",
+		"where the setup page listens while there is no configuration yet")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.Parse()
 
@@ -196,7 +198,81 @@ func run() error {
 		fmt.Printf("argus-control %s\n", version)
 		return nil
 	}
+	if configPath == "" {
+		configPath = defaultConfigPath()
+	}
 
+	if flag.NArg() > 0 {
+		path, err := commandConfig(configPath)
+		if err != nil {
+			return err
+		}
+		return runCommand(path)
+	}
+
+	sig, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	boot := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	// Round until stopped: set up if there is nothing to run on, run, and run
+	// again on the new file whenever the Settings page saves one.
+	reloaded := false
+	for {
+		loc, err := locateConfig(configPath)
+		if err != nil {
+			return err
+		}
+		if loc.Path == "" {
+			if err := runInstall(sig, loc, setupListen, boot); err != nil {
+				if errors.Is(err, errStopped) {
+					return nil
+				}
+				return err
+			}
+			continue
+		}
+		err = serve(sig, loc)
+		var startErr *startupError
+		switch {
+		case errors.Is(err, errReload):
+			reloaded = true
+			continue
+		case reloaded && errors.As(err, &startErr) && restorePrevious(loc):
+			// The console saved settings the control plane cannot start on.
+			// Exiting would leave it down until someone edits the file by
+			// hand, which is what the Settings page exists to avoid.
+			boot.Error("the saved settings did not start; went back to the previous ones",
+				"error", startErr.err, "config", loc.Managed)
+			setApplyError(startErr.err.Error())
+			reloaded = false
+			continue
+		default:
+			return err
+		}
+	}
+}
+
+// errReload is serve returning so the loop starts it again on a new file.
+var errReload = errors.New("reloading settings")
+
+// startupError is a failure before the control plane was serving: the
+// configuration, not something that happened while running.
+type startupError struct{ err error }
+
+func (e *startupError) Error() string { return e.err.Error() }
+func (e *startupError) Unwrap() error { return e.err }
+
+// restorePrevious puts back the file a save from the console replaced.
+func restorePrevious(loc configLocation) bool {
+	prev := loc.Managed + ".previous"
+	if _, err := os.Stat(prev); err != nil {
+		return false
+	}
+	return os.Rename(prev, loc.Managed) == nil
+}
+
+// runCommand runs a subcommand against the configuration at path.
+func runCommand(configPath string) error {
 	// `argus-control audit verify` recomputes the stored chain. Used by the
 	// restore drill and by whatever schedules integrity checks.
 	if flag.NArg() >= 2 && flag.Arg(0) == "audit" && flag.Arg(1) == "verify" {
@@ -204,7 +280,7 @@ func run() error {
 	}
 
 	// `argus-control backup run|verify`: see backup.go.
-	if flag.NArg() >= 1 && flag.Arg(0) == "backup" {
+	if flag.Arg(0) == "backup" {
 		return runBackup(configPath, flag.Args()[1:])
 	}
 
@@ -228,8 +304,22 @@ func run() error {
 			return fmt.Errorf("unknown users command %q: add, list, disable, enable", flag.Arg(1))
 		}
 	}
+	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, users add|list|disable|enable",
+		strings.Join(flag.Args(), " "))
+}
 
-	cfg, err := loadConfig(configPath)
+// serve runs the control plane on the configuration at loc until a signal,
+// or until the Settings page saves a new one (errReload).
+func serve(sig context.Context, loc configLocation) (retErr error) {
+	// Anything that fails before the listeners are up is the configuration's
+	// fault, which the main loop can undo when a save from the console caused it.
+	started := false
+	defer func() {
+		if retErr != nil && !started && !errors.Is(retErr, errReload) {
+			retErr = &startupError{err: retErr}
+		}
+	}()
+	cfg, err := loadConfig(loc.Path)
 	if err != nil {
 		return err
 	}
@@ -318,6 +408,9 @@ func run() error {
 	}
 
 	api := control.NewAPI(store, log)
+	reload := make(chan struct{}, 1)
+	api.Settings = &settingsBackend{loc: loc, cfg: cfg, reload: reloadAfter(reload)}
+	renewManagedCert(ctx, loc, cfg, log)
 	replica, _ := os.Hostname()
 	api.Tunnels = control.NewTunnelHub(store, log, replica)
 	defer api.Tunnels.Close()
@@ -376,14 +469,12 @@ func run() error {
 	if len(cfg.UserTokens) > 0 {
 		accounts, err := store.AnyAccountExists(ctx)
 		if err != nil {
-			log.Error("cannot tell whether local accounts exist", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("cannot tell whether local accounts exist: %w", err)
 		}
 		if accounts {
-			fmt.Fprintln(os.Stderr, "argus-control: user_tokens is set and local "+
-				"accounts exist.\nRemove user_tokens: a bearer token in a config file "+
-				"must not stand in for a password and a second factor.")
-			os.Exit(1)
+			return errors.New("user_tokens is set and local accounts exist.\n" +
+				"Remove user_tokens: a bearer token in a config file must not stand in " +
+				"for a password and a second factor")
 		}
 		log.Warn("static console tokens are active",
 			"detail", "no local accounts yet, so these are the only way in; create "+
@@ -393,7 +484,7 @@ func run() error {
 		api.StaticTokensDisabled = true
 	}
 	if signer != nil && (cfg.WebSetup == nil || *cfg.WebSetup) {
-		offerSetup(ctx, store, api, setupTokenPath(cfg.SetupTokenFile, configPath), cfg.ConsoleURL, log)
+		offerSetup(ctx, store, api, setupTokenPath(cfg.SetupTokenFile, loc.Managed), cfg.ConsoleURL, log)
 	}
 	api.ReporterToken = cfg.ReporterToken
 	api.AllowedOrigins = cfg.AllowedOrigins
@@ -551,8 +642,23 @@ func run() error {
 			"detail", "set tunnel.quic_listen for smoother sessions on lossy networks")
 	}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	// Bound here rather than in ListenAndServe, so an address that is taken
+	// is a startup failure the main loop can undo, not a crash a moment later.
+	bound := make([]net.Listener, 0, len(listeners))
+	defer func() {
+		if !started {
+			for _, ln := range bound {
+				_ = ln.Close()
+			}
+		}
+	}()
+	for _, l := range listeners {
+		ln, err := net.Listen("tcp", l.srv.Addr)
+		if err != nil {
+			return fmt.Errorf("listen on %s (%s): %w", l.srv.Addr, l.name, err)
+		}
+		bound = append(bound, ln)
+	}
 
 	// Shutdown runs where it can be waited for, not in a goroutine.
 	//
@@ -569,8 +675,9 @@ func run() error {
 			"detail", "session cookies, recordings and the audit log cross this "+
 				"listener in the clear; configure `tls` or terminate TLS in front of it")
 	}
-	for _, l := range listeners {
-		l := l
+	started = true
+	for i, l := range listeners {
+		l, ln := l, bound[i]
 		if cfg.TLS != nil {
 			log.Info("argus-control listening (TLS)",
 				"version", version, "surface", l.name, "addr", l.srv.Addr,
@@ -581,13 +688,14 @@ func run() error {
 		}
 		go func() {
 			if cfg.TLS != nil {
-				served <- l.srv.ListenAndServeTLS("", "")
+				served <- l.srv.ServeTLS(ln, "", "")
 				return
 			}
-			served <- l.srv.ListenAndServe()
+			served <- l.srv.Serve(ln)
 		}()
 	}
 
+	var stopping error
 	select {
 	case err := <-served:
 		// Failed on its own; no shutdown is in flight.
@@ -595,30 +703,68 @@ func run() error {
 			return err
 		}
 		return nil
-	case <-stop:
+	case <-sig.Done():
 		log.Info("shutting down, finishing requests in flight")
-		shutdownCtx, c := context.WithTimeout(context.Background(), 10*time.Second)
-		defer c()
-		// Every listener, and all of them before the sweeper stops: a request
-		// in flight on one must not be cut off because the other drained first.
-		for _, l := range listeners {
-			if err := l.srv.Shutdown(shutdownCtx); err != nil {
-				log.Error("some requests did not finish before the deadline",
-					"surface", l.name, "error", err)
+	case <-reload:
+		log.Info("settings changed from the console; restarting on them", "config", loc.Managed)
+		stopping = errReload
+	}
+	shutdownCtx, c := context.WithTimeout(context.Background(), 10*time.Second)
+	defer c()
+	// Every listener, and all of them before the sweeper stops: a request
+	// in flight on one must not be cut off because the other drained first.
+	for _, l := range listeners {
+		if err := l.srv.Shutdown(shutdownCtx); err != nil {
+			log.Error("some requests did not finish before the deadline",
+				"surface", l.name, "error", err)
+		}
+	}
+	// The sweeper stops only once nothing is being served, so a request
+	// already in a handler is not cut off by its own background context.
+	cancel()
+	for range listeners {
+		<-served
+	}
+	// After the listeners, so an alert for a report that arrived during
+	// the drain is still sent.
+	alerts.Close(shutdownCtx)
+	if stopping == nil {
+		log.Info("shutdown complete")
+	}
+	return stopping
+}
+
+// renewManagedCert keeps a certificate the control plane issued itself
+// current: at start, and twice a day after, so nobody has to remember it.
+func renewManagedCert(ctx context.Context, loc configLocation, cfg config, log *slog.Logger) {
+	pki := loc.pki()
+	if cfg.TLS == nil || filepath.Clean(cfg.TLS.CertFile) != pki.ServerCert() {
+		return
+	}
+	hosts := urlHosts(cfg.ConsoleURL)
+	if cfg.Console != nil {
+		hosts = append(hosts, urlHosts(cfg.Console.FleetURL)...)
+	}
+	renew := func() {
+		if done, err := pki.RenewServerIfDue(hosts); err != nil {
+			log.Error("could not renew this control plane's certificate", "error", err)
+		} else if done {
+			log.Info("renewed this control plane's certificate", "file", pki.ServerCert())
+		}
+	}
+	renew()
+	go func() {
+		t := time.NewTicker(12 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				renew()
+			case <-ctx.Done():
+				return
 			}
 		}
-		// The sweeper stops only once nothing is being served, so a request
-		// already in a handler is not cut off by its own background context.
-		cancel()
-		for range listeners {
-			<-served
-		}
-		// After the listeners, so an alert for a report that arrived during
-		// the drain is still sent.
-		alerts.Close(shutdownCtx)
-		log.Info("shutdown complete")
-		return nil
-	}
+	}()
 }
 
 func loadConfig(path string) (config, error) {
@@ -630,6 +776,9 @@ func loadConfig(path string) (config, error) {
 	}
 
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return cfg, errNotSetUp
+	}
 	if err != nil {
 		return cfg, fmt.Errorf("read config %s: %w", path, err)
 	}
@@ -643,9 +792,19 @@ func loadConfig(path string) (config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	// Resolve relative paths against the config file so the binary can be
-	// started from any working directory.
-	base := filepath.Dir(path)
+	absolutize(&cfg, filepath.Dir(path))
+
+	if cfg.ReporterToken == "" {
+		// Without this any host that can reach the API could write fabricated
+		// sessions into the audit record.
+		return cfg, fmt.Errorf("config %s: reporter_token is required", path)
+	}
+	return cfg, nil
+}
+
+// absolutize resolves relative paths against the config file's directory so
+// the binary can be started from any working directory.
+func absolutize(cfg *config, base string) {
 	if cfg.TLS != nil {
 		for _, f := range []*string{&cfg.TLS.CertFile, &cfg.TLS.KeyFile, &cfg.TLS.ClientCAFile} {
 			if *f != "" && !filepath.IsAbs(*f) {
@@ -656,13 +815,6 @@ func loadConfig(path string) (config, error) {
 	if cfg.Console != nil && cfg.Console.Dir != "" && !filepath.IsAbs(cfg.Console.Dir) {
 		cfg.Console.Dir = filepath.Join(base, cfg.Console.Dir)
 	}
-
-	if cfg.ReporterToken == "" {
-		// Without this any host that can reach the API could write fabricated
-		// sessions into the audit record.
-		return cfg, fmt.Errorf("config %s: reporter_token is required", path)
-	}
-	return cfg, nil
 }
 
 // setupTokenPath decides where the one-time setup token goes.

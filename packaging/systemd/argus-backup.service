@@ -15,7 +15,7 @@ EnvironmentFile=-/etc/argus/control.env
 EnvironmentFile=-/etc/argus/backup.env
 Environment=ARGUS_BACKUP_DIR=/var/backups/argus
 Environment=ARGUS_BACKUP_KEEP=14
-ExecStart=/usr/bin/argus-control --config /etc/argus/control.yaml \
+ExecStart=/usr/bin/argus-control --config /var/lib/argus/control.yaml \
     backup run -out ${ARGUS_BACKUP_DIR} -keep ${ARGUS_BACKUP_KEEP}
 # A large bucket on a first run takes a while; a hung one should still end.
 TimeoutStartSec=6h

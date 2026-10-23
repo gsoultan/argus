@@ -23,8 +23,10 @@ You also need:
 - **PostgreSQL 13 or newer**, reachable from the control plane. Install the
   PostgreSQL client tools of the **same major version or newer** on the control
   plane host, because backups use `pg_dump` and it refuses an older client.
-- **TLS certificates** for the control plane and the gateway. Either from your
-  own CA or a public one; both work (see step 2).
+- **Optional: TLS certificates.** The control plane makes its own CA and
+  issues itself and your gateways certificates from it, so none are needed.
+  Bring your own from an internal or public CA if browsers should trust it
+  without installing that CA (step 2).
 - **Optional:** S3-compatible object storage for recordings. Without it,
   recordings stay on the gateways' and agents' disks.
 
@@ -48,8 +50,10 @@ Both commands must succeed. A package that fails either is not ours.
 The control plane, the gateway and `argus-verify` are also released for macOS
 and Windows, as `argus_<version>_darwin_<arch>.tar.gz` and
 `argus_<version>_windows_<arch>.zip`. These are archives, not packages: nothing
-installs a service for you, and the console comes in the archive's `console`
-folder, so set `console.dir` in `control.yaml` to where you unpacked it. Use
+installs a service for you. Run `argus-control` from the unpacked folder and
+it finds the console in the `console` folder beside it, serves its setup page,
+and writes `control.yaml` in the working directory (or wherever `--config`
+points). Use
 `shasum -a 256 -c` on macOS, or `Get-FileHash` in PowerShell, in place of
 `sha256sum`.
 
@@ -64,48 +68,22 @@ The Windows agent is not out yet, so Windows hosts cannot be recorded yet.
 
 ## 2. Certificates
 
-Every listener is TLS. Put the files in `/etc/argus/tls/` on each server:
+Nothing to do unless you want your own. On first start the control plane makes
+a small certificate authority in `/var/lib/argus/tls/`, issues its own server
+certificate from it, and renews that certificate before it expires. Gateways
+get theirs from **Settings > Gateways**, and agents learn to trust the CA when
+they enroll.
 
-| File | What it is |
-|---|---|
-| `server.crt`, `server.key` | this server's certificate. Its names must include the hostname browsers, gateways and agents use to reach it |
-| `ca.crt` | the CA that issued the gateway's client certificate |
-| `client.crt`, `client.key` | gateway only: the certificate it presents to the control plane |
-
-If you have no internal CA, a small one with `openssl` is enough:
-
-```sh
-# Once, somewhere safe. Keep ca.key offline.
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
-  -keyout ca.key -out ca.crt -days 3650 -subj "/CN=Argus internal CA"
-
-# For each server (repeat with -subj "/CN=argus-gateway-client" for client.crt).
-openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
-  -keyout server.key -out server.csr -subj "/CN=argus.example.com"
-openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-  -days 397 -out server.crt \
-  -extfile <(printf "subjectAltName=DNS:argus.example.com\nextendedKeyUsage=serverAuth,clientAuth")
-```
-
-Install them so the service account can read the private keys and nobody else
-can. The control plane and gateway refuse to start with a key that group or
-others can read:
-
-```sh
-sudo install -o root  -g argus -m 0640 server.crt ca.crt /etc/argus/tls/
-sudo install -o argus -g argus -m 0600 server.key /etc/argus/tls/
-# gateway only:
-sudo install -o root  -g argus -m 0640 client.crt /etc/argus/tls/
-sudo install -o argus -g argus -m 0600 client.key /etc/argus/tls/
-```
-
-Agents do not need a certificate. They prove who they are with a per-server
-credential (step 6), and they learn to trust an internal CA during enrollment.
+Browsers warn about that CA until you trust it. Download it from **Settings >
+Certificate > Download the CA** and add it to your operating system's or
+browser's trust store, or upload a certificate from your own CA or a public one
+under **Settings > Certificate**. Its names must include every address people,
+gateways and agents use to reach the control plane.
 
 ## 3. Control plane
 
 ```sh
-sudo apt install ./argus-control_<version>_linux_amd64.deb ./argus-verify_<version>_linux_amd64.deb   # or rpm -i / apk add
+sudo apt install ./argus-control_<version>_linux_amd64.deb ./argus-verify_<version>_linux_amd64.deb   # or dnf / apk
 ```
 
 Create the database and a role that owns it:
@@ -115,67 +93,71 @@ CREATE ROLE argus LOGIN PASSWORD '...';
 CREATE DATABASE argus OWNER argus;
 ```
 
-Edit `/etc/argus/control.env`. Every `CHANGE-ME` must go:
-
-```sh
-ARGUS_DATABASE_URL=postgres://argus:...@db.internal:5432/argus?sslmode=require
-ARGUS_SIGNING_SECRET=$(openssl rand -base64 48)   # paste the value, not the command
-ARGUS_REPORTER_TOKEN=$(openssl rand -base64 32)   # same; gateways use it
-```
-
-Then review `/etc/argus/control.yaml`. The parts that matter on day one:
-
-- `tls:` points at the files from step 2. `client_ca_file` is what makes a
-  gateway's client certificate required.
-- `console.gateway_url` is the address browsers use to reach the gateway, for
-  example `https://bastion.example.com:8081`. Until it is set, people can sign in
-  but the terminal cannot open.
-- `console_url` is the address people use to reach the console. Alerts link to it.
-
-Start it and check it:
+Start the control plane. With no configuration it serves only its setup page:
 
 ```sh
 sudo systemctl enable --now argus-control
-journalctl -u argus-control -n 20        # "database ready, migrations applied"
-curl -fsS --cacert /etc/argus/tls/ca.crt https://argus.example.com:8080/healthz
+journalctl -u argus-control -n 5          # "argus-control is not set up yet: finish setup in the browser"
+sudo cat /var/lib/argus/setup-token
+```
+
+Open `https://argus.example.com:8080`. Every address goes to `/setup`, which
+asks for, in order:
+
+1. **The setup token** printed above. It proves you have the host, so nobody
+   who merely finds the address can set Argus up. It works once.
+2. **The database**: server, port, name, user, password and whether to use
+   TLS. **Test connection** must succeed before you can go on. A database that
+   already holds an Argus deployment keeps its accounts.
+3. **Addresses**: where people open the console, where browsers reach a
+   gateway (leave empty without one), where servers reach the control plane if
+   that differs (behind a Cloudflare Tunnel, for one), the port, and whether
+   agents may use QUIC on it.
+4. **Certificate**: the control plane's own, or yours.
+5. **The first administrator**: email, name and password.
+
+**Finish setup** writes `/var/lib/argus/control.yaml`, the secrets beside it in
+`/var/lib/argus/secrets/` (the database URL, a fresh signing secret and
+reporter token, each readable by the `argus` account alone), and the
+certificates in `/var/lib/argus/tls/`. The control plane then restarts on
+them in the same process, and `control.installed` and `user.created` are the
+first entries in the audit log, with the address setup came from.
+
+Sign in and enrol a second factor when the console asks. Check it from the
+host:
+
+```sh
+curl -fsS --cacert /var/lib/argus/tls/ca.crt https://argus.example.com:8080/healthz   # {"status":"ok"}
 ```
 
 Migrations run on start. There is no separate migrate step.
 
-### The first administrator
+### Settings
 
-Nothing is seeded. On a fresh install the control plane offers a setup page,
-guarded by a one-time token it writes on its own host:
+Everything the control plane is configured with is under **Settings** in the
+console, for owners and administrators:
 
-```sh
-journalctl -u argus-control -n 20       # "no accounts yet: finish setup in the browser"
-sudo cat /var/lib/argus/setup-token
-```
+| Card | Holds |
+|---|---|
+| Addresses | console, gateway and fleet addresses; the listen, console-only and QUIC addresses; CORS origins |
+| Sign-in and limits | sign-in and ticket lifetimes, how long an agent may be silent, rate limits, trusted proxies, log level |
+| Database | where PostgreSQL is, with a connection test |
+| Certificate | what is served, upload a replacement, download the CA |
+| Object storage | the S3-compatible bucket recordings are copied to |
+| Session alerts | email, Telegram and Firebase push |
+| People | add accounts, disable and enable them |
+| Gateways | the secrets and certificates a new gateway needs |
 
-Open `https://argus.example.com:8080/setup` (the sign-in screen links to it),
-paste the token, and choose the administrator's email and password. The page
-works once: as soon as any account exists it closes for good, the token is
-deleted, and `user.created` is in the audit log with the address it came from.
-Disabling accounts later does not reopen it.
+Secrets are write-only: the page says whether one is set, never what it is.
+**Save and apply** writes the file and restarts the control plane on it within
+a few seconds: people stay signed in, and agents reconnect. If it cannot start
+on the new settings, an address already in use for example, it puts the
+previous ones back and the page says why. Every save is a `settings.changed`
+entry in the audit log naming what changed.
 
-The token is what keeps the page from belonging to whoever finds it first, so
-it is never printed in the log, only the path of the file that holds it. Each
-restart before setup is finished writes a new one. To turn the page off, set
-`web_setup: false` in `control.yaml`.
-
-Or create the first account on the host instead, which works whether or not
-the page is on:
-
-```sh
-sudo sh -c 'set -a; . /etc/argus/control.env; set +a
-  argus-control -config /etc/argus/control.yaml users add you@example.com --role admin'
-```
-
-The `set -a` line loads the secrets the config refers to, the same way systemd
-does for the service. The password is read without echo.
-
-Either way, sign in at `https://argus.example.com:8080` and enrol a second
-factor when the console asks.
+The commands on the host still work and need no environment to load:
+`sudo argus-control users list`, `users add`, `users disable`, `audit verify`
+and `backup run|verify` all read `/var/lib/argus/control.yaml`.
 
 ## 4. Backups
 
@@ -199,10 +181,9 @@ database (never the live one, which it refuses):
 
 ```sh
 createdb argus_restore_check
-sudo sh -c 'set -a; . /etc/argus/control.env; set +a
-  argus-control -config /etc/argus/control.yaml backup verify \
+sudo argus-control backup verify \
     -scratch-db postgres://argus:...@db.internal:5432/argus_restore_check \
-    /var/backups/argus/<timestamp>'
+    /var/backups/argus/<timestamp>
 ```
 
 It restores the dump, checks the audit chain end to end, checks the recorded
@@ -211,6 +192,9 @@ Copy `/var/backups/argus` off the host: a backup on the server it protects
 covers mistakes, not the loss of the server.
 
 ## 5. Gateway
+
+Skip this if every server runs an agent: sessions through an agent need no
+gateway. A gateway fronts servers that cannot run one.
 
 ```sh
 sudo apt install ./argus-gateway_<version>_linux_amd64.deb ./argus-verify_<version>_linux_amd64.deb
@@ -223,20 +207,27 @@ The second key is the gateway's SSH certificate authority, which signs a
 short-lived certificate per session for hosts set to `ca-certificate`. The
 gateway will not start without both keys.
 
-There is no inventory file to write: with `control.url` set, the console
-supplies the servers and who may reach them. `/etc/argus/ssh/authorized_keys`
-is only for native `ssh` clients (see `listen` below); until it lists someone,
-none can sign in, which is what you want while the listener is loopback-only.
+In the console, open **Settings > Gateways**, name the gateway, enter the host
+browsers will reach it at, and **Issue**. Download the files it offers and put
+them on the gateway:
 
-In `/etc/argus/gateway.env`, set the same `ARGUS_SIGNING_SECRET` and
-`ARGUS_REPORTER_TOKEN` as the control plane. In `/etc/argus/gateway.yaml`:
+```sh
+sudo install -o root  -g argus -m 0640 ca.crt client.crt server.crt /etc/argus/tls/
+sudo install -o argus -g argus -m 0600 client.key server.key /etc/argus/tls/
+sudo install -o root  -g argus -m 0600 gateway.env /etc/argus/gateway.env
+```
 
-- `control.url` is the control plane's address.
-- `web.allowed_origins` must include the console's origin, for example
-  `https://argus.example.com:8080`. A browser terminal from any other origin is
-  refused.
-- `listen` stays on `127.0.0.1:2222` unless you want native `ssh` clients. The
-  browser terminal does not need it.
+and replace the `control:` and `web:` blocks of `/etc/argus/gateway.yaml` with
+the lines the page shows. They point the gateway at the control plane, allow
+the console's origin, and use the files above. Delete the downloads once they
+are in place: they hold the shared secrets, and issuing them is in the audit
+log. Set the gateway address under **Settings > Addresses** if you did not
+during setup.
+
+There is no inventory file to write: the console supplies the servers and who
+may reach them. `/etc/argus/ssh/authorized_keys` is only for native `ssh`
+clients (see `listen` in `gateway.yaml`); until it lists someone, none can sign
+in, which is what you want while that listener is loopback-only.
 
 ```sh
 sudo systemctl enable --now argus-gateway
@@ -356,45 +347,42 @@ the console, and the fleet keeps reaching `8080` directly.
 
 ### Control plane
 
-In `/etc/argus/control.yaml`:
+Under **Settings**:
 
-```yaml
-listen: "0.0.0.0:8080"              # unchanged: gateways and agents, TLS and mTLS, QUIC
-console_listen: "127.0.0.1:8090"    # the console, for cloudflared only
-console_url: "https://argus.example.com"
+| Setting | Value |
+|---|---|
+| Addresses > Listen | `:8080`, unchanged: gateways and agents, TLS and mTLS, QUIC |
+| Addresses > Console listen | `127.0.0.1:8090`: the console, for cloudflared only |
+| Addresses > Console address | `https://argus.example.com` |
+| Addresses > Gateway address | `https://bastion.example.com` (see "The browser terminal" below) |
+| Addresses > Address servers use | `https://argus-internal.example.com:8080`: what servers enrol against |
+| Sign-in and limits > Trusted proxies | `127.0.0.1/32` and `::1/128` |
 
-console:
-  dir: "/usr/share/argus/console"
-  gateway_url: "https://bastion.example.com"         # see "The browser terminal" below
-  fleet_url: "https://argus-internal.example.com:8080"  # what servers enrol against
+Trusting loopback makes the control plane read each person's address from
+CF-Connecting-IP, which Cloudflare sets and a client cannot. Without it every
+sign-in, session and audit entry says 127.0.0.1, and one person's mistyped
+passwords lock everyone out of the console for an hour.
 
-rate_limit:
-  # cloudflared reaches the console over loopback. Trusting loopback makes the
-  # control plane read each person's address from CF-Connecting-IP, which
-  # Cloudflare sets and a client cannot. Without it every sign-in, session and
-  # audit entry says 127.0.0.1, and one person's mistyped passwords lock
-  # everyone out of the console for an hour.
-  trusted_proxies: ["127.0.0.1/32", "::1/128"]
-```
+Leave "Something in front terminates TLS" off. The console listener still
+serves TLS, so cookies are already `Secure` and HSTS is already sent, and
+turning it on would stop enrollment pinning the control plane's certificate.
 
-Leave `behind_tls_proxy` unset here. The console listener still serves TLS
-with `server.crt`, so cookies are already `Secure` and HSTS is already sent,
-and setting it would stop enrollment pinning the control plane's certificate.
-It is only for a control plane with no `tls:` block at all, which then cannot
-offer QUIC or check gateways' client certificates either.
+"Address servers use" matters because "Add a server" otherwise writes the
+address the console was opened at into the enrollment command, and agents
+cannot enrol through the tunnel. The control plane's own certificate is
+reissued to cover the new names when you save.
 
-`fleet_url` matters because "Add a server" otherwise writes the address the
-console was opened at into the enrollment command, and agents cannot enrol
-through the tunnel.
-
-Restart and check the new listener answers locally:
+**Save and apply**, then check the new listener answers locally:
 
 ```sh
-sudo systemctl restart argus-control
 journalctl -u argus-control -n 20     # "argus-control listening (TLS)" surface=console addr=127.0.0.1:8090
-curl -fsS --cacert /etc/argus/tls/ca.crt --resolve argus-internal.example.com:8090:127.0.0.1 \
+curl -fsS --cacert /var/lib/argus/tls/ca.crt --resolve argus-internal.example.com:8090:127.0.0.1 \
   https://argus-internal.example.com:8090/healthz
 ```
+
+A fresh install can be set up through the tunnel too: point cloudflared at
+`https://localhost:8080` with `originServerName` set to this host's name
+until setup is done, then at the console listener.
 
 ### cloudflared
 
@@ -416,7 +404,7 @@ ingress:
       # cloudflared refuses the internal certificate; noTLSVerify would work
       # too, and would let anything on this host answer for Argus.
       originServerName: argus-internal.example.com
-      caPool: /etc/argus/tls/ca.crt
+      caPool: /var/lib/argus/tls/ca.crt
 
   # The gateway's web listener, if it runs on this host. Otherwise run a
   # second cloudflared on the gateway with this entry.
@@ -429,9 +417,10 @@ ingress:
   - service: http_status:404
 ```
 
-`caPool` must be readable by the user cloudflared runs as; copy `ca.crt` next
-to the config if that is not root or a member of `argus`. If `server.crt` is
-from a public CA, drop both `originRequest` settings.
+`caPool` must be readable by the user cloudflared runs as; copy the CA (from
+**Settings > Certificate > Download the CA**) next to its config if that is not
+root. If the certificate is from a public CA, drop both `originRequest`
+settings.
 
 ```sh
 sudo cloudflared service install
@@ -507,25 +496,15 @@ install it in the same command as the server package, for example
 the control plane starts and only ever add; take a backup first anyway
 (`systemctl start argus-backup.service`).
 
-Your edited files in `/etc/argus` are kept. The package manager puts the new
-defaults beside them (`.dpkg-dist` or `.rpmnew`), so compare when you upgrade.
-In particular, a control plane installed before the console shipped has no
-`console:` block; add this to `control.yaml` to serve it:
-
-```yaml
-console:
-  dir: "/usr/share/argus/console"
-  gateway_url: "https://bastion.example.com:8081"
-```
-
-A control plane upgraded from an earlier release has no `tunnel:` block, so
-agents connect over HTTPS only. Add this to `control.yaml` for QUIC, and open
-the port for UDP:
-
-```yaml
-tunnel:
-  quic_listen: "0.0.0.0:8080"
-```
+Your edited files in `/etc/argus` are kept. A control plane installed before
+setup moved into the console goes on reading `/etc/argus/control.yaml` and the
+variables in `/etc/argus/control.env`, and every setting appears under
+**Settings**. The first save there writes `/var/lib/argus/control.yaml`, which
+is read from then on. Secrets already referenced from `control.env` stay
+there; a secret you change from Settings moves to `/var/lib/argus/secrets/`.
+A control plane from before the console shipped, or before agents' tunnels,
+gets both by saving Settings once: the console is found where the package
+installs it, and **Addresses > QUIC** turns the tunnel's UDP listener on.
 
 A gateway installed from this release keeps its state (recordings, host key
 pins, vaulted credentials) in `/var/lib/argus-gateway`, apart from the agent's
@@ -537,8 +516,8 @@ Restart `argus-agent` after upgrading it (`sudo systemctl restart
 argus-agent`). Until it restarts, each login waits about two seconds for an
 answer the old daemon does not send, then is recorded as before.
 
-A control plane that already has accounts never offers the setup page, so an
-upgrade changes nothing about how people sign in.
+A control plane that already has a configuration and accounts never offers the
+setup page, so an upgrade changes nothing about how people sign in.
 
 Agents that report with the shared reporter token keep working. Move them to
 their own credential by enrolling each one (step 6) and removing

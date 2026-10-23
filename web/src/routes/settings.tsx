@@ -18,6 +18,7 @@ import { isConfigured } from '~/lib/live'
 import { FS, SP } from '~/theme'
 import type { GatewayPolicy, PolicyKey } from '~/types/domain'
 import { guard } from '~/lib/guard'
+import { ControlSettings } from '~/components/ControlSettings'
 
 export const Route = createFileRoute('/settings')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
@@ -154,7 +155,7 @@ function Settings() {
     <Box>
       <PageHeader
         title="Settings"
-        description="Gateway policy. Defaults are the safe choice — each toggle says what loosening it costs you."
+        description="Gateway policy, and everything the control plane is configured with. Defaults are the safe choice — each toggle says what loosening it costs you."
         actions={
           changes.length > 0 ? (
             <>
@@ -300,6 +301,12 @@ TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
             </Stack>
           </Grid.Col>
         </Grid>
+
+        {/* The control plane's own configuration: what used to be edited in
+            control.yaml and control.env by hand. Admins and owners only, and
+            only against a real control plane -- there is no fixture of a
+            configuration file worth pretending to edit. */}
+        {canEdit && isConfigured() && <ControlSettings />}
       </PageBody>
 
       <Modal

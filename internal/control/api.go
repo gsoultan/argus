@@ -91,6 +91,10 @@ type API struct {
 	// the API alone, as before it existed. See console.go.
 	Console http.Handler
 
+	// Settings reads and writes the configuration file for the console's
+	// Settings page. Nil leaves the page read-only; see settings_routes.go.
+	Settings SettingsBackend
+
 	// setup is the first-run page's one-time token; see setup.go.
 	setup setupGate
 	// proxyNotice logs an ignored proxy once; see noticeUntrustedProxy.
@@ -200,6 +204,13 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/recording-scope", a.putRecordingScope)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
+	mux.HandleFunc("POST /api/v1/users", a.postAccount)
+	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
+	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
+	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
+	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
+	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
+	mux.HandleFunc("POST /api/v1/settings/gateway-credentials", a.postGatewayCredentials)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)

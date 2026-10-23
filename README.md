@@ -138,8 +138,8 @@ so a half-built backend never breaks `make dev` for someone working on the UI.
 ## Installing
 
 **[docs/install.md](docs/install.md) is the production install, step by step:**
-certificates, the database, the first administrator, backups, the gateway,
-enrolling agents and upgrading. What follows is the reference behind it.
+the database, first-run setup in the browser, backups, the gateway, enrolling
+agents and upgrading. What follows is the reference behind it.
 
 Linux only — the gateway and control plane are servers, and the agent has to
 read another user's `authorized_keys` and own recordings the recorded user
@@ -195,13 +195,41 @@ verifier). Unpack and run the binaries directly; nothing installs a service.
 To check recordings from a workstation, `argus-verify` from the archive is all
 you need.
 
-**Nothing starts on install.** These services need certificates, secrets and an
-inventory first, and a package that starts a half-configured privileged-access
-gateway fails in the worst possible place. Configure, then:
+**Nothing starts on install.** Then:
 
 ```sh
-sudo systemctl enable --now argus-agent
+sudo systemctl enable --now argus-control
 ```
+
+and open `https://<that host>:8080`. With no configuration yet, the control
+plane serves only its setup page and sends every address there. The page asks
+for the one-time token the control plane wrote on its host
+(`sudo cat /var/lib/argus/setup-token`), the PostgreSQL database, the
+addresses people and servers use, a certificate if you have one, and the first
+administrator. The control plane writes its own configuration, secrets and
+certificates from that, and starts. There is no YAML or env file to edit.
+
+Every setting after that is on the console's **Settings** page, for owners and
+administrators: addresses and listeners, TLS certificates, the database, rate
+limits and session lifetimes, object storage, session alerts (email, Telegram,
+push), the people who can sign in, and the credentials a gateway needs. Saving
+restarts the control plane on the new settings within a few seconds, and if it
+cannot start on them it puts the previous ones back and says why. Every change
+is in the audit log.
+
+Where things live, for backups and the curious:
+
+| Path | Holds |
+|---|---|
+| `/var/lib/argus/control.yaml` | the configuration, written by setup and Settings |
+| `/var/lib/argus/secrets/` | the database URL, signing secret, reporter token and alert credentials, one owner-only file each |
+| `/var/lib/argus/tls/` | the control plane's own CA and server certificate, renewed automatically |
+
+A control plane installed before this keeps reading `/etc/argus/control.yaml`
+until the first save from Settings moves its settings across.
+
+Agents enroll from **Servers > Add a server**, which hands you the one command
+to run on each server; then `sudo systemctl enable --now argus-agent`.
 
 Uninstalling leaves `/var/lib/argus` in place. Removing the software must never
 destroy the evidence it produced — that is precisely what someone covering
@@ -301,9 +329,9 @@ argus-verify --quiet session.cast "$HEAD" || alert "recording $ID failed verific
 Two related checks live in `argus-control` rather than here, because they need
 the database:
 
-- `argus-control -config /etc/argus/control.yaml audit verify` recomputes the
-  audit log's hash chain and reports where it breaks, if it does.
-- `argus-control -config /etc/argus/control.yaml backup verify` checks a backup
+- `sudo argus-control audit verify` recomputes the audit log's hash chain and
+  reports where it breaks, if it does.
+- `sudo argus-control backup verify` checks a backup
   taken by `backup run` by restoring it into a scratch database (`-scratch-db`),
   checking the audit chain and its recorded head, and checking that every
   recording is present and verifies. See

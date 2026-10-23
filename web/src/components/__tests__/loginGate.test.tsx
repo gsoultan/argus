@@ -91,16 +91,49 @@ describe('LoginGate', () => {
     expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
   })
 
-  it('sends a fresh install to /setup when the control plane offers it', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json(401, {
+  // First run goes straight to the setup page rather than to a sign-in form
+  // nobody can use, and the address follows so a reload stays there.
+  it('sends a fresh install straight to /setup when the control plane offers it', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.endsWith('/auth/setup')
+      ? json(200, { complete: false, available: true, tokenFile: '/var/lib/argus/setup-token' })
+      : json(401, {
         authenticated: false, passwordEnabled: true, accountsExist: false, setupAvailable: true,
-      }),
-    ))
+      }))))
     await renderGate()
 
-    const link = await screen.findByRole('link', { name: /set up argus/i })
-    expect(link).toHaveAttribute('href', '/setup')
+    expect(await screen.findByLabelText(/setup token/i)).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/setup')
+    expect(screen.queryByRole('button', { name: /^sign in$/i })).not.toBeInTheDocument()
+    window.history.pushState({}, '', '/')
+  })
+
+  // No configuration at all: the control plane serves only the setup page,
+  // and the page sets up everything, starting with the token.
+  it('walks a control plane with no configuration through installing it', async () => {
+    window.history.pushState({}, '', '/assets')
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.endsWith('/auth/setup')
+      ? json(200, { complete: false, available: true, mode: 'install', port: 8080, hostname: 'argus.example.com',
+        tokenFile: '/var/lib/argus/setup-token' })
+      : json(401, {
+        authenticated: false, passwordEnabled: true, accountsExist: false, setupAvailable: true,
+        installing: true,
+      }))))
+    await renderGate()
+
+    expect(await screen.findByText(/has no configuration yet/i)).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/setup')
+    for (const step of ['Setup token', 'Database', 'Addresses', 'Certificate', 'Administrator']) {
+      expect(screen.getByText(new RegExp(`^\\d\\. ${step}$`))).toBeInTheDocument()
+    }
+    const next = screen.getByRole('button', { name: /next/i })
+    expect(next).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/setup token/i), { target: { value: 'abc' } })
+    expect(next).toBeEnabled()
+    fireEvent.click(next)
+    expect(await screen.findByRole('button', { name: /test connection/i })).toBeInTheDocument()
+    // Not past the database until it has answered.
+    expect(screen.getByRole('button', { name: /next/i })).toBeDisabled()
+    window.history.pushState({}, '', '/')
   })
 
   describe('at /setup', () => {

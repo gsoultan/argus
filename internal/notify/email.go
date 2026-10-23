@@ -16,14 +16,14 @@ import (
 type EmailConfig struct {
 	// Host and Port of the SMTP server. Port 465 is implicit TLS; any other
 	// port must offer STARTTLS, unless the server is on this machine.
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host string `yaml:"host,omitempty"`
+	Port int    `yaml:"port,omitempty"`
 	// Username and Password are optional; with neither, no AUTH is sent.
 	// Put the password in the environment or a file: "${file:/path}".
-	Username string   `yaml:"username"`
-	Password string   `yaml:"password"`
-	From     string   `yaml:"from"`
-	To       []string `yaml:"to"`
+	Username string   `yaml:"username,omitempty"`
+	Password string   `yaml:"password,omitempty"`
+	From     string   `yaml:"from,omitempty"`
+	To       []string `yaml:"to,omitempty"`
 }
 
 // Email sends alerts through an SMTP server.

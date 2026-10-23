@@ -90,7 +90,18 @@ function LoginGate({ children }: { children: React.ReactNode }) {
   if (!identity.authenticated) {
     // First-run setup is the one page nobody can be signed in for. Read from
     // the location rather than the router: this gate sits above the routes.
-    if (window.location.pathname === '/setup' && !identity.unreachable) {
+    if (identity.unreachable) {
+      return <SignIn identity={identity} onSignedIn={handleSignedIn} />
+    }
+    // First run sends everyone to /setup: a control plane with no
+    // configuration has nothing else to show, and one with no accounts has
+    // nobody to sign in. The address changes too, so a reload stays here.
+    const firstRun = identity.installing ||
+      (identity.setupAvailable && identity.accountsExist === false)
+    if (firstRun && window.location.pathname !== '/setup') {
+      window.history.replaceState(null, '', '/setup')
+    }
+    if (window.location.pathname === '/setup') {
       return <Setup />
     }
     return <SignIn identity={identity} onSignedIn={handleSignedIn} />
