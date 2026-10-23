@@ -159,7 +159,6 @@ func (i *installer) Install(ctx context.Context, in control.InstallRequest, clie
 		return control.InstallResult{}, control.BadInput(err)
 	}
 	consoleURL := strings.TrimRight(strings.TrimSpace(in.ConsoleURL), "/")
-	gatewayURL := strings.TrimRight(strings.TrimSpace(in.GatewayURL), "/")
 	fleetURL := strings.TrimRight(strings.TrimSpace(in.FleetURL), "/")
 
 	pki := i.loc.pki()
@@ -191,7 +190,7 @@ func (i *installer) Install(ctx context.Context, in control.InstallRequest, clie
 		}
 	}
 
-	cfg, err := i.config(in, dsn, consoleURL, gatewayURL, fleetURL)
+	cfg, err := i.config(in, dsn, consoleURL, fleetURL)
 	if err != nil {
 		return control.InstallResult{}, err
 	}
@@ -226,7 +225,7 @@ func (i *installer) Install(ctx context.Context, in control.InstallRequest, clie
 
 // config is a fresh install's configuration. Everything the page did not ask
 // is a default, and every one of them is on the Settings page afterwards.
-func (i *installer) config(in control.InstallRequest, dsn, consoleURL, gatewayURL, fleetURL string) (config, error) {
+func (i *installer) config(in control.InstallRequest, dsn, consoleURL, fleetURL string) (config, error) {
 	dir := i.loc.secretsDir()
 	signing, err := randomSecret(48)
 	if err != nil {
@@ -255,11 +254,9 @@ func (i *installer) config(in control.InstallRequest, dsn, consoleURL, gatewayUR
 		ReporterToken: refs["reporter-token"],
 		TLS: &tlsConfig{
 			CertFile: pki.ServerCert(), KeyFile: pki.ServerKey(),
-			// Gateways prove which host they are with a certificate from this
-			// CA, which the Settings page issues them.
 			ClientCAFile: pki.CACert(),
 		},
-		Console: &consoleConfig{Dir: i.consoleDir, GatewayURL: gatewayURL, FleetURL: fleetURL},
+		Console: &consoleConfig{Dir: i.consoleDir, FleetURL: fleetURL},
 		RateLimit: &rateLimitConfig{
 			LoginPerMinute: 20, FailuresPerHour: 20, TicketsPerMinute: 30,
 		},

@@ -138,8 +138,8 @@ so a half-built backend never breaks `make dev` for someone working on the UI.
 ## Installing
 
 **[docs/install.md](docs/install.md) is the production install, step by step:**
-the database, first-run setup in the browser, backups, the gateway, enrolling
-agents and upgrading. What follows is the reference behind it.
+the database, first-run setup in the browser, backups, enrolling agents and
+upgrading. What follows is the reference behind it.
 
 Linux only — the gateway and control plane are servers, and the agent has to
 read another user's `authorized_keys` and own recordings the recorded user
@@ -212,7 +212,8 @@ certificates from that, and starts. There is no YAML or env file to edit.
 Every setting after that is on the console's **Settings** page, for owners and
 administrators: addresses and listeners, TLS certificates, the database, rate
 limits and session lifetimes, object storage, session alerts (email, Telegram,
-push), the people who can sign in, and the credentials a gateway needs. Saving
+push), and the people who can sign in. Each section fits on one screen, and
+edits in several sections go out in one save. Saving
 restarts the control plane on the new settings within a few seconds, and if it
 cannot start on them it puts the previous ones back and says why. Every change
 is in the audit log.
@@ -228,8 +229,9 @@ Where things live, for backups and the curious:
 A control plane installed before this keeps reading `/etc/argus/control.yaml`
 until the first save from Settings moves its settings across.
 
-Agents enroll from **Servers > Add a server**, which hands you the one command
-to run on each server; then `sudo systemctl enable --now argus-agent`.
+Every server people log in to needs the agent: it opens, records and refuses
+sessions there. Agents enroll from **Servers > Add a server**, which hands you
+the one command to run on each server; then `sudo systemctl enable --now argus-agent`.
 
 Uninstalling leaves `/var/lib/argus` in place. Removing the software must never
 destroy the evidence it produced — that is precisely what someone covering

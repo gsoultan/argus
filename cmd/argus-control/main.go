@@ -434,10 +434,6 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		// Assigned only when built: a nil *consoleHandler in the interface
 		// field would be a non-nil handler that panics.
 		api.Console = h
-		if cfg.Console.GatewayURL == "" {
-			log.Warn("console.gateway_url is not set",
-				"detail", "the console's terminal, live view and termination cannot reach the gateway until it is set")
-		}
 		log.Info("serving the console", "dir", cfg.Console.Dir)
 	}
 	api.SetThrottles(throttles)

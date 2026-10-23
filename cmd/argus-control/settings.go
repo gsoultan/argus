@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -383,92 +382,6 @@ func (b *settingsBackend) applyTLS(c *config, in control.Settings) error {
 	}
 	c.TLS.CertFile, c.TLS.KeyFile = pki.ServerCert(), pki.ServerKey()
 	return nil
-}
-
-var gatewayName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,62}$`)
-
-func (b *settingsBackend) GatewayCredentials(name, host string) (control.GatewayCredentials, error) {
-	name = strings.ToLower(strings.TrimSpace(name))
-	if name == "" {
-		name = "argus-gateway"
-	}
-	if !gatewayName.MatchString(name) {
-		return control.GatewayCredentials{}, control.BadInput(errors.New(
-			"name the gateway with letters, digits, dots and dashes, such as bastion-1"))
-	}
-	c := b.cfg
-	if c.TLS == nil {
-		return control.GatewayCredentials{}, control.BadInput(errors.New(
-			"this control plane serves no TLS, so there is nothing to issue a gateway"))
-	}
-	pki := b.loc.pki()
-	if !pki.HasCAKey() {
-		return control.GatewayCredentials{}, control.BadInput(errors.New(
-			"this control plane does not hold a certificate authority's key, so it cannot issue " +
-				"certificates; reissue its certificate under Certificate first"))
-	}
-	mtls := c.TLS.ClientCAFile != ""
-	if mtls && filepath.Clean(c.TLS.ClientCAFile) != pki.CACert() {
-		return control.GatewayCredentials{}, control.BadInput(errors.New(
-			"gateways are checked against a client CA this control plane did not make, " +
-				"so a certificate from it would be refused; issue one from that CA instead"))
-	}
-	gatewayURL := ""
-	if c.Console != nil {
-		gatewayURL = c.Console.GatewayURL
-	}
-	host = strings.TrimSpace(host)
-	if host == "" {
-		if hs := urlHosts(gatewayURL); len(hs) > 0 {
-			host = hs[0]
-		}
-	}
-	if host == "" {
-		return control.GatewayCredentials{}, control.BadInput(errors.New(
-			"enter the name browsers will reach the gateway at, or set the gateway address first"))
-	}
-
-	const validity = 397 * 24 * time.Hour
-	out := control.GatewayCredentials{Name: name, ExpiresAt: time.Now().Add(validity)}
-	if mtls {
-		cert, key, err := pki.IssueClient(name, validity)
-		if err != nil {
-			return out, err
-		}
-		out.ClientCert, out.ClientKey = string(cert), string(key)
-	}
-	cert, key, err := pki.IssueServerPEM([]string{host, name})
-	if err != nil {
-		return out, err
-	}
-	out.ServerCert, out.ServerKey = string(cert), string(key)
-	ca, err := os.ReadFile(pki.CACert())
-	if err != nil {
-		return out, err
-	}
-	out.CACert = string(ca)
-
-	out.ControlURL = c.ConsoleURL
-	if c.Console != nil && c.Console.FleetURL != "" {
-		out.ControlURL = c.Console.FleetURL
-	}
-	out.Env = "ARGUS_SIGNING_SECRET=" + c.SigningSecret + "\nARGUS_REPORTER_TOKEN=" + c.ReporterToken + "\n"
-	origin := c.ConsoleURL
-	if u, err := control.CheckURL(c.ConsoleURL, "console", false); err == nil {
-		origin = u.Scheme + "://" + u.Host
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "control:\n  url: %q\n  token: \"${ARGUS_REPORTER_TOKEN}\"\n", out.ControlURL)
-	sb.WriteString("  spool: \"/var/lib/argus-gateway/report-spool.jsonl\"\n")
-	sb.WriteString("  ca_file: \"/etc/argus/tls/ca.crt\"\n")
-	if mtls {
-		sb.WriteString("  cert_file: \"/etc/argus/tls/client.crt\"\n  key_file: \"/etc/argus/tls/client.key\"\n")
-	}
-	fmt.Fprintf(&sb, "web:\n  listen: \"0.0.0.0:8081\"\n  allowed_origins:\n    - %q\n", origin)
-	sb.WriteString("  signing_secret: \"${ARGUS_SIGNING_SECRET}\"\n")
-	sb.WriteString("  tls:\n    cert_file: \"/etc/argus/tls/server.crt\"\n    key_file: \"/etc/argus/tls/server.key\"\n")
-	out.Config = sb.String()
-	return out, nil
 }
 
 func (b *settingsBackend) TestDatabase(ctx context.Context, d control.DatabaseSettings) (control.DatabaseCheck, error) {

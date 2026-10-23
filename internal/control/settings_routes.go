@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gsoultan/argus/internal/tlsconfig"
 )
@@ -142,24 +141,6 @@ type TLSSettings struct {
 	Reissue bool `json:"reissue,omitempty"`
 }
 
-// GatewayCredentials is everything a new gateway needs to report to this
-// control plane, for the administrator to put on it.
-type GatewayCredentials struct {
-	Name string `json:"name"`
-	// Env is the contents of /etc/argus/gateway.env.
-	Env        string `json:"env"`
-	ControlURL string `json:"controlUrl"`
-	CACert     string `json:"caCert"`
-	ClientCert string `json:"clientCert,omitempty"`
-	ClientKey  string `json:"clientKey,omitempty"`
-	// ServerCert and ServerKey are for the gateway's own web listener.
-	ServerCert string `json:"serverCert,omitempty"`
-	ServerKey  string `json:"serverKey,omitempty"`
-	// Config is the part of gateway.yaml that points it here.
-	Config    string    `json:"config"`
-	ExpiresAt time.Time `json:"expiresAt"`
-}
-
 // SettingsBackend reads and writes the configuration file. The binary
 // implements it, because it alone knows the file's shape and where it lives.
 type SettingsBackend interface {
@@ -168,7 +149,6 @@ type SettingsBackend interface {
 	// did, the control plane reloads itself shortly after.
 	SaveSettings(ctx context.Context, in Settings, actor string) ([]string, error)
 	TestDatabase(ctx context.Context, d DatabaseSettings) (DatabaseCheck, error)
-	GatewayCredentials(name, host string) (GatewayCredentials, error)
 }
 
 func (a *API) admin(w http.ResponseWriter, r *http.Request, what string) (string, bool) {
@@ -250,43 +230,4 @@ func (a *API) postTestDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, check)
-}
-
-func (a *API) postGatewayCredentials(w http.ResponseWriter, r *http.Request) {
-	actor, ok := a.admin(w, r, "issuing gateway credentials")
-	if !ok {
-		return
-	}
-	var in struct {
-		Name string `json:"name"`
-		// Host is the name browsers reach the gateway's web listener at.
-		Host string `json:"host"`
-	}
-	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	creds, err := a.Settings.GatewayCredentials(in.Name, in.Host)
-	if err != nil {
-		var bad *InputError
-		if errors.As(err, &bad) {
-			writeErr(w, http.StatusBadRequest, bad.Error())
-			return
-		}
-		a.fail(w, "gateway credentials", err)
-		return
-	}
-	// The shared secrets went to a browser. That is what installing a gateway
-	// takes, and exactly what an investigation would want to find.
-	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
-		Action: "gateway.credentials_issued", Severity: "warn", ActorEmail: actor,
-		Target: creds.Name,
-		Detail: "Downloaded the credentials for gateway " + creds.Name +
-			": the reporter token, the signing secret and a client certificate valid until " +
-			creds.ExpiresAt.UTC().Format(time.RFC3339) + ".",
-	}); aerr != nil {
-		a.log.Error("audit append failed", "error", aerr)
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, creds)
 }

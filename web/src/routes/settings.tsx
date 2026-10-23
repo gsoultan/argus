@@ -1,14 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ComponentType } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Code, Grid, Group, List, Modal, Skeleton, Stack,
-  Switch, Text, ThemeIcon,
+  Alert, Badge, Box, Button, Card, Code, Group, List, Modal, NavLink, Select, SimpleGrid,
+  Skeleton, Stack, Switch, Text, ThemeIcon,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconDeviceDesktop, IconInfoCircle, IconLock, IconNetwork,
-  IconShieldLock, IconTerminal2,
+  IconAlertTriangle, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock, IconNetwork,
+  IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -18,11 +18,18 @@ import { isConfigured } from '~/lib/live'
 import { FS, SP } from '~/theme'
 import type { GatewayPolicy, PolicyKey } from '~/types/domain'
 import { guard } from '~/lib/guard'
-import { ControlSettings } from '~/components/ControlSettings'
+import {
+  CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
+  type ControlSettingsState,
+} from '~/components/ControlSettings'
 
 export const Route = createFileRoute('/settings')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: Settings,
+  // Which section is open, so a reload or a shared link lands on it.
+  validateSearch: (s: Record<string, unknown>): { section?: string } => ({
+    ...(typeof s.section === 'string' && s.section ? { section: s.section } : {}),
+  }),
   loader: ({ context }) => context.queryClient.ensureQueryData(policyQuery()),
 })
 
@@ -98,11 +105,29 @@ const ALL_FIELDS = [...SSH_POLICY, ...RECORDING_POLICY]
 /** Roles the control plane lets change gateway policy. */
 const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
+type PolicySectionId = 'channels' | 'recording' | 'hosts'
+type SectionId = PolicySectionId | ControlSectionId
+
+interface NavItem {
+  id: SectionId
+  label: string
+  icon: ComponentType<IconProps>
+  changed: boolean
+}
+
+const POLICY_SECTIONS: { id: PolicySectionId; label: string; icon: ComponentType<IconProps> }[] = [
+  { id: 'channels', label: 'SSH channels', icon: IconTerminal2 },
+  { id: 'recording', label: 'Recording', icon: IconLock },
+  { id: 'hosts', label: 'Hosts and trust', icon: IconShieldLock },
+]
+
 function Settings() {
   const { data: saved } = useQuery(policyQuery())
   const { data: me } = useQuery(meQuery())
   const savePolicy = useSavePolicy()
   const [confirmOpen, confirm] = useDisclosure(false)
+  const { section } = Route.useSearch()
+  const navigate = useNavigate()
 
   /**
    * Edits live here until they are saved.
@@ -117,6 +142,12 @@ function Settings() {
   const current = draft ?? saved ?? null
 
   const canEdit = me ? CAN_EDIT_POLICY.has(me.role) : false
+  // The control plane's own configuration: what used to be edited in
+  // control.yaml and control.env by hand. Admins and owners only, and only
+  // against a real control plane -- there is no fixture of a configuration
+  // file worth pretending to edit.
+  const showControl = canEdit && isConfigured()
+  const ctl = useControlSettings(showControl)
 
   const changes = useMemo(() => {
     if (!saved || !draft) return []
@@ -124,6 +155,19 @@ function Settings() {
   }, [saved, draft])
 
   const loosening = changes.filter((f) => f.riskOn === Boolean(draft?.[f.key]))
+
+  const policyItems: NavItem[] = POLICY_SECTIONS.map((p) => ({
+    ...p,
+    changed: changes.some((f) => (p.id === 'channels' ? SSH_POLICY : p.id === 'recording' ? RECORDING_POLICY : []).includes(f)),
+  }))
+  const controlItems: NavItem[] = showControl
+    ? CONTROL_SECTIONS.map((c) => ({ id: c.id, label: c.label, icon: c.icon, changed: ctl.changedSections.includes(c) }))
+    : []
+  const items = [...policyItems, ...controlItems]
+  const active: SectionId = items.find((i) => i.id === section)?.id ?? 'channels'
+  const open = (id: string | null) => {
+    if (id) void navigate({ to: '/settings', search: { section: id }, replace: true })
+  }
 
   const set = (key: PolicyKey, value: boolean) => {
     if (!saved) return
@@ -151,11 +195,13 @@ function Settings() {
     )
   }
 
+  const policyDisabled = !canEdit || savePolicy.isPending
+
   return (
     <Box>
       <PageHeader
         title="Settings"
-        description="Gateway policy, and everything the control plane is configured with. Defaults are the safe choice — each toggle says what loosening it costs you."
+        description="Session policy, and everything the control plane is configured with. Defaults are the safe choice."
         actions={
           changes.length > 0 ? (
             <>
@@ -176,7 +222,7 @@ function Settings() {
 
       <PageBody>
         {!canEdit && me && (
-          <Alert color="slate" icon={<IconInfoCircle size={16} />} title="Read-only">
+          <Alert color="slate" icon={<IconInfoCircle size={16} />} title="Read-only" p="xs">
             <Text size={FS.body} lh={1.5}>
               Gateway policy is changed by an owner or admin. Your role is{' '}
               <Mono>{me.role}</Mono>, so these are shown as configured rather than as
@@ -197,6 +243,7 @@ function Settings() {
             color="amber"
             icon={<IconAlertTriangle size={16} />}
             title="Not connected to a control plane"
+            p="xs"
           >
             <Text size={FS.body} lh={1.5}>
               Changes are held in this browser session only and reach no gateway. Point{' '}
@@ -206,9 +253,32 @@ function Settings() {
           </Alert>
         )}
 
-        <Grid gap="sm">
-          <Grid.Col span={{ base: 12, lg: 7 }}>
-            <Stack gap="sm">
+        {/* One section at a time, picked from the list, so no section is
+            further down a long page than the screen. */}
+        <Group align="flex-start" gap="lg" wrap="nowrap">
+          <Box component="nav" aria-label="Settings sections" w={210} visibleFrom="md" style={{ flexShrink: 0 }}>
+            <SectionNav title="Session policy" items={policyItems} active={active} onOpen={open} />
+            {controlItems.length > 0 && (
+              <SectionNav title="Control plane" items={controlItems} active={active} onOpen={open} />
+            )}
+          </Box>
+
+          <Stack gap="sm" style={{ flex: 1, minWidth: 0 }} maw={960}>
+            <Select
+              hiddenFrom="md"
+              aria-label="Settings section"
+              allowDeselect={false}
+              value={active}
+              onChange={open}
+              data={[
+                { group: 'Session policy', items: policyItems.map(navOption) },
+                ...(controlItems.length > 0
+                  ? [{ group: 'Control plane', items: controlItems.map(navOption) }]
+                  : []),
+              ]}
+            />
+
+            {active === 'channels' && (
               <PolicyCard
                 icon={IconTerminal2}
                 title="SSH channel policy"
@@ -224,89 +294,46 @@ function Settings() {
                 fields={SSH_POLICY}
                 policy={current}
                 saved={saved ?? null}
-                disabled={!canEdit || savePolicy.isPending}
+                disabled={policyDisabled}
                 onChange={set}
               />
-              <PolicyCard
-                icon={IconLock}
-                title="Recording & retention"
-                fields={RECORDING_POLICY}
-                policy={current}
-                saved={saved ?? null}
-                disabled={!canEdit || savePolicy.isPending}
-                onChange={set}
-              />
-            </Stack>
-          </Grid.Col>
+            )}
 
-          <Grid.Col span={{ base: 12, lg: 5 }}>
-            <Stack gap="sm">
-              <SectionCard
-                title="Gateway endpoint"
-                icon={IconNetwork}
-                iconColor="sky"
-                description="Users connect with their normal client. The target is encoded in the username, so there is nothing to install and existing tooling keeps working."
-              >
-                <Code block fz={FS.digest}>
-                  {`ssh ops:db-01@argus.northwind.id
-scp report.csv ops:db-01@argus.northwind.id:/tmp/
-sftp ops:db-01@argus.northwind.id`}
-                </Code>
-              </SectionCard>
+            {active === 'recording' && (
+              <>
+                <PolicyCard
+                  icon={IconLock}
+                  title="Recording & retention"
+                  fields={RECORDING_POLICY}
+                  policy={current}
+                  saved={saved ?? null}
+                  disabled={policyDisabled}
+                  onChange={set}
+                />
+                <Alert color="amber" icon={<IconAlertTriangle size={16} />} p="xs">
+                  <Text size={FS.body} lh={1.5}>
+                    Command detection from PTY output is a heuristic, and <Mono>argus</Mono> labels
+                    it as such everywhere it appears. Do not present it to an auditor as proof of
+                    what ran — that is what the eBPF tier is for.
+                  </Text>
+                </Alert>
+              </>
+            )}
 
-              <SectionCard
-                title="Certificate authority"
-                icon={IconShieldLock}
-                iconColor="teal"
-                description="Add this to a host to move it off standing credentials. Argus then mints a short-lived certificate per session and there is nothing left in the vault to steal for that host."
-              >
-                <Code block fz={FS.micro}>
-                  {`# /etc/ssh/sshd_config
-TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
-                </Code>
-              </SectionCard>
+            {active === 'hosts' && <HostsAndTrust />}
 
-              <Alert color="sky" icon={<IconInfoCircle size={16} />} title="Threat model, stated plainly">
-                <Text size={FS.body} lh={1.55}>
-                  Argus terminates SSH, so the gateway holds session plaintext in memory. That is
-                  the price of working against hosts with no agent installed. Treat gateway nodes
-                  as your highest-value asset: no shared tenancy, no third-party agents, hardware
-                  keys for the vault, and the audit log replicated somewhere the gateway cannot
-                  write.
-                </Text>
-              </Alert>
-
-              <Card style={{ borderStyle: 'dashed' }}>
-                <Group gap={SP.cozy} mb={SP.snug}>
-                  <ThemeIcon variant="light" color="slate" size={22} radius="sm">
-                    <IconDeviceDesktop size={13} />
-                  </ThemeIcon>
-                  <Text fw={600} size="sm">Windows RDP</Text>
-                  <Badge size="xs" color="slate" variant="outline">phase 3</Badge>
-                </Group>
-                <Text size={FS.micro} c="dimmed" lh={1.5}>
-                  RDP runs as a separate service rather than inside the SSH gateway — different
-                  protocol, different recording pipeline, different failure modes. Linux SSH gets
-                  finished first.
-                </Text>
-              </Card>
-
-              <Alert color="amber" icon={<IconAlertTriangle size={16} />}>
-                <Text size={FS.body} lh={1.5}>
-                  Command detection from PTY output is a heuristic, and <Mono>argus</Mono> labels
-                  it as such everywhere it appears. Do not present it to an auditor as proof of
-                  what ran — that is what the eBPF tier is for.
-                </Text>
-              </Alert>
-            </Stack>
-          </Grid.Col>
-        </Grid>
-
-        {/* The control plane's own configuration: what used to be edited in
-            control.yaml and control.env by hand. Admins and owners only, and
-            only against a real control plane -- there is no fixture of a
-            configuration file worth pretending to edit. */}
-        {canEdit && isConfigured() && <ControlSettings />}
+            {showControl && controlItems.some((c) => c.id === active) && (
+              <>
+                <ControlSaveBar ctl={ctl} />
+                {ctl.loading ? (
+                  <Skeleton h={240} />
+                ) : (
+                  <ControlSection id={active as ControlSectionId} ctl={ctl} />
+                )}
+              </>
+            )}
+          </Stack>
+        </Group>
       </PageBody>
 
       <Modal
@@ -369,6 +396,115 @@ TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
   )
 }
 
+const navOption = (i: NavItem) => ({ value: i.id, label: i.changed ? `${i.label} (unsaved)` : i.label })
+
+function SectionNav({ title, items, active, onOpen }: {
+  title: string
+  items: NavItem[]
+  active: SectionId
+  onOpen: (id: SectionId) => void
+}) {
+  return (
+    <Box mb="md">
+      <Text size={FS.micro} c="dimmed" fw={600} tt="uppercase" px="sm" mb={SP.tight}>
+        {title}
+      </Text>
+      {items.map((i) => (
+        <NavLink
+          key={i.id}
+          component="button"
+          type="button"
+          label={i.label}
+          active={i.id === active}
+          variant="light"
+          leftSection={<i.icon size={15} />}
+          rightSection={i.changed ? <Badge size="xs" color="amber" variant="outline">unsaved</Badge> : null}
+          onClick={() => onOpen(i.id)}
+          aria-current={i.id === active ? 'page' : undefined}
+          style={{ borderRadius: 'var(--mantine-radius-sm)' }}
+        />
+      ))}
+    </Box>
+  )
+}
+
+/** The control plane's one save, for whichever of its sections changed. */
+function ControlSaveBar({ ctl }: { ctl: ControlSettingsState }) {
+  if (!ctl.dirty) return null
+  return (
+    <Alert color="amber" variant="light" p="xs" icon={<IconDeviceFloppy size={16} />}>
+      <Group justify="space-between" wrap="wrap" gap="xs">
+        <Text size={FS.body}>
+          Unsaved: {ctl.changedSections.map((c) => c.label).join(', ')}. One save applies them all.
+        </Text>
+        <Group gap="xs">
+          <Button variant="subtle" color="slate" size="xs" onClick={ctl.discard} disabled={ctl.saving}>
+            Discard settings
+          </Button>
+          <Button size="xs" leftSection={<IconDeviceFloppy size={14} />}
+            loading={ctl.saving} onClick={() => void ctl.save()}>
+            Save and apply
+          </Button>
+        </Group>
+      </Group>
+    </Alert>
+  )
+}
+
+function HostsAndTrust() {
+  return (
+    <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="sm">
+      <SectionCard
+        title="Certificate authority"
+        icon={IconShieldLock}
+        iconColor="teal"
+        description="Add this to a host to move it off standing credentials. Argus then mints a short-lived certificate per session and there is nothing left in the vault to steal for that host."
+      >
+        <Code block fz={FS.micro}>
+          {`# /etc/ssh/sshd_config
+TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
+        </Code>
+      </SectionCard>
+
+      <SectionCard
+        title="Gateway endpoint"
+        icon={IconNetwork}
+        iconColor="sky"
+        description="Users connect with their normal client. The target is encoded in the username, so there is nothing to install and existing tooling keeps working."
+      >
+        <Code block fz={FS.digest}>
+          {`ssh ops:db-01@argus.northwind.id
+scp report.csv ops:db-01@argus.northwind.id:/tmp/
+sftp ops:db-01@argus.northwind.id`}
+        </Code>
+      </SectionCard>
+
+      <Alert color="sky" icon={<IconInfoCircle size={16} />} title="Threat model, stated plainly">
+        <Text size={FS.body} lh={1.55}>
+          Argus terminates SSH, so the gateway holds session plaintext in memory. Treat gateway
+          nodes as your highest-value asset: no shared tenancy, no third-party agents, hardware
+          keys for the vault, and the audit log replicated somewhere the gateway cannot write.
+        </Text>
+      </Alert>
+
+      <Card style={{ borderStyle: 'dashed' }}>
+        <Group gap={SP.cozy} mb={SP.snug}>
+          <ThemeIcon variant="light" color="slate" size={22} radius="sm">
+            <IconDeviceDesktop size={13} />
+          </ThemeIcon>
+          <Text fw={600} size="sm">Windows RDP</Text>
+          <Badge size="xs" color="slate" variant="outline">phase 3</Badge>
+        </Group>
+        <Text size={FS.micro} c="dimmed" lh={1.5}>
+          RDP runs as a separate service rather than inside the SSH gateway — different
+          protocol, different recording pipeline, different failure modes. Linux SSH gets
+          finished first.
+        </Text>
+      </Card>
+    </SimpleGrid>
+  )
+}
+
 function PolicyCard({
   icon, title, note, fields, policy, saved, disabled, onChange,
 }: {
@@ -389,7 +525,7 @@ function PolicyCard({
           <Text size={FS.micro} lh={1.55}>{note}</Text>
         </Alert>
       )}
-      <Stack gap="lg">
+      <SimpleGrid cols={{ base: 1, lg: fields.length > 2 ? 2 : 1 }} spacing="lg" verticalSpacing="md">
         {fields.map((f) => (
           <Toggle
             key={f.key}
@@ -401,7 +537,7 @@ function PolicyCard({
             onChange={(v) => onChange(f.key, v)}
           />
         ))}
-      </Stack>
+      </SimpleGrid>
     </SectionCard>
   )
 }

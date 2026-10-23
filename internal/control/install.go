@@ -163,8 +163,6 @@ type InstallRequest struct {
 	// ConsoleURL is where people open the console, such as
 	// https://argus.example.com:8080.
 	ConsoleURL string `json:"consoleUrl"`
-	// GatewayURL is argus-gateway's web listener, if there is a gateway.
-	GatewayURL string `json:"gatewayUrl"`
 	// FleetURL is where servers reach the control plane, when not ConsoleURL.
 	FleetURL string `json:"fleetUrl"`
 	// Port is the TCP port to listen on, and UDP for QUIC.
@@ -194,11 +192,6 @@ type InstallResult struct {
 func (in *InstallRequest) Validate(accountsExist bool) error {
 	if _, err := CheckURL(in.ConsoleURL, "the console address", true); err != nil {
 		return err
-	}
-	if in.GatewayURL != "" {
-		if _, err := CheckURL(in.GatewayURL, "the gateway address", false); err != nil {
-			return err
-		}
 	}
 	if in.FleetURL != "" {
 		if _, err := CheckURL(in.FleetURL, "the address servers use", true); err != nil {

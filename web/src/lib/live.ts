@@ -259,7 +259,6 @@ export interface InstallInput {
   token: string
   database: DatabaseInput
   consoleUrl: string
-  gatewayUrl: string
   fleetUrl: string
   port: number
   quic: boolean
@@ -884,19 +883,6 @@ export interface ControlSettings {
   }
 }
 
-export interface GatewayCredentials {
-  name: string
-  env: string
-  controlUrl: string
-  caCert: string
-  clientCert?: string
-  clientKey?: string
-  serverCert?: string
-  serverKey?: string
-  config: string
-  expiresAt: string
-}
-
 export async function controlSettings(): Promise<ControlSettings> {
   return get<ControlSettings>('/api/v1/settings')
 }
@@ -910,10 +896,6 @@ export async function saveControlSettings(
 
 export async function testDatabase(d: ControlSettings['database']): Promise<DatabaseCheck> {
   return post<DatabaseCheck>('/api/v1/settings/test-database', d)
-}
-
-export async function gatewayCredentials(name: string, host: string): Promise<GatewayCredentials> {
-  return post<GatewayCredentials>('/api/v1/settings/gateway-credentials', { name, host })
 }
 
 /**

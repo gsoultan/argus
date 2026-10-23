@@ -90,21 +90,6 @@ func (p ManagedPKI) IssueServer(hosts []string) error {
 	return writePairAtomic(p.ServerCert(), p.ServerKey(), der, key)
 }
 
-// IssueServerPEM returns a server certificate and key for another listener,
-// such as a gateway's web listener, without writing anything.
-func (p ManagedPKI) IssueServerPEM(hosts []string) (certPEM, keyPEM []byte, err error) {
-	der, key, err := p.issueServer(hosts)
-	if err != nil {
-		return nil, nil, err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, nil, err
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), nil
-}
-
 func (p ManagedPKI) issueServer(hosts []string) ([]byte, *ecdsa.PrivateKey, error) {
 	caCert, caKey, err := p.loadCA()
 	if err != nil {
@@ -174,37 +159,6 @@ func (p ManagedPKI) RenewServerIfDue(hosts []string) (bool, error) {
 		keep = append(keep, ip.String())
 	}
 	return true, p.IssueServer(append(hosts, keep...))
-}
-
-// IssueClient returns a client certificate and key, in PEM, for a gateway
-// calling the control plane. The common name is what reports are attributed to.
-func (p ManagedPKI) IssueClient(commonName string, validity time.Duration) (certPEM, keyPEM []byte, err error) {
-	caCert, caKey, err := p.loadCA()
-	if err != nil {
-		return nil, nil, err
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: serial(),
-		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(validity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, nil, err
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), nil
 }
 
 // HasCAKey reports whether this directory can issue certificates.

@@ -508,7 +508,7 @@ jobs:
           sudo systemd-analyze verify /lib/systemd/system/argus-agent.service
           argus-agent scan --shim /usr/bin/argus-agent || true
 
-      - name: Install the control plane and gateway, start them, enroll an agent, back up
+      - name: Install the control plane, start it, enroll an agent, back up
         # The first production install is the wrong place to find out that
         # only the agent package was ever installed. This does what
         # docs/install.md tells an operator to do, on a clean runner, from the
@@ -569,7 +569,7 @@ jobs:
           tok=$(sudo cat /var/lib/argus/setup-token)
           jq -n --arg tok "$tok" '{token: $tok,
               database: {host: "localhost", port: 5433, name: "argus", user: "argus", password: "argus", sslMode: "disable"},
-              consoleUrl: "https://localhost:8080", gatewayUrl: "", fleetUrl: "", port: 8080, quic: true,
+              consoleUrl: "https://localhost:8080", fleetUrl: "", port: 8080, quic: true,
               certPem: "", keyPem: "",
               admin: {email: "admin@ci.example", displayName: "CI", password: "ci-admin-password-0123456789"}}' |
             curl -fsS --cacert "$tmp/ca.crt" -H Content-Type:application/json -d @- \
@@ -588,7 +588,7 @@ jobs:
 
           # The console ships in the package and is served same-origin.
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep -q '<div id="root">'
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q gatewayUrl
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q fleetUrl
 
           # Enroll this runner's agent with a token from the console API.
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
@@ -660,40 +660,6 @@ jobs:
           n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'terminal.opened'
                 AND actor_email = 'admin@ci.example' AND target = '$(hostname)' AND detail LIKE '%$sid%'")
           [ "$n" = 1 ] || { echo "::error::no audit entry for the session"; exit 1; }
-
-          # The gateway, as step 5 of docs/install.md has it. Until this was
-          # here, a gateway installed by the guide had never been started, and
-          # it would not: it wanted an inventory file and an authorized key the
-          # guide never mentions.
-          # Its credentials come from the console: the shared secrets, and
-          # certificates from the control plane's own CA.
-          $c -X POST https://localhost:8080/api/v1/settings/gateway-credentials \
-            -d '{"name":"ci-gateway","host":"localhost"}' > "$tmp/gw.json"
-          for f in ca.crt:caCert server.crt:serverCert client.crt:clientCert; do
-            jq -r ".${f#*:}" "$tmp/gw.json" > "$tmp/${f%%:*}"
-            sudo install -o root -g argus -m 0640 "$tmp/${f%%:*}" /etc/argus/tls/
-          done
-          for f in server.key:serverKey client.key:clientKey; do
-            jq -r ".${f#*:}" "$tmp/gw.json" > "$tmp/${f%%:*}"
-            sudo install -o argus -g argus -m 0600 "$tmp/${f%%:*}" /etc/argus/tls/
-          done
-          jq -r .env "$tmp/gw.json" | sudo tee /etc/argus/gateway.env >/dev/null
-          sudo ssh-keygen -q -t ed25519 -N '' -f /etc/argus/ssh/gateway_host_key
-          sudo argus-gateway ca init /etc/argus/ssh/argus_ca >/dev/null
-          sudo chown argus:argus /etc/argus/ssh/gateway_host_key /etc/argus/ssh/argus_ca
-          sudo sed -i 's#https://argus-control.example.com:8080#https://localhost:8080#' /etc/argus/gateway.yaml
-          # Its own state directory: /var/lib/argus is the agent's, root's on
-          # a host carrying both, and the gateway runs as argus.
-          [ "$(sudo stat -c '%a %U:%G' /var/lib/argus-gateway)" = "700 argus:argus" ]
-          sudo systemctl enable --now argus-gateway
-          for i in $(seq 1 30); do
-            sudo journalctl -u argus-gateway --no-pager | grep 'inventory synced' >/dev/null && break
-            sleep 1
-          done
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8081/healthz >/dev/null &&
-            sudo journalctl -u argus-gateway --no-pager | grep 'inventory synced' >/dev/null || {
-            sudo journalctl -u argus-gateway --no-pager | tail -30
-            echo "::error::the gateway installed by the guide did not start and sync from the control plane"; exit 1; }
 
           # A backup through the shipped unit, then proof that it restores.
           sudo systemctl start argus-backup.service

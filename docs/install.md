@@ -8,15 +8,13 @@ until it passes.
 
 | Component | Package | Runs on | Listens on |
 |---|---|---|---|
-| Control plane and console | `argus-control` | one server (two behind a load balancer if you need it) | `8080/tcp` HTTPS: the console, the API, and what gateways and agents report to |
-| Gateway | `argus-gateway` | one or more bastion servers | `8081/tcp` HTTPS + WebSocket: the browser terminal. `2222/tcp` SSH, loopback until you open it |
+| Control plane and console | `argus-control` | one server (two behind a load balancer if you need it) | `8080/tcp` HTTPS: the console, the API, and what agents report to |
 | Agent | `argus-agent` | every server people log in to | a local Unix socket only |
-| Verifier | `argus-verify` | gateways, the control plane, and any machine an auditor checks recordings on, including macOS and Windows | nothing; it is a command |
+| Verifier | `argus-verify` | the control plane, servers, and any machine an auditor checks recordings on, including macOS and Windows | nothing; it is a command |
 
-Browsers need to reach `8080` and `8081`. Gateways and agents need to reach
-`8080/tcp`; agents also use `8080/udp` when it is open (see below). Gateways
-need to reach port 22 on the servers they front. Nothing needs to reach an
-agent.
+Every server people log in to runs the agent: it is how sessions are opened,
+recorded and refused. Browsers and agents need to reach `8080/tcp`; agents also
+use `8080/udp` when it is open (see below). Nothing needs to reach an agent.
 
 You also need:
 
@@ -24,11 +22,11 @@ You also need:
   PostgreSQL client tools of the **same major version or newer** on the control
   plane host, because backups use `pg_dump` and it refuses an older client.
 - **Optional: TLS certificates.** The control plane makes its own CA and
-  issues itself and your gateways certificates from it, so none are needed.
+  issues itself a certificate from it, so none are needed.
   Bring your own from an internal or public CA if browsers should trust it
   without installing that CA (step 2).
 - **Optional:** S3-compatible object storage for recordings. Without it,
-  recordings stay on the gateways' and agents' disks.
+  recordings stay on the servers' and the control plane's disks.
 
 ## 1. Download and verify
 
@@ -70,15 +68,14 @@ The Windows agent is not out yet, so Windows hosts cannot be recorded yet.
 
 Nothing to do unless you want your own. On first start the control plane makes
 a small certificate authority in `/var/lib/argus/tls/`, issues its own server
-certificate from it, and renews that certificate before it expires. Gateways
-get theirs from **Settings > Gateways**, and agents learn to trust the CA when
-they enroll.
+certificate from it, and renews that certificate before it expires. Agents
+learn to trust the CA when they enroll.
 
 Browsers warn about that CA until you trust it. Download it from **Settings >
 Certificate > Download the CA** and add it to your operating system's or
 browser's trust store, or upload a certificate from your own CA or a public one
-under **Settings > Certificate**. Its names must include every address people,
-gateways and agents use to reach the control plane.
+under **Settings > Certificate**. Its names must include every address people
+and agents use to reach the control plane.
 
 ## 3. Control plane
 
@@ -109,9 +106,8 @@ asks for, in order:
 2. **The database**: server, port, name, user, password and whether to use
    TLS. **Test connection** must succeed before you can go on. A database that
    already holds an Argus deployment keeps its accounts.
-3. **Addresses**: where people open the console, where browsers reach a
-   gateway (leave empty without one), where servers reach the control plane if
-   that differs (behind a Cloudflare Tunnel, for one), the port, and whether
+3. **Addresses**: where people open the console, where servers reach the
+   control plane if that differs (behind a Cloudflare Tunnel, for one), the port, and whether
    agents may use QUIC on it.
 4. **Certificate**: the control plane's own, or yours.
 5. **The first administrator**: email, name and password.
@@ -135,21 +131,20 @@ Migrations run on start. There is no separate migrate step.
 ### Settings
 
 Everything the control plane is configured with is under **Settings** in the
-console, for owners and administrators:
+console, for owners and administrators. Pick a section from the list on the
+left; each fits on one screen:
 
-| Card | Holds |
+| Section | Holds |
 |---|---|
-| Addresses | console, gateway and fleet addresses; the listen, console-only and QUIC addresses; CORS origins |
+| Addresses | console and fleet addresses; the listen, console-only and QUIC addresses; CORS origins |
 | Sign-in and limits | sign-in and ticket lifetimes, how long an agent may be silent, rate limits, trusted proxies, log level |
 | Database | where PostgreSQL is, with a connection test |
 | Certificate | what is served, upload a replacement, download the CA |
 | Object storage | the S3-compatible bucket recordings are copied to |
 | Session alerts | email, Telegram and Firebase push |
 | People | add accounts, disable and enable them |
-| Gateways | the secrets and certificates a new gateway needs |
-
 Secrets are write-only: the page says whether one is set, never what it is.
-**Save and apply** writes the file and restarts the control plane on it within
+Changes in several sections are kept until you save, and **Save and apply** writes the file and restarts the control plane on it within
 a few seconds: people stay signed in, and agents reconnect. If it cannot start
 on the new settings, an address already in use for example, it puts the
 previous ones back and the page says why. Every save is a `settings.changed`
@@ -191,56 +186,7 @@ chain head is present, and checks every recording is present and verifies.
 Copy `/var/backups/argus` off the host: a backup on the server it protects
 covers mistakes, not the loss of the server.
 
-## 5. Gateway
-
-Skip this if every server runs an agent: sessions through an agent need no
-gateway. A gateway fronts servers that cannot run one.
-
-```sh
-sudo apt install ./argus-gateway_<version>_linux_amd64.deb ./argus-verify_<version>_linux_amd64.deb
-sudo ssh-keygen -t ed25519 -N '' -f /etc/argus/ssh/gateway_host_key
-sudo argus-gateway ca init /etc/argus/ssh/argus_ca
-sudo chown argus:argus /etc/argus/ssh/gateway_host_key /etc/argus/ssh/argus_ca
-```
-
-The second key is the gateway's SSH certificate authority, which signs a
-short-lived certificate per session for hosts set to `ca-certificate`. The
-gateway will not start without both keys.
-
-In the console, open **Settings > Gateways**, name the gateway, enter the host
-browsers will reach it at, and **Issue**. Download the files it offers and put
-them on the gateway:
-
-```sh
-sudo install -o root  -g argus -m 0640 ca.crt client.crt server.crt /etc/argus/tls/
-sudo install -o argus -g argus -m 0600 client.key server.key /etc/argus/tls/
-sudo install -o root  -g argus -m 0600 gateway.env /etc/argus/gateway.env
-```
-
-and replace the `control:` and `web:` blocks of `/etc/argus/gateway.yaml` with
-the lines the page shows. They point the gateway at the control plane, allow
-the console's origin, and use the files above. Delete the downloads once they
-are in place: they hold the shared secrets, and issuing them is in the audit
-log. Set the gateway address under **Settings > Addresses** if you did not
-during setup.
-
-There is no inventory file to write: the console supplies the servers and who
-may reach them. `/etc/argus/ssh/authorized_keys` is only for native `ssh`
-clients (see `listen` in `gateway.yaml`); until it lists someone, none can sign
-in, which is what you want while that listener is loopback-only.
-
-```sh
-sudo systemctl enable --now argus-gateway
-journalctl -u argus-gateway -n 20
-```
-
-The gateway appears in the console under Status once it reports.
-
-Leave the `rdp:` block out. The native RDP listener is a preview in this
-release, and it authenticates nobody; the gateway warns at start-up if it is
-configured.
-
-## 6. Agents
+## 5. Agents
 
 In the console, go to **Servers > Add a server**. Add the server, then make an
 enrollment token. On the server:
@@ -268,13 +214,13 @@ server's access away, revoke it there. The control plane stops accepting its rep
 once (within 30 seconds on any other control plane replica).
 
 Once the tunnel is connected, **Connect** opens SSH sessions to that server
-through its agent, with no gateway involved. The control plane checks you may
+through its agent. The control plane checks you may
 open the session and signs a one-minute grant for that server, that account
 and you; the agent checks the signature itself, starts the account's login
 shell as a normal login (in its own systemd unit, with a PAM session), and
 records it on the server before anything reaches your browser. The recording
-and the audit log name you, not only the account. Servers whose agent is not
-connected still go through the gateway.
+and the audit log name you, not only the account. A server whose agent is not connected cannot be
+opened from **Connect** until it reconnects.
 
 The agent trusts the first grant key the control plane sends and keeps it in
 `/var/lib/argus/grant-key.pub`. The key is derived from `signing_secret`, so
@@ -327,7 +273,7 @@ the page says once it has. Until it has heard from the control plane, an agent
 records every login. Changing the setting is in the audit log under the
 administrator who made it.
 
-## 7. Check it end to end
+## 6. Check it end to end
 
 1. Assign yourself to the new server under **Servers**.
 2. Open a terminal to it from **Connect**.
@@ -340,7 +286,7 @@ administrator who made it.
 The console and its API can be published through a
 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/),
 so people reach `https://argus.example.com` with no inbound port open on the
-control plane. Gateways and agents cannot use the same tunnel (see
+control plane. Agents cannot use the same tunnel (see
 [What cannot go through the tunnel](#what-cannot-go-through-the-tunnel)), so
 the control plane gives the two audiences separate listeners: the tunnel gets
 the console, and the fleet keeps reaching `8080` directly.
@@ -351,10 +297,9 @@ Under **Settings**:
 
 | Setting | Value |
 |---|---|
-| Addresses > Listen | `:8080`, unchanged: gateways and agents, TLS and mTLS, QUIC |
+| Addresses > Listen | `:8080`, unchanged: agents, TLS and QUIC |
 | Addresses > Console listen | `127.0.0.1:8090`: the console, for cloudflared only |
 | Addresses > Console address | `https://argus.example.com` |
-| Addresses > Gateway address | `https://bastion.example.com` (see "The browser terminal" below) |
 | Addresses > Address servers use | `https://argus-internal.example.com:8080`: what servers enrol against |
 | Sign-in and limits > Trusted proxies | `127.0.0.1/32` and `::1/128` |
 
@@ -406,14 +351,6 @@ ingress:
       originServerName: argus-internal.example.com
       caPool: /var/lib/argus/tls/ca.crt
 
-  # The gateway's web listener, if it runs on this host. Otherwise run a
-  # second cloudflared on the gateway with this entry.
-  - hostname: bastion.example.com
-    service: https://localhost:8081
-    originRequest:
-      originServerName: bastion-internal.example.com
-      caPool: /etc/argus/tls/ca.crt
-
   - service: http_status:404
 ```
 
@@ -435,25 +372,15 @@ second command must say `404`. A fresh install's `/setup` page works through
 the tunnel and still needs the token from the host.
 
 WebSockets need nothing extra. Cloudflare closes a WebSocket that carries
-nothing for about 100 seconds, so the control plane and the gateway ping every
+nothing for about 100 seconds, so the control plane pings every
 open terminal and live view every 30 seconds to keep an idle shell open.
 
 ### The browser terminal
 
-**Connect** reaches a server one of two ways. Through its agent's tunnel, the
-terminal is a WebSocket to the control plane itself, so it already goes through
-`argus.example.com`. Through a gateway, the browser connects to
-`console.gateway_url` directly, which is why the example gives the gateway's
-web listener its own hostname.
-
-For that, on the gateway:
-
-- `web.allowed_origins` in `gateway.yaml` must list `https://argus.example.com`,
-  the console's origin as the browser sees it, with no port.
-- The gateway records the address its web listener sees, so behind a tunnel
-  sessions opened through it name the tunnel connector, not the person. The
-  person is still named; their network address is not. Sessions through the
-  agent's tunnel record the real address.
+**Connect** reaches a server through its agent's tunnel, so the terminal is a
+WebSocket to the control plane itself and already goes through
+`argus.example.com`. Nothing else needs publishing, and sessions record the
+person's real address.
 
 ### Cloudflare Access
 
@@ -473,7 +400,7 @@ things Argus does are not that:
 | Traffic | Why it cannot use the tunnel | Instead |
 |---|---|---|
 | Agents' connection to the control plane | On QUIC it is UDP, which a public hostname does not carry. Its HTTPS fallback upgrades the connection to a protocol of its own, and Cloudflare forwards only WebSocket upgrades. | Keep `8080/tcp` and `8080/udp` reachable from your servers: open them only to their addresses, or put them on a private network (WireGuard, Tailscale, a VPC). Cloudflare's private networking (WARP Connector on the servers) can carry both, but is not something we have tested. |
-| Gateways' and agents' reports | The control plane requires the reporter's client certificate on these routes, and Cloudflare terminates TLS, so the certificate never arrives. | The same direct `listen` address as above. This is why the console and the fleet have separate listeners. |
+| Agents' reports | The control plane requires the reporter's client certificate on these routes, and Cloudflare terminates TLS, so the certificate never arrives. | The same direct `listen` address as above. This is why the console and the fleet have separate listeners. |
 | Native `ssh` to the gateway (`2222/tcp`) | SSH is not HTTP. | Users run `cloudflared access ssh` as their `ProxyCommand` against an `ssh://localhost:2222` ingress rule, which works with any SSH client. The gateway then sees every client as the connector's address. Or keep using the browser terminal, which needs none of this. |
 
 The native RDP listener is a preview that authenticates nobody, so do not
@@ -520,5 +447,5 @@ A control plane that already has a configuration and accounts never offers the
 setup page, so an upgrade changes nothing about how people sign in.
 
 Agents that report with the shared reporter token keep working. Move them to
-their own credential by enrolling each one (step 6) and removing
+their own credential by enrolling each one (step 5) and removing
 `--control-url` and `--control-token` from any override of the agent's unit.

@@ -47,7 +47,6 @@ export function Install({ status }: { status: SetupStatus }) {
   const [consoleUrl, setConsoleUrl] = useState(
     `https://${status.hostname ?? window.location.hostname}${port === 443 ? '' : `:${port}`}`,
   )
-  const [gatewayUrl, setGatewayUrl] = useState('')
   const [fleetUrl, setFleetUrl] = useState('')
   const [listenPort, setListenPort] = useState(String(port))
   const [quic, setQuic] = useState(true)
@@ -92,7 +91,7 @@ export function Install({ status }: { status: SetupStatus }) {
     setError(undefined)
     try {
       const res = await install({
-        token: token.trim(), database: db, consoleUrl, gatewayUrl, fleetUrl,
+        token: token.trim(), database: db, consoleUrl, fleetUrl,
         port: portNumber, quic,
         certPem: certMode === 'upload' ? certPem : '',
         keyPem: certMode === 'upload' ? keyPem : '',
@@ -218,14 +217,6 @@ export function Install({ status }: { status: SetupStatus }) {
           />
           <TextInput
             size="sm"
-            label="Gateway address"
-            description="Optional. Where browsers reach argus-gateway's web listener, if you run one. Servers with an agent need no gateway."
-            placeholder="https://bastion.example.com:8081"
-            value={gatewayUrl}
-            onChange={(e) => setGatewayUrl(e.currentTarget.value)}
-          />
-          <TextInput
-            size="sm"
             label="Address servers use"
             description="Optional. Only when servers reach this control plane at a different address from people, such as behind a Cloudflare Tunnel."
             placeholder="https://argus-internal.example.com:8080"
@@ -265,7 +256,7 @@ export function Install({ status }: { status: SetupStatus }) {
             <Alert color="sky" variant="light" icon={<IconShieldLock size={16} />}>
               <Text size="xs">
                 The control plane keeps a small certificate authority of its own, issues its
-                certificate from it, renews it before it expires, and issues gateways theirs.
+                certificate from it, and renews it before it expires.
                 Browsers warn about it until you trust that authority; Settings has it to
                 download. Upload a certificate from your own CA there at any time.
               </Text>

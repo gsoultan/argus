@@ -1,12 +1,9 @@
 package tlsconfig
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/pem"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/gsoultan/argus/internal/secrets"
 )
@@ -51,25 +48,6 @@ func TestManagedPKI(t *testing.T) {
 		t.Error("renewed a current certificate")
 	}
 
-	certPEM, keyPEM, err := p.IssueClient("bastion-1", time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pair, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaf, _ := x509.ParseCertificate(pair.Certificate[0])
-	roots := x509.NewCertPool()
-	caPEM, _ := os.ReadFile(p.CACert())
-	roots.AppendCertsFromPEM(caPEM)
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
-		t.Errorf("client certificate does not verify: %v", err)
-	}
-	if leaf.Subject.CommonName != "bastion-1" {
-		t.Errorf("client CN %q", leaf.Subject.CommonName)
-	}
 }
 
 // An uploaded certificate is checked against its key and never replaced by

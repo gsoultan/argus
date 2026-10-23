@@ -89,7 +89,18 @@ describe('settings', () => {
 
     fireEvent.click(screen.getByRole('switch', { name: 'Allow X11 forwarding' }))
     expect(await screen.findByRole('button', { name: /review 1 change/i })).toBeInTheDocument()
-    expect(screen.getByText('unsaved')).toBeInTheDocument()
+    // On the toggle, and on its section in the list of sections.
+    expect(screen.getAllByText('unsaved')).toHaveLength(2)
+  })
+
+  it('opens one section at a time from the list', async () => {
+    await renderRoute('/settings')
+    await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
+    expect(screen.queryByRole('switch', { name: /fail closed/i })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^recording/i }))
+    expect(await screen.findByRole('switch', { name: /fail closed/i })).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Allow X11 forwarding' })).not.toBeInTheDocument()
   })
 
   it('names the loosening before applying it', async () => {
