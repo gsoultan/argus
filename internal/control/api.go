@@ -192,6 +192,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	// The browser terminal through an agent's tunnel; see terminal.go.
 	mux.HandleFunc("GET /api/v1/terminal", a.handleTerminal)
 	mux.HandleFunc("GET /api/v1/files", a.handleFiles)
+	mux.HandleFunc("GET /api/v1/desktop", a.handleDesktop)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/watch", a.handleWatch)

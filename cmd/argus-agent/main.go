@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -194,6 +195,16 @@ func runDaemon(args []string) int {
 			Verifier: &tunnel.GrantVerifier{Host: hostname},
 			Log:      log,
 		})
+		// Remote Desktop, to this host's own listener, on Windows: the agent is
+		// the RDP client and records the session before it is shown.
+		if runtime.GOOS == "windows" {
+			services[agent.DesktopService] = agent.Desktop(agent.DesktopConfig{
+				Collector: col,
+				Verifier:  &tunnel.GrantVerifier{Host: hostname},
+				Hostname:  hostname,
+				Log:       log,
+			})
+		}
 		go agent.RunTunnel(ctx, agent.TunnelConfig{
 			Dial: tunnel.DialOptions{
 				ControlURL: *controlURL,

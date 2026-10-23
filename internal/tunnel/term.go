@@ -8,7 +8,11 @@ import (
 )
 
 /*
-The terminal service's frames, after the header and answer.
+The terminal and desktop services' frames, after the header and answer.
+
+A desktop uses the same frames: output carries display frames as the browser
+draws them (internal/rdp/display.go), input carries the browser's input
+messages as it sent them, resize the desktop's size in pixels.
 
 Binary and length-prefixed: a keystroke is six bytes on the wire rather than a
 JSON object, output is never re-encoded, and a frame boundary never splits a
@@ -26,6 +30,8 @@ const (
 	// recording says who and why rather than reading as a dropped
 	// connection. JSON: {"by":..., "reason":...}.
 	FrameTerminate byte = 'k'
+	// FrameRefresh asks a desktop to repaint, for a viewer who arrived late.
+	FrameRefresh byte = 'f'
 	// Toward the control plane.
 	FrameOutput byte = 'o' // terminal output
 	FrameExit   byte = 'x' // exit code int32, then the recording's chain head
