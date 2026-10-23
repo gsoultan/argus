@@ -156,11 +156,44 @@ host while the gateway and control plane go on a handful of servers:
 | `argus-control` | the control plane servers |
 | `argus-verify` | anywhere recordings are checked: gateways, the control plane, an auditor's machine |
 
+### Quick install
+
+Pick the version and architecture, download the package you need with the
+signed checksums, verify both, then install:
+
 ```sh
-sudo dpkg -i argus-agent_<version>_linux_amd64.deb    # Debian / Ubuntu
-sudo rpm -i  argus-agent-<version>.linux-amd64.rpm    # RHEL / Rocky / Alma
-sudo apk add --allow-untrusted argus-agent_<version>_linux_amd64.apk
+VERSION=0.4.0            # latest release: https://github.com/gsoultan/argus/releases/latest
+ARCH=amd64               # or arm64
+PKG=argus-agent          # or argus-gateway, argus-control, argus-verify
+FMT=deb                  # deb (Debian/Ubuntu), rpm (RHEL/Rocky/Alma), apk (Alpine)
+BASE=https://github.com/gsoultan/argus/releases/download/v$VERSION
+
+curl -fsSLO "$BASE/${PKG}_${VERSION}_linux_${ARCH}.${FMT}"
+curl -fsSLO "$BASE/checksums.txt"
+curl -fsSLO "$BASE/checksums.txt.sig"
+curl -fsSLO "$BASE/checksums.txt.pem"
 ```
+
+Check the download before installing it (see [Verifying a
+download](#verifying-a-download) below), then:
+
+```sh
+sudo apt install "./${PKG}_${VERSION}_linux_${ARCH}.deb"      # Debian / Ubuntu
+sudo dnf install "./${PKG}_${VERSION}_linux_${ARCH}.rpm"      # RHEL / Rocky / Alma
+sudo apk add --allow-untrusted "./${PKG}_${VERSION}_linux_${ARCH}.apk"   # Alpine
+```
+
+`apt install ./file.deb` and `dnf install ./file.rpm` resolve dependencies,
+where `dpkg -i` and `rpm -i` do not. Install a gateway or control plane
+together with `argus-verify` in one command, as
+[docs/install.md](docs/install.md) does, so both land at the same version.
+
+macOS and Windows get archives rather than packages:
+`argus_<version>_darwin_<arch>.tar.gz` (control plane, gateway, verifier and
+agent) and `argus_<version>_windows_<arch>.zip` (control plane, gateway and
+verifier). Unpack and run the binaries directly; nothing installs a service.
+To check recordings from a workstation, `argus-verify` from the archive is all
+you need.
 
 **Nothing starts on install.** These services need certificates, secrets and an
 inventory first, and a package that starts a half-configured privileged-access
@@ -193,6 +226,11 @@ because a dead agent makes sshd refuse every login on the host.
 
 ### Verifying a download
 
+Every release signs `checksums.txt` with Sigstore keyless signing from the
+release workflow, so a package can be traced to this repository's CI rather
+than to whoever handed it over. Install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/),
+then, in the directory holding the downloads:
+
 ```sh
 cosign verify-blob checksums.txt \
   --signature checksums.txt.sig --certificate checksums.txt.pem \
@@ -200,6 +238,76 @@ cosign verify-blob checksums.txt \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 sha256sum -c checksums.txt --ignore-missing
 ```
+
+The first proves the checksums file came from this repository's release
+workflow; the second proves each file you downloaded matches it. Both must
+succeed. A package that fails either is not ours. On macOS use
+`shasum -a 256 -c checksums.txt --ignore-missing`; in PowerShell compare
+`Get-FileHash <file>` against the line for it in `checksums.txt`.
+
+## Verifying a recording: `argus-verify`
+
+`argus-verify` checks that a session recording has not been altered since the
+gateway sealed it. It is a standalone command with no configuration, no network
+access and no dependency on Argus being up: it reads the `.cast` file, recomputes
+its hash chain from the bytes on disk, and compares the result with the chain
+head the gateway published when the session ended. An auditor can therefore
+verify a recording without trusting Argus, the storage it came from, or the
+person who handed it over.
+
+Install it from the `argus-verify` package on Linux, or take the binary from the
+macOS or Windows archive. Then get two things for the session you want to
+check, both from its page in the console: the recording (**Export .cast**, which
+saves the bytes exactly as stored) and
+the **Chain head** under *Recording integrity* (click it to copy the full value).
+
+```sh
+argus-verify session.cast <chain-head>
+```
+
+```
+INTACT   session.cast
+  lines  1842
+  head   9f2c…
+```
+
+If any byte of the recording was changed, removed or appended, the computed head
+no longer matches:
+
+```
+TAMPERED session.cast
+  lines     1842
+  expected  9f2c…
+  computed  41ab…
+
+  The recording on disk differs from what the gateway sealed.
+  Preserve it as evidence and treat this as an incident.
+```
+
+| Flag | Does |
+|---|---|
+| `--head` | print the computed chain head and exit, with no expected head needed |
+| `--quiet` | print nothing; rely on the exit status |
+| `--version` | print the version and exit |
+
+Exit status is `0` when the recording is intact, `1` when it has been tampered
+with, and `2` for a usage error or a file that cannot be read, so it drops
+straight into a compliance pipeline:
+
+```sh
+argus-verify --quiet session.cast "$HEAD" || alert "recording $ID failed verification"
+```
+
+Two related checks live in `argus-control` rather than here, because they need
+the database:
+
+- `argus-control -config /etc/argus/control.yaml audit verify` recomputes the
+  audit log's hash chain and reports where it breaks, if it does.
+- `argus-control -config /etc/argus/control.yaml backup verify` checks a backup
+  taken by `backup run` by restoring it into a scratch database (`-scratch-db`),
+  checking the audit chain and its recorded head, and checking that every
+  recording is present and verifies. See
+  [docs/install.md](docs/install.md).
 
 ## Adding an asset
 
