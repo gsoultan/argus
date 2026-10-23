@@ -125,3 +125,23 @@ process because setting it walks the tree. The sshd shim is NOT ported:
 matches every ForceCommand. Service via `x/sys/windows/svc`
 (`platform_windows.go`), `argus-agent service install`, log at
 `C:\ProgramData\Argus\agent.log`. CI: "Agent on Windows".
+
+## Desktop, live view and recordings (step 7, gateway retired)
+
+- **Remote Desktop**: service `"desktop"` (`internal/agent/desktop.go`), Windows
+  only. Control (`internal/control/desktop.go`, `GET /api/v1/desktop`) reads a
+  first `{"type":"logon",password,width,height}` message and passes it in the
+  stream header (`tunnel.DesktopOpen`); the agent dials `127.0.0.1:3389` with
+  CredSSP/NTLM (falls back to TLS-only unless the error is an auth failure),
+  clears the password and records `<id>.argusrdp`. Flags:
+  `no-credential-injection`, `legacy-credssp-binding`, `no-network-level-auth`.
+- **Live view / terminate**: `internal/control/live_sessions.go` keeps a
+  registry of sessions this replica is relaying; `/api/v1/sessions/{id}/watch`
+  (shadow ticket) and `/terminate` (terminate ticket). Terminate goes to the
+  agent as `FrameTerminate`. Only the replica relaying a session can serve it.
+- **Recordings** reach storage via `PUT /api/v1/report/recording/{id}` from the
+  agent's upload queue (`internal/agent/upload.go`), verified before storing.
+- **sshd shim**: every login on the collector socket is forced to `Direct`;
+  `--gateway-keys`, `--gateways`, `--skip-brokered` are accepted and ignored.
+- Tickets are burned in `redeemed_tickets` (`Store.Redeem`), shared across
+  control plane replicas.

@@ -1,7 +1,12 @@
 # Argus — core memory
 
 Commercial privileged-access management (PAM) for Linux SSH first, with Windows
-RDP as a separate service. Go control plane + gateway, React console in `web/`.
+RDP through the same agent. Go control plane + agent, React console in `web/`.
+
+**argus-gateway is retired** (2026-10). Every terminal, desktop, file transfer
+and live view opens from the console through the control plane and the server's
+agent tunnel (see [agent-tunnel](agent-tunnel.md)). Anything below that talks
+about the gateway is history: why a rule exists, not where it is enforced now.
 Ships via GoReleaser, not Docker. An agent is required on each host — that is a
 product decision, not an oversight, and the console says so out loud.
 
