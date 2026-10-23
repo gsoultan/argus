@@ -3,6 +3,7 @@ package rdp
 import (
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/asn1"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -139,15 +140,36 @@ func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
 			who, ProtocolName(selected))
 	}
 
-	// The binding covers the SubjectPublicKeyInfo of the certificate on this
+	// The binding covers the public key of the certificate on this
 	// connection, which is what ties the authentication to this channel.
-	auth.PublicKey = certs[0].RawSubjectPublicKeyInfo
+	key, err := subjectPublicKey(certs[0].RawSubjectPublicKeyInfo)
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	auth.PublicKey = key
 	result, err := auth.Authenticate(conn)
 	if err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("authenticate to %s: %w", hostname, err)
 	}
 	return conn, &result, nil
+}
+
+// subjectPublicKey returns the subjectPublicKey bits of a certificate's
+// SubjectPublicKeyInfo: the key itself, without the algorithm identifier
+// around it. MS-CSSP binds to this, and Windows ends the connection over a
+// binding computed on the whole structure.
+func subjectPublicKey(spki []byte) ([]byte, error) {
+	var info struct {
+		Algorithm asn1.RawValue
+		PublicKey asn1.BitString
+	}
+	rest, err := asn1.Unmarshal(spki, &info)
+	if err != nil || len(rest) != 0 {
+		return nil, errors.New("target certificate's public key does not parse")
+	}
+	return info.PublicKey.RightAlign(), nil
 }
 
 // buildConnectionRequest builds the client-side opening PDU Argus sends to a

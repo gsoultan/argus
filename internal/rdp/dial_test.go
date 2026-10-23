@@ -1,9 +1,11 @@
 package rdp
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -176,4 +178,25 @@ func TestDialTargetAllowsNoAuthenticatorWithoutNLA(t *testing.T) {
 		t.Fatalf("a TLS-only target needs no authenticator: %v", err)
 	}
 	conn.Close()
+}
+
+func TestTheBindingCoversTheKeyNotItsAlgorithm(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := subjectPublicKey(spki)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := x509.MarshalPKCS1PublicKey(&key.PublicKey); !bytes.Equal(got, want) {
+		t.Fatal("the binding is not over the RSA public key itself")
+	}
+	if _, err := subjectPublicKey(append(spki, 0)); err == nil {
+		t.Fatal("trailing bytes after the key were accepted")
+	}
 }
