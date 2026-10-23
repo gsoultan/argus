@@ -125,8 +125,6 @@ func _assertAssetShape(m m0.Asset) {
 		m.CredentialRef,
 		m.Domain,
 		m.ArchivedAt,
-		m.RecordingScope,
-		m.AgentRecordingScope,
 		m.AgentConsoleOnly,
 	}
 }

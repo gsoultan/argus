@@ -10,12 +10,12 @@ import (
 )
 
 /*
-The recording scope: "every login" or "Argus sessions only".
+Which logins the agent admits, and that every admitted one is recorded.
 
-What these hold is the refusal side. A direct login goes unrecorded only when
-the console asked for it, never by default or because a value could not be
-read; a brokered session is recorded whatever the scope; and a login that is
-let through is always reported.
+What these hold is the refusal side. Under console-only a direct login is
+refused and reported; a brokered session is admitted and recorded; and an agent
+that has not heard from the control plane records a direct login rather than
+letting it through unrecorded.
 */
 
 func startAs(t *testing.T, sock string, origin Origin) (net.Conn, *json.Decoder) {
@@ -53,11 +53,11 @@ func recordings(t *testing.T, c *Collector) int {
 	return len(entries)
 }
 
-// An agent that has not heard from the console records a direct login.
-func TestADirectLoginIsRecordedUntilTheConsoleSaysOtherwise(t *testing.T) {
+// An agent that has not heard from the console yet records a direct login:
+// it does not refuse before enrolment, and it never skips recording.
+func TestADirectLoginIsRecordedUntilConsoleOnlyArrives(t *testing.T) {
 	c, sock := testCollector(t)
 	defer c.CloseWithin(time.Second)
-	c.OnUnrecorded = func(SessionStart) { t.Error("a login was let through with no scope set") }
 
 	conn, dec := startAs(t, sock, Direct)
 	r := readReply(t, conn, dec)
@@ -65,65 +65,7 @@ func TestADirectLoginIsRecordedUntilTheConsoleSaysOtherwise(t *testing.T) {
 		t.Fatalf("decision = %+v, want record with a session id", r)
 	}
 	if recordings(t, c) != 1 {
-		t.Error("no recording was opened for a direct login under the default scope")
-	}
-}
-
-func TestArgusOnlyLetsADirectLoginThroughAndReportsIt(t *testing.T) {
-	c, sock := testCollector(t)
-	defer c.CloseWithin(time.Second)
-	c.SetScope(ScopeArgusOnly)
-	reported := make(chan SessionStart, 1)
-	c.OnUnrecorded = func(m SessionStart) { reported <- m }
-
-	conn, dec := startAs(t, sock, Direct)
-	r := readReply(t, conn, dec)
-	if r.Type != "decision" || r.Record {
-		t.Fatalf("decision = %+v, want record:false", r)
-	}
-	if r.Reason == "" {
-		t.Error("the user is not told why the login is not recorded")
-	}
-	select {
-	case m := <-reported:
-		if m.Principal != "ops" || m.ClientAddr != "10.0.0.9" {
-			t.Errorf("report lost who and where: %+v", m)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("a login let through unrecorded was not reported")
-	}
-	if n := recordings(t, c); n != 0 {
-		t.Errorf("%d recordings opened for a login the scope skips", n)
-	}
-}
-
-// "Argus sessions only" still records the Argus sessions.
-func TestArgusOnlyStillRecordsABrokeredSession(t *testing.T) {
-	c, sock := testCollector(t)
-	defer c.CloseWithin(time.Second)
-	c.SetScope(ScopeArgusOnly)
-	c.OnUnrecorded = func(SessionStart) { t.Error("a brokered session was let through unrecorded") }
-
-	conn, dec := startAs(t, sock, Brokered)
-	if r := readReply(t, conn, dec); !r.Record {
-		t.Fatalf("decision = %+v, want record", r)
-	}
-	if recordings(t, c) != 1 {
-		t.Error("no recording was opened for a brokered session")
-	}
-}
-
-// A value this agent cannot read must not be what turns recording off.
-func TestAnUnknownScopeRecordsEverything(t *testing.T) {
-	for _, s := range []string{"", "ARGUS_ONLY", "argus-only", "none", "off"} {
-		if got := ParseScope(s); got != ScopeEveryLogin {
-			t.Errorf("ParseScope(%q) = %q, want every_login", s, got)
-		}
-	}
-	c := NewCollector(t.TempDir(), nil)
-	c.SetScope("nonsense")
-	if c.Scope() != ScopeEveryLogin {
-		t.Errorf("Scope() = %q after an unknown value", c.Scope())
+		t.Error("no recording was opened for a direct login before console-only")
 	}
 }
 
@@ -168,38 +110,34 @@ func TestTheShimReadsTheDecision(t *testing.T) {
 	}
 }
 
-// Console-only refuses a direct login outright, whatever the recording scope,
-// and reports it. The reason travels as an error too, so a shim older than
-// the refusal still fails closed instead of letting the login through.
+// Console-only refuses a direct login outright and reports it. The reason
+// travels as an error too, so a shim older than the refusal still fails
+// closed instead of letting the login through.
 func TestConsoleOnlyRefusesADirectLoginAndReportsIt(t *testing.T) {
-	for _, scope := range []RecordingScope{ScopeEveryLogin, ScopeArgusOnly} {
-		c, sock := testCollector(t)
-		c.SetScope(scope)
-		c.SetConsoleOnly(true)
-		refused := make(chan SessionStart, 1)
-		c.OnRefused = func(m SessionStart) { refused <- m }
-		c.OnUnrecorded = func(SessionStart) { t.Error("a refused login was reported as let through") }
+	c, sock := testCollector(t)
+	defer c.CloseWithin(time.Second)
+	c.SetConsoleOnly(true)
+	refused := make(chan SessionStart, 1)
+	c.OnRefused = func(m SessionStart) { refused <- m }
 
-		conn, dec := startAs(t, sock, Direct)
-		r := readReply(t, conn, dec)
-		if !r.Refused || r.Record {
-			t.Fatalf("%s: decision = %+v, want refused", scope, r)
+	conn, dec := startAs(t, sock, Direct)
+	r := readReply(t, conn, dec)
+	if !r.Refused || r.Record {
+		t.Fatalf("decision = %+v, want refused", r)
+	}
+	if r.Error == "" {
+		t.Error("no error for a shim that predates the refusal")
+	}
+	select {
+	case m := <-refused:
+		if m.Principal != "ops" || m.ClientAddr != "10.0.0.9" {
+			t.Errorf("report lost who and where: %+v", m)
 		}
-		if r.Error == "" {
-			t.Errorf("%s: no error for a shim that predates the refusal", scope)
-		}
-		select {
-		case m := <-refused:
-			if m.Principal != "ops" || m.ClientAddr != "10.0.0.9" {
-				t.Errorf("report lost who and where: %+v", m)
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatalf("%s: a refused login was not reported", scope)
-		}
-		if n := recordings(t, c); n != 0 {
-			t.Errorf("%s: %d recordings opened for a refused login", scope, n)
-		}
-		c.CloseWithin(time.Second)
+	case <-time.After(3 * time.Second):
+		t.Fatal("a refused login was not reported")
+	}
+	if n := recordings(t, c); n != 0 {
+		t.Errorf("%d recordings opened for a refused login", n)
 	}
 }
 

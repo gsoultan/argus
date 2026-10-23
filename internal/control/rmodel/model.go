@@ -159,8 +159,6 @@ type Asset struct {
 	CredentialRef        string
 	Domain               string
 	ArchivedAt           *time.Time
-	RecordingScope       string
-	AgentRecordingScope  *string
 	AgentConsoleOnly     *bool
 }
 
@@ -185,9 +183,6 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.Col(&m.CredentialRef).Default("''::text")
 	t.Col(&m.Domain).Default("''::text")
 	t.Index(&m.Hostname).Where("archived_at IS NULL").Named("assets_live_idx")
-	t.Col(&m.RecordingScope).Default("'every_login'::text")
-	t.CheckNamed("assets_recording_scope_check",
-		"recording_scope = ANY (ARRAY['every_login'::text, 'argus_only'::text])")
 }
 
 // AssetAssignment is table asset_assignments: who may reach which host, as whom.
