@@ -21,6 +21,11 @@ function save(blob: Blob, filename: string): void {
   requestAnimationFrame(() => URL.revokeObjectURL(url))
 }
 
+/** Saves bytes the console received, such as a file fetched from a server. */
+export function downloadBlob(blob: Blob, filename: string): void {
+  save(blob, filename)
+}
+
 export function downloadText(text: string, filename: string, type = 'text/plain'): void {
   save(new Blob([text], { type: `${type};charset=utf-8` }), filename)
 }

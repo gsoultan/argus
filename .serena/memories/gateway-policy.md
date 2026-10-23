@@ -6,7 +6,7 @@ gateway. Added 2026-09-04; the console had shipped the UI for it first.
 ## Shape
 
 One row in `gateway_policy` (migration `006`), enforced single by
-`id BOOLEAN PRIMARY KEY CHECK (id)`. Eight booleans: four SSH forwarding
+`id BOOLEAN PRIMARY KEY CHECK (id)`. Nine booleans: native clients (migration `019`, console-only when false), four SSH forwarding
 channels, four recording guarantees. Field names are identical across
 `internal/control.GatewayPolicy`, `internal/gateway.Policy`,
 `internal/reporter.GatewayPolicy` and `web/src/types/domain.ts` — deliberately,

@@ -109,6 +109,10 @@ function makeAssets(): Asset[] {
         agentState,
         agentLastSeenAt:
           agentState === 'absent' ? null : ago(agentState === 'stale' ? between(180, 2200) : between(0, 3)),
+        // A healthy agent holds its tunnel and applies console-only. Derived,
+        // not rolled, so the rest of the fixture is unchanged.
+        tunnelConnected: agentState === 'healthy',
+        agentConsoleOnly: agentState === 'healthy' ? true : null,
         bypassPosture,
         unmanagedKeyCount: bypassPosture === 'enforced' ? 0 : (rnd() > 0.7 ? between(1, 5) : 0),
         principals: rnd() > 0.6 ? ['deploy', 'ops', 'root'] : ['deploy', 'ops'],
