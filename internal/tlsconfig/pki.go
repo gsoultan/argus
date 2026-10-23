@@ -16,6 +16,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/gsoultan/argus/internal/secrets"
 )
 
 /*
@@ -264,6 +266,14 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return err
+	}
+	// A key is made private before anything is written to it, and on Windows
+	// that takes an access list: the mode above is ignored there.
+	if mode&0o077 == 0 {
+		if err := secrets.MakePrivate(tmp.Name()); err != nil {
+			_ = tmp.Close()
+			return err
+		}
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()

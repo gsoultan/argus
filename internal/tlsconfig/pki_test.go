@@ -81,3 +81,21 @@ func TestUploadedCertificateIsLeftAlone(t *testing.T) {
 		t.Fatal("bad fixture")
 	}
 }
+
+// The keys the control plane makes for itself pass the check it applies when
+// loading them, on Windows too, where the mode they are written with means
+// nothing.
+func TestManagedKeysPassThePrivateKeyCheck(t *testing.T) {
+	p := ManagedPKI{Dir: t.TempDir()}
+	if _, err := p.EnsureCA(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.IssueServer([]string{"localhost"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{p.CAKey(), p.ServerKey()} {
+		if err := secrets.CheckPrivate(k); err != nil {
+			t.Error(err)
+		}
+	}
+}
