@@ -46,7 +46,7 @@ import { downloadText, stamp } from '~/lib/download'
 import { notifyOk } from '~/lib/notify'
 import type { KernelExec } from '~/lib/castDecode'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
-import { GATEWAY_URL, live, rdpReplay, shadowTicket } from '~/lib/live'
+import { live, rdpReplay, shadowTicket, watchEndpoint } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 import { guard } from '~/lib/guard'
 
@@ -272,10 +272,7 @@ function SessionDetail() {
   // They are kept because the console has just finished admitting it does not
   // know whether the session is running, and removing the controls would be
   // deciding on the operator's behalf from exactly that missing information.
-  // Two things make it the wrong call concretely. A new control plane reading
-  // gateways too old to report liveness sees every genuinely live session as
-  // silent, and would take Watch and Terminate away from all of them for the
-  // length of the upgrade. And the control plane audits the *authorisation* to
+  // It is the wrong call concretely: the control plane audits the *authorisation* to
   // terminate rather than its outcome, deliberately — "an operator who tried
   // to stop a session and could not is a more urgent finding than one who
   // succeeded" — so a failed attempt is recorded truthfully, not falsely.
@@ -632,7 +629,7 @@ function SessionDetail() {
         {shadowOpen && isRDP && (
           <Suspense fallback={<PlayerFallback label="Loading desktop view…" />}>
           <RDPScreen
-            gatewayUrl={GATEWAY_URL}
+            endpoint={watchEndpoint(session.id)}
             target={session.assetHostname}
             principal={session.principal}
             readOnly
@@ -652,7 +649,7 @@ function SessionDetail() {
         {shadowOpen && !isRDP && (
           <Suspense fallback={<PlayerFallback label="Loading terminal…" />}>
           <ShadowTerminal
-            gatewayUrl={GATEWAY_URL}
+            endpoint={watchEndpoint(session.id)}
             sessionId={session.id}
             getTicket={async () => {
               const res = await shadowTicket(session.id)

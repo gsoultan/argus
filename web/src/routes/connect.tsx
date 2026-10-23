@@ -1,19 +1,19 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Center, Grid, Group, Loader, Radio, Select, Stack,
-  Text, TextInput, ThemeIcon,
+  Alert, Badge, Box, Button, Card, Center, Grid, Group, Loader, PasswordInput, Radio, Select,
+  Stack, Text, ThemeIcon,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAdjustments, IconDeviceDesktop, IconFolders, IconInfoCircle, IconPlugConnected,
+  IconDeviceDesktop, IconFolders, IconInfoCircle, IconPlugConnected,
   IconPlugConnectedX, IconServer2, IconShieldLock, IconTerminal2, IconUser, IconX,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader } from '~/components/page'
 import type { TerminalState } from '~/components/LiveTerminal'
 import { assetsQuery } from '~/lib/queries'
 import {
-  GATEWAY_URL, filesEndpoint, isConfigured, terminalEndpoint, terminalTicket,
+  desktopEndpoint, filesEndpoint, terminalEndpoint, terminalTicket,
 } from '~/lib/live'
 import { HostKeyBadge } from '~/components/primitives'
 import { FS, SP } from '~/theme'
@@ -58,26 +58,27 @@ export const Route = createFileRoute('/connect')({
   }),
 })
 
-const DEFAULT_GATEWAY = GATEWAY_URL
-
 /** Stable identity, so the principal-reset effect is not re-armed every render. */
 const DEFAULT_PRINCIPALS = ['ops', 'deploy']
 
 function Connect() {
   const { data: assets } = useQuery(assetsQuery({}))
 
-  const [gateway, setGateway] = useState(DEFAULT_GATEWAY)
   const [requesting, setRequesting] = useState(false)
   const [denied, setDenied] = useState<string>()
   const { host, as } = Route.useSearch()
   const [target, setTarget] = useState<string | null>(host ?? null)
   const [principal, setPrincipal] = useState(as ?? 'ops')
-  // Shown by default only when the console has no control plane to get an
-  // address from — that is the one case where the user has to supply it.
-  const [showGateway, setShowGateway] = useState(!isConfigured())
   const [session, setSession] = useState<
-    { target: string; principal: string; protocol: 'ssh' | 'rdp' | 'files'; viaAgent: boolean } | null
+    { target: string; principal: string; protocol: 'ssh' | 'rdp' | 'files' } | null
   >(null)
+  /**
+   * The Windows account's password, for a desktop's sign-in. Held only until
+   * the desktop takes it -- it goes to the server's agent for this one logon
+   * -- and cleared then, or when the server or account changes.
+   */
+  const [password, setPassword] = useState('')
+  const heldPassword = useRef('')
   const [state, setState] = useState<TerminalState>('connecting')
   const [detail, setDetail] = useState<string>()
 
@@ -100,11 +101,11 @@ function Connect() {
 
   const selected = assets?.find((a) => a.hostname === target)
   const isRDPTarget = selected?.protocol === 'rdp'
-  // SSH opens through the server's own agent, and only through it: a server
-  // whose agent is not connected has no way in until it reconnects. Remote
-  // Desktop is still the gateway's until the Windows agent ships.
-  const viaAgent = !isRDPTarget && selected?.tunnelConnected === true
-  const agentDown = !!selected && !isRDPTarget && !viaAgent
+  // Everything opens through the server's own agent, and only through it: a
+  // server whose agent is not connected has no way in until it reconnects.
+  const viaAgent = selected?.tunnelConnected === true
+  const agentDown = !!selected && !viaAgent
+  useEffect(() => setPassword(''), [target, principal])
 
   // Memoised so the effect below depends on the contents rather than on a fresh
   // array identity, which the `??` default produced on every single render.
@@ -158,7 +159,7 @@ function Connect() {
           }
           description={
             isRDP
-              ? 'Brokered through the gateway — same policy, certificate pinning and recording as a desktop client.'
+              ? 'Opened on the Windows server by its Argus agent, which records it there before anything reaches you.'
               : isFiles
                 ? `Read and written on the server by its Argus agent, as ${session.principal}. Every upload and download is in the audit log with its size and SHA-256.`
                 : 'Opened on the server by its Argus agent, which records it there before anything reaches you.'
@@ -192,10 +193,15 @@ function Connect() {
               />
             ) : isRDP ? (
               <RDPScreen
-                gatewayUrl={gateway}
+                endpoint={desktopEndpoint()}
                 target={session.target}
                 principal={session.principal}
                 getTicket={getTicket}
+                takePassword={() => {
+                  const p = heldPassword.current
+                  heldPassword.current = ''
+                  return p
+                }}
                 onStateChange={(s, d) => {
                   setState(s === 'live' ? 'live' : s === 'error' ? 'error' : 'closed')
                   setDetail(d)
@@ -203,7 +209,7 @@ function Connect() {
               />
             ) : (
               <LiveTerminal
-                endpoint={terminalEndpoint(session.viaAgent, gateway)}
+                endpoint={terminalEndpoint()}
                 getTicket={getTicket}
                 target={session.target}
                 principal={session.principal}
@@ -234,8 +240,10 @@ function Connect() {
     // Handed to the terminal rather than discarded — this ticket is the
     // authorisation the user just obtained.
     heldTicket.current = res.ticket
+    heldPassword.current = password
+    setPassword('')
     setSession({
-      target, principal, viaAgent,
+      target, principal,
       protocol: mode === 'files' ? 'files' : (selected?.protocol ?? 'ssh'),
     })
   }
@@ -362,6 +370,23 @@ function Connect() {
                     </Group>
                   </Radio.Group>
                 )}
+                {/* Windows asks for the account's own password before it shows
+                    a desktop (network level authentication). It goes to the
+                    server's agent for this one sign-in and is kept nowhere. */}
+                {target && isRDPTarget && principals.length > 0 && (
+                  <PasswordInput
+                    mt="sm"
+                    size="sm"
+                    label={`Windows password for ${principal}`}
+                    description="Used once to sign in on the server, and not stored by Argus."
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !agentDown) void onConnect()
+                    }}
+                  />
+                )}
               </Step>
 
               {denied && (
@@ -374,14 +399,14 @@ function Connect() {
                 <Text size={FS.micro} c="dimmed">
                   {target
                     ? `Opens ${principal}@${target.split('.')[0]} ${
-                        isRDPTarget ? 'through the gateway' : "through the server's Argus agent"
+                        "through the server's Argus agent"
                       }.`
                     : 'Nothing is sent until you choose a host.'}
                 </Text>
                 <Group gap="xs">
                   {/* Files move through the agent only: it reads and writes as
                       the account, and the control plane hashes what crosses. */}
-                  {viaAgent && (
+                  {viaAgent && !isRDPTarget && (
                     <Button
                       size="sm"
                       variant="light"
@@ -396,7 +421,7 @@ function Connect() {
                   <Button
                     size="sm"
                     leftSection={<IconPlugConnected size={15} />}
-                    disabled={!target || agentDown || (isRDPTarget && !gateway)}
+                    disabled={!target || agentDown}
                     loading={requesting}
                     onClick={() => void onConnect()}
                   >
@@ -416,18 +441,18 @@ function Connect() {
               <Card padding="md">
                 <Text fw={600} size="sm" mb={SP.snug}>What happens when you connect</Text>
                 <Stack gap={SP.snug}>
-                  {(viaAgent
+                  {(isRDPTarget
                     ? [
+                        'Argus checks you are allowed on that server as that account.',
+                        "The server's own agent checks Argus's signature, then signs you in to Windows with the password you typed. Argus does not keep it.",
+                        'Nothing reaches the server except through the agent it enrolled, so nothing can pose as it.',
+                        'The agent records the whole desktop session on the server before you see any of it.',
+                      ]
+                    : [
                         'Argus checks you are allowed on that server as that account.',
                         "The server's own agent checks Argus's signature, then signs you in. No password or key is involved.",
                         'Nothing reaches the server except through the agent it enrolled, so nothing can pose as it.',
                         'The agent records the whole session on the server before you see any of it.',
-                      ]
-                    : [
-                        'Argus checks you are allowed on that server as that account.',
-                        'It signs in for you. You never see or type a password or key.',
-                        'It checks the server is the one it was last time, so nothing can pose as it.',
-                        'The whole session is recorded.',
                       ]
                   ).map((line) => (
                     <Group key={line} gap={SP.cozy} wrap="nowrap" align="flex-start">
@@ -446,50 +471,12 @@ function Connect() {
                   <Text fw={600} size="sm">This console is the only way in</Text>
                 </Group>
                 <Text size={FS.meta} c="dimmed" lh={1.5}>
-                  Terminals, desktops and file transfers all open from this page. ssh, scp,
-                  sftp and mstsc straight to the gateway or to a server are refused, and a
-                  refused attempt is written to the audit log.
+                  Terminals, desktops and file transfers all open from this page. ssh, scp
+                  and sftp straight to a server are refused, and a refused attempt is
+                  written to the audit log.
                 </Text>
               </Card>
 
-              {/* Advanced, and collapsed once a control plane supplies the
-                  address. It only has to be typed when there is no control
-                  plane to ask, which is also the only time it is editable
-                  usefully. Shown only for Remote Desktop: SSH goes through
-                  the server's agent and never touches a gateway. */}
-              {isRDPTarget && (
-              <Card>
-                <Group justify="space-between" wrap="nowrap">
-                  <Group gap={SP.cozy}>
-                    <ThemeIcon variant="light" color="slate" size={22} radius="sm">
-                      <IconAdjustments size={13} />
-                    </ThemeIcon>
-                    <Text fw={600} size="sm">Gateway endpoint</Text>
-                  </Group>
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    color="slate"
-                    onClick={() => setShowGateway((v) => !v)}
-                  >
-                    {showGateway ? 'Hide' : 'Change'}
-                  </Button>
-                </Group>
-                {showGateway ? (
-                  <TextInput
-                    mt="xs"
-                    label="Address"
-                    description="Where argus-gateway serves the browser terminal"
-                    value={gateway}
-                    onChange={(e) => setGateway(e.currentTarget.value)}
-                  />
-                ) : (
-                  <Text size={FS.digest} ff="monospace" c="dimmed" mt={SP.snug}>
-                    {gateway || 'not set'}
-                  </Text>
-                )}
-              </Card>
-              )}
             </Stack>
           </Grid.Col>
         </Grid>
