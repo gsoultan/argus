@@ -338,13 +338,18 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 			termination_reason
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		ON CONFLICT (id) DO UPDATE SET
-			state           = EXCLUDED.state,
+			-- An ended session does not start again. The agent says a tunnel
+			-- session is active every minute and that it ended once, through a
+			-- spool that may deliver them out of order; the end must win.
+			state           = CASE WHEN EXCLUDED.state = 'active' AND sessions.state <> 'active'
+			                       THEN sessions.state ELSE EXCLUDED.state END,
 			ended_at        = COALESCE(EXCLUDED.ended_at, sessions.ended_at),
 			recording_bytes = GREATEST(EXCLUDED.recording_bytes, sessions.recording_bytes),
 			command_count   = COALESCE(EXCLUDED.command_count, sessions.command_count),
 			exit_code       = COALESCE(EXCLUDED.exit_code, sessions.exit_code),
 			chain_head      = COALESCE(EXCLUDED.chain_head, sessions.chain_head),
-			risk_flags      = EXCLUDED.risk_flags,
+			risk_flags      = CASE WHEN EXCLUDED.state = 'active' AND sessions.state <> 'active'
+			                       THEN sessions.risk_flags ELSE EXCLUDED.risk_flags END,
 			recording_key   = COALESCE(EXCLUDED.recording_key, sessions.recording_key),
 			-- COALESCE, not EXCLUDED: a later report that omits the reason must
 			-- not erase why a session was stopped.

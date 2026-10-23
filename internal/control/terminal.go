@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/gsoultan/argus/internal/live"
 	"github.com/gsoultan/argus/internal/tunnel"
 	"github.com/gsoultan/argus/internal/wskeep"
 )
@@ -159,6 +160,50 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
+	// Writes to the stream come from the browser loop and from a terminate,
+	// so frames are written whole under one lock.
+	var stmu sync.Mutex
+	writeStream := func(typ byte, p []byte) error {
+		stmu.Lock()
+		defer stmu.Unlock()
+		return tunnel.WriteFrame(st, typ, p)
+	}
+	var ended, endedBy, endReason = make(chan struct{}), "", ""
+	var endOnce sync.Once
+	ls := &liveSession{id: answer.Session, protocol: "ssh", hub: live.NewHub(),
+		width: 80, height: 24}
+	ls.terminate = func(by, reason string) bool {
+		select {
+		case <-ended:
+			return false
+		default:
+		}
+		first := false
+		endOnce.Do(func() {
+			first = true
+			stmu.Lock()
+			endedBy, endReason = by, reason
+			stmu.Unlock()
+		})
+		if !first {
+			return true
+		}
+		if err := writeStream(tunnel.FrameTerminate, tunnel.TerminatePayload(by, reason)); err != nil {
+			// The agent is unreachable on this stream. Closing it hangs the
+			// shell up all the same; the recording then reads as dropped.
+			_ = st.Close()
+		}
+		return true
+	}
+	a.live.add(ls)
+	// Gone from the registry before the browser hears it ended, so nothing
+	// can be watched or ended once it has.
+	finish := sync.OnceFunc(func() {
+		close(ended)
+		a.live.remove(ls)
+	})
+	defer finish()
+
 	if sendJSON(terminalMessage{Type: "ready", Session: answer.Session}) != nil {
 		return
 	}
@@ -188,15 +233,18 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 				// end the session over it.
 				for in := []byte(m.Data); len(in) > 0; {
 					n := min(len(in), 32<<10)
-					if tunnel.WriteFrame(st, tunnel.FrameInput, in[:n]) != nil {
+					if writeStream(tunnel.FrameInput, in[:n]) != nil {
 						return
 					}
 					in = in[n:]
 				}
 			case "resize":
-				if m.Cols > 0 && m.Rows > 0 &&
-					tunnel.WriteFrame(st, tunnel.FrameResize, tunnel.ResizePayload(m.Cols, m.Rows)) != nil {
-					return
+				if m.Cols > 0 && m.Rows > 0 {
+					if writeStream(tunnel.FrameResize, tunnel.ResizePayload(m.Cols, m.Rows)) != nil {
+						return
+					}
+					ls.setSize(m.Cols, m.Rows)
+					ls.hub.Broadcast(hubResizeFrame(m.Cols, m.Rows))
 				}
 			}
 		}
@@ -216,12 +264,22 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 		}
 		switch typ {
 		case tunnel.FrameOutput:
+			// The same bytes to whoever is watching; the hub never waits.
+			ls.hub.Broadcast(append([]byte{hubOutput}, p...))
 			if send(websocket.MessageBinary, p) != nil {
 				// The browser is gone: closing the stream hangs the shell up.
 				return
 			}
 		case tunnel.FrameExit:
+			finish()
 			code, head, _ := tunnel.ParseExit(p)
+			stmu.Lock()
+			by, why := endedBy, endReason
+			stmu.Unlock()
+			if by != "" {
+				_ = sendJSON(terminalMessage{Type: "error",
+					Data: "this session was ended by " + by + ": " + why})
+			}
 			_ = sendJSON(terminalMessage{Type: "closed", ExitCode: code,
 				Session: answer.Session, ChainHead: head})
 			_ = conn.Close(websocket.StatusNormalClosure, "exit")

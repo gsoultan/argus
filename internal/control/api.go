@@ -64,6 +64,9 @@ type API struct {
 	RequirePeerCert bool
 
 	storage *storage.Client
+	// storeRecording replaces storage.Upload for a shipped recording. Nil
+	// uses storage; set by tests that have no object store.
+	storeRecording recordingUploader
 
 	signer        *auth.Signer
 	consoleURL    string
@@ -94,6 +97,9 @@ type API struct {
 	// Settings reads and writes the configuration file for the console's
 	// Settings page. Nil leaves the page read-only; see settings_routes.go.
 	Settings SettingsBackend
+
+	// live is every session this replica relays; see live_sessions.go.
+	live liveRegistry
 
 	// setup is the first-run page's one-time token; see setup.go.
 	setup setupGate
@@ -188,6 +194,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/files", a.handleFiles)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
+	mux.HandleFunc("GET /api/v1/sessions/{id}/watch", a.handleWatch)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate", a.handleTerminate)
 	mux.HandleFunc("GET /api/v1/requests", a.getRequests)
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
@@ -255,6 +263,8 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/report/authorize", a.reporter(a.handleAuthorize))
 	// A gateway that retried a stranded upload, saying where it landed.
 	mux.HandleFunc("POST /api/v1/report/recording", a.reporter(a.handleRecordingStored))
+	// An agent shipping a sealed recording; see recording_upload.go.
+	mux.HandleFunc("PUT /api/v1/report/recording/{id}", a.agentReporter(a.putRecording))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.agentReporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/login", a.agentReporter(a.postLogin))
 	mux.HandleFunc("GET "+tunnel.UpgradePath, a.handleTunnelUpgrade)

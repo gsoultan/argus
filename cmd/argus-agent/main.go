@@ -244,38 +244,26 @@ func runDaemon(args []string) int {
 			"at":          time.Now().UTC(),
 		})
 	}
+	var uploads *agent.Uploads
+	if rep.Enabled() {
+		uploads = agent.NewUploads(*stateDir, rep, log)
+		go uploads.Run(ctx, time.Minute)
+	}
 	col.OnSession = func(rec agent.SessionRecord) {
 		// Always keep the local copy. The control plane is where a session
 		// becomes visible, not where it becomes real.
 		appendJSONL(*stateDir+"/sessions.jsonl", rec, log)
 
-		// A session through the tunnel is attributed to the person the
-		// control plane signed it for; a login through sshd only to the
-		// local account.
-		who := rec.Principal + "@" + rec.Hostname
-		if rec.Actor != "" {
-			who = rec.Actor
-		}
-		rep.Session(ctx, map[string]any{
-			"id":             rec.ID,
-			"userEmail":      who,
-			"assetHostname":  rec.Hostname,
-			"principal":      rec.Principal,
-			"protocol":       "ssh",
-			"origin":         string(rec.Origin),
-			"state":          "closed",
-			"startedAt":      rec.StartedAt,
-			"endedAt":        rec.EndedAt,
-			"clientIp":       rec.ClientAddr,
-			"fidelity":       rec.Fidelity,
-			"commandCount":   rec.Commands,
-			"recordingBytes": rec.Bytes,
-			"exitCode":       rec.ExitCode,
-			"chainHead":      rec.ChainHead,
-			"reportedBy":     "agent:" + rec.Hostname,
-			"riskFlags":      agentRiskFlags(rec),
-		})
+		rep.Session(ctx, sessionReport(rec))
+		// The recording itself, so it can be replayed from the console. Queued
+		// on disk first: the host's copy is the evidence until the control
+		// plane has verified and stored its own.
+		uploads.Queue(rec)
 	}
+	// A session through the tunnel shows in the console while it runs, and is
+	// spoken for every minute, so a long one is not taken for one whose host
+	// went quiet.
+	col.OnActive = func(rec agent.SessionRecord) { rep.Session(ctx, sessionReport(rec)) }
 
 	// Kernel execution tracing, when the host can support it. A failure here is
 	// a supported configuration, not a fatal one: the agent still records
@@ -299,6 +287,11 @@ func runDaemon(args []string) int {
 	// is what makes killing the agent detectable: a user with root can stop it,
 	// but they cannot make the silence look like health.
 	stop := make(chan struct{})
+	go loop(time.Minute, stop, func() {
+		for _, rec := range col.ActiveTunnelRecords() {
+			rep.Session(ctx, sessionReport(rec))
+		}
+	})
 	go loop(*scanEvery, stop, func() {
 		p, err := agent.Scan(agent.DefaultScanConfig(*shimPath))
 		if err != nil {
@@ -442,16 +435,65 @@ func runDaemon(args []string) int {
 	}
 }
 
+// sessionReport is what the control plane is told about a session.
+func sessionReport(rec agent.SessionRecord) map[string]any {
+	// A session through the tunnel is attributed to the person the control
+	// plane signed it for; a login through sshd only to the local account.
+	who := rec.Principal + "@" + rec.Hostname
+	if rec.Actor != "" {
+		who = rec.Actor
+	}
+	protocol, state := rec.Protocol, rec.State
+	if protocol == "" {
+		protocol = "ssh"
+	}
+	if state == "" {
+		state = "closed"
+	}
+	fidelity := rec.Fidelity
+	if protocol == "rdp" {
+		fidelity = "rdp"
+	}
+	out := map[string]any{
+		"id":             rec.ID,
+		"userEmail":      who,
+		"assetHostname":  rec.Hostname,
+		"principal":      rec.Principal,
+		"protocol":       protocol,
+		"origin":         string(rec.Origin),
+		"state":          state,
+		"startedAt":      rec.StartedAt,
+		"clientIp":       rec.ClientAddr,
+		"fidelity":       fidelity,
+		"commandCount":   rec.Commands,
+		"recordingBytes": rec.Bytes,
+		"reportedBy":     "agent:" + rec.Hostname,
+		"riskFlags":      agentRiskFlags(rec),
+	}
+	if state != "active" {
+		out["endedAt"] = rec.EndedAt
+		out["exitCode"] = rec.ExitCode
+		out["chainHead"] = rec.ChainHead
+	}
+	if rec.TerminatedBy != "" {
+		out["terminatedBy"] = rec.TerminatedBy
+		out["terminationReason"] = rec.TerminationReason
+	}
+	return out
+}
+
 // agentRiskFlags marks what the console highlights about a session the agent saw.
 func agentRiskFlags(rec agent.SessionRecord) []string {
 	flags := []string{}
 	if rec.Origin == agent.Direct {
 		flags = append(flags, "bypassed-gateway")
 	}
-	if rec.Principal == "root" {
+	// Administrator is to Windows what root is to Linux.
+	switch strings.ToLower(rec.Principal) {
+	case "root", "administrator":
 		flags = append(flags, "root-principal")
 	}
-	return flags
+	return append(flags, rec.Flags...)
 }
 
 func runShim(args []string) int {

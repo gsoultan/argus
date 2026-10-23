@@ -203,6 +203,13 @@ func (t *tunnelShell) run(st tunnel.Stream, log *slog.Logger) {
 					_ = t.term.Resize(cols, rows)
 					_ = t.rec.Resize(cols, rows)
 				}
+			case tunnel.FrameTerminate:
+				if k, ok := tunnel.ParseTerminate(p); ok {
+					log.Warn("tunnel: session ended from the console", "session", t.rec.ID(),
+						"by", k.By, "reason", k.Reason)
+					t.rec.Terminate(k.By, k.Reason)
+					return
+				}
 			}
 		}
 	}()

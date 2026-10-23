@@ -40,10 +40,21 @@ type Collector struct {
 	// hangups ends each session the agent opened itself through the tunnel,
 	// for the same reason: those have no shim connection to close.
 	hangups map[string]func()
+	// tunnels is every session through the tunnel still open, terminal or
+	// desktop, for the reports that say they are running.
+	tunnels map[string]liveRecording
 
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
 	OnSession func(SessionRecord)
+
+	// OnActive is called when a session through the tunnel starts, so the
+	// console can show it running -- and watch or end it -- rather than
+	// learning of it only once it is over. The daemon also repeats it for
+	// every such session still open, see ActiveTunnelRecords. Not called for
+	// logins through sshd: a direct login's report is an alarm, and one per
+	// minute would be noise.
+	OnActive func(SessionRecord)
 
 	// OnUnrecorded is called for a direct login let through without recording
 	// under ScopeArgusOnly. The daemon reports it; nil in standalone mode,
@@ -97,6 +108,17 @@ type SessionRecord struct {
 	// Actor is who a tunnel session was opened for, from the signed grant.
 	// Empty for a login through sshd, where only the local account is known.
 	Actor string `json:"actor,omitempty"`
+	// Protocol is "ssh" for a terminal, "rdp" for a desktop. Empty is ssh.
+	Protocol string `json:"protocol,omitempty"`
+	// State is "active" while it runs, then "closed", or "terminated" when
+	// someone ended it from the console.
+	State string `json:"state,omitempty"`
+	// TerminatedBy and TerminationReason say who ended it and why.
+	TerminatedBy      string `json:"terminated_by,omitempty"`
+	TerminationReason string `json:"termination_reason,omitempty"`
+	// Flags are risk flags the service that opened the session knows of,
+	// on top of what the daemon derives itself.
+	Flags []string `json:"flags,omitempty"`
 }
 
 type activeSession struct {
@@ -120,6 +142,8 @@ type activeSession struct {
 	// execLost which is one that arrived and could not be written. Different
 	// causes, same consequence for what the artefact can claim.
 	execDropped uint64
+	// terminatedBy and terminationReason are set when the console ended it.
+	terminatedBy, terminationReason string
 }
 
 // SetScope applies the recording scope the control plane sent.
@@ -544,6 +568,13 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 
 	_, bytes, _ := sess.rec.Stats()
 
+	state := "closed"
+	sess.mu.Lock()
+	by, why := sess.terminatedBy, sess.terminationReason
+	sess.mu.Unlock()
+	if by != "" {
+		state = "terminated"
+	}
 	rec := SessionRecord{
 		ID:         sess.id,
 		Principal:  sess.start.Principal,
@@ -560,6 +591,11 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 		Fidelity:   sess.fidelity(c.Exec),
 		Commands:   sess.commandCount(),
 		Actor:      sess.start.Actor,
+		Protocol:   "ssh",
+		State:      state,
+
+		TerminatedBy:      by,
+		TerminationReason: why,
 	}
 
 	c.log.Info("recording sealed",

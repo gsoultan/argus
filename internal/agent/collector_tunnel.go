@@ -48,8 +48,74 @@ func (c *Collector) StartRecording(m SessionStart, hangup func()) (*TunnelRecord
 		c.hangups = map[string]func(){}
 	}
 	c.hangups[sess.id] = hangup
+	r := &TunnelRecording{c: c, sess: sess}
+	c.trackTunnel(sess.id, r)
 	c.mu.Unlock()
-	return &TunnelRecording{c: c, sess: sess}, nil
+	if c.OnActive != nil {
+		c.OnActive(r.activeRecord())
+	}
+	return r, nil
+}
+
+// liveRecording is a session the agent opened through the tunnel, as the
+// console should see it while it runs.
+type liveRecording interface {
+	activeRecord() SessionRecord
+}
+
+// trackTunnel registers a tunnel session for ActiveTunnelRecords. Called
+// with c.mu held.
+func (c *Collector) trackTunnel(id string, r liveRecording) {
+	if c.tunnels == nil {
+		c.tunnels = map[string]liveRecording{}
+	}
+	c.tunnels[id] = r
+}
+
+// ActiveTunnelRecords is every session through the tunnel still open, as
+// an "active" report. The daemon repeats these so a long session is never
+// mistaken for one nothing is speaking for.
+func (c *Collector) ActiveTunnelRecords() []SessionRecord {
+	c.mu.Lock()
+	open := make([]liveRecording, 0, len(c.tunnels))
+	for _, r := range c.tunnels {
+		open = append(open, r)
+	}
+	c.mu.Unlock()
+	out := make([]SessionRecord, 0, len(open))
+	for _, r := range open {
+		out = append(out, r.activeRecord())
+	}
+	return out
+}
+
+func (r *TunnelRecording) activeRecord() SessionRecord {
+	s := r.sess
+	_, bytes, _ := s.rec.Stats()
+	return SessionRecord{
+		ID:         s.id,
+		Principal:  s.start.Principal,
+		ClientAddr: s.start.ClientAddr,
+		Origin:     s.start.Origin,
+		Hostname:   s.start.Hostname,
+		StartedAt:  s.start.StartedAt,
+		Bytes:      bytes,
+		Fidelity:   s.fidelity(r.c.Exec),
+		Commands:   s.commandCount(),
+		Actor:      s.start.Actor,
+		Protocol:   "ssh",
+		State:      "active",
+	}
+}
+
+// Terminate records that by ended the session from the console, for reason.
+// The caller hangs the session up; the seal then reports it as terminated.
+func (r *TunnelRecording) Terminate(by, reason string) {
+	r.sess.mu.Lock()
+	defer r.sess.mu.Unlock()
+	if r.sess.terminatedBy == "" {
+		r.sess.terminatedBy, r.sess.terminationReason = by, reason
+	}
 }
 
 // ID is the recording's session id.
@@ -67,6 +133,7 @@ func (r *TunnelRecording) Resize(cols, rows int) error {
 func (r *TunnelRecording) Seal(exitCode int) string {
 	r.c.mu.Lock()
 	delete(r.c.hangups, r.sess.id)
+	delete(r.c.tunnels, r.sess.id)
 	r.c.mu.Unlock()
 	defer r.c.wg.Done()
 	r.c.seal(r.sess, exitCode, nil)
