@@ -1,7 +1,7 @@
 import { useState, type ComponentType } from 'react'
 import {
   Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput, ScrollArea,
-  SegmentedControl, Select, Stack, Switch, Table, Tabs, TagsInput, Text, Textarea, TextInput,
+  SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -421,99 +421,99 @@ function Alerts({ s, edit }: CardProps) {
   const e = s.email
   const t = s.telegram
   const f = s.fcm
-  const on = (yes: boolean) => yes ? <Badge size="xs" variant="light" color="teal">on</Badge> : null
+  const [channel, setChannel] = useState('email')
+  const label = (name: string, on: boolean) => (on ? `${name} · on` : name)
   return (
     <SectionCard title="Session alerts" icon={IconBell} iconColor="amber"
       description="Tell administrators every time somebody opens a session, including logins that went around Argus.">
-      <Tabs defaultValue="email" variant="outline" keepMounted={false}>
-        <Tabs.List mb="sm">
-          <Tabs.Tab value="email" rightSection={on(e.enabled)}>Email</Tabs.Tab>
-          <Tabs.Tab value="telegram" rightSection={on(t.enabled)}>Telegram</Tabs.Tab>
-          <Tabs.Tab value="push" rightSection={on(f.enabled)}>Push notification</Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="email">
-          <Stack gap="xs">
-            <Switch size="xs" label="Send email" checked={e.enabled}
-              onChange={(ev) => edit({ email: { ...e, enabled: ev.currentTarget.checked } })} />
-            {e.enabled && (
-              <Grid gap="xs">
-                <Grid.Col span={{ base: 12, sm: 8 }}>
-                  <TextInput size="xs" label="SMTP server" value={e.host}
-                    onChange={(ev) => edit({ email: { ...e, host: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <NumberInput size="xs" label="Port" description="465 is TLS; others STARTTLS" min={1} max={65535}
-                    value={e.port || 587} onChange={(v) => edit({ email: { ...e, port: Number(v) || 0 } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TextInput size="xs" label="Username" value={e.username} autoComplete="off"
-                    onChange={(ev) => edit({ email: { ...e, username: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <SecretInput label="Password" set={e.passwordSet} value={e.password}
-                    onChange={(v) => edit({ email: { ...e, password: v } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TextInput size="xs" label="From" value={e.from}
-                    onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TagsInput size="xs" label="To" value={e.to} onChange={(v) => edit({ email: { ...e, to: v } })} />
-                </Grid.Col>
-              </Grid>
-            )}
-          </Stack>
-        </Tabs.Panel>
-        <Tabs.Panel value="telegram">
-          <Stack gap="xs">
-            <Switch size="xs" label="Send to Telegram" checked={t.enabled}
-              onChange={(ev) => edit({ telegram: { ...t, enabled: ev.currentTarget.checked } })} />
-            {t.enabled && (
-              <Grid gap="xs">
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <SecretInput label="Bot token" description="From @BotFather" set={t.botTokenSet} value={t.botToken}
-                    onChange={(v) => edit({ telegram: { ...t, botToken: v } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TagsInput size="xs" label="Chat ids" description="Add the bot to a group first"
-                    value={t.chatIds} onChange={(v) => edit({ telegram: { ...t, chatIds: v } })} />
-                </Grid.Col>
-              </Grid>
-            )}
-          </Stack>
-        </Tabs.Panel>
-        <Tabs.Panel value="push">
-          <Stack gap="xs">
-            <Switch size="xs" label="Send through Firebase Cloud Messaging" checked={f.enabled}
-              onChange={(ev) => edit({ fcm: { ...f, enabled: ev.currentTarget.checked } })} />
-            {f.enabled && (
-              <Grid gap="xs">
-                <Grid.Col span={12}>
-                  <Textarea size="xs" label="Service account key (JSON)"
-                    description={f.credentialsSet && f.credentials === undefined
-                      ? 'A key is configured. Paste a new one to replace it.'
-                      : 'Firebase console, Project settings, Service accounts.'}
-                    autosize minRows={2} maxRows={4} value={f.credentials ?? ''}
-                    styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 11 } }}
-                    onChange={(ev) => edit({ fcm: { ...f, credentials: ev.currentTarget.value || undefined } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <TextInput size="xs" label="Topic" value={f.topic}
-                    onChange={(ev) => edit({ fcm: { ...f, topic: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <TextInput size="xs" label="Project id" description="Optional" value={f.projectId}
-                    onChange={(ev) => edit({ fcm: { ...f, projectId: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <TagsInput size="xs" label="Device tokens" description="Optional"
-                    value={f.tokens} onChange={(v) => edit({ fcm: { ...f, tokens: v } })} />
-                </Grid.Col>
-              </Grid>
-            )}
-          </Stack>
-        </Tabs.Panel>
-      </Tabs>
+      <SegmentedControl size="xs" mb="sm" value={channel} onChange={setChannel}
+        data={[
+          { value: 'email', label: label('Email', e.enabled) },
+          { value: 'telegram', label: label('Telegram', t.enabled) },
+          { value: 'push', label: label('Push notification', f.enabled) },
+        ]} />
+      {channel === 'email' && (
+        <Stack gap="xs">
+          <Switch size="xs" label="Send email" checked={e.enabled}
+            onChange={(ev) => edit({ email: { ...e, enabled: ev.currentTarget.checked } })} />
+          {e.enabled && (
+            <Grid gap="xs">
+              <Grid.Col span={{ base: 12, sm: 8 }}>
+                <TextInput size="xs" label="SMTP server" value={e.host}
+                  onChange={(ev) => edit({ email: { ...e, host: ev.currentTarget.value } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 4 }}>
+                <NumberInput size="xs" label="Port" description="465 is TLS; others STARTTLS" min={1} max={65535}
+                  value={e.port || 587} onChange={(v) => edit({ email: { ...e, port: Number(v) || 0 } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Username" value={e.username} autoComplete="off"
+                  onChange={(ev) => edit({ email: { ...e, username: ev.currentTarget.value } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <SecretInput label="Password" set={e.passwordSet} value={e.password}
+                  onChange={(v) => edit({ email: { ...e, password: v } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="From" value={e.from}
+                  onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TagsInput size="xs" label="To" value={e.to} onChange={(v) => edit({ email: { ...e, to: v } })} />
+              </Grid.Col>
+            </Grid>
+          )}
+        </Stack>
+      )}
+      {channel === 'telegram' && (
+        <Stack gap="xs">
+          <Switch size="xs" label="Send to Telegram" checked={t.enabled}
+            onChange={(ev) => edit({ telegram: { ...t, enabled: ev.currentTarget.checked } })} />
+          {t.enabled && (
+            <Grid gap="xs">
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <SecretInput label="Bot token" description="From @BotFather" set={t.botTokenSet} value={t.botToken}
+                  onChange={(v) => edit({ telegram: { ...t, botToken: v } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TagsInput size="xs" label="Chat ids" description="Add the bot to a group first"
+                  value={t.chatIds} onChange={(v) => edit({ telegram: { ...t, chatIds: v } })} />
+              </Grid.Col>
+            </Grid>
+          )}
+        </Stack>
+      )}
+      {channel === 'push' && (
+        <Stack gap="xs">
+          <Switch size="xs" label="Send through Firebase Cloud Messaging" checked={f.enabled}
+            onChange={(ev) => edit({ fcm: { ...f, enabled: ev.currentTarget.checked } })} />
+          {f.enabled && (
+            <Grid gap="xs">
+              <Grid.Col span={12}>
+                <Textarea size="xs" label="Service account key (JSON)"
+                  description={f.credentialsSet && f.credentials === undefined
+                    ? 'A key is configured. Paste a new one to replace it.'
+                    : 'Firebase console, Project settings, Service accounts.'}
+                  autosize minRows={2} maxRows={4} value={f.credentials ?? ''}
+                  styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 11 } }}
+                  onChange={(ev) => edit({ fcm: { ...f, credentials: ev.currentTarget.value || undefined } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 4 }}>
+                <TextInput size="xs" label="Topic" value={f.topic}
+                  onChange={(ev) => edit({ fcm: { ...f, topic: ev.currentTarget.value } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 4 }}>
+                <TextInput size="xs" label="Project id" description="Optional" value={f.projectId}
+                  onChange={(ev) => edit({ fcm: { ...f, projectId: ev.currentTarget.value } })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 4 }}>
+                <TagsInput size="xs" label="Device tokens" description="Optional"
+                  value={f.tokens} onChange={(v) => edit({ fcm: { ...f, tokens: v } })} />
+              </Grid.Col>
+            </Grid>
+          )}
+        </Stack>
+      )}
     </SectionCard>
   )
 }

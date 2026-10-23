@@ -26,8 +26,13 @@ const BUDGET_KB = {
    * because it renders above the router. Lazy cost 3.4 kB instead -- it shares
    * Alert, Stack, Center and the icon factory with the shell, and splitting
    * those into chunks of their own cost more than the page did.
+   *
+   * 260.6 kB once the install wizard joined it, for the same reason: it renders
+   * above the router on a fresh install. 9.5 kB, of which Grid and
+   * SegmentedControl, which the shell did not load before, are 4.6 kB. Lazy
+   * measured 258.0 kB and split the shared components into 11 more files.
    */
-  overview: 253,
+  overview: 263,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most

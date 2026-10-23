@@ -81,13 +81,11 @@
 @import '@mantine/core/styles/Radio.layer.css';
 @import '@mantine/core/styles/Tooltip.layer.css';
 @import '@mantine/core/styles/SegmentedControl.layer.css';
-@import '@mantine/core/styles/SimpleGrid.layer.css';
 @import '@mantine/core/styles/Skeleton.layer.css';
 @import '@mantine/core/styles/Slider.layer.css';
 @import '@mantine/core/styles/Stack.layer.css';
 @import '@mantine/core/styles/Switch.layer.css';
 @import '@mantine/core/styles/Table.layer.css';
-@import '@mantine/core/styles/Tabs.layer.css';
 @import '@mantine/core/styles/ThemeIcon.layer.css';
 
 @import './app.tokens.css';

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ComponentType } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Code, Group, List, Modal, NavLink, Select, SimpleGrid,
+  Alert, Badge, Box, Button, Card, Code, Group, List, Grid, Modal, NavLink, Select,
   Skeleton, Stack, Switch, Text, ThemeIcon,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -453,55 +453,63 @@ function ControlSaveBar({ ctl }: { ctl: ControlSettingsState }) {
 
 function HostsAndTrust() {
   return (
-    <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="sm">
-      <SectionCard
-        title="Certificate authority"
-        icon={IconShieldLock}
-        iconColor="teal"
-        description="Add this to a host to move it off standing credentials. Argus then mints a short-lived certificate per session and there is nothing left in the vault to steal for that host."
-      >
-        <Code block fz={FS.micro}>
-          {`# /etc/ssh/sshd_config
+    <Grid gap="sm">
+      <Grid.Col span={{ base: 12, lg: 6 }}>
+        <SectionCard
+          title="Certificate authority"
+          icon={IconShieldLock}
+          iconColor="teal"
+          description="Add this to a host to move it off standing credentials. Argus then mints a short-lived certificate per session and there is nothing left in the vault to steal for that host."
+        >
+          <Code block fz={FS.micro}>
+            {`# /etc/ssh/sshd_config
 TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
-        </Code>
-      </SectionCard>
+          </Code>
+        </SectionCard>
+      </Grid.Col>
 
-      <SectionCard
-        title="Gateway endpoint"
-        icon={IconNetwork}
-        iconColor="sky"
-        description="Users connect with their normal client. The target is encoded in the username, so there is nothing to install and existing tooling keeps working."
-      >
-        <Code block fz={FS.digest}>
-          {`ssh ops:db-01@argus.northwind.id
+      <Grid.Col span={{ base: 12, lg: 6 }}>
+        <SectionCard
+          title="Gateway endpoint"
+          icon={IconNetwork}
+          iconColor="sky"
+          description="Users connect with their normal client. The target is encoded in the username, so there is nothing to install and existing tooling keeps working."
+        >
+          <Code block fz={FS.digest}>
+            {`ssh ops:db-01@argus.northwind.id
 scp report.csv ops:db-01@argus.northwind.id:/tmp/
 sftp ops:db-01@argus.northwind.id`}
-        </Code>
-      </SectionCard>
+          </Code>
+        </SectionCard>
+      </Grid.Col>
 
-      <Alert color="sky" icon={<IconInfoCircle size={16} />} title="Threat model, stated plainly">
-        <Text size={FS.body} lh={1.55}>
-          Argus terminates SSH, so the gateway holds session plaintext in memory. Treat gateway
-          nodes as your highest-value asset: no shared tenancy, no third-party agents, hardware
-          keys for the vault, and the audit log replicated somewhere the gateway cannot write.
-        </Text>
-      </Alert>
+      <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Alert color="sky" icon={<IconInfoCircle size={16} />} title="Threat model, stated plainly">
+          <Text size={FS.body} lh={1.55}>
+            Argus terminates SSH, so the gateway holds session plaintext in memory. Treat gateway
+            nodes as your highest-value asset: no shared tenancy, no third-party agents, hardware
+            keys for the vault, and the audit log replicated somewhere the gateway cannot write.
+          </Text>
+        </Alert>
+      </Grid.Col>
 
-      <Card style={{ borderStyle: 'dashed' }}>
-        <Group gap={SP.cozy} mb={SP.snug}>
-          <ThemeIcon variant="light" color="slate" size={22} radius="sm">
-            <IconDeviceDesktop size={13} />
-          </ThemeIcon>
-          <Text fw={600} size="sm">Windows RDP</Text>
-          <Badge size="xs" color="slate" variant="outline">phase 3</Badge>
-        </Group>
-        <Text size={FS.micro} c="dimmed" lh={1.5}>
-          RDP runs as a separate service rather than inside the SSH gateway — different
-          protocol, different recording pipeline, different failure modes. Linux SSH gets
-          finished first.
-        </Text>
-      </Card>
-    </SimpleGrid>
+      <Grid.Col span={{ base: 12, lg: 6 }}>
+        <Card style={{ borderStyle: 'dashed' }}>
+          <Group gap={SP.cozy} mb={SP.snug}>
+            <ThemeIcon variant="light" color="slate" size={22} radius="sm">
+              <IconDeviceDesktop size={13} />
+            </ThemeIcon>
+            <Text fw={600} size="sm">Windows RDP</Text>
+            <Badge size="xs" color="slate" variant="outline">phase 3</Badge>
+          </Group>
+          <Text size={FS.micro} c="dimmed" lh={1.5}>
+            RDP runs as a separate service rather than inside the SSH gateway — different
+            protocol, different recording pipeline, different failure modes. Linux SSH gets
+            finished first.
+          </Text>
+        </Card>
+      </Grid.Col>
+    </Grid>
   )
 }
 
@@ -525,19 +533,20 @@ function PolicyCard({
           <Text size={FS.micro} lh={1.55}>{note}</Text>
         </Alert>
       )}
-      <SimpleGrid cols={{ base: 1, lg: fields.length > 2 ? 2 : 1 }} spacing="lg" verticalSpacing="md">
+      <Grid gap="lg">
         {fields.map((f) => (
-          <Toggle
-            key={f.key}
-            spec={f}
-            checked={policy?.[f.key] ?? false}
-            loading={!policy}
-            modified={Boolean(saved && policy && saved[f.key] !== policy[f.key])}
-            disabled={disabled}
-            onChange={(v) => onChange(f.key, v)}
-          />
+          <Grid.Col key={f.key} span={{ base: 12, lg: fields.length > 2 ? 6 : 12 }}>
+            <Toggle
+              spec={f}
+              checked={policy?.[f.key] ?? false}
+              loading={!policy}
+              modified={Boolean(saved && policy && saved[f.key] !== policy[f.key])}
+              disabled={disabled}
+              onChange={(v) => onChange(f.key, v)}
+            />
+          </Grid.Col>
         ))}
-      </SimpleGrid>
+      </Grid>
     </SectionCard>
   )
 }

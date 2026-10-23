@@ -61,11 +61,8 @@ On the control plane, start it and finish setup in the browser:
   open https://<this host>:8080/setup      # asks for: sudo cat /var/lib/argus/setup-token
   systemctl enable --now argus-backup.timer
 
-Everything else, including the files a gateway needs, is under Settings in
-the console.
-
-On a gateway: put the files from Settings > Gateways in /etc/argus, then
-  systemctl enable --now argus-gateway
+Everything else is under Settings in the console. Every server people log
+in to needs argus-agent: enroll it from Servers > Add a server.
 
 The agent additionally needs sshd configured to record sessions:
 
