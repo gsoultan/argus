@@ -247,8 +247,8 @@ func TestMutualTLS(t *testing.T) {
 			t.Fatalf("mTLS request failed: %v", err)
 		}
 		defer resp.Body.Close()
-		if sawIdentity != "argus-gateway" {
-			t.Errorf("peer identity = %q, want argus-gateway", sawIdentity)
+		if sawIdentity != "argus-agent" {
+			t.Errorf("peer identity = %q, want argus-agent", sawIdentity)
 		}
 	})
 

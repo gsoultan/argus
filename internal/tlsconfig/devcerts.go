@@ -83,7 +83,7 @@ func GenerateDevPKI(dir string, hosts []string) error {
 	// "whoever holds the token".
 	clientTmpl := &x509.Certificate{
 		SerialNumber: serial(),
-		Subject:      pkix.Name{CommonName: "argus-gateway"},
+		Subject:      pkix.Name{CommonName: "argus-agent"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().AddDate(1, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

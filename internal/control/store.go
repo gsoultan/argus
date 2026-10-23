@@ -574,62 +574,6 @@ type Asset struct {
 	TunnelConnected bool `json:"tunnelConnected"`
 }
 
-// ErrConsoleOwned means a gateway tried to publish over a row an administrator
-// entered in the console.
-//
-// Not a failure: it is the rule working. The gateway keeps publishing its file
-// inventory so a file-driven deployment appears without anyone retyping it, and
-// the console stays the authority the moment someone edits a host there.
-var ErrConsoleOwned = errors.New("this asset is managed from the console")
-
-// UpsertAsset registers or updates an asset by hostname, on behalf of a gateway.
-//
-// Returns ErrConsoleOwned when the row belongs to the console, having changed
-// nothing. Said out loud rather than swallowed: an administrator whose edits
-// keep being overwritten, or a gateway whose inventory is quietly ignored, both
-// need to know which of the two is happening.
-func (s *Store) UpsertAsset(ctx context.Context, a Asset) error {
-	if a.Tags == nil {
-		a.Tags = []string{}
-	}
-	if a.Principals == nil {
-		a.Principals = []string{}
-	}
-	if a.Port == 0 {
-		a.Port = 22
-	}
-	if a.Protocol == "" {
-		a.Protocol = "ssh"
-	}
-	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO assets (hostname, address, port, os, tags, group_name,
-			credential_mode, host_key_state, host_key_fingerprint,
-			host_key_pinned_at, health, principals, protocol, source)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'gateway')
-		ON CONFLICT (hostname) DO UPDATE SET
-			address              = EXCLUDED.address,
-			port                 = EXCLUDED.port,
-			os                   = COALESCE(NULLIF(EXCLUDED.os,''), assets.os),
-			principals           = EXCLUDED.principals,
-			credential_mode      = EXCLUDED.credential_mode,
-			protocol             = EXCLUDED.protocol,
-			host_key_state       = EXCLUDED.host_key_state,
-			host_key_fingerprint = COALESCE(EXCLUDED.host_key_fingerprint, assets.host_key_fingerprint),
-			host_key_pinned_at   = COALESCE(EXCLUDED.host_key_pinned_at, assets.host_key_pinned_at),
-			updated_at           = now()
-		WHERE assets.source <> 'console'`,
-		a.Hostname, a.Address, a.Port, a.OS, a.Tags, a.GroupName,
-		a.CredentialMode, a.HostKeyState, a.HostKeyFingerprint,
-		a.HostKeyPinnedAt, a.Health, a.Principals, a.Protocol)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrConsoleOwned
-	}
-	return nil
-}
-
 // Assets lists the inventory an administrator sees: every live asset.
 func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
 	rows, err := s.pool.Query(ctx, assetSelect+`

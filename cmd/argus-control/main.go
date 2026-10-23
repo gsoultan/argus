@@ -1,13 +1,12 @@
 // Command argus-control is the Argus control plane.
 //
 // It is the system of record: assets, sessions, agent liveness and the
-// hash-chained audit log. The console reads from it; gateways and agents report
-// into it.
+// hash-chained audit log. The console reads from it and opens sessions through
+// it; agents report into it and hold the tunnels it opens sessions over.
 //
-// Deliberately not on the critical path for a session. If this is down, the
-// gateway still brokers and records, and the agent still captures bypasses —
-// they spool locally and reconcile when it returns. A PAM tool whose outage
-// stops people working gets removed.
+// Sessions open through it, so an outage stops new sessions from the console.
+// It does not lose evidence: agents record on the host, spool what they could
+// not report and reconcile when it returns.
 //
 //	argus-control --config control.yaml
 package main
@@ -48,7 +47,7 @@ type config struct {
 	//
 	// Empty, which is the default, means one listener serves everything --
 	// unchanged from before this existed. Set it and the two surfaces split:
-	// `listen` carries only what gateways and agents post to, and this carries
+	// `listen` carries only what agents post to, and this carries
 	// only what a person signs in to. That lets the console be bound somewhere
 	// narrow without taking the fleet's reporting with it, which is the reason
 	// `listen` cannot simply be moved to loopback.
@@ -61,8 +60,7 @@ type config struct {
 	// told. Short on purpose: silence is how a killed agent looks.
 	AgentStaleAfter time.Duration   `yaml:"agent_stale_after,omitempty"`
 	Storage         *storage.Config `yaml:"storage,omitempty"`
-	// SigningSecret signs session cookies and terminal tickets. Shared with the
-	// gateway so it can verify tickets without calling back.
+	// SigningSecret signs session cookies and terminal tickets.
 	SigningSecret string `yaml:"signing_secret,omitempty"`
 	ConsoleURL    string `yaml:"console_url,omitempty"`
 	// TLS serves the API over HTTPS. Strongly recommended: session cookies,
@@ -109,9 +107,6 @@ type tunnelConfig struct {
 type consoleConfig struct {
 	// Dir is where the package installs the built console.
 	Dir string `yaml:"dir,omitempty"`
-	// GatewayURL is where browsers reach argus-gateway's web listener, for the
-	// terminal. Without it the Connect page asks for the address.
-	GatewayURL string `yaml:"gateway_url,omitempty"`
 	// FleetURL is where servers reach the control plane, when it is not the
 	// console's own address -- behind a Cloudflare Tunnel, for one. "Add a
 	// server" puts it in the enrollment command.
@@ -172,8 +167,8 @@ type rateLimitConfig struct {
 type tlsConfig struct {
 	CertFile string `yaml:"cert_file,omitempty"`
 	KeyFile  string `yaml:"key_file,omitempty"`
-	// ClientCAFile enables mutual TLS on the reporter endpoints, so a gateway
-	// or agent proves which host it is rather than only that it holds a token
+	// ClientCAFile enables mutual TLS on the reporter endpoints, so an agent
+	// proves which host it is rather than only that it holds a token
 	// identical on every host.
 	ClientCAFile string `yaml:"client_ca_file,omitempty"`
 }
@@ -372,6 +367,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			return err
 		}
 		defer signer.Close()
+		signer.SetRedeemer(store)
 	}
 
 	rl := control.ThrottleConfig{}
@@ -425,7 +421,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	api.Alerts = alerts
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
-			Dir: cfg.Console.Dir, GatewayURL: cfg.Console.GatewayURL, Version: version,
+			Dir: cfg.Console.Dir, Version: version,
 			FleetURL: cfg.Console.FleetURL,
 		})
 		if err != nil {
@@ -499,14 +495,14 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 					log.Error("stale agent sweep failed", "error", err)
 					continue
 				}
-				// A session whose gateway never came back. Closed at its
+				// A session whose agent never came back. Closed at its
 				// last report rather than at now(), and marked inferred, so
 				// the record says what was observed and what was deduced.
 				if closed, cerr := store.CloseAbandonedSessions(ctx, control.SessionAbandonedAfter); cerr != nil {
 					log.Error("abandoned session sweep failed", "error", cerr)
 				} else {
 					for _, sess := range closed {
-						log.Warn("closed a session whose gateway stopped reporting",
+						log.Warn("closed a session nothing reported for a day",
 							"session", sess.ID, "user", sess.UserEmail,
 							"target", sess.Principal+"@"+sess.AssetHostname,
 							"last_reported", sess.LastReportedAt)
@@ -518,7 +514,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 							Severity:   "warn",
 							ActorEmail: "system",
 							Target:     sess.ID,
-							Detail: "No gateway reported " + sess.UserEmail + "'s session as " +
+							Detail: "Nothing reported " + sess.UserEmail + "'s session as " +
 								sess.Principal + "@" + sess.AssetHostname + " for " +
 								control.SessionAbandonedAfter.String() + ". Closed at its last " +
 								"report, " + sess.LastReportedAt.Format(time.RFC3339) +

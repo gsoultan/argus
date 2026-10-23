@@ -79,9 +79,9 @@ jobs:
             echo "| Package | Goes on |"
             echo "|---|---|"
             echo "| \`argus-agent\` | every managed host |"
-            echo "| \`argus-gateway\` | the bastion servers |"
             echo "| \`argus-control\` | the control plane servers |"
+            echo "| \`argus-verify\` | wherever recordings are checked |"
             echo
-            echo "macOS and Windows archives carry argus-control, argus-gateway"
-            echo "and argus-verify. The agent is Linux-only."
+            echo "macOS and Windows archives carry argus-control, argus-verify"
+            echo "and argus-agent."
           } >> "$GITHUB_STEP_SUMMARY"

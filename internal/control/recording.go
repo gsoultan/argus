@@ -90,7 +90,7 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 	if verdict == "tampered" {
 		severity = "critical"
 		detail = "Recording retrieved but its hash chain does NOT match what the " +
-			"gateway sealed. The stored artefact has been altered."
+			"agent sealed. The stored artefact has been altered."
 	}
 	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action:     "recording.read",
@@ -188,31 +188,3 @@ func (s *Store) StoreRecordingKey(ctx context.Context, id, chainHead, key string
 
 // ErrNoSuchSession is returned when a report names a session that is not here.
 var ErrNoSuchSession = errors.New("no such session")
-
-// handleRecordingStored is what a gateway calls after a retried upload lands.
-func (a *API) handleRecordingStored(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		ID            string `json:"id"`
-		ChainHead     string `json:"chainHead"`
-		RecordingPath string `json:"recordingPath"`
-	}
-	if err := decodeReport(r, &in, a.log, "report/recording"); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if in.ID == "" || in.RecordingPath == "" {
-		writeErr(w, http.StatusBadRequest, "id and recordingPath are required")
-		return
-	}
-	if err := a.store.StoreRecordingKey(r.Context(), in.ID, in.ChainHead, in.RecordingPath); err != nil {
-		if errors.Is(err, ErrNoSuchSession) {
-			writeErr(w, http.StatusNotFound, err.Error())
-			return
-		}
-		a.fail(w, "store recording key", err)
-		return
-	}
-	a.log.Info("a stranded recording reached object storage",
-		"session", in.ID, "key", in.RecordingPath)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}

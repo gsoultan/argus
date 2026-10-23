@@ -35,27 +35,6 @@ func RunShim(cfg ShimConfig) int {
 	origCmd := os.Getenv("SSH_ORIGINAL_COMMAND")
 	clientAddr, _, _ := strings.Cut(os.Getenv("SSH_CONNECTION"), " ")
 
-	// Identify the gateway by the key it authenticated with, not by where the
-	// packets appear to come from. Behind NAT or a port forward every client
-	// shares one source address, so an address rule would let anyone on that
-	// path opt out of being recorded.
-	fingerprints, err := LoadGatewayFingerprints(cfg.GatewayKeys)
-	if err != nil {
-		fingerprints = map[string]bool{}
-	}
-	origin, originReason := OriginDetector{
-		GatewayKeyFingerprints: fingerprints,
-		GatewayAddrs:           cfg.GatewayAddrs,
-	}.Detect()
-
-	// Only skip when the operator has explicitly accepted the trade — see
-	// SkipBrokered. The safe default records everything and lets the control
-	// plane deduplicate, because the alternative is a gap an attacker can
-	// create simply by stealing the gateway's key.
-	if origin == Brokered && cfg.SkipBrokered {
-		return execSession(cfg, origCmd, nil)
-	}
-
 	conn, err := net.DialTimeout("unix", cfg.SocketPath, 5*time.Second)
 	if err != nil {
 		if !cfg.FailOpen {
@@ -78,7 +57,7 @@ func RunShim(cfg ShimConfig) int {
 		Type:         "start",
 		Principal:    currentUsername(),
 		ClientAddr:   clientAddr,
-		Origin:       origin,
+		Origin:       Direct,
 		Command:      origCmd,
 		TTY:          term.IsTerminal(),
 		Cols:         cols,
@@ -86,7 +65,7 @@ func RunShim(cfg ShimConfig) int {
 		Hostname:     hostname,
 		StartedAt:    time.Now().UTC(),
 		PID:          os.Getpid(),
-		OriginReason: originReason,
+		OriginReason: "a login through sshd; Argus opens its own sessions over the tunnel",
 	}
 
 	enc := json.NewEncoder(conn)

@@ -99,13 +99,7 @@ jobs:
         # before anything noticed.
         run: go run ./cmd/stormgen verify -dsn "$ARGUS_TEST_DATABASE_URL"
 
-      - name: Fuzz the SSH request parsers
-        # These read bytes from the network before any policy runs. A panic
-        # there takes down every session on the gateway, so a short fuzz run on
-        # every change is cheap insurance.
-        run: go test -run=Fuzz -fuzz=FuzzParsePTYRequest -fuzztime=60s ./internal/gateway/
-
-  # The control plane, gateway and verifier ship for macOS and Windows too.
+  # The control plane and verifier ship for macOS and Windows too.
   # Cross-compiling proves they build; this proves they start, and that the
   # private-key check reads Windows access lists rather than mode bits that
   # mean nothing there.
@@ -136,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
-          for c in argus-control argus-gateway argus-verify; do
+          for c in argus-control argus-verify; do
             go build -o "bin/$c$ext" "./cmd/$c"
             "./bin/$c$ext" -version
           done
@@ -718,13 +712,11 @@ jobs:
           pg_isready -h localhost -p 5433 -U argus
           # One host carrying all of them, as a small deployment does: no two
           # packages may own the same file.
-          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-gateway*linux_amd64.deb) \
-            $(ls dist/argus-verify*linux_amd64.deb)
+          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-verify*linux_amd64.deb)
           argus-verify -h >/dev/null 2>&1 || [ -x /usr/bin/argus-verify ]
           argus-control -version
-          argus-gateway -version || argus-gateway --version || true
 
-          for u in argus-control.service argus-gateway.service argus-backup.service argus-backup.timer; do
+          for u in argus-control.service argus-backup.service argus-backup.timer; do
             sudo systemd-analyze verify "/lib/systemd/system/$u"
           done
           [ "$(sudo stat -c '%a %U:%G' /var/backups/argus)" = "700 argus:argus" ]
@@ -853,23 +845,6 @@ jobs:
           sudo sh -c 'argus-control backup verify \
             -scratch-db "postgres://argus:argus@localhost:5433/argus_drill?sslmode=disable" \
             /var/backups/argus/'"$run"
-
-      - name: Confirm the shipped config does not expose the SSH port
-        # A shipped default reaches every install that never edits the file,
-        # which is most of them. The browser terminal is the intended way in
-        # and does not touch this listener at all -- webssh calls the same Dial
-        # in-process -- so 0.0.0.0 here buys nothing and puts authorized_keys
-        # on the internet. Native-client access is opt-in, and this is what
-        # stops that decision drifting back by accident.
-        run: |
-          set -euo pipefail
-          listen=$(grep -E '^listen:' packaging/config/gateway.yaml)
-          echo "$listen"
-          case "$listen" in
-            *0.0.0.0*|*'"[::]'*|*'"*:'*)
-              echo "::error::packaging/config/gateway.yaml exposes the SSH listener by default; exposing it is an operator's decision, not a shipped one"
-              exit 1 ;;
-          esac
 
       - name: Confirm the units are hardened
         run: |

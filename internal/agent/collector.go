@@ -369,10 +369,15 @@ func (c *Collector) handle(conn net.Conn) {
 				c.log.Warn("duplicate start on one connection")
 				return
 			}
+			// Everything on this socket came in through sshd, and nothing
+			// Argus opens does: the console's sessions arrive over the tunnel.
+			// So a login here is direct whatever its start message claims --
+			// the socket is open to every local user, and a claim of having
+			// come through Argus is not something to take from one of them.
+			m.Origin = Direct
 			// Console-only comes first: a login that did not come through
 			// Argus does not happen at all, whatever the recording scope.
-			// A brokered one is a gateway session the console opened.
-			if m.Origin == Direct && c.ConsoleOnly() {
+			if c.ConsoleOnly() {
 				c.log.Warn("DIRECT LOGIN REFUSED — this host is console-only",
 					"principal", m.Principal,
 					"client", m.ClientAddr,
@@ -388,11 +393,9 @@ func (c *Collector) handle(conn net.Conn) {
 				}
 				return
 			}
-			// Only a direct login is ever let through, and only when the
-			// console asked for it. A brokered one is an Argus session, and
-			// an origin the shim could not decide is treated as direct by
-			// the detector already -- so nothing here widens what skips.
-			if m.Origin == Direct && c.Scope() == ScopeArgusOnly {
+			// A direct login is let through unrecorded only when the console
+			// asked for it.
+			if c.Scope() == ScopeArgusOnly {
 				c.log.Warn("DIRECT LOGIN — let through unrecorded by the host's recording scope",
 					"principal", m.Principal,
 					"client", m.ClientAddr,
@@ -422,7 +425,7 @@ func (c *Collector) handle(conn net.Conn) {
 			// the moment it happens, not only when the session ends — a long
 			// session should not delay the alarm.
 			if m.Origin == Direct {
-				c.log.Warn("DIRECT SESSION — gateway was bypassed",
+				c.log.Warn("DIRECT SESSION — Argus was bypassed",
 					"session", sess.id,
 					"principal", m.Principal,
 					"client", m.ClientAddr,

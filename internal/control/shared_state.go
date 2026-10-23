@@ -4,10 +4,19 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/argus/internal/auth"
 )
 
 /* ── Ticket redemption ───────────────────────────────────────────────────── */
+
+// Redeem makes the store the signer's record of used tickets.
+//
+// In memory, "single use" holds for exactly one control plane: a ticket burned
+// on one replica stays valid on the next, so behind a load balancer it would
+// quietly become "single use per replica".
+func (s *Store) Redeem(ctx context.Context, t auth.Ticket) (alreadyUsed bool, err error) {
+	return s.RedeemTicket(ctx, t.ID, t.Email, t.Target, t.Principal, t.ExpiresAt)
+}
 
 // RedeemTicket records a ticket as used and reports whether it already was.
 //
@@ -42,76 +51,4 @@ func (s *Store) SweepTickets(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
-}
-
-/* ── Host key pins ───────────────────────────────────────────────────────── */
-
-// HostKeyPin is one target's verified identity.
-type HostKeyPin struct {
-	Host        string    `json:"host"`
-	Fingerprint string    `json:"fingerprint"`
-	KeyType     string    `json:"keyType"`
-	PinnedAt    time.Time `json:"pinnedAt"`
-	PinnedBy    string    `json:"pinnedBy"`
-}
-
-// HostKeyPin returns the pin for host, or nil when none exists.
-func (s *Store) HostKeyPin(ctx context.Context, host string) (*HostKeyPin, error) {
-	var p HostKeyPin
-	err := s.pool.QueryRow(ctx, `
-		SELECT host, fingerprint, key_type, pinned_at, pinned_by
-		FROM host_key_pins WHERE host = $1`, host).
-		Scan(&p.Host, &p.Fingerprint, &p.KeyType, &p.PinnedAt, &p.PinnedBy)
-	if err == pgx.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &p, nil
-}
-
-// PinHostKey records a pin, refusing to silently replace a different one.
-//
-// Overwriting a pin is how a host-key mismatch turns into no alert at all, so
-// changing one is a deliberate act (Repin) rather than a side effect of a
-// gateway happening to connect during a rebuild.
-func (s *Store) PinHostKey(ctx context.Context, p HostKeyPin) (conflicting *HostKeyPin, err error) {
-	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO host_key_pins (host, fingerprint, key_type, pinned_by)
-		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (host) DO NOTHING`,
-		p.Host, p.Fingerprint, p.KeyType, p.PinnedBy)
-	if err != nil {
-		return nil, err
-	}
-	if tag.RowsAffected() == 1 {
-		return nil, nil
-	}
-
-	// A pin already existed. Return it so the caller can tell "someone else
-	// pinned the same key first" from "this host presented something else".
-	existing, err := s.HostKeyPin(ctx, p.Host)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil && existing.Fingerprint == p.Fingerprint {
-		return nil, nil // benign race: two gateways pinned the same key
-	}
-	return existing, nil
-}
-
-// RepinHostKey replaces a pin after an operator verified the new key out of
-// band. Never called automatically.
-func (s *Store) RepinHostKey(ctx context.Context, p HostKeyPin) error {
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO host_key_pins (host, fingerprint, key_type, pinned_by)
-		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (host) DO UPDATE SET
-			fingerprint = EXCLUDED.fingerprint,
-			key_type    = EXCLUDED.key_type,
-			pinned_at   = now(),
-			pinned_by   = EXCLUDED.pinned_by`,
-		p.Host, p.Fingerprint, p.KeyType, p.PinnedBy)
-	return err
 }

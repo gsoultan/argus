@@ -90,10 +90,10 @@ func scopeOf(t Ticket) string {
 
 // Redeemer records which tickets have been used.
 //
-// An interface because the answer has to be the same on every gateway. The
-// in-memory implementation is correct for exactly one instance and quietly
-// wrong for two: a ticket burned on gateway A stays valid on gateway B, so
-// "single use" silently becomes "single use per gateway".
+// An interface because the answer has to be the same on every control plane
+// replica. The in-memory implementation is correct for exactly one instance and
+// quietly wrong for two: a ticket burned on replica A stays valid on replica B,
+// so "single use" silently becomes "single use per replica".
 //
 // Redeem returns alreadyUsed. An error means "cannot tell", and callers must
 // refuse rather than assume the ticket is fresh.
@@ -103,15 +103,14 @@ type Redeemer interface {
 
 // Signer mints and verifies sessions and tickets.
 //
-// HMAC rather than asymmetric signing: the control plane issues and the gateway
-// verifies, and both are operated by the same party, so a shared secret is
-// simpler with no meaningful loss. Move to asymmetric when a third party needs
-// to verify without being able to mint.
+// HMAC rather than asymmetric signing: the control plane both issues and
+// verifies, so a shared secret is simpler with no meaningful loss. Move to
+// asymmetric when a third party needs to verify without being able to mint.
 type Signer struct {
 	key []byte
 
 	// redeemer is shared state when configured. Nil falls back to the
-	// in-memory set below, which the gateway warns about at startup.
+	// in-memory set below, which holds for one instance only.
 	redeemer Redeemer
 
 	// Local redemption set. Bounded by expiry sweeping rather than growing

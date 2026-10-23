@@ -11,27 +11,6 @@ import (
 type ShimConfig struct {
 	// SocketPath is the collector to stream to.
 	SocketPath string
-	// GatewayKeys is the path to the gateway's public keys, in authorized_keys
-	// format. A session that authenticated with one of these came through
-	// Argus and is already recorded. This is the authoritative signal.
-	GatewayKeys string
-	// GatewayAddrs is a weak fallback used only when sshd does not expose auth
-	// info. See OriginDetector.Detect for why address matching alone is never
-	// treated as proof.
-	GatewayAddrs []string
-	// SkipBrokered stops the agent recording sessions it believes came through
-	// the gateway, on the grounds the gateway already recorded them.
-	//
-	// Off by default, and that default is deliberate. "Brokered" is inferred
-	// from the key that authenticated, which really means "whoever holds the
-	// gateway's key" — and that is exactly the credential an attacker steals in
-	// order to bypass the gateway. Skipping on that signal would let a stolen
-	// key silence the agent, turning the strongest control into an off switch.
-	//
-	// Recording both ends costs storage and leaves the control plane to
-	// reconcile two artefacts per brokered session. That is a far better
-	// trade than a recording gap an attacker can trigger on demand.
-	SkipBrokered bool
 	// FailOpen decides what happens when the collector is unreachable.
 	//
 	// False (the default) refuses the session: if it cannot be recorded, it

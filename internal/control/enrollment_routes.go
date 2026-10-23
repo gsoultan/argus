@@ -236,7 +236,7 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 	if a.ReporterToken != "" && subtle.ConstantTimeCompare(
 		[]byte(in.Token), []byte(a.ReporterToken)) == 1 {
 		writeErr(w, http.StatusBadRequest,
-			"that is the gateways' reporter token, not an enrollment token; "+
+			"that is the shared reporter token, not an enrollment token; "+
 				"make one under Servers > Add a server")
 		return
 	}

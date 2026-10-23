@@ -1,21 +1,22 @@
 # GoReleaser builds Argus and packages it.
 #
-#   argus-control, argus-gateway, argus-verify   Linux, macOS and Windows
-#   argus-agent                                  Linux, macOS and Windows
+#   argus-control, argus-verify   Linux, macOS and Windows
+#   argus-agent                   Linux, macOS and Windows
 #
-# The servers and the verifier are portable Go, so they ship for all three: an
+# The control plane and the verifier are portable Go, so they ship for all three: an
 # auditor checks recordings on whatever their workstation runs, and the control
 # plane can be tried on a laptop before it goes on a server. Only Linux gets
 # deb, rpm and apk packages and systemd units; macOS and Windows get archives,
 # and the macOS one carries the agent's launchd job. The Windows agent
-# installs itself as a service (argus-agent service install). It records
-# sessions opened through the console; direct sshd logins are not hooked on
-# Windows yet, and the agent says so rather than claiming them.
+# installs itself as a service (argus-agent service install). It opens and
+# records terminals and Remote Desktop sessions started in the console; direct
+# sshd logins are not hooked on Windows yet, and the agent says so rather than
+# claiming them.
 #
 # Packages are split rather than shipped as one bundle: the agent goes on every
-# managed host, potentially thousands, while the gateway and control plane go on
-# a handful of servers. Installing a gateway on every host to get the agent
-# would be a large and pointless increase in attack surface.
+# managed host, potentially thousands, while the control plane goes on a
+# handful of servers. Installing the control plane on every host to get the
+# agent would be a large and pointless increase in attack surface.
 #
 #   goreleaser check          validate this file
 #   goreleaser release --snapshot --clean    build locally without publishing
@@ -29,29 +30,10 @@ before:
     - go mod tidy
     - go vet ./...
     # The console ships inside argus-control. Built same-origin (VITE_CONTROL_URL=/)
-    # because the control plane serves it and the session cookie depends on it;
-    # the gateway address comes from console.gateway_url at run time.
+    # because the control plane serves it and the session cookie depends on it.
     - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn"
 
 builds:
-  - &gateway
-    id: argus-gateway
-    main: ./cmd/argus-gateway
-    binary: argus-gateway
-    env: [CGO_ENABLED=0]
-    goos: [linux]
-    goarch: [amd64, arm64]
-    # -trimpath keeps build-machine paths out of the binary; -s -w drop the
-    # symbol table and DWARF, which are of no use in production and of some use
-    # to someone reverse engineering it.
-    flags: [-trimpath]
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
-      - -X main.date={{.CommitDate}}
-    mod_timestamp: "{{ .CommitTimestamp }}"
-
   - &control
     id: argus-control
     main: ./cmd/argus-control
@@ -59,6 +41,9 @@ builds:
     env: [CGO_ENABLED=0]
     goos: [linux]
     goarch: [amd64, arm64]
+    # -trimpath keeps build-machine paths out of the binary; -s -w drop the
+    # symbol table and DWARF, which are of no use in production and of some use
+    # to someone reverse engineering it.
     flags: [-trimpath]
     ldflags:
       - -s -w
@@ -95,11 +80,8 @@ builds:
       - -X main.version={{.Version}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  # macOS: the three servers and the agent. Separate build ids from Linux so
-  # each system's archive carries only what means something there.
-  - <<: *gateway
-    id: argus-gateway-darwin
-    goos: [darwin]
+  # macOS: the control plane, the verifier and the agent. Separate build ids
+  # from Linux so each system's archive carries only what means something there.
   - <<: *control
     id: argus-control-darwin
     goos: [darwin]
@@ -110,10 +92,7 @@ builds:
     id: argus-agent-darwin
     goos: [darwin]
 
-  # Windows: the three servers and the agent.
-  - <<: *gateway
-    id: argus-gateway-windows
-    goos: [windows]
+  # Windows: the control plane, the verifier and the agent.
   - <<: *control
     id: argus-control-windows
     goos: [windows]
@@ -126,7 +105,7 @@ builds:
 
 archives:
   - id: default
-    ids: [argus-gateway, argus-control, argus-agent, argus-verify]
+    ids: [argus-control, argus-agent, argus-verify]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
@@ -141,7 +120,7 @@ archives:
         dst: config
 
   - id: darwin
-    ids: [argus-gateway-darwin, argus-control-darwin, argus-verify-darwin, argus-agent-darwin]
+    ids: [argus-control-darwin, argus-verify-darwin, argus-agent-darwin]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
@@ -150,8 +129,6 @@ archives:
         dst: docs
       - src: packaging/config/control.example.yaml
         dst: config/control.example.yaml
-      - src: packaging/config/gateway.yaml
-        dst: config/gateway.yaml
       # No package installs the console here, so the archive carries it: point
       # console.dir at this folder.
       - src: web/dist-release
@@ -161,7 +138,7 @@ archives:
         dst: launchd/com.argus.agent.plist
 
   - id: windows
-    ids: [argus-gateway-windows, argus-control-windows, argus-verify-windows, argus-agent-windows]
+    ids: [argus-control-windows, argus-verify-windows, argus-agent-windows]
     # Explorer opens a zip with a double click; a tar.gz needs a tool.
     formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -171,8 +148,6 @@ archives:
         dst: docs
       - src: packaging/config/control.example.yaml
         dst: config/control.example.yaml
-      - src: packaging/config/gateway.yaml
-        dst: config/gateway.yaml
       # No package installs the console here, so the archive carries it: point
       # console.dir at this folder.
       - src: web/dist-release
@@ -188,9 +163,9 @@ nfpms:
     maintainer: Argus Maintainers <noreply@example.com>
     description: |
       Argus host agent.
-      Records privileged sessions on this host, including sessions that connect
-      straight to sshd without passing through the Argus gateway, and reports
-      how reachable the host is without Argus.
+      Opens the sessions people start in the Argus console over an outbound
+      tunnel, records them on this host, refuses or records logins that do not
+      come through Argus, and reports how reachable the host is without it.
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
@@ -214,10 +189,8 @@ nfpms:
         dependencies: [openssh]
 
   # ── Verifier: wherever recordings are checked ──────────────────────────────
-  # Its own package because the gateway and the control plane both want it and
-  # often share a host: two packages owning /usr/bin/argus-verify cannot both
-  # be installed. It has no service and no config, so an auditor can install
-  # it on a workstation that runs nothing else.
+  # Its own package so an auditor can install it on a workstation that runs
+  # nothing else: it has no service and no config.
   - id: argus-verify
     package_name: argus-verify
     ids: [argus-verify]
@@ -227,46 +200,10 @@ nfpms:
     description: |
       Argus recording verifier.
       Checks a session recording's hash chain against its recorded head,
-      independently of the gateway and control plane that produced it.
+      independently of the agent and control plane that produced it.
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
-    # Releases up to 0.1.x shipped this binary inside argus-gateway and
-    # argus-control. Replaces lets dpkg hand the file over on upgrade instead
-    # of refusing it. Not for rpm, where it would mean Obsoletes and remove
-    # the gateway; there, upgrade the packages in one transaction.
-    overrides:
-      deb:
-        replaces: [argus-gateway, argus-control]
-
-  # ── Gateway ────────────────────────────────────────────────────────────────
-  - id: argus-gateway
-    package_name: argus-gateway
-    ids: [argus-gateway]
-    vendor: Argus
-    homepage: https://github.com/gsoultan/argus
-    maintainer: Argus Maintainers <noreply@example.com>
-    description: |
-      Argus SSH gateway.
-      Brokers, records and authorises privileged SSH sessions.
-    license: Proprietary
-    formats: [deb, rpm, apk]
-    bindir: /usr/bin
-    contents:
-      - src: packaging/systemd/argus-gateway.service
-        dst: /lib/systemd/system/argus-gateway.service
-      - src: packaging/config/gateway.yaml
-        dst: /etc/argus/gateway.yaml
-        type: config|noreplace
-        file_info: {mode: 0640}
-      - src: packaging/config/gateway.env
-        dst: /etc/argus/gateway.env
-        type: config|noreplace
-        file_info: {mode: 0600}
-    scripts:
-      postinstall: packaging/scripts/postinstall.sh
-      preremove: packaging/scripts/preremove.sh
-      postremove: packaging/scripts/postremove.sh
 
   # ── Control plane ──────────────────────────────────────────────────────────
   - id: argus-control
@@ -373,14 +310,14 @@ release:
     ```
 
     On macOS and Windows, unpack `argus_{{ .Version }}_darwin_<arch>.tar.gz` or
-    `argus_{{ .Version }}_windows_<arch>.zip`: the control plane, gateway and
+    `argus_{{ .Version }}_windows_<arch>.zip`: the control plane and
     verifier, with the console in `console/`. The macOS archive also carries the
     agent and its launchd job in `launchd/`; the Windows archive carries the
     agent, which installs itself with `argus-agent service install`.
 
     Nothing starts on install. These services need certificates, secrets and an
     inventory first, and a package that starts a half-configured privileged
-    access gateway is one that fails in the worst possible place.
+    access service is one that fails in the worst possible place.
 
     Verify what you downloaded:
 

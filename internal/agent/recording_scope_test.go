@@ -97,19 +97,27 @@ func TestArgusOnlyLetsADirectLoginThroughAndReportsIt(t *testing.T) {
 	}
 }
 
-// "Argus sessions only" still records the Argus sessions.
-func TestArgusOnlyStillRecordsABrokeredSession(t *testing.T) {
+// A login through sshd that claims to have come through Argus is still a
+// direct login. The socket is open to every local user, and the console's own
+// sessions never arrive on it.
+func TestArgusOnlyDoesNotTakeALoginsWordForWhereItCameFrom(t *testing.T) {
 	c, sock := testCollector(t)
 	defer c.CloseWithin(time.Second)
 	c.SetScope(ScopeArgusOnly)
-	c.OnUnrecorded = func(SessionStart) { t.Error("a brokered session was let through unrecorded") }
+	let := make(chan SessionStart, 1)
+	c.OnUnrecorded = func(m SessionStart) { let <- m }
 
 	conn, dec := startAs(t, sock, Brokered)
-	if r := readReply(t, conn, dec); !r.Record {
-		t.Fatalf("decision = %+v, want record", r)
+	if r := readReply(t, conn, dec); r.Record {
+		t.Fatalf("decision = %+v, want the login treated as direct", r)
 	}
-	if recordings(t, c) != 1 {
-		t.Error("no recording was opened for a brokered session")
+	select {
+	case m := <-let:
+		if m.Origin != Direct {
+			t.Errorf("reported as %q, want direct", m.Origin)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the login was not reported as a bypass")
 	}
 }
 
@@ -203,16 +211,15 @@ func TestConsoleOnlyRefusesADirectLoginAndReportsIt(t *testing.T) {
 	}
 }
 
-// A session the gateway's browser terminal opened is an Argus session.
-func TestConsoleOnlyStillAdmitsABrokeredSession(t *testing.T) {
+// Console-only refuses a login through sshd whatever it claims to be.
+func TestConsoleOnlyRefusesALoginThatClaimsToBeBrokered(t *testing.T) {
 	c, sock := testCollector(t)
 	defer c.CloseWithin(time.Second)
 	c.SetConsoleOnly(true)
-	c.OnRefused = func(SessionStart) { t.Error("a brokered session was refused") }
 
 	conn, dec := startAs(t, sock, Brokered)
-	if r := readReply(t, conn, dec); !r.Record || r.Refused {
-		t.Fatalf("decision = %+v, want record", r)
+	if r := readReply(t, conn, dec); r.Record || !r.Refused {
+		t.Fatalf("decision = %+v, want refused", r)
 	}
 }
 

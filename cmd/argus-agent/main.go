@@ -510,28 +510,20 @@ func agentRiskFlags(rec agent.SessionRecord) []string {
 func runShim(args []string) int {
 	fs := flag.NewFlagSet("shim", flag.ExitOnError)
 	socket := fs.String("socket", agent.SocketPath, "collector socket")
-	gatewayKeys := fs.String("gateway-keys", "/etc/argus/gateway_keys", "gateway public keys (authorized_keys format); the authoritative signal")
-	gateways := fs.String("gateways", "", "fallback: comma-separated gateway addresses, never treated as proof")
-	skipBrokered := fs.Bool("skip-brokered", false,
-		"do not record sessions that appear to come from the gateway (saves storage; a stolen gateway key can then suppress recording)")
+	// Accepted and ignored. An sshd_config written before the gateway was
+	// retired still passes it, and a ForceCommand that fails on an unknown flag
+	// refuses every login on the host.
+	_ = fs.String("gateway-keys", "", "ignored: no longer used")
+	_ = fs.String("gateways", "", "ignored: no longer used")
+	_ = fs.Bool("skip-brokered", false, "ignored: no longer used")
 	failOpen := fs.Bool("fail-open", false, "allow unrecorded sessions when the collector is down")
 	shell := fs.String("shell", "", "override the login shell")
 	_ = fs.Parse(args)
 
-	var gws []string
-	for _, g := range strings.Split(*gateways, ",") {
-		if g = strings.TrimSpace(g); g != "" {
-			gws = append(gws, g)
-		}
-	}
-
 	return agent.RunShim(agent.ShimConfig{
-		SocketPath:   *socket,
-		GatewayKeys:  *gatewayKeys,
-		GatewayAddrs: gws,
-		SkipBrokered: *skipBrokered,
-		FailOpen:     *failOpen,
-		Shell:        *shell,
+		SocketPath: *socket,
+		FailOpen:   *failOpen,
+		Shell:      *shell,
 	})
 }
 
@@ -583,7 +575,7 @@ func runScan(args []string) int {
 			fmt.Print(" Run `argus-agent install` to see what to change.\n")
 		} else {
 			fmt.Print(" Recording direct logins is not available on this platform\n" +
-				"yet: stop sshd, or allow it only from the gateway.\n")
+				"yet: stop sshd; sessions opened from the Argus console do not use it.\n")
 		}
 		return 1
 	}
@@ -593,28 +585,23 @@ func runScan(args []string) int {
 func runInstall(args []string) int {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	shimPath := fs.String("shim", agent.DefaultShimPath, "path sshd will invoke")
-	gatewayKeys := fs.String("gateway-keys", "/etc/argus/gateway_keys", "gateway public keys")
 	_ = fs.Parse(args)
 
 	if !shimSupported {
 		fmt.Fprintln(os.Stderr, "argus-agent install: direct SSH logins cannot be recorded "+
 			"on this platform yet. Sessions opened from the Argus console are recorded; "+
-			"to leave no unrecorded way in, stop sshd or allow it only from the gateway.")
+			"to leave no unrecorded way in, stop sshd.")
 		return 1
 	}
 	fmt.Printf(`# Argus host recording — append to /etc/ssh/sshd_config, then:
 #   %s
 #
 # ForceCommand makes sshd run the recorder for EVERY session, including one
-# opened with a standing key that never touched the gateway. That is the point:
-# without it, a bypass is invisible.
+# opened with a standing key that never touched Argus. That is the point:
+# without it, a bypass is invisible. Sessions opened from the Argus console do
+# not use sshd at all; they reach the agent over its tunnel.
 
-ForceCommand %s shim --gateway-keys %s
-
-# ExposeAuthInfo lets the recorder identify the gateway by the key it
-# authenticated with. Without it the agent cannot prove a session was brokered,
-# so it records everything — correct, but noisier.
-ExposeAuthInfo yes
+ForceCommand %s shim
 
 # Recommended alongside it. These remove the ability to bypass rather than
 # merely recording it, which is the stronger control:
@@ -625,7 +612,7 @@ ExposeAuthInfo yes
 
 # Verify with:
 #   argus-agent scan
-`, reloadSSHDHint, *shimPath, *gatewayKeys)
+`, reloadSSHDHint, *shimPath)
 	return 0
 }
 

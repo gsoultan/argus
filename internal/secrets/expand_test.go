@@ -193,7 +193,6 @@ func TestCommentsAreNotResolved(t *testing.T) {
 func TestShippedConfigsNeedOnlyTheirEnvFile(t *testing.T) {
 	for file, vars := range map[string][]string{
 		"control.example.yaml": {"ARGUS_DATABASE_URL", "ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
-		"gateway.yaml":         {"ARGUS_SIGNING_SECRET", "ARGUS_REPORTER_TOKEN"},
 	} {
 		for _, v := range vars {
 			t.Setenv(v, "set")

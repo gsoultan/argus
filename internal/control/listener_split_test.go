@@ -35,12 +35,10 @@ func TestTheConsoleSurfaceDoesNotCarryFleetRoutes(t *testing.T) {
 	h := splitAPI(t).ConsoleHandler()
 	for _, tc := range []struct{ method, path string }{
 		{"POST", "/api/v1/report/session"},
-		{"GET", "/api/v1/report/authorize"},
 		{"POST", "/api/v1/report/heartbeat"},
-		{"POST", "/api/v1/report/audit"},
-		{"GET", "/api/v1/gateway/policy"},
-		{"GET", "/api/v1/hostkeys/pin"},
-		{"POST", "/api/v1/terminal/redeem"},
+		{"POST", "/api/v1/report/facts"},
+		{"PUT", "/api/v1/report/recording/00000000-0000-0000-0000-000000000000"},
+		{"POST", "/api/v1/agents/enroll"},
 	} {
 		if got := status(h, tc.method, tc.path); got != http.StatusNotFound {
 			t.Errorf("%s %s is reachable on the console listener (%d); binding "+
@@ -96,7 +94,7 @@ func TestTheCombinedHandlerServesBoth(t *testing.T) {
 		{"POST", "/api/v1/report/session"},
 		{"GET", "/auth/me"},
 		{"GET", "/api/v1/sessions"},
-		{"GET", "/api/v1/gateway/policy"},
+		{"POST", "/api/v1/report/heartbeat"},
 	} {
 		if got := status(h, tc.method, tc.path); got == http.StatusNotFound {
 			t.Errorf("%s %s is missing from the combined handler; the "+
