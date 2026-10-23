@@ -26,6 +26,9 @@ fi
 # account writes them; nobody else reads them.
 if [ -x /usr/bin/argus-control ]; then
     install -d -o argus -g argus -m 0700 /var/backups/argus
+    # The control plane's configuration, secrets and certificates, apart from
+    # the agent's /var/lib/argus, which the agent's unit makes root's.
+    install -d -o argus -g argus -m 0700 /var/lib/argus-control
 fi
 
 # Config may name a database, an issuer and internal hostnames. The env files
@@ -55,12 +58,14 @@ cat <<'MSG'
 Argus installed. Nothing has been started — these services need configuration
 first.
 
-  1. Put certificates in /etc/argus/tls/
-  2. Fill in the CHANGE-ME values in /etc/argus/*.env
-  3. Review /etc/argus/*.yaml
-  4. systemctl enable --now argus-<component>
-  5. On the control plane: systemctl enable --now argus-backup.timer
-     (needs pg_dump; prove a backup restores with `argus-control backup verify`)
+On the control plane, start it and finish setup in the browser:
+
+  systemctl enable --now argus-control
+  open https://<this host>:8080/setup      # asks for: sudo cat /var/lib/argus-control/setup-token
+  systemctl enable --now argus-backup.timer
+
+Everything else is under Settings in the console. Every server people log
+in to needs argus-agent: enroll it from Servers > Add a server.
 
 The agent additionally needs sshd configured to record sessions:
 

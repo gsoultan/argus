@@ -177,7 +177,7 @@ jobs:
 
           # The shipped config, pointed at this runner's files.
           sed -e "s#/etc/argus/tls/#$tmp/#" -e 's#dir: "/usr/share/argus/console"#dir: ""#' \
-            packaging/config/control.yaml > "$tmp/control.yaml"
+            packaging/config/control.example.yaml > "$tmp/control.yaml"
           export ARGUS_DATABASE_URL="$PGURL" ARGUS_SIGNING_SECRET=$(openssl rand -hex 32) \
             ARGUS_REPORTER_TOKEN=$(openssl rand -hex 32)
           "$tmp/argus-control" -config "$tmp/control.yaml" >"$tmp/control.log" 2>&1 &
@@ -508,7 +508,7 @@ jobs:
           sudo systemd-analyze verify /lib/systemd/system/argus-agent.service
           argus-agent scan --shim /usr/bin/argus-agent || true
 
-      - name: Install the control plane and gateway, start them, enroll an agent, back up
+      - name: Install the control plane, start it, enroll an agent, back up
         # The first production install is the wrong place to find out that
         # only the agent package was ever installed. This does what
         # docs/install.md tells an operator to do, on a clean runner, from the
@@ -550,33 +550,45 @@ jobs:
           ! systemctl is-active --quiet argus-control
           ! systemctl is-enabled --quiet argus-backup.timer
 
-          # Certificates. A real install brings its own; see docs/install.md.
+          # Nothing is configured by hand. With no configuration the control
+          # plane serves only its setup page, over a certificate of its own,
+          # guarded by a token only the host can read -- and writes its
+          # configuration, secrets and certificates from what the page sends.
           tmp=$(mktemp -d)
-          go run ./scripts/tools/gencerts "$tmp"
-          sudo install -o root -g argus -m 0640 "$tmp"/ca.crt "$tmp"/server.crt /etc/argus/tls/
-          # Private keys: readable by the service account and nobody else, or
-          # the control plane refuses to start.
-          sudo install -o argus -g argus -m 0600 "$tmp"/server.key /etc/argus/tls/
-
-          secret=$(openssl rand -hex 32)
-          printf 'ARGUS_DATABASE_URL=%s\nARGUS_SIGNING_SECRET=%s\nARGUS_REPORTER_TOKEN=%s\n' \
-            "$PGURL" "$secret" "$(openssl rand -hex 32)" | sudo tee /etc/argus/control.env >/dev/null
-
           sudo systemctl enable --now argus-control
           for i in $(seq 1 30); do
-            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz && break
+            sudo test -s /var/lib/argus-control/setup-token && break
             sleep 1
           done
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz || {
+          sudo cat /var/lib/argus-control/tls/ca.crt > "$tmp/ca.crt" || {
             sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
+          # Every page goes to /setup until it is done.
+          to=$(curl -s -o /dev/null -w '%{redirect_url}' --cacert "$tmp/ca.crt" https://localhost:8080/assets)
+          [ "$to" = https://localhost:8080/setup ] || { echo "::error::first run did not send /assets to /setup (got '$to')"; exit 1; }
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep -q '<div id="root">'
+          tok=$(sudo cat /var/lib/argus-control/setup-token)
+          jq -n --arg tok "$tok" '{token: $tok,
+              database: {host: "localhost", port: 5433, name: "argus", user: "argus", password: "argus", sslMode: "disable"},
+              consoleUrl: "https://localhost:8080", fleetUrl: "", port: 8080, quic: true,
+              certPem: "", keyPem: "",
+              admin: {email: "admin@ci.example", displayName: "CI", password: "ci-admin-password-0123456789"}}' |
+            curl -fsS --cacert "$tmp/ca.crt" -H Content-Type:application/json -d @- \
+              https://localhost:8080/auth/setup/install
+          for i in $(seq 1 30); do
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' && break
+            sleep 1
+          done
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' || {
+            sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
+          # What setup wrote is the service's own, and nobody else's.
+          [ "$(sudo stat -c '%a %U' /var/lib/argus-control/control.yaml)" = "600 argus" ]
+          [ "$(sudo stat -c '%a %U' /var/lib/argus-control/secrets/signing-secret)" = "600 argus" ]
+          [ "$(sudo stat -c '%a %U' /var/lib/argus-control/tls/ca.key)" = "600 argus" ]
+          ! sudo test -e /var/lib/argus-control/setup-token
 
           # The console ships in the package and is served same-origin.
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep -q '<div id="root">'
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q gatewayUrl
-
-          # The first administrator, as the guide says.
-          printf 'ci-admin-password-0123456789\n' | sudo sh -c \
-            'set -a; . /etc/argus/control.env; set +a; argus-control -config /etc/argus/control.yaml users add admin@ci.example --role admin'
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q fleetUrl
 
           # Enroll this runner's agent with a token from the console API.
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
@@ -649,39 +661,13 @@ jobs:
                 AND actor_email = 'admin@ci.example' AND target = '$(hostname)' AND detail LIKE '%$sid%'")
           [ "$n" = 1 ] || { echo "::error::no audit entry for the session"; exit 1; }
 
-          # The gateway, as step 5 of docs/install.md has it. Until this was
-          # here, a gateway installed by the guide had never been started, and
-          # it would not: it wanted an inventory file and an authorized key the
-          # guide never mentions.
-          sudo install -o root -g argus -m 0640 "$tmp"/client.crt /etc/argus/tls/
-          sudo install -o argus -g argus -m 0600 "$tmp"/client.key /etc/argus/tls/
-          sudo ssh-keygen -q -t ed25519 -N '' -f /etc/argus/ssh/gateway_host_key
-          sudo argus-gateway ca init /etc/argus/ssh/argus_ca >/dev/null
-          sudo chown argus:argus /etc/argus/ssh/gateway_host_key /etc/argus/ssh/argus_ca
-          sudo grep -E '^ARGUS_(SIGNING_SECRET|REPORTER_TOKEN)=' /etc/argus/control.env \
-            | sudo tee /etc/argus/gateway.env >/dev/null
-          sudo sed -i 's#https://argus-control.example.com:8080#https://localhost:8080#' /etc/argus/gateway.yaml
-          # Its own state directory: /var/lib/argus is the agent's, root's on
-          # a host carrying both, and the gateway runs as argus.
-          [ "$(sudo stat -c '%a %U:%G' /var/lib/argus-gateway)" = "700 argus:argus" ]
-          sudo systemctl enable --now argus-gateway
-          for i in $(seq 1 30); do
-            sudo journalctl -u argus-gateway --no-pager | grep 'inventory synced' >/dev/null && break
-            sleep 1
-          done
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8081/healthz >/dev/null &&
-            sudo journalctl -u argus-gateway --no-pager | grep 'inventory synced' >/dev/null || {
-            sudo journalctl -u argus-gateway --no-pager | tail -30
-            echo "::error::the gateway installed by the guide did not start and sync from the control plane"; exit 1; }
-
           # A backup through the shipped unit, then proof that it restores.
           sudo systemctl start argus-backup.service
           sudo journalctl -u argus-backup --no-pager | tail -10
           run=$(sudo ls /var/backups/argus | grep -E '^[0-9]{8}T' | tail -1)
           sudo test -f "/var/backups/argus/$run/manifest.json"
           psql "$PGURL" -c 'CREATE DATABASE argus_drill'
-          sudo sh -c 'set -a; . /etc/argus/control.env; set +a; argus-control \
-            -config /etc/argus/control.yaml backup verify \
+          sudo sh -c 'argus-control backup verify \
             -scratch-db "postgres://argus:argus@localhost:5433/argus_drill?sslmode=disable" \
             /var/backups/argus/'"$run"
 

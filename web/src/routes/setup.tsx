@@ -21,7 +21,7 @@ function SetupDone() {
         <Text size={FS.title} fw={700}>Setup is complete</Text>
         <Text size="sm" c="dimmed" mt="xs" mb="md">
           This control plane has accounts, so first-run setup is closed. Further
-          accounts are added on the host with argus-control users add.
+          accounts, and every other setting, are under Settings.
         </Text>
         <ButtonLink size="xs" variant="light" to="/">
           Back to overview

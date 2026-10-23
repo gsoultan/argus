@@ -145,6 +145,8 @@ export interface Identity {
   accountsExist?: boolean
   /** True when a fresh install is offering its /setup page. */
   setupAvailable?: boolean
+  /** True when the control plane has no configuration yet and serves only /setup. */
+  installing?: boolean
   /** Whether the signed-in account has a second factor. */
   mfaEnrolled?: boolean
 }
@@ -234,6 +236,59 @@ export interface SetupStatus {
   available: boolean
   /** Where on the host the one-time token was written. */
   tokenFile?: string
+  /** "install" when there is no configuration yet: the page sets up everything. */
+  mode?: 'install'
+  /** The port this control plane is listening on, the form's default. */
+  port?: number
+  /** The host name the browser used to reach it. */
+  hostname?: string
+}
+
+/** Where the control plane's PostgreSQL is. */
+export interface DatabaseInput {
+  host: string
+  port: number
+  name: string
+  user: string
+  password?: string
+  sslMode: string
+}
+
+export interface DatabaseCheck {
+  version: string
+  /** The database already belongs to a deployment; its accounts are kept. */
+  accountsExist: boolean
+}
+
+export interface InstallInput {
+  token: string
+  database: DatabaseInput
+  consoleUrl: string
+  fleetUrl: string
+  port: number
+  quic: boolean
+  certPem: string
+  keyPem: string
+  admin: { email: string; displayName: string; password: string }
+}
+
+export interface InstallResult {
+  consoleUrl: string
+  configFile: string
+  email?: string
+}
+
+/** Tests a database before install, guarded by the setup token. */
+export async function checkInstallDatabase(token: string, database: DatabaseInput): Promise<DatabaseCheck> {
+  return post<DatabaseCheck>('/auth/setup/database', { token, database })
+}
+
+/**
+ * Writes the configuration of a control plane that has none, and makes the
+ * first administrator. The control plane restarts on it straight after.
+ */
+export async function install(input: InstallInput): Promise<InstallResult> {
+  return post<InstallResult>('/auth/setup/install', input)
 }
 
 export async function setupStatus(): Promise<SetupStatus> {
@@ -774,6 +829,111 @@ export async function gatewayPolicy(): Promise<GatewayPolicy | null> {
  */
 export async function saveGatewayPolicy(policy: GatewayPolicy): Promise<GatewayPolicy> {
   return post<GatewayPolicy>('/api/v1/policy', policy)
+}
+
+/** A certificate, as the Settings page describes it. */
+export interface CertSummary {
+  subject: string
+  issuer: string
+  names: string[]
+  notAfter: string
+  pin: string
+}
+
+/**
+ * The control plane's configuration, as GET /api/v1/settings returns it.
+ *
+ * Secrets are write-only: the *Set flags say whether one is configured, and
+ * the value fields are sent only to replace one.
+ */
+export interface ControlSettings {
+  configFile: string
+  applyError?: string
+  consoleUrl: string
+  gatewayUrl: string
+  fleetUrl: string
+  listen: string
+  consoleListen: string
+  quicListen: string
+  behindTlsProxy: boolean
+  allowedOrigins: string[]
+  trustedProxies: string[]
+  loginPerMinute: number
+  failuresPerHour: number
+  ticketsPerMinute: number
+  sessionTtl: string
+  ticketTtl: string
+  agentStaleAfter: string
+  logLevel: string
+  database: {
+    host: string; port: number; name: string; user: string; sslMode: string
+    passwordSet: boolean; password?: string; raw?: boolean
+  }
+  storage: {
+    enabled: boolean; endpoint: string; bucket: string; region: string; useSsl: boolean
+    accessKey: string; secretKeySet: boolean; secretKey?: string
+  }
+  email: {
+    enabled: boolean; host: string; port: number; username: string
+    passwordSet: boolean; password?: string; from: string; to: string[]
+  }
+  telegram: { enabled: boolean; botTokenSet: boolean; botToken?: string; chatIds: string[] }
+  fcm: {
+    enabled: boolean; credentialsSet: boolean; credentials?: string
+    projectId: string; topic: string; tokens: string[]
+  }
+  tls: {
+    enabled: boolean; certificate?: CertSummary; managed: boolean; canIssue: boolean
+    caCert?: string; mutualTls: boolean; certPem?: string; keyPem?: string; reissue?: boolean
+  }
+}
+
+export async function controlSettings(): Promise<ControlSettings> {
+  return get<ControlSettings>('/api/v1/settings')
+}
+
+/** Writes the whole configuration. The control plane reloads itself on it. */
+export async function saveControlSettings(
+  s: ControlSettings,
+): Promise<{ changed: string[]; restarting: boolean }> {
+  return send('PUT', '/api/v1/settings', s)
+}
+
+export async function testDatabase(d: ControlSettings['database']): Promise<DatabaseCheck> {
+  return post<DatabaseCheck>('/api/v1/settings/test-database', d)
+}
+
+/**
+ * Waits for the control plane to answer again after a reload. Resolves false
+ * if it has not within the time allowed.
+ */
+export async function waitForControlPlane(timeoutMs = 30_000): Promise<boolean> {
+  const until = Date.now() + timeoutMs
+  // A first pause, so the answer is not from the process that is going away.
+  await new Promise((r) => setTimeout(r, 1500))
+  while (Date.now() < until) {
+    try {
+      const res = await fetch(`${BASE}/healthz`, { cache: 'no-store' })
+      if (res.ok) return true
+    } catch {
+      // Still restarting.
+    }
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  return false
+}
+
+export async function createAccount(input: {
+  email: string
+  displayName: string
+  role: string
+  password: string
+}): Promise<{ email: string; role: string }> {
+  return post('/api/v1/users', input)
+}
+
+export async function setAccountDisabled(email: string, disabled: boolean): Promise<{ email: string }> {
+  return post(`/api/v1/users/${encodeURIComponent(email)}/${disabled ? 'disable' : 'enable'}`, {})
 }
 
 export const live = {

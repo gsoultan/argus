@@ -10,6 +10,7 @@ import {
 import { completeSetup, setupStatus, type SetupStatus } from '~/lib/live'
 import { FS } from '~/theme'
 import { Brand, ErrorNote } from '~/components/SignIn'
+import { Install } from '~/components/Install'
 
 /** The floor the control plane enforces; checked here only to say so sooner. */
 const MIN_PASSWORD = 12
@@ -59,7 +60,7 @@ export function Setup() {
 
   return (
     <Center mih="100vh" py="xl">
-      <Paper p="xl" withBorder maw={status && status.available && !created ? 720 : 440} w="100%" radius="lg">
+      <Paper p="xl" withBorder maw={status && status.available && !created ? 720 : 440} w="100%" radius="lg" mx="md">
         <Brand />
         {created ? (
           <Done email={created} />
@@ -73,6 +74,8 @@ export function Setup() {
           <Closed />
         ) : !status.available ? (
           <NotOffered />
+        ) : status.mode === 'install' ? (
+          <Install status={status} />
         ) : (
           <SetupForm tokenFile={status.tokenFile} onCreated={setCreated} />
         )}
@@ -99,7 +102,7 @@ function SetupForm({ tokenFile, onCreated }: {
   const mismatch = repeat.length > 0 && repeat !== password
   const ready = token.trim() && email.trim() && [...password].length >= MIN_PASSWORD &&
     password === repeat
-  const command = `sudo cat ${tokenFile ?? '/var/lib/argus/setup-token'}`
+  const command = `sudo cat ${tokenFile ?? '/var/lib/argus-control/setup-token'}`
 
   // Shown, not hidden: a password nobody saw is one nobody saved. Filling the
   // repeat field too is the point -- retyping 27 random characters to prove
@@ -299,8 +302,7 @@ function Closed() {
       <Text size="sm" fw={600} mb={4}>Setup is complete</Text>
       <Text size="xs" c="dimmed" mb="md">
         This control plane already has an account, so there is nothing to set up.
-        Further accounts are added on the host with{' '}
-        <Text span ff="monospace" inherit>argus-control users add</Text>.
+        An administrator adds further accounts under Settings.
       </Text>
       <Button size="sm" fullWidth onClick={() => window.location.assign('/')}>
         Go to sign in

@@ -147,8 +147,8 @@ archives:
       - README.md
       - src: docs/*
         dst: docs
-      - src: packaging/config/control.yaml
-        dst: config/control.yaml
+      - src: packaging/config/control.example.yaml
+        dst: config/control.example.yaml
       - src: packaging/config/gateway.yaml
         dst: config/gateway.yaml
       # No package installs the console here, so the archive carries it: point
@@ -168,8 +168,8 @@ archives:
       - README.md
       - src: docs/*
         dst: docs
-      - src: packaging/config/control.yaml
-        dst: config/control.yaml
+      - src: packaging/config/control.example.yaml
+        dst: config/control.example.yaml
       - src: packaging/config/gateway.yaml
         dst: config/gateway.yaml
       # No package installs the console here, so the archive carries it: point
@@ -297,6 +297,8 @@ nfpms:
         dst: /etc/argus/control.yaml
         type: config|noreplace
         file_info: {mode: 0640}
+      - src: packaging/config/control.example.yaml
+        dst: /usr/share/doc/argus-control/control.example.yaml
       - src: packaging/config/control.env
         dst: /etc/argus/control.env
         type: config|noreplace

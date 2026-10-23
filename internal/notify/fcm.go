@@ -31,13 +31,13 @@ type FCMConfig struct {
 	// CredentialsFile is the service account key downloaded from the Firebase
 	// console (Project settings → Service accounts). It holds a private key, so
 	// it must be readable by the owner alone, like every other key Argus loads.
-	CredentialsFile string `yaml:"credentials_file"`
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
 	// ProjectID overrides the project named in the credentials file.
-	ProjectID string `yaml:"project_id"`
+	ProjectID string `yaml:"project_id,omitempty"`
 	// Topic is a topic name, without the "/topics/" prefix.
-	Topic string `yaml:"topic"`
+	Topic string `yaml:"topic,omitempty"`
 	// Tokens are registration tokens of individual devices.
-	Tokens []string `yaml:"tokens"`
+	Tokens []string `yaml:"tokens,omitempty"`
 }
 
 // serviceAccount is the part of a Google service account key that FCM needs.

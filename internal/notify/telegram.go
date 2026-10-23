@@ -15,10 +15,10 @@ import (
 type TelegramConfig struct {
 	// BotToken is the token @BotFather gives you. Keep it out of the file:
 	// "${ARGUS_TELEGRAM_TOKEN}" or "${file:/path}".
-	BotToken string `yaml:"bot_token"`
+	BotToken string `yaml:"bot_token,omitempty"`
 	// ChatIDs are the chats to post to: a person's numeric id, or a group's
 	// (negative) id. The bot must already be in a group to post there.
-	ChatIDs []string `yaml:"chat_ids"`
+	ChatIDs []string `yaml:"chat_ids,omitempty"`
 }
 
 // Telegram sends alerts through a Telegram bot.
