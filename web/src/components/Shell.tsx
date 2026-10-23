@@ -29,9 +29,8 @@ const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
 import {
-  PRIMARY_ACTION, isActive, navFor, type NavCounts, type NavSection,
+  isActive, navFor, type NavCounts, type NavSection,
 } from '~/components/nav'
-import { ButtonLink } from '~/components/links'
 import { Logo } from '~/components/Logo'
 import {
   GATEWAY_URL, controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
@@ -127,9 +126,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const source = dataSource(statsQuery_.isPending)
   const { data: cov } = useQuery(coverageQuery())
   // Someone who was only given servers gets a console that is a list of their
-  // servers: no search across the fleet, no live-session counters, and no
-  // Connect button beside a page that is already one per server. An approver
-  // keeps the request bell, because the queue is their job.
+  // servers: no search across the fleet and no live-session counters. An
+  // approver keeps the request bell, because the queue is their job.
   const whole = seesWholeFleet(me?.role)
   const approves = canSee(me?.role, 'approvers')
 
@@ -140,8 +138,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     sessionsActive: stats?.sessionsActive ?? 0,
     coverageGaps: cov ? cov.unreviewedHosts + cov.assetsUnmonitored : 0,
     // Servers whose agent has checked in and is waiting for someone to approve
-    // it. Counted on "Add a server" because that is where they are approved.
-    serversWaiting: cov?.unreviewedHosts ?? 0,
+    // it. Only for those who can approve one: on anyone else's Servers entry it
+    // would be a number they can do nothing about.
+    serversWaiting: canSee(me?.role, 'admin') ? (cov?.unreviewedHosts ?? 0) : 0,
   }
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
@@ -310,10 +309,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>{me?.email}</Menu.Label>
-                <Menu.Item leftSection={<IconSettings size={14} />} component={Link} to="/settings">
-                  Gateway policy
-                </Menu.Item>
-                <Menu.Divider />
+                {/* Settings is a fleet page; anyone else would be sent away. */}
+                {whole && (
+                  <>
+                    <Menu.Item leftSection={<IconSettings size={14} />} component={Link} to="/settings">
+                      Settings
+                    </Menu.Item>
+                    <Menu.Divider />
+                  </>
+                )}
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
                   color="rose"
@@ -335,23 +339,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           <Logo />
         </Box>
 
-        {/* The reason most people open the console, as a button rather than
-            one list item among many. */}
-        {whole && <Box px="sm" pb="sm">
-          <ButtonLink
-            to={PRIMARY_ACTION.to as never}
-            fullWidth
-            size="sm"
-            radius="md"
-            leftSection={<PRIMARY_ACTION.icon size={17} />}
-            justify="flex-start"
-          >
-            {PRIMARY_ACTION.label}
-          </ButtonLink>
-        </Box>}
-
         <AppShell.Section grow component={ScrollArea} px="sm" pb="xs">
-          <Stack gap="md" pt={SP.tight}>
+          <Stack gap="lg" pt={SP.tight}>
             {navFor(me?.role).map((section, si) => (
               <NavSectionView
                 key={section.label ?? si}
@@ -454,34 +443,28 @@ function NavSectionView({
             aria-expanded={open}
             className="argus-navsection"
             w="100%"
-            px="sm"
-            py={SP.tight}
-            mb={SP.tight}
           >
             <Group gap={SP.snug} justify="space-between" wrap="nowrap">
+              <Text className="argus-navsection-label">{section.label}</Text>
               <Group gap={SP.snug} wrap="nowrap">
+                {!open && folded > 0 && (
+                  <Badge size="sm" circle color="amber">
+                    {folded}
+                  </Badge>
+                )}
                 <IconChevronRight
                   size={14}
+                  opacity={0.6}
                   style={{ transform: open ? 'rotate(90deg)' : undefined, transition: 'transform 120ms' }}
                 />
-                <Text size={FS.meta} c="dimmed" fw={500}>
-                  {section.label}
-                </Text>
               </Group>
-              {!open && folded > 0 && (
-                <Badge size="sm" circle color="amber">
-                  {folded}
-                </Badge>
-              )}
             </Group>
           </UnstyledButton>
         ) : (
-          <Text size={FS.meta} c="dimmed" fw={500} px="sm" mb={SP.snug}>
-            {section.label}
-          </Text>
+          <Text className="argus-navsection argus-navsection-label">{section.label}</Text>
         ))}
       {shown && (
-        <Stack gap={SP.hair}>
+        <Stack gap={2}>
           {section.items.map((item) => {
             const count = item.badge ? item.badge(counts) : 0
             return (
@@ -491,7 +474,6 @@ function NavSectionView({
                 to={item.to as never}
                 activeOptions={{ exact: item.to === '/' }}
                 label={item.label}
-                description={item.blurb}
                 active={isActive(pathname, item.to)}
                 variant="light"
                 color="azure"

@@ -28,16 +28,17 @@ describe('who may edit the inventory', () => {
   // most of the default five seconds.
   it('offers an administrator a way to add a host', async () => {
     signedInAs('admin')
-    await renderRoute('/assets')
+    await renderRoute('/assets?view=manage')
     expect(await screen.findByRole('button', { name: /add by hand/i })).toBeInTheDocument()
   }, 15_000)
 
-  // The inventory is not an operator's page at all: their console is My
-  // servers, so a typed address lands there instead of on a read-only copy.
-  it('sends an operator to their own servers instead', async () => {
+  // The inventory is not an operator's view at all: even asked for by
+  // address, they get the cards of their own servers, not a read-only table.
+  it('shows an operator their own servers instead', async () => {
     signedInAs('operator')
-    await renderRoute('/assets')
-    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
+    await renderRoute('/assets?view=manage&agent=absent')
+    expect(await screen.findByRole('textbox', { name: 'Find a server' })).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/filter by hostname/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /add by hand/i })).not.toBeInTheDocument()
   })
 
@@ -45,7 +46,7 @@ describe('who may edit the inventory', () => {
   // read -- and nothing on the page is theirs to change.
   it('lets an auditor see who is assigned but not edit', async () => {
     signedInAs('auditor')
-    await renderRoute('/assets')
+    await renderRoute('/assets?view=manage')
     // Waits for a row rather than the heading: the actions are per host, so
     // asserting before the fixture resolves would pass for the wrong reason.
     const seeWhoCan = await screen.findAllByLabelText(/^Who can reach/)
@@ -66,14 +67,14 @@ describe('what the pages say they are about', () => {
   it('sends an operator to their own servers', async () => {
     signedInAs('operator')
     await renderRoute('/')
-    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
     expect(screen.queryByText(/fleet posture/i)).not.toBeInTheDocument()
   })
 
-  it('keeps an operator on My servers rather than the session log', async () => {
+  it('keeps an operator on Servers rather than the session log', async () => {
     signedInAs('operator')
     await renderRoute('/sessions')
-    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
   })
 })
 

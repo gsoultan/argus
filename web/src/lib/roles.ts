@@ -20,7 +20,7 @@ export function seesWholeFleet(role: UserRole | undefined): boolean {
  *   administrator's page, and an auditor has nothing to do on it.
  * - `approvers`: the fleet roles, and approvers, whose job is the request queue.
  *
- * Omitted means everyone. Someone who was only given servers sees My servers
+ * Omitted means everyone. Someone who was only given servers sees Servers
  * and nothing else: they asked for a console that is a list of their servers.
  */
 export type Audience = 'fleet' | 'admin' | 'approvers'

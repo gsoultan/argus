@@ -1,24 +1,26 @@
 import { Suspense, lazy, useState } from 'react'
 import {
-  ActionIcon, Box, Button, Group, Select, Table, Text, TextInput, Tooltip,
+  ActionIcon, Badge, Box, Button, Group, SegmentedControl, Select, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconCirclePlus, IconPencil, IconPlus, IconSearch, IconServer2, IconShieldLock, IconUsers, IconX,
+  IconAdjustmentsHorizontal, IconCirclePlus, IconClipboardCheck, IconPencil, IconPlayerPlay, IconPlus,
+  IconSearch, IconServer2, IconShieldLock, IconUsers, IconX,
 } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
+import { ServerCards } from '~/components/myservers'
 import {
   AgentBadge, BypassBadge, CredentialBadge, HealthDot, HostKeyBadge, Mono,
   relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
-import { assetsQuery, groupsQuery, meQuery } from '~/lib/queries'
+import { assetsQuery, coverageQuery, groupsQuery, meQuery } from '~/lib/queries'
 import type { Asset, CredentialMode } from '~/types/domain'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
-import { guard } from '~/lib/guard'
+import { seesWholeFleet } from '~/lib/roles'
 
 /**
  * Loaded on demand.
@@ -35,6 +37,25 @@ const AssetAssignments = lazy(() =>
 )
 
 /**
+ * Servers: one page for every role, in two views.
+ *
+ * The menu used to carry "Connect to a server", "My servers" and "Servers",
+ * and people asked what the difference was. There was none worth a menu entry:
+ * all three were the same servers, once as a form, once as cards and once as a
+ * table. Now there is one entry and one page.
+ *
+ * - **Connect** is the default for everyone: a card per server with a Connect
+ *   button. It is all an operator ever sees here.
+ * - **Manage** is for the roles sent the whole fleet: the inventory table with
+ *   host keys, agents and bypass posture, and the buttons to add a server.
+ *
+ * The view is in the URL like the filters, and any inventory filter opens
+ * Manage by itself, so a link from Coverage or the Overview still lands on the
+ * narrowed table.
+ */
+type View = 'connect' | 'manage'
+
+/**
  * Filters live in the URL.
  *
  * Coverage counts hosts with no agent and hosts whose agent went quiet, and had
@@ -44,6 +65,8 @@ const AssetAssignments = lazy(() =>
  * paste into an incident channel.
  */
 interface AssetSearch {
+  /** Omitted means Connect; see `View`. */
+  view?: 'manage'
   q?: string
   group?: string
   /**
@@ -86,11 +109,14 @@ const str = (v: unknown): string | undefined =>
   typeof v === 'string' && v.length > 0 ? v : undefined
 
 export const Route = createFileRoute('/assets/')({
-  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
-  component: Assets,
+  // No role guard: this is the one page every role is sent to. What each role
+  // sees on it is decided below, and the control plane has already narrowed
+  // the list to what they may reach.
+  component: Servers,
   // Unrecognised values are dropped rather than passed through, so a
   // hand-edited URL cannot put the table into a state the controls cannot show.
   validateSearch: (search: Record<string, unknown>): AssetSearch => ({
+    view: search.view === 'manage' ? 'manage' : undefined,
     q: str(search.q),
     group: str(search.group),
     hostKey: oneOf(HOST_KEY_STATES, search.hostKey),
@@ -98,7 +124,14 @@ export const Route = createFileRoute('/assets/')({
     bypass: oneOf(BYPASS_POSTURES, search.bypass),
     credential: oneOf(CREDENTIAL_MODES, search.credential),
   }),
-  loader: ({ context }) => context.queryClient.ensureQueryData(assetsQuery({})),
+  // Who is asking decides which view this is, so it is known before the first
+  // paint: an administrator should not see the cards flash before the table
+  // their link was for. A failed lookup renders the narrowest view.
+  loader: ({ context }) =>
+    Promise.all([
+      context.queryClient.ensureQueryData(meQuery()).catch(() => undefined),
+      context.queryClient.ensureQueryData(assetsQuery({})),
+    ]),
 })
 
 function rotationOverdue(a: Asset): boolean {
@@ -120,7 +153,116 @@ const BYPASS_LABEL: Record<Asset['bypassPosture'], string> = {
   open: 'Unmonitored — a bypass is invisible',
 }
 
-function Assets() {
+function inventoryFiltered(s: AssetSearch): boolean {
+  return Boolean(s.q || s.group || s.hostKey || s.agent || s.bypass || s.credential)
+}
+
+function Servers() {
+  const navigate = useNavigate()
+  const search = Route.useSearch()
+  const { data: me } = useQuery(meQuery())
+  const { data: assets } = useQuery(assetsQuery({}))
+  const whole = seesWholeFleet(me?.role)
+  const canEdit = me?.role === 'admin' || me?.role === 'owner'
+  // Only asked for by a role that can act on it; for anyone else the control
+  // plane would refuse the read.
+  const { data: cov } = useQuery({ ...coverageQuery(), enabled: canEdit })
+  const waiting = cov?.unreviewedHosts ?? 0
+
+  const view: View = whole && (search.view === 'manage' || inventoryFiltered(search)) ? 'manage' : 'connect'
+  const setView = (v: View) =>
+    void navigate({ to: '/assets', search: v === 'manage' ? { view: 'manage' } : {}, replace: true })
+
+  return (
+    <Box>
+      <PageHeader
+        title="Servers"
+        description={
+          !whole
+            ? 'The servers you have been given. Press Connect to open one in this browser, or pick the account to log in as.'
+            : view === 'connect'
+              ? 'As an administrator you can connect to every server. Press Connect to open a terminal or desktop in this browser.'
+              : 'Every server Argus looks after. Add new ones, approve the ones waiting, and check each one is set up safely.'
+        }
+        actions={
+          !whole ? (
+            (assets?.length ?? 0) > 0 && (
+              <ButtonLink to="/requests" variant="default" leftSection={<IconClipboardCheck size={14} />}>
+                Request more access
+              </ButtonLink>
+            )
+          ) : (
+            <Group gap={SP.cozy} wrap="nowrap">
+              {/* Says what this page cannot answer. The inventory lists the
+                  hosts Argus manages, so a machine nobody enrolled is invisible
+                  here by construction -- which is the question Coverage is for. */}
+              {view === 'manage' && (
+                <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
+                  <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
+                    Coverage
+                  </ButtonLink>
+                </Tooltip>
+              )}
+              {/* Installing the agent, which then shows up for approval: the
+                  usual way a server joins. The count is servers that already
+                  did and are waiting for someone to say yes. */}
+              {canEdit && (
+                <ButtonLink
+                  to="/assets/add"
+                  leftSection={<IconCirclePlus size={14} />}
+                  rightSection={
+                    waiting > 0 ? (
+                      <Badge size="xs" color="amber" variant="filled" aria-label={`${waiting} waiting for approval`}>
+                        {waiting}
+                      </Badge>
+                    ) : undefined
+                  }
+                >
+                  Add a server
+                </ButtonLink>
+              )}
+            </Group>
+          )
+        }
+      />
+
+      <PageBody>
+        {whole && (
+          <SegmentedControl
+            aria-label="View"
+            value={view}
+            onChange={(v) => setView(v as View)}
+            style={{ alignSelf: 'flex-start' }}
+            data={[
+              {
+                value: 'connect',
+                label: (
+                  <Group gap={SP.snug} wrap="nowrap">
+                    <IconPlayerPlay size={14} />
+                    <span>Connect</span>
+                  </Group>
+                ),
+              },
+              {
+                value: 'manage',
+                label: (
+                  <Group gap={SP.snug} wrap="nowrap">
+                    <IconAdjustmentsHorizontal size={14} />
+                    <span>Manage</span>
+                  </Group>
+                ),
+              },
+            ]}
+          />
+        )}
+        {view === 'manage' ? <Inventory canEdit={canEdit} /> : <ServerCards />}
+      </PageBody>
+    </Box>
+  )
+}
+
+/** The Manage view: the whole inventory as a table, with its filters. */
+function Inventory({ canEdit }: { canEdit: boolean }) {
   const navigate = useNavigate()
   const search = Route.useSearch()
 
@@ -129,14 +271,7 @@ function Assets() {
   const [text, setText] = useState(search.q ?? '')
 
   const setSearch = (patch: Partial<AssetSearch>) =>
-    void navigate({ to: '/assets', search: (prev) => ({ ...prev, ...patch }), replace: true })
-
-  const { data: me } = useQuery(meQuery())
-  // Editing the fleet is the administrator's; an auditor may look at who is
-  // assigned but change nothing. The control plane enforces both — this only
-  // keeps the console from offering a button that would be refused.
-  const canEdit = me?.role === 'admin' || me?.role === 'owner'
-  const canSeeAssignments = canEdit || me?.role === 'auditor'
+    void navigate({ to: '/assets', search: (prev) => ({ ...prev, view: 'manage', ...patch }), replace: true })
 
   const [editing, setEditing] = useState<Asset | undefined>()
   const [formOpen, setFormOpen] = useState(false)
@@ -161,32 +296,24 @@ function Assets() {
 
   const clear = () => {
     setText('')
-    void navigate({ to: '/assets', search: {}, replace: true })
+    void navigate({ to: '/assets', search: { view: 'manage' }, replace: true })
   }
 
   return (
-    <Box>
-      <PageHeader
-        title="Servers"
-        description={
-          canSeeAssignments
-            ? 'Every host Argus can broker a session to. Host-key state is the trust anchor — an unpinned target is one nobody has verified.'
-            : 'The servers assigned to you, and the accounts you may use on each. Anything else needs an approved access request.'
-        }
-        actions={
-          <Group gap={SP.cozy}>
-            {/* Says what this page cannot answer. The inventory lists the hosts
-                Argus manages, so a machine nobody enrolled is invisible here by
-                construction — which is the question Coverage exists for. */}
-            <Tooltip label="This table only shows hosts Argus manages. Coverage also finds the ones it does not.">
-              <ButtonLink variant="default" to="/coverage" leftSection={<IconShieldLock size={14} />}>
-                Coverage
-              </ButtonLink>
-            </Tooltip>
+    <>
+      <Toolbar
+        right={
+          <Group gap="sm" wrap="nowrap">
+            {assets && (
+              <Text size={FS.micro} c="dimmed">
+                {assets.length} {filtered ? 'matching' : assets.length === 1 ? 'server' : 'servers'}
+              </Text>
+            )}
             {/* Entering a server's details by hand, for one with no agent
                 yet. Only someone who may edit the inventory sees it. */}
             {canEdit && (
               <Button
+                size="xs"
                 variant="default"
                 leftSection={<IconPlus size={14} />}
                 onClick={() => {
@@ -197,212 +324,185 @@ function Assets() {
                 Add by hand
               </Button>
             )}
-            {/* Installing the agent, which then shows up for approval: the
-                usual way a server joins. */}
-            <ButtonLink to="/assets/add" leftSection={<IconCirclePlus size={14} />}>
-              Add a server
-            </ButtonLink>
           </Group>
         }
-      />
+      >
+        <TextInput
+          w={260}
+          placeholder="Filter by hostname, address, OS or tag"
+          leftSection={<IconSearch size={14} />}
+          value={text}
+          onChange={(e) => {
+            setText(e.currentTarget.value)
+            setSearch({ q: e.currentTarget.value || undefined })
+          }}
+        />
+        <Select
+          w={180}
+          placeholder="All groups"
+          clearable
+          value={search.group ?? null}
+          onChange={(v) => setSearch({ group: v ?? undefined })}
+          data={groups?.map((g) => ({ value: g.id, label: `${g.name} (${g.assetCount})` })) ?? []}
+        />
+        <Select
+          w={170}
+          placeholder="Any host key state"
+          clearable
+          value={search.hostKey ?? null}
+          onChange={(v) => setSearch({ hostKey: (v as AssetSearch['hostKey']) ?? undefined })}
+          data={[
+            { value: 'unverified', label: 'Not pinned (any)' },
+            { value: 'pinned', label: 'Pinned' },
+            { value: 'unpinned', label: 'Unpinned' },
+            { value: 'changed', label: 'Changed' },
+          ]}
+        />
+        <Select
+          w={180}
+          placeholder="Any agent state"
+          clearable
+          value={search.agent ?? null}
+          onChange={(v) => setSearch({ agent: (v as Asset['agentState']) ?? undefined })}
+          data={AGENT_STATES.map((s) => ({ value: s, label: AGENT_LABEL[s] }))}
+        />
+        {/* The column exists, so the filter does too — Coverage links here
+            with `?bypass=open`, and a filter with no visible control would
+            leave the table narrowed for a reason nothing on screen gives. */}
+        <Select
+          w={230}
+          placeholder="Any bypass posture"
+          clearable
+          value={search.bypass ?? null}
+          onChange={(v) => setSearch({ bypass: (v as Asset['bypassPosture']) ?? undefined })}
+          data={BYPASS_POSTURES.map((s) => ({ value: s, label: BYPASS_LABEL[s] }))}
+        />
+        {/* The Overview counts the assets still on a standing credential and
+            says to move them; without this there was nowhere to go and see
+            which ones. */}
+        <Select
+          w={240}
+          placeholder="Any credential mode"
+          clearable
+          value={search.credential ?? null}
+          onChange={(v) => setSearch({ credential: (v as AssetSearch['credential']) ?? undefined })}
+          data={CREDENTIAL_MODES.map((m) => ({ value: m, label: CREDENTIAL_LABEL[m] }))}
+        />
+        {filtered && (
+          <Button
+            variant="subtle"
+            color="slate"
+            size="compact-xs"
+            leftSection={<IconX size={12} />}
+            onClick={clear}
+          >
+            Clear
+          </Button>
+        )}
+      </Toolbar>
 
-      <PageBody>
-        <Toolbar
-          right={
-            assets && (
-              <Text size={FS.micro} c="dimmed">
-                {assets.length} {filtered ? 'matching' : 'assets'}
-              </Text>
-            )
-          }
-        >
-          <TextInput
-            w={260}
-            placeholder="Filter by hostname, address, OS or tag"
-            leftSection={<IconSearch size={14} />}
-            value={text}
-            onChange={(e) => {
-              setText(e.currentTarget.value)
-              setSearch({ q: e.currentTarget.value || undefined })
-            }}
+      <DataTable
+        minWidth={980}
+        loading={assets === undefined}
+        isEmpty={assets?.length === 0}
+        columns={['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated', '']}
+        empty={
+          <EmptyState
+            icon={IconServer2}
+            title="No servers match."
+            description={
+              filtered
+                ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'
+                : canEdit
+                  ? 'There are no servers yet. Add one by installing the agent, or enter its details by hand.'
+                  : 'There are no servers yet. An administrator adds them.'
+            }
+            action={
+              filtered ? (
+                <Button variant="light" onClick={clear}>
+                  Clear filters
+                </Button>
+              ) : canEdit && (
+                <ButtonLink variant="light" to="/assets/add" leftSection={<IconCirclePlus size={14} />}>
+                  Add a server
+                </ButtonLink>
+              )
+            }
           />
-          <Select
-            w={180}
-            placeholder="All groups"
-            clearable
-            value={search.group ?? null}
-            onChange={(v) => setSearch({ group: v ?? undefined })}
-            data={groups?.map((g) => ({ value: g.id, label: `${g.name} (${g.assetCount})` })) ?? []}
-          />
-          <Select
-            w={170}
-            placeholder="Any host key state"
-            clearable
-            value={search.hostKey ?? null}
-            onChange={(v) => setSearch({ hostKey: (v as AssetSearch['hostKey']) ?? undefined })}
-            data={[
-              { value: 'unverified', label: 'Not pinned (any)' },
-              { value: 'pinned', label: 'Pinned' },
-              { value: 'unpinned', label: 'Unpinned' },
-              { value: 'changed', label: 'Changed' },
-            ]}
-          />
-          <Select
-            w={180}
-            placeholder="Any agent state"
-            clearable
-            value={search.agent ?? null}
-            onChange={(v) => setSearch({ agent: (v as Asset['agentState']) ?? undefined })}
-            data={AGENT_STATES.map((s) => ({ value: s, label: AGENT_LABEL[s] }))}
-          />
-          {/* The column exists, so the filter does too — Coverage links here
-              with `?bypass=open`, and a filter with no visible control would
-              leave the table narrowed for a reason nothing on screen gives. */}
-          <Select
-            w={230}
-            placeholder="Any bypass posture"
-            clearable
-            value={search.bypass ?? null}
-            onChange={(v) => setSearch({ bypass: (v as Asset['bypassPosture']) ?? undefined })}
-            data={BYPASS_POSTURES.map((s) => ({ value: s, label: BYPASS_LABEL[s] }))}
-          />
-          {/* The Overview counts the assets still on a standing credential and
-              says to move them; without this there was nowhere to go and see
-              which ones. */}
-          <Select
-            w={240}
-            placeholder="Any credential mode"
-            clearable
-            value={search.credential ?? null}
-            onChange={(v) => setSearch({ credential: (v as AssetSearch['credential']) ?? undefined })}
-            data={CREDENTIAL_MODES.map((m) => ({ value: m, label: CREDENTIAL_LABEL[m] }))}
-          />
-          {filtered && (
-            <Button
-              variant="subtle"
-              color="slate"
-              size="compact-xs"
-              leftSection={<IconX size={12} />}
-              onClick={clear}
-            >
-              Clear
-            </Button>
-          )}
-        </Toolbar>
-
-        <DataTable
-          minWidth={980}
-          loading={assets === undefined}
-          isEmpty={assets?.length === 0}
-          columns={
-            canSeeAssignments
-              ? ['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated', '']
-              : ['Host', 'Address', 'OS', 'Auth', 'Host key', 'Agent', 'Bypass', 'Rotated']
-          }
-          empty={
-            <EmptyState
-              icon={IconServer2}
-              title="No servers match."
-              description={
-                filtered
-                  ? 'Nothing in the inventory fits these filters. Clear one to widen the search.'
-                  : canEdit
-                    ? 'There are no servers yet. Add one by installing the agent, or enter its details by hand.'
-                    : 'No hosts are assigned to you. An administrator assigns one, or an approved access request covers it temporarily.'
-              }
-              action={
-                filtered ? (
-                  <Button variant="light" onClick={clear}>
-                    Clear filters
-                  </Button>
-                ) : canEdit ? (
-                  <ButtonLink variant="light" to="/assets/add" leftSection={<IconCirclePlus size={14} />}>
-                    Add a server
-                  </ButtonLink>
-                ) : (
-                  <ButtonLink variant="light" to="/requests">
-                    Request access
-                  </ButtonLink>
-                )
-              }
-            />
-          }
-        >
-          {assets?.map((a) => (
-            <Table.Tr
-              key={a.id}
-              {...rowNav(() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }))}
-            >
-              <Table.Td>
-                <Group gap={SP.cozy} wrap="nowrap">
-                  <HealthDot health={a.health} />
-                  <Box>
-                    <Mono>{a.hostname.split('.')[0]}</Mono>
-                    <Text size={FS.micro} c="dimmed">
-                      {a.hostname.split('.').slice(1).join('.')}
-                    </Text>
-                  </Box>
-                </Group>
-              </Table.Td>
-              <Table.Td><Mono c="dimmed">{a.address}:{a.port}</Mono></Table.Td>
-              <Table.Td><Text size="xs" c="dimmed">{a.os}</Text></Table.Td>
-              <Table.Td><CredentialBadge mode={a.credentialMode} /></Table.Td>
-              <Table.Td><HostKeyBadge state={a.hostKeyState} /></Table.Td>
-              <Table.Td>
-                <AgentBadge state={a.agentState} lastSeen={a.agentLastSeenAt} />
-              </Table.Td>
-              <Table.Td>
-                <BypassBadge posture={a.bypassPosture} unmanagedKeys={a.unmanagedKeyCount} />
-              </Table.Td>
-              <Table.Td>
-                {a.credentialMode === 'ca-certificate' ? (
-                  <Tooltip label="Certificate auth — nothing to rotate">
-                    <Text size="xs" c="dimmed">n/a</Text>
-                  </Tooltip>
-                ) : (
-                  <Text size="xs" c={rotationOverdue(a) ? 'amber.4' : 'dimmed'}>
-                    {relTime(a.credentialRotatedAt)}
-                    {rotationOverdue(a) && ' ⚠'}
+        }
+      >
+        {assets?.map((a) => (
+          <Table.Tr
+            key={a.id}
+            {...rowNav(() => navigate({ to: '/assets/$assetId', params: { assetId: a.id } }))}
+          >
+            <Table.Td>
+              <Group gap={SP.cozy} wrap="nowrap">
+                <HealthDot health={a.health} />
+                <Box>
+                  <Mono>{a.hostname.split('.')[0]}</Mono>
+                  <Text size={FS.micro} c="dimmed">
+                    {a.hostname.split('.').slice(1).join('.')}
                   </Text>
-                )}
-              </Table.Td>
-              {canSeeAssignments && (
-                // Stops the row's own navigation: these open a panel about this
-                // host rather than taking you away from it.
-                <Table.Td align="right" onClick={(e) => e.stopPropagation()}>
-                  <Group gap={SP.tight} justify="flex-end" wrap="nowrap">
-                    <Tooltip label="Who can reach this host">
-                      <ActionIcon
-                        variant="subtle"
-                        color="slate"
-                        aria-label={`Who can reach ${a.hostname}`}
-                        onClick={() => setAssigning(a)}
-                      >
-                        <IconUsers size={14} />
-                      </ActionIcon>
-                    </Tooltip>
-                    {canEdit && (
-                      <Tooltip label="Edit this asset">
-                        <ActionIcon
-                          variant="subtle"
-                          color="slate"
-                          aria-label={`Edit ${a.hostname}`}
-                          onClick={() => {
-                            setEditing(a)
-                            setFormOpen(true)
-                          }}
-                        >
-                          <IconPencil size={14} />
-                        </ActionIcon>
-                      </Tooltip>
-                    )}
-                  </Group>
-                </Table.Td>
+                </Box>
+              </Group>
+            </Table.Td>
+            <Table.Td><Mono c="dimmed">{a.address}:{a.port}</Mono></Table.Td>
+            <Table.Td><Text size="xs" c="dimmed">{a.os}</Text></Table.Td>
+            <Table.Td><CredentialBadge mode={a.credentialMode} /></Table.Td>
+            <Table.Td><HostKeyBadge state={a.hostKeyState} /></Table.Td>
+            <Table.Td>
+              <AgentBadge state={a.agentState} lastSeen={a.agentLastSeenAt} />
+            </Table.Td>
+            <Table.Td>
+              <BypassBadge posture={a.bypassPosture} unmanagedKeys={a.unmanagedKeyCount} />
+            </Table.Td>
+            <Table.Td>
+              {a.credentialMode === 'ca-certificate' ? (
+                <Tooltip label="Certificate auth — nothing to rotate">
+                  <Text size="xs" c="dimmed">n/a</Text>
+                </Tooltip>
+              ) : (
+                <Text size="xs" c={rotationOverdue(a) ? 'amber.4' : 'dimmed'}>
+                  {relTime(a.credentialRotatedAt)}
+                  {rotationOverdue(a) && ' ⚠'}
+                </Text>
               )}
-            </Table.Tr>
-          ))}
-        </DataTable>
-      </PageBody>
+            </Table.Td>
+            {/* Stops the row's own navigation: these open a panel about this
+                host rather than taking you away from it. */}
+            <Table.Td align="right" onClick={(e) => e.stopPropagation()}>
+              <Group gap={SP.tight} justify="flex-end" wrap="nowrap">
+                <Tooltip label="Who can reach this host">
+                  <ActionIcon
+                    variant="subtle"
+                    color="slate"
+                    aria-label={`Who can reach ${a.hostname}`}
+                    onClick={() => setAssigning(a)}
+                  >
+                    <IconUsers size={14} />
+                  </ActionIcon>
+                </Tooltip>
+                {canEdit && (
+                  <Tooltip label="Edit this asset">
+                    <ActionIcon
+                      variant="subtle"
+                      color="slate"
+                      aria-label={`Edit ${a.hostname}`}
+                      onClick={() => {
+                        setEditing(a)
+                        setFormOpen(true)
+                      }}
+                    >
+                      <IconPencil size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </Group>
+            </Table.Td>
+          </Table.Tr>
+        ))}
+      </DataTable>
 
       {/* Rendered only while open, so the chunk is fetched the first time an
           administrator actually opens one. */}
@@ -410,15 +510,15 @@ function Assets() {
         {formOpen && canEdit && (
           <AssetForm opened={formOpen} onClose={() => setFormOpen(false)} asset={editing} />
         )}
-        {assigning && canSeeAssignments && (
+        {assigning && (
           <AssetAssignments
             asset={assigning}
             opened={Boolean(assigning)}
             onClose={() => setAssigning(undefined)}
-            canEdit={Boolean(canEdit)}
+            canEdit={canEdit}
           />
         )}
       </Suspense>
-    </Box>
+    </>
   )
 }

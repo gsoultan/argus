@@ -177,17 +177,19 @@ describe('asking for more', () => {
 })
 
 describe('the menu follows the role', () => {
-  // Asked for in so many words: an ordinary user's console is My servers, and
-  // nothing else.
-  it('shows an operator My servers and nothing else', async () => {
+  // Asked for in so many words: an ordinary user's console is their servers,
+  // and nothing else.
+  it('shows an operator Servers and nothing else', async () => {
     signedInAs('operator')
     await renderRoute('/mine')
     const nav = await screen.findByRole('navigation')
-    await within(nav).findByRole('link', { name: /my servers/i })
+    await within(nav).findByRole('link', { name: /^servers/i })
     expect(within(nav).getAllByRole('link')).toHaveLength(1)
     expect(within(nav).queryByRole('button', { name: /admin/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /connect to a server/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument()
+    // The inventory view is the fleet's; an operator gets the cards alone.
+    expect(screen.queryByRole('radio', { name: /manage/i })).not.toBeInTheDocument()
   })
 
   // The request queue is an approver's job, so it stays theirs.
@@ -223,10 +225,10 @@ describe('the menu follows the role', () => {
   it.each([
     ['/', 'operator'], ['/assets', 'operator'], ['/assets/add', 'auditor'], ['/sessions', 'approver'],
     ['/coverage', 'operator'], ['/audit', 'operator'], ['/settings', 'operator'], ['/users', 'auditor'],
-  ] as const)('sends %s to My servers for an %s', async (path, role) => {
+  ] as const)('sends %s to Servers for an %s', async (path, role) => {
     signedInAs(role)
     await renderRoute(path)
-    expect(await screen.findByRole('heading', { name: 'My servers' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
   })
 })
 

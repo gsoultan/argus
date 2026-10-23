@@ -12,7 +12,8 @@ const ROUTES: Array<[string, string]> = [
   ['/settings', 'Settings'],
   ['/coverage', 'Coverage'],
   ['/connect', 'Connect'],
-  ['/mine', 'My servers'],
+  // The old address of My servers, now part of Servers.
+  ['/mine', 'Servers'],
 ]
 
 for (const [path, heading] of ROUTES) {
@@ -61,7 +62,7 @@ test('the audit chain verifies in the browser', async ({ page }) => {
 })
 
 test('no status badge is ever truncated', async ({ page }) => {
-  for (const path of ['/', '/sessions', '/assets']) {
+  for (const path of ['/', '/sessions', '/assets', '/assets?view=manage']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     const clipped = await page.evaluate(() =>

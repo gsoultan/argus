@@ -70,7 +70,7 @@ function Requests() {
         description={
           decides
             ? 'Ask for temporary access to a server, or decide on someone else\u2019s request. Someone other than you approves it, and access ends by itself when the time is up.'
-            : 'Ask for temporary access to a server. An approver decides, and the access ends by itself when the time is up. Approved servers show on My servers under Temporary access.'
+            : 'Ask for temporary access to a server. An approver decides, and the access ends by itself when the time is up. Approved servers show on Servers under Temporary access.'
         }
         actions={
           <Button leftSection={<IconPlus size={14} />} onClick={newModal.open}>
