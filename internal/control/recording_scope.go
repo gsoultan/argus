@@ -197,10 +197,6 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 			"login before anything ran. Whoever holds that key or password can still "+
 			"reach sshd directly; remove it if it is not meant to exist.",
 			in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what)
-		if p, err := a.store.GatewayPolicy(r.Context()); err == nil && p.AllowNativeClients {
-			detail += " Native clients are allowed in the console's policy now, so the " +
-				"agent was not following the current setting; check the agent on this host."
-		}
 		if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 			Action:   "session.direct_refused",
 			Severity: "warning",

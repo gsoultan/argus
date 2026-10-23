@@ -258,6 +258,14 @@ func run() error {
 					"clear and can be forged or suppressed in transit")
 		}
 	}
+	// Every session opens from the console, and the console is argus-control:
+	// it issues the tickets, holds the policy and runs the agents that SSH goes
+	// through. A gateway without one has no way in to offer, so it does not
+	// start rather than start and refuse everything.
+	if !rep.Enabled() {
+		return errors.New("control.url is required: argus-gateway runs alongside " +
+			"argus-control and the Argus agents, and every session opens from the console")
+	}
 
 	// Share replay protection and host-key pins through the control plane.
 	//
@@ -325,17 +333,6 @@ func run() error {
 	// runs under the safe configuration, so a control plane that is slow or
 	// absent at boot can never be the reason a channel was permitted.
 	policy := gateway.NewPolicyHolder()
-	if rep == nil || !rep.Enabled() {
-		// Console-only needs a console. A gateway with no control plane has
-		// none -- no tickets, no browser terminal -- so refusing native clients
-		// would refuse everything. It keeps them, and says so.
-		p := policy.Get()
-		p.AllowNativeClients = true
-		policy.Set(p)
-		log.Warn("no control plane: native ssh, scp and sftp are allowed",
-			"detail", "console-only access needs argus-control; configure `control:` "+
-				"to make every session open from the console")
-	}
 
 	srv, err := gateway.NewServer(gateway.Config{
 		Listen:             cfg.Listen,

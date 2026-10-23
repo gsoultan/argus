@@ -257,17 +257,18 @@ It works as on Linux, with these differences:
 
 ### Direct logins are refused
 
-The deployment is console-only by default (Settings → **How people connect**).
-While it is, the agent refuses any `ssh`, `scp` or `sftp` login that reached
+Every deployment is console-only, with no setting to change it. The agent
+refuses any `ssh`, `scp` or `sftp` login that reached
 sshd without going through Argus, before anything runs, tells the person to use
 the console, and writes a `session.direct_refused` entry to the audit log. The
-agent remembers the setting in its state directory, so a restart during a
+agent remembers this in its state directory, so a restart during a
 control-plane outage keeps refusing. Use the machine's own console (hypervisor
 or physical) as the break-glass path.
 
 ### Which logins are recorded
 
-This applies only when native clients are allowed in Settings. Each server's
+Because every direct login is refused, this setting currently has no effect:
+it only decides what happens to a direct login that is let through. Each server's
 page in the console has **Which logins are recorded**. Logins through Argus are
 always recorded; this decides what happens when someone logs in to the server
 directly, skipping Argus:

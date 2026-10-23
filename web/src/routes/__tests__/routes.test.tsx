@@ -95,8 +95,9 @@ describe('settings', () => {
 
   it('opens on how people connect', async () => {
     await renderRoute('/settings')
-    expect(await screen.findByRole('switch', { name: /allow native clients/i })).not.toBeChecked()
-    expect(screen.getByText('Console only')).toBeInTheDocument()
+    expect(await screen.findByText('Console only, through the agent')).toBeInTheDocument()
+    // Not a setting: there is no switch that lets native clients back in.
+    expect(screen.queryByRole('switch', { name: /native clients/i })).not.toBeInTheDocument()
   })
 
   it('opens one section at a time from the list', async () => {

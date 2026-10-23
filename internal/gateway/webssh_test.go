@@ -41,6 +41,7 @@ func webGateway(t *testing.T) (*Server, *httptest.Server, WebConfig) {
 
 	srv := &Server{
 		cfg: Config{
+			directPaths:  true,
 			RecordingDir: dir,
 			HostKeys:     mustHostKeys(t),
 			Inventory: &Inventory{assets: map[string]Asset{
@@ -115,6 +116,29 @@ func TestBrowserTerminalOpensWithAValidTicket(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+// In production the gateway serves no SSH terminal: SSH opens through the
+// server's agent. A valid ticket is refused, and not burned by the refusal.
+func TestGatewayTerminalIsRefusedInProduction(t *testing.T) {
+	srv, ts, cfg := webGateway(t)
+	srv.cfg.directPaths = false
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ticket, err := cfg.Signer.IssueTicket("dewi.p@northwind.id", "pay-01", "ops", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, code := dialTerminal(t, ctx, wsURL(ts, "target=pay-01&principal=ops&ticket="+ticket)); c != nil {
+		c.CloseNow()
+		t.Fatal("the gateway opened an SSH terminal")
+	} else if code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", code)
+	}
+	if len(srv.sessions) != 0 {
+		t.Error("a refused terminal left a session behind")
 	}
 }
 

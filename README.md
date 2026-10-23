@@ -452,48 +452,30 @@ the account, an elevated account (root, Administrator) needs an approved access
 request first, and the ticket that opens it is single-use and expires in about
 a minute.
 
-### Console-only is the default
+### The console is the only way in
 
-Settings → **How people connect** → *Allow native clients* is **off** on a new
-deployment and after an upgrade. With it off:
+There is no setting for this and nothing to turn off: Argus needs an agent on
+every server, and every session opens from the console through it.
 
 | Path | What happens |
 |---|---|
 | `ssh`, `scp`, `sftp` to the gateway (`2222/tcp`) | Refused before the target is dialled, with a message pointing at the console. |
 | `mstsc` to the gateway's native RDP listener | Refused before the target is dialled. |
-| `ssh`, `scp`, `sftp` straight to a server whose agent is installed | The agent refuses the login before anything runs, tells the person to use the console, and writes a `session.direct_refused` entry to the audit log with the account, source address and command. |
-| A server with no agent | Argus cannot see or stop a direct login there. Install the agent, or close sshd to everything but the agent's host. |
+| `ssh`, `scp`, `sftp` straight to a server | The agent refuses the login before anything runs, tells the person to use the console, and writes a `session.direct_refused` entry to the audit log with the account, source address and command. |
+| A Linux server whose agent is not connected | Nothing opens. Connect says the agent is offline; the server's page shows when it last checked in. The gateway does not stand in for it. |
 
-A change reaches each agent at its next check-in, about a minute. The server's
-page in the console says whether its agent has confirmed it, and an agent that
-restarts while the control plane is unreachable keeps the last setting it heard.
-The machine's own console (a hypervisor or physical console) is not affected, so
-it remains the break-glass path if the control plane is down.
+Remote Desktop is the one session that still goes through the gateway, from the
+browser, until the Windows agent ships.
 
-Turning native clients on is audited as a loosening. It puts back the native
-paths below.
+Each agent confirms at its next check-in, about a minute, and the server's page
+says whether it has. An agent that restarts while the control plane is
+unreachable keeps refusing. The machine's own console (a hypervisor or physical
+console) is not affected, so it remains the break-glass path if the control
+plane is down.
 
-### Native clients, when they are allowed
-
-The packaged config binds the gateway's SSH listener to loopback; set
-`listen: "0.0.0.0:2222"` too, and put the port behind a VPN or an allowlist.
-Once it is reachable, `authorized_keys` is the whole perimeter. The target is
-encoded in the SSH username:
-
-```sh
-ssh  ops:pay-01@argus.example.com
-sftp ops+pay-01@argus.example.com          # note the +
-scp  report.csv ops+pay-01@argus.example.com:/tmp/
-```
-
-`sftp` and `scp` need `+` rather than `:`, because their own syntax is
-`host:path`. SFTP through the gateway is decoded rather than relayed as opaque
-bytes, so a transfer becomes an audit event naming the file and the volume moved:
-
-```
-notice   file.download   download /var/lib/payments/dump.sql (195.3 KB)
-warning  file.delete     delete /tmp/uploaded-back.dat
-```
+argus-gateway does not run on its own: it refuses to start without
+`control.url`, because without the control plane there are no tickets, no
+agents and so no way in.
 
 ## Layout
 
@@ -589,8 +571,10 @@ someone who may not use it.
 
 ## Security posture
 
-Argus terminates SSH, which means the gateway holds session plaintext in memory.
-That is the deliberate cost of working against hosts with no agent installed.
+SSH sessions run on the server under its agent, and the gateway's own SSH paths
+are closed. Browser Remote Desktop is still brokered by the gateway until the
+Windows agent ships, which means the gateway holds those sessions' plaintext in
+memory.
 Treat gateway nodes as the highest-value asset in the fleet: no shared tenancy,
 hardware-backed keys for the vault, and the audit log replicated somewhere the
 gateway cannot write.

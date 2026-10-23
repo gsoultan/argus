@@ -7,11 +7,11 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
   IconAdjustments, IconDeviceDesktop, IconFolders, IconInfoCircle, IconPlugConnected,
-  IconServer2, IconShieldLock, IconTerminal2, IconUser, IconX,
+  IconPlugConnectedX, IconServer2, IconShieldLock, IconTerminal2, IconUser, IconX,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader } from '~/components/page'
 import type { TerminalState } from '~/components/LiveTerminal'
-import { assetsQuery, policyQuery } from '~/lib/queries'
+import { assetsQuery } from '~/lib/queries'
 import {
   GATEWAY_URL, filesEndpoint, isConfigured, terminalEndpoint, terminalTicket,
 } from '~/lib/live'
@@ -65,9 +65,6 @@ const DEFAULT_PRINCIPALS = ['ops', 'deploy']
 
 function Connect() {
   const { data: assets } = useQuery(assetsQuery({}))
-  const { data: policy } = useQuery(policyQuery())
-  // Console-only unless the control plane says native clients are allowed.
-  const nativeAllowed = policy?.allowNativeClients === true
 
   const [gateway, setGateway] = useState(DEFAULT_GATEWAY)
   const [requesting, setRequesting] = useState(false)
@@ -103,10 +100,11 @@ function Connect() {
 
   const selected = assets?.find((a) => a.hostname === target)
   const isRDPTarget = selected?.protocol === 'rdp'
-  // SSH opens through the server's own agent whenever it is connected; the
-  // gateway is only for servers whose agent is not. Remote Desktop is still
-  // the gateway's.
+  // SSH opens through the server's own agent, and only through it: a server
+  // whose agent is not connected has no way in until it reconnects. Remote
+  // Desktop is still the gateway's until the Windows agent ships.
   const viaAgent = !isRDPTarget && selected?.tunnelConnected === true
+  const agentDown = !!selected && !isRDPTarget && !viaAgent
 
   // Memoised so the effect below depends on the contents rather than on a fresh
   // array identity, which the `??` default produced on every single render.
@@ -163,9 +161,7 @@ function Connect() {
               ? 'Brokered through the gateway — same policy, certificate pinning and recording as a desktop client.'
               : isFiles
                 ? `Read and written on the server by its Argus agent, as ${session.principal}. Every upload and download is in the audit log with its size and SHA-256.`
-                : session.viaAgent
-                ? 'Opened on the server by its Argus agent, which records it there before anything reaches you.'
-                : 'Brokered through the gateway — same policy, host-key verification and recording as ssh(1).'
+                : 'Opened on the server by its Argus agent, which records it there before anything reaches you.'
           }
           actions={
             <Button
@@ -318,6 +314,20 @@ function Connect() {
                     <HostKeyBadge state={selected.hostKeyState} />
                   </Group>
                 )}
+                {agentDown && (
+                  <Alert
+                    mt="sm"
+                    color="amber"
+                    icon={<IconPlugConnectedX size={16} />}
+                    title="This server's agent is not connected"
+                  >
+                    <Text size={FS.meta} lh={1.5}>
+                      Sessions and file transfers reach a server only through its Argus agent.
+                      Nothing can open until the agent on {selected.hostname} reconnects; its
+                      page under Servers shows when it last checked in.
+                    </Text>
+                  </Alert>
+                )}
               </Step>
 
               <Step n={2} icon={IconUser} title="Choose an account" disabled={!target}>
@@ -364,7 +374,7 @@ function Connect() {
                 <Text size={FS.micro} c="dimmed">
                   {target
                     ? `Opens ${principal}@${target.split('.')[0]} ${
-                        viaAgent ? "through the server's Argus agent" : 'through the gateway'
+                        isRDPTarget ? 'through the gateway' : "through the server's Argus agent"
                       }.`
                     : 'Nothing is sent until you choose a host.'}
                 </Text>
@@ -386,7 +396,7 @@ function Connect() {
                   <Button
                     size="sm"
                     leftSection={<IconPlugConnected size={15} />}
-                    disabled={!target || (!viaAgent && !gateway)}
+                    disabled={!target || agentDown || (isRDPTarget && !gateway)}
                     loading={requesting}
                     onClick={() => void onConnect()}
                   >
@@ -417,7 +427,7 @@ function Connect() {
                         'Argus checks you are allowed on that server as that account.',
                         'It signs in for you. You never see or type a password or key.',
                         'It checks the server is the one it was last time, so nothing can pose as it.',
-                        'The whole session is recorded, the same as one opened with ssh.',
+                        'The whole session is recorded.',
                       ]
                   ).map((line) => (
                     <Group key={line} gap={SP.cozy} wrap="nowrap" align="flex-start">
@@ -428,44 +438,26 @@ function Connect() {
                 </Stack>
               </Card>
 
-              {nativeAllowed ? (
-                <Card style={{ borderStyle: 'dashed' }}>
-                  <Group gap={SP.cozy} mb={SP.snug}>
-                    <ThemeIcon variant="light" color="slate" size={22} radius="sm">
-                      <IconTerminal2 size={13} />
-                    </ThemeIcon>
-                    <Text fw={600} size="sm">Prefer your own client?</Text>
-                  </Group>
-                  <Text size={FS.meta} c="dimmed" lh={1.5}>
-                    Native clients are allowed on this deployment. The target is encoded in the
-                    username, so ordinary tooling gets the identical controls:
-                  </Text>
-                  <Text size={FS.digest} ff="monospace" mt={SP.cozy} c="slate.2">
-                    ssh {principal}:{target?.split('.')[0] ?? 'HOST'}@argus.northwind.id
-                  </Text>
-                </Card>
-              ) : (
-                <Card style={{ borderStyle: 'dashed' }}>
-                  <Group gap={SP.cozy} mb={SP.snug}>
-                    <ThemeIcon variant="light" color="teal" size={22} radius="sm">
-                      <IconShieldLock size={13} />
-                    </ThemeIcon>
-                    <Text fw={600} size="sm">This console is the only way in</Text>
-                  </Group>
-                  <Text size={FS.meta} c="dimmed" lh={1.5}>
-                    Terminals, desktops and file transfers all open from this page. ssh, scp,
-                    sftp and mstsc straight to the gateway or to a server are refused, and a
-                    refused attempt is written to the audit log.
-                  </Text>
-                </Card>
-              )}
+              <Card style={{ borderStyle: 'dashed' }}>
+                <Group gap={SP.cozy} mb={SP.snug}>
+                  <ThemeIcon variant="light" color="teal" size={22} radius="sm">
+                    <IconShieldLock size={13} />
+                  </ThemeIcon>
+                  <Text fw={600} size="sm">This console is the only way in</Text>
+                </Group>
+                <Text size={FS.meta} c="dimmed" lh={1.5}>
+                  Terminals, desktops and file transfers all open from this page. ssh, scp,
+                  sftp and mstsc straight to the gateway or to a server are refused, and a
+                  refused attempt is written to the audit log.
+                </Text>
+              </Card>
 
               {/* Advanced, and collapsed once a control plane supplies the
                   address. It only has to be typed when there is no control
                   plane to ask, which is also the only time it is editable
-                  usefully. Not shown at all for a server reached through its
-                  agent, which never touches a gateway. */}
-              {!viaAgent && (
+                  usefully. Shown only for Remote Desktop: SSH goes through
+                  the server's agent and never touches a gateway. */}
+              {isRDPTarget && (
               <Card>
                 <Group justify="space-between" wrap="nowrap">
                   <Group gap={SP.cozy}>

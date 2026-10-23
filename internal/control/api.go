@@ -643,14 +643,11 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.RecordingScope,
 		in.ConsoleOnly)
 	reply := map[string]any{"status": "ok", "recording_scope": scope}
-	// Console-only rides the same reply. Left out when the policy cannot be
-	// read, so the agent keeps what it last heard: a database blip must not
-	// switch direct logins on or off across the fleet.
-	if p, perr := a.store.GatewayPolicy(r.Context()); perr == nil {
-		reply["console_only"] = !p.AllowNativeClients
-	} else {
-		a.log.Error("heartbeat: read gateway policy", "error", perr)
-	}
+	// Console-only rides the same reply, and is always on: every session
+	// opens from the console, and there is no setting that turns direct
+	// logins back on. Sent rather than assumed so an agent that last heard
+	// otherwise from an older control plane is brought back in line.
+	reply["console_only"] = true
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,

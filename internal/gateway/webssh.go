@@ -198,8 +198,20 @@ func (s *Server) handleAssets(cfg WebConfig) http.HandlerFunc {
 }
 
 // handleWebSession upgrades to a WebSocket and proxies a live shell.
+//
+// Refused in production: a browser SSH terminal opens through the server's
+// own agent, never from here, so a host without a connected agent has no way
+// in. Checked before the ticket is redeemed so a refused request does not
+// burn it.
 func (s *Server) handleWebSession(cfg WebConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.cfg.directPaths {
+			s.log.Warn("gateway SSH terminal refused: SSH opens through the server's agent",
+				"target", r.URL.Query().Get("target"), "remote", r.RemoteAddr)
+			http.Error(w, "SSH sessions open through the server's Argus agent; "+
+				"this server has no connected agent", http.StatusForbidden)
+			return
+		}
 		target := r.URL.Query().Get("target")
 		principal := r.URL.Query().Get("principal")
 		if target == "" || principal == "" {

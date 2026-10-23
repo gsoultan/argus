@@ -126,9 +126,6 @@ type GatewayPolicy struct {
 	AllowRemoteForward bool `json:"allowRemoteForward"`
 	AllowAgentForward  bool `json:"allowAgentForward"`
 	AllowX11Forward    bool `json:"allowX11Forward"`
-	// AllowNativeClients is absent from a control plane older than it, which
-	// reads as false: the console-only position.
-	AllowNativeClients bool `json:"allowNativeClients"`
 
 	ProxySftpSubsystem        bool `json:"proxySftpSubsystem"`
 	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
