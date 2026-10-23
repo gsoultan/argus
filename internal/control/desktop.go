@@ -194,6 +194,11 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	})
 	defer finish()
 	go wskeep.Run(ctx, conn)
+	// The session's id, for the console's link to it; a console that does
+	// not know this message ignores it.
+	if sendText(terminalMessage{Type: "ready", Session: answer.Session}) != nil {
+		return
+	}
 
 	// Input, forwarded as the browser sent it; the agent maps it to RDP.
 	go func() {

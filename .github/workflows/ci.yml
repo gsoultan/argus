@@ -295,6 +295,7 @@ jobs:
           go build -o "$tmp/argus-control.exe" ./cmd/argus-control
           go build -o "$tmp/argus-agent.exe" ./cmd/argus-agent
           go build -o "$tmp/termdrill.exe" ./scripts/tools/termdrill
+          go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
           go run ./scripts/tools/gencerts "$tmp"
           # The Windows "chmod 600", which the control plane checks for.
           icacls "$(cygpath -w "$tmp/server.key")" /inheritance:r /grant:r "$USERNAME:R" \
@@ -354,7 +355,9 @@ jobs:
           # the session, as an interactive logon would make it.
           # Under 15 characters: net asks before setting a longer password,
           # and there is nobody to answer.
-          net user argusdrill "Dr1ll-$(openssl rand -hex 4)" /add >/dev/null
+          DRILL_PASSWORD="Dr1ll-$(openssl rand -hex 4)"
+          export DRILL_PASSWORD
+          net user argusdrill "$DRILL_PASSWORD" /add >/dev/null
           tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
             -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
           set +e
@@ -388,6 +391,42 @@ jobs:
           if [ "$tkt" != null ] && "$tmp/termdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
                -ticket "$tkt" -target "$host" -principal 'CORP\ana' -input $'exit\r' 2>&1; then
             echo "::error::a session for a domain account was opened"; exit 1
+          fi
+
+          # Remote Desktop through the agent: the runner's own listener, with
+          # network level authentication as Windows has it by default, signed
+          # in as the account with its password.
+          reg add 'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server' \
+            /v fDenyTSConnections /t REG_DWORD /d 0 /f >/dev/null
+          net localgroup "Remote Desktop Users" argusdrill /add >/dev/null
+          sc.exe config TermService start= demand >/dev/null || true
+          net start TermService >/dev/null 2>&1 || true
+          for i in $(seq 1 30); do
+            netstat -an | grep -q ':3389 .*LISTENING' && break
+            sleep 1
+          done
+          netstat -an | grep ':3389 ' || { echo "::error::Remote Desktop is not listening on the runner"; exit 1; }
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill \
+            -password-env DRILL_PASSWORD -frames 3 2>"$tmp/desk.err" || {
+              cat "$tmp/desk.err"; sleep 5; tail -40 "$log"
+              echo "::error::a Remote Desktop did not open through the agent"; exit 1; }
+          cat "$tmp/desk.err"
+          dsid=$(sed -n 's/^session=//p' "$tmp/desk.err" | tr -d '\r')
+          for i in $(seq 1 30); do
+            st=$(psql "$PGURL" -tAc "SELECT state || ' ' || user_email || ' ' || protocol
+                 FROM sessions WHERE id = '$dsid'::uuid")
+            [ "${st%% *}" = closed ] && break
+            sleep 1
+          done
+          [ "$st" = "closed admin@ci.example rdp" ] || { tail -40 "$log"
+            echo "::error::the desktop was reported as '$st'"; exit 1; }
+          rec="/c/ProgramData/Argus/recordings/$dsid.argusrdp"
+          [ -s "$rec" ] || { echo "::error::the desktop's recording is not on the host"; exit 1; }
+          if grep -q "$DRILL_PASSWORD" "$rec" "$log"; then
+            echo "::error::the account's password was written down on the host"; exit 1
           fi
 
           # Stopping the service seals and exits cleanly.
