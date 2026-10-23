@@ -16,7 +16,7 @@ import {
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
-  assetQuery, meQuery, policyQuery, sessionsQuery, usePinHostKey, useRotateCredential,
+  assetQuery, meQuery, sessionsQuery, usePinHostKey, useRotateCredential,
 } from '~/lib/queries'
 import { guard } from '~/lib/guard'
 
@@ -41,7 +41,6 @@ function AssetDetail() {
   const { data: asset } = useQuery(assetQuery(assetId))
   const { data: allSessions } = useQuery(sessionsQuery())
   const { data: me } = useQuery(meQuery())
-  const { data: policy } = useQuery(policyQuery())
   const pin = usePinHostKey()
   const rotate = useRotateCredential()
 
@@ -270,31 +269,19 @@ function AssetDetail() {
 
               <RecordingScopeCard asset={asset} canEdit={canEdit} />
 
-              {policy?.allowNativeClients ? (
-                <SectionCard
-                  title="Connect"
-                  icon={IconPlugConnected}
-                  description="Native clients are allowed on this deployment, so the target encoded in the username works with ssh, scp and sftp as well as from the console."
-                >
-                  <Code block fz={FS.digest}>
-                    {`ssh ${asset.principals[0]}:${asset.hostname.split('.')[0]}@argus.northwind.id`}
-                  </Code>
-                </SectionCard>
-              ) : (
-                <SectionCard
-                  title="Connect"
-                  icon={IconPlugConnected}
-                  description="Console only: terminals and file transfers to this server open from Connect, through its agent. Direct ssh, scp and sftp are refused."
-                >
-                  <Text size={FS.meta} c="dimmed" lh={1.5}>
-                    {asset.agentConsoleOnly === true
-                      ? "This server's agent confirmed at its last check-in that it refuses direct logins."
-                      : asset.agentConsoleOnly === false
-                        ? "This server's agent has not applied console-only yet; it will at its next check-in."
-                        : "This server's agent has not confirmed console-only. An agent older than the setting, or a server with no agent, still accepts direct logins: close sshd to everything but the agent there."}
-                  </Text>
-                </SectionCard>
-              )}
+              <SectionCard
+                title="Connect"
+                icon={IconPlugConnected}
+                description="Terminals and file transfers to this server open from Connect, through its agent. Direct ssh, scp and sftp are refused."
+              >
+                <Text size={FS.meta} c="dimmed" lh={1.5}>
+                  {asset.agentConsoleOnly === true
+                    ? "This server's agent confirmed at its last check-in that it refuses direct logins."
+                    : asset.agentConsoleOnly === false
+                      ? "This server's agent has not applied console-only yet; it will at its next check-in."
+                      : "This server's agent has not confirmed console-only. An agent older than the setting still accepts direct logins until it is upgraded."}
+                </Text>
+              </SectionCard>
             </Stack>
           </Grid.Col>
 

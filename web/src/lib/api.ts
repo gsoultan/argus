@@ -47,7 +47,6 @@ const DEFAULT_POLICY: GatewayPolicy = {
   allowRemoteForward: false,
   allowAgentForward: false,
   allowX11Forward: false,
-  allowNativeClients: false,
   proxySftpSubsystem: true,
   failClosedOnRecordingLoss: true,
   requireEbpfForRoot: true,

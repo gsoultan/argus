@@ -55,7 +55,6 @@ func SyncPolicy(
 			"remoteForward", next.AllowRemoteForward,
 			"agentForward", next.AllowAgentForward,
 			"x11Forward", next.AllowX11Forward,
-			"nativeClients", next.AllowNativeClients,
 			"sftpProxy", next.ProxySftpSubsystem,
 			"failClosedOnRecordingLoss", next.FailClosedOnRecordingLoss)
 		h.Set(next)

@@ -63,6 +63,14 @@ type Config struct {
 	// configuration, which is what this gateway enforced before policy was
 	// configurable — so leaving it unset changes nothing.
 	Policy *PolicyHolder
+
+	// directPaths opens the paths that do not start in the console: the SSH
+	// listener (ssh, scp, sftp), the browser SSH terminal served from the
+	// gateway, and the native RDP listener. Every SSH session opens through
+	// the server's agent, so in production these are always refused, and
+	// there is no setting to change that. Unexported so only this package's
+	// tests can set it, to exercise the session machinery behind them.
+	directPaths bool
 }
 
 // Server is the Argus SSH gateway.
@@ -537,10 +545,10 @@ func (s *Server) handleConn(nConn net.Conn) {
 
 	ext := sshConn.Permissions.Extensions
 
-	// Console-only is decided before a target is dialled or a recording
-	// opened: a native client must not get as far as reaching the host.
-	if !s.policy().AllowNativeClients {
-		s.log.Warn("native SSH client refused: console-only policy",
+	// Refused before a target is dialled or a recording opened: a native
+	// client must not get as far as reaching the host.
+	if !s.cfg.directPaths {
+		s.log.Warn("native SSH client refused: sessions open from the console",
 			"user", ext["argus-user"],
 			"target", ext["argus-target"],
 			"principal", ext["argus-principal"],

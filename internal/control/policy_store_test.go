@@ -29,9 +29,6 @@ func TestGatewayPolicySeedsTheClosedDefaults(t *testing.T) {
 		!p.RequireEbpfForRoot {
 		t.Errorf("every recording guarantee must be on by default: %+v", p)
 	}
-	if p.AllowNativeClients {
-		t.Errorf("a fresh database must be console-only: %+v", p)
-	}
 }
 
 func TestSaveGatewayPolicyRoundTrips(t *testing.T) {

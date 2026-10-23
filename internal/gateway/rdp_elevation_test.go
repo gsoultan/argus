@@ -87,8 +87,8 @@ func TestRDPStillBrokersAnOrdinaryPrincipal(t *testing.T) {
 	}
 }
 
-// Console-only, the default, closes the native listener to everyone: mstsc
-// straight to the gateway is refused before a target is dialled.
+// The native listener is closed to everyone: mstsc straight to the gateway is
+// refused before a target is dialled.
 func TestRDPNativeClientIsRefusedWhenConsoleOnly(t *testing.T) {
 	targetAddr, fingerprint := windowsHost(t, rdp.ProtocolSSL)
 	host, portStr, _ := net.SplitHostPort(targetAddr)
@@ -98,7 +98,7 @@ func TestRDPNativeClientIsRefusedWhenConsoleOnly(t *testing.T) {
 		Hostname: "win-01", Address: host, Port: port,
 		Protocol: ProtocolRDP, Principals: []string{"ops"},
 	}
-	gwAddr, _ := startRDPGateway(t, asset, fingerprint, NewPolicyHolder())
+	gwAddr, _ := startRDPGatewayAsIs(t, asset, fingerprint)
 
 	conn, err := net.Dial("tcp", gwAddr)
 	if err != nil {
@@ -115,6 +115,6 @@ func TestRDPNativeClientIsRefusedWhenConsoleOnly(t *testing.T) {
 		t.Fatalf("no refusal was sent: %v", err)
 	}
 	if _, failure, _ := rdp.ParseConnectionConfirm(reply); failure == 0 {
-		t.Error("a console-only gateway brokered a native RDP client")
+		t.Error("the gateway brokered a native RDP client")
 	}
 }

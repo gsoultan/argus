@@ -329,22 +329,21 @@ func serveTargetGlobalRequests(conn ssh.Conn, reqs <-chan *ssh.Request) {
 	}
 }
 
-// startGateway builds a real gateway in front of a real target, with native
-// clients allowed: these tests are about what a native session may do once
+// startGateway builds a real gateway in front of a real target, with the
+// direct paths open: these tests are about what a native session may do once
 // it is in, so the console-only refusal would stop every one at the door.
 func startGateway(t *testing.T, policy *PolicyHolder) (addr string, clientSigner ssh.Signer) {
 	t.Helper()
-	if policy == nil {
-		policy = NewPolicyHolder()
-	}
-	p := policy.Get()
-	p.AllowNativeClients = true
-	policy.Set(p)
-	return startGatewayAsIs(t, policy)
+	return newTestGateway(t, policy, true)
 }
 
-// startGatewayAsIs is startGateway without opening native clients.
+// startGatewayAsIs is startGateway as production runs it: direct paths shut.
 func startGatewayAsIs(t *testing.T, policy *PolicyHolder) (addr string, clientSigner ssh.Signer) {
+	t.Helper()
+	return newTestGateway(t, policy, false)
+}
+
+func newTestGateway(t *testing.T, policy *PolicyHolder, direct bool) (addr string, clientSigner ssh.Signer) {
 	t.Helper()
 	drainTargetConns()
 	dir := t.TempDir()
@@ -387,6 +386,7 @@ func startGatewayAsIs(t *testing.T, policy *PolicyHolder) (addr string, clientSi
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	srv.cfg.directPaths = direct
 
 	// Listen binds cfg.Listen itself and blocks, so the bound address is only
 	// knowable afterwards. Same package, so the listener is readable directly
@@ -798,7 +798,7 @@ func TestLooseningDoesNotReachSessionsAlreadyOpen(t *testing.T) {
 		t.Fatal("forwarding should be refused while policy is closed")
 	}
 
-	policy.Set(Policy{AllowLocalForward: true, AllowNativeClients: true})
+	policy.Set(Policy{AllowLocalForward: true})
 
 	if c, err := early.Dial("tcp", echo); err == nil {
 		_ = c.Close()
@@ -1002,7 +1002,7 @@ func TestAgentForwardingIsRefusedByDefault(t *testing.T) {
 	}
 }
 
-// Console-only is the default. A native client with a valid key must be told
+// Console-only is the only mode. A native client with a valid key must be told
 // to use the console, and must not reach the target: the refusal arrives as
 // the session's stderr and a failing exit, before any shell or scp runs.
 func TestNativeClientIsRefusedByDefault(t *testing.T) {

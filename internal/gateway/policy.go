@@ -39,14 +39,6 @@ type Policy struct {
 	AllowAgentForward bool `json:"allowAgentForward"`
 	AllowX11Forward   bool `json:"allowX11Forward"`
 
-	// AllowNativeClients opens the gateway's own SSH listener to ssh(1),
-	// scp, sftp and friends, and the native RDP listener to mstsc. False --
-	// the default and the closed position -- means every session opens from
-	// the Argus console and nothing else: a native client is told so and
-	// refused before a target is dialled. The browser terminal and browser
-	// RDP do not use either listener, so they are not affected.
-	AllowNativeClients bool `json:"allowNativeClients"`
-
 	ProxySftpSubsystem        bool `json:"proxySftpSubsystem"`
 	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
 	RequireEbpfForRoot        bool `json:"requireEbpfForRoot"`
@@ -162,12 +154,11 @@ func (p Policy) channelAllowed(kind string) bool {
 	}
 }
 
-// ConsoleOnlyRefusal is what a native client is told when AllowNativeClients
-// is off. It names the way in, so the person refused knows where to go rather
-// than debugging their key.
-const ConsoleOnlyRefusal = "this deployment accepts connections from the Argus console only; " +
+// ConsoleOnlyRefusal is what a native client is told. It names the way in, so
+// the person refused knows where to go rather than debugging their key.
+const ConsoleOnlyRefusal = "Argus accepts connections from the Argus console only; " +
 	"open the server from the console in your browser (Servers, then Connect). " +
-	"ssh, scp, sftp and mstsc straight to the gateway are switched off by policy"
+	"ssh, scp, sftp and mstsc straight to the gateway are not supported"
 
 // globalRequestAllowed covers requests made against the connection rather than
 // a channel — remote forwarding is the one that matters here.
@@ -207,7 +198,6 @@ func policyFromWire(w reporter.GatewayPolicy) Policy {
 		AllowRemoteForward:        w.AllowRemoteForward,
 		AllowAgentForward:         w.AllowAgentForward,
 		AllowX11Forward:           w.AllowX11Forward,
-		AllowNativeClients:        w.AllowNativeClients,
 		ProxySftpSubsystem:        w.ProxySftpSubsystem,
 		FailClosedOnRecordingLoss: w.FailClosedOnRecordingLoss,
 		RequireEbpfForRoot:        w.RequireEbpfForRoot,
@@ -231,7 +221,6 @@ func (p Policy) Equal(o Policy) bool {
 		p.AllowRemoteForward != o.AllowRemoteForward ||
 		p.AllowAgentForward != o.AllowAgentForward ||
 		p.AllowX11Forward != o.AllowX11Forward ||
-		p.AllowNativeClients != o.AllowNativeClients ||
 		p.ProxySftpSubsystem != o.ProxySftpSubsystem ||
 		p.FailClosedOnRecordingLoss != o.FailClosedOnRecordingLoss ||
 		p.RequireEbpfForRoot != o.RequireEbpfForRoot {

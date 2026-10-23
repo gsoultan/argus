@@ -8,10 +8,10 @@ import { terminalEndpoint } from '~/lib/live'
 /**
  * Which way a terminal opens, and the page saying so.
  *
- * A server whose agent holds a tunnel opens through the agent, and the page
- * must not then describe a gateway, ask for its address, or refuse to connect
- * because none is configured. A server whose agent is not connected still
- * goes through the gateway, and the page says that instead.
+ * SSH opens through the server's agent and nothing else. A server whose agent
+ * holds a tunnel opens through it, and the page must not describe a gateway or
+ * ask for its address. A server whose agent is not connected cannot be opened
+ * at all, and the page says why rather than falling back to the gateway.
  */
 
 const ssh = assets.find((a) => a.protocol !== 'rdp')!
@@ -34,11 +34,13 @@ describe('opening a terminal', () => {
     expect(screen.getByRole('button', { name: /open terminal/i })).toBeEnabled()
   }, 15_000)
 
-  it('goes through the gateway when the agent is not connected', async () => {
+  it('does not open at all when the agent is not connected', async () => {
     withHost(false)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByText(/through the gateway\./i)).toBeInTheDocument()
-    expect(screen.getByText('Gateway endpoint')).toBeInTheDocument()
+    expect(await screen.findByText(/agent is not connected/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /open terminal/i })).toBeDisabled()
+    expect(screen.queryByText(/through the gateway/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
   })
 
   it('connects to the control plane for an agent, and to the gateway otherwise', () => {
@@ -58,18 +60,10 @@ describe('console-only', () => {
     expect(screen.queryByText(/prefer your own client/i)).not.toBeInTheDocument()
   }, 15_000)
 
-  it('does not offer file transfer through the gateway', async () => {
+  it('does not offer file transfer without the agent', async () => {
     withHost(false)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByText(/through the gateway\./i)).toBeInTheDocument()
+    expect(await screen.findByText(/agent is not connected/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /transfer files/i })).not.toBeInTheDocument()
-  })
-
-  it('shows the native client line only when the policy allows it', async () => {
-    withHost(true)
-    const policy = await api.policy()
-    vi.spyOn(api, 'policy').mockResolvedValue({ ...policy, allowNativeClients: true })
-    await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByText(/prefer your own client/i)).toBeInTheDocument()
   })
 })
