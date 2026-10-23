@@ -45,17 +45,18 @@ Both commands must succeed. A package that fails either is not ours.
 
 ### macOS and Windows
 
-The control plane, the gateway and `argus-verify` are also released for macOS
+The control plane and `argus-verify` are also released for macOS
 and Windows, as `argus_<version>_darwin_<arch>.tar.gz` and
 `argus_<version>_windows_<arch>.zip`. These are archives, not packages: nothing
-installs a service for you. Run `argus-control` from the unpacked folder and
+installs a service for you. They also carry `argus-gateway`, which only browser
+Remote Desktop uses until the Windows agent ships. Run `argus-control` from the unpacked folder and
 it finds the console in the `console` folder beside it, serves its setup page,
 and writes `control.yaml` in the working directory (or wherever `--config`
 points). Use
 `shasum -a 256 -c` on macOS, or `Get-FileHash` in PowerShell, in place of
 `sha256sum`.
 
-On Windows, a private key file (TLS, CA, vaulted credentials) must be readable
+On Windows, a private key file (TLS, CA) must be readable
 only by its owner, the account Argus runs as, SYSTEM and Administrators, just
 as on Linux it must be mode `600`. A key copied under `C:\ProgramData`
 inherits read access for every local user and is refused at startup; the error
@@ -386,7 +387,7 @@ until setup is done, then at the console listener.
 
 Create the tunnel and route the hostnames to it as Cloudflare describes
 (`cloudflared tunnel create argus`, then `cloudflared tunnel route dns argus
-argus.example.com` and the same for `bastion.example.com`). Then
+argus.example.com`). Then
 `/etc/cloudflared/config.yml` on the control plane host:
 
 ```yaml
@@ -439,25 +440,18 @@ person's real address.
 
 An Access application in front of `argus.example.com` adds Cloudflare's sign-in
 ahead of Argus's own. It does not replace it: Argus still asks for its password
-and second factor and attributes everything to its own account. The console
-calls `bastion.example.com` from another origin, so if you put that hostname
-behind Access too, its preflight requests must be allowed through and the
-Access cookie must be valid for both names. The simplest working setup is
-Access on the console's hostname only.
+and second factor and attributes everything to its own account. The console and
+its API are one origin, so one Access application on that hostname covers both.
 
 ### What cannot go through the tunnel
 
-A Cloudflare Tunnel carries HTTP and WebSocket traffic from browsers. Three
+A Cloudflare Tunnel carries HTTP and WebSocket traffic from browsers. Two
 things Argus does are not that:
 
 | Traffic | Why it cannot use the tunnel | Instead |
 |---|---|---|
 | Agents' connection to the control plane | On QUIC it is UDP, which a public hostname does not carry. Its HTTPS fallback upgrades the connection to a protocol of its own, and Cloudflare forwards only WebSocket upgrades. | Keep `8080/tcp` and `8080/udp` reachable from your servers: open them only to their addresses, or put them on a private network (WireGuard, Tailscale, a VPC). Cloudflare's private networking (WARP Connector on the servers) can carry both, but is not something we have tested. |
 | Agents' reports | The control plane requires the reporter's client certificate on these routes, and Cloudflare terminates TLS, so the certificate never arrives. | The same direct `listen` address as above. This is why the console and the fleet have separate listeners. |
-| Native `ssh` to the gateway (`2222/tcp`) | SSH is not HTTP. | Users run `cloudflared access ssh` as their `ProxyCommand` against an `ssh://localhost:2222` ingress rule, which works with any SSH client. The gateway then sees every client as the connector's address. Or keep using the browser terminal, which needs none of this. |
-
-The native RDP listener is a preview that authenticates nobody, so do not
-publish it through anything.
 
 ## Upgrading
 
@@ -468,10 +462,9 @@ sudo apt install ./argus-control_<new>_linux_amd64.deb
 sudo systemctl restart argus-control
 ```
 
-Upgrade the control plane first, then gateways, then agents. Since this
-release `argus-verify` is its own package; on a host upgraded from 0.1.x,
-install it in the same command as the server package, for example
-`sudo apt install ./argus-gateway_<new>_linux_amd64.deb ./argus-verify_<new>_linux_amd64.deb`
+Upgrade the control plane first, then agents. `argus-verify` is its own
+package; on a host upgraded from 0.1.x, install it in the same command as the server package, for example
+`sudo apt install ./argus-control_<new>_linux_amd64.deb ./argus-verify_<new>_linux_amd64.deb`
 (or one `rpm -U` with both files). Migrations run when
 the control plane starts and only ever add; take a backup first anyway
 (`systemctl start argus-backup.service`).
@@ -486,11 +479,15 @@ A control plane from before the console shipped, or before agents' tunnels,
 gets both by saving Settings once: the console is found where the package
 installs it, and **Addresses > QUIC** turns the tunnel's UDP listener on.
 
-A gateway installed from this release keeps its state (recordings, host key
-pins, vaulted credentials) in `/var/lib/argus-gateway`, apart from the agent's
-`/var/lib/argus`, which is root's. An upgraded gateway keeps the paths in its
-existing `gateway.yaml`; to move, stop it, move those files and change the
-paths to match `gateway.yaml.dpkg-dist` (or `.rpmnew`).
+Sessions no longer go through `argus-gateway`: its SSH listener, its browser
+SSH terminal and its native RDP listener all refuse, and it will not start
+without `control.url`. It is still packaged only because browser Remote
+Desktop to Windows goes through it until the Windows agent ships. If you do not
+use that, stop and disable it (`sudo systemctl disable --now argus-gateway`)
+after the agents on your Linux and macOS servers show **Connected**. If you
+keep it, upgrade it after the control plane; its state (recordings, host key
+pins, vaulted credentials) stays in `/var/lib/argus-gateway`, and an upgraded
+one keeps the paths in its existing `gateway.yaml`.
 
 Restart `argus-agent` after upgrading it (`sudo systemctl restart
 argus-agent`). Until it restarts, each login waits about two seconds for an
