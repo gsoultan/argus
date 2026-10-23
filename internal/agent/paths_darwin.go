@@ -26,6 +26,10 @@ const (
 	osReleasePath = ""
 	machineIDPath = ""
 
+	sshdConfigPath = "/etc/ssh/sshd_config"
+	// adminKeysFile is an authorized_keys file outside any home; none here.
+	adminKeysFile = ""
+
 	// sessionLang is a UTF-8 locale every install has.
 	sessionLang = "en_US.UTF-8"
 )

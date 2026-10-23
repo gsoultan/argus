@@ -74,7 +74,7 @@ export function bytes(n: number): string {
  * `duration(startedAt, endedAt)` counts to now when the end time is null, which
  * is right for a session in progress and wrong for every other reason the field
  * can be empty. Two of those exist in the dev control plane right now: 15
- * sessions whose gateway went away without reporting the end, and 26
+ * sessions whose reporter went away without reporting the end, and 26
  * `terminated` ones stored before the end time was written outside the seal
  * branch. Both rendered as still running, the oldest at 310 hours, on the
  * Overview and in two tables.
@@ -141,7 +141,7 @@ export function SessionDuration({
 /**
  * Whether this session's recording can actually be opened right now.
  *
- * A sealed recording with no object-storage key is not lost: the gateway that
+ * A sealed recording with no object-storage key is not lost: the agent that
  * produced it still holds the file and queues the upload for retry. But it
  * cannot be fetched from here until that lands, and the list was showing the
  * fidelity badge, the byte count and a Replay button for all 44 sessions in
@@ -154,7 +154,7 @@ export function ArtefactPending({ session }: { session: Pick<Session, 'state' | 
   if (session.state === 'active' || session.recordingKey) return null
   return (
     <Tooltip
-      label="Recorded, but the artefact has not reached object storage — it is still on the gateway that produced it, queued for retry. There is nothing to replay here until it lands."
+      label="Recorded, but the artefact has not reached object storage — it is still on the server whose agent recorded it, queued for retry. There is nothing to replay here until it lands."
       multiline
       maw={320}
     >
@@ -178,14 +178,14 @@ export function ArtefactPending({ session }: { session: Pick<Session, 'state' | 
 /**
  * `silent` is the state the console could not previously express.
  *
- * A gateway killed rather than drained never reports the end, so the session
+ * An agent killed rather than stopped never reports the end, so the session
  * stays `active` forever: fifteen in the dev control plane, the oldest live for
- * nineteen days by this badge's reckoning. Gateways now re-report what they
- * hold once a minute, and past three intervals of silence this stops claiming
- * the session is running.
+ * nineteen days by this badge's reckoning. Agents re-report what they hold once
+ * a minute, and past three intervals of silence this stops claiming the session
+ * is running.
  *
- * Amber, not rose. An agent going quiet is evidence someone with root killed
- * it; a gateway going quiet is usually a restart. The honest reading is "we do
+ * Amber, not rose. An agent going quiet can be someone with root killing it,
+ * and is just as often a restart or a lost network. The honest reading is "we do
  * not know", which is what amber already means everywhere else here.
  */
 export function SessionStateBadge({
@@ -202,7 +202,7 @@ export function SessionStateBadge({
   if (state === 'active' && silent) {
     return (
       <Tooltip
-        label={`Reported active, but nothing has spoken for it since ${relTime(lastReportedAt ?? null)}. Its gateway most likely went away without reporting the end — the session is not necessarily still running.`}
+        label={`Reported active, but nothing has spoken for it since ${relTime(lastReportedAt ?? null)}. Its agent most likely went away without reporting the end — the session is not necessarily still running.`}
         multiline
         maw={320}
       >
@@ -223,7 +223,7 @@ export function SessionStateBadge({
   if (state === 'closed' && endInferred) {
     return (
       <Tooltip
-        label={`No gateway reported this session for a day, so Argus closed it at ${relTime(lastReportedAt ?? null)} — the last moment it was seen alive. It ran at least that long; the actual end was never observed.`}
+        label={`Nothing reported this session for a day, so Argus closed it at ${relTime(lastReportedAt ?? null)} — the last moment it was seen alive. It ran at least that long; the actual end was never observed.`}
         multiline
         maw={320}
       >
@@ -333,7 +333,7 @@ export function FidelityBadge({ fidelity }: { fidelity: RecordingFidelity }) {
 
 const RISK_LABEL: Record<RiskFlag, string> = {
   'bypassed-gateway':
-    'Connected straight to sshd — no policy was evaluated. Captured by the host agent after the fact.',
+    'Connected straight to sshd, not through Argus — no policy was evaluated. Captured by the host agent.',
   'off-hours': 'Outside the configured working window',
   'new-asset-for-user': 'First time this user has reached this host',
   'root-principal': 'Session opened as root',
@@ -372,7 +372,9 @@ export function RiskFlags({ flags }: { flags: RiskFlag[] }) {
             }
             variant={f === 'bypassed-gateway' ? 'filled' : 'light'}
           >
-            {f}
+            {/* The stored name predates the agent tunnel; what it means is
+                that the login did not come through Argus. */}
+            {f === 'bypassed-gateway' ? 'bypassed-argus' : f}
           </Badge>
         </Tooltip>
       ))}
@@ -383,15 +385,15 @@ export function RiskFlags({ flags }: { flags: RiskFlag[] }) {
 /**
  * Where the session came from.
  *
- * A direct session means someone reached sshd without passing through the
- * gateway: no approval, no time window, no principal restriction. The recording
+ * A direct session means someone reached sshd without passing through
+ * Argus: no approval, no time window, no principal restriction. The recording
  * exists — the host agent saw it — but every *preventive* control was skipped.
  * That is a control failure, so it is styled like one.
  */
 export function OriginBadge({ origin }: { origin: SessionOrigin }) {
   if (origin === 'brokered') {
     return (
-      <Tooltip label="Went through the gateway — policy evaluated before the connection existed.">
+      <Tooltip label="Opened from the Argus console, through the server's agent — policy evaluated before the session existed.">
         <Badge color="teal" leftSection={<IconRouteAltLeft size={11} />}>brokered</Badge>
       </Tooltip>
     )
@@ -440,7 +442,7 @@ export function AgentBadge({ state, lastSeen }: { state: AgentState; lastSeen: s
  * Can this host still be reached without Argus, and would anyone know?
  *
  * `enforced` is the goal state: no standing keys, CA-only trust, port 22
- * reachable from the gateway alone. A bypass you prevented beats one you
+ * reachable from nowhere. A bypass you prevented beats one you
  * merely recorded.
  */
 export function BypassBadge({ posture, unmanagedKeys }: {
@@ -449,7 +451,7 @@ export function BypassBadge({ posture, unmanagedKeys }: {
 }) {
   if (posture === 'enforced') {
     return (
-      <Tooltip label="No standing keys, certificate-only trust, port 22 firewalled to the gateway. Direct access is not possible.">
+      <Tooltip label="No standing keys, certificate-only trust, port 22 firewalled off. Direct access is not possible.">
         <Badge color="teal" leftSection={<IconShieldCheck size={11} />}>closed</Badge>
       </Tooltip>
     )

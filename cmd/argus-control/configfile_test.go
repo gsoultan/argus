@@ -99,10 +99,10 @@ func TestDurationText(t *testing.T) {
 }
 
 func TestChangedKeys(t *testing.T) {
-	a := config{Listen: ":8080", LogLevel: "info", Console: &consoleConfig{GatewayURL: "https://a"}}
+	a := config{Listen: ":8080", LogLevel: "info", Console: &consoleConfig{FleetURL: "https://a"}}
 	b := a
 	b.LogLevel = "debug"
-	b.Console = &consoleConfig{GatewayURL: "https://b"}
+	b.Console = &consoleConfig{FleetURL: "https://b"}
 	b.Tunnel = &tunnelConfig{QUICListen: ":8080"}
 	got, err := changedKeys(a, b)
 	if err != nil {

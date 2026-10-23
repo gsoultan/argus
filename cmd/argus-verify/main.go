@@ -85,7 +85,7 @@ func main() {
 		fmt.Printf("  expected  %s\n", expected)
 		fmt.Printf("  computed  %s\n", v.Head)
 		fmt.Println()
-		fmt.Println("  The recording on disk differs from what the gateway sealed.")
+		fmt.Println("  The recording on disk differs from what was sealed.")
 		fmt.Println("  Preserve it as evidence and treat this as an incident.")
 	}
 	os.Exit(1)

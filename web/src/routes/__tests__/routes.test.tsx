@@ -43,7 +43,7 @@ describe('overview', () => {
     expect(screen.getByText('Unverified hosts')).toBeInTheDocument()
     // The coverage gap leads the page: an unmonitored host is a session nobody
     // will ever hear about, which outranks one you can see and fix.
-    expect(screen.getByText('Bypassed gateway')).toBeInTheDocument()
+    expect(screen.getByText('Bypassed Argus')).toBeInTheDocument()
   })
 })
 
@@ -73,22 +73,22 @@ describe('sessions', () => {
 })
 
 describe('settings', () => {
+  const EBPF = 'Require eBPF agent for root sessions'
+
   it('renders switches that reflect stored policy rather than a default prop', async () => {
-    await renderRoute('/settings?section=channels')
-    const x11 = await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
-    const sftp = await screen.findByRole('switch', { name: 'Proxy SFTP as a subsystem' })
-    // The closed defaults, read from the store — not `defaultChecked`, which is
+    await renderRoute('/settings?section=recording')
+    const ebpf = await screen.findByRole('switch', { name: EBPF })
+    // The closed default, read from the store — not `defaultChecked`, which is
     // what this page shipped with and which silently reverted on navigation.
-    expect(x11).not.toBeChecked()
-    expect(sftp).toBeChecked()
+    expect(ebpf).toBeChecked()
   })
 
   it('offers no save until something actually changes', async () => {
-    await renderRoute('/settings?section=channels')
-    await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
+    await renderRoute('/settings?section=recording')
+    await screen.findByRole('switch', { name: EBPF })
     expect(screen.queryByRole('button', { name: /review \d+ change/i })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Allow X11 forwarding' }))
+    fireEvent.click(screen.getByRole('switch', { name: EBPF }))
     expect(await screen.findByRole('button', { name: /review 1 change/i })).toBeInTheDocument()
     // On the toggle, and on its section in the list of sections.
     expect(screen.getAllByText('unsaved')).toHaveLength(2)
@@ -101,33 +101,40 @@ describe('settings', () => {
     expect(screen.queryByRole('switch', { name: /native clients/i })).not.toBeInTheDocument()
   })
 
-  it('opens one section at a time from the list', async () => {
-    await renderRoute('/settings?section=channels')
-    await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
+  it('offers no switches for a gateway that no longer exists', async () => {
+    await renderRoute('/settings?section=recording')
+    await screen.findByRole('switch', { name: EBPF })
+    expect(screen.queryByRole('switch', { name: /forwarding/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('switch', { name: /fail closed/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /ssh channels/i })).not.toBeInTheDocument()
+  })
 
-    fireEvent.click(screen.getByRole('button', { name: /^recording/i }))
-    expect(await screen.findByRole('switch', { name: /fail closed/i })).toBeInTheDocument()
-    expect(screen.queryByRole('switch', { name: 'Allow X11 forwarding' })).not.toBeInTheDocument()
+  it('opens one section at a time from the list', async () => {
+    await renderRoute('/settings?section=recording')
+    await screen.findByRole('switch', { name: EBPF })
+    expect(screen.queryByText('Threat model, stated plainly')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^hosts and trust/i }))
+    expect(await screen.findByText('Threat model, stated plainly')).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: EBPF })).not.toBeInTheDocument()
   })
 
   it('names the loosening before applying it', async () => {
-    await renderRoute('/settings?section=channels')
-    const agent = await screen.findByRole('switch', { name: 'Allow SSH agent forwarding' })
-    fireEvent.click(agent)
+    await renderRoute('/settings?section=recording')
+    fireEvent.click(await screen.findByRole('switch', { name: EBPF }))
     fireEvent.click(await screen.findByRole('button', { name: /review 1 change/i }))
 
-    expect(await screen.findByText(/loosens the gateway/i)).toBeInTheDocument()
+    expect(await screen.findByText(/loosens the policy/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /apply policy/i })).toBeInTheDocument()
   })
 
   it('discards edits without touching the store', async () => {
-    await renderRoute('/settings?section=channels')
-    const x11 = await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
-    fireEvent.click(x11)
+    await renderRoute('/settings?section=recording')
+    const ebpf = await screen.findByRole('switch', { name: EBPF })
+    fireEvent.click(ebpf)
     fireEvent.click(await screen.findByRole('button', { name: /discard/i }))
 
-    await waitFor(() => expect(x11).not.toBeChecked())
+    await waitFor(() => expect(ebpf).toBeChecked())
     expect(screen.queryByRole('button', { name: /review \d+ change/i })).not.toBeInTheDocument()
   })
 })

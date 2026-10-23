@@ -40,7 +40,7 @@ Group=root
 NoNewPrivileges=yes
 ProtectSystem=strict
 # NOT ProtectHome=yes: the posture scan reads /home/*/.ssh/authorized_keys to
-# find standing credentials that could bypass the gateway. Read-only is exactly
+# find standing credentials that could bypass Argus. Read-only is exactly
 # the access it needs and no more.
 ProtectHome=read-only
 PrivateTmp=yes

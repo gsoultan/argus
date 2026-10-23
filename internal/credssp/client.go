@@ -30,7 +30,8 @@ const maxTokenSize = 64 << 10
 // certificate. Passing a plain socket would produce an exchange that appears to
 // succeed and binds to nothing.
 type Authenticator struct {
-	// PublicKey is the DER SubjectPublicKeyInfo of the target's certificate,
+	// PublicKey is the subjectPublicKey of the target's certificate (its
+	// SubjectPublicKeyInfo without the algorithm identifier),
 	// which the binding is computed over.
 	PublicKey []byte
 	// Credentials are what Argus delegates on the user's behalf.

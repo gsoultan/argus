@@ -16,7 +16,7 @@ import type { Asset } from '~/types/domain'
  *
  * The principal list is the asset's own — assigning someone an account the host
  * does not permit would produce access that looks granted here and is refused
- * at the gateway, which is the worst of both. The control plane refuses it too;
+ * when the session opens, which is the worst of both. The control plane refuses it too;
  * this only keeps the console from offering it.
  */
 export function AssetAssignments({
@@ -56,7 +56,7 @@ export function AssetAssignments({
         failure: 'Not assigned',
         success: [
           'Assigned',
-          `${email} can open ${asset.hostname} as ${principals.join(', ')}. Gateways pick it up within a minute.`,
+          `${email} can open ${asset.hostname} as ${principals.join(', ')}.`,
         ],
       },
     )

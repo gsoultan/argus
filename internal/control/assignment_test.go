@@ -323,34 +323,3 @@ func TestCertificateModeDropsTheCredentialName(t *testing.T) {
 		t.Errorf("a certificate asset kept a credential name: %q", asset.CredentialRef)
 	}
 }
-
-/* ── The console owns what it edits ──────────────────────────────────────── */
-
-// A gateway publishing its file inventory must not overwrite what an
-// administrator entered in the console — otherwise every edit reverts at the
-// next gateway restart, which is the kind of bug people blame on themselves.
-func TestAGatewayPublishDoesNotOverwriteAConsoleAsset(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-	asset := testAsset(t, s, "ops")
-
-	err := s.UpsertAsset(ctx, Asset{
-		Hostname:   asset.Hostname,
-		Address:    "10.0.0.9",
-		Port:       2222,
-		Principals: []string{"ops", "root"},
-		Health:     "reachable",
-	})
-	if !errors.Is(err, ErrConsoleOwned) {
-		t.Fatalf("a gateway publish over a console asset returned %v", err)
-	}
-
-	after, err := s.AssetByID(ctx, asset.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Address != asset.Address || len(after.Principals) != 1 {
-		t.Errorf("the console's values were overwritten: %s %v",
-			after.Address, after.Principals)
-	}
-}

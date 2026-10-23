@@ -104,3 +104,44 @@ not the stream. The control plane hashes the bytes itself and writes
 `file.upload` / `file.download` with size and SHA-256, warning when the agent's
 count disagrees. The console's browser is `components/FileBrowser.tsx`, offered
 on Connect only when the agent's tunnel is up.
+
+## Windows (step 7)
+
+The terminal is split at `openShell` (`terminal_unix.go` / `terminal_windows.go`)
+behind `terminalIO` (read/write/close/resize) and `shellProc`. Windows: a
+ConPTY; the shell is created with `CreateProcessAsUser` on a token from an
+**S4U logon** (`logon_windows.go`: `LsaRegisterLogonProcess` +
+`LsaLogonUser`, MSV1_0, network logon type) -- needs SeTcb, so the agent must
+run as LocalSystem. `lpDesktop = ""` so the account gets its own window
+station. Created `CREATE_SUSPENDED` (held), resumed by `Release` once the
+recording is open; every process in a kill-on-close job object. Profile via
+`LoadUserProfileW`. Local accounts only: `splitAccount` refuses domain names
+because nothing tests the Kerberos path. Accounts from `NetUserEnum`, as
+passwd lines whose home has a drive colon -- hence `passwdFields`, which reads
+home as everything up to the last colon. State dir protected by
+`ProtectStateDir` (protected DACL, SYSTEM + Administrators), once per dir per
+process because setting it walks the tree. The sshd shim is NOT ported:
+`RunShim` refuses, `install` says so, posture's empty `ShimPath` no longer
+matches every ForceCommand. Service via `x/sys/windows/svc`
+(`platform_windows.go`), `argus-agent service install`, log at
+`C:\ProgramData\Argus\agent.log`. CI: "Agent on Windows".
+
+## Desktop, live view and recordings (step 7, gateway retired)
+
+- **Remote Desktop**: service `"desktop"` (`internal/agent/desktop.go`), Windows
+  only. Control (`internal/control/desktop.go`, `GET /api/v1/desktop`) reads a
+  first `{"type":"logon",password,width,height}` message and passes it in the
+  stream header (`tunnel.DesktopOpen`); the agent dials `127.0.0.1:3389` with
+  CredSSP/NTLM (falls back to TLS-only unless the error is an auth failure),
+  clears the password and records `<id>.argusrdp`. Flags:
+  `no-credential-injection`, `legacy-credssp-binding`, `no-network-level-auth`.
+- **Live view / terminate**: `internal/control/live_sessions.go` keeps a
+  registry of sessions this replica is relaying; `/api/v1/sessions/{id}/watch`
+  (shadow ticket) and `/terminate` (terminate ticket). Terminate goes to the
+  agent as `FrameTerminate`. Only the replica relaying a session can serve it.
+- **Recordings** reach storage via `PUT /api/v1/report/recording/{id}` from the
+  agent's upload queue (`internal/agent/upload.go`), verified before storing.
+- **sshd shim**: every login on the collector socket is forced to `Direct`;
+  `--gateway-keys`, `--gateways`, `--skip-brokered` are accepted and ignored.
+- Tickets are burned in `redeemed_tickets` (`Store.Redeem`), shared across
+  control plane replicas.

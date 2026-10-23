@@ -134,16 +134,6 @@ func (c *Client) Facts(ctx context.Context, v any) {
 	c.post(ctx, "/api/v1/report/facts", v)
 }
 
-// Asset registers or updates an asset.
-func (c *Client) Asset(ctx context.Context, v any) {
-	c.post(ctx, "/api/v1/report/asset", v)
-}
-
-// Audit appends an audit event.
-func (c *Client) Audit(ctx context.Context, v any) {
-	c.post(ctx, "/api/v1/report/audit", v)
-}
-
 type spoolEntry struct {
 	Path string          `json:"path"`
 	Body json.RawMessage `json:"body"`

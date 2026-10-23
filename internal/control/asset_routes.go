@@ -193,8 +193,8 @@ func (a *API) deleteAsset(w http.ResponseWriter, r *http.Request) {
 		Severity:   "notice",
 		ActorEmail: sess.Email,
 		Target:     asset.Hostname,
-		Detail: "Retired " + asset.Hostname + ". It leaves the inventory and every " +
-			"gateway at the next sync; its sessions and audit history are kept.",
+		Detail: "Retired " + asset.Hostname + ". It leaves the inventory and can no " +
+			"longer be opened; its sessions and audit history are kept.",
 	})
 	a.log.Warn("asset archived", "hostname", asset.Hostname, "actor", sess.Email)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
@@ -310,24 +310,6 @@ func (a *API) deleteAssignment(w http.ResponseWriter, r *http.Request) {
 		Detail:     email + " no longer has access to " + asset.Hostname + ".",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
-}
-
-// getInventory serves what a gateway brokers, and for whom.
-//
-// Machine credential only. It carries the credential *names* a gateway resolves
-// against its own vault, never credential material: a control plane that could
-// hand out keys would be a vault, and this one deliberately is not.
-func (a *API) getInventory(w http.ResponseWriter, r *http.Request) {
-	inv, err := a.store.InventorySnapshot(r.Context())
-	if err != nil {
-		// An error rather than an empty inventory. A gateway keeps the last
-		// inventory it successfully fetched, and handing it a zero-valued one
-		// on a database fault would read as "every asset was deleted" — which
-		// would take the whole fleet offline on a transient failure.
-		a.fail(w, "inventory", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, inv)
 }
 
 // assignmentPermits reports whether this person may open this session, and

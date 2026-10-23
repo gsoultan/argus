@@ -64,6 +64,9 @@ type API struct {
 	RequirePeerCert bool
 
 	storage *storage.Client
+	// storeRecording replaces storage.Upload for a shipped recording. Nil
+	// uses storage; set by tests that have no object store.
+	storeRecording recordingUploader
 
 	signer        *auth.Signer
 	consoleURL    string
@@ -94,6 +97,9 @@ type API struct {
 	// Settings reads and writes the configuration file for the console's
 	// Settings page. Nil leaves the page read-only; see settings_routes.go.
 	Settings SettingsBackend
+
+	// live is every session this replica relays; see live_sessions.go.
+	live liveRegistry
 
 	// setup is the first-run page's one-time token; see setup.go.
 	setup setupGate
@@ -186,8 +192,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	// The browser terminal through an agent's tunnel; see terminal.go.
 	mux.HandleFunc("GET /api/v1/terminal", a.handleTerminal)
 	mux.HandleFunc("GET /api/v1/files", a.handleFiles)
+	mux.HandleFunc("GET /api/v1/desktop", a.handleDesktop)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
+	mux.HandleFunc("GET /api/v1/sessions/{id}/watch", a.handleWatch)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate", a.handleTerminate)
 	mux.HandleFunc("GET /api/v1/requests", a.getRequests)
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
@@ -240,44 +249,23 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 
 }
 
-// registerFleet adds the routes a gateway or agent reaches.
+// registerFleet adds the routes an agent reaches.
 func (a *API) registerFleet(mux *http.ServeMux) {
 	// Reporter surface. Machine credentials only.
 	//
-	// Session, heartbeat and facts are what an agent sends, so they also take
-	// a per-host agent credential, bound to the host it reports for. Every
-	// other route here is a gateway's and takes the shared token alone: an
-	// agent has no business posting audit events, reading the inventory or
-	// redeeming tickets.
+	// Every route here is an agent's. It takes the per-host agent credential,
+	// bound to the host it reports for.
 	mux.HandleFunc("POST /api/v1/report/session", a.agentReporter(a.postSession))
-	// Asked by a gateway before it opens an elevated session. See
-	// authorize_routes.go for why the decision lives here and not there.
-	mux.HandleFunc("GET /api/v1/report/authorize", a.reporter(a.handleAuthorize))
-	// A gateway that retried a stranded upload, saying where it landed.
-	mux.HandleFunc("POST /api/v1/report/recording", a.reporter(a.handleRecordingStored))
+	// An agent shipping a sealed recording; see recording_upload.go.
+	mux.HandleFunc("PUT /api/v1/report/recording/{id}", a.agentReporter(a.putRecording))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.agentReporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/login", a.agentReporter(a.postLogin))
 	mux.HandleFunc("GET "+tunnel.UpgradePath, a.handleTunnelUpgrade)
-	mux.HandleFunc("POST /api/v1/report/asset", a.reporter(a.postAsset))
 	mux.HandleFunc("POST /api/v1/report/facts", a.agentReporter(a.postFacts))
 
 	// The exchange that gives an agent its credential. Throttled like a
 	// sign-in: the token is the only thing it checks.
 	mux.HandleFunc("POST /api/v1/agents/enroll", a.limitLogin(a.postEnroll))
-	mux.HandleFunc("POST /api/v1/report/audit", a.reporter(a.postAudit))
-
-	// Shared state, so replay protection and host-key pins hold across every
-	// gateway rather than per instance.
-	mux.HandleFunc("POST /api/v1/terminal/redeem", a.reporter(a.postRedeem))
-	mux.HandleFunc("GET /api/v1/hostkeys/pin", a.reporter(a.getHostKeyPin))
-	// Gateways read policy through the machine credential, never the console's.
-	mux.HandleFunc("GET /api/v1/gateway/policy", a.reporter(a.getGatewayPolicy))
-	// And the inventory: which hosts this gateway brokers, and who is assigned
-	// to them. Names the credential in the gateway's own vault, never carries
-	// credential material.
-	mux.HandleFunc("GET /api/v1/gateway/inventory", a.reporter(a.getInventory))
-	mux.HandleFunc("POST /api/v1/hostkeys/pin", a.reporter(a.postHostKeyPin))
-
 }
 
 // securityHeaders sets the response headers a browser needs to protect the
@@ -590,7 +578,7 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 			Severity:   "critical",
 			ActorEmail: in.UserEmail,
 			Target:     in.AssetHostname,
-			Detail: "Session reached the host without passing through the gateway. " +
+			Detail: "Session reached the host without passing through Argus. " +
 				"It was recorded, but no approval, time window or principal check was applied.",
 		}); err != nil {
 			a.log.Error("audit append failed", "error", err)
@@ -662,58 +650,6 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, reply)
-}
-
-func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {
-	var in Asset
-	if err := decodeReport(r, &in, a.log, "report/asset"); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if in.Hostname == "" {
-		writeErr(w, http.StatusBadRequest, "hostname is required")
-		return
-	}
-	err := a.store.UpsertAsset(r.Context(), in)
-	if errors.Is(err, ErrConsoleOwned) {
-		// Not a failure. A gateway publishes its file inventory at start-up so
-		// a file-driven deployment appears here without anyone retyping it, and
-		// the console owns the row the moment an administrator edits it. Said
-		// out loud at both ends, because "my edits keep reverting" and "my
-		// inventory file is being ignored" are the same event seen from two
-		// sides, and neither is diagnosable in silence.
-		a.log.Info("ignored a published asset the console owns",
-			"hostname", in.Hostname,
-			"detail", "this host is edited in the console; the file entry no longer applies")
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status":  "skipped",
-			"warning": "this asset is managed from the console; the published entry was ignored",
-		})
-		return
-	}
-	if err != nil {
-		a.fail(w, "report asset", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (a *API) postAudit(w http.ResponseWriter, r *http.Request) {
-	var in AuditEvent
-	if err := decodeReport(r, &in, a.log, "report/audit"); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if in.Action == "" {
-		writeErr(w, http.StatusBadRequest, "action is required")
-		return
-	}
-	out, err := a.store.AppendAudit(r.Context(), in)
-	if err != nil {
-		a.fail(w, "append audit", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */

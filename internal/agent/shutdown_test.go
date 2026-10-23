@@ -32,7 +32,7 @@ func testCollector(t *testing.T) (*Collector, string) {
 	t.Helper()
 	c := NewCollector(t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	sockDir, err := os.MkdirTemp("/tmp", "argus")
+	sockDir, err := os.MkdirTemp(shortTempRoot, "argus")
 	if err != nil {
 		t.Fatal(err)
 	}

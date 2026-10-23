@@ -7,9 +7,8 @@
 # grandchildren — a half-dead Vite holding port 5290 is the most annoying way to
 # start a morning.
 #
-# Services are DETECTED, not assumed. Today that is the web UI; when
-# cmd/argus-control and cmd/argus-gateway land they are picked up automatically
-# with no change here.
+# Services are DETECTED, not assumed: a service whose directory is missing is
+# skipped with no change here.
 #
 #   ./scripts/dev.sh              run everything present
 #   ./scripts/dev.sh web          run only named services
@@ -32,7 +31,6 @@ cd "$ARGUS_ROOT"
 SERVICES=(
   "web|5290|$MAGENTA|web|web/package.json|bun run dev"
   "control|8480|$BLUE|.|cmd/argus-control|go run ./cmd/argus-control -config dev/control.yaml"
-  "gateway|2222|$GREEN|.|cmd/argus-gateway|go run ./cmd/argus-gateway -config dev/argus.yaml"
 )
 
 svc_field() { printf '%s' "$1" | cut -d'|' -f"$2"; }
@@ -87,7 +85,7 @@ preflight() {
   require_bun
   check_node
   # Only demand Go once there is Go code to run.
-  [[ -e cmd/argus-control || -e cmd/argus-gateway ]] && require_go
+  [[ -e cmd/argus-control ]] && require_go
   return 0
 }
 

@@ -141,7 +141,7 @@ func Enroll(ctx context.Context, opts EnrollOptions) (Enrollment, error) {
 		Credential: out.Credential,
 		EnrolledAt: time.Now().UTC(),
 	}
-	if err := os.MkdirAll(opts.StateDir, 0o700); err != nil {
+	if err := ProtectStateDir(opts.StateDir); err != nil {
 		return Enrollment{}, err
 	}
 

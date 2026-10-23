@@ -34,7 +34,6 @@ type Settings struct {
 	ApplyError string `json:"applyError,omitempty"`
 
 	ConsoleURL string `json:"consoleUrl"`
-	GatewayURL string `json:"gatewayUrl"`
 	FleetURL   string `json:"fleetUrl"`
 
 	Listen         string   `json:"listen"`

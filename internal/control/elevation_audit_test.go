@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gsoultan/argus/internal/auth"
 )
 
 /*
@@ -29,8 +31,7 @@ func authorizeAPI(t *testing.T) (*API, *Store) {
 
 func askAuthorize(t *testing.T, a *API, email, target, principal string) Authorization {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodGet,
-		"/api/v1/report/authorize?email="+email+"&target="+target+"&principal="+principal, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/terminal/ticket", nil)
 	got, err := a.authorizePrincipal(r, email, target, principal)
 	if err != nil {
 		t.Fatalf("authorizePrincipal: %v", err)
@@ -126,5 +127,56 @@ func TestAnOrdinaryPrincipalIsNotAudited(t *testing.T) {
 	}
 	if action, _ := lastElevationAudit(t, s, email); action != "" {
 		t.Errorf("an ordinary session wrote an elevation entry: %q", action)
+	}
+}
+
+// The browser is the only way in now, so the ticket is where elevation is
+// decided. Root on an assigned host still needs an approved access request,
+// and both answers are written down.
+func TestABrowserSessionAsRootIsDecidedAndAudited(t *testing.T) {
+	a, s := authorizeAPI(t)
+	ctx := context.Background()
+	signer, err := auth.NewSigner("a-signing-secret-with-plenty-of-variety-0193")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(signer.Close)
+	a.SetAuth(signer, "https://console.example", true)
+
+	email := unique("operator") + "@corp.example"
+	asset := assignedAsset(t, s, email, "root")
+	setExecTracing(t, s, asset.Hostname, true)
+	cookie, err := signer.IssueSession(auth.Session{Email: email, Name: email, Role: "operator"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/terminal/ticket",
+			strings.NewReader(`{"target":"`+asset.Hostname+`","principal":"root"}`))
+		r.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: cookie})
+		w := httptest.NewRecorder()
+		a.handleTicket(w, r)
+		return w
+	}
+
+	if w := ask(); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "access request") {
+		t.Fatalf("root with no approval: %d %s", w.Code, w.Body)
+	}
+	if action, _ := lastElevationAudit(t, s, email); action != "session.elevation_refused" {
+		t.Errorf("last elevation audit = %q, want session.elevation_refused", action)
+	}
+
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO access_requests (requester_email, asset_hostnames, principal,
+		                             justification, duration_minutes, state, expires_at)
+		VALUES ($1, ARRAY[$2], 'root', 'incident', 30, 'approved', now() + interval '30 minutes')`,
+		email, asset.Hostname); err != nil {
+		t.Fatal(err)
+	}
+	if w := ask(); w.Code != http.StatusOK {
+		t.Fatalf("root under an approved request: %d %s", w.Code, w.Body)
+	}
+	if action, _ := lastElevationAudit(t, s, email); action != "session.elevation_allowed" {
+		t.Errorf("last elevation audit = %q, want session.elevation_allowed", action)
 	}
 }

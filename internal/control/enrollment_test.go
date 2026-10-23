@@ -261,23 +261,6 @@ func TestACredentialReportsOnlyForItsOwnHost(t *testing.T) {
 	}
 }
 
-// The rest of the reporter surface is a gateway's.
-func TestACredentialCannotUseTheGatewayRoutes(t *testing.T) {
-	_, s, h, _ := enrollAPI(t)
-	cred, _ := enrolled(t, s, h, unique("enr-routes"))
-	for _, rt := range []struct{ method, path, body string }{
-		{http.MethodPost, "/api/v1/report/audit", `{"action":"forged"}`},
-		{http.MethodGet, "/api/v1/gateway/inventory", ""},
-		{http.MethodGet, "/api/v1/gateway/policy", ""},
-		{http.MethodPost, "/api/v1/terminal/redeem", `{}`},
-		{http.MethodPost, "/api/v1/report/asset", `{"hostname":"x"}`},
-	} {
-		if w := do(t, h, rt.method, rt.path, cred, rt.body); w.Code != http.StatusUnauthorized {
-			t.Errorf("%s %s with an agent credential: %d", rt.method, rt.path, w.Code)
-		}
-	}
-}
-
 // Which credential vouched for a session is the control plane's to say.
 func TestASessionNamesTheCredentialThatReportedIt(t *testing.T) {
 	_, s, h, _ := enrollAPI(t)

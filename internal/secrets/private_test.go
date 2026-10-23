@@ -65,3 +65,13 @@ func TestReadPrivateReturnsContentOnlyWhenSafe(t *testing.T) {
 		t.Error("ReadPrivate must not return a world-readable secret")
 	}
 }
+
+func TestMakePrivatePassesTheCheck(t *testing.T) {
+	p := writeMode(t, 0o644)
+	if err := MakePrivate(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckPrivate(p); err != nil {
+		t.Fatalf("after MakePrivate: %v", err)
+	}
+}

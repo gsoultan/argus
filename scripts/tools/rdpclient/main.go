@@ -28,8 +28,7 @@ func main() {
 	height := flag.Int("height", 768, "desktop height")
 	depth := flag.Int("depth", 16, "colour depth")
 	frames := flag.Int("frames", 20, "how many update PDUs to read")
-	cookie := flag.String("cookie", "", "mstshash routing cookie, e.g. ops:win-01 — "+
-		"required when connecting through the Argus gateway rather than to a target")
+	cookie := flag.String("cookie", "", "mstshash routing cookie, e.g. ops:win-01")
 	flag.Parse()
 
 	if *addr == "" {

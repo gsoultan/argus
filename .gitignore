@@ -45,7 +45,7 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Gateway dev material — keys and recordings must never be committed
+# Dev material — keys and recordings must never be committed
 dev/keys/
 dev/data/
 # Vaulted credentials. The whole point is that these never sit in a file

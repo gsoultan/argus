@@ -28,6 +28,22 @@ func openPasswd(path string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
+// passwdFields splits a passwd(5) line into its seven fields. The home is
+// everything between the gecos field and the last colon, so a Windows home
+// ("C:\Users\ana") survives; a real passwd file has no colon in any field,
+// so it reads as it always did.
+func passwdFields(line string) []string {
+	f := strings.SplitN(line, ":", 6)
+	if len(f) < 6 {
+		return f
+	}
+	i := strings.LastIndexByte(f[5], ':')
+	if i < 0 {
+		return f
+	}
+	return append(f[:5], f[5][:i], f[5][i+1:])
+}
+
 // dsclToPasswd converts `dscl . -readall /Users RecordName UniqueID
 // PrimaryGroupID NFSHomeDirectory UserShell` into passwd(5) lines.
 //

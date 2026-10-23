@@ -10,7 +10,7 @@
 # too many workflows. Supply the values in /etc/argus/control.env, or from a
 # mounted file with ${file:/run/secrets/name}.
 
-# Where gateways and agents report, and -- unless console_listen is set below
+# Where agents report, and -- unless console_listen is set below
 # -- where people sign in too. This has to stay reachable by the fleet: a
 # control plane they cannot post to keeps no recordings, no chain heads and no
 # audit events, while the console goes on showing a fleet it has stopped
@@ -18,7 +18,7 @@
 listen: "0.0.0.0:8080"
 
 # Optional. Give the console its own address and the two surfaces separate:
-# `listen` above then carries only what gateways and agents post to, and this
+# `listen` above then carries only what agents post to, and this
 # carries only what a person signs in to. Bind it to a VPN address or an
 # internal interface to take the human surface off the public one without
 # taking the fleet's reporting with it.
@@ -29,7 +29,7 @@ listen: "0.0.0.0:8080"
 # console_listen: "127.0.0.1:8080"
 #
 # Behind a Cloudflare Tunnel this is the address cloudflared points at, for
-# example "127.0.0.1:8090", while `listen` stays where gateways and agents
+# example "127.0.0.1:8090", while `listen` stays where agents
 # reach it directly. See "Through a Cloudflare Tunnel" in docs/install.md.
 database_url: "${ARGUS_DATABASE_URL}"
 # The address people open the console at, such as https://argus.example.com.
@@ -46,11 +46,10 @@ console_url: ""
 
 # The web console. The package installs it; the control plane serves it on the
 # same address people sign in to, so the session cookie stays same-origin.
-# gateway_url is where browsers reach argus-gateway's web listener (terminal,
-# live view, termination) -- until it is set, the console can sign people in but cannot open a terminal.
+# Terminals, desktops and live viewing open through this control plane and the
+# server's agent; there is no other address for the console to know.
 console:
   dir: "/usr/share/argus/console"
-  gateway_url: ""
   # Where servers reach the control plane, when that is not the console's own
   # address (behind a Cloudflare Tunnel, for one). "Add a server" puts it in
   # the enrollment command. Empty means the console's address.

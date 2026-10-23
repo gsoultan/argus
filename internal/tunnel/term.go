@@ -2,12 +2,17 @@ package tunnel
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 )
 
 /*
-The terminal service's frames, after the header and answer.
+The terminal and desktop services' frames, after the header and answer.
+
+A desktop uses the same frames: output carries display frames as the browser
+draws them (internal/rdp/display.go), input carries the browser's input
+messages as it sent them, resize the desktop's size in pixels.
 
 Binary and length-prefixed: a keystroke is six bytes on the wire rather than a
 JSON object, output is never re-encoded, and a frame boundary never splits a
@@ -21,6 +26,12 @@ const (
 	// Toward the agent.
 	FrameInput  byte = 'i' // keystrokes
 	FrameResize byte = 'r' // cols uint16, rows uint16
+	// FrameTerminate ends the session for someone in the console, so the
+	// recording says who and why rather than reading as a dropped
+	// connection. JSON: {"by":..., "reason":...}.
+	FrameTerminate byte = 'k'
+	// FrameRefresh asks a desktop to repaint, for a viewer who arrived late.
+	FrameRefresh byte = 'f'
 	// Toward the control plane.
 	FrameOutput byte = 'o' // terminal output
 	FrameExit   byte = 'x' // exit code int32, then the recording's chain head
@@ -102,4 +113,24 @@ func ParseExit(p []byte) (code int, chainHead string, ok bool) {
 		return 0, "", false
 	}
 	return int(int32(binary.BigEndian.Uint32(p[0:4]))), string(p[4:]), true
+}
+
+// Termination is a FrameTerminate's payload.
+type Termination struct {
+	By     string `json:"by"`
+	Reason string `json:"reason"`
+}
+
+// TerminatePayload and ParseTerminate carry who ended a session and why.
+func TerminatePayload(by, reason string) []byte {
+	b, _ := json.Marshal(Termination{By: by, Reason: reason})
+	return b
+}
+
+func ParseTerminate(p []byte) (Termination, bool) {
+	var t Termination
+	if json.Unmarshal(p, &t) != nil || t.By == "" {
+		return Termination{}, false
+	}
+	return t, true
 }

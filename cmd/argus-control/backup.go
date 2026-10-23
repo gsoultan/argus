@@ -143,7 +143,7 @@ func runBackup(configPath string, args []string) error {
 		recordings = total
 		fmt.Printf("  recordings %d (%d new)\n", total, added)
 	} else {
-		fmt.Println("  recordings: no object storage configured; recordings live on the gateways and agents only")
+		fmt.Println("  recordings: no object storage configured; recordings live on the agents only")
 	}
 
 	m := manifest{

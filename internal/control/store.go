@@ -338,13 +338,18 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 			termination_reason
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		ON CONFLICT (id) DO UPDATE SET
-			state           = EXCLUDED.state,
+			-- An ended session does not start again. The agent says a tunnel
+			-- session is active every minute and that it ended once, through a
+			-- spool that may deliver them out of order; the end must win.
+			state           = CASE WHEN EXCLUDED.state = 'active' AND sessions.state <> 'active'
+			                       THEN sessions.state ELSE EXCLUDED.state END,
 			ended_at        = COALESCE(EXCLUDED.ended_at, sessions.ended_at),
 			recording_bytes = GREATEST(EXCLUDED.recording_bytes, sessions.recording_bytes),
 			command_count   = COALESCE(EXCLUDED.command_count, sessions.command_count),
 			exit_code       = COALESCE(EXCLUDED.exit_code, sessions.exit_code),
 			chain_head      = COALESCE(EXCLUDED.chain_head, sessions.chain_head),
-			risk_flags      = EXCLUDED.risk_flags,
+			risk_flags      = CASE WHEN EXCLUDED.state = 'active' AND sessions.state <> 'active'
+			                       THEN sessions.risk_flags ELSE EXCLUDED.risk_flags END,
 			recording_key   = COALESCE(EXCLUDED.recording_key, sessions.recording_key),
 			-- COALESCE, not EXCLUDED: a later report that omits the reason must
 			-- not erase why a session was stopped.
@@ -567,62 +572,6 @@ type Asset struct {
 	// TunnelConnected is whether this host's agent holds a live tunnel, by
 	// the database's clock, so the console can open sessions through it.
 	TunnelConnected bool `json:"tunnelConnected"`
-}
-
-// ErrConsoleOwned means a gateway tried to publish over a row an administrator
-// entered in the console.
-//
-// Not a failure: it is the rule working. The gateway keeps publishing its file
-// inventory so a file-driven deployment appears without anyone retyping it, and
-// the console stays the authority the moment someone edits a host there.
-var ErrConsoleOwned = errors.New("this asset is managed from the console")
-
-// UpsertAsset registers or updates an asset by hostname, on behalf of a gateway.
-//
-// Returns ErrConsoleOwned when the row belongs to the console, having changed
-// nothing. Said out loud rather than swallowed: an administrator whose edits
-// keep being overwritten, or a gateway whose inventory is quietly ignored, both
-// need to know which of the two is happening.
-func (s *Store) UpsertAsset(ctx context.Context, a Asset) error {
-	if a.Tags == nil {
-		a.Tags = []string{}
-	}
-	if a.Principals == nil {
-		a.Principals = []string{}
-	}
-	if a.Port == 0 {
-		a.Port = 22
-	}
-	if a.Protocol == "" {
-		a.Protocol = "ssh"
-	}
-	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO assets (hostname, address, port, os, tags, group_name,
-			credential_mode, host_key_state, host_key_fingerprint,
-			host_key_pinned_at, health, principals, protocol, source)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'gateway')
-		ON CONFLICT (hostname) DO UPDATE SET
-			address              = EXCLUDED.address,
-			port                 = EXCLUDED.port,
-			os                   = COALESCE(NULLIF(EXCLUDED.os,''), assets.os),
-			principals           = EXCLUDED.principals,
-			credential_mode      = EXCLUDED.credential_mode,
-			protocol             = EXCLUDED.protocol,
-			host_key_state       = EXCLUDED.host_key_state,
-			host_key_fingerprint = COALESCE(EXCLUDED.host_key_fingerprint, assets.host_key_fingerprint),
-			host_key_pinned_at   = COALESCE(EXCLUDED.host_key_pinned_at, assets.host_key_pinned_at),
-			updated_at           = now()
-		WHERE assets.source <> 'console'`,
-		a.Hostname, a.Address, a.Port, a.OS, a.Tags, a.GroupName,
-		a.CredentialMode, a.HostKeyState, a.HostKeyFingerprint,
-		a.HostKeyPinnedAt, a.Health, a.Principals, a.Protocol)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrConsoleOwned
-	}
-	return nil
 }
 
 // Assets lists the inventory an administrator sees: every live asset.

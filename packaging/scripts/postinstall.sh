@@ -2,7 +2,7 @@
 # Runs after install or upgrade, on deb, rpm and apk alike.
 set -e
 
-# A dedicated system account. The gateway and control plane run as this; the
+# A dedicated system account. The control plane runs as this; the
 # agent runs as root and does not use it.
 if ! getent group argus >/dev/null 2>&1; then
     groupadd --system argus
@@ -18,10 +18,6 @@ install -d -o root -g argus -m 0750 /etc/argus/tls
 install -d -o root -g argus -m 0750 /etc/argus/ssh
 install -d -o argus -g argus -m 0700 /var/lib/argus
 install -d -o root -g root  -m 0700 /var/lib/argus/recordings
-# The gateway keeps its state apart from the agent's, which is root's.
-if [ -x /usr/bin/argus-gateway ]; then
-    install -d -o argus -g argus -m 0700 /var/lib/argus-gateway
-fi
 # Backups hold the audit chain and every recording. Only the control plane's
 # account writes them; nobody else reads them.
 if [ -x /usr/bin/argus-control ]; then
@@ -33,10 +29,10 @@ fi
 
 # Config may name a database, an issuer and internal hostnames. The env files
 # hold credentials outright.
-for f in /etc/argus/control.yaml /etc/argus/gateway.yaml; do
+for f in /etc/argus/control.yaml; do
     [ -f "$f" ] && chmod 0640 "$f" && chown root:argus "$f"
 done
-for f in /etc/argus/control.env /etc/argus/gateway.env /etc/argus/agent.env; do
+for f in /etc/argus/control.env /etc/argus/agent.env; do
     [ -f "$f" ] && chmod 0600 "$f" && chown root:argus "$f"
 done
 # Anyone who can read a private key owns everything that trusts it.
@@ -51,7 +47,7 @@ fi
 
 # Deliberately not enabled or started. These services need certificates,
 # secrets and an inventory before they can do anything, and a package that
-# starts a half-configured privileged-access gateway on install is a package
+# starts a half-configured privileged-access service on install is a package
 # that fails loudly in the worst possible place.
 cat <<'MSG'
 

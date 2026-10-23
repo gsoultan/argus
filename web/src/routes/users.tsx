@@ -152,7 +152,7 @@ function Users() {
                   <Badge size="xs" color="teal" variant="light">enrolled</Badge>
                 ) : (
                   <Tooltip
-                    label="An account without MFA is a standing password to your gateway. Enrol it or delete it."
+                    label="An account without MFA is a standing password to every server it can open. Enrol it or delete it."
                     maw={300}
                     multiline
                   >

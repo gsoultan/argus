@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !windows
 
 package agent
 
@@ -19,6 +19,10 @@ const (
 	systemPasswd  = "/etc/passwd"
 	osReleasePath = "/etc/os-release"
 	machineIDPath = "/etc/machine-id"
+
+	sshdConfigPath = "/etc/ssh/sshd_config"
+	// adminKeysFile is an authorized_keys file outside any home; none here.
+	adminKeysFile = ""
 
 	// sessionLang is a UTF-8 locale every install has.
 	sessionLang = "C.UTF-8"

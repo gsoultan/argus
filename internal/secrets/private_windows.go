@@ -126,3 +126,51 @@ func sidName(sid *windows.SID) string {
 func fixHint(path string) string {
 	return fmt.Sprintf(`icacls "%s" /inheritance:r /grant:r "%%USERNAME%%:R" /grant:r SYSTEM:F /grant:r Administrators:F`, path)
 }
+
+// MakePrivate replaces path's access list with one that lets in only the
+// account this process runs as, SYSTEM and Administrators -- the list
+// ownerOnly accepts.
+//
+// Mode bits mean nothing here: a key written at 0600 under %ProgramData% or a
+// temp directory inherits read access for every local user, and the process
+// that wrote it then refuses to load it.
+func MakePrivate(path string) error {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("cannot tell which account this process runs as: %w", err)
+	}
+	sids := []*windows.SID{user.User.Sid}
+	for _, t := range []windows.WELL_KNOWN_SID_TYPE{
+		windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid,
+	} {
+		sid, err := windows.CreateWellKnownSid(t)
+		if err != nil {
+			return err
+		}
+		sids = append(sids, sid)
+	}
+	var entries []windows.EXPLICIT_ACCESS
+	for _, sid := range sids {
+		entries = append(entries, windows.EXPLICIT_ACCESS{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.SET_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_UNKNOWN,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		})
+	}
+	acl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		return err
+	}
+	// Protected: what the parent grants no longer flows in.
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		return fmt.Errorf("cannot make %s private: %w", path, err)
+	}
+	return nil
+}

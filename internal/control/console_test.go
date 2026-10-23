@@ -68,17 +68,17 @@ func TestAnUnknownAPIPathIsNotTheConsole(t *testing.T) {
 	}
 }
 
-func TestConsoleConfigCarriesTheGatewayAndTheCSPAllowsIt(t *testing.T) {
-	h, err := NewConsoleHandler(ConsoleConfig{Dir: consoleDir(t), GatewayURL: "https://bastion.example:8081"})
+func TestTheConsoleTalksOnlyToItsOwnOrigin(t *testing.T) {
+	h, err := NewConsoleHandler(ConsoleConfig{Dir: consoleDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	w := consoleGet(t, h, "/console-config.js")
-	if !strings.Contains(w.Body.String(), `"gatewayUrl":"https://bastion.example:8081"`) {
-		t.Errorf("config: %s", w.Body)
+	if strings.Contains(w.Body.String(), "gatewayUrl") {
+		t.Errorf("config still names a gateway: %s", w.Body)
 	}
 	csp := w.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "wss://bastion.example:8081") || !strings.Contains(csp, "frame-ancestors 'none'") {
+	if !strings.Contains(csp, "connect-src 'self';") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("CSP: %s", csp)
 	}
 }
@@ -86,9 +86,6 @@ func TestConsoleConfigCarriesTheGatewayAndTheCSPAllowsIt(t *testing.T) {
 func TestAConfiguredConsoleDirectoryMustHoldAConsole(t *testing.T) {
 	if _, err := NewConsoleHandler(ConsoleConfig{Dir: t.TempDir()}); err == nil {
 		t.Error("an empty directory was accepted as the console")
-	}
-	if _, err := NewConsoleHandler(ConsoleConfig{Dir: consoleDir(t), GatewayURL: "bastion:8081"}); err == nil {
-		t.Error("a gateway address with no scheme was accepted")
 	}
 }
 
