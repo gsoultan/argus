@@ -1,6 +1,6 @@
 import { useMemo, useState, type ComponentType } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Code, Group, List, Grid, Modal, NavLink, Select,
+  Alert, Badge, Box, Button, Card, Group, List, Grid, Modal, NavLink, Select,
   Skeleton, Stack, Switch, Text, ThemeIcon,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -38,7 +38,7 @@ interface FieldSpec {
   label: string
   description: string
   /**
-   * True when turning the field ON loosens the gateway.
+   * True when turning the field ON loosens the policy.
    *
    * Drives both the badge and the confirmation step, so "which way is
    * dangerous" is stated once instead of being implied by each caller.
@@ -46,51 +46,7 @@ interface FieldSpec {
   riskOn: boolean
 }
 
-const SSH_POLICY: FieldSpec[] = [
-  {
-    key: 'allowLocalForward',
-    label: 'Allow local port forwarding (-L)',
-    description:
-      'Unrestricted forwarding turns the gateway into an open tunnel into the private network — the exact thing a bastion exists to prevent. Leave off and allowlist per role.',
-    riskOn: true,
-  },
-  {
-    key: 'allowRemoteForward',
-    label: 'Allow remote port forwarding (-R)',
-    description:
-      'Lets a target open a listener back through the gateway. Rarely needed, and a clean egress path for an attacker who already has the host.',
-    riskOn: true,
-  },
-  {
-    key: 'allowAgentForward',
-    label: 'Allow SSH agent forwarding',
-    description:
-      "Anyone with root on the gateway can sign challenges with the user's keys for the life of the session. Credential injection exists precisely so this is unnecessary.",
-    riskOn: true,
-  },
-  {
-    key: 'allowX11Forward',
-    label: 'Allow X11 forwarding',
-    description: 'Broad attack surface, almost never used for server administration.',
-    riskOn: true,
-  },
-  {
-    key: 'proxySftpSubsystem',
-    label: 'Proxy SFTP as a subsystem',
-    description:
-      'Decodes the SFTP protocol rather than teeing raw bytes, so every file open, read, write and delete becomes an audit event with a path and a size.',
-    riskOn: false,
-  },
-]
-
 const RECORDING_POLICY: FieldSpec[] = [
-  {
-    key: 'failClosedOnRecordingLoss',
-    label: 'Fail closed when recording is unavailable',
-    description:
-      "If the recorder cannot write, refuse the session rather than allowing an unrecorded one. This is what an auditor means by 'all privileged sessions are recorded'.",
-    riskOn: false,
-  },
   {
     key: 'requireEbpfForRoot',
     label: 'Require eBPF agent for root sessions',
@@ -100,12 +56,12 @@ const RECORDING_POLICY: FieldSpec[] = [
   },
 ]
 
-const ALL_FIELDS = [...SSH_POLICY, ...RECORDING_POLICY]
+const ALL_FIELDS = RECORDING_POLICY
 
-/** Roles the control plane lets change gateway policy. */
+/** Roles the control plane lets change session policy. */
 const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
-type PolicySectionId = 'access' | 'channels' | 'recording' | 'hosts'
+type PolicySectionId = 'access' | 'recording' | 'hosts'
 type SectionId = PolicySectionId | ControlSectionId
 
 interface NavItem {
@@ -117,14 +73,12 @@ interface NavItem {
 
 const POLICY_SECTIONS: { id: PolicySectionId; label: string; icon: ComponentType<IconProps> }[] = [
   { id: 'access', label: 'How people connect', icon: IconNetwork },
-  { id: 'channels', label: 'SSH channels', icon: IconTerminal2 },
   { id: 'recording', label: 'Recording', icon: IconLock },
   { id: 'hosts', label: 'Hosts and trust', icon: IconShieldLock },
 ]
 
 const POLICY_FIELDS: Record<PolicySectionId, FieldSpec[]> = {
   access: [],
-  channels: SSH_POLICY,
   recording: RECORDING_POLICY,
   hosts: [],
 }
@@ -142,9 +96,9 @@ function Settings() {
    *
    * The switches used to be uncontrolled, with a `defaultChecked` and no
    * handler: they moved, nothing was sent anywhere, and navigating away
-   * reverted them silently. For a page whose toggles decide whether port
-   * forwarding is permitted and whether an unrecorded session may proceed, a
-   * control that looks set and is not is the worst thing on the screen.
+   * reverted them silently. For a page whose toggles decide what root needs
+   * before it opens, a control that looks set and is not is the worst thing
+   * on the screen.
    */
   const [draft, setDraft] = useState<GatewayPolicy | null>(null)
   const current = draft ?? saved ?? null
@@ -198,7 +152,7 @@ function Settings() {
     confirm.close()
     setDraft(null)
     notifyOk(
-      'Gateway policy saved',
+      'Session policy saved',
       `${changes.length} change${changes.length === 1 ? '' : 's'} applied. New sessions use it immediately; sessions already open keep the policy they started under.`,
     )
   }
@@ -232,7 +186,7 @@ function Settings() {
         {!canEdit && me && (
           <Alert color="slate" icon={<IconInfoCircle size={16} />} title="Read-only" p="xs">
             <Text size={FS.body} lh={1.5}>
-              Gateway policy is changed by an owner or admin. Your role is{' '}
+              Session policy is changed by an owner or admin. Your role is{' '}
               <Mono>{me.role}</Mono>, so these are shown as configured rather than as
               controls you can move.
             </Text>
@@ -243,9 +197,9 @@ function Settings() {
             exactly the condition under which savePolicy writes to the fixture
             instead of the control plane. It used to be keyed on isLive(),
             which any single refused request turned false -- so an admin could
-            be told their changes reached no gateway while the save was
-            reaching the gateway, and open a forwarding channel believing it
-            was a local sandbox. */}
+            be told their changes reached no control plane while the save was
+            reaching it, and loosen a live policy believing it was a local
+            sandbox. */}
         {!isConfigured() && (
           <Alert
             color="amber"
@@ -254,7 +208,7 @@ function Settings() {
             p="xs"
           >
             <Text size={FS.body} lh={1.5}>
-              Changes are held in this browser session only and reach no gateway. Point{' '}
+              Changes are held in this browser session only and reach no control plane. Point{' '}
               <Mono>VITE_CONTROL_URL</Mono> at a running control plane to make this page
               authoritative.
             </Text>
@@ -293,11 +247,11 @@ function Settings() {
                 title="Console only, through the agent"
                 icon={IconShieldLock}
                 iconColor="teal"
-                description="Every terminal, desktop and file transfer opens here in the console. SSH reaches a server only through its Argus agent; Remote Desktop goes through the gateway until the Windows agent ships."
+                description="Every terminal, desktop and file transfer opens here in the console, through the server's Argus agent."
               >
                 <Text size={FS.meta} c="dimmed" lh={1.5}>
-                  ssh, scp, sftp and mstsc to the gateway are refused with a message pointing here.
-                  A direct login to a server's sshd is refused by its agent and written to the
+                  The agent holds an outbound tunnel to the control plane, and sessions open over
+                  it. A direct login to a server's sshd is refused by its agent and written to the
                   audit log. A server whose agent is not connected cannot be opened until it
                   reconnects. This is how Argus works, not an option, so there is nothing to turn
                   off.
@@ -305,32 +259,18 @@ function Settings() {
               </SectionCard>
             )}
 
-            {active === 'channels' && (
-              <PolicyCard
-                icon={IconTerminal2}
-                title="SSH channel policy"
-                note={
-                  <>
-                    A forwarded connection's <strong>contents are not recorded</strong>. The
-                    tunnel carries someone else's protocol and can be arbitrarily large, so
-                    Argus records the fact of it instead — who, from where, to which host and
-                    port, when it opened and closed, and how many bytes moved each way. Those
-                    land in the audit chain, not just the session recording.
-                  </>
-                }
-                fields={SSH_POLICY}
-                policy={current}
-                saved={saved ?? null}
-                disabled={policyDisabled}
-                onChange={set}
-              />
-            )}
-
             {active === 'recording' && (
               <>
                 <PolicyCard
                   icon={IconLock}
                   title="Recording & retention"
+                  note={
+                    <>
+                      The agent records a session before showing any of it, so a session it
+                      cannot record does not open. There is no setting that lets one through
+                      unrecorded.
+                    </>
+                  }
                   fields={RECORDING_POLICY}
                   policy={current}
                   saved={saved ?? null}
@@ -366,14 +306,14 @@ function Settings() {
       <Modal
         opened={confirmOpen}
         onClose={confirm.close}
-        title="Apply gateway policy"
+        title="Apply session policy"
         size="md"
       >
         {loosening.length > 0 && (
           <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
             <Text size={FS.body} lh={1.5}>
               {loosening.length === 1 ? 'One change loosens' : `${loosening.length} changes loosen`}{' '}
-              the gateway. Every session opened after this uses the new policy.
+              the policy. Every session opened after this uses it.
             </Text>
           </Alert>
         )}
@@ -482,42 +422,29 @@ function HostsAndTrust() {
   return (
     <Grid gap="sm">
       <Grid.Col span={{ base: 12, lg: 6 }}>
-        <SectionCard
-          title="Certificate authority"
-          icon={IconShieldLock}
-          iconColor="teal"
-          description="Add this to a host to move it off standing credentials. Argus then mints a short-lived certificate per session and there is nothing left in the vault to steal for that host."
-        >
-          <Code block fz={FS.micro}>
-            {`# /etc/ssh/sshd_config
-TrustedUserCAKeys /etc/ssh/argus_ca.pub`}
-          </Code>
-        </SectionCard>
-      </Grid.Col>
-
-      <Grid.Col span={{ base: 12, lg: 6 }}>
         <Alert color="sky" icon={<IconInfoCircle size={16} />} title="Threat model, stated plainly">
           <Text size={FS.body} lh={1.55}>
-            Argus terminates SSH, so the gateway holds session plaintext in memory. Treat gateway
-            nodes as your highest-value asset: no shared tenancy, no third-party agents, hardware
-            keys for the vault, and the audit log replicated somewhere the gateway cannot write.
+            Sessions are relayed by the control plane and recorded by each server&rsquo;s agent,
+            so the control plane holds session plaintext in memory while it relays. Treat it as
+            your highest-value asset: no shared tenancy, its signing secret kept out of shared
+            files, and the audit log replicated somewhere it cannot write.
           </Text>
         </Alert>
       </Grid.Col>
 
       <Grid.Col span={{ base: 12, lg: 6 }}>
-        <Card style={{ borderStyle: 'dashed' }}>
+        <Card>
           <Group gap={SP.cozy} mb={SP.snug}>
-            <ThemeIcon variant="light" color="slate" size={22} radius="sm">
+            <ThemeIcon variant="light" color="teal" size={22} radius="sm">
               <IconDeviceDesktop size={13} />
             </ThemeIcon>
-            <Text fw={600} size="sm">Windows RDP</Text>
-            <Badge size="xs" color="slate" variant="outline">phase 3</Badge>
+            <Text fw={600} size="sm">Windows Remote Desktop</Text>
           </Group>
           <Text size={FS.micro} c="dimmed" lh={1.5}>
-            RDP runs as a separate service rather than inside the SSH gateway — different
-            protocol, different recording pipeline, different failure modes. Linux SSH gets
-            finished first.
+            Windows servers run the same agent, as a service. A desktop opens through it to the
+            server&rsquo;s own Remote Desktop and is recorded on the server. The account&rsquo;s
+            Windows password is asked for when the desktop opens and used once, in memory, to sign
+            in; Argus does not keep it.
           </Text>
         </Card>
       </Grid.Col>

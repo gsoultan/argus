@@ -248,7 +248,7 @@ function SessionDetail() {
       notifications.show({
         color: 'rose',
         title: 'Session not terminated',
-        message: err instanceof Error ? err.message : 'the gateway refused',
+        message: err instanceof Error ? err.message : 'the control plane refused',
       })
       return
     }
@@ -346,10 +346,10 @@ function SessionDetail() {
             title="Nothing has reported this session in minutes"
           >
             <Text size={FS.body} lh={1.5}>
-              It was last heard from {relTime(session.lastReportedAt)}, and gateways
+              It was last heard from {relTime(session.lastReportedAt)}, and agents
               re-report the sessions they are holding every minute. Most likely its
-              gateway was killed rather than drained, so the end was never reported —
-              but Argus cannot tell that apart from a session still running on a gateway
+              agent was killed or lost its network, so the end was never reported —
+              but Argus cannot tell that apart from a session still running on a server
               it has lost contact with. Watch and Terminate are still offered, and are the
               way to find out: if the session is real it can still be watched and stopped,
               and if it is not, both will fail and the attempt is on the record either way.
@@ -359,7 +359,7 @@ function SessionDetail() {
         {/* First, and filled rather than light: everything below it is suspect.
             The side panel already carried this verdict as a badge, which an
             operator watching a replay has no reason to look at. A recording
-            that does not match what the gateway sealed is not a recording with
+            that does not match what was sealed is not a recording with
             a caveat, it is an artefact that cannot be used as evidence, and the
             player should not present it as though it were. */}
         {verified === 'tampered' && (
@@ -367,7 +367,7 @@ function SessionDetail() {
             color="rose"
             variant="filled"
             icon={<IconAlertTriangle size={16} />}
-            title="This recording does not match what the gateway sealed"
+            title="This recording does not match what was sealed"
           >
             <Text size={FS.body} lh={1.5}>
               The stored artefact's hash chain disagrees with the chain head recorded when
@@ -413,7 +413,7 @@ function SessionDetail() {
             title="PTY-only recording"
           >
             <Text size={FS.body} lh={1.5}>
-              This session was captured at the gateway as a terminal stream. It faithfully shows
+              This session was captured on the server as a terminal stream. It faithfully shows
               what crossed the wire, but a user can obscure intent — base64-encoded commands, or
               a script whose body never appears on screen. Treat the command timeline below as an
               audit aid, not proof. Enable the eBPF agent on this host for kernel-observed
@@ -676,7 +676,7 @@ function SessionDetail() {
         {session.silent && (
           <Alert color="amber" icon={<IconAlertTriangle size={16} />} mb="md">
             <Text size={FS.body} lh={1.5}>
-              Nothing has reported this session in minutes, so its gateway may already be
+              Nothing has reported this session in minutes, so it may already be
               gone — in which case there is nothing left to close. Your reason is recorded
               against your account either way: the log keeps the authorisation, not the
               outcome, so an attempt that could not be carried out is still on the record.

@@ -33,9 +33,9 @@ export type Reach = 'online' | 'slow' | 'offline' | 'blocked'
 
 export function reachOf(a: Asset): Reach {
   if (a.protocol !== 'rdp' && a.hostKeyState === 'changed') return 'blocked'
-  // A connected agent tunnel is how an SSH session opens without the gateway
-  // reaching the server at all, so it counts as reachable on its own.
-  if (a.protocol !== 'rdp' && a.tunnelConnected === true) return 'online'
+  // A connected agent tunnel is how every session opens, terminal or desktop,
+  // so it counts as reachable on its own.
+  if (a.tunnelConnected === true) return 'online'
   if (a.health === 'reachable') return 'online'
   if (a.health === 'degraded') return 'slow'
   return 'offline'

@@ -23,7 +23,7 @@ function VerificationBanner({ verified }: { verified: string | null }) {
         color="rose"
         variant="filled"
         icon={<IconAlertTriangle size={16} />}
-        title="This recording does not match what the gateway sealed"
+        title="This recording does not match what was sealed"
       >
         <Text size="xs">
           The stored artefact's hash chain disagrees with the chain head recorded when this
@@ -56,7 +56,7 @@ const show = (verified: string | null) =>
 describe('a replay whose artefact was altered', () => {
   it('says so where someone about to watch it will read it', () => {
     show('tampered')
-    expect(screen.getByText(/does not match what the gateway sealed/i)).toBeInTheDocument()
+    expect(screen.getByText(/does not match what was sealed/i)).toBeInTheDocument()
     expect(screen.getByText(/not evidence of what happened/i)).toBeInTheDocument()
   })
 
@@ -72,12 +72,12 @@ describe('a replay whose artefact was altered', () => {
     // No alarm on a good recording: a warning that appears every time is one
     // nobody reads on the day it matters.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.queryByText(/gateway sealed/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/does not match what was sealed/i)).not.toBeInTheDocument()
   })
 
   it('stays quiet before a verdict has arrived', () => {
     show(null)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.queryByText(/gateway sealed/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/does not match what was sealed/i)).not.toBeInTheDocument()
   })
 })

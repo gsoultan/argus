@@ -264,7 +264,7 @@ function Connect() {
 
         <Grid gap="sm">
           {/* Two decisions, numbered, then one button. The form previously led
-              with a gateway address field — server plumbing the operator has no
+              with a server address field — plumbing the operator has no
               answer for and does not need, standing between them and the two
               choices that actually matter. */}
           <Grid.Col span={{ base: 12, lg: 7 }}>
@@ -435,7 +435,7 @@ function Connect() {
           <Grid.Col span={{ base: 12, lg: 5 }}>
             <Stack gap="sm">
               {/* Plain words first. The earlier panel was one paragraph of
-                  gateway internals (principals, pins, hash-chained artefacts)
+                  internals (principals, pins, hash-chained artefacts)
                   that answered a question a security reviewer asks, not the
                   one a person about to connect has. */}
               <Card padding="md">

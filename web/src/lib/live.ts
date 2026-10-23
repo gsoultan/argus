@@ -787,7 +787,6 @@ export interface ControlSettings {
   configFile: string
   applyError?: string
   consoleUrl: string
-  gatewayUrl: string
   fleetUrl: string
   listen: string
   consoleListen: string

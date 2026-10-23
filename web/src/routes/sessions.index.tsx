@@ -24,7 +24,7 @@ interface SessionSearch {
   /**
    * Narrow everything on the page to the last 24 hours.
    *
-   * The Overview's "Bypassed gateway" tile counts direct sessions *today*, and
+   * The Overview's "Bypassed Argus" tile counts direct sessions *today*, and
    * without this its link landed on every direct session ever recorded -- a
    * superset, which is the same defect as the alert that counted 5 hosts and
    * selected 2, just in the other direction.

@@ -260,7 +260,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 at to decide whether anything is happening. */}
             {whole && stats && stats.sessionsSilent > 0 && (
               <Tooltip
-                label={`${stats.sessionsSilent} ${stats.sessionsSilent === 1 ? 'session is' : 'sessions are'} recorded as active but have not been reported in minutes. Their gateway most likely went away without reporting the end. Sessions › Unknown.`}
+                label={`${stats.sessionsSilent} ${stats.sessionsSilent === 1 ? 'session is' : 'sessions are'} recorded as active but have not been reported in minutes. Their agent most likely went away without reporting the end. Sessions › Unknown.`}
                 multiline
                 maw={300}
               >
