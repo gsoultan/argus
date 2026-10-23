@@ -51,6 +51,7 @@ type Row struct {
 	ArchivedAt           runtime.Null[time.Time]
 	RecordingScope       string
 	AgentRecordingScope  runtime.Null[string]
+	AgentConsoleOnly     runtime.Null[bool]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -89,7 +90,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 31
+const nCols = 32
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -99,11 +100,12 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs            [6]string
-	nums            [6]int64
-	raws            [4][16]byte
-	tims            [4]time.Time
-	ns, nn, nr, ntm uint8
+	strs                 [6]string
+	nums                 [6]int64
+	raws                 [4][16]byte
+	tims                 [4]time.Time
+	bools                [4]bool
+	ns, nn, nr, ntm, nbo uint8
 
 	anyRaw          [3][][16]byte
 	anyStr          [3][]string
@@ -406,6 +408,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.AgentRecordingScope.V
 		q.ns++
+	case 31:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.AgentConsoleOnly.V
+		q.nbo++
 	}
 }
 
@@ -557,9 +566,18 @@ type Pred struct {
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
 	anyI32 []int32
+}
+
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Typed column handles. The type of the handle is what makes
@@ -596,6 +614,7 @@ var (
 	ArchivedAt           = NullTimeCol{28}
 	RecordingScope       = TextCol{29}
 	AgentRecordingScope  = NullTextCol{30}
+	AgentConsoleOnly     = NullBoolCol{31}
 )
 
 // UUIDCol addresses a uuid column.
@@ -797,6 +816,23 @@ func (h NullTextCol) In(v ...string) Pred   { return Pred{col: h.c, op: opIn, an
 func (h NullTextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
 func (h NullTextCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTextCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullBoolCol addresses a bool column.
+type NullBoolCol struct{ c uint8 }
+
+func (h NullBoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullBoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullBoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullBoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullBoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h NullBoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
+func (h NullBoolCol) IsNull() Pred      { return Pred{col: h.c, op: opIsNull} }
+func (h NullBoolCol) IsNotNull() Pred   { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -1319,6 +1355,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 31:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1636,8 +1679,12 @@ func (q Query) AgentRecordingScopeNotIn(v ...string) Query {
 }
 func (q Query) AgentRecordingScopeIsNull() Query    { return q.Where(AgentRecordingScope.IsNull()) }
 func (q Query) AgentRecordingScopeIsNotNull() Query { return q.Where(AgentRecordingScope.IsNotNull()) }
+func (q Query) AgentConsoleOnlyEq(v bool) Query     { return q.Where(AgentConsoleOnly.Eq(v)) }
+func (q Query) AgentConsoleOnlyNotEq(v bool) Query  { return q.Where(AgentConsoleOnly.NotEq(v)) }
+func (q Query) AgentConsoleOnlyIsNull() Query       { return q.Where(AgentConsoleOnly.IsNull()) }
+func (q Query) AgentConsoleOnlyIsNotNull() Query    { return q.Where(AgentConsoleOnly.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope" FROM "assets"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope", "agent_console_only" FROM "assets"`
 const countPrefix = `SELECT count(*) FROM "assets"`
 const existsPrefix = `SELECT 1 FROM "assets"`
 const existsSuffix = ` LIMIT 1`
@@ -1860,6 +1907,12 @@ var orderTable = [nCols][4]string{
 		"\"agent_recording_scope\" ASC NULLS FIRST",
 		"\"agent_recording_scope\" DESC NULLS LAST",
 	},
+	{ // agent_console_only
+		"\"agent_console_only\"",
+		"\"agent_console_only\" DESC",
+		"\"agent_console_only\" ASC NULLS FIRST",
+		"\"agent_console_only\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1896,6 +1949,7 @@ var identTable = [nCols]string{
 	"\"archived_at\"",
 	"\"recording_scope\"",
 	"\"agent_recording_scope\"",
+	"\"agent_console_only\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1928,7 +1982,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [31][28]runtime.Frag{
+var fragTable = [32][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2859,6 +2913,36 @@ var fragTable = [31][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // agent_console_only
+		{}, // opNone
+		{A: "\"agent_console_only\" = $", B: ""},
+		{A: "\"agent_console_only\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"agent_console_only\" IS NULL", B: ""},
+		{A: "\"agent_console_only\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3053,6 +3137,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ArchivedAt = runtime.Nullable(rv[28], runtime.Timestamptz)
 	r.RecordingScope = sl.Str(rv[29])
 	r.AgentRecordingScope = runtime.NullText(rv[30], sl)
+	r.AgentConsoleOnly = runtime.Nullable(rv[31], runtime.Bool)
 	return decErr
 }
 
@@ -3062,6 +3147,7 @@ type binder struct {
 	nums   [6]int64
 	raws   [4][16]byte
 	tims   [4]time.Time
+	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	anyI32 [3][]int32
@@ -3106,7 +3192,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nn, nr, ntm, nar, nas, nai32 uint8
+	var ns, nn, nr, ntm, nbo, nar, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -3338,6 +3424,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 31:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -3475,7 +3565,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope"`
+const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope", "agent_console_only") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "recording_scope", "agent_recording_scope", "agent_console_only"`
 
 const updatePrefix = `UPDATE "assets" SET `
 const deletePrefix = `DELETE FROM "assets"`
@@ -3512,9 +3602,10 @@ const (
 	dArchivedAt           uint64 = 1 << 26
 	dRecordingScope       uint64 = 1 << 27
 	dAgentRecordingScope  uint64 = 1 << 28
+	dAgentConsoleOnly     uint64 = 1 << 29
 )
 
-const nUpdatable = 29
+const nUpdatable = 30
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3547,6 +3638,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"archived_at\" = $", B: ""},            // archived_at
 	{A: "\"recording_scope\" = $", B: ""},        // recording_scope
 	{A: "\"agent_recording_scope\" = $", B: ""},  // agent_recording_scope
+	{A: "\"agent_console_only\" = $", B: ""},     // agent_console_only
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3582,6 +3674,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"archived_at\" = now()", B: ""}, // archived_at = the database's clock
 	{},                                    // recording_scope has no server-side form
 	{},                                    // agent_recording_scope has no server-side form
+	{},                                    // agent_console_only has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3624,9 +3717,10 @@ const (
 	iArchivedAt           uint64 = 1 << 28
 	iRecordingScope       uint64 = 1 << 29
 	iAgentRecordingScope  uint64 = 1 << 30
+	iAgentConsoleOnly     uint64 = 1 << 31
 )
 
-const nInsertable = 31
+const nInsertable = 32
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3661,6 +3755,7 @@ var insCols = [nInsertable]string{
 	"\"archived_at\"",
 	"\"recording_scope\"",
 	"\"agent_recording_scope\"",
+	"\"agent_console_only\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3669,7 +3764,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"assets\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"recording_scope\", \"agent_recording_scope\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"recording_scope\", \"agent_recording_scope\", \"agent_console_only\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3688,7 +3783,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"recording_scope\", \"agent_recording_scope\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"recording_scope\", \"agent_recording_scope\", \"agent_console_only\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -4078,6 +4173,20 @@ func (m *Mut) SetAgentRecordingScopeNull() {
 	m.expr &^= dAgentRecordingScope
 }
 
+func (m *Mut) SetAgentConsoleOnly(v bool) {
+	m.row.AgentConsoleOnly = runtime.Null[bool]{V: v, Valid: true}
+	m.dirty |= dAgentConsoleOnly
+	m.expr &^= dAgentConsoleOnly
+}
+
+// SetAgentConsoleOnlyNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetAgentConsoleOnlyNull() {
+	m.row.AgentConsoleOnly = runtime.Null[bool]{}
+	m.dirty |= dAgentConsoleOnly
+	m.expr &^= dAgentConsoleOnly
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -4357,6 +4466,18 @@ func (n *Ins) SetAgentRecordingScopeNull() {
 	n.set |= iAgentRecordingScope
 }
 
+func (n *Ins) SetAgentConsoleOnly(v bool) {
+	n.row.AgentConsoleOnly = runtime.Null[bool]{V: v, Valid: true}
+	n.set |= iAgentConsoleOnly
+}
+
+// SetAgentConsoleOnlyNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetAgentConsoleOnlyNull() {
+	n.row.AgentConsoleOnly = runtime.Null[bool]{}
+	n.set |= iAgentConsoleOnly
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4408,7 +4529,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 29)
+	set := make([]string, 0, 30)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -4498,6 +4619,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<30) != 0 {
 			set = append(set, "agent_recording_scope")
 		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "agent_console_only")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -4583,6 +4707,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<30) != 0 {
 			set = append(set, "agent_recording_scope")
 		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "agent_console_only")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -4667,6 +4794,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<30) != 0 {
 			set = append(set, "agent_recording_scope")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "agent_console_only")
 		}
 	}
 	return set
@@ -4783,6 +4913,7 @@ var assignFor = map[string]string{
 	"archived_at":            "\"archived_at\" = EXCLUDED.\"archived_at\"",
 	"recording_scope":        "\"recording_scope\" = EXCLUDED.\"recording_scope\"",
 	"agent_recording_scope":  "\"agent_recording_scope\" = EXCLUDED.\"agent_recording_scope\"",
+	"agent_console_only":     "\"agent_console_only\" = EXCLUDED.\"agent_console_only\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4895,6 +5026,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.RecordingScope)
 		case 30:
 			args = append(args, n.row.AgentRecordingScope.Arg())
+		case 31:
+			args = append(args, n.row.AgentConsoleOnly.Arg())
 		}
 	}
 	var out Row
@@ -4932,7 +5065,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 31)
+	args := make([]any, 0, 32)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4964,6 +5097,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ArchivedAt.Arg())
 	args = append(args, r.RecordingScope)
 	args = append(args, r.AgentRecordingScope.Arg())
+	args = append(args, r.AgentConsoleOnly.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -5021,13 +5155,14 @@ var copyCols = []string{
 	"archived_at",
 	"recording_scope",
 	"agent_recording_scope",
+	"agent_console_only",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [31]any
+	buf  [32]any
 }
 
 func (s *rowSource) Next() bool {
@@ -5076,6 +5211,7 @@ func (s *rowSource) Values() []any {
 	s.buf[28] = r.ArchivedAt.Ptr()
 	s.buf[29] = &r.RecordingScope
 	s.buf[30] = r.AgentRecordingScope.Ptr()
+	s.buf[31] = r.AgentConsoleOnly.Ptr()
 	return s.buf[:]
 }
 
@@ -5137,8 +5273,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 28
 	mask |= 1 << 29
 	mask |= 1 << 30
+	mask |= 1 << 31
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 31)
+	args := make([]any, 0, 32)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -5170,6 +5307,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ArchivedAt.Arg())
 	args = append(args, r.RecordingScope)
 	args = append(args, r.AgentRecordingScope.Arg())
+	args = append(args, r.AgentConsoleOnly.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -5265,6 +5403,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.RecordingScope)
 		case 30:
 			args = append(args, n.row.AgentRecordingScope.Arg())
+		case 31:
+			args = append(args, n.row.AgentConsoleOnly.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -5378,6 +5518,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.RecordingScope)
 		case 28:
 			args = append(args, m.row.AgentRecordingScope.Arg())
+		case 29:
+			args = append(args, m.row.AgentConsoleOnly.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5518,6 +5660,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.RecordingScope)
 		case 28:
 			args = append(args, m.row.AgentRecordingScope.Arg())
+		case 29:
+			args = append(args, m.row.AgentConsoleOnly.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5724,6 +5868,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.RecordingScope)
 		case 28:
 			args = append(args, m.row.AgentRecordingScope.Arg())
+		case 29:
+			args = append(args, m.row.AgentConsoleOnly.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

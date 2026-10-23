@@ -161,6 +161,7 @@ type Asset struct {
 	ArchivedAt           *time.Time
 	RecordingScope       string
 	AgentRecordingScope  *string
+	AgentConsoleOnly     *bool
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -249,6 +250,7 @@ type GatewayPolicy struct {
 	RequireEbpfForRoot        bool
 	UpdatedAt                 time.Time
 	UpdatedBy                 string
+	AllowNativeClients        bool
 }
 
 func (m *GatewayPolicy) Schema(t *storm.Table) {
@@ -263,6 +265,7 @@ func (m *GatewayPolicy) Schema(t *storm.Table) {
 	t.Col(&m.RequireEbpfForRoot).Default("true")
 	t.Col(&m.UpdatedAt).Default("now()")
 	t.Col(&m.UpdatedBy).Default("''::text")
+	t.Col(&m.AllowNativeClients).Default("false")
 	t.CheckNamed("gateway_policy_id_check", "id")
 }
 

@@ -140,6 +140,11 @@ export interface Asset {
    * a session can open through it. Absent from an older control plane.
    */
   tunnelConnected?: boolean
+  /**
+   * Whether the agent said, at its last check-in, that it refuses logins that
+   * did not come through Argus. Null until it says: unconfirmed, never applied.
+   */
+  agentConsoleOnly?: boolean | null
 }
 
 /**
@@ -344,6 +349,8 @@ export type AuditAction =
   | 'session.command'
   | 'file.upload'
   | 'file.download'
+  | 'files.opened'
+  | 'session.direct_refused'
   | 'request.create'
   | 'request.approve'
   | 'request.deny'
@@ -471,6 +478,13 @@ export interface GatewayPolicy {
   allowRemoteForward: boolean
   allowAgentForward: boolean
   allowX11Forward: boolean
+  /**
+   * ssh, scp, sftp and mstsc without the console: through the gateway's own
+   * listeners, or straight to sshd on a server whose agent enforces it. Off is
+   * console-only, the default. Absent from an older control plane, which had
+   * no such rule and let native clients in.
+   */
+  allowNativeClients?: boolean
   proxySftpSubsystem: boolean
   failClosedOnRecordingLoss: boolean
   requireEbpfForRoot: boolean

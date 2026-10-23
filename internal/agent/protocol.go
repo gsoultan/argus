@@ -115,6 +115,12 @@ type Decision struct {
 	SessionID string `json:"session_id,omitempty"`
 	// Reason is said to the user when Record is false.
 	Reason string `json:"reason,omitempty"`
+	// Refused means the login may not happen at all: the deployment is
+	// console-only and this one did not come through Argus. Error carries the
+	// same reason, so a shim older than Refused -- which reads any error as a
+	// recording that failed to open -- still refuses rather than skipping.
+	Refused bool   `json:"refused,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // Reply is anything the daemon sends a shim: a Decision, or an Ack, which has
@@ -124,6 +130,7 @@ type Reply struct {
 	Record    bool   `json:"record"`
 	SessionID string `json:"session_id"`
 	Reason    string `json:"reason"`
+	Refused   bool   `json:"refused"`
 	ChainHead string `json:"chain_head"`
 	Error     string `json:"error"`
 }

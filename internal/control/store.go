@@ -561,6 +561,9 @@ type Asset struct {
 	// heartbeat. Nil until it says, which an agent older than the setting
 	// never does -- so nil is "unconfirmed", never "applied".
 	AgentRecordingScope *string `json:"agentRecordingScope"`
+	// AgentConsoleOnly is whether the agent said, at its last heartbeat, that
+	// it refuses logins that did not come through Argus. Nil is unconfirmed.
+	AgentConsoleOnly *bool `json:"agentConsoleOnly"`
 	// TunnelConnected is whether this host's agent holds a live tunnel, by
 	// the database's clock, so the console can open sessions through it.
 	TunnelConnected bool `json:"tunnelConnected"`
@@ -656,7 +659,7 @@ func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
 // matches more than one asset, or none.
 func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	activeSessions int, posture any, execTracing bool, execReason string,
-	appliedScope string) (string, error) {
+	appliedScope string, appliedConsoleOnly *bool) (string, error) {
 
 	var postureJSON []byte
 	if posture != nil {
@@ -701,11 +704,12 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 			bypass_posture        = COALESCE(NULLIF($2,''), bypass_posture),
 			unmanaged_key_count   = COALESCE($3, unmanaged_key_count),
 			agent_recording_scope = NULLIF($4,''),
+			agent_console_only    = $5,
 			updated_at            = now()
 		WHERE hostname = $1
 		   OR agent_hostname = $1
 		   OR split_part(hostname, '.', 1) = $1
-		RETURNING recording_scope`, hostname, rating, unmanaged, appliedScope)
+		RETURNING recording_scope`, hostname, rating, unmanaged, appliedScope, appliedConsoleOnly)
 	if err != nil {
 		return ScopeEveryLogin, err
 	}

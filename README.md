@@ -407,9 +407,10 @@ Two cases, stated rather than implied:
   path has always worked. The gateway says so at start-up.
 - **The native RDP listener** authenticates nobody: the request is parsed from
   an mstshash cookie and names a principal and a target, not a person. There is
-  no identity to hold an assignment, so it cannot be applied there. Elevated
-  principals are refused outright on that path, and the browser console is the
-  one that authenticates before it brokers.
+  no identity to hold an assignment, so it cannot be applied there. It is
+  refused outright while the deployment is console-only (the default), elevated
+  principals are refused on it regardless, and the browser console is the one
+  that authenticates before it brokers.
 
 An existing file-driven deployment keeps working. Each gateway publishes its
 inventory at start-up, so those hosts appear in the console as ordinary assets;
@@ -431,19 +432,53 @@ publishes them, and the Sessions page shows who has been using what.
 
 ## Connecting
 
-The browser terminal is the way in by default, at the gateway's `web` listener.
-It is not a lesser path: it calls the same `Dial` as `ssh(1)` in-process, so the
-principal is checked against the inventory, the host key is verified against its
-pin, the credential is injected, an elevated principal still needs an approved
-access request, and the session is recorded to the same hash-chained artefact.
+**Every connection goes through the console.** Sign in, open **Connect**, pick
+a server and an account, and choose what to open:
 
-The packaged config binds the SSH listener to loopback, because nothing about
-the browser console goes through it. Native clients are worth serving and the
-rest of this section is about them — set `listen: "0.0.0.0:2222"` to allow them,
-and put the port behind a VPN or an allowlist when you do. Once it is reachable,
-`authorized_keys` is the whole perimeter.
+```
+you ──▶ Argus console ──▶ pick a server ──▶ its Argus agent ──▶ shown in the console
+```
 
-The target is encoded in the SSH username, so ordinary tooling works unchanged:
+- **Open terminal** — a shell on the server, started by its agent as the account
+  you picked and recorded on the server before you see any of it.
+- **Transfer files** — the console's scp: browse folders, upload and download.
+  The agent reads and writes as the account you picked, so it can touch exactly
+  what that account can, and every transfer is written to the audit log with the
+  person, server, account, path, size and SHA-256.
+- **Open desktop** — Remote Desktop to a Windows server, in the browser.
+
+The same checks run whichever you open: you must be assigned to the server and
+the account, an elevated account (root, Administrator) needs an approved access
+request first, and the ticket that opens it is single-use and expires in about
+a minute.
+
+### Console-only is the default
+
+Settings → **How people connect** → *Allow native clients* is **off** on a new
+deployment and after an upgrade. With it off:
+
+| Path | What happens |
+|---|---|
+| `ssh`, `scp`, `sftp` to the gateway (`2222/tcp`) | Refused before the target is dialled, with a message pointing at the console. |
+| `mstsc` to the gateway's native RDP listener | Refused before the target is dialled. |
+| `ssh`, `scp`, `sftp` straight to a server whose agent is installed | The agent refuses the login before anything runs, tells the person to use the console, and writes a `session.direct_refused` entry to the audit log with the account, source address and command. |
+| A server with no agent | Argus cannot see or stop a direct login there. Install the agent, or close sshd to everything but the agent's host. |
+
+A change reaches each agent at its next check-in, about a minute. The server's
+page in the console says whether its agent has confirmed it, and an agent that
+restarts while the control plane is unreachable keeps the last setting it heard.
+The machine's own console (a hypervisor or physical console) is not affected, so
+it remains the break-glass path if the control plane is down.
+
+Turning native clients on is audited as a loosening. It puts back the native
+paths below.
+
+### Native clients, when they are allowed
+
+The packaged config binds the gateway's SSH listener to loopback; set
+`listen: "0.0.0.0:2222"` too, and put the port behind a VPN or an allowlist.
+Once it is reachable, `authorized_keys` is the whole perimeter. The target is
+encoded in the SSH username:
 
 ```sh
 ssh  ops:pay-01@argus.example.com
@@ -452,11 +487,8 @@ scp  report.csv ops+pay-01@argus.example.com:/tmp/
 ```
 
 `sftp` and `scp` need `+` rather than `:`, because their own syntax is
-`host:path` — they would read `ops:pay-01@gateway` as a path on a host called
-`ops`. `/` works too.
-
-SFTP sessions are decoded rather than relayed as opaque bytes, so a transfer
-becomes an audit event naming the file and the volume moved:
+`host:path`. SFTP through the gateway is decoded rather than relayed as opaque
+bytes, so a transfer becomes an audit event naming the file and the volume moved:
 
 ```
 notice   file.download   download /var/lib/payments/dump.sql (195.3 KB)
@@ -603,6 +635,11 @@ The console explains each of these where it appears; this is the list.
   started under — tightening policy does not stop a session in progress;
   terminating it does. A gateway that cannot reach the control plane keeps the
   policy it has, in either direction.
+- **Console-only access** is on by default: native ssh, scp, sftp and mstsc are
+  refused at the gateway, and an agent refuses a direct sshd login and reports
+  it. See [Connecting](#connecting).
+- **File transfers in the console** run as the account on the server, through
+  its agent, and each one is in the audit chain with its size and SHA-256.
 - **Port, agent and X11 forwarding** are implemented, not merely permitted.
   Local forwards dial from the *target*, so `-L` reaches what the target can
   reach and nothing more. A tunnel's contents are not recorded; its endpoints,

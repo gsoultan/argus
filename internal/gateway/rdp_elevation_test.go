@@ -86,3 +86,35 @@ func TestRDPStillBrokersAnOrdinaryPrincipal(t *testing.T) {
 			"elevation check is catching sessions it should not", failure)
 	}
 }
+
+// Console-only, the default, closes the native listener to everyone: mstsc
+// straight to the gateway is refused before a target is dialled.
+func TestRDPNativeClientIsRefusedWhenConsoleOnly(t *testing.T) {
+	targetAddr, fingerprint := windowsHost(t, rdp.ProtocolSSL)
+	host, portStr, _ := net.SplitHostPort(targetAddr)
+	port, _ := strconv.Atoi(portStr)
+
+	asset := Asset{
+		Hostname: "win-01", Address: host, Port: port,
+		Protocol: ProtocolRDP, Principals: []string{"ops"},
+	}
+	gwAddr, _ := startRDPGateway(t, asset, fingerprint, NewPolicyHolder())
+
+	conn, err := net.Dial("tcp", gwAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	if _, err := conn.Write(clientCR("ops:win-01", rdp.ProtocolSSL)); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := rdp.ReadPDU(conn)
+	if err != nil {
+		t.Fatalf("no refusal was sent: %v", err)
+	}
+	if _, failure, _ := rdp.ParseConnectionConfirm(reply); failure == 0 {
+		t.Error("a console-only gateway brokered a native RDP client")
+	}
+}

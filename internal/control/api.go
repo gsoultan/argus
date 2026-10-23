@@ -185,6 +185,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
 	// The browser terminal through an agent's tunnel; see terminal.go.
 	mux.HandleFunc("GET /api/v1/terminal", a.handleTerminal)
+	mux.HandleFunc("GET /api/v1/files", a.handleFiles)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
 	mux.HandleFunc("GET /api/v1/requests", a.getRequests)
@@ -614,6 +615,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// can show whether a change has reached the host. Absent from an
 		// agent older than the setting.
 		RecordingScope string `json:"recording_scope"`
+		// ConsoleOnly is whether the agent is refusing direct logins now.
+		// Absent from an agent older than console-only.
+		ConsoleOnly *bool `json:"console_only"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -636,23 +640,31 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// one call every agent already makes, so a change reaches the host within
 	// one interval without a second poll per host.
 	scope, err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
-		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.RecordingScope)
+		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.RecordingScope,
+		in.ConsoleOnly)
+	reply := map[string]any{"status": "ok", "recording_scope": scope}
+	// Console-only rides the same reply. Left out when the policy cannot be
+	// read, so the agent keeps what it last heard: a database blip must not
+	// switch direct logins on or off across the fleet.
+	if p, perr := a.store.GatewayPolicy(r.Context()); perr == nil {
+		reply["console_only"] = !p.AllowNativeClients
+	} else {
+		a.log.Error("heartbeat: read gateway policy", "error", perr)
+	}
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,
 			"detail", "coverage is not being tracked for this host; add it to the "+
 				"inventory or set its agent_hostname")
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "ok", "warning": "no matching asset; coverage not tracked",
-			"recording_scope": scope,
-		})
+		reply["warning"] = "no matching asset; coverage not tracked"
+		writeJSON(w, http.StatusOK, reply)
 		return
 	}
 	if err != nil {
 		a.fail(w, "heartbeat", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "recording_scope": scope})
+	writeJSON(w, http.StatusOK, reply)
 }
 
 func (a *API) postAsset(w http.ResponseWriter, r *http.Request) {

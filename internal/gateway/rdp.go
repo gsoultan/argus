@@ -189,6 +189,13 @@ func (s *RDPServer) handleConn(conn net.Conn) {
 	// through it -- which is what the README already claims of every elevated
 	// session, and what the risk flags already assume by treating
 	// administrator as root's equivalent.
+	if !s.srv.policy().AllowNativeClients {
+		s.log.Warn("native RDP client refused: console-only policy",
+			"principal", req.Principal, "target", asset.Hostname, "remote", remote,
+			"detail", ConsoleOnlyRefusal)
+		rdp.Refuse(conn, rdp.FailInconsistentFlags)
+		return
+	}
 	if s.srv.policy().IsElevated(req.Principal) {
 		s.log.Warn("rdp elevated principal refused: this path cannot identify the requester",
 			"principal", req.Principal, "target", asset.Hostname, "remote", remote,

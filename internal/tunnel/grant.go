@@ -53,6 +53,18 @@ type Grant struct {
 	// ClientAddr is the browser's address as the control plane saw it.
 	ClientAddr string    `json:"client_addr,omitempty"`
 	ExpiresAt  time.Time `json:"exp"`
+	// Service is what the grant opens: "terminal" or "files". Empty is a
+	// terminal, which is all a grant could open before files existed, so a
+	// files grant cannot be spent on a shell nor a terminal grant on files.
+	Service string `json:"svc,omitempty"`
+}
+
+// ForService reports whether g may open svc.
+func (g Grant) ForService(svc string) bool {
+	if g.Service == "" {
+		return svc == "terminal"
+	}
+	return g.Service == svc
 }
 
 // GrantKeyFromSecret derives the grant signing key from the control plane's

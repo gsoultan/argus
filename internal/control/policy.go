@@ -20,6 +20,12 @@ type GatewayPolicy struct {
 	AllowRemoteForward bool `json:"allowRemoteForward"`
 	AllowAgentForward  bool `json:"allowAgentForward"`
 	AllowX11Forward    bool `json:"allowX11Forward"`
+	// AllowNativeClients lets ssh, scp, sftp and mstsc reach a server without
+	// the console: through the gateway's own listeners, or straight to sshd
+	// on a host whose agent enforces it. False, the default, is console-only:
+	// every session opens from the console, through the agent. A console
+	// older than the field sends nothing for it, which closes it.
+	AllowNativeClients bool `json:"allowNativeClients"`
 
 	ProxySftpSubsystem        bool `json:"proxySftpSubsystem"`
 	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
@@ -49,6 +55,7 @@ func DefaultGatewayPolicy() GatewayPolicy {
 		AllowRemoteForward:        false,
 		AllowAgentForward:         false,
 		AllowX11Forward:           false,
+		AllowNativeClients:        false,
 		ProxySftpSubsystem:        true,
 		FailClosedOnRecordingLoss: true,
 		RequireEbpfForRoot:        true,
@@ -63,12 +70,12 @@ func (s *Store) GatewayPolicy(ctx context.Context) (GatewayPolicy, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT allow_local_forward, allow_remote_forward, allow_agent_forward,
 		       allow_x11_forward, proxy_sftp_subsystem, fail_closed_on_recording_loss,
-		       require_ebpf_for_root,
+		       require_ebpf_for_root, allow_native_clients,
 		       to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), updated_by
 		  FROM gateway_policy WHERE id = TRUE`).Scan(
 		&p.AllowLocalForward, &p.AllowRemoteForward, &p.AllowAgentForward,
 		&p.AllowX11Forward, &p.ProxySftpSubsystem, &p.FailClosedOnRecordingLoss,
-		&p.RequireEbpfForRoot,
+		&p.RequireEbpfForRoot, &p.AllowNativeClients,
 		&p.UpdatedAt, &p.UpdatedBy)
 	if err != nil {
 		return DefaultGatewayPolicy(), fmt.Errorf("read gateway policy: %w", err)
@@ -93,12 +100,13 @@ func (s *Store) SaveGatewayPolicy(
 			proxy_sftp_subsystem            = $5,
 			fail_closed_on_recording_loss   = $6,
 			require_ebpf_for_root           = $7,
+			allow_native_clients            = $9,
 			updated_at                      = now(),
 			updated_by                      = $8
 		WHERE id = TRUE`,
 		p.AllowLocalForward, p.AllowRemoteForward, p.AllowAgentForward,
 		p.AllowX11Forward, p.ProxySftpSubsystem, p.FailClosedOnRecordingLoss,
-		p.RequireEbpfForRoot, actor)
+		p.RequireEbpfForRoot, actor, p.AllowNativeClients)
 	if err != nil {
 		return GatewayPolicy{}, fmt.Errorf("save gateway policy: %w", err)
 	}
@@ -126,6 +134,9 @@ var policyFields = []policyField{
 		"root on the gateway can sign challenges with the user's keys"},
 	{"X11 forwarding", func(p GatewayPolicy) bool { return p.AllowX11Forward }, true,
 		"broad attack surface, rarely needed for server administration"},
+	{"native clients (ssh, scp, sftp, mstsc without the console)",
+		func(p GatewayPolicy) bool { return p.AllowNativeClients }, true,
+		"sessions and file transfers can open without the console, and direct logins to agent hosts are let through"},
 	{"SFTP subsystem proxying", func(p GatewayPolicy) bool { return p.ProxySftpSubsystem }, false,
 		"file transfers stop producing per-file audit events"},
 	{"fail closed on recording loss", func(p GatewayPolicy) bool { return p.FailClosedOnRecordingLoss }, false,

@@ -73,7 +73,7 @@ describe('sessions', () => {
 
 describe('settings', () => {
   it('renders switches that reflect stored policy rather than a default prop', async () => {
-    await renderRoute('/settings')
+    await renderRoute('/settings?section=channels')
     const x11 = await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
     const sftp = await screen.findByRole('switch', { name: 'Proxy SFTP as a subsystem' })
     // The closed defaults, read from the store — not `defaultChecked`, which is
@@ -83,7 +83,7 @@ describe('settings', () => {
   })
 
   it('offers no save until something actually changes', async () => {
-    await renderRoute('/settings')
+    await renderRoute('/settings?section=channels')
     await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
     expect(screen.queryByRole('button', { name: /review \d+ change/i })).not.toBeInTheDocument()
 
@@ -93,8 +93,14 @@ describe('settings', () => {
     expect(screen.getAllByText('unsaved')).toHaveLength(2)
   })
 
-  it('opens one section at a time from the list', async () => {
+  it('opens on how people connect', async () => {
     await renderRoute('/settings')
+    expect(await screen.findByRole('switch', { name: /allow native clients/i })).not.toBeChecked()
+    expect(screen.getByText('Console only')).toBeInTheDocument()
+  })
+
+  it('opens one section at a time from the list', async () => {
+    await renderRoute('/settings?section=channels')
     await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
     expect(screen.queryByRole('switch', { name: /fail closed/i })).not.toBeInTheDocument()
 
@@ -104,7 +110,7 @@ describe('settings', () => {
   })
 
   it('names the loosening before applying it', async () => {
-    await renderRoute('/settings')
+    await renderRoute('/settings?section=channels')
     const agent = await screen.findByRole('switch', { name: 'Allow SSH agent forwarding' })
     fireEvent.click(agent)
     fireEvent.click(await screen.findByRole('button', { name: /review 1 change/i }))
@@ -114,7 +120,7 @@ describe('settings', () => {
   })
 
   it('discards edits without touching the store', async () => {
-    await renderRoute('/settings')
+    await renderRoute('/settings?section=channels')
     const x11 = await screen.findByRole('switch', { name: 'Allow X11 forwarding' })
     fireEvent.click(x11)
     fireEvent.click(await screen.findByRole('button', { name: /discard/i }))
