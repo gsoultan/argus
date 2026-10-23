@@ -88,6 +88,11 @@ func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
 		InsecureSkipVerify: true,
 		ServerName:         hostname,
 		MinVersion:         tls.VersionTLS12,
+		// CredSSP runs inside this channel, and Windows' server side of it
+		// answers the first NTLM message with an internal-error alert when the
+		// channel is TLS 1.3. The Windows client stays on 1.2 for the same
+		// reason.
+		MaxVersion: tls.VersionTLS12,
 	})
 	if err := conn.Handshake(); err != nil {
 		raw.Close()
