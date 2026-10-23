@@ -358,8 +358,8 @@ jobs:
             -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
           set +e
           out=$("$tmp/termdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
-            -ticket "$tkt" -target "$host" -principal argusdrill -after-output \
-            -input $'whoami\recho home=%USERPROFILE%\rtype nul > "%USERPROFILE%\\through-argus"\rexit 7\r' \
+            -ticket "$tkt" -target "$host" -principal argusdrill -after-output -literal-cr \
+            -input 'whoami\recho home=%USERPROFILE%\rtype nul > "%USERPROFILE%\through-argus"\rexit 7\r' \
             2>"$tmp/term.err")
           code=$?
           set -e
@@ -385,7 +385,7 @@ jobs:
           tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
             -d "{\"target\":\"$host\",\"principal\":\"CORP\\\\ana\"}" | jq -r .ticket)
           if [ "$tkt" != null ] && "$tmp/termdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
-               -ticket "$tkt" -target "$host" -principal 'CORP\ana' -input $'exit\r' 2>&1; then
+               -ticket "$tkt" -target "$host" -principal 'CORP\ana' -literal-cr -input 'exit\r' 2>&1; then
             echo "::error::a session for a domain account was opened"; exit 1
           fi
 

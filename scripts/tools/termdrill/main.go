@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -43,7 +44,13 @@ func main() {
 	// the prompt before typing; this waits for it, and types a line at a time.
 	afterOutput := flag.Bool("after-output", false,
 		"wait for the shell's first output, then type the input one line at a time")
+	// Git for Windows' bash drops carriage returns from arguments it builds,
+	// so a drill there cannot pass a real Enter; it writes \r instead.
+	literalCR := flag.Bool("literal-cr", false, `read the two characters \r in the input as Enter`)
 	flag.Parse()
+	if *literalCR {
+		*input = strings.ReplaceAll(*input, `\r`, "\r")
+	}
 
 	pool := x509.NewCertPool()
 	if *caFile != "" {
