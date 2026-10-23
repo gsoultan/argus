@@ -15,6 +15,8 @@ never an address. Code: `internal/tunnel` (wire format, both transports),
   hijacked into yamux. Always on, on `listen`. The 101 advertises the QUIC port;
   the agent then tries QUIC in the background and moves when it works.
   QUIC failing parks the agent on HTTPS for 10 minutes before trying again.
+  yamux's stream window is 1 MB (`yamuxWindow`), not the 256 KB default: a
+  stream carries one window per round trip. Capacity: `docs/capacity.md`.
 
 ## Rules
 

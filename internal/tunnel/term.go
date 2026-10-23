@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 )
 
 /*
@@ -31,13 +32,24 @@ const (
 // protocol produces.
 const MaxFrame = 256 << 10
 
+// frameBufs holds the buffers frames are assembled in. Every 32 KB a
+// session prints is one frame, so a fresh buffer each time was 40 KB of
+// garbage per 32 KB relayed. io.Writer must not retain what it is given, so
+// a buffer is free again once Write returns.
+var frameBufs = sync.Pool{New: func() any { b := make([]byte, 0, 5+32<<10); return &b }}
+
 // WriteFrame writes one frame in a single Write, so frames from two
 // goroutines cannot interleave as long as each holds the writer.
 func WriteFrame(w io.Writer, typ byte, payload []byte) error {
 	if len(payload) > MaxFrame {
 		return fmt.Errorf("tunnel: frame of %d bytes exceeds %d", len(payload), MaxFrame)
 	}
-	buf := make([]byte, 5+len(payload))
+	bp := frameBufs.Get().(*[]byte)
+	defer frameBufs.Put(bp)
+	if cap(*bp) < 5+len(payload) {
+		*bp = make([]byte, 0, 5+len(payload))
+	}
+	buf := (*bp)[:5+len(payload)]
 	buf[0] = typ
 	binary.BigEndian.PutUint32(buf[1:5], uint32(len(payload)))
 	copy(buf[5:], payload)
