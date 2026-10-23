@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"time"
@@ -215,7 +216,10 @@ func serveTunnel(ctx context.Context, sess tunnel.Session, cfg TunnelConfig, log
 			// Over the bound: refuse rather than queue, so a flood of opens
 			// cannot pin memory or goroutines on the host.
 			_ = st.SetDeadline(time.Now().Add(tunnel.HeaderTimeout))
-			_ = tunnel.WriteJSON(st, tunnel.Answer{Error: "too many streams"})
+			_ = tunnel.WriteJSON(st, tunnel.Answer{Error: fmt.Sprintf(
+				"this server already has %d sessions and file transfers open through "+
+					"Argus, the most its agent takes at once; close one and try again",
+				cfg.MaxStreams)})
 			_ = st.Close()
 			continue
 		}
