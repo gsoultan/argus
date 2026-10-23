@@ -358,7 +358,7 @@ jobs:
             -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
           set +e
           out=$("$tmp/termdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
-            -ticket "$tkt" -target "$host" -principal argusdrill \
+            -ticket "$tkt" -target "$host" -principal argusdrill -after-output \
             -input $'whoami\recho home=%USERPROFILE%\rtype nul > "%USERPROFILE%\\through-argus"\rexit 7\r' \
             2>"$tmp/term.err")
           code=$?
