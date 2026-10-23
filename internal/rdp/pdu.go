@@ -168,16 +168,22 @@ func ParseDemandActive(body []byte) (DemandActive, error) {
 
 // Capability set types (MS-RDPBCGR 2.2.7).
 const (
-	capGeneral    uint16 = 1
-	capBitmap     uint16 = 2
-	capOrder      uint16 = 3
-	capPointer    uint16 = 8
-	capShare      uint16 = 9
-	capColorCache uint16 = 10
-	capInput      uint16 = 13
-	capBrush      uint16 = 15
-	capGlyphCache uint16 = 16
-	capSound      uint16 = 12
+	capGeneral          uint16 = 1
+	capBitmap           uint16 = 2
+	capOrder            uint16 = 3
+	capBitmapCache      uint16 = 4
+	capControl          uint16 = 5
+	capWindowActivation uint16 = 7
+	capPointer          uint16 = 8
+	capShare            uint16 = 9
+	capColorCache       uint16 = 10
+	capSound            uint16 = 12
+	capInput            uint16 = 13
+	capFont             uint16 = 14
+	capBrush            uint16 = 15
+	capGlyphCache       uint16 = 16
+	capOffscreenCache   uint16 = 17
+	capVirtualChannel   uint16 = 20
 )
 
 // ConfirmActivePDU builds the client's answer to a demand.
@@ -191,20 +197,37 @@ const (
 // sending bitmap updates. That is a real trade: orders are more compact for
 // line drawing and window furniture, and bitmaps are what this decoder reads.
 // Claiming orders would be faster and wrong.
+//
+// Every set MS-RDPBCGR 2.2.7 calls mandatory for a client is sent, including
+// the caches Argus never uses: Windows ends the connection without a word
+// over a confirm active that leaves one out or sizes one wrong, where
+// FreeRDP's server lets it pass.
 func ConfirmActivePDU(shareID uint32, userID uint16, width, height, depth int) []byte {
-	caps := generalCaps()
-	caps = append(caps, bitmapCaps(width, height, depth)...)
-	caps = append(caps, orderCaps()...)
-	caps = append(caps, pointerCaps()...)
-	caps = append(caps, inputCaps()...)
-	caps = append(caps, brushCaps()...)
-	caps = append(caps, glyphCaps()...)
-	caps = append(caps, soundCaps()...)
-	caps = append(caps, colorCacheCaps()...)
-	caps = append(caps, shareCaps()...)
+	sets := [][]byte{
+		generalCaps(),
+		bitmapCaps(width, height, depth),
+		orderCaps(),
+		bitmapCacheCaps(depth),
+		pointerCaps(),
+		inputCaps(),
+		brushCaps(),
+		glyphCaps(),
+		offscreenCaps(),
+		virtualChannelCaps(),
+		soundCaps(),
+		controlCaps(),
+		windowActivationCaps(),
+		fontCaps(),
+		colorCacheCaps(),
+		shareCaps(),
+	}
+	var caps []byte
+	for _, set := range sets {
+		caps = append(caps, set...)
+	}
 
 	const source = "MSTSC"
-	numCaps := 10
+	numCaps := len(sets)
 
 	body := make([]byte, 0, 32+len(caps))
 	body = binary.LittleEndian.AppendUint32(body, shareID)
@@ -264,6 +287,7 @@ func bitmapCaps(width, height, depth int) []byte {
 	// resolution change.
 	binary.LittleEndian.PutUint16(b[14:16], 1)
 	binary.LittleEndian.PutUint16(b[16:18], 1) // bitmap compression
+	binary.LittleEndian.PutUint16(b[20:22], 1) // multipleRectangleSupport: must be set
 	return capSet(capBitmap, b)
 }
 
@@ -280,17 +304,62 @@ func orderCaps() []byte {
 	binary.LittleEndian.PutUint16(b[22:24], 20) // desktopSaveYGranularity
 	binary.LittleEndian.PutUint16(b[26:28], 1)  // maximumOrderLevel
 	binary.LittleEndian.PutUint16(b[28:30], 0)  // numberFonts
-	// ORDERFLAGS_ZEROBOUNDSDELTASSUPPORT only. NEGOTIATEORDERSUPPORT is
-	// deliberately not set.
-	binary.LittleEndian.PutUint16(b[30:32], 0x0008)
-	// orderSupport array stays zero: nothing is claimed.
-	binary.LittleEndian.PutUint32(b[64:68], 0)      // desktopSaveSize
-	binary.LittleEndian.PutUint16(b[72:74], 0x06A1) // textANSICodePage
+	// NEGOTIATEORDERSUPPORT and ZEROBOUNDSDELTASSUPPORT, which the
+	// specification requires, and COLORINDEXSUPPORT. Negotiating orders with
+	// the support array left zero is what claims none of them.
+	binary.LittleEndian.PutUint16(b[30:32], 0x0002|0x0008|0x0020)
+	// orderSupport (32:64), textFlags, orderSupportExFlags: zero.
+	binary.LittleEndian.PutUint32(b[72:76], 230400) // desktopSaveSize
 	return capSet(capOrder, b)
 }
 
-func pointerCaps() []byte {
+// bitmapCacheCaps declares the revision 1 bitmap cache, with the sizes
+// Windows' own clients use. The cache is filled through drawing orders, which
+// are not claimed, so it stays empty.
+func bitmapCacheCaps(depth int) []byte {
+	bytesPerPixel := uint16((depth + 7) / 8)
+	b := make([]byte, 36)
+	binary.LittleEndian.PutUint16(b[24:26], 600)
+	binary.LittleEndian.PutUint16(b[26:28], 256*bytesPerPixel)
+	binary.LittleEndian.PutUint16(b[28:30], 300)
+	binary.LittleEndian.PutUint16(b[30:32], 1024*bytesPerPixel)
+	binary.LittleEndian.PutUint16(b[32:34], 262)
+	binary.LittleEndian.PutUint16(b[34:36], 4096*bytesPerPixel)
+	return capSet(capBitmapCache, b)
+}
+
+// offscreenCaps declares no offscreen bitmap cache.
+func offscreenCaps() []byte {
+	return capSet(capOffscreenCache, make([]byte, 8))
+}
+
+// virtualChannelCaps declares uncompressed virtual channel traffic. No
+// channel is joined (see clientNetworkData); the set is still mandatory.
+func virtualChannelCaps() []byte {
+	return capSet(capVirtualChannel, make([]byte, 8))
+}
+
+func controlCaps() []byte {
 	b := make([]byte, 8)
+	binary.LittleEndian.PutUint16(b[4:6], 2) // controlInterest: never
+	binary.LittleEndian.PutUint16(b[6:8], 2) // detachInterest: never
+	return capSet(capControl, b)
+}
+
+func windowActivationCaps() []byte {
+	return capSet(capWindowActivation, make([]byte, 8))
+}
+
+func fontCaps() []byte {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint16(b[0:2], 1) // FONTSUPPORT_FONTLIST
+	return capSet(capFont, b)
+}
+
+func pointerCaps() []byte {
+	// colorPointerFlag, colorPointerCacheSize, pointerCacheSize: the set is
+	// ten bytes long, and Windows reads its length as written.
+	b := make([]byte, 6)
 	binary.LittleEndian.PutUint16(b[0:2], 1)  // colorPointerFlag
 	binary.LittleEndian.PutUint16(b[2:4], 20) // colorPointerCacheSize
 	binary.LittleEndian.PutUint16(b[4:6], 20)

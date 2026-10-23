@@ -161,12 +161,13 @@ func TestOrderCapabilitiesClaimNothing(t *testing.T) {
 	pdu := ConfirmActivePDU(1, 1004, 1024, 768, 24)
 	caps := capability(t, pdu, capOrder)
 
+	// Negotiation is on, as the specification requires of a client; it is
+	// the support array, entirely clear, that claims nothing.
 	const negotiateOrderSupport = 0x0002
 	flags := binary.LittleEndian.Uint16(caps[30:32])
-	if flags&negotiateOrderSupport != 0 {
-		t.Error("order negotiation was requested but no orders can be rendered")
+	if flags&negotiateOrderSupport == 0 {
+		t.Error("order negotiation is off, which a client must not send")
 	}
-	// The support array must be entirely clear.
 	if !bytes.Equal(caps[32:64], make([]byte, 32)) {
 		t.Errorf("orderSupport claims primitives: %x", caps[32:64])
 	}
@@ -222,4 +223,16 @@ func decodeUTF16LE(b []byte) string {
 		out = append(out, rune(uint16(b[i])|uint16(b[i+1])<<8))
 	}
 	return string(out)
+}
+
+func TestTheConfirmActiveCarriesEveryMandatorySet(t *testing.T) {
+	pdu := ConfirmActivePDU(1, 1004, 1024, 768, 16)
+	for _, set := range []uint16{capGeneral, capBitmap, capOrder, capBitmapCache,
+		capPointer, capInput, capBrush, capGlyphCache, capOffscreenCache,
+		capVirtualChannel, capSound} {
+		capability(t, pdu, set)
+	}
+	if got := len(capability(t, pdu, capPointer)); got != 6 {
+		t.Errorf("pointer set body is %d bytes, want 6", got)
+	}
 }
