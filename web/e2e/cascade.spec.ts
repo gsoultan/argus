@@ -36,8 +36,8 @@ const SHIPPED = 'http://localhost:5510'
 const REFERENCE = 'http://localhost:5512'
 
 const ROUTES = [
-  '/', '/sessions', '/assets', '/requests', '/audit', '/users', '/settings',
-  '/connect', '/coverage',
+  '/', '/sessions', '/assets', '/assets?view=manage', '/requests', '/audit', '/users',
+  '/settings', '/connect', '/coverage',
 ]
 
 /**
@@ -53,7 +53,8 @@ const ROUTES = [
  */
 const DETAIL_ROUTES: Array<[label: string, listPath: string]> = [
   ['a session detail', '/sessions'],
-  ['an asset detail', '/assets'],
+  // The rows are on the Manage view; Servers opens on cards.
+  ['an asset detail', '/assets?view=manage'],
 ]
 
 /**
