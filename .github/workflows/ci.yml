@@ -295,8 +295,10 @@ jobs:
           icacls "$(cygpath -w "$tmp/server.key")" /inheritance:r /grant:r "$USERNAME:R" \
             /grant:r SYSTEM:F /grant:r Administrators:F >/dev/null
 
+          # The shipped example, pointed at this runner's files. The packaged
+          # control.yaml is empty on purpose: it starts the setup page.
           sed -e "s#/etc/argus/tls/#$tmp/#" -e 's#dir: "/usr/share/argus/console"#dir: ""#' \
-            packaging/config/control.yaml > "$tmp/control.yaml"
+            packaging/config/control.example.yaml > "$tmp/control.yaml"
           export ARGUS_DATABASE_URL="$PGURL" ARGUS_SIGNING_SECRET=$(openssl rand -hex 32) \
             ARGUS_REPORTER_TOKEN=$(openssl rand -hex 32)
           "$tmp/argus-control.exe" -config "$tmp/control.yaml" >"$tmp/control.log" 2>&1 &
