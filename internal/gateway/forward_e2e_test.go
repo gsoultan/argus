@@ -329,8 +329,22 @@ func serveTargetGlobalRequests(conn ssh.Conn, reqs <-chan *ssh.Request) {
 	}
 }
 
-// startGateway builds a real gateway in front of a real target.
+// startGateway builds a real gateway in front of a real target, with native
+// clients allowed: these tests are about what a native session may do once
+// it is in, so the console-only refusal would stop every one at the door.
 func startGateway(t *testing.T, policy *PolicyHolder) (addr string, clientSigner ssh.Signer) {
+	t.Helper()
+	if policy == nil {
+		policy = NewPolicyHolder()
+	}
+	p := policy.Get()
+	p.AllowNativeClients = true
+	policy.Set(p)
+	return startGatewayAsIs(t, policy)
+}
+
+// startGatewayAsIs is startGateway without opening native clients.
+func startGatewayAsIs(t *testing.T, policy *PolicyHolder) (addr string, clientSigner ssh.Signer) {
 	t.Helper()
 	drainTargetConns()
 	dir := t.TempDir()
@@ -784,7 +798,7 @@ func TestLooseningDoesNotReachSessionsAlreadyOpen(t *testing.T) {
 		t.Fatal("forwarding should be refused while policy is closed")
 	}
 
-	policy.Set(Policy{AllowLocalForward: true})
+	policy.Set(Policy{AllowLocalForward: true, AllowNativeClients: true})
 
 	if c, err := early.Dial("tcp", echo); err == nil {
 		_ = c.Close()
@@ -985,5 +999,32 @@ func TestAgentForwardingIsRefusedByDefault(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("a closed policy must refuse agent forwarding")
+	}
+}
+
+// Console-only is the default. A native client with a valid key must be told
+// to use the console, and must not reach the target: the refusal arrives as
+// the session's stderr and a failing exit, before any shell or scp runs.
+func TestNativeClientIsRefusedByDefault(t *testing.T) {
+	addr, signer := startGatewayAsIs(t, NewPolicyHolder())
+	cli := dialGateway(t, addr, signer)
+
+	s, err := cli.NewSession()
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	defer s.Close()
+	stdout, _ := s.StdoutPipe()
+	stderr, _ := s.StderrPipe()
+	if err := s.Start("scp -t /tmp"); err == nil {
+		t.Fatal("a console-only gateway accepted a native command")
+	}
+	out, _ := io.ReadAll(stdout)
+	msg, _ := io.ReadAll(stderr)
+	if len(out) != 0 {
+		t.Errorf("a refused session produced output from the target: %q", out)
+	}
+	if !strings.Contains(string(msg), "Argus console only") {
+		t.Errorf("refusal does not point at the console: %q", msg)
 	}
 }

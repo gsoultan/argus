@@ -48,3 +48,28 @@ describe('opening a terminal', () => {
     expect(terminalEndpoint(false, '')).toBe('')
   })
 })
+
+describe('console-only', () => {
+  it('offers file transfer through the agent, and no native client', async () => {
+    withHost(true)
+    await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
+    expect(await screen.findByRole('button', { name: /transfer files/i })).toBeEnabled()
+    expect(screen.getByText(/this console is the only way in/i)).toBeInTheDocument()
+    expect(screen.queryByText(/prefer your own client/i)).not.toBeInTheDocument()
+  }, 15_000)
+
+  it('does not offer file transfer through the gateway', async () => {
+    withHost(false)
+    await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
+    expect(await screen.findByText(/through the gateway\./i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /transfer files/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the native client line only when the policy allows it', async () => {
+    withHost(true)
+    const policy = await api.policy()
+    vi.spyOn(api, 'policy').mockResolvedValue({ ...policy, allowNativeClients: true })
+    await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
+    expect(await screen.findByText(/prefer your own client/i)).toBeInTheDocument()
+  })
+})

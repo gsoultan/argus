@@ -325,6 +325,17 @@ func run() error {
 	// runs under the safe configuration, so a control plane that is slow or
 	// absent at boot can never be the reason a channel was permitted.
 	policy := gateway.NewPolicyHolder()
+	if rep == nil || !rep.Enabled() {
+		// Console-only needs a console. A gateway with no control plane has
+		// none -- no tickets, no browser terminal -- so refusing native clients
+		// would refuse everything. It keeps them, and says so.
+		p := policy.Get()
+		p.AllowNativeClients = true
+		policy.Set(p)
+		log.Warn("no control plane: native ssh, scp and sftp are allowed",
+			"detail", "console-only access needs argus-control; configure `control:` "+
+				"to make every session open from the console")
+	}
 
 	srv, err := gateway.NewServer(gateway.Config{
 		Listen:             cfg.Listen,

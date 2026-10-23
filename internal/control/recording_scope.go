@@ -154,13 +154,16 @@ func (a *API) putRecordingScope(w http.ResponseWriter, r *http.Request) {
 // an auditor reads and the one that cannot be quietly edited afterwards.
 func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Hostname   string    `json:"hostname"`
-		Principal  string    `json:"principal"`
-		ClientAddr string    `json:"client_addr"`
-		Command    string    `json:"command"`
-		Origin     string    `json:"origin"`
-		Scope      string    `json:"scope"`
-		At         time.Time `json:"at"`
+		Hostname   string `json:"hostname"`
+		Principal  string `json:"principal"`
+		ClientAddr string `json:"client_addr"`
+		Command    string `json:"command"`
+		Origin     string `json:"origin"`
+		Scope      string `json:"scope"`
+		// Refused is a login the agent turned away because the deployment
+		// is console-only. Absent from an agent older than that.
+		Refused bool      `json:"refused"`
+		At      time.Time `json:"at"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/login"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -185,6 +188,32 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 	if from == "" {
 		from = "an unknown address"
 	}
+	if in.Refused {
+		// Not a bypass that happened: one that was tried and stopped. Still
+		// in the chain, because someone holding a working key to sshd on a
+		// console-only fleet is exactly what an auditor needs to find.
+		detail := fmt.Sprintf("%s tried to log in to %s from %s at %s to run %s without "+
+			"the Argus console. The deployment is console-only, so the agent refused the "+
+			"login before anything ran. Whoever holds that key or password can still "+
+			"reach sshd directly; remove it if it is not meant to exist.",
+			in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what)
+		if p, err := a.store.GatewayPolicy(r.Context()); err == nil && p.AllowNativeClients {
+			detail += " Native clients are allowed in the console's policy now, so the " +
+				"agent was not following the current setting; check the agent on this host."
+		}
+		if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+			Action:   "session.direct_refused",
+			Severity: "warning",
+			Target:   in.Hostname,
+			Detail:   detail,
+		}); err != nil {
+			a.fail(w, "report login", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
+		return
+	}
+
 	detail := fmt.Sprintf("%s logged in to %s from %s at %s and ran %s without "+
 		"passing through Argus. The host records Argus sessions only, so the agent "+
 		"let it through unrecorded: there is no replay, and no approval, time window "+

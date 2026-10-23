@@ -127,6 +127,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.ArchivedAt,
 		m.RecordingScope,
 		m.AgentRecordingScope,
+		m.AgentConsoleOnly,
 	}
 }
 
@@ -176,6 +177,7 @@ func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
 		m.RequireEbpfForRoot,
 		m.UpdatedAt,
 		m.UpdatedBy,
+		m.AllowNativeClients,
 	}
 }
 

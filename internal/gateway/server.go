@@ -536,6 +536,19 @@ func (s *Server) handleConn(nConn net.Conn) {
 	_ = nConn.SetDeadline(time.Time{})
 
 	ext := sshConn.Permissions.Extensions
+
+	// Console-only is decided before a target is dialled or a recording
+	// opened: a native client must not get as far as reaching the host.
+	if !s.policy().AllowNativeClients {
+		s.log.Warn("native SSH client refused: console-only policy",
+			"user", ext["argus-user"],
+			"target", ext["argus-target"],
+			"principal", ext["argus-principal"],
+			"remote", nConn.RemoteAddr().String())
+		s.rejectAll(chans, ConsoleOnlyRefusal)
+		return
+	}
+
 	sess, err := s.newSession(sshConn, ext)
 	if err != nil {
 		s.log.Warn("session refused",

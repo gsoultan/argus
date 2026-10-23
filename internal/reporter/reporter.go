@@ -106,6 +106,10 @@ type HeartbeatReply struct {
 	// RecordingScope is the console's setting for this host. Empty from a
 	// control plane older than the setting.
 	RecordingScope string `json:"recording_scope"`
+	// ConsoleOnly is whether this host must refuse logins that did not come
+	// through Argus. Nil from a control plane older than the setting, or one
+	// that could not read its policy: the agent keeps what it last heard.
+	ConsoleOnly *bool `json:"console_only"`
 }
 
 // HeartbeatWithReply reports like Heartbeat and returns the control plane's

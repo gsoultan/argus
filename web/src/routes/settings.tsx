@@ -38,6 +38,16 @@ interface FieldSpec {
   riskOn: boolean
 }
 
+const ACCESS_POLICY: FieldSpec[] = [
+  {
+    key: 'allowNativeClients',
+    label: 'Allow native clients (ssh, scp, sftp, mstsc)',
+    description:
+      'Off, every session and every file transfer opens here in the console, through the server\'s agent: the gateway refuses ssh, scp, sftp and mstsc, and an agent refuses a login that reached sshd without Argus, reporting the attempt. On lets them in again.',
+    riskOn: true,
+  },
+]
+
 const SSH_POLICY: FieldSpec[] = [
   {
     key: 'allowLocalForward',
@@ -92,7 +102,7 @@ const RECORDING_POLICY: FieldSpec[] = [
   },
 ]
 
-const ALL_FIELDS = [...SSH_POLICY, ...RECORDING_POLICY]
+const ALL_FIELDS = [...ACCESS_POLICY, ...SSH_POLICY, ...RECORDING_POLICY]
 
 /** Roles the control plane lets change gateway policy. */
 const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
@@ -209,6 +219,23 @@ function Settings() {
           <Grid.Col span={{ base: 12, lg: 7 }}>
             <Stack gap="sm">
               <PolicyCard
+                icon={IconShieldLock}
+                title="How people connect"
+                note={
+                  <>
+                    Console-only is the default. A server&apos;s agent applies a change at its
+                    next check-in, about a minute; each server&apos;s page says whether its agent
+                    has confirmed it. A server with no agent cannot refuse a direct login, so
+                    close sshd to everything but the agent there, or install one.
+                  </>
+                }
+                fields={ACCESS_POLICY}
+                policy={current}
+                saved={saved ?? null}
+                disabled={!canEdit || savePolicy.isPending}
+                onChange={set}
+              />
+              <PolicyCard
                 icon={IconTerminal2}
                 title="SSH channel policy"
                 note={
@@ -240,18 +267,33 @@ function Settings() {
 
           <Grid.Col span={{ base: 12, lg: 5 }}>
             <Stack gap="sm">
-              <SectionCard
-                title="Gateway endpoint"
-                icon={IconNetwork}
-                iconColor="sky"
-                description="Users connect with their normal client. The target is encoded in the username, so there is nothing to install and existing tooling keeps working."
-              >
-                <Code block fz={FS.digest}>
-                  {`ssh ops:db-01@argus.northwind.id
+              {current?.allowNativeClients ? (
+                <SectionCard
+                  title="Gateway endpoint"
+                  icon={IconNetwork}
+                  iconColor="sky"
+                  description="Native clients are allowed, so users can also connect with their normal client. The target is encoded in the username."
+                >
+                  <Code block fz={FS.digest}>
+                    {`ssh ops:db-01@argus.northwind.id
 scp report.csv ops:db-01@argus.northwind.id:/tmp/
 sftp ops:db-01@argus.northwind.id`}
-                </Code>
-              </SectionCard>
+                  </Code>
+                </SectionCard>
+              ) : (
+                <SectionCard
+                  title="Console only"
+                  icon={IconNetwork}
+                  iconColor="sky"
+                  description="Sessions open from Connect: pick a server, pick an account, and the terminal, desktop or file browser opens here, through the server's agent."
+                >
+                  <Text size={FS.meta} c="dimmed" lh={1.5}>
+                    ssh, scp, sftp and mstsc to the gateway are refused with a message pointing
+                    here, and a direct login to a server with an agent is refused and written
+                    to the audit log.
+                  </Text>
+                </SectionCard>
+              )}
 
               <SectionCard
                 title="Certificate authority"

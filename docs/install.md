@@ -235,8 +235,9 @@ In `/etc/argus/gateway.env`, set the same `ARGUS_SIGNING_SECRET` and
 - `web.allowed_origins` must include the console's origin, for example
   `https://argus.example.com:8080`. A browser terminal from any other origin is
   refused.
-- `listen` stays on `127.0.0.1:2222` unless you want native `ssh` clients. The
-  browser terminal does not need it.
+- `listen` stays on `127.0.0.1:2222`. The deployment is console-only by
+  default, so the gateway refuses native `ssh`, `scp` and `sftp` there anyway;
+  open it only after turning on *Allow native clients* in Settings.
 
 ```sh
 sudo systemctl enable --now argus-gateway
@@ -318,11 +319,22 @@ It works as on Linux, with these differences:
 - There is no kernel command tracing on macOS, so recordings are terminal
   output only, and each session says so in the console.
 
+### Direct logins are refused
+
+The deployment is console-only by default (Settings → **How people connect**).
+While it is, the agent refuses any `ssh`, `scp` or `sftp` login that reached
+sshd without going through Argus, before anything runs, tells the person to use
+the console, and writes a `session.direct_refused` entry to the audit log. The
+agent remembers the setting in its state directory, so a restart during a
+control-plane outage keeps refusing. Use the machine's own console (hypervisor
+or physical) as the break-glass path.
+
 ### Which logins are recorded
 
-Each server's page in the console has **Which logins are recorded**. Logins
-through Argus are always recorded; this decides what happens when someone
-logs in to the server directly, skipping Argus:
+This applies only when native clients are allowed in Settings. Each server's
+page in the console has **Which logins are recorded**. Logins through Argus are
+always recorded; this decides what happens when someone logs in to the server
+directly, skipping Argus:
 
 - **Record logins through Argus and direct logins** (the default): the direct
   login is recorded too, and flagged as a bypass.

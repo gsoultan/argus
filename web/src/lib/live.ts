@@ -102,6 +102,11 @@ export function terminalEndpoint(viaAgent: boolean, gatewayUrl: string): string 
   }
 }
 
+/** The file browser's WebSocket endpoint, on the control plane. */
+export function filesEndpoint(): string {
+  return `${BASE}/api/v1/files`
+}
+
 /**
  * What this console is pointed at, for display in the header.
  *

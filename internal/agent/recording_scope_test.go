@@ -167,3 +167,70 @@ func TestTheShimReadsTheDecision(t *testing.T) {
 		t.Errorf("silence gave %+v, want record", d)
 	}
 }
+
+// Console-only refuses a direct login outright, whatever the recording scope,
+// and reports it. The reason travels as an error too, so a shim older than
+// the refusal still fails closed instead of letting the login through.
+func TestConsoleOnlyRefusesADirectLoginAndReportsIt(t *testing.T) {
+	for _, scope := range []RecordingScope{ScopeEveryLogin, ScopeArgusOnly} {
+		c, sock := testCollector(t)
+		c.SetScope(scope)
+		c.SetConsoleOnly(true)
+		refused := make(chan SessionStart, 1)
+		c.OnRefused = func(m SessionStart) { refused <- m }
+		c.OnUnrecorded = func(SessionStart) { t.Error("a refused login was reported as let through") }
+
+		conn, dec := startAs(t, sock, Direct)
+		r := readReply(t, conn, dec)
+		if !r.Refused || r.Record {
+			t.Fatalf("%s: decision = %+v, want refused", scope, r)
+		}
+		if r.Error == "" {
+			t.Errorf("%s: no error for a shim that predates the refusal", scope)
+		}
+		select {
+		case m := <-refused:
+			if m.Principal != "ops" || m.ClientAddr != "10.0.0.9" {
+				t.Errorf("report lost who and where: %+v", m)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: a refused login was not reported", scope)
+		}
+		if n := recordings(t, c); n != 0 {
+			t.Errorf("%s: %d recordings opened for a refused login", scope, n)
+		}
+		c.CloseWithin(time.Second)
+	}
+}
+
+// A session the gateway's browser terminal opened is an Argus session.
+func TestConsoleOnlyStillAdmitsABrokeredSession(t *testing.T) {
+	c, sock := testCollector(t)
+	defer c.CloseWithin(time.Second)
+	c.SetConsoleOnly(true)
+	c.OnRefused = func(SessionStart) { t.Error("a brokered session was refused") }
+
+	conn, dec := startAs(t, sock, Brokered)
+	if r := readReply(t, conn, dec); !r.Record || r.Refused {
+		t.Fatalf("decision = %+v, want record", r)
+	}
+}
+
+// The shim reads a refusal as "not allowed", not as a recording failure that
+// FailOpen could wave through.
+func TestShimReadsARefusalAsConsoleOnly(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		_ = json.NewEncoder(b).Encode(Decision{Type: "decision", Refused: true,
+			Reason: ConsoleOnlyReason, Error: ConsoleOnlyReason})
+	}()
+	d := awaitDecision(a, json.NewDecoder(a), 3*time.Second)
+	if !d.consoleOnly || d.refused || d.skip {
+		t.Fatalf("decision = %+v, want consoleOnly", d)
+	}
+	if d.reason == "" {
+		t.Error("the user is not told to use the console")
+	}
+}

@@ -6,13 +6,15 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAdjustments, IconDeviceDesktop, IconInfoCircle, IconPlugConnected,
-  IconServer2, IconTerminal2, IconUser, IconX,
+  IconAdjustments, IconDeviceDesktop, IconFolders, IconInfoCircle, IconPlugConnected,
+  IconServer2, IconShieldLock, IconTerminal2, IconUser, IconX,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader } from '~/components/page'
 import type { TerminalState } from '~/components/LiveTerminal'
-import { assetsQuery } from '~/lib/queries'
-import { GATEWAY_URL, isConfigured, terminalEndpoint, terminalTicket } from '~/lib/live'
+import { assetsQuery, policyQuery } from '~/lib/queries'
+import {
+  GATEWAY_URL, filesEndpoint, isConfigured, terminalEndpoint, terminalTicket,
+} from '~/lib/live'
 import { HostKeyBadge } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 
@@ -29,6 +31,9 @@ const LiveTerminal = lazy(() =>
 )
 const RDPScreen = lazy(() =>
   import('~/components/RDPScreen').then((m) => ({ default: m.RDPScreen })),
+)
+const FileBrowser = lazy(() =>
+  import('~/components/FileBrowser').then((m) => ({ default: m.FileBrowser })),
 )
 
 /**
@@ -60,6 +65,9 @@ const DEFAULT_PRINCIPALS = ['ops', 'deploy']
 
 function Connect() {
   const { data: assets } = useQuery(assetsQuery({}))
+  const { data: policy } = useQuery(policyQuery())
+  // Console-only unless the control plane says native clients are allowed.
+  const nativeAllowed = policy?.allowNativeClients === true
 
   const [gateway, setGateway] = useState(DEFAULT_GATEWAY)
   const [requesting, setRequesting] = useState(false)
@@ -71,7 +79,7 @@ function Connect() {
   // address from — that is the one case where the user has to supply it.
   const [showGateway, setShowGateway] = useState(!isConfigured())
   const [session, setSession] = useState<
-    { target: string; principal: string; protocol: 'ssh' | 'rdp'; viaAgent: boolean } | null
+    { target: string; principal: string; protocol: 'ssh' | 'rdp' | 'files'; viaAgent: boolean } | null
   >(null)
   const [state, setState] = useState<TerminalState>('connecting')
   const [detail, setDetail] = useState<string>()
@@ -136,11 +144,12 @@ function Connect() {
 
   if (session) {
     const isRDP = session.protocol === 'rdp'
+    const isFiles = session.protocol === 'files'
     return (
       <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
           crumbs={[{ label: 'Connect', to: '/connect' }, { label: session.target }]}
-          title={isRDP ? 'Remote Desktop' : 'Terminal'}
+          title={isRDP ? 'Remote Desktop' : isFiles ? 'Files' : 'Terminal'}
           status={
             <Badge
               color={state === 'live' ? 'sky' : state === 'error' ? 'rose' : 'slate'}
@@ -152,7 +161,9 @@ function Connect() {
           description={
             isRDP
               ? 'Brokered through the gateway — same policy, certificate pinning and recording as a desktop client.'
-              : session.viaAgent
+              : isFiles
+                ? `Read and written on the server by its Argus agent, as ${session.principal}. Every upload and download is in the audit log with its size and SHA-256.`
+                : session.viaAgent
                 ? 'Opened on the server by its Argus agent, which records it there before anything reaches you.'
                 : 'Brokered through the gateway — same policy, host-key verification and recording as ssh(1).'
           }
@@ -172,7 +183,18 @@ function Connect() {
         />
         <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} p={isRDP ? 'md' : undefined}>
           <Suspense fallback={<TerminalLoading />}>
-            {isRDP ? (
+            {isFiles ? (
+              <FileBrowser
+                endpoint={filesEndpoint()}
+                getTicket={getTicket}
+                target={session.target}
+                principal={session.principal}
+                onStateChange={(s, d) => {
+                  setState(s)
+                  setDetail(d)
+                }}
+              />
+            ) : isRDP ? (
               <RDPScreen
                 gatewayUrl={gateway}
                 target={session.target}
@@ -201,7 +223,7 @@ function Connect() {
     )
   }
 
-  const onConnect = async () => {
+  const onConnect = async (mode: 'session' | 'files' = 'session') => {
     if (!target) return
     setDenied(undefined)
     setRequesting(true)
@@ -216,14 +238,17 @@ function Connect() {
     // Handed to the terminal rather than discarded — this ticket is the
     // authorisation the user just obtained.
     heldTicket.current = res.ticket
-    setSession({ target, principal, protocol: selected?.protocol ?? 'ssh', viaAgent })
+    setSession({
+      target, principal, viaAgent,
+      protocol: mode === 'files' ? 'files' : (selected?.protocol ?? 'ssh'),
+    })
   }
 
   return (
     <Box>
       <PageHeader
         title="Connect"
-        description="Pick a server and an account, and the session opens here in the browser: a terminal for SSH, a desktop for Remote Desktop."
+        description="Pick a server and an account, and the session opens here in the browser: a terminal or file transfer for SSH, a desktop for Remote Desktop."
       />
 
       <PageBody>
@@ -343,15 +368,31 @@ function Connect() {
                       }.`
                     : 'Nothing is sent until you choose a host.'}
                 </Text>
-                <Button
-                  size="sm"
-                  leftSection={<IconPlugConnected size={15} />}
-                  disabled={!target || (!viaAgent && !gateway)}
-                  loading={requesting}
-                  onClick={onConnect}
-                >
-                  {isRDPTarget ? 'Open desktop' : 'Open terminal'}
-                </Button>
+                <Group gap="xs">
+                  {/* Files move through the agent only: it reads and writes as
+                      the account, and the control plane hashes what crosses. */}
+                  {viaAgent && (
+                    <Button
+                      size="sm"
+                      variant="light"
+                      leftSection={<IconFolders size={15} />}
+                      disabled={!target}
+                      loading={requesting}
+                      onClick={() => void onConnect('files')}
+                    >
+                      Transfer files
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    leftSection={<IconPlugConnected size={15} />}
+                    disabled={!target || (!viaAgent && !gateway)}
+                    loading={requesting}
+                    onClick={() => void onConnect()}
+                  >
+                    {isRDPTarget ? 'Open desktop' : 'Open terminal'}
+                  </Button>
+                </Group>
               </Group>
             </Stack>
           </Grid.Col>
@@ -387,21 +428,37 @@ function Connect() {
                 </Stack>
               </Card>
 
-              <Card style={{ borderStyle: 'dashed' }}>
-                <Group gap={SP.cozy} mb={SP.snug}>
-                  <ThemeIcon variant="light" color="slate" size={22} radius="sm">
-                    <IconTerminal2 size={13} />
-                  </ThemeIcon>
-                  <Text fw={600} size="sm">Prefer your own client?</Text>
-                </Group>
-                <Text size={FS.meta} c="dimmed" lh={1.5}>
-                  Nothing here is required. The target is encoded in the username, so ordinary
-                  tooling works unchanged and gets the identical controls:
-                </Text>
-                <Text size={FS.digest} ff="monospace" mt={SP.cozy} c="slate.2">
-                  ssh {principal}:{target?.split('.')[0] ?? 'HOST'}@argus.northwind.id
-                </Text>
-              </Card>
+              {nativeAllowed ? (
+                <Card style={{ borderStyle: 'dashed' }}>
+                  <Group gap={SP.cozy} mb={SP.snug}>
+                    <ThemeIcon variant="light" color="slate" size={22} radius="sm">
+                      <IconTerminal2 size={13} />
+                    </ThemeIcon>
+                    <Text fw={600} size="sm">Prefer your own client?</Text>
+                  </Group>
+                  <Text size={FS.meta} c="dimmed" lh={1.5}>
+                    Native clients are allowed on this deployment. The target is encoded in the
+                    username, so ordinary tooling gets the identical controls:
+                  </Text>
+                  <Text size={FS.digest} ff="monospace" mt={SP.cozy} c="slate.2">
+                    ssh {principal}:{target?.split('.')[0] ?? 'HOST'}@argus.northwind.id
+                  </Text>
+                </Card>
+              ) : (
+                <Card style={{ borderStyle: 'dashed' }}>
+                  <Group gap={SP.cozy} mb={SP.snug}>
+                    <ThemeIcon variant="light" color="teal" size={22} radius="sm">
+                      <IconShieldLock size={13} />
+                    </ThemeIcon>
+                    <Text fw={600} size="sm">This console is the only way in</Text>
+                  </Group>
+                  <Text size={FS.meta} c="dimmed" lh={1.5}>
+                    Terminals, desktops and file transfers all open from this page. ssh, scp,
+                    sftp and mstsc straight to the gateway or to a server are refused, and a
+                    refused attempt is written to the audit log.
+                  </Text>
+                </Card>
+              )}
 
               {/* Advanced, and collapsed once a control plane supplies the
                   address. It only has to be typed when there is no control

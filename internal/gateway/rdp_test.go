@@ -117,7 +117,9 @@ func clientCR(cookie string, protocols uint32) []byte {
 }
 
 // startRDPGateway wires a gateway in front of a fake Windows host.
-func startRDPGateway(t *testing.T, asset Asset, targetFingerprint string) (addr, recordings string) {
+// The native listener is under test here, so native clients are allowed
+// unless the caller passes a policy of its own.
+func startRDPGateway(t *testing.T, asset Asset, targetFingerprint string, policy ...*PolicyHolder) (addr, recordings string) {
 	t.Helper()
 
 	pins, err := hostkey.Open(filepath.Join(t.TempDir(), "known_hosts"), false)
@@ -141,6 +143,7 @@ func startRDPGateway(t *testing.T, asset Asset, targetFingerprint string) (addr,
 		cfg: Config{
 			Inventory: &Inventory{assets: map[string]Asset{asset.Hostname: asset}},
 			HostKeys:  pins,
+			Policy:    nativeAllowed(policy...),
 		},
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		sessions: map[string]*Session{},
@@ -410,6 +413,7 @@ func TestRDPRefusesToBrokerWhatItCannotRecord(t *testing.T) {
 		cfg: Config{
 			Inventory: &Inventory{assets: map[string]Asset{asset.Hostname: asset}},
 			HostKeys:  pins,
+			Policy:    nativeAllowed(),
 		},
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		sessions: map[string]*Session{},
@@ -480,4 +484,16 @@ func TestRDPRefusesToBrokerWhatItCannotRecord(t *testing.T) {
 	if len(rs.ActiveSessions()) != 0 {
 		t.Error("an unrecordable session was tracked as active")
 	}
+}
+
+// nativeAllowed is a policy holder with native clients open, or the one given.
+func nativeAllowed(given ...*PolicyHolder) *PolicyHolder {
+	if len(given) > 0 {
+		return given[0]
+	}
+	h := NewPolicyHolder()
+	p := h.Get()
+	p.AllowNativeClients = true
+	h.Set(p)
+	return h
 }

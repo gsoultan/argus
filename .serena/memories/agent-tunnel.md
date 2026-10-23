@@ -83,3 +83,24 @@ reader (posture, discovery, shim shell, tunnel lookup) goes through
 launchd daemon (no sandbox to escape there, no PAM session). No kernel
 tracing: execlog's non-Linux probe reports why. launchd job in
 `packaging/launchd/`. The "Agent on macOS" CI job is the install drill.
+
+## Files (`files` service)
+
+`GET /api/v1/files?target&principal&ticket` (WebSocket, `control/files.go`)
+redeems the same terminal ticket and signs a grant with `svc: "files"`.
+`Grant.ForService` keeps the two apart: a grant with no `svc` is a terminal
+(all an old control plane could sign), so a files grant never opens a shell
+and a terminal grant never opens files.
+
+The agent (`agent/files.go`) runs `argus-agent file-op list|download|upload`
+per request **as the account** -- `systemd-run --pipe --uid` on a systemd host
+for the same sandbox reason as the shell, a direct child with credentials
+elsewhere. The agent never reads or writes a user's file as root. Uploads go
+through a temp file and `link` (no clobber) or `rename` (overwrite).
+
+Frames are the terminal's (`tunnel/files.go`): `q` request, `a` answer, `d`
+data, `e` end of upload. One operation at a time; an error ends the operation,
+not the stream. The control plane hashes the bytes itself and writes
+`file.upload` / `file.download` with size and SHA-256, warning when the agent's
+count disagrees. The console's browser is `components/FileBrowser.tsx`, offered
+on Connect only when the agent's tunnel is up.

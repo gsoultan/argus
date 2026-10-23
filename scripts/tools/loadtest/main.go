@@ -22,8 +22,10 @@
 //   - the target's sshd, whose default MaxStartups 10:30:100 starts refusing
 //     at ten unauthenticated connections. Left in place it caps the result at
 //     roughly 76% success and looks exactly like a gateway fault.
+//   - console-only, when the gateway has a control plane: it refuses every
+//     native session this tool opens. Allow native clients in Settings.
 //
-// Restore both afterwards. The published figures in README.md were taken with
+// Restore all three afterwards. The published figures in README.md were taken with
 // both raised, against one target, on a single host.
 package main
 

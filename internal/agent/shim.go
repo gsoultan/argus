@@ -140,6 +140,11 @@ func RunShim(cfg ShimConfig) int {
 	// would lose whatever the first had already read past.
 	dec := json.NewDecoder(bufio.NewReader(conn))
 	switch d := awaitDecision(conn, dec, decisionWait); {
+	case d.consoleOnly:
+		// Not a recording failure, so FailOpen does not apply: the login is
+		// not allowed, recorded or not.
+		fmt.Fprintf(os.Stderr, "argus: %s.\n", d.reason)
+		return 1
 	case d.refused:
 		if !cfg.FailOpen {
 			fmt.Fprintln(os.Stderr, "argus: cannot start recording, refusing connection.")
@@ -185,6 +190,8 @@ type decision struct {
 	// skip: the daemon chose not to record this login, for reason.
 	skip   bool
 	reason string
+	// consoleOnly: the login is not allowed at all, for reason.
+	consoleOnly bool
 }
 
 // awaitDecision reads the daemon's answer to a start.
@@ -206,6 +213,12 @@ func awaitDecision(conn net.Conn, dec *json.Decoder, wait time.Duration) decisio
 		return decision{refused: true}
 	}
 	switch {
+	case r.Refused:
+		reason := r.Reason
+		if reason == "" {
+			reason = ConsoleOnlyReason
+		}
+		return decision{consoleOnly: true, reason: reason}
 	case r.Error != "":
 		return decision{refused: true}
 	case r.Type == "decision" && !r.Record:
