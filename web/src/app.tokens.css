@@ -125,32 +125,63 @@ body {
   opacity: 0.9;
 }
 
-/* Sidebar items: a label and one line saying what the page is for. Set at
-   reading size, because the menu is how people find their way around. */
+/* Sidebar items: one line each, on one rhythm. Every row is the same height,
+   the icons share one column and one colour, and the only thing that stands
+   out is the page you are on -- a tinted row with a bar on its leading edge. */
 .argus-navlink {
-  padding: 7px 10px;
+  position: relative;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 .argus-navlink .mantine-NavLink-label {
   font-size: 14px;
   font-weight: 500;
 }
-.argus-navlink .mantine-NavLink-description {
-  font-size: 12px;
-  color: var(--mantine-color-slate-4);
-  margin-top: 1px;
+.argus-navlink .mantine-NavLink-section[data-position='left'] {
+  margin-inline-end: 12px;
 }
-.argus-navlink:not([data-active]) .mantine-NavLink-section {
+.argus-navlink:not([data-active]) {
+  color: var(--mantine-color-slate-2);
+}
+.argus-navlink:not([data-active]) .mantine-NavLink-section[data-position='left'] {
   color: var(--mantine-color-slate-4);
 }
-.argus-navlink[data-active] .mantine-NavLink-description {
-  color: var(--mantine-color-azure-2);
+.argus-navlink:not([data-active]):hover {
+  background: var(--color-raised);
+}
+.argus-navlink[data-active]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-brand-bright);
+}
+.argus-navlink[data-active] .mantine-NavLink-label {
+  font-weight: 600;
 }
 
+/* Section headings sit on the same 10px inset as the items under them, so the
+   labels, the chevron and the counts line up in two clean columns. */
 .argus-navsection {
+  display: block;
+  padding: 4px 10px;
+  margin-bottom: 4px;
   border-radius: 6px;
 }
-.argus-navsection:hover {
+button.argus-navsection:hover {
   background: var(--color-raised);
+}
+.argus-navsection-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mantine-color-slate-4);
 }
 
 /* The Overview's server picker: the one place the console raises its voice.

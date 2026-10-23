@@ -4,7 +4,8 @@ import { meQuery } from '~/lib/queries'
 import { canSee, type Audience } from '~/lib/roles'
 
 /**
- * Sends a role that is not this page's audience to My servers.
+ * Sends a role that is not this page's audience to Servers, which every role
+ * may open.
  *
  * The menu hides these pages, but a bookmark or a typed address would still
  * land on them, and "only my servers" has to hold for those too. This is about
@@ -17,5 +18,5 @@ import { canSee, type Audience } from '~/lib/roles'
  */
 export async function guard(queryClient: QueryClient, audience: Audience): Promise<void> {
   const me = await queryClient.ensureQueryData(meQuery()).catch(() => undefined)
-  if (me && !canSee(me.role, audience)) throw redirect({ to: '/mine', replace: true })
+  if (me && !canSee(me.role, audience)) throw redirect({ to: '/assets', replace: true })
 }

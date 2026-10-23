@@ -1,7 +1,6 @@
 import {
-  IconCirclePlus, IconClipboardCheck, IconFileDescription, IconHome2, IconPlugConnected,
-  IconServer2, IconServerBolt, IconSettings, IconShieldCheck, IconTerminal2, IconUsers,
-  type IconProps,
+  IconCirclePlus, IconClipboardCheck, IconFileDescription, IconHome2, IconServer2,
+  IconSettings, IconShieldCheck, IconTerminal2, IconUsers, type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 import { canSee, type Audience } from '~/lib/roles'
@@ -10,36 +9,33 @@ import type { UserRole } from '~/types/domain'
 /**
  * The console's menu, in one place.
  *
- * Built for someone who has never seen Argus before. The second version still
- * had ten items under three headings, two of them near-synonyms ("All servers"
- * and "Add a server"), and Connect sitting in the list as one page among many
- * when it is the reason most people open the console. Now:
+ * The third version still had three ways to the same servers: a "Connect to a
+ * server" button, "My servers" and "Servers". People asked what the difference
+ * was, and the honest answer was "a form, some cards and a table of the same
+ * machines". Now:
  *
- * - **Connect to a server** is a button at the top, not a list item.
- * - **Four everyday pages**, each with one line saying what it is for, so
- *   nobody has to open a page to learn what it holds.
+ * - **One Servers page** for everyone. Its Connect view is a card per server
+ *   with a Connect button; administrators also get a Manage view with the
+ *   inventory and the buttons to add and approve servers. /mine redirects
+ *   there, and /connect is where a Connect button takes you, not a menu entry.
+ * - **One line per item.** Names short enough not to need a caption: the
+ *   caption under every item doubled the menu's height and made it read as a
+ *   wall of text. What each page is for still shows in the command palette.
  * - **Admin** is folded away until it is wanted. It opens by itself when you
  *   are on one of its pages, and shows a count when something in it needs you.
  *
- * Adding a server is a button on the Servers page and the Overview, rather than
- * a menu entry of its own: it is something you do to the list of servers, not a
- * separate place. Paths are unchanged, so every bookmark and deep link works.
- *
- * **The menu follows the role.** An operator was shown the same ten entries as
- * an owner -- fleet posture, the whole inventory, coverage, users -- and had to
- * work out which of them were about the two servers they could actually use.
- * Now someone who is only given servers sees *My servers* and nothing else --
- * an approver also keeps Access requests, which is their job -- and Users &
- * roles is an administrator's alone. The control plane still scopes every list
- * on its own; the routes behind these entries also send a role that is not
- * their audience back to My servers (`guard` in lib/roles.ts).
+ * **The menu follows the role.** Someone who is only given servers sees
+ * Servers and nothing else -- an approver also keeps Access requests, which is
+ * their job -- and Users & roles is an administrator's alone. The control plane
+ * still scopes every list on its own; the routes behind these entries also send
+ * a role that is not their audience back to Servers (`guard` in lib/guard.ts).
  */
 
 export interface NavItem {
   to: string
   label: string
   icon: ComponentType<IconProps>
-  /** Shown under the label: what the page is for, in a few plain words. */
+  /** What the page is for, in a few plain words. Shown in the command palette. */
   blurb: string
   badge?: (s: NavCounts) => number
   /** `sky` for work in progress, `amber` for work waiting on a person. */
@@ -65,14 +61,6 @@ export interface NavSection {
   items: NavItem[]
 }
 
-/** The one thing most visits are for, drawn as a button above the menu. */
-export const PRIMARY_ACTION: NavItem = {
-  to: '/connect',
-  label: 'Connect to a server',
-  icon: IconPlugConnected,
-  blurb: 'Open SSH or Remote Desktop in this browser',
-}
-
 export const NAV_SECTIONS: NavSection[] = [
   {
     items: [
@@ -81,22 +69,16 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Overview',
         icon: IconHome2,
         blurb: 'What needs you now',
-        // Someone who is only given servers lands on My servers instead.
+        // Someone who is only given servers lands on Servers instead.
         audience: 'fleet',
-      },
-      {
-        to: '/mine',
-        label: 'My servers',
-        icon: IconServerBolt,
-        blurb: 'Servers you can connect to',
       },
       {
         to: '/assets',
         label: 'Servers',
         icon: IconServer2,
-        blurb: 'Add and manage servers',
-        audience: 'fleet',
+        blurb: 'Connect to a server, or add and manage them',
         // Servers whose agent checked in and that nobody has approved yet.
+        // Zero for anyone who cannot approve them; see the shell.
         badge: (s) => s.serversWaiting,
         badgeColor: 'amber',
       },
@@ -162,7 +144,6 @@ export const NAV_SECTIONS: NavSection[] = [
  * by a button rather than a menu item.
  */
 export const ALL_PAGES: NavItem[] = [
-  { ...PRIMARY_ACTION, audience: 'fleet' },
   // A section's audience narrows each of its items, so the palette never offers
   // a page the menu hides.
   ...NAV_SECTIONS.flatMap((s) => s.items.map((i) => (s.audience && !i.audience ? { ...i, audience: s.audience } : i))),

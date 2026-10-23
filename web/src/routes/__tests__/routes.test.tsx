@@ -23,7 +23,8 @@ const ROUTES: Array<[path: string, heading: string]> = [
   ['/settings', 'Settings'],
   ['/coverage', 'Coverage'],
   ['/connect', 'Connect'],
-  ['/mine', 'My servers'],
+  // The old address of My servers, now part of Servers.
+  ['/mine', 'Servers'],
 ]
 
 describe('every route mounts', () => {
@@ -132,7 +133,7 @@ describe('settings', () => {
 
 describe('assets', () => {
   it('filters to nothing when the search matches no host', async () => {
-    await renderRoute('/assets')
+    await renderRoute('/assets?view=manage')
     const search = await screen.findByPlaceholderText(/filter by hostname/i)
     fireEvent.change(search, { target: { value: 'zzz-not-a-host' } })
     expect(await screen.findByText('No servers match.')).toBeInTheDocument()
@@ -165,19 +166,29 @@ describe('unknown routes', () => {
  * still point where they always did.
  */
 describe('navigation', () => {
-  it('leads with connecting to a server, as a button above the menu', async () => {
+  // "Connect to a server", "My servers" and "Servers" were three ways to the
+  // same machines, and people asked which was which. Now there is one.
+  it('has one entry for servers, and no separate Connect', async () => {
     await renderRoute('/')
     const nav = await screen.findByRole('navigation')
-    const links = within(nav).getAllByRole('link')
-    expect(links[0]).toHaveTextContent('Connect to a server')
-    expect(links[0]).toHaveAttribute('href', '/connect')
+    const servers = await within(nav).findByRole('link', { name: /^Servers/ })
+    expect(servers).toHaveAttribute('href', '/assets')
+    expect(within(nav).queryByRole('link', { name: /connect/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /my servers/i })).not.toBeInTheDocument()
   })
 
-  it('says what each everyday page is for, under its name', async () => {
-    await renderRoute('/')
-    const nav = await screen.findByRole('navigation')
-    expect(within(nav).getByText('Add and manage servers')).toBeInTheDocument()
-    expect(within(nav).getByText('Live and recorded')).toBeInTheDocument()
+  it('opens Servers on the cards to connect from, with the inventory one switch away', async () => {
+    await renderRoute('/assets')
+    expect(await screen.findByRole('textbox', { name: 'Find a server' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: /manage/i }))
+    expect(await screen.findByPlaceholderText(/filter by hostname/i)).toBeInTheDocument()
+  })
+
+  // A link from Coverage or the Overview carries a filter, and must land on
+  // the table it narrows rather than on the cards.
+  it('opens the inventory by itself for a filtered link', async () => {
+    await renderRoute('/assets?bypass=open')
+    expect(await screen.findByPlaceholderText(/filter by hostname/i)).toBeInTheDocument()
   })
 
   /**
@@ -348,13 +359,13 @@ describe('assets and coverage', () => {
   it('drops a filter value the controls cannot show', async () => {
     // A hand-edited URL must not put the table into a state with no visible
     // cause -- rows filtered by something none of the selects can display.
-    await renderRoute('/assets?agent=not-a-state')
+    await renderRoute('/assets?view=manage&agent=not-a-state')
     await screen.findByRole('heading', { name: 'Servers' })
     expect(await screen.findAllByText('no agent')).not.toHaveLength(0)
   })
 
   it('says on the inventory that it is not the whole fleet', async () => {
-    await renderRoute('/assets')
+    await renderRoute('/assets?view=manage')
     // Scoped to the page header: the sidebar links to Coverage from every page,
     // and what is under test is that this page points at it too.
     const heading = await screen.findByRole('heading', { name: 'Servers' })
