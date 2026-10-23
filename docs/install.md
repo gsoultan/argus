@@ -265,25 +265,8 @@ agent remembers this in its state directory, so a restart during a
 control-plane outage keeps refusing. Use the machine's own console (hypervisor
 or physical) as the break-glass path.
 
-### Which logins are recorded
-
-Because every direct login is refused, this setting currently has no effect:
-it only decides what happens to a direct login that is let through. Each server's
-page in the console has **Which logins are recorded**. Logins through Argus are
-always recorded; this decides what happens when someone logs in to the server
-directly, skipping Argus:
-
-- **Record logins through Argus and direct logins** (the default): the direct
-  login is recorded too, and flagged as a bypass.
-- **Record logins through Argus only**: the direct login is let
-  through unrecorded. It is still written to the audit log as a critical
-  `session.direct_unrecorded` entry with the account, source address and time,
-  and the user is told on login that it is not recorded.
-
-The agent picks the setting up at its next heartbeat (every 30 seconds) and
-the page says once it has. Until it has heard from the control plane, an agent
-records every login. Changing the setting is in the audit log under the
-administrator who made it.
+Every login that is admitted -- every session opened from the console -- is
+recorded. There is no setting to record fewer.
 
 ## 6. Check it end to end
 

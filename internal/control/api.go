@@ -203,7 +203,6 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/assets", a.postAssetCreate)
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
-	mux.HandleFunc("PUT /api/v1/assets/{id}/recording-scope", a.putRecordingScope)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
@@ -611,10 +610,6 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// whether the kernel probe is loaded; ExecReason says why not.
 		ExecTracing bool   `json:"exec_tracing"`
 		ExecReason  string `json:"exec_reason"`
-		// RecordingScope is what the agent is applying now, so the console
-		// can show whether a change has reached the host. Absent from an
-		// agent older than the setting.
-		RecordingScope string `json:"recording_scope"`
 		// ConsoleOnly is whether the agent is refusing direct logins now.
 		// Absent from an agent older than console-only.
 		ConsoleOnly *bool `json:"console_only"`
@@ -630,24 +625,14 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !a.mayReportFor(w, r, in.Hostname) {
 		return
 	}
-	switch in.RecordingScope {
-	case "", ScopeEveryLogin, ScopeArgusOnly:
-	default:
-		writeErr(w, http.StatusBadRequest, "recording_scope must be every_login or argus_only")
-		return
-	}
-	// The reply carries the scope the console has set: the heartbeat is the
-	// one call every agent already makes, so a change reaches the host within
-	// one interval without a second poll per host.
-	scope, err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
-		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.RecordingScope,
-		in.ConsoleOnly)
-	reply := map[string]any{"status": "ok", "recording_scope": scope}
-	// Console-only rides the same reply, and is always on: every session
-	// opens from the console, and there is no setting that turns direct
-	// logins back on. Sent rather than assumed so an agent that last heard
-	// otherwise from an older control plane is brought back in line.
-	reply["console_only"] = true
+	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
+		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.ConsoleOnly)
+	// Console-only rides the reply, and is always on: every session opens
+	// from the console, and there is no setting that turns direct logins back
+	// on. Sent rather than assumed so an agent that last heard otherwise from
+	// an older control plane is brought back in line. An older agent also
+	// reads the absent recording_scope as every_login.
+	reply := map[string]any{"status": "ok", "console_only": true}
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,

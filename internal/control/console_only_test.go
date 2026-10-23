@@ -31,7 +31,7 @@ func heartbeatConsoleOnly(t *testing.T, h http.Handler, credential, hostname, ap
 }
 
 func TestConsoleOnlyAlwaysReachesTheAgent(t *testing.T) {
-	s, h, _ := scopeAPI(t)
+	s, h, _ := reportAPI(t)
 	asset, cred := enrolledAsset(t, s, h)
 
 	if got := heartbeatConsoleOnly(t, h, cred, asset.Hostname, "true"); got == nil || !*got {
@@ -52,9 +52,12 @@ func TestConsoleOnlyAlwaysReachesTheAgent(t *testing.T) {
 // An agent older than console-only says nothing, and that is unconfirmed --
 // never shown as applied.
 func TestAnAgentThatDoesNotSayIsUnconfirmed(t *testing.T) {
-	s, h, _ := scopeAPI(t)
+	s, h, _ := reportAPI(t)
 	asset, cred := enrolledAsset(t, s, h)
-	heartbeatScope(t, h, cred, asset.Hostname, ScopeEveryLogin)
+	if w := do(t, h, http.MethodPost, "/api/v1/report/heartbeat", cred,
+		`{"hostname":"`+asset.Hostname+`","version":"1.0.0","active_sessions":0}`); w.Code != http.StatusOK {
+		t.Fatalf("heartbeat: %d %s", w.Code, w.Body)
+	}
 	a, _ := s.AssetByID(context.Background(), asset.ID)
 	if a.AgentConsoleOnly != nil {
 		t.Errorf("an agent that never said is shown as %v", *a.AgentConsoleOnly)
@@ -62,7 +65,7 @@ func TestAnAgentThatDoesNotSayIsUnconfirmed(t *testing.T) {
 }
 
 func TestARefusedDirectLoginIsInTheAuditChain(t *testing.T) {
-	s, h, _ := scopeAPI(t)
+	s, h, _ := reportAPI(t)
 	asset, cred := enrolledAsset(t, s, h)
 
 	w := do(t, h, http.MethodPost, "/api/v1/report/login", cred,
