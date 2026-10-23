@@ -1,170 +1,89 @@
 # Argus
 
-Privileged access management for Linux infrastructure. Brokered SSH with session
-recording, credential injection, just-in-time approvals, and a tamper-evident
-audit trail.
+Privileged access management that knows who reached which server, as whom, and
+what they did there, and can prove it later. Every session opens from the Argus
+console and runs through an agent on the server, which records it there and
+streams the record back as it happens. The audit trail is a hash chain, so
+tampering shows.
 
-## Running locally
-
-```bash
-./scripts/setup.sh    # once
-./scripts/dev.sh      # every day
+```
+browser ──HTTPS / WSS──▶ argus-control ──agent tunnel──▶ argus-agent ──▶ local login (shell, files)
+          sign-in, MFA,     checks access, signs           checks the grant, opens the
+          the console       a one-minute grant, relays     session, records it on the server
 ```
 
-Everything is a plain shell script under `scripts/` — no build tool, no task
-runner, nothing to install. `dev.sh` checks tool versions, resolves stale port
-holders, and streams every service into one prefixed log. Ctrl-C stops
-everything, including grandchildren.
+You install two things:
 
-A `Makefile` exists as a thin wrapper (`make dev`, `make check`, …) if you
-prefer it, but every target is a one-line delegation to the script — the
-scripts are the interface.
+| Component | Package | Runs on |
+|---|---|---|
+| Control plane and console | `argus-control` | one server (two behind a load balancer if you need it) |
+| Agent | `argus-agent` | every server people log in to |
+| Verifier (optional) | `argus-verify` | anywhere recordings are checked, including an auditor's laptop |
 
-The web UI runs against an in-memory mock API, so it is fully usable before any
-backend exists — every function in `web/src/lib/api.ts` maps 1:1 to an endpoint
-the Go control plane will serve.
+The agent holds one outbound connection to the control plane (QUIC, or HTTPS
+when UDP is blocked). Nothing needs to reach the servers, and nothing on them
+listens beyond a local Unix socket.
 
-| | |
+**[docs/install.md](docs/install.md) is the production install, step by step.**
+This page is the overview and the reference behind it.
+
+## Contents
+
+- [How people get in](#how-people-get-in)
+- [Installing](#installing)
+- [Reaching the console through a Cloudflare Tunnel](#reaching-the-console-through-a-cloudflare-tunnel)
+- [Servers, assignments and roles](#servers-assignments-and-roles)
+- [Verifying a recording: `argus-verify`](#verifying-a-recording-argus-verify)
+- [Security posture](#security-posture)
+- [Not done yet](#not-done-yet)
+- [Running locally](#running-locally)
+
+## How people get in
+
+**Every connection goes through the console.** Sign in and open **Servers**.
+Each server you may use is a card with a **Connect** button and the accounts you
+can log in as there, plus any temporary access you have been granted. Pick an
+account and choose what to open:
+
+- **Open terminal**: a shell on the server, started by its agent as that
+  account (a normal login, in its own systemd unit with a PAM session) and
+  recorded on the server before you see any of it.
+- **Transfer files**: the console's scp. Browse folders, upload and download.
+  The agent reads and writes as the account you picked, so it can touch exactly
+  what that account can, and every transfer goes in the audit log with the
+  person, server, account, path, size and SHA-256.
+- **Open desktop**: Remote Desktop to a Windows server, in the browser (see
+  [Not done yet](#not-done-yet)).
+
+The same checks run whichever you open. You must be assigned the server and the
+account; an elevated account (`root`, `Administrator`) also needs an approved
+access request; and the grant that opens the session is single-use, signed for
+that person, server and account, and expires in about a minute. The control
+plane checks it before relaying, and the agent checks the signature again
+before opening anything, so a compromised relay cannot open sessions by itself.
+
+### The console is the only way in
+
+There is no setting for this and nothing to turn off.
+
+| Path | What happens |
 |---|---|
-| Web UI | http://localhost:5290 |
-| Control plane API | http://localhost:8480 *(once built)* |
-| SSH gateway | `localhost:2222` *(once built)* |
+| `ssh`, `scp`, `sftp` straight to a server | The agent refuses the login before anything runs, tells the person to use the console, and writes `session.direct_refused` to the audit log with the account, source address and command. |
+| A server whose agent is not connected | Nothing opens. The Servers page says the agent is offline and when it last checked in. |
+| An agent restarted while the control plane is down | It keeps refusing direct logins; it remembers this in its state directory. |
 
-### Signing in locally
-
-There is no default account, here or anywhere else. Nothing is seeded, so the
-console has nothing to let you in with until you make something -- see
-[Signing in](#signing-in) for why that is deliberate rather than an omission.
-
-Make one against the dev control plane:
-
-```bash
-set -a; . dev/secrets.env; set +a
-go run ./cmd/argus-control -config dev/control.yaml \
-  users add you@example.com --role admin
-```
-
-Two things that will otherwise waste your afternoon:
-
-- **`-config` goes before the subcommand.** After it, you get
-  `unknown flag "-config"`, which reads as the flag not existing rather than
-  being in the wrong place.
-- **Load `dev/secrets.env` first.** Without it the config cannot resolve its
-  `${VAR}` references and the command exits before it reaches the database.
-
-The password is read from the terminal without echo. Piping one in works too,
-for provisioning a throwaway account in a script:
-
-```bash
-printf '%s\n' "$A_PASSWORD" | go run ./cmd/argus-control \
-  -config dev/control.yaml users add you@example.com --role admin
-```
-
-Then sign in at the web UI above. The console keeps the URL you asked for, so a
-deep link takes you back to that page rather than the dashboard.
-
-If the sign-in form never appears and the console says the control plane could
-not be reached, that is not an authentication problem -- the control plane is
-down or the console is pointed at the wrong address. `./scripts/dev.sh` names
-the specific cause on startup.
-
-### The scripts
-
-| Script | Does |
-|---|---|
-| `scripts/setup.sh` | First-time setup — verify toolchain, install dependencies |
-| `scripts/dev.sh` | Run every service present locally |
-| `scripts/deps.sh` | Postgres + MinIO lifecycle |
-| `scripts/check.sh` | Typecheck, vet, test — what CI runs |
-| `scripts/build.sh` | Production build |
-| `scripts/lib.sh` | Shared helpers, sourced by the rest |
-
-Each takes `--help`. Common flags:
-
-```bash
-./scripts/dev.sh web           # only named services
-./scripts/dev.sh --force       # kill whatever holds a needed port
-./scripts/dev.sh --clean       # reinstall web deps first
-./scripts/check.sh web         # or: go
-./scripts/build.sh web         # or: go
-./scripts/deps.sh up|down|reset|status|logs
-```
-
-### Requirements
-
-- **Bun** ≥ 1.4 — the only hard requirement for the web app
-- **Node** — *not needed.* Bun runs Vite, `tsc` and the dev server; the whole
-  toolchain is verified to work with no node on PATH. If you happen to have one
-  installed, the scripts note its version but never depend on it.
-- **Go** ≥ 1.25 — only once `cmd/` exists
-- **Apple `container`** (or Docker) — only once the control plane exists, for
-  Postgres and MinIO. `make deps-up` starts them.
-  Install with `brew install --cask container`; start with `container system start`.
-
-### Local dependencies
-
-`scripts/deps.sh` owns Postgres and MinIO.
-
-```bash
-./scripts/deps.sh up       # create, start, wait until ready, ensure buckets
-./scripts/deps.sh down     # stop, keep data
-./scripts/deps.sh reset    # stop and delete all data
-./scripts/deps.sh status
-./scripts/deps.sh logs postgres
-```
-
-Two Apple-container specifics the script handles, both of which fail confusingly
-if you hit them by hand:
-
-- **`PGDATA` must be a subdirectory of the volume mount.** Apple container
-  volumes are formatted filesystems containing `lost+found`, and `initdb`
-  refuses to initialise into a non-empty directory.
-- **There is no DNS for user-defined networks.** Containers cannot resolve each
-  other by name, so the script addresses MinIO by IP. (`container system dns
-  create` would fix it, but requires sudo.)
-
-### Adding a service
-
-`scripts/dev.sh` detects services rather than assuming them. Add one line to the
-`SERVICES` registry:
-
-```
-name | port | colour | working dir | detect path | command
-```
-
-The `detect path` is what must exist for the service to be considered present,
-so a half-built backend never breaks `make dev` for someone working on the UI.
+The machine's own console (hypervisor or physical) is not affected, and is the
+break-glass path when the control plane is down.
 
 ## Installing
 
-**[docs/install.md](docs/install.md) is the production install, step by step:**
-the database, first-run setup in the browser, backups, enrolling agents and
-upgrading. What follows is the reference behind it.
-
-Linux only — the gateway and control plane are servers, and the agent has to
-read another user's `authorized_keys` and own recordings the recorded user
-cannot touch. None of that means anything elsewhere.
-
 Releases publish `.deb`, `.rpm` and `.apk` for amd64 and arm64, built by
-GoReleaser in CI. Separate packages, because the agent goes on every managed
-host while the gateway and control plane go on a handful of servers:
-
-| Package | Installed on |
-|---|---|
-| `argus-agent` | every managed host |
-| `argus-gateway` | the bastion servers |
-| `argus-control` | the control plane servers |
-| `argus-verify` | anywhere recordings are checked: gateways, the control plane, an auditor's machine |
-
-### Quick install
-
-Pick the version and architecture, download the package you need with the
-signed checksums, verify both, then install:
+GoReleaser in CI and signed with Sigstore.
 
 ```sh
 VERSION=0.4.0            # latest release: https://github.com/gsoultan/argus/releases/latest
 ARCH=amd64               # or arm64
-PKG=argus-agent          # or argus-gateway, argus-control, argus-verify
+PKG=argus-control        # or argus-agent, argus-verify
 FMT=deb                  # deb (Debian/Ubuntu), rpm (RHEL/Rocky/Alma), apk (Alpine)
 BASE=https://github.com/gsoultan/argus/releases/download/v$VERSION
 
@@ -174,8 +93,7 @@ curl -fsSLO "$BASE/checksums.txt.sig"
 curl -fsSLO "$BASE/checksums.txt.pem"
 ```
 
-Check the download before installing it (see [Verifying a
-download](#verifying-a-download) below), then:
+Check the download ([Verifying a download](#verifying-a-download)), then:
 
 ```sh
 sudo apt install "./${PKG}_${VERSION}_linux_${ARCH}.deb"      # Debian / Ubuntu
@@ -184,82 +102,133 @@ sudo apk add --allow-untrusted "./${PKG}_${VERSION}_linux_${ARCH}.apk"   # Alpin
 ```
 
 `apt install ./file.deb` and `dnf install ./file.rpm` resolve dependencies,
-where `dpkg -i` and `rpm -i` do not. Install a gateway or control plane
-together with `argus-verify` in one command, as
-[docs/install.md](docs/install.md) does, so both land at the same version.
+where `dpkg -i` and `rpm -i` do not. Install the control plane together with
+`argus-verify` in one command, as [docs/install.md](docs/install.md) does, so
+both land at the same version.
 
 macOS and Windows get archives rather than packages:
-`argus_<version>_darwin_<arch>.tar.gz` (control plane, gateway, verifier and
-agent) and `argus_<version>_windows_<arch>.zip` (control plane, gateway and
-verifier). Unpack and run the binaries directly; nothing installs a service.
-To check recordings from a workstation, `argus-verify` from the archive is all
-you need.
+`argus_<version>_darwin_<arch>.tar.gz` (control plane, verifier and the macOS
+agent with its launchd job) and `argus_<version>_windows_<arch>.zip` (control
+plane and verifier). Nothing installs a service from them. To check recordings
+from a workstation, `argus-verify` from the archive is all you need.
 
-**Nothing starts on install.** Then:
+### First run: `/setup`
+
+**Nothing starts on install.** You need a PostgreSQL 13+ database and a role
+that owns it; then:
 
 ```sh
 sudo systemctl enable --now argus-control
+sudo cat /var/lib/argus-control/setup-token
 ```
 
-and open `https://<that host>:8080`. With no configuration yet, the control
-plane serves only its setup page and sends every address there. The page asks
-for the one-time token the control plane wrote on its host
-(`sudo cat /var/lib/argus-control/setup-token`), the PostgreSQL database, the
-addresses people and servers use, a certificate if you have one, and the first
-administrator. The control plane writes its own configuration, secrets and
-certificates from that, and starts. There is no YAML or env file to edit.
+Open `https://<that host>:8080`. With no configuration, the control plane makes
+its own CA and certificate, serves only its setup page, and sends every address
+to `/setup` (the API answers 503 until setup is done). The page asks for:
 
-Every setting after that is on the console's **Settings** page, for owners and
-administrators: addresses and listeners, TLS certificates, the database, rate
-limits and session lifetimes, object storage, session alerts (email, Telegram,
-push), and the people who can sign in. Each section fits on one screen, and
-edits in several sections go out in one save. Saving
-restarts the control plane on the new settings within a few seconds, and if it
-cannot start on them it puts the previous ones back and says why. Every change
-is in the audit log.
+1. **The setup token** from the host. It proves you have the host, and works once.
+2. **The database**, with **Test connection**. A database that already holds an
+   Argus deployment keeps its accounts.
+3. **Addresses**: where people open the console, where servers reach the
+   control plane if that differs (behind a Cloudflare Tunnel, for one), the
+   port, and whether agents may use QUIC.
+4. **Certificate**: the control plane's own, or yours.
+5. **The first administrator**.
+
+**Finish setup** writes the configuration, its secrets and certificates, runs
+migrations and starts properly in the same process. `control.installed` and
+`user.created` are the first entries in the audit log. There is no YAML or env
+file to edit, and no default account: nothing is seeded, because a product that
+ships a default administrator has shipped a backdoor.
+
+### Settings
+
+After setup, everything is on the console's **Settings** page, for owners and
+administrators. Pick a section on the left; each fits on one screen:
+
+| Section | Holds |
+|---|---|
+| SSH channels, Recording, Hosts and trust | the session policy |
+| Addresses | console and fleet addresses, listeners, QUIC, CORS origins |
+| Sign-in and limits | session and ticket lifetimes, agent silence, rate limits, trusted proxies, log level |
+| Database | where PostgreSQL is, with a connection test |
+| Certificate | what is served, upload a replacement, download the CA |
+| Object storage | the S3-compatible bucket recordings are copied to |
+| Session alerts | email, Telegram and Firebase push |
+| People | add, disable and enable accounts |
+
+Edits in several sections wait for one **Save and apply**. Secrets are
+write-only. The save is checked with the same checks start-up runs, then the
+control plane reloads in place within a few seconds; if it cannot start on the
+new settings, it puts the previous ones back and says why. Every save is a
+`settings.changed` entry in the audit log.
 
 Where things live, for backups and the curious:
 
 | Path | Holds |
 |---|---|
 | `/var/lib/argus-control/control.yaml` | the configuration, written by setup and Settings |
-| `/var/lib/argus-control/secrets/` | the database URL, signing secret, reporter token and alert credentials, one owner-only file each |
+| `/var/lib/argus-control/secrets/` | database URL, signing secret, reporter token, alert credentials; one owner-only file each |
 | `/var/lib/argus-control/tls/` | the control plane's own CA and server certificate, renewed automatically |
+| `/var/lib/argus/` | on each server: the agent's state and recordings, root's only |
 
-A control plane installed before this keeps reading `/etc/argus/control.yaml`
-until the first save from Settings moves its settings across.
+A control plane installed before setup moved into the console keeps reading
+`/etc/argus/control.yaml` until the first save from Settings moves it across.
+The commands on the host (`users list|add|disable`, `audit verify`,
+`backup run|verify`) find the configuration themselves.
 
-Every server people log in to needs the agent: it opens, records and refuses
-sessions there. Agents enroll from **Servers > Add a server**, which hands you
-the one command to run on each server; then `sudo systemctl enable --now argus-agent`.
+### Enrolling servers
 
-Uninstalling leaves `/var/lib/argus` and `/var/lib/argus-control` in place. Removing the software must never
-destroy the evidence it produced — that is precisely what someone covering
-their tracks would reach for.
+Admins add servers from **Servers > Manage > Add a server**, which hands you
+the one command to run on each one:
+
+```sh
+sudo apt install ./argus-agent_<version>_linux_amd64.deb
+sudo argus-agent enroll --control-url https://argus.example.com:8080 \
+    --pin sha256/... --token argus-enrol-...      # copied from the console
+sudo systemctl enable --now argus-agent
+sudo argus-agent install    # prints the sshd_config lines; add them, then reload sshd
+```
+
+The token works once and expires within the hour; the pin means the first
+connection cannot be intercepted. The server then shows its tunnel as
+**Connected** (QUIC, with the round trip) or **Connected over HTTPS**. Open
+`8080/udp` on the control plane if you can; QUIC is smoother on a lossy
+network. macOS servers work the same way with the agent from the darwin archive;
+see [docs/install.md](docs/install.md#macos-servers).
+
+Uninstalling leaves `/var/lib/argus` and `/var/lib/argus-control` in place.
+Removing the software must never destroy the evidence it produced.
 
 ### What the packages set up
 
-A system account `argus` with `nologin`, used by the gateway and control plane.
-The **agent runs as root**, deliberately: the shim runs as whoever connected, so
-if the daemon were not root the recorded user could edit the record of their own
+A system account `argus` with `nologin`, used by the control plane. The **agent
+runs as root**, deliberately: sessions run as whoever connected, so if the
+daemon were not root the recorded user could edit the record of their own
 session. Recordings are `0700 root:root` for that reason.
 
-The systemd units are hardened rather than merely present — `ProtectSystem=strict`,
-an empty `CapabilityBoundingSet` for the two that need none, and a syscall
-filter. The agent keeps three capabilities: `CAP_DAC_READ_SEARCH`, because its
-posture scan reads other users' `authorized_keys` (it uses
-`ProtectHome=read-only` rather than `yes` for the same reason), and `CAP_BPF`
-with `CAP_PERFMON`, which load the probe that records commands as the kernel
-saw them. Its syscall filter allows `bpf` and `perf_event_open` for that probe,
-and returns `EPERM` for anything else it refuses rather than killing the agent,
-because a dead agent makes sshd refuse every login on the host.
+The systemd units are hardened, not merely present: `ProtectSystem=strict`, an
+empty `CapabilityBoundingSet` where none is needed, and a syscall filter. The
+agent keeps three capabilities: `CAP_DAC_READ_SEARCH`, because its posture scan
+reads other users' `authorized_keys`, and `CAP_BPF` with `CAP_PERFMON`, which
+load the probe that records commands as the kernel saw them. Its filter returns
+`EPERM` rather than killing the agent, because a dead agent makes sshd refuse
+every login on the host.
+
+### Backups
+
+`argus-backup.timer` takes a `pg_dump`, a checksum manifest and, with object
+storage, an incremental mirror of recordings, after checking the audit chain is
+intact. `sudo argus-control backup verify -scratch-db <url> <dir>` proves a
+backup by restoring it into a scratch database. See
+[docs/install.md](docs/install.md#4-backups).
 
 ### Verifying a download
 
 Every release signs `checksums.txt` with Sigstore keyless signing from the
 release workflow, so a package can be traced to this repository's CI rather
-than to whoever handed it over. Install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/),
-then, in the directory holding the downloads:
+than to whoever handed it over. With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/),
+in the directory holding the downloads:
 
 ```sh
 cosign verify-blob checksums.txt \
@@ -269,27 +238,99 @@ cosign verify-blob checksums.txt \
 sha256sum -c checksums.txt --ignore-missing
 ```
 
-The first proves the checksums file came from this repository's release
-workflow; the second proves each file you downloaded matches it. Both must
-succeed. A package that fails either is not ours. On macOS use
+Both must succeed. A package that fails either is not ours. On macOS use
 `shasum -a 256 -c checksums.txt --ignore-missing`; in PowerShell compare
-`Get-FileHash <file>` against the line for it in `checksums.txt`.
+`Get-FileHash <file>` against its line in `checksums.txt`.
+
+## Reaching the console through a Cloudflare Tunnel
+
+The console can be published through a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/),
+so people reach `https://argus.example.com` with no inbound port open on the
+control plane. Terminals, file transfers and desktops are WebSockets to the
+control plane, so they go through the tunnel too and need nothing else
+published.
+
+Agents cannot use the tunnel: their connection is QUIC (UDP) or a protocol
+upgrade Cloudflare does not forward, and their reports need a client
+certificate that Cloudflare's TLS termination would strip. So the control plane
+gives the two audiences separate listeners:
+
+| Setting | Value |
+|---|---|
+| Addresses > Listen | `:8080`, for agents (TLS and QUIC); keep it reachable from your servers only |
+| Addresses > Console listen | `127.0.0.1:8090`, for cloudflared |
+| Addresses > Console address | `https://argus.example.com` |
+| Addresses > Address servers use | `https://argus-internal.example.com:8080` |
+| Sign-in and limits > Trusted proxies | `127.0.0.1/32` and `::1/128`, so the real address comes from CF-Connecting-IP |
+
+A fresh install's `/setup` page works through the tunnel and still needs the
+token from the host. The full cloudflared config, the checks and Cloudflare
+Access notes are in
+[docs/install.md](docs/install.md#through-a-cloudflare-tunnel).
+
+## Servers, assignments and roles
+
+The sidebar has **Overview, Servers, Sessions, Access requests**, and a folded
+**Admin** group (Coverage, Audit log, Users & roles, Settings). **Servers** has
+two views:
+
+- **Connect**, the default for everyone: a card per server you may use.
+- **Manage**, for admins, owners and auditors: the inventory table, Coverage,
+  **Add a server** (with a count waiting for approval) and **Add by hand**. It is
+  in the URL as `?view=manage`, and any inventory filter opens it. Operators
+  only ever get Connect.
+
+| | Servers page | Add, edit, retire | Assign | Connect | Sessions & recordings |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| owner, admin | Connect and Manage, the fleet | yes | yes | any server | all |
+| auditor | Manage, the fleet | no | no | no sessions at all | all |
+| operator | Connect, assigned servers only | no | no | assigned servers | their own |
+
+**Nobody can reach a server until someone is assigned it**, not even the person
+who added it. Open **Who can reach** on the server, pick an account and the
+principals they may log in as. A server's principal list is the authority, not
+its `/etc/passwd`, and an assignment can never exceed it. Assignment is
+permission to ask, not to have: an elevated principal still needs an approved
+access request on the day, and an approved request is also how someone reaches
+a server they were never assigned, narrower than an assignment and expiring.
+
+Admins and owners are exempt from assignment, for the same reason they are
+exempt from the approval chain: someone must be able to act when the chain is
+broken. Their sessions are recorded and flagged like everyone else's. Someone
+else's session answers 404 rather than 403, because a 403 confirms the id is a
+real session.
+
+Argus will not guess initial assignments from who used what before; that would
+be the product deciding who is authorised from past behaviour, which is what it
+exists to stop.
+
+### Signing in
+
+Argus holds its own accounts; there is no identity provider to stand up. The
+first administrator comes from `/setup`; add more under **Settings > People**, or
+on the host with `sudo argus-control users add you@example.com --role admin`
+(the password is read without echo). Sign in, then enrol a second factor: any
+TOTP authenticator works, and enrolment issues ten single-use recovery codes,
+shown once and stored only as digests.
+
+`user_tokens:` is a bootstrap hatch that skips password, second factor and role,
+so the control plane refuses to start when it is set alongside any local
+account.
 
 ## Verifying a recording: `argus-verify`
 
-`argus-verify` checks that a session recording has not been altered since the
-gateway sealed it. It is a standalone command with no configuration, no network
-access and no dependency on Argus being up: it reads the `.cast` file, recomputes
-its hash chain from the bytes on disk, and compares the result with the chain
-head the gateway published when the session ended. An auditor can therefore
-verify a recording without trusting Argus, the storage it came from, or the
-person who handed it over.
+`argus-verify` checks that a session recording has not been altered since it was
+sealed. It needs no configuration, no network and no running Argus: it reads the
+`.cast` file, recomputes its hash chain from the bytes on disk and compares the
+result with the chain head published when the session ended. An auditor can
+verify a recording without trusting Argus, its storage, or whoever handed the
+file over.
 
-Install it from the `argus-verify` package on Linux, or take the binary from the
-macOS or Windows archive. Then get two things for the session you want to
-check, both from its page in the console: the recording (**Export .cast**, which
-saves the bytes exactly as stored) and
-the **Chain head** under *Recording integrity* (click it to copy the full value).
+Install the `argus-verify` package on Linux, or take the binary from the macOS
+or Windows archive. From the session's page in the console, take the recording
+(**Export .cast**, the bytes exactly as stored) and the **Chain head** under
+*Recording integrity*, then:
 
 ```sh
 argus-verify session.cast <chain-head>
@@ -301,350 +342,136 @@ INTACT   session.cast
   head   9f2c…
 ```
 
-If any byte of the recording was changed, removed or appended, the computed head
-no longer matches:
+Any byte changed, removed or appended and the heads no longer match:
 
 ```
 TAMPERED session.cast
   lines     1842
   expected  9f2c…
   computed  41ab…
-
-  The recording on disk differs from what the gateway sealed.
-  Preserve it as evidence and treat this as an incident.
 ```
 
 | Flag | Does |
 |---|---|
-| `--head` | print the computed chain head and exit, with no expected head needed |
+| `--head` | print the computed chain head and exit |
 | `--quiet` | print nothing; rely on the exit status |
 | `--version` | print the version and exit |
 
-Exit status is `0` when the recording is intact, `1` when it has been tampered
-with, and `2` for a usage error or a file that cannot be read, so it drops
-straight into a compliance pipeline:
+Exit status is `0` intact, `1` tampered, `2` usage error or unreadable file, so
+it drops into a compliance pipeline:
 
 ```sh
 argus-verify --quiet session.cast "$HEAD" || alert "recording $ID failed verification"
 ```
 
-Two related checks live in `argus-control` rather than here, because they need
-the database:
-
-- `sudo argus-control audit verify` recomputes the audit log's hash chain and
-  reports where it breaks, if it does.
-- `sudo argus-control backup verify` checks a backup
-  taken by `backup run` by restoring it into a scratch database (`-scratch-db`),
-  checking the audit chain and its recorded head, and checking that every
-  recording is present and verifies. See
-  [docs/install.md](docs/install.md).
-
-## Adding an asset
-
-An administrator adds a host in the console; an operator sees the hosts assigned
-to them and nothing else. Both halves matter — a list of every host in the fleet
-is a map, whether or not the buttons on it work.
-
-**1. Put the credential on the gateway.** Argus stores its *name*, never the
-secret. For SSH, a private key at `<vault_dir>/<name>`; for Remote Desktop, a
-directory `<vault_dir>/<name>/` holding one file per principal, each containing
-that account's password. `vault_dir` is `/var/lib/argus-gateway/vault` in the packaged
-config. Keys are mode-checked at load: one readable by group or other is
-refused.
-
-Certificate mode skips this step entirely. With a CA configured and the target
-carrying `TrustedUserCAKeys`, the gateway mints a short-lived certificate per
-session and there is no standing credential to place, rotate or lose.
-
-**2. Add the asset.** Assets → **Add asset**. Hostname, address, protocol, and
-the principals Argus may broker a session as. That list is the authority, not
-the target's own `/etc/passwd`: a credential that happens to work on an account
-outside it is still refused.
-
-The credential field takes a name, not a path. Anything with a separator in it
-is rejected at both ends — an administrator who could type a path could point
-the gateway at any file it can read and have it used as a private key.
-
-**3. Assign it.** Nobody can reach a host until someone is assigned it, not even
-the person who added it. Open **Who can reach** on the asset, pick an account
-and the principals they may assume there. An assignment can never exceed the
-asset's own principal list, and removing a principal from the asset removes it
-from everyone assigned it.
-
-Assignment is permission to ask, not permission to have. An elevated principal —
-`root`, `Administrator`, anything the policy names — still needs an approved
-access request on the day, and an approved request is also the way to reach a
-host you were never assigned: narrower than an assignment, and it expires.
-
-Changes reach every gateway within a minute. Until then the gateway is working
-from the inventory it already had, deliberately: a control plane that cannot be
-reached must not be able to change what a gateway permits, in either direction.
-
-### What each role sees
-
-| | Assets page | Add, edit, retire | Assign | Connect | Sessions & recordings |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| owner, admin | the fleet | yes | yes | any host | all |
-| auditor | the fleet | no | no | no sessions at all | all |
-| operator | assigned hosts | no | no | assigned hosts | their own |
-
-The Overview is scoped the same way rather than hidden: an operator sees their
-assigned hosts and their own sessions, and the page says so. Someone else's
-session answers 404 rather than 403 — a 403 confirms the id names a real session
-and whose it is, which is most of what the recording would have told them.
-
-Admins and owners are exempt from assignment for the same reason they are exempt
-from the approval chain: someone has to be able to act when the chain itself is
-broken. Their sessions are recorded and flagged like everyone else's.
-
-### Where this is not enforced
-
-Two cases, stated rather than implied:
-
-- **A gateway with no control plane** runs on `inventory.json` alone. That file
-  carries no assignments, so the principal list is the whole control and any key
-  in `authorized_keys` can open any principal a host lists — which is how this
-  path has always worked. The gateway says so at start-up.
-- **The native RDP listener** authenticates nobody: the request is parsed from
-  an mstshash cookie and names a principal and a target, not a person. There is
-  no identity to hold an assignment, so it cannot be applied there. It is
-  refused outright while the deployment is console-only (the default), elevated
-  principals are refused on it regardless, and the browser console is the one
-  that authenticates before it brokers.
-
-An existing file-driven deployment keeps working. Each gateway publishes its
-inventory at start-up, so those hosts appear in the console as ordinary assets;
-edit one there and the console owns it from then on, and later publishes leave
-it alone.
-
-### Upgrading an existing deployment
-
-**Assignment is enforced from the first start, and nobody is assigned yet.** On
-a deployment where operators previously reached any host in `inventory.json`,
-they will be refused until someone assigns them — admins and owners are exempt,
-so there is always a way in to do it.
-
-Argus will not guess the initial assignments. It could infer them from who has
-opened sessions before, and that would be a product deciding who is authorised
-by looking at who managed it in the past, which is the thing it exists to stop.
-Assign deliberately: the hosts appear in the console as soon as a gateway
-publishes them, and the Sessions page shows who has been using what.
-
-## Connecting
-
-**Every connection goes through the console.** Sign in, open **Connect**, pick
-a server and an account, and choose what to open:
-
-```
-you ──▶ Argus console ──▶ pick a server ──▶ its Argus agent ──▶ shown in the console
-```
-
-- **Open terminal** — a shell on the server, started by its agent as the account
-  you picked and recorded on the server before you see any of it.
-- **Transfer files** — the console's scp: browse folders, upload and download.
-  The agent reads and writes as the account you picked, so it can touch exactly
-  what that account can, and every transfer is written to the audit log with the
-  person, server, account, path, size and SHA-256.
-- **Open desktop** — Remote Desktop to a Windows server, in the browser.
-
-The same checks run whichever you open: you must be assigned to the server and
-the account, an elevated account (root, Administrator) needs an approved access
-request first, and the ticket that opens it is single-use and expires in about
-a minute.
-
-### The console is the only way in
-
-There is no setting for this and nothing to turn off: Argus needs an agent on
-every server, and every session opens from the console through it.
-
-| Path | What happens |
-|---|---|
-| `ssh`, `scp`, `sftp` to the gateway (`2222/tcp`) | Refused before the target is dialled, with a message pointing at the console. |
-| `mstsc` to the gateway's native RDP listener | Refused before the target is dialled. |
-| `ssh`, `scp`, `sftp` straight to a server | The agent refuses the login before anything runs, tells the person to use the console, and writes a `session.direct_refused` entry to the audit log with the account, source address and command. |
-| A Linux server whose agent is not connected | Nothing opens. Connect says the agent is offline; the server's page shows when it last checked in. The gateway does not stand in for it. |
-
-Remote Desktop is the one session that still goes through the gateway, from the
-browser, until the Windows agent ships.
-
-Each agent confirms at its next check-in, about a minute, and the server's page
-says whether it has. An agent that restarts while the control plane is
-unreachable keeps refusing. The machine's own console (a hypervisor or physical
-console) is not affected, so it remains the break-glass path if the control
-plane is down.
-
-argus-gateway does not run on its own: it refuses to start without
-`control.url`, because without the control plane there are no tickets, no
-agents and so no way in.
-
-## Layout
-
-```
-web/                  React 19 · Mantine 9 · TanStack Router/Query/Form · Vite 8
-  src/types/domain.ts The wire contract the Go control plane implements
-  src/lib/api.ts      Mock API — swap for fetch against argus-control
-  src/workers/        Audit hash-chain verification, asciicast decoding
-scripts/              setup · dev · deps · check · build (plain shell, no task runner)
-Makefile              Optional thin wrapper over scripts/
-```
-
-## Measured capacity
-
-One gateway, one target, one host. Every session in these runs did the whole
-thing: TCP, handshake, publickey auth, PTY request, a command whose output was
-checked, then a hold and a clean close. Reproduce with
-`go run ./scripts/tools/loadtest` — read its header first, because the target's
-own sshd will otherwise be the thing you measure.
-
-| concurrent | succeeded | connect+auth p95 | session+PTY p95 | gateway RSS peak |
-| ---------- | --------- | ---------------- | --------------- | ---------------- |
-| 50         | 100%      | 19 ms            | 195 ms          | 30 MB            |
-| 100        | 100%      | 20 ms            | 371 ms          | 40 MB            |
-| 200        | 100%      | 36 ms            | 703 ms          | 50 MB            |
-| 400        | 52%       | 31 ms            | 1274 ms         | 65 MB            |
-
-200 concurrent sessions is the number to plan against. The 400-session row is
-included because it is where the wheels come off, and because the wheels are
-not the gateway's: the failures were the target refusing TCP connections, and
-the gateway reported each one with the reason rather than hanging.
-
-Across 1232 sessions the gateway sealed and uploaded 1232 recordings, panicked
-zero times. Steady state is ~24 MB idle.
-
-### Soak
-
-5300 sessions in waves through one gateway over 90 minutes, with the numbers
-read from `/stats` at idle between waves — after every session has torn down,
-which is the only moment a leak is visible.
-
-| | first half | second half |
-| --- | --- | --- |
-| goroutines at idle | 38.1 | 34.3 |
-| heap in use at idle | 7.31 MB | 6.91 MB |
-
-Both went **down**. A goroutine leaked per session would have shown +5300.
-
-13 of 212 waves failed, every one because the gateway could not reach the
-target over the development container network (`dial tcp: i/o timeout`). It
-refused each session with that reason rather than hanging, which is the
-behaviour worth having. Run this on a laptop and expect the same: the limit
-you hit first is the environment.
-
-### Two gateways at once
-
-Two instances sharing one control plane, 100 concurrent sessions driven through
-each at the same time: 200 of 200 succeeded, 200 session rows landed, every id
-distinct, and the audit chain verified intact afterwards across both writers.
-
-The state that has to be shared is shared. The second gateway starts with an
-empty local pin file and gets its host-key pins from the control plane, so
-trust-on-first-use cannot let it accept a host the first would refuse. A
-terminal ticket redeemed on one gateway is refused by the other with 401.
-
-Reproduce with `dev/argus2.yaml.example`.
-
-These figures are from a development environment on one machine. They are a
-floor to plan against, not a datasheet, and nobody has yet measured a fleet of
-targets or a gateway under sustained multi-hour load.
-
-### Checking a running process
-
-Both servers report on themselves at `GET /stats`, over loopback only:
-
-```sh
-curl -sk https://127.0.0.1:8081/stats   # gateway
-curl -sk https://127.0.0.1:8480/stats   # control plane
-```
-
-Goroutines, live heap, heap objects, session count, uptime — and for the control
-plane, database pool size. A goroutine count that climbs while the session count
-does not is a leak, stated directly; it is the failure that looks fine for a
-week and then does not.
-
-Counts only, and deliberately not `net/http/pprof`. The gateway holds session
-plaintext — every keystroke and every byte of output for every live session — so
-a heap dump of it is a transcript of everyone's privileged work, including
-anything typed that was a password. That is not a debugging endpoint. Loopback
-is enforced in the handler rather than by the listen address, and a caller from
-anywhere else gets 404 rather than 403, so the endpoint is not advertised to
-someone who may not use it.
+Two related checks need the database and so live in `argus-control`:
+`sudo argus-control audit verify` recomputes the audit log's chain and reports
+where it breaks, and `backup verify` checks a backup end to end.
 
 ## Security posture
 
-SSH sessions run on the server under its agent, and the gateway's own SSH paths
-are closed. Browser Remote Desktop is still brokered by the gateway until the
-Windows agent ships, which means the gateway holds those sessions' plaintext in
-memory.
-Treat gateway nodes as the highest-value asset in the fleet: no shared tenancy,
-hardware-backed keys for the vault, and the audit log replicated somewhere the
-gateway cannot write.
+- **The record leaves the server as it happens.** The agent streams recording
+  chunks and their chain heads to the control plane during the session.
+  Anything already sent cannot be rewritten; root on a server can at most stop
+  future recording, and a stream that stops mid-session shows in the console as
+  a gap, never as a clean session.
+- **No standing credential on the server.** For SSH the agent is root and starts
+  the account's shell directly, so there is no key to place, rotate or lose.
+- **Grants are checked twice**, by the control plane and by the agent, and the
+  agent pins the grant key it first receives.
+- **Private keys must be owner-only** (mode `0600`, or the Windows ACL
+  equivalent); a readable one is refused at start-up with the fix in the message.
+- **Failed logins are budgeted separately** from logins, and a 429 says nothing
+  about whether anything supplied was valid.
+- **Command detection from terminal output is an audit aid, not a boundary.**
+  The eBPF probe gives kernel-observed `execve` evidence, the console labels
+  which one produced a timeline, and a session claiming eBPF whose recording
+  has no kernel events is flagged. macOS has no kernel tracing, and says so per
+  session.
+- **No object storage** is warned about at start-up: without it the audit chain
+  and recordings exist in one database on one host.
+- **`/stats`** (goroutines, heap, session count, pool size) answers loopback
+  callers only, and a request carrying proxy forwarding headers is not treated
+  as loopback. It is deliberately not `pprof`: a heap dump of a process relaying
+  sessions is a transcript of everyone's privileged work.
 
-PTY-derived command detection is an audit aid, not a security boundary — a user
-can obscure intent with base64 or a script whose body never reaches the screen.
-The eBPF agent tier provides kernel-observed `execve` evidence. The UI labels
-which one produced any given timeline and never presents them as equivalent.
+## Not done yet
 
-## Signing in
+What the design in front of this page does not cover yet, stated rather than
+implied:
 
-Argus holds its own accounts. There is no identity provider to stand up and
-nothing external to configure -- create the first one on the host and sign in:
+- **Windows servers.** The Windows agent is not merged or released, so Windows
+  hosts cannot be recorded by an agent yet. Until it ships, browser Remote
+  Desktop still goes through `argus-gateway`, which is the only reason the
+  gateway is still built and packaged. That gateway holds those sessions'
+  plaintext in memory; treat its host as the most sensitive in the fleet. Its
+  own SSH and native RDP listeners always refuse, and it will not start without
+  the control plane.
+- **Retiring argus-gateway.** Planned for after the Windows agent, with one
+  release where it stays buildable for existing installs.
+- **"Which logins are recorded"** is still on each server's page, but every
+  direct login is now refused before it applies, so it has no effect.
+- **Faster transports.** WebRTC and direct browser-to-agent paths for the
+  terminal and desktop are designed but not built; today the control plane
+  relays every session.
+- **Capacity of the agent path has not been measured.** The earlier figures
+  (200 concurrent sessions comfortably on one node, flat goroutines and heap
+  over a 5300-session soak) were taken on the gateway's SSH path, which is now
+  closed. `go run ./scripts/tools/loadtest` is the harness to adapt.
+
+## Running locally
 
 ```bash
-argus-control users add you@example.com --role admin
+./scripts/setup.sh    # once
+./scripts/dev.sh      # every day
 ```
 
-The password is read from the terminal without echo, so it does not reach shell
-history or a process list. Nothing is seeded: a product that ships a default
-administrator with a known password has shipped a backdoor.
+Everything is a plain shell script under `scripts/`. `dev.sh` checks tool
+versions, resolves stale port holders, starts Postgres and MinIO, and streams
+every service into one prefixed log; Ctrl-C stops everything. The `Makefile` is
+a thin wrapper (`make dev`, `make check`, …) over the scripts.
 
-Then open the console, sign in, and enrol a second factor. Any authenticator app
-works -- the codes are ordinary TOTP. Enrolment issues ten single-use recovery
-codes, shown once and stored only as digests, for the phone that ends up in a
-river.
+| | |
+|---|---|
+| Web UI | http://localhost:5290 |
+| Control plane API | http://localhost:8480 |
 
-`user_tokens:` is a bootstrap hatch for a deployment that has no other way in
-yet, and it is the only thing here that skips the password, the second factor
-and the role. The control plane therefore **refuses to start** when it is set
-alongside any local account. Where it does apply, the role comes from the named
-account rather than from holding the string.
+Without a control plane configured, the web UI runs against an in-memory mock
+API (`web/src/lib/api.ts`), so it is usable on its own.
 
-## Controls an operator should know exist
+To sign in against the dev control plane, make an account (nothing is seeded):
 
-The console explains each of these where it appears; this is the list.
+```bash
+set -a; . dev/secrets.env; set +a
+go run ./cmd/argus-control -config dev/control.yaml \
+  users add you@example.com --role admin
+```
 
-- **Gateway policy** is held by the control plane and enforced by the gateway.
-  Every SSH forwarding channel is closed by default and every recording
-  guarantee is on. Only an owner or admin can change it, every change is
-  audited with what moved and why it matters, and a session keeps the policy it
-  started under — tightening policy does not stop a session in progress;
-  terminating it does. A gateway that cannot reach the control plane keeps the
-  policy it has, in either direction.
-- **Console-only access** is on by default: native ssh, scp, sftp and mstsc are
-  refused at the gateway, and an agent refuses a direct sshd login and reports
-  it. See [Connecting](#connecting).
-- **File transfers in the console** run as the account on the server, through
-  its agent, and each one is in the audit chain with its size and SHA-256.
-- **Port, agent and X11 forwarding** are implemented, not merely permitted.
-  Local forwards dial from the *target*, so `-L` reaches what the target can
-  reach and nothing more. A tunnel's contents are not recorded; its endpoints,
-  duration and bytes each way go to the audit chain. Both are bounded per
-  session (32 local, 8 remote).
-- **Private keys must be mode 0600.** The gateway host key, the CA key, injected
-  credentials and every TLS key are refused at load if group or others can
-  read them. The process will not start; the message says `chmod 600`.
-- **Failed logins are budgeted separately from logins.** `failures_per_hour`
-  is charged only by actual failures and refused before any work is done. A
-  429 says nothing about whether anything supplied was valid.
-- **Browser terminal tickets** are single-use, bound to one target and
-  principal, and expire in about a minute — which is what makes a credential
-  in a WebSocket query string acceptable.
-- **Recording fidelity is checked against the artefact.** A session reported
-  as eBPF whose recording carries no kernel events is flagged in the console;
-  the badge alone reads the claim, not the bytes.
-- **No object storage** is warned about loudly at startup: without it the
-  audit chain and every recording exist only in one database on one host.
+`-config` goes **before** the subcommand (after it you get
+`unknown flag "-config"`), and `dev/secrets.env` must be loaded first or the
+config cannot resolve its `${VAR}` references. If the console says the control
+plane could not be reached, it is down or the console points at the wrong
+address; `dev.sh` names the cause on start-up.
 
-### Verifying it yourself
+| Script | Does |
+|---|---|
+| `scripts/setup.sh` | First-time setup: verify toolchain, install dependencies |
+| `scripts/dev.sh` | Run every service present locally (`web`, `control`, …; `--force`, `--clean`) |
+| `scripts/deps.sh` | Postgres and MinIO: `up`, `down`, `reset`, `status`, `logs` |
+| `scripts/check.sh` | Typecheck, vet, test: what CI runs |
+| `scripts/build.sh` | Production build |
+
+Each takes `--help`. Requirements: **Bun** ≥ 1.4 (Node is not needed), **Go** ≥
+1.25, and **Apple `container`** or Docker for Postgres and MinIO
+(`brew install --cask container`, then `container system start`).
+`deps.sh` handles two Apple-container quirks: `PGDATA` must be a subdirectory of
+the volume mount, and containers cannot resolve each other by name.
+
+To add a service to `dev.sh`, add a line to its `SERVICES` registry
+(`name | port | colour | working dir | detect path | command`); it starts only
+when its detect path exists.
+
+### Tests
 
 ```bash
 ./scripts/deps.sh up
@@ -652,7 +479,21 @@ ARGUS_TEST_DATABASE_URL="postgres://argus:argus@localhost:5433/argus?sslmode=dis
 cd web && bun run test && bun run e2e     # unit, then a real browser
 ```
 
-The browser suite builds the console, serves it as deployed, and asserts on
-every route with zero console errors, the fonts actually loading, the audit
-chain verifying in WASM, and — the reason it exists — that replaying a large
-terminal or desktop recording leaves the main-thread heap flat.
+The browser suite builds the console, serves it as deployed, and checks every
+route with zero console errors, the audit chain verifying in WASM, and that
+replaying a large terminal or desktop recording leaves the main-thread heap
+flat.
+
+### Layout
+
+```
+cmd/argus-control     control plane and console server
+cmd/argus-agent       the agent on each server
+cmd/argus-verify      standalone recording verifier
+cmd/argus-gateway     browser RDP until the Windows agent ships
+internal/             tunnel, agent, control, recorder, hashchain, …
+web/                  React 19 · Mantine 9 · TanStack Router/Query/Form · Vite 8
+docs/install.md       the production install
+packaging/            systemd units, launchd job, packaged config
+scripts/              setup · dev · deps · check · build
+```
