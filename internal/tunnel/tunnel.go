@@ -182,8 +182,11 @@ func OpenWith(ctx context.Context, s Session, h Header) (Stream, Answer, error) 
 	if err != nil {
 		return nil, Answer{}, err
 	}
+	// The caller's deadline when it set one: it knows how long what it is
+	// opening may take to answer, and a session on a first logon takes longer
+	// than a header.
 	deadline := time.Now().Add(HeaderTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+	if d, ok := ctx.Deadline(); ok {
 		deadline = d
 	}
 	_ = st.SetDeadline(deadline)
