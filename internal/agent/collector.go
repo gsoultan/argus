@@ -50,6 +50,17 @@ type Collector struct {
 	// where nothing can set that scope in the first place.
 	OnUnrecorded func(SessionStart)
 
+	// OnRefused is called for a direct login turned away because the
+	// deployment is console-only. The daemon reports it; nil in standalone
+	// mode, where nothing can switch console-only on.
+	OnRefused func(SessionStart)
+
+	// consoleOnly is the console's policy as of the last heartbeat: refuse
+	// any login that did not come through Argus. Off until the control plane
+	// says otherwise, so an agent installed before it can reach the control
+	// plane does not lock its host's administrators out.
+	consoleOnly atomic.Bool
+
 	// scope is the console's recording scope, as of the last heartbeat. The
 	// zero value is every_login, so an agent that has not heard from the
 	// control plane records everything.
@@ -121,6 +132,17 @@ func (c *Collector) Scope() RecordingScope {
 	}
 	return ScopeEveryLogin
 }
+
+// SetConsoleOnly applies the control plane's console-only policy.
+func (c *Collector) SetConsoleOnly(on bool) { c.consoleOnly.Store(on) }
+
+// ConsoleOnly reports whether direct logins are being refused.
+func (c *Collector) ConsoleOnly() bool { return c.consoleOnly.Load() }
+
+// ConsoleOnlyReason is what a refused direct login is told.
+const ConsoleOnlyReason = "this server accepts sessions from the Argus console only; " +
+	"open it from the console in your browser. ssh, scp and sftp straight to this " +
+	"server are refused, and this attempt has been reported"
 
 // NewCollector builds a collector writing recordings into dir.
 func NewCollector(dir string, log *slog.Logger) *Collector {
@@ -322,6 +344,25 @@ func (c *Collector) handle(conn net.Conn) {
 		case SessionStart:
 			if sess != nil {
 				c.log.Warn("duplicate start on one connection")
+				return
+			}
+			// Console-only comes first: a login that did not come through
+			// Argus does not happen at all, whatever the recording scope.
+			// A brokered one is a gateway session the console opened.
+			if m.Origin == Direct && c.ConsoleOnly() {
+				c.log.Warn("DIRECT LOGIN REFUSED — this host is console-only",
+					"principal", m.Principal,
+					"client", m.ClientAddr,
+					"command", m.Command,
+					"detail", "the login reached sshd without Argus; whoever holds its "+
+						"key or password can still reach sshd directly")
+				_ = json.NewEncoder(conn).Encode(Decision{
+					Type: "decision", Record: false, Refused: true,
+					Reason: ConsoleOnlyReason, Error: ConsoleOnlyReason,
+				})
+				if c.OnRefused != nil {
+					c.OnRefused(m)
+				}
 				return
 			}
 			// Only a direct login is ever let through, and only when the

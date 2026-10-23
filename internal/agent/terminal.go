@@ -63,6 +63,12 @@ func Terminal(cfg TerminalConfig) TunnelService {
 			call.Refuse(err.Error())
 			return
 		}
+		if !g.ForService(TerminalService) {
+			log.Warn("tunnel: refused a session on a grant for another service",
+				"service", g.Service, "for", g.Email)
+			call.Refuse(tunnel.ErrGrant{Reason: "it is for " + g.Service + ", not a terminal"}.Error())
+			return
+		}
 		t, err := startTerminal(cfg, g)
 		if err != nil {
 			log.Warn("tunnel: could not open a session", "principal", g.Principal,

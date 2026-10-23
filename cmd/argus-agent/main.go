@@ -49,6 +49,9 @@ func main() {
 		os.Exit(runDaemon(os.Args[2:]))
 	case "shim":
 		os.Exit(runShim(os.Args[2:]))
+	case "file-op":
+		// Run by the files service as the account, one per operation.
+		os.Exit(agent.RunFileOp(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
 	case "probe":
@@ -173,6 +176,11 @@ func runDaemon(args []string) int {
 			Hostname:  hostname,
 			Log:       log,
 		})
+		// File transfer, as the account, on a grant of its own.
+		services[agent.FilesService] = agent.Files(agent.FilesConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Log:      log,
+		})
 		go agent.RunTunnel(ctx, agent.TunnelConfig{
 			Dial: tunnel.DialOptions{
 				ControlURL: *controlURL,
@@ -187,6 +195,27 @@ func runDaemon(args []string) int {
 		})
 	}
 
+	// Console-only survives a restart: an agent restarted during a control
+	// plane outage keeps refusing direct logins rather than reopening sshd
+	// until the next heartbeat gets through.
+	consoleOnlyFile := *stateDir + "/console-only"
+	if b, err := os.ReadFile(consoleOnlyFile); err == nil && strings.TrimSpace(string(b)) == "1" {
+		col.SetConsoleOnly(true)
+		log.Info("console-only: direct logins to this host are refused until the console says otherwise")
+	}
+	col.OnRefused = func(m agent.SessionStart) {
+		hostname, _ := os.Hostname()
+		rep.Login(ctx, map[string]any{
+			"hostname":    hostname,
+			"principal":   m.Principal,
+			"client_addr": m.ClientAddr,
+			"command":     m.Command,
+			"origin":      m.Origin,
+			"scope":       "console_only",
+			"refused":     true,
+			"at":          time.Now().UTC(),
+		})
+	}
 	col.OnUnrecorded = func(m agent.SessionStart) {
 		// The daemon's own hostname, not the shim's: the shim runs as the
 		// user who logged in, and the credential this reports with only
@@ -308,6 +337,7 @@ func runDaemon(args []string) int {
 			"exec_tracing":    execCtx.Tracer != nil,
 			"exec_reason":     execCtx.Reason,
 			"recording_scope": col.Scope(),
+			"console_only":    col.ConsoleOnly(),
 		})
 		// Only a delivered reply changes the scope. An unreachable control
 		// plane leaves the last setting in place -- the console's, not a
@@ -320,6 +350,23 @@ func runDaemon(args []string) int {
 					"from", prev, "to", next)
 			}
 			col.SetScope(next)
+			// Absent from an older control plane, or one that could not read
+			// its policy: keep what was last heard.
+			if reply.ConsoleOnly != nil {
+				on := *reply.ConsoleOnly
+				if on != col.ConsoleOnly() {
+					log.Warn("console-only changed by the console", "console_only", on,
+						"detail", "direct ssh, scp and sftp logins are refused while this is on")
+				}
+				col.SetConsoleOnly(on)
+				v := "0"
+				if on {
+					v = "1"
+				}
+				if err := os.WriteFile(consoleOnlyFile, []byte(v+"\n"), 0o600); err != nil {
+					log.Error("console-only: cannot persist the setting", "error", err)
+				}
+			}
 		}
 	})
 
