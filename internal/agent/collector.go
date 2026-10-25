@@ -56,11 +56,6 @@ type Collector struct {
 	// minute would be noise.
 	OnActive func(SessionRecord)
 
-	// OnUnrecorded is called for a direct login let through without recording
-	// under ScopeArgusOnly. The daemon reports it; nil in standalone mode,
-	// where nothing can set that scope in the first place.
-	OnUnrecorded func(SessionStart)
-
 	// OnRefused is called for a direct login turned away because the
 	// deployment is console-only. The daemon reports it; nil in standalone
 	// mode, where nothing can switch console-only on.
@@ -71,11 +66,6 @@ type Collector struct {
 	// says otherwise, so an agent installed before it can reach the control
 	// plane does not lock its host's administrators out.
 	consoleOnly atomic.Bool
-
-	// scope is the console's recording scope, as of the last heartbeat. The
-	// zero value is every_login, so an agent that has not heard from the
-	// control plane records everything.
-	scope atomic.Value // RecordingScope
 
 	// Exec attributes kernel-observed executions to sessions. Nil, or holding
 	// no probe, on hosts without kernel support — the collector behaves
@@ -144,17 +134,6 @@ type activeSession struct {
 	execDropped uint64
 	// terminatedBy and terminationReason are set when the console ended it.
 	terminatedBy, terminationReason string
-}
-
-// SetScope applies the recording scope the control plane sent.
-func (c *Collector) SetScope(s RecordingScope) { c.scope.Store(ParseScope(string(s))) }
-
-// Scope is the recording scope in force.
-func (c *Collector) Scope() RecordingScope {
-	if s, ok := c.scope.Load().(RecordingScope); ok {
-		return s
-	}
-	return ScopeEveryLogin
 }
 
 // SetConsoleOnly applies the control plane's console-only policy.
@@ -375,8 +354,8 @@ func (c *Collector) handle(conn net.Conn) {
 			// the socket is open to every local user, and a claim of having
 			// come through Argus is not something to take from one of them.
 			m.Origin = Direct
-			// Console-only comes first: a login that did not come through
-			// Argus does not happen at all, whatever the recording scope.
+			// Console-only: a login that did not come through Argus does not
+			// happen at all. Every login that is admitted is recorded.
 			if c.ConsoleOnly() {
 				c.log.Warn("DIRECT LOGIN REFUSED — this host is console-only",
 					"principal", m.Principal,
@@ -390,25 +369,6 @@ func (c *Collector) handle(conn net.Conn) {
 				})
 				if c.OnRefused != nil {
 					c.OnRefused(m)
-				}
-				return
-			}
-			// A direct login is let through unrecorded only when the console
-			// asked for it.
-			if c.Scope() == ScopeArgusOnly {
-				c.log.Warn("DIRECT LOGIN — let through unrecorded by the host's recording scope",
-					"principal", m.Principal,
-					"client", m.ClientAddr,
-					"command", m.Command,
-					"detail", "this host records Argus sessions only; the login is reported as a bypass")
-				_ = json.NewEncoder(conn).Encode(Decision{
-					Type:   "decision",
-					Record: false,
-					Reason: "this server records sessions opened through Argus only; " +
-						"this login is not recorded, and it has been reported",
-				})
-				if c.OnUnrecorded != nil {
-					c.OnUnrecorded(m)
 				}
 				return
 			}

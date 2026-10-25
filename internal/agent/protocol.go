@@ -135,28 +135,6 @@ type Reply struct {
 	Error     string `json:"error"`
 }
 
-// RecordingScope is which logins the agent records, as set in the console.
-type RecordingScope string
-
-const (
-	// ScopeEveryLogin records every sshd login, through Argus or not. The
-	// default, and what the agent does until the control plane says otherwise.
-	ScopeEveryLogin RecordingScope = "every_login"
-	// ScopeArgusOnly records sessions that came through Argus and lets a
-	// direct login through unrecorded -- reported, so never unseen.
-	ScopeArgusOnly RecordingScope = "argus_only"
-)
-
-// ParseScope reads a scope from the control plane. Anything it does not
-// recognise is every_login: a value this agent cannot interpret must not be
-// what turns recording off.
-func ParseScope(s string) RecordingScope {
-	if RecordingScope(s) == ScopeArgusOnly {
-		return ScopeArgusOnly
-	}
-	return ScopeEveryLogin
-}
-
 // envelope is used to peek at a message's type before full decoding.
 type envelope struct {
 	Type string `json:"type"`

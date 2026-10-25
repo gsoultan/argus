@@ -240,21 +240,6 @@ func runDaemon(args []string) int {
 			"at":          time.Now().UTC(),
 		})
 	}
-	col.OnUnrecorded = func(m agent.SessionStart) {
-		// The daemon's own hostname, not the shim's: the shim runs as the
-		// user who logged in, and the credential this reports with only
-		// speaks for this host anyway.
-		hostname, _ := os.Hostname()
-		rep.Login(ctx, map[string]any{
-			"hostname":    hostname,
-			"principal":   m.Principal,
-			"client_addr": m.ClientAddr,
-			"command":     m.Command,
-			"origin":      m.Origin,
-			"scope":       agent.ScopeArgusOnly,
-			"at":          time.Now().UTC(),
-		})
-	}
 	var uploads *agent.Uploads
 	if rep.Enabled() {
 		uploads = agent.NewUploads(*stateDir, rep, log)
@@ -353,20 +338,12 @@ func runDaemon(args []string) int {
 			"posture":         posture,
 			"exec_tracing":    execCtx.Tracer != nil,
 			"exec_reason":     execCtx.Reason,
-			"recording_scope": col.Scope(),
 			"console_only":    col.ConsoleOnly(),
 		})
-		// Only a delivered reply changes the scope. An unreachable control
-		// plane leaves the last setting in place -- the console's, not a
-		// default chosen by an outage -- and a control plane that does not
-		// send one is every_login, which is what it has always meant.
+		// Only a delivered reply changes anything. An unreachable control
+		// plane leaves the last setting in place, not a default chosen by an
+		// outage.
 		if ok {
-			next := agent.ParseScope(reply.RecordingScope)
-			if prev := col.Scope(); next != prev {
-				log.Warn("recording scope changed by the console",
-					"from", prev, "to", next)
-			}
-			col.SetScope(next)
 			// Absent from an older control plane, or one that could not read
 			// its policy: keep what was last heard.
 			if reply.ConsoleOnly != nil {
