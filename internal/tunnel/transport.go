@@ -64,8 +64,19 @@ func (s quicSession) GrantKey() string      { return s.grantKey }
 
 /* ── yamux over an HTTP upgrade ──────────────────────────────────────────── */
 
+// yamuxWindow is how far a stream may run ahead of its reader on the HTTPS
+// fallback. One window per round trip is the most a stream can carry, and
+// yamux's default of 256 KB held a download or a large `cat` to 1.5 MB/s at
+// an 80 ms round trip, where QUIC carried ten times that (see
+// capacity_test.go). It is also what a stalled reader can make the other
+// side buffer per stream, which is why it is 1 MB and not the 6 MB QUIC
+// allows: on the control plane a slow browser holds at most this much of
+// its session's output.
+const yamuxWindow = 1 << 20
+
 func yamuxConfig() *yamux.Config {
 	c := yamux.DefaultConfig()
+	c.MaxStreamWindowSize = yamuxWindow
 	c.EnableKeepAlive = true
 	c.KeepAliveInterval = 15 * time.Second
 	c.ConnectionWriteTimeout = 10 * time.Second

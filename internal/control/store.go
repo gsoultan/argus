@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/rgen/session"
@@ -36,6 +37,11 @@ const GenesisHash = "00000000000000000000000000000000000000000000000000000000000
 // Store is the control plane's persistence layer.
 type Store struct {
 	pool *pgxpool.Pool
+
+	// Audit appends waiting for the next transaction; see AppendAudit.
+	auditMu      sync.Mutex
+	auditQueue   []*auditAppend
+	auditWriting bool
 }
 
 // Open connects and applies migrations.
@@ -781,60 +787,166 @@ type AuditEvent struct {
 
 // AppendAudit adds an event, chaining it to the current head.
 //
-// Serialised through a transaction that locks the tail row: two concurrent
+// Serialised through a transaction that holds an advisory lock: two concurrent
 // writers computing from the same head would produce two events claiming the
 // same predecessor, and the chain would no longer verify.
+//
+// Appends that arrive while one is being written are committed together, in
+// the order they arrived, in the next transaction: one lock, one read of the
+// head and one commit for all of them. Each caller still returns only once its
+// own event is committed, with its own seq and hash. Done one transaction
+// each, a burst of 500 sessions opening waited on 500 commits in a row, and
+// the median one was told it was ready 760 ms late (see capacity_test.go).
 func (s *Store) AppendAudit(ctx context.Context, e AuditEvent) (AuditEvent, error) {
+	r := &auditAppend{in: e, done: make(chan struct{})}
+	s.auditMu.Lock()
+	s.auditQueue = append(s.auditQueue, r)
+	if s.auditWriting {
+		s.auditMu.Unlock()
+		<-r.done
+		return r.out, r.err
+	}
+	s.auditWriting = true
+	s.auditMu.Unlock()
+
+	// One caller giving up must not fail the others whose events it is
+	// carrying, so the write has a deadline of its own instead.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteWait)
+	defer cancel()
+	for s.writeAuditQueue(wctx) {
+		select {
+		case <-r.done:
+			// This caller's event is in. Whatever queued since is written
+			// in the background rather than holding this request up.
+			s.auditMu.Lock()
+			if len(s.auditQueue) == 0 {
+				s.auditWriting = false
+				s.auditMu.Unlock()
+			} else {
+				s.auditMu.Unlock()
+				go s.drainAudit()
+			}
+			return r.out, r.err
+		default:
+		}
+	}
+	return r.out, r.err
+}
+
+// auditWriteWait bounds one batch's transaction.
+const auditWriteWait = 30 * time.Second
+
+// maxAuditBatch bounds how many events one transaction carries.
+const maxAuditBatch = 256
+
+type auditAppend struct {
+	in, out AuditEvent
+	err     error
+	done    chan struct{}
+}
+
+// drainAudit writes whatever is queued until nothing is.
+func (s *Store) drainAudit() {
+	ctx, cancel := context.WithTimeout(context.Background(), auditWriteWait)
+	defer cancel()
+	for s.writeAuditQueue(ctx) {
+	}
+}
+
+// writeAuditQueue writes the next batch and reports whether there was one.
+// When the queue is empty it gives up the writer's role, under the same lock
+// that an arriving append checks it with, so an event is never left queued
+// with nobody writing.
+func (s *Store) writeAuditQueue(ctx context.Context) bool {
+	s.auditMu.Lock()
+	n := min(len(s.auditQueue), maxAuditBatch)
+	if n == 0 {
+		s.auditWriting = false
+		s.auditMu.Unlock()
+		return false
+	}
+	batch := s.auditQueue[:n:n]
+	s.auditQueue = s.auditQueue[n:]
+	s.auditMu.Unlock()
+
+	if err := s.appendAuditBatch(ctx, batch); err != nil && len(batch) > 1 {
+		// One bad event must not cost the rest theirs: write them one at
+		// a time, so each caller gets its own outcome.
+		for _, r := range batch {
+			r.err = s.appendAuditBatch(ctx, []*auditAppend{r})
+		}
+	} else {
+		for _, r := range batch {
+			r.err = err
+		}
+	}
+	for _, r := range batch {
+		if r.err != nil {
+			// A rolled-back event has no seq or hash; hand back what was asked.
+			r.out = r.in
+		}
+		close(r.done)
+	}
+	return true
+}
+
+// appendAuditBatch chains batch onto the head in one transaction.
+func (s *Store) appendAuditBatch(ctx context.Context, batch []*auditAppend) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return e, err
+		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Advisory lock rather than a table lock: cheap, and scoped to audit
 	// appends so it never blocks a session write.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('argus_audit'))`); err != nil {
-		return e, err
+		return err
 	}
 
 	prev := GenesisHash
 	err = tx.QueryRow(ctx, `SELECT hash FROM audit_events ORDER BY seq DESC LIMIT 1`).Scan(&prev)
 	if err != nil && err != pgx.ErrNoRows {
-		return e, err
+		return err
 	}
 
-	// Truncated to what the column can hold, before anything is hashed.
-	//
-	// TIMESTAMPTZ stores microseconds; Go's time.Time carries nanoseconds, and
-	// chainHash formats with RFC3339Nano. So a hash computed over the in-memory
-	// value could never be recomputed from the stored row -- verification read
-	// back a timestamp Postgres had already rounded and declared the record
-	// modified. It survived review because Go's clock on macOS is microsecond
-	// granular, so the nanosecond digits were usually zero; on Linux they are
-	// not, and the chain failed to verify for very nearly every event written.
-	//
-	// Truncating here rather than in chainHash keeps the rule in one place: the
-	// value that is hashed is the value that is stored.
-	if e.At.IsZero() {
-		e.At = time.Now()
-	}
-	e.At = e.At.UTC().Truncate(time.Microsecond)
-	if e.Severity == "" {
-		e.Severity = "info"
-	}
-	e.PrevHash = prev
-	e.Hash = chainHash(prev, e)
+	for _, r := range batch {
+		e := r.in
+		// Truncated to what the column can hold, before anything is hashed.
+		//
+		// TIMESTAMPTZ stores microseconds; Go's time.Time carries nanoseconds, and
+		// chainHash formats with RFC3339Nano. So a hash computed over the in-memory
+		// value could never be recomputed from the stored row -- verification read
+		// back a timestamp Postgres had already rounded and declared the record
+		// modified. It survived review because Go's clock on macOS is microsecond
+		// granular, so the nanosecond digits were usually zero; on Linux they are
+		// not, and the chain failed to verify for very nearly every event written.
+		//
+		// Truncating here rather than in chainHash keeps the rule in one place: the
+		// value that is hashed is the value that is stored.
+		if e.At.IsZero() {
+			e.At = time.Now()
+		}
+		e.At = e.At.UTC().Truncate(time.Microsecond)
+		if e.Severity == "" {
+			e.Severity = "info"
+		}
+		e.PrevHash = prev
+		e.Hash = chainHash(prev, e)
 
-	err = tx.QueryRow(ctx, `
-		INSERT INTO audit_events (at, action, severity, actor_email, target, detail, prev_hash, hash)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		RETURNING seq, id::text`,
-		e.At, e.Action, e.Severity, e.ActorEmail, e.Target, e.Detail, e.PrevHash, e.Hash).
-		Scan(&e.Seq, &e.ID)
-	if err != nil {
-		return e, err
+		err = tx.QueryRow(ctx, `
+			INSERT INTO audit_events (at, action, severity, actor_email, target, detail, prev_hash, hash)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			RETURNING seq, id::text`,
+			e.At, e.Action, e.Severity, e.ActorEmail, e.Target, e.Detail, e.PrevHash, e.Hash).
+			Scan(&e.Seq, &e.ID)
+		if err != nil {
+			return err
+		}
+		r.out = e
+		prev = e.Hash
 	}
-	return e, tx.Commit(ctx)
+	return tx.Commit(ctx)
 }
 
 // chainHash must match the console's worker byte for byte, or a log that

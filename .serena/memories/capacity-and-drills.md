@@ -239,3 +239,34 @@ references first. **Before deleting from the bucket, check `recording_key`.**
 Both branches were exercised against the real 12k-recording backup by nulling
 that one key, running, and restoring it -- a passing branch nobody has run is
 the kind of check this script exists to argue against.
+
+## The agent path (2026-10-23)
+
+The gateway figures above are history: that SSH path is closed. The agent
+path's numbers are in `docs/capacity.md`, from two harnesses that skip unless
+asked: `internal/control/capacity_test.go` (whole browser terminals, agents in
+a child process so the heap figures are the control plane's) and
+`internal/tunnel/capacity_test.go` (one tunnel per transport through a proxy
+that adds a round trip and nothing else).
+
+1000 concurrent terminals on 50 agents, one 4-vCPU box: all sealed, ~110 KB
+heap and 5 goroutines per terminal on the control plane, keystroke p50 1-2 ms.
+Burst open time is dominated by starting that many login shells on four cores.
+
+Three things the numbers found, all fixed:
+- yamux's 256 KB default window held the HTTPS fallback to 1.5 MB/s per
+  stream at 80 ms RTT. Now 1 MB (`yamuxWindow`), 6.1 MB/s. Not larger: the
+  window is what a slow browser makes the control plane buffer per session.
+- Every audit append was its own transaction behind one advisory lock, and
+  every terminal open appends before "ready". A burst of 500 waited ~760 ms
+  median on that alone. `AppendAudit` now group-commits whatever queued while
+  a write was in flight (leader/follower, no long-lived goroutine); each caller
+  still waits for its own commit, and a failed batch is retried one by one so
+  a bad event fails alone. Proof is `xmin`: 200 queued appends, ≤2 txs.
+- `WriteFrame` allocated a fresh 5+len buffer per frame. Pooled now.
+
+**An agent takes 64 streams at once** (sessions + file browsers + the ping).
+The 65th is refused with a sentence, not "too many streams".
+
+**Gotcha in the harness:** with fewer sessions than bulk printers the run
+used to wait forever on a WaitGroup; bulk only runs from 16 sessions up.
