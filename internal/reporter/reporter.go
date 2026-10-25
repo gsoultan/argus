@@ -103,9 +103,6 @@ func (c *Client) Heartbeat(ctx context.Context, v any) {
 // HeartbeatReply is what the control plane answers a heartbeat with.
 type HeartbeatReply struct {
 	Status string `json:"status"`
-	// RecordingScope is the console's setting for this host. Empty from a
-	// control plane older than the setting.
-	RecordingScope string `json:"recording_scope"`
 	// ConsoleOnly is whether this host must refuse logins that did not come
 	// through Argus. Nil from a control plane older than the setting, or one
 	// that could not read its policy: the agent keeps what it last heard.
