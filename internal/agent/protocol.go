@@ -33,12 +33,12 @@ import (
 // recording.
 const SocketPath = socketPath
 
-// Origin records whether a session was brokered or bypassed the gateway.
+// Origin records whether a session came through Argus or bypassed it.
 type Origin string
 
 const (
-	// Brokered means the connection arrived from a known gateway address, so
-	// the gateway already recorded it and policy was evaluated beforehand.
+	// Brokered means the session was opened from the console, over the
+	// agent's tunnel, so policy was evaluated before it existed.
 	Brokered Origin = "brokered"
 	// Direct means someone reached sshd without passing through Argus. The
 	// session is recorded, but no approval, time window or principal check ever

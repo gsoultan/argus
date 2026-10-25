@@ -1,3 +1,5 @@
+//go:build !windows
+
 package agent
 
 import (
@@ -21,45 +23,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ShimConfig controls how a session is wrapped.
-type ShimConfig struct {
-	// SocketPath is the collector to stream to.
-	SocketPath string
-	// GatewayKeys is the path to the gateway's public keys, in authorized_keys
-	// format. A session that authenticated with one of these came through
-	// Argus and is already recorded. This is the authoritative signal.
-	GatewayKeys string
-	// GatewayAddrs is a weak fallback used only when sshd does not expose auth
-	// info. See OriginDetector.Detect for why address matching alone is never
-	// treated as proof.
-	GatewayAddrs []string
-	// SkipBrokered stops the agent recording sessions it believes came through
-	// the gateway, on the grounds the gateway already recorded them.
-	//
-	// Off by default, and that default is deliberate. "Brokered" is inferred
-	// from the key that authenticated, which really means "whoever holds the
-	// gateway's key" — and that is exactly the credential an attacker steals in
-	// order to bypass the gateway. Skipping on that signal would let a stolen
-	// key silence the agent, turning the strongest control into an off switch.
-	//
-	// Recording both ends costs storage and leaves the control plane to
-	// reconcile two artefacts per brokered session. That is a far better
-	// trade than a recording gap an attacker can trigger on demand.
-	SkipBrokered bool
-	// FailOpen decides what happens when the collector is unreachable.
-	//
-	// False (the default) refuses the session: if it cannot be recorded, it
-	// does not happen. That is what "all privileged sessions are recorded"
-	// requires, and it is the correct posture for a PAM product.
-	//
-	// True lets the session proceed unrecorded. Only sensible during rollout,
-	// when locking every admin out of the fleet because a daemon crashed is a
-	// worse outcome than a gap in the audit trail.
-	FailOpen bool
-	// Shell overrides the login shell; empty means look it up.
-	Shell string
-}
-
 // RunShim wraps the user's session, streaming it to the collector.
 //
 // sshd invokes this via ForceCommand, so it runs as the connecting user with
@@ -71,27 +34,6 @@ type ShimConfig struct {
 func RunShim(cfg ShimConfig) int {
 	origCmd := os.Getenv("SSH_ORIGINAL_COMMAND")
 	clientAddr, _, _ := strings.Cut(os.Getenv("SSH_CONNECTION"), " ")
-
-	// Identify the gateway by the key it authenticated with, not by where the
-	// packets appear to come from. Behind NAT or a port forward every client
-	// shares one source address, so an address rule would let anyone on that
-	// path opt out of being recorded.
-	fingerprints, err := LoadGatewayFingerprints(cfg.GatewayKeys)
-	if err != nil {
-		fingerprints = map[string]bool{}
-	}
-	origin, originReason := OriginDetector{
-		GatewayKeyFingerprints: fingerprints,
-		GatewayAddrs:           cfg.GatewayAddrs,
-	}.Detect()
-
-	// Only skip when the operator has explicitly accepted the trade — see
-	// SkipBrokered. The safe default records everything and lets the control
-	// plane deduplicate, because the alternative is a gap an attacker can
-	// create simply by stealing the gateway's key.
-	if origin == Brokered && cfg.SkipBrokered {
-		return execSession(cfg, origCmd, nil)
-	}
 
 	conn, err := net.DialTimeout("unix", cfg.SocketPath, 5*time.Second)
 	if err != nil {
@@ -115,7 +57,7 @@ func RunShim(cfg ShimConfig) int {
 		Type:         "start",
 		Principal:    currentUsername(),
 		ClientAddr:   clientAddr,
-		Origin:       origin,
+		Origin:       Direct,
 		Command:      origCmd,
 		TTY:          term.IsTerminal(),
 		Cols:         cols,
@@ -123,7 +65,7 @@ func RunShim(cfg ShimConfig) int {
 		Hostname:     hostname,
 		StartedAt:    time.Now().UTC(),
 		PID:          os.Getpid(),
-		OriginReason: originReason,
+		OriginReason: "a login through sshd; Argus opens its own sessions over the tunnel",
 	}
 
 	enc := json.NewEncoder(conn)
@@ -175,60 +117,6 @@ func RunShim(cfg ShimConfig) int {
 			ack.SessionID, ack.ChainHead[:12])
 	}
 	return code
-}
-
-// decisionWait bounds how long a login waits for the daemon's answer.
-//
-// A current daemon answers at once. One older than the decision message --
-// for the moments of an upgrade between the new shim landing and the daemon
-// restarting -- says nothing, and the wait is what that costs per login.
-const decisionWait = 2 * time.Second
-
-type decision struct {
-	// refused: the daemon could not open the recording, or went away.
-	refused bool
-	// skip: the daemon chose not to record this login, for reason.
-	skip   bool
-	reason string
-	// consoleOnly: the login is not allowed at all, for reason.
-	consoleOnly bool
-}
-
-// awaitDecision reads the daemon's answer to a start.
-//
-// Silence until the deadline is a daemon that predates the answer and is
-// recording, so it streams. A closed connection or an error is a recording
-// that did not open, and goes to the same fail-closed path as an unreachable
-// collector.
-func awaitDecision(conn net.Conn, dec *json.Decoder, wait time.Duration) decision {
-	_ = conn.SetReadDeadline(time.Now().Add(wait))
-	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
-
-	var r Reply
-	if err := dec.Decode(&r); err != nil {
-		var ne net.Error
-		if errors.As(err, &ne) && ne.Timeout() {
-			return decision{}
-		}
-		return decision{refused: true}
-	}
-	switch {
-	case r.Refused:
-		reason := r.Reason
-		if reason == "" {
-			reason = ConsoleOnlyReason
-		}
-		return decision{consoleOnly: true, reason: reason}
-	case r.Error != "":
-		return decision{refused: true}
-	case r.Type == "decision" && !r.Record:
-		reason := r.Reason
-		if reason == "" {
-			reason = "this login is not recorded"
-		}
-		return decision{skip: true, reason: reason}
-	}
-	return decision{}
 }
 
 // stream serialises frames onto the collector connection.

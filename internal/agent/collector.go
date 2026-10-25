@@ -40,10 +40,21 @@ type Collector struct {
 	// hangups ends each session the agent opened itself through the tunnel,
 	// for the same reason: those have no shim connection to close.
 	hangups map[string]func()
+	// tunnels is every session through the tunnel still open, terminal or
+	// desktop, for the reports that say they are running.
+	tunnels map[string]liveRecording
 
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
 	OnSession func(SessionRecord)
+
+	// OnActive is called when a session through the tunnel starts, so the
+	// console can show it running -- and watch or end it -- rather than
+	// learning of it only once it is over. The daemon also repeats it for
+	// every such session still open, see ActiveTunnelRecords. Not called for
+	// logins through sshd: a direct login's report is an alarm, and one per
+	// minute would be noise.
+	OnActive func(SessionRecord)
 
 	// OnRefused is called for a direct login turned away because the
 	// deployment is console-only. The daemon reports it; nil in standalone
@@ -87,6 +98,17 @@ type SessionRecord struct {
 	// Actor is who a tunnel session was opened for, from the signed grant.
 	// Empty for a login through sshd, where only the local account is known.
 	Actor string `json:"actor,omitempty"`
+	// Protocol is "ssh" for a terminal, "rdp" for a desktop. Empty is ssh.
+	Protocol string `json:"protocol,omitempty"`
+	// State is "active" while it runs, then "closed", or "terminated" when
+	// someone ended it from the console.
+	State string `json:"state,omitempty"`
+	// TerminatedBy and TerminationReason say who ended it and why.
+	TerminatedBy      string `json:"terminated_by,omitempty"`
+	TerminationReason string `json:"termination_reason,omitempty"`
+	// Flags are risk flags the service that opened the session knows of,
+	// on top of what the daemon derives itself.
+	Flags []string `json:"flags,omitempty"`
 }
 
 type activeSession struct {
@@ -110,6 +132,8 @@ type activeSession struct {
 	// execLost which is one that arrived and could not be written. Different
 	// causes, same consequence for what the artefact can claim.
 	execDropped uint64
+	// terminatedBy and terminationReason are set when the console ended it.
+	terminatedBy, terminationReason string
 }
 
 // SetConsoleOnly applies the control plane's console-only policy.
@@ -133,7 +157,7 @@ func NewCollector(dir string, log *slog.Logger) *Collector {
 
 // Listen serves the unix socket at path until Close.
 func (c *Collector) Listen(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := prepareSocketDir(filepath.Dir(path)); err != nil {
 		return fmt.Errorf("create socket dir: %w", err)
 	}
 	// A stale socket from an unclean shutdown would otherwise make every
@@ -160,12 +184,11 @@ func (c *Collector) Listen(path string) error {
 	}
 
 	// Any local user must be able to connect — their session is what we are
-	// recording. Confidentiality comes from the daemon owning the output, not
-	// from restricting who may speak to it.
-	if err := os.Chmod(path, 0o666); err != nil {
-		return fmt.Errorf("chmod socket: %w", err)
+	// recording. See openSocket.
+	if err := openSocket(path); err != nil {
+		return err
 	}
-	if err := os.MkdirAll(c.dir, 0o700); err != nil {
+	if err := ProtectStateDir(c.dir); err != nil {
 		return fmt.Errorf("create recording dir: %w", err)
 	}
 
@@ -325,10 +348,15 @@ func (c *Collector) handle(conn net.Conn) {
 				c.log.Warn("duplicate start on one connection")
 				return
 			}
+			// Everything on this socket came in through sshd, and nothing
+			// Argus opens does: the console's sessions arrive over the tunnel.
+			// So a login here is direct whatever its start message claims --
+			// the socket is open to every local user, and a claim of having
+			// come through Argus is not something to take from one of them.
+			m.Origin = Direct
 			// Console-only: a login that did not come through Argus does not
-			// happen at all. A brokered one is a session Argus opened. Every
-			// login that is admitted is recorded.
-			if m.Origin == Direct && c.ConsoleOnly() {
+			// happen at all. Every login that is admitted is recorded.
+			if c.ConsoleOnly() {
 				c.log.Warn("DIRECT LOGIN REFUSED — this host is console-only",
 					"principal", m.Principal,
 					"client", m.ClientAddr,
@@ -357,7 +385,7 @@ func (c *Collector) handle(conn net.Conn) {
 			// the moment it happens, not only when the session ends — a long
 			// session should not delay the alarm.
 			if m.Origin == Direct {
-				c.log.Warn("DIRECT SESSION — gateway was bypassed",
+				c.log.Warn("DIRECT SESSION — Argus was bypassed",
 					"session", sess.id,
 					"principal", m.Principal,
 					"client", m.ClientAddr,
@@ -503,6 +531,13 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 
 	_, bytes, _ := sess.rec.Stats()
 
+	state := "closed"
+	sess.mu.Lock()
+	by, why := sess.terminatedBy, sess.terminationReason
+	sess.mu.Unlock()
+	if by != "" {
+		state = "terminated"
+	}
 	rec := SessionRecord{
 		ID:         sess.id,
 		Principal:  sess.start.Principal,
@@ -519,6 +554,11 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 		Fidelity:   sess.fidelity(c.Exec),
 		Commands:   sess.commandCount(),
 		Actor:      sess.start.Actor,
+		Protocol:   "ssh",
+		State:      state,
+
+		TerminatedBy:      by,
+		TerminationReason: why,
 	}
 
 	c.log.Info("recording sealed",

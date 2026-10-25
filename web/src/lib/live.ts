@@ -16,8 +16,8 @@ import type {
 /**
  * Live control-plane client.
  *
- * Argus can run without a control plane — the gateway still brokers and
- * records, the agent still catches bypasses. So the console degrades rather
+ * The console can be run without a control plane, against a fixture, for
+ * development and demonstration. So it degrades rather
  * than breaks: when no control plane is configured or reachable, the callers
  * fall back to the in-memory fixture in `api.ts`. `isLive()` is what the UI
  * uses to say which it is showing, because silently presenting demo data as
@@ -30,30 +30,7 @@ const RAW_BASE = import.meta.env.VITE_CONTROL_URL ?? ''
 const BASE = RAW_BASE === '/' ? '' : RAW_BASE.replace(/\/$/, '')
 const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
 
-/**
- * Where the gateway serves its browser endpoints.
- *
- * The terminal, the shadow stream and termination all go straight to the
- * gateway rather than through the control plane: the gateway is the only place
- * that holds the live connection, and proxying the byte stream through the
- * control plane would put a second service on the path of every keystroke.
- */
-export const GATEWAY_URL: string =
-  runtimeGatewayURL() ?? import.meta.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8081'
-
-/**
- * The gateway address the serving control plane configured, if any.
- *
- * A packaged console is built once and installed everywhere, so an address
- * baked in at build time is right for nobody. argus-control serves
- * /console-config.js with `console.gateway_url` from its config; the copy in
- * public/ sets nothing, which leaves development and fixture builds as they were.
- */
-function runtimeGatewayURL(): string | undefined {
-  return runtimeConfig()?.gatewayUrl || undefined
-}
-
-interface RuntimeConfig { gatewayUrl?: string; version?: string; fleetUrl?: string }
+interface RuntimeConfig { version?: string; fleetUrl?: string }
 
 function runtimeConfig(): RuntimeConfig | undefined {
   return (globalThis as { __ARGUS__?: RuntimeConfig }).__ARGUS__
@@ -86,24 +63,39 @@ export function isConfigured(): boolean {
 }
 
 /**
- * Where a browser terminal connects.
- *
- * Through the server's own agent when it holds a tunnel to the control plane:
- * the control plane relays, and the agent opens and records the session on
- * the server. Otherwise through the gateway, for servers not yet moved over.
+ * Where a browser terminal connects: the control plane, which relays to the
+ * server's own agent, which opens and records the session on the server.
  */
-export function terminalEndpoint(viaAgent: boolean, gatewayUrl: string): string {
-  if (viaAgent) return `${BASE}/api/v1/terminal`
-  try {
-    return new URL('/ws/session', gatewayUrl).toString()
-  } catch {
-    return ''
-  }
+export function terminalEndpoint(): string {
+  return `${BASE}/api/v1/terminal`
 }
 
 /** The file browser's WebSocket endpoint, on the control plane. */
 export function filesEndpoint(): string {
   return `${BASE}/api/v1/files`
+}
+
+/** Where a Remote Desktop opens, through the Windows server's agent. */
+export function desktopEndpoint(): string {
+  return `${BASE}/api/v1/desktop`
+}
+
+/** Where a session in flight is watched, read only. */
+export function watchEndpoint(sessionId: string): string {
+  return `${BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}/watch`
+}
+
+/**
+ * An http(s) endpoint as the WebSocket URL to open, with its query.
+ *
+ * Relative endpoints are the same-origin deployment, resolved against the
+ * page the console was loaded from.
+ */
+export function socketURL(endpoint: string, params: Record<string, string>): string {
+  const url = new URL(endpoint, window.location.href)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
+  return url.toString()
 }
 
 /**
@@ -214,7 +206,7 @@ export async function whoami(): Promise<Identity> {
     if (res.ok || res.status === 401) {
       return (await res.json()) as Identity
     }
-    // A gateway error means something in front of the control plane could not
+    // A 502, 503 or 504 means something in front of the control plane could not
     // reach it. Any other status means it answered, and answering is the thing
     // "unreachable" is about.
     if (res.status === 502 || res.status === 503 || res.status === 504) {
@@ -319,8 +311,8 @@ export async function logout(): Promise<void> {
 /**
  * Requests a single-use ticket for one terminal session.
  *
- * The control plane decides whether this is allowed; the gateway only verifies
- * the signature. So a refusal here is the authoritative one, and its message is
+ * The control plane decides whether this is allowed; the agent only verifies
+ * the grant it is turned into. So a refusal here is the authoritative one, and its message is
  * worth showing verbatim rather than replacing with something generic.
  */
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -411,8 +403,7 @@ export function isLive(): boolean {
 /**
  * Requests a single-use ticket to watch a session already in flight.
  *
- * The refusal here is the authoritative one — the gateway only checks the
- * signature — so its message is shown verbatim. "You need the auditor role"
+ * The refusal here is the authoritative one, so its message is shown verbatim. "You need the auditor role"
  * is useful; "request failed" is not.
  */
 export async function shadowTicket(
@@ -451,15 +442,15 @@ async function scopedTicket(
 }
 
 /**
- * Ends a session on the gateway.
+ * Ends a session in flight.
  *
  * Two steps on purpose: the control plane authorises and records the intent,
- * then the gateway acts. An attempt that the gateway refuses is still in the
- * audit log, which is the version of events an investigator needs — "tried to
- * stop it and could not" is more urgent than "stopped it".
+ * then the replica relaying the session asks the server's agent to end it.
+ * An attempt that fails is still in the audit log, which is the version of
+ * events an investigator needs -- "tried to stop it and could not" is more
+ * urgent than "stopped it".
  */
 export async function terminateSession(
-  gatewayUrl: string,
   sessionId: string,
   reason: string,
 ): Promise<{ ok: true } | { error: string }> {
@@ -467,58 +458,30 @@ export async function terminateSession(
   if ('error' in minted) return minted
 
   try {
-    const res = await fetch(
-      `${gatewayUrl.replace(/\/$/, '')}/api/v1/sessions/${sessionId}/terminate`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${minted.ticket}`,
-        },
-        body: JSON.stringify({ reason }),
+    const res = await fetch(`${BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}/terminate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${minted.ticket}`,
       },
-    )
-    if (!res.ok) return { error: (await res.text()).trim() || `gateway refused (${res.status})` }
+      body: JSON.stringify({ reason }),
+    })
+    if (!res.ok) {
+      let msg = ''
+      try {
+        msg = ((await res.json()) as { error?: string }).error ?? ''
+      } catch {
+        // Not JSON; the status says enough.
+      }
+      return { error: msg || `the control plane refused (${res.status})` }
+    }
     return { ok: true }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'the gateway is unreachable' }
+    return { error: err instanceof Error ? err.message : 'the control plane is unreachable' }
   }
 }
 
-/**
- * Ends a Remote Desktop session on the gateway.
- *
- * Separate from terminateSession because the two run on different endpoints:
- * an SSH session is proxied and an RDP one is driven by Argus as the client,
- * so there is no single connection to close for both.
- */
-export async function terminateRDPSession(
-  gatewayUrl: string,
-  sessionId: string,
-  reason: string,
-): Promise<{ ok: true } | { error: string }> {
-  const minted = await terminateTicket(sessionId, reason)
-  if ('error' in minted) return minted
-  try {
-    const res = await fetch(
-      `${gatewayUrl.replace(/\/$/, '')}/api/v1/rdp/${sessionId}/terminate`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${minted.ticket}`,
-        },
-        body: JSON.stringify({ reason }),
-      },
-    )
-    if (!res.ok) return { error: (await res.text()).trim() || `gateway refused (${res.status})` }
-    return { ok: true }
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : 'the gateway is unreachable' }
-  }
-}
-
-/** Sessions the gateway currently has open, as opposed to what it last reported. */
 /**
  * What came back when the console asked for a session's recording.
  *
@@ -556,32 +519,6 @@ export interface AuditPage {
 export type RecordingResult =
   | { kind: 'ok'; cast: string; verified: string }
   | { kind: 'unavailable'; reason: string }
-
-export interface LiveSession {
-  id: string
-  userEmail: string
-  principal: string
-  assetHostname: string
-  clientIp: string
-  startedAt: string
-  viewers: number
-  riskFlags: string[]
-  certSerial?: number
-}
-
-export async function liveSessions(gatewayUrl: string): Promise<LiveSession[]> {
-  try {
-    const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/api/v1/sessions/live`, {
-      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
-    })
-    if (!res.ok) return []
-    return (await res.json()) as LiveSession[]
-  } catch {
-    // A gateway that cannot be reached has no live sessions to show. Surfacing
-    // an error here would break the dashboard for a panel that is advisory.
-    return []
-  }
-}
 
 /** Hosts running an agent that the inventory has no entry for. */
 export async function discoveredHosts(
@@ -842,7 +779,6 @@ export interface ControlSettings {
   configFile: string
   applyError?: string
   consoleUrl: string
-  gatewayUrl: string
   fleetUrl: string
   listen: string
   consoleListen: string

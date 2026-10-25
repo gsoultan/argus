@@ -105,7 +105,7 @@ export function AssetForm({
       {
         failure: asset ? 'Not saved' : 'Not added',
         success: asset
-          ? ['Asset saved', `${form.hostname} is updated. Gateways pick it up within a minute.`]
+          ? ['Asset saved', `${form.hostname} is updated.`]
           : [
               'Asset added',
               `${form.hostname} is in the inventory. Nobody is assigned to it yet — assign it before anyone can connect.`,

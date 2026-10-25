@@ -25,9 +25,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
+	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent"
@@ -40,6 +39,9 @@ import (
 var version = "dev"
 
 func main() {
+	if code, ok := runAsService(); ok {
+		os.Exit(code)
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -60,6 +62,8 @@ func main() {
 		os.Exit(runInstall(os.Args[2:]))
 	case "enroll", "enrol":
 		os.Exit(runEnroll(os.Args[2:]))
+	case "service":
+		os.Exit(runService(os.Args[2:]))
 	case "--version", "version":
 		fmt.Printf("argus-agent %s\n", version)
 	default:
@@ -77,6 +81,7 @@ func usage() {
   argus-agent scan      report how reachable this host is without Argus
   argus-agent probe     report whether this kernel can observe command execution
   argus-agent install   print the sshd_config required to enable recording
+  argus-agent service   install|uninstall|start|stop the Windows service
 
 `)
 }
@@ -100,6 +105,15 @@ func runDaemon(args []string) int {
 	_ = fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	// Before anything is written there: on Windows a new directory is
+	// readable by every local user until it is locked down.
+	for _, d := range []string{*stateDir, *dir} {
+		if err := agent.ProtectStateDir(d); err != nil {
+			log.Error("cannot make the agent's directory private", "dir", d, "error", err)
+			return 1
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -181,6 +195,16 @@ func runDaemon(args []string) int {
 			Verifier: &tunnel.GrantVerifier{Host: hostname},
 			Log:      log,
 		})
+		// Remote Desktop, to this host's own listener, on Windows: the agent is
+		// the RDP client and records the session before it is shown.
+		if runtime.GOOS == "windows" {
+			services[agent.DesktopService] = agent.Desktop(agent.DesktopConfig{
+				Collector: col,
+				Verifier:  &tunnel.GrantVerifier{Host: hostname},
+				Hostname:  hostname,
+				Log:       log,
+			})
+		}
 		go agent.RunTunnel(ctx, agent.TunnelConfig{
 			Dial: tunnel.DialOptions{
 				ControlURL: *controlURL,
@@ -216,38 +240,26 @@ func runDaemon(args []string) int {
 			"at":          time.Now().UTC(),
 		})
 	}
+	var uploads *agent.Uploads
+	if rep.Enabled() {
+		uploads = agent.NewUploads(*stateDir, rep, log)
+		go uploads.Run(ctx, time.Minute)
+	}
 	col.OnSession = func(rec agent.SessionRecord) {
 		// Always keep the local copy. The control plane is where a session
 		// becomes visible, not where it becomes real.
 		appendJSONL(*stateDir+"/sessions.jsonl", rec, log)
 
-		// A session through the tunnel is attributed to the person the
-		// control plane signed it for; a login through sshd only to the
-		// local account.
-		who := rec.Principal + "@" + rec.Hostname
-		if rec.Actor != "" {
-			who = rec.Actor
-		}
-		rep.Session(ctx, map[string]any{
-			"id":             rec.ID,
-			"userEmail":      who,
-			"assetHostname":  rec.Hostname,
-			"principal":      rec.Principal,
-			"protocol":       "ssh",
-			"origin":         string(rec.Origin),
-			"state":          "closed",
-			"startedAt":      rec.StartedAt,
-			"endedAt":        rec.EndedAt,
-			"clientIp":       rec.ClientAddr,
-			"fidelity":       rec.Fidelity,
-			"commandCount":   rec.Commands,
-			"recordingBytes": rec.Bytes,
-			"exitCode":       rec.ExitCode,
-			"chainHead":      rec.ChainHead,
-			"reportedBy":     "agent:" + rec.Hostname,
-			"riskFlags":      agentRiskFlags(rec),
-		})
+		rep.Session(ctx, sessionReport(rec))
+		// The recording itself, so it can be replayed from the console. Queued
+		// on disk first: the host's copy is the evidence until the control
+		// plane has verified and stored its own.
+		uploads.Queue(rec)
 	}
+	// A session through the tunnel shows in the console while it runs, and is
+	// spoken for every minute, so a long one is not taken for one whose host
+	// went quiet.
+	col.OnActive = func(rec agent.SessionRecord) { rep.Session(ctx, sessionReport(rec)) }
 
 	// Kernel execution tracing, when the host can support it. A failure here is
 	// a supported configuration, not a fatal one: the agent still records
@@ -271,6 +283,11 @@ func runDaemon(args []string) int {
 	// is what makes killing the agent detectable: a user with root can stop it,
 	// but they cannot make the silence look like health.
 	stop := make(chan struct{})
+	go loop(time.Minute, stop, func() {
+		for _, rec := range col.ActiveTunnelRecords() {
+			rep.Session(ctx, sessionReport(rec))
+		}
+	})
 	go loop(*scanEvery, stop, func() {
 		p, err := agent.Scan(agent.DefaultScanConfig(*shimPath))
 		if err != nil {
@@ -376,8 +393,7 @@ func runDaemon(args []string) int {
 		})
 	})
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	stopReq := stopRequests()
 
 	log.Info("argus-agent starting", "version", version, "socket", *socket)
 	listenErr := make(chan error, 1)
@@ -391,7 +407,7 @@ func runDaemon(args []string) int {
 			return 1
 		}
 		return 0
-	case <-sig:
+	case <-stopReq:
 		// Handled here rather than in a goroutine. Close shuts the socket
 		// first, so Listen returns immediately -- and returning on that exited
 		// the agent through the middle of its own drain, losing the seal on
@@ -407,43 +423,84 @@ func runDaemon(args []string) int {
 	}
 }
 
+// sessionReport is what the control plane is told about a session.
+func sessionReport(rec agent.SessionRecord) map[string]any {
+	// A session through the tunnel is attributed to the person the control
+	// plane signed it for; a login through sshd only to the local account.
+	who := rec.Principal + "@" + rec.Hostname
+	if rec.Actor != "" {
+		who = rec.Actor
+	}
+	protocol, state := rec.Protocol, rec.State
+	if protocol == "" {
+		protocol = "ssh"
+	}
+	if state == "" {
+		state = "closed"
+	}
+	fidelity := rec.Fidelity
+	if protocol == "rdp" {
+		fidelity = "rdp"
+	}
+	out := map[string]any{
+		"id":             rec.ID,
+		"userEmail":      who,
+		"assetHostname":  rec.Hostname,
+		"principal":      rec.Principal,
+		"protocol":       protocol,
+		"origin":         string(rec.Origin),
+		"state":          state,
+		"startedAt":      rec.StartedAt,
+		"clientIp":       rec.ClientAddr,
+		"fidelity":       fidelity,
+		"commandCount":   rec.Commands,
+		"recordingBytes": rec.Bytes,
+		"reportedBy":     "agent:" + rec.Hostname,
+		"riskFlags":      agentRiskFlags(rec),
+	}
+	if state != "active" {
+		out["endedAt"] = rec.EndedAt
+		out["exitCode"] = rec.ExitCode
+		out["chainHead"] = rec.ChainHead
+	}
+	if rec.TerminatedBy != "" {
+		out["terminatedBy"] = rec.TerminatedBy
+		out["terminationReason"] = rec.TerminationReason
+	}
+	return out
+}
+
 // agentRiskFlags marks what the console highlights about a session the agent saw.
 func agentRiskFlags(rec agent.SessionRecord) []string {
 	flags := []string{}
 	if rec.Origin == agent.Direct {
 		flags = append(flags, "bypassed-gateway")
 	}
-	if rec.Principal == "root" {
+	// Administrator is to Windows what root is to Linux.
+	switch strings.ToLower(rec.Principal) {
+	case "root", "administrator":
 		flags = append(flags, "root-principal")
 	}
-	return flags
+	return append(flags, rec.Flags...)
 }
 
 func runShim(args []string) int {
 	fs := flag.NewFlagSet("shim", flag.ExitOnError)
 	socket := fs.String("socket", agent.SocketPath, "collector socket")
-	gatewayKeys := fs.String("gateway-keys", "/etc/argus/gateway_keys", "gateway public keys (authorized_keys format); the authoritative signal")
-	gateways := fs.String("gateways", "", "fallback: comma-separated gateway addresses, never treated as proof")
-	skipBrokered := fs.Bool("skip-brokered", false,
-		"do not record sessions that appear to come from the gateway (saves storage; a stolen gateway key can then suppress recording)")
+	// Accepted and ignored. An sshd_config written before the gateway was
+	// retired still passes it, and a ForceCommand that fails on an unknown flag
+	// refuses every login on the host.
+	_ = fs.String("gateway-keys", "", "ignored: no longer used")
+	_ = fs.String("gateways", "", "ignored: no longer used")
+	_ = fs.Bool("skip-brokered", false, "ignored: no longer used")
 	failOpen := fs.Bool("fail-open", false, "allow unrecorded sessions when the collector is down")
 	shell := fs.String("shell", "", "override the login shell")
 	_ = fs.Parse(args)
 
-	var gws []string
-	for _, g := range strings.Split(*gateways, ",") {
-		if g = strings.TrimSpace(g); g != "" {
-			gws = append(gws, g)
-		}
-	}
-
 	return agent.RunShim(agent.ShimConfig{
-		SocketPath:   *socket,
-		GatewayKeys:  *gatewayKeys,
-		GatewayAddrs: gws,
-		SkipBrokered: *skipBrokered,
-		FailOpen:     *failOpen,
-		Shell:        *shell,
+		SocketPath: *socket,
+		FailOpen:   *failOpen,
+		Shell:      *shell,
 	})
 }
 
@@ -490,7 +547,13 @@ func runScan(args []string) int {
 
 	if rating == "open" {
 		fmt.Print("\nThis host is UNMONITORED. A direct connection to port 22 would\n" +
-			"leave no trace. Run `argus-agent install` to see what to change.\n")
+			"leave no trace.")
+		if shimSupported {
+			fmt.Print(" Run `argus-agent install` to see what to change.\n")
+		} else {
+			fmt.Print(" Recording direct logins is not available on this platform\n" +
+				"yet: stop sshd; sessions opened from the Argus console do not use it.\n")
+		}
 		return 1
 	}
 	return 0
@@ -499,22 +562,23 @@ func runScan(args []string) int {
 func runInstall(args []string) int {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	shimPath := fs.String("shim", agent.DefaultShimPath, "path sshd will invoke")
-	gatewayKeys := fs.String("gateway-keys", "/etc/argus/gateway_keys", "gateway public keys")
 	_ = fs.Parse(args)
 
+	if !shimSupported {
+		fmt.Fprintln(os.Stderr, "argus-agent install: direct SSH logins cannot be recorded "+
+			"on this platform yet. Sessions opened from the Argus console are recorded; "+
+			"to leave no unrecorded way in, stop sshd.")
+		return 1
+	}
 	fmt.Printf(`# Argus host recording — append to /etc/ssh/sshd_config, then:
 #   %s
 #
 # ForceCommand makes sshd run the recorder for EVERY session, including one
-# opened with a standing key that never touched the gateway. That is the point:
-# without it, a bypass is invisible.
+# opened with a standing key that never touched Argus. That is the point:
+# without it, a bypass is invisible. Sessions opened from the Argus console do
+# not use sshd at all; they reach the agent over its tunnel.
 
-ForceCommand %s shim --gateway-keys %s
-
-# ExposeAuthInfo lets the recorder identify the gateway by the key it
-# authenticated with. Without it the agent cannot prove a session was brokered,
-# so it records everything — correct, but noisier.
-ExposeAuthInfo yes
+ForceCommand %s shim
 
 # Recommended alongside it. These remove the ability to bypass rather than
 # merely recording it, which is the stronger control:
@@ -525,7 +589,7 @@ ExposeAuthInfo yes
 
 # Verify with:
 #   argus-agent scan
-`, reloadSSHDHint, *shimPath, *gatewayKeys)
+`, reloadSSHDHint, *shimPath)
 	return 0
 }
 
@@ -630,8 +694,9 @@ func runEnroll(args []string) int {
 	force := fs.Bool("force", false, "replace an existing enrollment (revoke the old one first)")
 	_ = fs.Parse(args)
 
-	if os.Geteuid() != 0 {
-		fmt.Fprintln(os.Stderr, "argus-agent enroll: run as root -- the credential must not be readable by the users it records")
+	if !isPrivileged() {
+		fmt.Fprintln(os.Stderr, "argus-agent enroll: run as "+privilegedName+
+			" -- the credential must not be readable by the users it records")
 		return 1
 	}
 	// A token on the command line lands in shell history; reading it from the

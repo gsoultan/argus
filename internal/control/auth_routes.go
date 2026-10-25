@@ -126,9 +126,9 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 
 // handleTicket issues a single-use ticket for one terminal session.
 //
-// This is where authorisation happens for browser access: the console asks for
-// permission to open a specific shell, the control plane decides, and the
-// gateway only has to verify a signature. Without it the gateway would need its
+// This is where authorisation happens: the console asks for permission to open
+// a specific shell or desktop, the control plane decides, and the agent only
+// has to verify the grant it is handed. Without it every agent would need its
 // own copy of the policy, which is a second place for the rules to drift.
 func (a *API) handleTicket(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.authenticate(r)
@@ -172,26 +172,25 @@ func (a *API) handleTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Elevated principals require a grant, so root cannot be reached by typing
-	// it into a form field. Admins are exempt because someone has to be able to
-	// act when the approval chain itself is broken — and their sessions are
-	// recorded and flagged like everyone else's.
-	if isElevated(in.Principal) && sess.Role != "admin" && sess.Role != "owner" {
-		granted, expires, err := a.store.ActiveGrant(r.Context(), sess.Email, in.Target, in.Principal)
+	// it into a form field, and the kernel-evidence policy applies to them.
+	// Decided by authorizePrincipal, which audits the decision either way:
+	// "who held root on this host, and under which approval" is the question
+	// an audit opens with. Admins are exempt from the grant, because someone
+	// has to be able to act when the approval chain itself is broken, and the
+	// exemption is written down rather than left implicit.
+	if isElevated(in.Principal) {
+		auth, err := a.authorizePrincipal(r, sess.Email, in.Target, in.Principal)
 		if err != nil {
-			a.fail(w, "check grant", err)
+			a.log.Error("refusing a session: elevation could not be checked",
+				"email", sess.Email, "target", in.Target, "principal", in.Principal, "error", err)
+			writeErr(w, http.StatusServiceUnavailable,
+				"the control plane could not check your access; nothing was opened")
 			return
 		}
-		if !granted {
-			// Say what to do about it. A refusal with no next step just
-			// generates a support ticket.
-			writeErr(w, http.StatusForbidden,
-				"opening a session as "+in.Principal+" needs an approved access request; "+
-					"request one and have an approver decide it")
+		if !auth.Allowed {
+			writeErr(w, http.StatusForbidden, auth.Reason)
 			return
 		}
-		a.log.Info("elevated session authorised by grant",
-			"email", sess.Email, "principal", in.Principal,
-			"target", in.Target, "expires", expires)
 	}
 
 	ticket, err := a.signer.IssueTicket(sess.Email, in.Target, in.Principal, a.ticketTTL())
@@ -220,11 +219,6 @@ func (a *API) handleTicket(w http.ResponseWriter, r *http.Request) {
 
 // isElevated lists principals that never come for free.
 // ElevatedPrincipals is the one definition of "needs an approval first".
-//
-// Shipped to gateways with the policy rather than compiled into each of them,
-// so the SSH path and the browser path cannot come to different conclusions
-// about the same principal. A gateway with a narrower list than this would hand
-// out root unchecked.
 func ElevatedPrincipals() []string {
 	return []string{"root", "admin", "administrator"}
 }

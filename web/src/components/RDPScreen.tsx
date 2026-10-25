@@ -5,23 +5,38 @@ import type { RDPWorkerResponse } from '~/workers/rdp.worker'
 export type RDPState = 'connecting' | 'live' | 'closed' | 'error'
 
 export interface RDPScreenProps {
-  gatewayUrl: string
+  /** The WebSocket endpoint as an http(s) URL: desktopEndpoint, or watchEndpoint. */
+  endpoint: string
   target: string
   principal: string
   /** Fetches a ticket. A callback because tickets are single-use. */
   getTicket: () => Promise<string | null>
+  /**
+   * Hands over the account's password for the logon, once. A callback so the
+   * caller can forget it the moment it is sent: it goes to the server's agent
+   * for this one sign-in and is kept nowhere.
+   */
+  takePassword?: () => string
   /** Read-only disables input, for shadowing someone else's session. */
   readOnly?: boolean
   /**
-   * When set, attaches to an existing session instead of opening one.
-   *
-   * Shadowing uses a different endpoint because the gateway must not treat a
-   * viewer as a second operator: there is no input path at all, and the target
-   * is asked to redraw so the newcomer sees the screen as it stands rather than
+   * When set, attaches to an existing session instead of opening one, on
+   * the watch endpoint: there is no input path at all, and the server is
+   * asked to redraw so the newcomer sees the screen as it stands rather than
    * only what changes from now on.
    */
   shadowSessionId?: string
   onStateChange?: (state: RDPState, detail?: string) => void
+}
+
+/**
+ * The desktop size to ask for: what fits the window, within what Argus
+ * offers. The agent rounds it to what RDP accepts.
+ */
+function wantedSize(): { width: number; height: number } {
+  const w = Math.min(Math.max(window.innerWidth - 48, 640), 1920)
+  const h = Math.min(Math.max(window.innerHeight - 180, 480), 1200)
+  return { width: w - (w % 4), height: h }
 }
 
 /**
@@ -37,10 +52,11 @@ export interface RDPScreenProps {
  * costs the same as one that just started.
  */
 export function RDPScreen({
-  gatewayUrl,
+  endpoint,
   target,
   principal,
   getTicket,
+  takePassword,
   readOnly = false,
   shadowSessionId,
   onStateChange,
@@ -120,7 +136,8 @@ export function RDPScreen({
           setSize({ width: m.width, height: m.height })
           break
         case 'closed':
-          setStatus('closed', 'the session ended')
+          // A reason the control plane gave just before stays on screen.
+          if (stateRef.current !== 'error') setStatus('closed', 'the session ended')
           break
         case 'error':
           setStatus('error', m.message)
@@ -136,19 +153,13 @@ export function RDPScreen({
         return
       }
 
-      const url = new URL(shadowSessionId ? '/ws/rdp/shadow' : '/ws/rdp', gatewayUrl)
+      const url = new URL(endpoint, window.location.href)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      if (shadowSessionId) {
-        url.searchParams.set('session', shadowSessionId)
-      } else {
+      if (!shadowSessionId) {
         url.searchParams.set('target', target)
         url.searchParams.set('principal', principal)
       }
       url.searchParams.set('ticket', ticket)
-      // Screen updates as the target sent them, for the worker to decode. An
-      // older gateway ignores this and sends decoded frames, which the worker
-      // still draws.
-      url.searchParams.set('frames', 'encoded')
 
       const ws = new WebSocket(url.toString())
       // Without this the socket yields Blobs, and every frame would cost an
@@ -156,10 +167,25 @@ export function RDPScreen({
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
 
+      if (!shadowSessionId) {
+        // The logon is the first message: the account's password, for the
+        // server's own Remote Desktop to authenticate, and the size to open at.
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'logon', password: takePassword?.() ?? '', ...wantedSize() }))
+        }
+      }
       ws.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) {
           // Transferred, not copied: the main thread gives up the buffer.
           worker.postMessage(ev.data, [ev.data])
+          return
+        }
+        // Text is the control plane saying why: a refusal, or who ended it.
+        try {
+          const m = JSON.parse(ev.data as string) as { type?: string; data?: string }
+          if (m.type === 'error' && m.data) setStatus('error', m.data)
+        } catch {
+          // Not something this console sends or understands.
         }
       }
       ws.onerror = () => setStatus('error', 'connection failed')
@@ -179,7 +205,7 @@ export function RDPScreen({
     }
     // size is state this effect sets; including it would reconnect on resize.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gatewayUrl, target, principal, shadowSessionId])
+  }, [endpoint, target, principal, shadowSessionId])
 
   /* ── Input ─────────────────────────────────────────────────────────────── */
 

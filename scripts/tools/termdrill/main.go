@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -38,7 +39,18 @@ func main() {
 	target := flag.String("target", "", "host")
 	principal := flag.String("principal", "", "account")
 	input := flag.String("input", "exit\n", "typed once the session is ready")
+	// cmd.exe on a pseudoconsole drops the Enter of anything typed before it
+	// has drawn its prompt: the text is echoed and never run. A person sees
+	// the prompt before typing; this waits for it, and types a line at a time.
+	afterOutput := flag.Bool("after-output", false,
+		"wait for the shell's first output, then type the input one line at a time")
+	// Git for Windows' bash drops carriage returns from arguments it builds,
+	// so a drill there cannot pass a real Enter; it writes \r instead.
+	literalCR := flag.Bool("literal-cr", false, `read the two characters \r in the input as Enter`)
 	flag.Parse()
+	if *literalCR {
+		*input = strings.ReplaceAll(*input, `\r`, "\r")
+	}
 
 	pool := x509.NewCertPool()
 	if *caFile != "" {
@@ -73,6 +85,24 @@ func main() {
 	}
 	defer c.CloseNow()
 
+	send := func(text string) {
+		b, _ := json.Marshal(message{Type: "input", Data: text})
+		if err := c.Write(ctx, websocket.MessageText, b); err != nil {
+			fail("%v", err)
+		}
+	}
+	typed := false
+	typeLines := func() {
+		typed = true
+		go func() {
+			time.Sleep(time.Second)
+			for _, line := range lines(*input) {
+				send(line)
+				time.Sleep(300 * time.Millisecond)
+			}
+		}()
+	}
+
 	for {
 		typ, data, err := c.Read(ctx)
 		if err != nil {
@@ -80,6 +110,9 @@ func main() {
 		}
 		if typ == websocket.MessageBinary {
 			_, _ = os.Stdout.Write(data)
+			if *afterOutput && !typed {
+				typeLines()
+			}
 			continue
 		}
 		var m message
@@ -87,9 +120,8 @@ func main() {
 		switch m.Type {
 		case "ready":
 			fmt.Fprintf(os.Stderr, "session=%s\n", m.Session)
-			b, _ := json.Marshal(message{Type: "input", Data: *input})
-			if err := c.Write(ctx, websocket.MessageText, b); err != nil {
-				fail("%v", err)
+			if !*afterOutput {
+				send(*input)
 			}
 		case "error":
 			fail("refused: %s", m.Data)
@@ -98,6 +130,22 @@ func main() {
 			os.Exit(m.ExitCode)
 		}
 	}
+}
+
+// lines splits input after each \r or \n, keeping the terminator.
+func lines(input string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(input); i++ {
+		if input[i] == '\r' || input[i] == '\n' {
+			out = append(out, input[start:i+1])
+			start = i + 1
+		}
+	}
+	if start < len(input) {
+		out = append(out, input[start:])
+	}
+	return out
 }
 
 func fail(format string, a ...any) {

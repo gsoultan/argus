@@ -59,7 +59,7 @@ func DefaultDiscoverConfig() DiscoverConfig {
 		Passwd:     systemPasswd,
 		Shells:     "/etc/shells",
 		MachineID:  machineIDPath,
-		SSHDConfig: "/etc/ssh/sshd_config",
+		SSHDConfig: sshdConfigPath,
 	}
 }
 
@@ -193,7 +193,7 @@ func loginAccounts(passwdPath, shellsPath string) []string {
 	out := []string{}
 	sc := bufio.NewScanner(file)
 	for sc.Scan() {
-		fields := strings.Split(sc.Text(), ":")
+		fields := passwdFields(sc.Text())
 		if len(fields) < 7 {
 			continue
 		}

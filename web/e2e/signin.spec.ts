@@ -320,7 +320,7 @@ test.describe('coverage links land on exactly what they counted', () => {
   const TILES = [
     { label: 'Live sessions', heading: 'Sessions', rows: 'tbody tr' },
     { label: 'Unverified hosts', heading: 'Servers', rows: 'tbody tr' },
-    { label: 'Bypassed gateway', heading: 'Sessions', rows: 'tbody tr' },
+    { label: 'Bypassed Argus', heading: 'Sessions', rows: 'tbody tr' },
     // Requests are cards, not a table.
     { label: 'Pending approvals', heading: 'Access requests', rows: '.argus-request' },
   ]

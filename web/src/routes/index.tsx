@@ -135,7 +135,7 @@ function Overview() {
               icon: IconAlertTriangle,
               title: `${plural(stats!.sessionsSilent, 'session is', 'sessions are')} unaccounted for`,
               detail:
-                'Recorded as active, but no gateway has reported on them in minutes. Most likely a gateway stopped without saying the session ended.',
+                'Recorded as active, but nothing has reported on them in minutes. Most likely an agent stopped without saying the session ended.',
               action: {
                 label: 'Review sessions',
                 to: '/sessions' as const,
@@ -190,7 +190,7 @@ function Overview() {
           </Grid.Col>
           <Grid.Col span={{ base: 6, md: 3 }}>
             <Stat
-              label="Bypassed gateway"
+              label="Bypassed Argus"
               value={stats?.sessionsDirectToday}
               sub="direct to sshd, 24h"
               icon={IconDoorExit}
@@ -276,7 +276,7 @@ function Overview() {
                     compact
                     icon={IconCircleCheck}
                     title="Nobody is connected right now."
-                    description="Sessions appear the moment the gateway brokers one — and an agent reports any that bypassed it."
+                    description="Sessions appear the moment someone opens one from the console — and an agent reports any login that bypassed it."
                   />
                 )}
               </ScrollArea.Autosize>

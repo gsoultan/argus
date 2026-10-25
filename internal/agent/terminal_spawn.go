@@ -1,3 +1,5 @@
+//go:build !windows
+
 package agent
 
 import (
@@ -36,38 +38,6 @@ Either way the shell is held before it runs anything: the process exists, so
 kernel tracing can attach to its pid, but it waits for the agent to say go,
 which the agent says only once the recording is open.
 */
-
-// SpawnMode is how a tunnel session's shell is started.
-type SpawnMode string
-
-const (
-	// SpawnAuto uses systemd when the agent runs as root on a systemd host,
-	// and a direct child otherwise.
-	SpawnAuto SpawnMode = ""
-	// SpawnSystemd starts the shell in a transient unit, outside the agent's
-	// sandbox.
-	SpawnSystemd SpawnMode = "systemd"
-	// SpawnDirect starts the shell as the agent's child. For hosts without
-	// systemd, and tests.
-	SpawnDirect SpawnMode = "direct"
-)
-
-// shellProc is a held shell.
-type shellProc interface {
-	Pid() int
-	// Release lets the shell run.
-	Release() error
-	// Abort makes a held shell exit without running anything.
-	Abort()
-	// Wait returns the exit code, once.
-	Wait() int
-	// Hangup ends the session; a shell still running after hangupWait is
-	// killed.
-	Hangup()
-	// Summary is what started the shell said about how it ended, after
-	// Wait; empty when there is nothing to add.
-	Summary() string
-}
 
 type loginAccount struct {
 	name, home, shell string

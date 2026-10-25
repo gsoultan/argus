@@ -52,8 +52,10 @@ account and choose what to open:
   The agent reads and writes as the account you picked, so it can touch exactly
   what that account can, and every transfer goes in the audit log with the
   person, server, account, path, size and SHA-256.
-- **Open desktop**: Remote Desktop to a Windows server, in the browser (see
-  [Not done yet](#not-done-yet)).
+- **Open desktop**: Remote Desktop to a Windows server, in the browser. The
+  agent runs on the server as a service and connects to its own Remote Desktop;
+  you type the account's Windows password when the desktop opens, it is used
+  once in memory to sign in, and the session is recorded on the server.
 
 The same checks run whichever you open. You must be assigned the server and the
 account; an elevated account (`root`, `Administrator`) also needs an approved
@@ -109,7 +111,8 @@ both land at the same version.
 macOS and Windows get archives rather than packages:
 `argus_<version>_darwin_<arch>.tar.gz` (control plane, verifier and the macOS
 agent with its launchd job) and `argus_<version>_windows_<arch>.zip` (control
-plane and verifier). Nothing installs a service from them. To check recordings
+plane, verifier and the Windows agent, which installs itself with
+`argus-agent service install`). Nothing else installs a service from them. To check recordings
 from a workstation, `argus-verify` from the archive is all you need.
 
 ### First run: `/setup`
@@ -400,15 +403,10 @@ where it breaks, and `backup verify` checks a backup end to end.
 What the design in front of this page does not cover yet, stated rather than
 implied:
 
-- **Windows servers.** The Windows agent is not merged or released, so Windows
-  hosts cannot be recorded by an agent yet. Until it ships, browser Remote
-  Desktop still goes through `argus-gateway`, which is the only reason the
-  gateway is still built and packaged. That gateway holds those sessions'
-  plaintext in memory; treat its host as the most sensitive in the fleet. Its
-  own SSH and native RDP listeners always refuse, and it will not start without
-  the control plane.
-- **Retiring argus-gateway.** Planned for after the Windows agent, with one
-  release where it stays buildable for existing installs.
+- **Direct logins on Windows.** The Windows agent opens and records sessions
+  started in the console, but does not hook OpenSSH for Windows yet: a direct
+  login to its sshd is neither refused nor recorded. Stop that service if you
+  do not need it.
 - **"Which logins are recorded"** is still on each server's page, but every
   direct login is now refused before it applies, so it has no effect.
 - **Faster transports.** WebRTC and direct browser-to-agent paths for the
@@ -416,8 +414,8 @@ implied:
   relays every session.
 - **Capacity of the agent path has not been measured.** The earlier figures
   (200 concurrent sessions comfortably on one node, flat goroutines and heap
-  over a 5300-session soak) were taken on the gateway's SSH path, which is now
-  closed. `go run ./scripts/tools/loadtest` is the harness to adapt.
+  over a 5300-session soak) were taken on the retired gateway's SSH path, and
+  its load harness went with it.
 
 ## Running locally
 
@@ -490,7 +488,6 @@ flat.
 cmd/argus-control     control plane and console server
 cmd/argus-agent       the agent on each server
 cmd/argus-verify      standalone recording verifier
-cmd/argus-gateway     browser RDP until the Windows agent ships
 internal/             tunnel, agent, control, recorder, hashchain, …
 web/                  React 19 · Mantine 9 · TanStack Router/Query/Form · Vite 8
 docs/install.md       the production install

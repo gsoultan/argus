@@ -12,8 +12,8 @@ ExecStart=/usr/bin/argus-control --config /var/lib/argus-control/control.yaml
 Restart=on-failure
 RestartSec=5s
 
-# The control plane finishes requests in flight before exiting; gateways and
-# agents are mid-report when a restart lands. Comfortably over its own 10s
+# The control plane finishes requests in flight before exiting; agents and
+# browsers are mid-request when a restart lands. Comfortably over its own 10s
 # shutdown deadline.
 TimeoutStopSec=45s
 

@@ -63,7 +63,7 @@ const SESSIONS = [
   session({ id: 's-quiet-2', state: 'active', startedAt: ago(9_100), lastReportedAt: ago(700), silent: true }),
   session({ id: 's-quiet-3', state: 'active', startedAt: ago(300), lastReportedAt: ago(12), silent: true }),
   session({ id: 's-direct-today', state: 'closed', origin: 'direct', startedAt: ago(200), endedAt: ago(190), lastReportedAt: ago(190), silent: false, riskFlags: ['bypassed-gateway'] }),
-  // Older than the window. If the "Bypassed gateway" link ever loses its 24h
+  // Older than the window. If the "Bypassed Argus" link ever loses its 24h
   // scope, this row is what makes the test notice.
   session({ id: 's-direct-old', state: 'closed', origin: 'direct', startedAt: ago(9_000), endedAt: ago(8_990), lastReportedAt: ago(8_990), silent: false, riskFlags: ['bypassed-gateway'] }),
   session({ id: 's-closed-1', state: 'closed', startedAt: ago(400), endedAt: ago(360), lastReportedAt: ago(360), silent: false }),

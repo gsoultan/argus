@@ -111,3 +111,22 @@ func TestCheckPrivateRefusesDirectoryAndMissingOnWindows(t *testing.T) {
 		t.Error("a missing file must be refused")
 	}
 }
+
+// A key written with a list that lets every local user read it is what a file
+// under C:\ProgramData or a runner's temp directory starts with. MakePrivate
+// is how Argus's own keys pass its own check.
+func TestMakePrivatePassesTheCheck(t *testing.T) {
+	p := keyWithReaders(t, "S-1-5-32-545") // BUILTIN\Users
+	if err := CheckPrivate(p); err == nil {
+		t.Fatal("a key every user can read passed the check")
+	}
+	if err := MakePrivate(p); err != nil {
+		t.Fatalf("MakePrivate: %v", err)
+	}
+	if err := CheckPrivate(p); err != nil {
+		t.Fatalf("after MakePrivate: %v", err)
+	}
+	if _, err := os.ReadFile(p); err != nil {
+		t.Fatalf("the owner can no longer read it: %v", err)
+	}
+}

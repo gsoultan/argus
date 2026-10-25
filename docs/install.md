@@ -45,25 +45,24 @@ Both commands must succeed. A package that fails either is not ours.
 
 ### macOS and Windows
 
-The control plane and `argus-verify` are also released for macOS
+The control plane, the agent and `argus-verify` are also released for macOS
 and Windows, as `argus_<version>_darwin_<arch>.tar.gz` and
 `argus_<version>_windows_<arch>.zip`. These are archives, not packages: nothing
-installs a service for you. They also carry `argus-gateway`, which only browser
-Remote Desktop uses until the Windows agent ships. Run `argus-control` from the unpacked folder and
+installs a service for you. Run `argus-control` from the unpacked folder and
 it finds the console in the `console` folder beside it, serves its setup page,
 and writes `control.yaml` in the working directory (or wherever `--config`
 points). Use
 `shasum -a 256 -c` on macOS, or `Get-FileHash` in PowerShell, in place of
 `sha256sum`.
 
-On Windows, a private key file (TLS, CA) must be readable
+On Windows, a private key file (TLS or CA) must be readable
 only by its owner, the account Argus runs as, SYSTEM and Administrators, just
 as on Linux it must be mode `600`. A key copied under `C:\ProgramData`
 inherits read access for every local user and is refused at startup; the error
 gives the `icacls` command that fixes it.
 
-The macOS archive also carries the agent; see [macOS servers](#macos-servers).
-The Windows agent is not out yet, so Windows hosts cannot be recorded yet.
+Both archives also carry the agent; see [macOS servers](#macos-servers) and
+[Windows servers](#windows-servers).
 
 ## 2. Certificates
 
@@ -256,6 +255,47 @@ It works as on Linux, with these differences:
 - There is no kernel command tracing on macOS, so recordings are terminal
   output only, and each session says so in the console.
 
+### Windows servers
+
+The agent for Windows is `argus-agent.exe` in
+`argus_<version>_windows_<arch>.zip`. In an elevated PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force 'C:\Program Files\Argus' | Out-Null
+Copy-Item argus-agent.exe 'C:\Program Files\Argus\'
+cd 'C:\Program Files\Argus'
+.\argus-agent.exe enroll --control-url https://argus.example.com:8080 `
+    --pin sha256/... --token argus-enrol-...
+.\argus-agent.exe service install
+```
+
+`service install` registers the `argus-agent` service to start at boot as
+LocalSystem, restarts it if it fails, and starts it. `service stop`,
+`service start` and `service uninstall` do what they say.
+
+It works as on Linux, with these differences:
+
+- State, recordings and the log (`agent.log`) are in `C:\ProgramData\Argus`,
+  which the agent restricts to SYSTEM and Administrators before writing
+  anything there.
+- A session from the console runs as the local account on a Windows
+  pseudoconsole, with the account's profile loaded (it is created on the
+  account's first session). The shell is OpenSSH's `DefaultShell` if one is
+  set, otherwise `cmd.exe`. The agent logs the account on without its
+  password (Windows' S4U logon), so the session cannot reach network shares as
+  the account, the same limit an OpenSSH key login has.
+- A local administrator's session gets the filtered, non-elevated token
+  Windows gives every network logon of a local account (remote UAC), so
+  commands that need elevation fail in it.
+- Only local accounts can be opened for now. A domain account (`CORP\ana`,
+  `ana@corp.example`) is refused.
+- Direct logins through Windows' OpenSSH server are **not refused yet**: the
+  sshd hook is not ported, `argus-agent install` says so, and
+  `argus-agent scan` reports the host as open while sshd accepts them. Until
+  that lands, stop the `sshd` service.
+- There is no kernel command tracing on Windows, so recordings are terminal
+  output only, and each session says so in the console.
+
 ### Direct logins are refused
 
 Every deployment is console-only, with no setting to change it. The agent
@@ -395,6 +435,9 @@ things Argus does are not that:
 | Agents' connection to the control plane | On QUIC it is UDP, which a public hostname does not carry. Its HTTPS fallback upgrades the connection to a protocol of its own, and Cloudflare forwards only WebSocket upgrades. | Keep `8080/tcp` and `8080/udp` reachable from your servers: open them only to their addresses, or put them on a private network (WireGuard, Tailscale, a VPC). Cloudflare's private networking (WARP Connector on the servers) can carry both, but is not something we have tested. |
 | Agents' reports | The control plane requires the reporter's client certificate on these routes, and Cloudflare terminates TLS, so the certificate never arrives. | The same direct `listen` address as above. This is why the console and the fleet have separate listeners. |
 
+Terminals, desktops and file transfer are browser traffic to the console, so
+they go through the tunnel like the rest of it.
+
 ## Upgrading
 
 Install the new packages over the old ones and restart:
@@ -404,10 +447,7 @@ sudo apt install ./argus-control_<new>_linux_amd64.deb
 sudo systemctl restart argus-control
 ```
 
-Upgrade the control plane first, then agents. `argus-verify` is its own
-package; on a host upgraded from 0.1.x, install it in the same command as the server package, for example
-`sudo apt install ./argus-control_<new>_linux_amd64.deb ./argus-verify_<new>_linux_amd64.deb`
-(or one `rpm -U` with both files). Migrations run when
+Upgrade the control plane first, then agents. Migrations run when
 the control plane starts and only ever add; take a backup first anyway
 (`systemctl start argus-backup.service`).
 
@@ -421,15 +461,27 @@ A control plane from before the console shipped, or before agents' tunnels,
 gets both by saving Settings once: the console is found where the package
 installs it, and **Addresses > QUIC** turns the tunnel's UDP listener on.
 
-Sessions no longer go through `argus-gateway`: its SSH listener, its browser
-SSH terminal and its native RDP listener all refuse, and it will not start
-without `control.url`. It is still packaged only because browser Remote
-Desktop to Windows goes through it until the Windows agent ships. If you do not
-use that, stop and disable it (`sudo systemctl disable --now argus-gateway`)
-after the agents on your Linux and macOS servers show **Connected**. If you
-keep it, upgrade it after the control plane; its state (recordings, host key
-pins, vaulted credentials) stays in `/var/lib/argus-gateway`, and an upgraded
-one keeps the paths in its existing `gateway.yaml`.
+### Coming from argus-gateway
+
+There is no `argus-gateway` any more. Every terminal and desktop opens from the
+console through the server's own agent, so a server needs `argus-agent`
+enrolled and connected before anyone can open it. Nothing else replaces the
+gateway, and no published release ever shipped it, so a test install retires
+it like this:
+
+1. Enroll `argus-agent` on every server people use (**Servers > Add a server**),
+   including Windows servers, and check each shows as connected.
+2. Stop and remove the gateway: `sudo systemctl disable --now argus-gateway`,
+   then `sudo apt remove argus-gateway` (or `rpm -e`, `apk del`).
+3. Its data stays in `/var/lib/argus-gateway`, as removing a package never
+   deletes evidence. Recordings there that reached object storage are already
+   in the console; check any others with `argus-verify` before you delete the
+   folder.
+4. Remove `console.gateway_url` from `control.yaml` if you set it. It is ignored
+   now.
+5. In each server's `sshd_config`, `ForceCommand argus-agent shim` no longer
+   needs `--gateway-keys`, and `ExposeAuthInfo` is no longer read. The old
+   flags are accepted, so existing lines keep working.
 
 Restart `argus-agent` after upgrading it (`sudo systemctl restart
 argus-agent`). Until it restarts, each login waits about two seconds for an

@@ -36,28 +36,6 @@ type Authorization struct {
 	KernelEvidenceWaived bool `json:"kernelEvidenceWaived,omitempty"`
 }
 
-// handleAuthorize answers a gateway asking about one session.
-//
-// Reporter-authenticated: the caller is a gateway holding a client certificate,
-// not a person, so the subject's address is a parameter rather than something
-// read from a session cookie.
-func (a *API) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	email := r.URL.Query().Get("email")
-	target := r.URL.Query().Get("target")
-	principal := r.URL.Query().Get("principal")
-	if email == "" || target == "" || principal == "" {
-		writeErr(w, http.StatusBadRequest, "email, target and principal are required")
-		return
-	}
-
-	auth, err := a.authorizePrincipal(r, email, target, principal)
-	if err != nil {
-		a.fail(w, "authorize", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, auth)
-}
-
 // kernelEvidenceWaived reports whether policy demanded kernel-observed evidence
 // for a session on this target and the target cannot produce it.
 //

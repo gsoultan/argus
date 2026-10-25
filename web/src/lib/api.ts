@@ -9,7 +9,6 @@ import {
   createRequest,
   decideRequest,
   gatewayPolicy,
-  GATEWAY_URL,
   isConfigured,
   live,
   removeAssetAssignment,
@@ -17,8 +16,7 @@ import {
   updateAsset as updateOnControlPlane,
   whoami,
   saveGatewayPolicy,
-  terminateRDPSession as terminateRDPOnGateway,
-  terminateSession as terminateOnGateway,
+  terminateSession as terminateLive,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
 import type {
@@ -378,8 +376,8 @@ export const api = {
   /**
    * Ends a live session.
    *
-   * Against a configured deployment this reaches the gateway, which is the only
-   * process holding the connection. It previously only marked the row
+   * Against a configured deployment this asks the control plane relaying the
+   * session to have the server's agent end it. It previously only marked the row
    * terminated, which meant an operator got a success message while the session
    * they were trying to stop carried on — the worst possible failure for this
    * particular button.
@@ -388,15 +386,10 @@ export const api = {
     const s = db.sessions.find((x) => x.id === id)
 
     if (isConfigured()) {
-      // An SSH session is proxied and an RDP one is driven by Argus as the
-      // client, so they end on different endpoints. Picking by protocol here
-      // keeps that out of every caller.
-      const res = s?.protocol === 'rdp'
-        ? await terminateRDPOnGateway(GATEWAY_URL, id, reason)
-        : await terminateOnGateway(GATEWAY_URL, id, reason)
+      const res = await terminateLive(id, reason)
       if ('error' in res) throw new Error(res.error)
-      // The gateway reports the closure to the control plane itself; refetching
-      // is what makes the row authoritative rather than optimistic.
+      // The agent reports the closure itself; refetching is what makes the
+      // row authoritative rather than optimistic.
       return (await this.session(id)) ?? mustFind(s)
     }
 

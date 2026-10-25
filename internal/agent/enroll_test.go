@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,13 +106,7 @@ func TestEnrollKeepsTheCAThatVerifiesTheServer(t *testing.T) {
 		t.Fatalf("expected the CA to be kept, got CAFile=%q Pin=%q", enr.CAFile, enr.Pin)
 	}
 	for _, f := range []string{EnrollmentFile, enrolledCAFile} {
-		info, err := os.Stat(filepath.Join(dir, f))
-		if err != nil {
-			t.Fatalf("%s: %v", f, err)
-		}
-		if info.Mode().Perm() != 0o600 {
-			t.Errorf("%s is %v; the credential must be root-only", f, info.Mode().Perm())
-		}
+		assertPrivateFile(t, filepath.Join(dir, f))
 	}
 	loaded, err := LoadEnrollment(dir)
 	if err != nil || loaded == nil || loaded.Credential != "argus-agent-secret" {

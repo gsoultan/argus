@@ -67,7 +67,7 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 	s.ApplyError = lastApplyError
 	lastApplyMu.Unlock()
 	if c.Console != nil {
-		s.GatewayURL, s.FleetURL = c.Console.GatewayURL, c.Console.FleetURL
+		s.FleetURL = c.Console.FleetURL
 	}
 	if c.Tunnel != nil {
 		s.QUICListen = c.Tunnel.QUICListen
@@ -193,7 +193,7 @@ func (b *settingsBackend) apply(ctx context.Context, c *config, in control.Setti
 	if c.Console == nil {
 		c.Console = &consoleConfig{}
 	}
-	c.Console.GatewayURL, c.Console.FleetURL = trimURL(in.GatewayURL), trimURL(in.FleetURL)
+	c.Console.FleetURL = trimURL(in.FleetURL)
 	if c.Console.Dir == "" {
 		c.Console.Dir = detectConsoleDir(b.loc.Managed)
 	}
@@ -416,11 +416,6 @@ func validateConfig(c config) error {
 		}
 	}
 	if c.Console != nil {
-		if c.Console.GatewayURL != "" {
-			if _, err := control.CheckURL(c.Console.GatewayURL, "the gateway address", false); err != nil {
-				return err
-			}
-		}
 		if c.Console.FleetURL != "" {
 			if _, err := control.CheckURL(c.Console.FleetURL, "the address servers use", true); err != nil {
 				return err
@@ -428,7 +423,7 @@ func validateConfig(c config) error {
 		}
 		if c.Console.Dir != "" {
 			if _, err := control.NewConsoleHandler(control.ConsoleConfig{Dir: c.Console.Dir,
-				GatewayURL: c.Console.GatewayURL, FleetURL: c.Console.FleetURL}); err != nil {
+				FleetURL: c.Console.FleetURL}); err != nil {
 				return err
 			}
 		}

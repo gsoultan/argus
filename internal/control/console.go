@@ -29,9 +29,6 @@ removes a reverse proxy nobody had documented rather than adding a moving part.
 type ConsoleConfig struct {
 	// Dir holds index.html and assets/, as `vite build` writes them.
 	Dir string
-	// GatewayURL is where browsers reach argus-gateway's web listener. The
-	// build bakes in a development default; this replaces it at run time.
-	GatewayURL string
 	// Version is this control plane's, so "Add a server" can offer the agent
 	// package that matches it rather than whatever was current at build time.
 	Version string
@@ -57,27 +54,16 @@ func NewConsoleHandler(cfg ConsoleConfig) (http.Handler, error) {
 	if _, err := os.Stat(filepath.Join(cfg.Dir, "index.html")); err != nil {
 		return nil, fmt.Errorf("console.dir %s holds no built console (index.html): %w", cfg.Dir, err)
 	}
+	// Terminals, desktops, file transfer and live viewing all go to this
+	// control plane, so the console talks to nothing but its own origin.
 	connect := []string{"'self'"}
-	if cfg.GatewayURL != "" {
-		u, err := url.Parse(cfg.GatewayURL)
-		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-			return nil, fmt.Errorf("console.gateway_url %q is not an http(s) URL", cfg.GatewayURL)
-		}
-		ws := "wss"
-		if u.Scheme == "http" {
-			ws = "ws"
-		}
-		// The terminal, the shadow stream and termination go straight to the
-		// gateway, over fetch and WebSocket both.
-		connect = append(connect, u.Scheme+"://"+u.Host, ws+"://"+u.Host)
-	}
 	if cfg.FleetURL != "" {
 		if u, err := url.Parse(cfg.FleetURL); err != nil || u.Host == "" || u.Scheme != "https" {
 			return nil, fmt.Errorf("console.fleet_url %q is not an https URL", cfg.FleetURL)
 		}
 	}
 	cfgJSON, _ := json.Marshal(map[string]string{
-		"gatewayUrl": cfg.GatewayURL, "version": cfg.Version, "fleetUrl": cfg.FleetURL,
+		"version": cfg.Version, "fleetUrl": cfg.FleetURL,
 	})
 	return &consoleHandler{
 		dir:    cfg.Dir,

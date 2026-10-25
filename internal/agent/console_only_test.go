@@ -141,16 +141,15 @@ func TestConsoleOnlyRefusesADirectLoginAndReportsIt(t *testing.T) {
 	}
 }
 
-// A session the gateway's browser terminal opened is an Argus session.
-func TestConsoleOnlyStillAdmitsABrokeredSession(t *testing.T) {
+// Console-only refuses a login through sshd whatever it claims to be.
+func TestConsoleOnlyRefusesALoginThatClaimsToBeBrokered(t *testing.T) {
 	c, sock := testCollector(t)
 	defer c.CloseWithin(time.Second)
 	c.SetConsoleOnly(true)
-	c.OnRefused = func(SessionStart) { t.Error("a brokered session was refused") }
 
 	conn, dec := startAs(t, sock, Brokered)
-	if r := readReply(t, conn, dec); !r.Record || r.Refused {
-		t.Fatalf("decision = %+v, want record", r)
+	if r := readReply(t, conn, dec); r.Record || !r.Refused {
+		t.Fatalf("decision = %+v, want refused", r)
 	}
 }
 

@@ -82,23 +82,3 @@ func (a *API) postPolicy(w http.ResponseWriter, r *http.Request) {
 		"actor", sess.Email, "changes", len(changes), "loosened", loosened)
 	writeJSON(w, http.StatusOK, after)
 }
-
-// getGatewayPolicy serves the policy to a gateway.
-//
-// Separate from the console route and behind the reporter credential, matching
-// how every other machine-facing endpoint here is gated. A gateway holds a
-// machine token and no browser session, so it could not reach the console route
-// at all — and sharing one handler between the two audiences is how a browser
-// eventually ends up able to read something meant for a gateway.
-func (a *API) getGatewayPolicy(w http.ResponseWriter, r *http.Request) {
-	p, err := a.store.GatewayPolicy(r.Context())
-	if err != nil {
-		// Deliberately an error rather than the default: a gateway that fetches
-		// policy successfully must have fetched the real one. Handing it
-		// defaults on a database fault would look identical to a healthy read
-		// and would silently re-close a channel an admin had opened.
-		a.fail(w, "gateway policy", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, p)
-}

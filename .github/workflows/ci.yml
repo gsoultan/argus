@@ -99,13 +99,7 @@ jobs:
         # before anything noticed.
         run: go run ./cmd/stormgen verify -dsn "$ARGUS_TEST_DATABASE_URL"
 
-      - name: Fuzz the SSH request parsers
-        # These read bytes from the network before any policy runs. A panic
-        # there takes down every session on the gateway, so a short fuzz run on
-        # every change is cheap insurance.
-        run: go test -run=Fuzz -fuzz=FuzzParsePTYRequest -fuzztime=60s ./internal/gateway/
-
-  # The control plane, gateway and verifier ship for macOS and Windows too.
+  # The control plane and verifier ship for macOS and Windows too.
   # Cross-compiling proves they build; this proves they start, and that the
   # private-key check reads Windows access lists rather than mode bits that
   # mean nothing there.
@@ -131,13 +125,12 @@ jobs:
           ./internal/secrets/... ./internal/hashchain/... ./internal/recorder/...
           ./internal/tunnel/... ./cmd/argus-verify/...
       - name: Test the agent
-        if: runner.os == 'macOS'
         run: go test -count=1 ./internal/agent/... ./cmd/argus-agent/...
       - name: Build and start each binary
         run: |
           set -euo pipefail
           ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
-          for c in argus-control argus-gateway argus-verify; do
+          for c in argus-control argus-verify; do
             go build -o "bin/$c$ext" "./cmd/$c"
             "./bin/$c$ext" -version
           done
@@ -255,6 +248,192 @@ jobs:
           # Stopping it through launchd seals and exits cleanly.
           sudo launchctl bootout system/com.argus.agent
           sudo tail -5 /var/log/argus-agent.log
+
+  # The same drill on Windows: the agent installed as a service running as
+  # LocalSystem, enrolled, holding its tunnel, opening a console session as a
+  # real local account on a pseudoconsole and recording it on the host.
+  windows-agent:
+    name: Agent on Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Git Bash rewrites arguments that look like paths ("/add",
+      # "/inheritance:r"); Windows programs need them as written.
+      MSYS_NO_PATHCONV: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start PostgreSQL
+        run: |
+          set -euo pipefail
+          pg=$(cygpath -u "$PGBIN")
+          echo "$pg" >> "$GITHUB_PATH"
+          "$pg/initdb" -D "$RUNNER_TEMP/pg" -U argus --auth=trust >/dev/null
+          "$pg/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" -o "-p 5433" start
+          "$pg/createdb" -h localhost -p 5433 -U argus argus
+      - name: Install the agent, enroll it, open a session through it
+        env:
+          PGURL: postgres://argus@localhost:5433/argus?sslmode=disable
+        run: |
+          set -euo pipefail
+          # Windows' curl asks the CA for revocation status, which a private
+          # CA has nowhere to publish; the certificate itself is still checked.
+          curl() { command curl --ssl-no-revoke "$@"; }
+          tmp=$(cygpath -m "$RUNNER_TEMP")/drill
+          mkdir -p "$tmp"
+          go build -o "$tmp/argus-control.exe" ./cmd/argus-control
+          go build -o "$tmp/argus-agent.exe" ./cmd/argus-agent
+          go build -o "$tmp/termdrill.exe" ./scripts/tools/termdrill
+          go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
+          go run ./scripts/tools/gencerts "$tmp"
+          # The Windows "chmod 600", which the control plane checks for.
+          icacls "$(cygpath -w "$tmp/server.key")" /inheritance:r /grant:r "$USERNAME:R" \
+            /grant:r SYSTEM:F /grant:r Administrators:F >/dev/null
+
+          # The shipped example, pointed at this runner's files. The packaged
+          # control.yaml is empty on purpose: it starts the setup page.
+          sed -e "s#/etc/argus/tls/#$tmp/#" -e 's#dir: "/usr/share/argus/console"#dir: ""#' \
+            packaging/config/control.example.yaml > "$tmp/control.yaml"
+          export ARGUS_DATABASE_URL="$PGURL" ARGUS_SIGNING_SECRET=$(openssl rand -hex 32) \
+            ARGUS_REPORTER_TOKEN=$(openssl rand -hex 32)
+          "$tmp/argus-control.exe" -config "$tmp/control.yaml" >"$tmp/control.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz && break
+            sleep 1
+          done
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz || { tail -50 "$tmp/control.log"; exit 1; }
+          printf 'ci-admin-password-0123456789\n' | \
+            "$tmp/argus-control.exe" -config "$tmp/control.yaml" users add admin@ci.example --role admin
+
+          # Installed as docs/install.md says.
+          inst="/c/Program Files/Argus"
+          mkdir -p "$inst"
+          cp "$tmp/argus-agent.exe" "$inst/"
+          agent="$inst/argus-agent.exe"
+
+          c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
+          $c -X POST https://localhost:8080/auth/password \
+            -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
+          tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
+          "$agent" enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
+          "$agent" service install
+
+          # The credential, and everything else the agent keeps, is out of
+          # reach of the accounts it records.
+          acl=$(icacls 'C:\ProgramData\Argus')
+          echo "$acl"
+          if grep -Eqi 'Users|Everyone|CREATOR OWNER' <<<"$acl"; then
+            echo "::error::the agent's state directory is open to other accounts"; exit 1
+          fi
+
+          host=$(hostname)
+          log='C:\ProgramData\Argus\agent.log'
+          for i in $(seq 1 30); do
+            tr=$(psql "$PGURL" -tAc "SELECT tunnel_transport FROM agent_credentials
+                 WHERE lower(hostname) = lower('$host') AND revoked_at IS NULL
+                   AND tunnel_rtt_us IS NOT NULL")
+            [ -n "$tr" ] && break
+            sleep 1
+          done
+          [ -n "$tr" ] || { tail -40 "$log"; tail -20 "$tmp/control.log"
+            echo "::error::the agent's tunnel never came up"; exit 1; }
+          echo "tunnel over $tr"
+          n=$(psql "$PGURL" -tAc "SELECT count(*) FROM agents WHERE lower(hostname) = lower('$host')")
+          [ "$n" = 1 ] || { tail -40 "$log"; echo "::error::the agent never reported"; exit 1; }
+
+          # A local account that has never logged on: its profile is made by
+          # the session, as an interactive logon would make it.
+          # Under 15 characters: net asks before setting a longer password,
+          # and there is nobody to answer.
+          DRILL_PASSWORD="Dr1ll-$(openssl rand -hex 4)"
+          export DRILL_PASSWORD
+          net user argusdrill "$DRILL_PASSWORD" /add >/dev/null
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          set +e
+          out=$("$tmp/termdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill -after-output -literal-cr \
+            -input 'whoami\recho home=%USERPROFILE%\rtype nul > "%USERPROFILE%\through-argus"\rexit 7\r' \
+            2>"$tmp/term.err")
+          code=$?
+          set -e
+          cat "$tmp/term.err"; echo "$out"
+          [ "$code" = 7 ] && grep -qi '\\argusdrill' <<<"$out" || {
+            sleep 30; tail -40 "$log"
+            echo "::error::a session through the tunnel did not run as the account (exit $code)"; exit 1; }
+          owner=$(powershell -NoProfile -Command "(Get-Acl 'C:\Users\argusdrill\through-argus').Owner")
+          grep -qi 'argusdrill' <<<"$owner" || {
+            echo "::error::the file the session wrote is owned by '$owner', not the account"; exit 1; }
+          sid=$(sed -n 's/^session=//p' "$tmp/term.err" | tr -d '\r')
+          grep -q through-argus "/c/ProgramData/Argus/recordings/$sid.cast" || {
+            echo "::error::the recording on the host does not hold the session"; exit 1; }
+          for i in $(seq 1 30); do
+            who=$(psql "$PGURL" -tAc "SELECT user_email FROM sessions WHERE id = '$sid'::uuid")
+            [ -n "$who" ] && break
+            sleep 1
+          done
+          [ "$who" = admin@ci.example ] || {
+            echo "::error::the session was reported as '$who', not the person it was opened for"; exit 1; }
+
+          # A domain account is refused, not half-opened.
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"CORP\\\\ana\"}" | jq -r .ticket)
+          if [ "$tkt" != null ] && "$tmp/termdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+               -ticket "$tkt" -target "$host" -principal 'CORP\ana' -literal-cr -input 'exit\r' 2>&1; then
+            echo "::error::a session for a domain account was opened"; exit 1
+          fi
+
+          # Remote Desktop through the agent: the runner's own listener, with
+          # network level authentication as Windows has it by default, signed
+          # in as the account with its password.
+          reg add 'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server' \
+            /v fDenyTSConnections /t REG_DWORD /d 0 /f >/dev/null
+          net localgroup "Remote Desktop Users" argusdrill /add >/dev/null
+          sc.exe config TermService start= demand >/dev/null || true
+          net start TermService >/dev/null 2>&1 || true
+          for i in $(seq 1 30); do
+            netstat -an | grep -q ':3389 .*LISTENING' && break
+            sleep 1
+          done
+          netstat -an | grep ':3389 ' || { echo "::error::Remote Desktop is not listening on the runner"; exit 1; }
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill \
+            -password-env DRILL_PASSWORD -frames 3 2>"$tmp/desk.err" || {
+              cat "$tmp/desk.err"; sleep 5; tail -40 "$log"
+              echo "::error::a Remote Desktop did not open through the agent"; exit 1; }
+          cat "$tmp/desk.err"
+          dsid=$(sed -n 's/^session=//p' "$tmp/desk.err" | tr -d '\r')
+          for i in $(seq 1 30); do
+            st=$(psql "$PGURL" -tAc "SELECT state || ' ' || user_email || ' ' || protocol
+                 FROM sessions WHERE id = '$dsid'::uuid")
+            [ "${st%% *}" = closed ] && break
+            sleep 1
+          done
+          [ "$st" = "closed admin@ci.example rdp" ] || { tail -40 "$log"
+            echo "::error::the desktop was reported as '$st'"; exit 1; }
+          rec="/c/ProgramData/Argus/recordings/$dsid.argusrdp"
+          [ -s "$rec" ] || { echo "::error::the desktop's recording is not on the host"; exit 1; }
+          if grep -q "$DRILL_PASSWORD" "$rec" "$log"; then
+            echo "::error::the account's password was written down on the host"; exit 1
+          fi
+
+          # Stopping the service seals and exits cleanly.
+          "$agent" service stop
+          for i in $(seq 1 30); do
+            sc.exe query argus-agent | grep -q STOPPED && break
+            sleep 1
+          done
+          sc.exe query argus-agent | grep -q STOPPED
+          tail -5 "$log"
+          grep -q 'shutdown complete' "$log"
 
   ebpf:
     name: Kernel probe
@@ -535,13 +714,11 @@ jobs:
           pg_isready -h localhost -p 5433 -U argus
           # One host carrying all of them, as a small deployment does: no two
           # packages may own the same file.
-          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-gateway*linux_amd64.deb) \
-            $(ls dist/argus-verify*linux_amd64.deb)
+          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb) $(ls dist/argus-verify*linux_amd64.deb)
           argus-verify -h >/dev/null 2>&1 || [ -x /usr/bin/argus-verify ]
           argus-control -version
-          argus-gateway -version || argus-gateway --version || true
 
-          for u in argus-control.service argus-gateway.service argus-backup.service argus-backup.timer; do
+          for u in argus-control.service argus-backup.service argus-backup.timer; do
             sudo systemd-analyze verify "/lib/systemd/system/$u"
           done
           [ "$(sudo stat -c '%a %U:%G' /var/backups/argus)" = "700 argus:argus" ]
@@ -670,23 +847,6 @@ jobs:
           sudo sh -c 'argus-control backup verify \
             -scratch-db "postgres://argus:argus@localhost:5433/argus_drill?sslmode=disable" \
             /var/backups/argus/'"$run"
-
-      - name: Confirm the shipped config does not expose the SSH port
-        # A shipped default reaches every install that never edits the file,
-        # which is most of them. The browser terminal is the intended way in
-        # and does not touch this listener at all -- webssh calls the same Dial
-        # in-process -- so 0.0.0.0 here buys nothing and puts authorized_keys
-        # on the internet. Native-client access is opt-in, and this is what
-        # stops that decision drifting back by accident.
-        run: |
-          set -euo pipefail
-          listen=$(grep -E '^listen:' packaging/config/gateway.yaml)
-          echo "$listen"
-          case "$listen" in
-            *0.0.0.0*|*'"[::]'*|*'"*:'*)
-              echo "::error::packaging/config/gateway.yaml exposes the SSH listener by default; exposing it is an operator's decision, not a shipped one"
-              exit 1 ;;
-          esac
 
       - name: Confirm the units are hardened
         run: |

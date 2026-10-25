@@ -245,6 +245,12 @@ func handleStream(ctx context.Context, call *Call, services map[string]TunnelSer
 		call.Refuse("unknown service")
 		return
 	}
+	// The header deadline is for the header. Opening a session can take far
+	// longer -- Windows builds an account's profile on its first logon, in
+	// twenty seconds or more -- and a deadline left in place fails the answer
+	// after the session has started, closing it under the shell before it
+	// runs. How long to wait for the answer is the control plane's call.
+	_ = st.SetDeadline(time.Time{})
 	svc(ctx, call)
 	if !call.answered {
 		// A service that returned without answering is a refusal it did

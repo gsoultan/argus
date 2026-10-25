@@ -33,7 +33,7 @@ export function ErrorState({
         </ThemeIcon>
         <Text fw={600} size="sm" ta="center">{title}</Text>
         <Text size="xs" c="dimmed" ta="center">
-          Nothing was changed on the gateway or in the audit log — this failed while drawing
+          Nothing was changed on any server or in the audit log — this failed while drawing
           the page, not while carrying out an action.
         </Text>
         <Code block fz="xs" w="100%" style={{ whiteSpace: 'pre-wrap' }}>

@@ -33,7 +33,7 @@ import {
 } from '~/components/nav'
 import { Logo } from '~/components/Logo'
 import {
-  GATEWAY_URL, controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
+  controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
 } from '~/lib/live'
 import { FS, SP } from '~/theme'
 
@@ -260,7 +260,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 at to decide whether anything is happening. */}
             {whole && stats && stats.sessionsSilent > 0 && (
               <Tooltip
-                label={`${stats.sessionsSilent} ${stats.sessionsSilent === 1 ? 'session is' : 'sessions are'} recorded as active but have not been reported in minutes. Their gateway most likely went away without reporting the end. Sessions › Unknown.`}
+                label={`${stats.sessionsSilent} ${stats.sessionsSilent === 1 ? 'session is' : 'sessions are'} recorded as active but have not been reported in minutes. Their agent most likely went away without reporting the end. Sessions › Unknown.`}
                 multiline
                 maw={300}
               >
@@ -558,7 +558,7 @@ function SourceLine({ source }: { source: DataSource }) {
     <Tooltip
       label={
         source === 'live'
-          ? `Connected to ${controlPlaneHost()}. Sessions are brokered through ${gatewayHost()}.`
+          ? `Connected to ${controlPlaneHost()}. Sessions open through each server's Argus agent.`
           : source === 'fixture'
             ? 'No control plane is configured. Every figure on this screen is generated demo data, not your fleet.'
             : source === 'unreachable'
@@ -610,7 +610,7 @@ function DataSourceBadge({ source }: { source: DataSource }) {
   if (source === 'live') {
     return (
       <Tooltip
-        label={`Connected to ${controlPlaneHost()}. Sessions are brokered through ${gatewayHost()}.`}
+        label={`Connected to ${controlPlaneHost()}. Sessions open through each server's Argus agent.`}
         multiline
         maw={300}
       >
@@ -642,15 +642,3 @@ function DataSourceBadge({ source }: { source: DataSource }) {
   )
 }
 
-/**
- * The gateway is configured separately from the control plane and can point
- * somewhere else entirely, so "which deployment am I about to act on" is not
- * fully answered by the control plane's host alone.
- */
-function gatewayHost(): string {
-  try {
-    return new URL(GATEWAY_URL).host
-  } catch {
-    return GATEWAY_URL
-  }
-}

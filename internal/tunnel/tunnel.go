@@ -87,6 +87,22 @@ type Header struct {
 	// Grant is the control plane's signed permission, for a service that
 	// opens a session. See Grant.
 	Grant string `json:"grant,omitempty"`
+	// Desktop is how a desktop session should open; see DesktopOpen.
+	Desktop *DesktopOpen `json:"desktop,omitempty"`
+}
+
+// DesktopOpen is what a desktop session needs beyond its grant.
+type DesktopOpen struct {
+	// Password is the account's own, typed by the person in the console, for
+	// the host's Remote Desktop to authenticate (network level
+	// authentication). It crosses the control plane in memory only, is used
+	// for this one logon and is never written down or logged on either side.
+	// Empty asks for the Windows sign-in screen instead, which a host that
+	// requires network level authentication refuses.
+	Password string `json:"password,omitempty"`
+	// Width and Height are the desktop size the browser asked for.
+	Width  int `json:"width,omitempty"`
+	Height int `json:"height,omitempty"`
 }
 
 // Answer is the agent's reply to a Header, before any service bytes.
@@ -166,8 +182,11 @@ func OpenWith(ctx context.Context, s Session, h Header) (Stream, Answer, error) 
 	if err != nil {
 		return nil, Answer{}, err
 	}
+	// The caller's deadline when it set one: it knows how long what it is
+	// opening may take to answer, and a session on a first logon takes longer
+	// than a header.
 	deadline := time.Now().Add(HeaderTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+	if d, ok := ctx.Deadline(); ok {
 		deadline = d
 	}
 	_ = st.SetDeadline(deadline)

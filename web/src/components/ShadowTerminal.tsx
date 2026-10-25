@@ -6,7 +6,8 @@ import '@xterm/xterm/css/xterm.css'
 export type ShadowState = 'connecting' | 'watching' | 'ended' | 'error'
 
 export interface ShadowTerminalProps {
-  gatewayUrl: string
+  /** The watch endpoint as an http(s) URL; see watchEndpoint. */
+  endpoint: string
   sessionId: string
   /** Fetches a ticket. A callback because tickets are single-use. */
   getTicket: () => Promise<string | null>
@@ -24,11 +25,11 @@ interface ServerMessage {
  *
  * There is no onData handler and nothing is ever sent on the socket. Read-only
  * is a property of this component having no code path to the target's stdin,
- * not a flag the gateway is trusted to honour — though the gateway refuses to
- * read from a shadow socket as well, so neither side relies on the other.
+ * not a flag the control plane is trusted to honour — though it discards
+ * whatever a viewer's socket sends as well, so neither side relies on the other.
  */
 export function ShadowTerminal({
-  gatewayUrl,
+  endpoint,
   sessionId,
   getTicket,
   onStateChange,
@@ -97,15 +98,21 @@ export function ShadowTerminal({
         return
       }
 
-      const url = new URL('/ws/shadow', gatewayUrl)
+      const url = new URL(endpoint, window.location.href)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      url.searchParams.set('session', sessionId)
       url.searchParams.set('ticket', ticket)
 
       const ws = new WebSocket(url.toString())
+      // Output arrives as binary messages, written as they came: a multi-byte
+      // character split across two of them still arrives intact.
+      ws.binaryType = 'arraybuffer'
       wsRef.current = ws
 
       ws.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(ev.data))
+          return
+        }
         let msg: ServerMessage
         try {
           msg = JSON.parse(ev.data as string) as ServerMessage
@@ -159,7 +166,7 @@ export function ShadowTerminal({
     // dims is state the effect sets, not an input to it; including it would
     // tear down the socket on every resize the subject makes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gatewayUrl, sessionId])
+  }, [endpoint, sessionId])
 
   return (
     <Stack gap="xs">

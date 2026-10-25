@@ -133,8 +133,8 @@ function AddServer() {
               >
                 <Command text={START_COMMAND} />
                 <Text size={FS.meta} c="dimmed" mt={SP.snug} lh={1.55}>
-                  Put the gateway's public SSH key in <Mono>/etc/argus/gateway_keys</Mono> so the
-                  agent can tell sessions that came through Argus from direct logins.{' '}
+                  Sessions opened from the console reach the agent over its tunnel, so any login
+                  that arrives through sshd is one that skipped Argus.{' '}
                   <Mono>argus-agent scan</Mono> then says whether anything can still get in around it.
                 </Text>
               </Step>
@@ -286,7 +286,7 @@ function EnrolledAgents() {
       </Text>
       {!agents || agents.length === 0 ? (
         <Text size={FS.body} c="dimmed" lh={1.5}>
-          No server has enrolled yet. Servers set up with the gateways' shared reporter token
+          No server has enrolled yet. Servers set up with the shared reporter token
           still report, but are not listed here; enroll them to give each its own credential.
         </Text>
       ) : (

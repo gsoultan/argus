@@ -1,5 +1,12 @@
 # Gateway policy
 
+**Mostly historical.** The gateway is retired. Of the eight switches only
+`requireEbpfForRoot` still does anything: `handleTicket` sends elevated
+principals through `authorizePrincipal`, which reads it. The forwarding and
+recording switches stay in the table but the console no longer shows them; the
+agent's sessions carry no forwarded channels and the agent always records
+before it shows anything. The table name and type names were left alone.
+
 What a brokered session may do, owned by the control plane and enforced by the
 gateway. Added 2026-09-04; the console had shipped the UI for it first.
 
