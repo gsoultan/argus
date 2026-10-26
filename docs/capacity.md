@@ -2,8 +2,7 @@
 
 What one control plane relays between browsers and agents, measured on
 2026-10-23. The earlier published figures (200 concurrent sessions on one
-gateway) were taken on the gateway's SSH path, which is closed; these replace
-them.
+gateway) were taken on the retired gateway's SSH path; these replace them.
 
 Two harnesses, both in the tree, both skipped unless asked for:
 
@@ -153,6 +152,6 @@ deployment where the control plane is a long way from its users.
   QUIC's advantage over TCP under loss, and how a larger window queues behind a
   slow link, are not in these tables.
 - Two control-plane replicas, or the control plane on its own machine.
-- Remote Desktop, which still goes through `argus-gateway` until the Windows
-  agent ships.
+- Remote Desktop and the Windows agent. Every figure here is a Linux
+  terminal; a desktop session carries far more bytes and has not been loaded.
 - Long soaks. The longest run held 1000 sessions for 20 seconds.

@@ -35,6 +35,7 @@ This page is the overview and the reference behind it.
 - [Servers, assignments and roles](#servers-assignments-and-roles)
 - [Verifying a recording: `argus-verify`](#verifying-a-recording-argus-verify)
 - [Security posture](#security-posture)
+- [Measured capacity](#measured-capacity)
 - [Not done yet](#not-done-yet)
 - [Running locally](#running-locally)
 
@@ -398,6 +399,16 @@ where it breaks, and `backup verify` checks a backup end to end.
   as loopback. It is deliberately not `pprof`: a heap dump of a process relaying
   sessions is a transcript of everyone's privileged work.
 
+## Measured capacity
+
+One control plane relayed 1000 browser terminals at once to 50 agents, and all
+1000 opened, ran and sealed their recordings. It cost about 110 KB of heap and
+five goroutines per open terminal, and a keystroke's answer came back in 1–2 ms
+at the median. One agent takes up to 64 sessions and file transfers at once.
+On the HTTPS fallback one stream carries about 6 MB/s at an 80 ms round trip;
+QUIC carries more. The method, the full tables and what was not measured are in
+[docs/capacity.md](docs/capacity.md).
+
 ## Not done yet
 
 What the design in front of this page does not cover yet, stated rather than
@@ -411,11 +422,10 @@ implied:
   direct login is now refused before it applies, so it has no effect.
 - **Faster transports.** WebRTC and direct browser-to-agent paths for the
   terminal and desktop are designed but not built; today the control plane
-  relays every session.
-- **Capacity of the agent path has not been measured.** The earlier figures
-  (200 concurrent sessions comfortably on one node, flat goroutines and heap
-  over a 5300-session soak) were taken on the retired gateway's SSH path, and
-  its load harness went with it.
+  relays every session. The [measurements](docs/capacity.md) do not justify
+  them yet: the relay adds about a millisecond to a keystroke and little CPU,
+  so a direct path would only save distance, which wants a measurement from a
+  deployment where the control plane is far from its users.
 
 ## Running locally
 
