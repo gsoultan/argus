@@ -84,7 +84,7 @@ Releases publish `.deb`, `.rpm` and `.apk` for amd64 and arm64, built by
 GoReleaser in CI and signed with Sigstore.
 
 ```sh
-VERSION=0.4.0            # latest release: https://github.com/gsoultan/argus/releases/latest
+VERSION=0.5.0            # latest release: https://github.com/gsoultan/argus/releases/latest
 ARCH=amd64               # or arm64
 PKG=argus-control        # or argus-agent, argus-verify
 FMT=deb                  # deb (Debian/Ubuntu), rpm (RHEL/Rocky/Alma), apk (Alpine)
