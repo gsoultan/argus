@@ -448,7 +448,7 @@ sudo systemctl restart argus-control
 ```
 
 Upgrade the control plane first, then agents. Migrations run when
-the control plane starts. They mostly add, but 0.4.0 drops the columns behind
+the control plane starts. They mostly add, but 0.5.0 drops the columns behind
 two settings it removed (the native-clients switch and the per-server
 recording scope), so take a backup first
 (`systemctl start argus-backup.service`).
@@ -469,7 +469,7 @@ There is no `argus-gateway` any more. Every terminal and desktop opens from the
 console through the server's own agent, so a server needs `argus-agent`
 enrolled and connected before anyone can open it. Nothing else replaces the
 gateway. v0.3.0 was the last release to ship it; retire it before or while you
-upgrade to 0.4.0:
+upgrade to 0.5.0:
 
 1. Enroll `argus-agent` on every server people use (**Servers > Add a server**),
    including Windows servers, and check each shows as connected.
