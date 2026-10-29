@@ -62,7 +62,10 @@ messages.push(
   Buffer.concat([
     graphics(command(0x0e, Buffer.concat([u32(W, H, 1), Buffer.alloc(340 - 8 - 12)]))), // ResetGraphics
     graphics(command(0x09, Buffer.concat([u16(1, W, H), Buffer.from([0x20])]))), // CreateSurface
-    graphics(command(0x0f, Buffer.concat([u16(1, 0), u32(0, 0)]))), // MapSurfaceToOutput
+    // MapSurfaceToScaledOutput, at the surface's own size: what Windows
+    // Server 2025 sends, rather than MapSurfaceToOutput. A console that
+    // knew only the latter decoded every picture and showed none of them.
+    graphics(command(0x17, Buffer.concat([u16(1, 0), u32(0, 0, W, H)]))),
     // SolidFill, blue: what a picture that never decodes would leave.
     graphics(command(0x04, Buffer.concat([u16(1), Buffer.from([255, 0, 0, 0]), u16(1, 0, 0, W, H)]))),
   ]),
