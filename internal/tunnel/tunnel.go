@@ -103,6 +103,9 @@ type DesktopOpen struct {
 	// Width and Height are the desktop size the browser asked for.
 	Width  int `json:"width,omitempty"`
 	Height int `json:"height,omitempty"`
+	// Graphics asks for RDP's graphics pipeline, passed through to a browser
+	// that decodes it (H.264), instead of bitmap updates.
+	Graphics bool `json:"graphics,omitempty"`
 }
 
 // Answer is the agent's reply to a Header, before any service bytes.

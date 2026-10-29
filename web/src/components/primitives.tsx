@@ -351,6 +351,8 @@ const RISK_LABEL: Record<RiskFlag, string> = {
     'Pre-version-5 CredSSP binding — not bound to a nonce, so a captured exchange can be replayed against another channel',
   'no-network-level-auth':
     'TLS without CredSSP — the user met the host’s own logon screen through the tunnel, unauthenticated until they typed something',
+  'graphics-pipeline':
+    'Drawn with the graphics pipeline (H.264). The recording holds every frame, but this console cannot replay it yet',
 }
 
 export function RiskFlags({ flags }: { flags: RiskFlag[] }) {

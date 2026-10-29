@@ -22,6 +22,8 @@
  *    detached, so the same pixels are never resident twice.
  */
 
+import { FRAME_GRAPHICS, FRAME_GRAPHICS_PART, PartJoiner } from '~/lib/gfx'
+import { GraphicsRenderer } from '~/lib/gfxRenderer'
 import { loadPixels, type PixelsModule } from '~/lib/rdpPixels'
 
 /** Frame types, matching internal/rdp/display.go. */
@@ -63,6 +65,21 @@ const pixels: Promise<PixelsModule> = loadPixels(
  * until something repainted them.
  */
 let queue: Promise<void> = Promise.resolve()
+
+/**
+ * The graphics pipeline, made on its first command: a session that draws
+ * with bitmap updates never sends one.
+ */
+let graphics: GraphicsRenderer | null = null
+const parts = new PartJoiner()
+
+function renderer(): GraphicsRenderer {
+  graphics ??= new GraphicsRenderer({
+    rects: (rects) => post({ type: 'rects', rects }, rects.map((r) => r.bitmap)),
+    resize: (width, height) => post({ type: 'resize', width, height }),
+  })
+  return graphics
+}
 
 self.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
   const buf = ev.data
@@ -109,6 +126,25 @@ async function handle(buf: ArrayBuffer) {
         continue
       }
 
+      if (kind === FRAME_GRAPHICS || kind === FRAME_GRAPHICS_PART) {
+        const length = view.getUint32(at + 4, true)
+        const total = view.getUint32(at + 8, true)
+        const padded = (length + 3) & ~3
+        if (at + HEADER + padded > buf.byteLength) {
+          post({ type: 'error', message: 'display frame is truncated' })
+          return
+        }
+        let command: Uint8Array | null = new Uint8Array(buf, at + HEADER, length)
+        at += HEADER + padded
+        if (kind === FRAME_GRAPHICS_PART) command = parts.add(command, total)
+        if (command) {
+          // Bitmaps decoded earlier in this message go first, in order.
+          await flush(pending)
+          await renderer().command(command)
+        }
+        continue
+      }
+
       if (kind !== FRAME_BITMAP) {
         at += HEADER
         // Whatever was drawn before this frame is delivered before it, so a
@@ -122,6 +158,8 @@ async function handle(buf: ArrayBuffer) {
             post({ type: 'ready', width, height })
             break
           case FRAME_CLOSED:
+            graphics?.close()
+            graphics = null
             post({ type: 'closed' })
             break
         }

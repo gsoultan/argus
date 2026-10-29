@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Badge, Box, Group, Loader, Stack, Text } from '@mantine/core'
+import { canDecodeH264 } from '~/lib/gfx'
 import type { RDPWorkerResponse } from '~/workers/rdp.worker'
 
 export type RDPState = 'connecting' | 'live' | 'closed' | 'error'
@@ -37,6 +38,22 @@ function wantedSize(): { width: number; height: number } {
   const w = Math.min(Math.max(window.innerWidth - 48, 640), 1920)
   const h = Math.min(Math.max(window.innerHeight - 180, 480), 1200)
   return { width: w - (w % 4), height: h }
+}
+
+/**
+ * Whether to ask for the graphics pipeline: Windows' own H.264, decoded here.
+ * Off unless asked for, with ?graphics=h264 or the argus.desktop.graphics
+ * setting, while recordings of it cannot be replayed yet; and only where this
+ * browser can decode it.
+ */
+async function wantsGraphics(): Promise<boolean> {
+  let asked = new URLSearchParams(window.location.search).get('graphics') === 'h264'
+  try {
+    asked ||= window.localStorage.getItem('argus.desktop.graphics') === 'h264'
+  } catch {
+    // Storage refused: only the URL can ask.
+  }
+  return asked && (await canDecodeH264())
 }
 
 /**
@@ -153,6 +170,9 @@ export function RDPScreen({
         return
       }
 
+      const graphics = !shadowSessionId && (await wantsGraphics())
+      if (disposed) return
+
       const url = new URL(endpoint, window.location.href)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       if (!shadowSessionId) {
@@ -171,7 +191,9 @@ export function RDPScreen({
         // The logon is the first message: the account's password, for the
         // server's own Remote Desktop to authenticate, and the size to open at.
         ws.onopen = () => {
-          ws.send(JSON.stringify({ type: 'logon', password: takePassword?.() ?? '', ...wantedSize() }))
+          ws.send(
+            JSON.stringify({ type: 'logon', password: takePassword?.() ?? '', graphics, ...wantedSize() }),
+          )
         }
       }
       ws.onmessage = (ev) => {

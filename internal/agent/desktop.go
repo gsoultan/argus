@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,6 +70,40 @@ type DesktopInfo struct {
 	// LegacyBinding is a listener that used the pre-version-5 CredSSP
 	// binding, which is not bound to a nonce.
 	LegacyBinding bool
+	// Graphics collects the graphics pipeline's commands as the client reads
+	// them, when the browser asked for the pipeline. Nil means bitmaps.
+	Graphics *GraphicsSink
+}
+
+// GraphicsSink holds graphics commands read but not yet sent, as display
+// frames. The client fills it from inside NextBitmaps and runDesktop empties
+// it after each call, on the same goroutine, so it needs no lock.
+type GraphicsSink struct {
+	frames []byte
+}
+
+// Add is the rdp.ClientConfig.Graphics callback.
+func (g *GraphicsSink) Add(p rdp.GraphicsPDU) {
+	g.frames = append(g.frames, rdp.EncodeGraphics(p.Raw)...)
+}
+
+// take returns what has gathered, at most limit bytes of whole frames, and
+// keeps the rest.
+func (g *GraphicsSink) take(limit int) []byte {
+	if len(g.frames) == 0 {
+		return nil
+	}
+	n := 0
+	for n < len(g.frames) {
+		size := rdp.FrameHeaderSize + int((binary.LittleEndian.Uint32(g.frames[n+4:n+8])+3)&^3)
+		if n > 0 && n+size > limit {
+			break
+		}
+		n += size
+	}
+	out := g.frames[:n:n]
+	g.frames = append([]byte(nil), g.frames[n:]...)
+	return out
 }
 
 // desktopBatch bounds one output frame of display frames. Under
@@ -162,7 +197,7 @@ func Desktop(cfg DesktopConfig) TunnelService {
 		if err := call.Accept(d.ID()); err != nil {
 			_ = client.Close()
 		}
-		runDesktop(call.Stream, client, d, dlog)
+		runDesktop(call.Stream, client, info.Graphics, d, dlog)
 	}
 }
 
@@ -173,6 +208,11 @@ func desktopFlags(info DesktopInfo) []string {
 	flags := []string{"no-credential-injection"}
 	if info.LegacyBinding {
 		flags = append(flags, "legacy-credssp-binding")
+	}
+	if info.Graphics != nil {
+		// Recorded whole, but the console's replay does not draw the
+		// graphics pipeline yet.
+		flags = append(flags, "graphics-pipeline")
 	}
 	if info.Protocol == rdp.ProtocolSSL {
 		// The person met the Windows sign-in screen, unauthenticated until
@@ -233,12 +273,17 @@ func connectDesktop(cfg DesktopConfig, principal string, open tunnel.DesktopOpen
 		info.LegacyBinding = result.LegacyBinding
 	}
 	width, height := desktopSize(open)
-	client, err := rdp.Connect(conn, rdp.ClientConfig{
+	ccfg := rdp.ClientConfig{
 		Width: width, Height: height, Depth: 16,
 		SelectedProtocol: protocol,
 		Logon:            logon,
 		Log:              log,
-	})
+	}
+	if open.Graphics {
+		info.Graphics = &GraphicsSink{}
+		ccfg.Graphics = info.Graphics.Add
+	}
+	client, err := rdp.Connect(conn, ccfg)
 	if err != nil {
 		_ = conn.Close()
 		return nil, DesktopInfo{}, err
@@ -279,7 +324,8 @@ type desktopInput struct {
 
 // runDesktop relays until the desktop or the stream ends, then seals the
 // recording and says how it ended.
-func runDesktop(st tunnel.Stream, client DesktopClient, d *DesktopRecording, log *slog.Logger) {
+func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *DesktopRecording,
+	log *slog.Logger) {
 	var wmu sync.Mutex
 	write := func(typ byte, p []byte) error {
 		wmu.Lock()
@@ -338,6 +384,13 @@ func runDesktop(st tunnel.Stream, client DesktopClient, d *DesktopRecording, log
 	for err == nil {
 		var bitmaps []rdp.Bitmap
 		bitmaps, err = client.NextBitmaps()
+		if gfx != nil {
+			// Graphics commands go as they were read, in order, in batches
+			// the size bitmaps go in.
+			for b := gfx.take(desktopBatch); b != nil && err == nil; b = gfx.take(desktopBatch) {
+				err = write(tunnel.FrameOutput, b)
+			}
+		}
 		if err != nil || len(bitmaps) == 0 {
 			continue
 		}

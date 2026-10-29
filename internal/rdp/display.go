@@ -30,6 +30,12 @@ const (
 	// FrameEncoded carries one rectangle as the target sent it, for the
 	// browser to decode. See EncodeBitmap.
 	FrameEncoded uint8 = 5
+	// FrameGraphics carries one graphics pipeline command. See
+	// EncodeGraphics.
+	FrameGraphics uint8 = 6
+	// FrameGraphicsPart carries a piece of a graphics command too large for
+	// one frame. See EncodeGraphics.
+	FrameGraphicsPart uint8 = 7
 )
 
 // Fast-Path update codes (MS-RDPBCGR 2.2.9.1.2.1).
