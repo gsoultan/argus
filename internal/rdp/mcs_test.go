@@ -60,7 +60,7 @@ func TestClientSecurityDeclaresNoLegacyEncryption(t *testing.T) {
 // Clipboard and drive redirection ride on virtual channels, and they are the
 // two features that turn a recorded session into an unrecorded file transfer.
 func TestNoVirtualChannelsAreRequestedByDefault(t *testing.T) {
-	b := clientNetworkData()
+	b := clientNetworkData(false)
 	if got := binary.LittleEndian.Uint32(b[4:8]); got != 0 {
 		t.Errorf("channel count = %d, want 0", got)
 	}

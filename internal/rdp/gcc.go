@@ -42,6 +42,9 @@ type ClientInfo struct {
 	// Name appears in the server's session list, so it says what opened the
 	// session rather than leaving an operator guessing.
 	Name string
+	// Graphics asks for the graphics pipeline: 32-bit colour, and the
+	// drdynvc channel it runs on. See gfx.go.
+	Graphics bool
 }
 
 // GCCRequest builds the Conference Create Request carrying the client blocks.
@@ -61,7 +64,7 @@ func GCCRequest(info ClientInfo) []byte {
 
 	blocks := clientCoreData(info)
 	blocks = append(blocks, clientSecurityData()...)
-	blocks = append(blocks, clientNetworkData()...)
+	blocks = append(blocks, clientNetworkData(info.Graphics)...)
 
 	// The T.124 Conference Create Request wrapper. These bytes are fixed for
 	// RDP: the object identifier, the conference name "Duca", and the flags no
@@ -123,10 +126,18 @@ func clientCoreData(info ClientInfo) []byte {
 	b = binary.LittleEndian.AppendUint16(b, 1)             // clientProductId
 	b = binary.LittleEndian.AppendUint32(b, 0)             // serialNumber
 	b = binary.LittleEndian.AppendUint16(b, high)          // highColorDepth
-	b = binary.LittleEndian.AppendUint16(b, supportedDepths)
-	b = binary.LittleEndian.AppendUint16(b, 0x0001) // support error info PDU
-	b = append(b, make([]byte, 64)...)              // clientDigProductId
-	b = append(b, 0x07, 0x00)                       // connection type: LAN, pad
+	// earlyCapabilityFlags: error info PDUs always. The graphics pipeline
+	// wants a 32-bit session, and says so here, before any capability set.
+	early, depths := uint16(0x0001), supportedDepths
+	if info.Graphics {
+		const want32BPP, dynvcGFX, depth32 = 0x0002, 0x0100, 0x0008
+		early |= want32BPP | dynvcGFX
+		depths |= depth32
+	}
+	b = binary.LittleEndian.AppendUint16(b, depths)
+	b = binary.LittleEndian.AppendUint16(b, early)
+	b = append(b, make([]byte, 64)...) // clientDigProductId
+	b = append(b, 0x07, 0x00)          // connection type: LAN, pad
 	b = binary.LittleEndian.AppendUint32(b, info.SelectedProtocol)
 
 	return block(blockClientCore, b)
@@ -142,14 +153,24 @@ func clientSecurityData() []byte {
 	return block(blockClientSecurity, b)
 }
 
-// clientNetworkData requests no virtual channels.
+// clientNetworkData requests no virtual channels, or only drdynvc for the
+// graphics pipeline.
 //
 // Clipboard and drive redirection ride on virtual channels. Not requesting them
 // is a deliberate default: they are the two features that turn a recorded
 // session into an unrecorded file transfer, and enabling one should be a policy
 // decision on the asset rather than something the gateway does because it can.
-func clientNetworkData() []byte {
-	b := make([]byte, 4) // channelCount = 0
+// drdynvc could carry them too, as dynamic channels; dvc.go accepts the
+// graphics channel on it and refuses every other.
+func clientNetworkData(graphics bool) []byte {
+	if !graphics {
+		return block(blockClientNetwork, make([]byte, 4)) // channelCount = 0
+	}
+	b := binary.LittleEndian.AppendUint32(nil, 1)
+	name := make([]byte, 8) // eight bytes, NUL terminated
+	copy(name, drdynvcName)
+	b = append(b, name...)
+	b = binary.LittleEndian.AppendUint32(b, drdynvcOptions)
 	return block(blockClientNetwork, b)
 }
 
