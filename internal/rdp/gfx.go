@@ -84,16 +84,23 @@ func CodecName(id uint16) string {
 	return fmt.Sprintf("codec-0x%04x", id)
 }
 
+// Graphics capability sets (MS-RDPEGFX 2.2.3). The server confirms the
+// highest it supports, so every version is offered; what is asked of each
+// steers it towards plain 4:2:0 H.264, the form a browser decodes as is.
 const (
-	// gfxCapVersion8 is offered as well, so a server that will not do 8.1
-	// still answers; it carries no H.264.
-	gfxCapVersion8 uint32 = 0x00080004
-	// gfxCapVersion81 is the capability set wanted. Version 8.1 with AVC420
-	// is H.264 in its plain 4:2:0 form, the one a browser decodes as is.
-	// Version 10 lets Windows choose AVC444, two streams a browser would have
-	// to recombine; that is a later step, if colour fidelity calls for it.
+	gfxCapVersion8      uint32 = 0x00080004
 	gfxCapVersion81     uint32 = 0x00080105
+	gfxCapVersion10     uint32 = 0x000A0002
+	gfxCapVersion102    uint32 = 0x000A0200
+	gfxCapVersion103    uint32 = 0x000A0301
+	gfxCapVersion104    uint32 = 0x000A0400
+	gfxCapVersion105    uint32 = 0x000A0502
+	gfxCapVersion106    uint32 = 0x000A0600
+	gfxCapVersion107    uint32 = 0x000A0701
 	gfxCapAVC420Enabled uint32 = 0x00000010
+	// gfxCapAVCThinClient, from 10.3, asks for AVC420 rather than AVC444:
+	// AVC444 is two streams a browser would have to recombine.
+	gfxCapAVCThinClient uint32 = 0x00000040
 
 	gfxHeaderSize = 8
 )
@@ -179,13 +186,21 @@ func gfxPDU(cmd uint16, body []byte) []byte {
 	return append(out, body...)
 }
 
-// gfxCapsAdvertise offers version 8.1 with AVC420.
+// gfxCapsAdvertise offers every version this client reads.
 func gfxCapsAdvertise() []byte {
-	b := binary.LittleEndian.AppendUint16(nil, 2)
-	for _, set := range [][2]uint32{
+	sets := [][2]uint32{
 		{gfxCapVersion8, 0},
 		{gfxCapVersion81, gfxCapAVC420Enabled},
-	} {
+		{gfxCapVersion10, 0},
+		{gfxCapVersion102, 0},
+		{gfxCapVersion103, gfxCapAVCThinClient},
+		{gfxCapVersion104, gfxCapAVCThinClient},
+		{gfxCapVersion105, gfxCapAVCThinClient},
+		{gfxCapVersion106, gfxCapAVCThinClient},
+		{gfxCapVersion107, gfxCapAVCThinClient},
+	}
+	b := binary.LittleEndian.AppendUint16(nil, uint16(len(sets)))
+	for _, set := range sets {
 		b = binary.LittleEndian.AppendUint32(b, set[0])
 		b = binary.LittleEndian.AppendUint32(b, 4)
 		b = binary.LittleEndian.AppendUint32(b, set[1])

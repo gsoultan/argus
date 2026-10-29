@@ -464,6 +464,9 @@ jobs:
           # The same busy screen straight from Windows, with bitmap updates
           # and with the graphics pipeline, so the H.264 path is measured
           # against what the desktop above costs.
+          # H.264 needs an encoder; Windows Server has one only with Media
+          # Foundation installed.
+          powershell -NoProfile -Command "Get-WindowsFeature Server-Media-Foundation | Format-Table -AutoSize" || true
           ARGUS_TEST_RDP_TARGET=127.0.0.1:3389 ARGUS_TEST_RDP_USER=argusdrill \
             ARGUS_TEST_RDP_PASSWORD="$DRILL_PASSWORD" ARGUS_TEST_RDP_REPORT="$tmp/graphics.json" \
             go test ./internal/rdp/ -run TestTargetGraphics -count=1 -v
