@@ -49,12 +49,13 @@ type Client struct {
 	wmu sync.Mutex
 
 	// The graphics pipeline, when it was asked for.
-	graphics   func(GraphicsPDU)
-	dynvc      uint16 // MCS channel of drdynvc
-	static     staticChannel
-	dynamic    dynamicChannels
-	zgfx       *Decompressor
-	gfxDecoded uint32
+	graphics    func(GraphicsPDU)
+	dynvc       uint16 // MCS channel of drdynvc
+	static      staticChannel
+	dynamic     dynamicChannels
+	zgfx        *Decompressor
+	gfxDecoded  uint32
+	gfxMessages int
 }
 
 // ClientConfig configures a session.
@@ -388,6 +389,7 @@ func (c *Client) virtual(pdu []byte) error {
 		}
 	}
 	if ev.opened {
+		c.log.Info("rdp graphics: offering capabilities", "pdu", fmt.Sprintf("%x", gfxCapsAdvertise()))
 		if err := c.writeGraphics(gfxCapsAdvertise()); err != nil {
 			return err
 		}
@@ -395,6 +397,10 @@ func (c *Client) virtual(pdu []byte) error {
 	if ev.data == nil {
 		return nil
 	}
+	if c.gfxMessages == 0 {
+		c.log.Info("rdp graphics: the first message arrived on the graphics channel", "bytes", len(ev.data))
+	}
+	c.gfxMessages++
 	plain, err := c.zgfx.Decompress(ev.data)
 	if err != nil {
 		return err
@@ -420,7 +426,7 @@ func (c *Client) virtual(pdu []byte) error {
 }
 
 func (c *Client) writeGraphics(msg []byte) error {
-	for _, m := range dvcMessages(c.dynamic.graphics, msg) {
+	for _, m := range dvcMessages(c.dynamic.graphics, c.dynamic.cbID, msg) {
 		if err := c.writeVirtual(m); err != nil {
 			return err
 		}

@@ -93,7 +93,7 @@ func TestDVCMessagesSplitLargeOnes(t *testing.T) {
 	var d dynamicChannels
 	d.handle(append([]byte{dvcCreate << 4, 9}, append([]byte(graphicsChannelName), 0)...))
 	var got []byte
-	for _, m := range dvcMessages(9, msg) {
+	for _, m := range dvcMessages(9, 0, msg) {
 		if len(m) > channelChunk {
 			t.Fatalf("a %d byte PDU exceeds the chunk size", len(m))
 		}

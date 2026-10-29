@@ -85,7 +85,10 @@ func CodecName(id uint16) string {
 }
 
 const (
-	// gfxCapVersion81 is the capability set offered. Version 8.1 with AVC420
+	// gfxCapVersion8 is offered as well, so a server that will not do 8.1
+	// still answers; it carries no H.264.
+	gfxCapVersion8 uint32 = 0x00080004
+	// gfxCapVersion81 is the capability set wanted. Version 8.1 with AVC420
 	// is H.264 in its plain 4:2:0 form, the one a browser decodes as is.
 	// Version 10 lets Windows choose AVC444, two streams a browser would have
 	// to recombine; that is a later step, if colour fidelity calls for it.
@@ -178,10 +181,15 @@ func gfxPDU(cmd uint16, body []byte) []byte {
 
 // gfxCapsAdvertise offers version 8.1 with AVC420.
 func gfxCapsAdvertise() []byte {
-	b := binary.LittleEndian.AppendUint16(nil, 1)
-	b = binary.LittleEndian.AppendUint32(b, gfxCapVersion81)
-	b = binary.LittleEndian.AppendUint32(b, 4)
-	b = binary.LittleEndian.AppendUint32(b, gfxCapAVC420Enabled)
+	b := binary.LittleEndian.AppendUint16(nil, 2)
+	for _, set := range [][2]uint32{
+		{gfxCapVersion8, 0},
+		{gfxCapVersion81, gfxCapAVC420Enabled},
+	} {
+		b = binary.LittleEndian.AppendUint32(b, set[0])
+		b = binary.LittleEndian.AppendUint32(b, 4)
+		b = binary.LittleEndian.AppendUint32(b, set[1])
+	}
 	return gfxPDU(GfxCapsAdvertise, b)
 }
 

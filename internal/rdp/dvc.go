@@ -118,9 +118,11 @@ func channelPDUs(msg []byte) [][]byte {
 type dynamicChannels struct {
 	// graphics is the graphics pipeline's channel id once it is open.
 	graphics uint32
-	open     bool
-	pending  map[uint32]*bytes.Buffer
-	expect   map[uint32]int
+	// cbID is the id size the server used for it, which replies mirror.
+	cbID    int
+	open    bool
+	pending map[uint32]*bytes.Buffer
+	expect  map[uint32]int
 }
 
 // dvcEvent is what one drdynvc message meant.
@@ -165,7 +167,7 @@ func (d *dynamicChannels) handle(msg []byte) (dvcEvent, error) {
 		accepted := string(name) == graphicsChannelName && !d.open
 		if accepted {
 			status = 0
-			d.graphics, d.open = id, true
+			d.graphics, d.open, d.cbID = id, true, cbID
 		}
 		reply := append([]byte{dvcCreate<<4 | byte(cbID)}, dvcPut(id, cbID)...)
 		reply = binary.LittleEndian.AppendUint32(reply, status)
@@ -220,7 +222,11 @@ func (d *dynamicChannels) handle(msg []byte) (dvcEvent, error) {
 			d.open = false
 		}
 		delete(d.pending, id)
-		return dvcEvent{reply: append([]byte{dvcClose<<4 | byte(cbID)}, dvcPut(id, cbID)...)}, nil
+		ev := dvcEvent{reply: append([]byte{dvcClose<<4 | byte(cbID)}, dvcPut(id, cbID)...)}
+		if id == d.graphics {
+			ev.note = "the server closed the graphics channel"
+		}
+		return ev, nil
 
 	case dvcFirstCompr, dvcDataCompr:
 		return dvcEvent{}, fmt.Errorf("%w: compressed dynamic channel data, which version %d does not allow",
@@ -233,19 +239,21 @@ func (d *dynamicChannels) handle(msg []byte) (dvcEvent, error) {
 }
 
 // dvcData builds data PDUs carrying msg on channel id.
-func dvcMessages(id uint32, msg []byte) [][]byte {
-	const room = channelChunk - 6 // header byte and a four-byte id
+func dvcMessages(id uint32, cbID int, msg []byte) [][]byte {
+	const room = channelChunk - 6 // header byte and at most a four-byte id
+	head := func(cmd byte) []byte { return append([]byte{cmd<<4 | byte(cbID)}, dvcPut(id, cbID)...) }
 	if len(msg) <= room {
-		return [][]byte{append(append([]byte{dvcData<<4 | 2}, dvcPut(id, 2)...), msg...)}
+		return [][]byte{append(head(dvcData), msg...)}
 	}
 	var out [][]byte
-	first := append([]byte{dvcDataFirst<<4 | 2<<2 | 2}, dvcPut(id, 2)...)
+	first := head(dvcDataFirst)
+	first[0] |= 2 << 2 // a four-byte length
 	first = append(first, dvcPut(uint32(len(msg)), 2)...)
 	n := room - 4
 	out = append(out, append(first, msg[:n]...))
 	for at := n; at < len(msg); at += room {
 		end := min(at+room, len(msg))
-		out = append(out, append(append([]byte{dvcData<<4 | 2}, dvcPut(id, 2)...), msg[at:end]...))
+		out = append(out, append(head(dvcData), msg[at:end]...))
 	}
 	return out
 }
