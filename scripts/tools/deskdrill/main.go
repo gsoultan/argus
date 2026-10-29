@@ -7,6 +7,9 @@
 //
 //	deskdrill -url https://localhost:8080 -ca ca.crt -ticket T -target H -principal P \
 //	    -password-env DRILL_PASSWORD
+//
+// With -measure it stays, and reports what the desktop is like to use: see
+// measure.go.
 package main
 
 import (
@@ -34,6 +37,11 @@ func main() {
 	principal := flag.String("principal", "", "account")
 	passwordEnv := flag.String("password-env", "", "environment variable holding the account's password")
 	want := flag.Int("frames", 1, "screen updates to wait for")
+	width := flag.Int("width", 1024, "desktop width to ask for")
+	height := flag.Int("height", 768, "desktop height to ask for")
+	busy := flag.Duration("measure", 0, "measure the desktop, keeping a window busy this long")
+	keys := flag.Int("keys", 40, "keystrokes to time when measuring")
+	report := flag.String("report", "", "file to write the measurement to, as JSON")
 	flag.Parse()
 
 	pool := x509.NewCertPool()
@@ -57,7 +65,7 @@ func main() {
 	u.RawQuery = url.Values{"target": {*target}, "principal": {*principal},
 		"ticket": {*ticket}}.Encode()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second+4**busy)
 	defer cancel()
 	c, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
 		HTTPClient: client, HTTPHeader: http.Header{"Origin": {origin}}})
@@ -75,7 +83,7 @@ func main() {
 		password = os.Getenv(*passwordEnv)
 	}
 	logon, _ := json.Marshal(map[string]any{"type": "logon", "password": password,
-		"width": 1024, "height": 768})
+		"width": *width, "height": *height})
 	if err := c.Write(ctx, websocket.MessageText, logon); err != nil {
 		fail("%v", err)
 	}
@@ -85,6 +93,10 @@ func main() {
 		if err := c.Write(ctx, websocket.MessageText, b); err != nil {
 			fail("%v", err)
 		}
+	}
+	if *busy > 0 {
+		measure(ctx, c, send, *busy, *keys, *report)
+		return
 	}
 	frames, bytes := 0, 0
 	for {
