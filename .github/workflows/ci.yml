@@ -517,7 +517,7 @@ jobs:
             "| Size | \(.width)x\(.height) |",
             "| Commands | \(.commands) in \(.messages) messages |",
             "| Pictures decoded | \(.pictures) (\(.skipped) skipped waiting for a key frame, \(.failures) decoder failures) |",
-            "| Put together in full colour | \(.combined) |",
+            "| Put together in full colour | \(.combined)\(if .gpuLost then " (the GPU context was lost; drawn on the CPU, then at 4:2:0)" else " on the GPU" end) |",
             "| Colour space, as Chrome read it | `\(.colourSpace)` |",
             "| Codecs not drawn | \(.unknownCodecs | map(tostring) | join(", ") | if . == "" then "none" else . end) |",
             "", "The last screen is desktop.png in the desktop-measure artifact."' \

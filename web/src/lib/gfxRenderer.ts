@@ -20,7 +20,7 @@
  * the main view is drawn on its own, at 4:2:0.
  */
 
-import { Avc444Gl, framePlanes, type Planes } from './avc444'
+import { Avc444Gl, combineRegion, framePlanes, type Planes } from './avc444'
 import {
   Cmd,
   Codec,
@@ -122,6 +122,8 @@ export class GraphicsRenderer {
     format: '',
     /** The average luma of the last main view copied out, to tell an empty copy. */
     meanLuma: -1,
+    /** The GPU context was lost, and full colour went on on the CPU. */
+    gpuLost: false,
   }
 
   /** The GPU combiner, made on first use; null once it is known not to be had. */
@@ -415,38 +417,72 @@ export class GraphicsRenderer {
     if (decoder && decoder.state !== 'closed') decoder.close()
   }
 
-  /** Puts full-colour pictures together and draws their regions. */
+  /**
+   * Puts full-colour pictures together and draws their regions: on the GPU,
+   * or on the CPU if the GPU has gone, as a browser may take it away at any
+   * time. After that, pictures are drawn by the browser at 4:2:0.
+   */
   private combine() {
-    const gl = this.gl
-    if (!gl) return
     for (const s of this.surfaces.values()) {
       const redraw = s.redraw.splice(0)
       const main = s.mainPlanes
       if (redraw.length === 0 || !main) continue
       // Until the second view's first picture, the main one alone, at 4:2:0.
-      const aux = s.auxPlanes && s.auxPlanes.width === main.width && s.auxPlanes.height === main.height ? s.auxPlanes : null
-      // Taken out as a bitmap rather than drawn from the GL canvas directly:
-      // Chrome on Windows drew nothing from the canvas itself.
-      const picture = gl.draw(main, aux)
-      this.stats.combined++
+      const aux =
+        s.auxPlanes && s.auxPlanes.width === main.width && s.auxPlanes.height === main.height ? s.auxPlanes : null
+
+      // What to draw: each region cut to its surface, and where it is in
+      // the picture.
+      const parts: Array<{ to: Rect; from: Rect }> = []
       for (const { dest, regions } of redraw) {
         for (const region of regions.length > 0 ? regions : [dest]) {
-          const r = clip(region, s)
-          if (!r) continue
-          const w = r.right - r.left
-          const h = r.bottom - r.top
-          const sx = r.left - dest.left
-          const sy = r.top - dest.top
-          if (sx < 0 || sy < 0 || sx + w > main.width || sy + h > main.height) {
+          const to = clip(region, s)
+          if (!to) continue
+          const from = {
+            left: to.left - dest.left,
+            top: to.top - dest.top,
+            right: to.right - dest.left,
+            bottom: to.bottom - dest.top,
+          }
+          if (from.left < 0 || from.top < 0 || from.right > main.width || from.bottom > main.height) {
             this.stats.outside++
             continue
           }
-          s.ctx.drawImage(picture, sx, sy, w, h, r.left, r.top, w, h)
-          s.dirty.push(r)
-          this.stats.regions++
+          parts.push({ to, from })
         }
       }
-      picture.close()
+      if (parts.length === 0) continue
+      const box = parts.map((p) => p.from).reduce((a, r) => ({
+        left: Math.min(a.left, r.left),
+        top: Math.min(a.top, r.top),
+        right: Math.max(a.right, r.right),
+        bottom: Math.max(a.bottom, r.bottom),
+      }))
+
+      let picture: ImageBitmap | null = null
+      if (this.gl) {
+        try {
+          // Taken out as a bitmap rather than drawn from the GL canvas.
+          picture = this.gl.draw(main, aux, box)
+        } catch (err) {
+          this.stats.lastError = err instanceof Error ? err.message : String(err)
+          this.stats.gpuLost = true
+          this.gl = null
+        }
+      }
+      this.stats.combined++
+      for (const { to, from } of parts) {
+        const w = to.right - to.left
+        const h = to.bottom - to.top
+        if (picture) {
+          s.ctx.drawImage(picture, from.left, from.top, w, h, to.left, to.top, w, h)
+        } else {
+          s.ctx.putImageData(new ImageData(combineRegion(main, aux, from), w, h), to.left, to.top)
+        }
+        s.dirty.push(to)
+        this.stats.regions++
+      }
+      picture?.close()
     }
   }
 

@@ -27,6 +27,14 @@
  * tested against.
  */
 
+/** A rectangle in picture coordinates, right and bottom exclusive. */
+export interface Box {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
 /** One picture's planes: Y at full size, U and V at half size each way. */
 export interface Planes {
   width: number
@@ -146,14 +154,24 @@ export function rgb(y: number, u: number, v: number, colour: Colour = DEFAULT_CO
 }
 
 /** The whole picture as RGBA, on the CPU. */
-export function combineV2(main: Planes, aux: Planes): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(main.width * main.height * 4)
-  for (let y = 0; y < main.height; y++) {
-    for (let x = 0; x < main.width; x++) {
-      const [u, v] = chromaV2(main, aux, x, y)
-      const [r, g, b] = rgb(main.y[y * main.yStride + x] ?? 0, u, v, main.colour)
-      const o = (y * main.width + x) * 4
-      out[o] = r
+export function combineV2(main: Planes, aux: Planes): Uint8ClampedArray<ArrayBuffer> {
+  return combineRegion(main, aux, { left: 0, top: 0, right: main.width, bottom: main.height })
+}
+
+/**
+ * Part of the picture as RGBA, on the CPU: what is drawn where the GPU is
+ * not to be had. Without the second view, the main one's colour, 4:2:0.
+ */
+export function combineRegion(main: Planes, aux: Planes | null, r: Box): Uint8ClampedArray<ArrayBuffer> {
+  const w = r.right - r.left
+  const out = new Uint8ClampedArray(w * (r.bottom - r.top) * 4)
+  for (let y = r.top; y < r.bottom; y++) {
+    for (let x = r.left; x < r.right; x++) {
+      const c = (y >> 1) * main.chromaStride + (x >> 1)
+      const [u, v] = aux ? chromaV2(main, aux, x, y) : [main.u[c] ?? 0, main.v[c] ?? 0]
+      const [red, g, b] = rgb(main.y[y * main.yStride + x] ?? 0, u, v, main.colour)
+      const o = ((y - r.top) * w + (x - r.left)) * 4
+      out[o] = red
       out[o + 1] = g
       out[o + 2] = b
       out[o + 3] = 255
@@ -330,6 +348,8 @@ export class Avc444Gl {
   private sizeAt: WebGLUniformLocation | null
   private hasAuxAt: WebGLUniformLocation | null
   private program: WebGLProgram
+  /** The size the textures were made for. */
+  private made = { width: 0, height: 0 }
 
   private constructor(canvas: OffscreenCanvas, gl: WebGL2RenderingContext, program: WebGLProgram) {
     this.canvas = canvas
@@ -385,16 +405,23 @@ export class Avc444Gl {
     return new Avc444Gl(canvas, gl, program)
   }
 
+  /** Whether the browser has taken the GPU context away, which it may do at any time. */
+  get lost(): boolean {
+    return this.gl.isContextLost()
+  }
+
   /**
-   * Draws the whole picture: in full colour, or without the second view, as
-   * the main one's 4:2:0. The caller closes the bitmap.
+   * Draws the picture within box: in full colour, or without the second
+   * view, as the main one's 4:2:0. Only that part of the returned bitmap is
+   * the picture; the caller closes it. Throws if the GPU context is lost.
    */
-  draw(main: Planes, aux: Planes | null): ImageBitmap {
-    this.render(main, aux)
+  draw(main: Planes, aux: Planes | null, box?: Box): ImageBitmap {
+    this.render(main, aux, box)
+    if (this.lost) throw new Error('the WebGL context was lost')
     return this.canvas.transferToImageBitmap()
   }
 
-  private render(main: Planes, aux: Planes | null) {
+  private render(main: Planes, aux: Planes | null, wanted?: Box) {
     const gl = this.gl
     const { width, height } = main
     if (this.canvas.width !== width || this.canvas.height !== height) {
@@ -402,21 +429,45 @@ export class Avc444Gl {
       this.canvas.height = height
     }
     gl.viewport(0, 0, width, height)
+    // Only what changed is uploaded and drawn: a whole 1080p picture each
+    // time is six megabytes up and two million pixels of shader, which a
+    // software GPU did not keep up with. Widened to whole 4x2 blocks, which
+    // is what one pixel's colour can depend on.
+    const box = {
+      left: Math.max(0, (wanted?.left ?? 0) & ~3),
+      top: Math.max(0, (wanted?.top ?? 0) & ~1),
+      right: Math.min(width, ((wanted?.right ?? width) + 3) & ~3),
+      bottom: Math.min(height, ((wanted?.bottom ?? height) + 1) & ~1),
+    }
     const cw = main.chromaStride
     const ch = (height + 1) >> 1
-    const planes: Array<[Uint8Array, number, number]> = [
-      [main.y, main.yStride, height],
-      [main.u, cw, ch],
-      [main.v, cw, ch],
+    const resized = this.made.width !== width || this.made.height !== height
+    this.made = { width, height }
+    const planes: Array<[Uint8Array, number, number, boolean]> = [
+      [main.y, main.yStride, height, true],
+      [main.u, cw, ch, false],
+      [main.v, cw, ch, false],
     ]
     if (aux) {
-      planes.push([aux.y, aux.yStride, height], [aux.u, aux.chromaStride, ch], [aux.v, aux.chromaStride, ch])
+      planes.push(
+        [aux.y, aux.yStride, height, true],
+        [aux.u, aux.chromaStride, ch, false],
+        [aux.v, aux.chromaStride, ch, false],
+      )
     }
-    planes.forEach(([data, w, h], i) => {
+    planes.forEach(([data, w, h, full], i) => {
       gl.activeTexture(gl.TEXTURE0 + i)
       gl.bindTexture(gl.TEXTURE_2D, this.textures[i] ?? null)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, w, h, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, data)
+      if (resized) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, w, h, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null)
+      const top = full ? box.top : box.top >> 1
+      const bottom = Math.min(h, full ? box.bottom : (box.bottom + 1) >> 1)
+      if (bottom <= top) return
+      const rows = data.subarray(top * w, bottom * w)
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, top, w, bottom - top, gl.RED_INTEGER, gl.UNSIGNED_BYTE, rows)
     })
+    gl.enable(gl.SCISSOR_TEST)
+    // GL counts rows from the bottom.
+    gl.scissor(box.left, height - box.bottom, box.right - box.left, box.bottom - box.top)
     gl.uniform2i(this.sizeAt, width, height)
     gl.uniform1i(this.hasAuxAt, aux ? 1 : 0)
     const m = colourMatrix(main.colour)
