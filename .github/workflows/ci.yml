@@ -389,6 +389,17 @@ jobs:
             echo "::error::a session for a domain account was opened"; exit 1
           fi
 
+          # The caret's blink is a screen update every half second, which the
+          # desktop measurement below would take for a keystroke's answer.
+          # Set in the account's own hive, once its terminal session has let go.
+          for i in $(seq 1 15); do
+            reg load 'HKU\argusdrill' 'C:\Users\argusdrill\NTUSER.DAT' >/dev/null 2>&1 && break
+            sleep 2
+          done
+          reg add 'HKU\argusdrill\Control Panel\Desktop' /v CursorBlinkRate /t REG_SZ /d -1 /f >/dev/null || \
+            echo "::warning::the caret still blinks; keystroke times may read short"
+          reg unload 'HKU\argusdrill' >/dev/null 2>&1 || true
+
           # Remote Desktop through the agent: the runner's own listener, with
           # network level authentication as Windows has it by default, signed
           # in as the account with its password.
@@ -425,6 +436,31 @@ jobs:
             echo "::error::the account's password was written down on the host"; exit 1
           fi
 
+          # What that desktop is like to use at 1080p: keystroke to screen,
+          # and a busy window's frame rate and bandwidth. Reported, not yet
+          # held to a number; docs/capacity.md has the targets.
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill \
+            -password-env DRILL_PASSWORD -width 1920 -height 1080 -measure 20s \
+            -report "$tmp/desktop-measure.json" 2>"$tmp/measure.err" || {
+              cat "$tmp/measure.err"; tail -40 "$log"
+              echo "::error::the desktop could not be measured"; exit 1; }
+          cat "$tmp/measure.err"
+          mkdir -p measure && cp "$tmp/desktop-measure.json" measure/
+          jq -r '"### Remote Desktop through the agent, \(.Width)x\(.Height) at \(.Depth)-bit",
+            "",
+            "| | |", "|---|---|",
+            "| First paint | \(.FirstPaintMS / 1000 | floor) s, \(.FirstPaintBytes / 1e6 * 10 | floor / 10) MB |",
+            "| Idle | \(.IdleBitsPerSec / 1000 | floor) kbit/s |",
+            "| Keystroke to screen (\(.KeySamples) keys, \(.KeyMissed) missed) | p50 \(.KeyP50MS) ms, p95 \(.KeyP95MS) ms, max \(.KeyMaxMS) ms |",
+            "| Busy window: frames | \(.BusyFramesPerSec * 10 | floor / 10) per s (\(.BusyMessagesPerSec * 10 | floor / 10) updates per s) |",
+            "| Busy window: bandwidth | \(.BusyMbitPerSec * 100 | floor / 100) Mbit/s, \(.BusyScreensPerSec * 100 | floor / 100) screens redrawn per s |",
+            "| Busy window: longest wait | p95 \(.BusyGapP95MS) ms, max \(.BusyGapMaxMS) ms |",
+            "| Busy window: decode (native) | \(.BusyDecodeShare * 1000 | floor / 10) % of a core |"' \
+            "$tmp/desktop-measure.json" >> "$GITHUB_STEP_SUMMARY"
+
           # Stopping the service seals and exits cleanly.
           "$agent" service stop
           for i in $(seq 1 30); do
@@ -434,6 +470,14 @@ jobs:
           sc.exe query argus-agent | grep -q STOPPED
           tail -5 "$log"
           grep -q 'shutdown complete' "$log"
+
+      - name: Keep the desktop measurement
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-measure
+          path: measure/
+          if-no-files-found: ignore
 
   ebpf:
     name: Kernel probe
