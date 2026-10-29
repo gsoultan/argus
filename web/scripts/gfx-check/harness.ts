@@ -6,6 +6,7 @@
  * screenshots the canvas.
  */
 
+import { Avc444Gl, combineV2, rgb, splitV2 } from '../../src/lib/avc444'
 import { FRAME_GRAPHICS, FRAME_GRAPHICS_PART, PartJoiner } from '../../src/lib/gfx'
 import { GraphicsRenderer } from '../../src/lib/gfxRenderer'
 
@@ -31,6 +32,8 @@ export interface CheckResult {
   outside: number
   posted: number
   unmapped: number
+  /** Full-colour pictures put together on the GPU. */
+  combined: number
   /** Distinct colours on the canvas at the end, up to 4096. */
   colours: number
 }
@@ -125,4 +128,70 @@ function describe(c: Uint8Array): string {
   return `0x${id.toString(16)} ${c.byteLength} bytes: ${u16s.join(' ')}`
 }
 
-;(window as unknown as { decodeCapture: typeof decodeCapture }).decodeCapture = decodeCapture
+/**
+ * The GPU's AVC444v2 reconstruction against the CPU's, on a picture with hard
+ * one-pixel colour edges: the largest difference in any channel, or -1 where
+ * there is no WebGL 2.
+ */
+function checkCombiner(): number {
+  const gl = Avc444Gl.create()
+  if (!gl) return -1
+  const w = 64
+  const h = 34
+  let seed = 3
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % 256
+  const plane = () => new Uint8Array(w * h).map(() => rnd())
+  const { main, aux } = splitV2(w, h, plane(), plane(), plane())
+  let worst = 0
+  // As Windows' client assumes, and as a stream might say instead.
+  for (const colour of [{ bt709: false, fullRange: true }, { bt709: true, fullRange: false }]) {
+    main.colour = colour
+    const want = combineV2(main, aux)
+    gl.draw(main, aux)
+    const got = gl.read()
+    for (let i = 0; i < want.length; i++) worst = Math.max(worst, Math.abs((want[i] ?? 0) - (got[i] ?? 0)))
+  }
+  return worst
+}
+
+/**
+ * How far the screen is from a 4:4:4 picture (8-bit Y, U, V planes, limited
+ * range BT.601, as ffmpeg makes them): the mean difference per channel, and
+ * the same for that picture at 4:2:0, which is what a console without the
+ * second view would at best show.
+ */
+async function compareTruth(url: string): Promise<{ full: number; at420: number }> {
+  const canvas = document.getElementById('screen') as HTMLCanvasElement
+  const { width: w, height: h } = canvas
+  const truth = new Uint8Array(await (await fetch(url)).arrayBuffer())
+  const shown = canvas.getContext('2d')!.getImageData(0, 0, w, h).data
+  const colour = { bt709: false, fullRange: false }
+  const at = (plane: number, x: number, y: number) => truth[plane * w * h + y * w + x] ?? 0
+  const block = (plane: number, x: number, y: number) => {
+    const bx = x & ~1
+    const by = y & ~1
+    return Math.round((at(plane, bx, by) + at(plane, bx + 1, by) + at(plane, bx, by + 1) + at(plane, bx + 1, by + 1)) / 4)
+  }
+  let full = 0
+  let at420 = 0
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const want = rgb(at(0, x, y), at(1, x, y), at(2, x, y), colour)
+      const blurred = rgb(at(0, x, y), block(1, x, y), block(2, x, y), colour)
+      for (let c = 0; c < 3; c++) {
+        full += Math.abs((shown[(y * w + x) * 4 + c] ?? 0) - want[c]!)
+        at420 += Math.abs(blurred[c]! - want[c]!)
+      }
+    }
+  }
+  return { full: full / (w * h * 3), at420: at420 / (w * h * 3) }
+}
+
+const w = window as unknown as {
+  decodeCapture: typeof decodeCapture
+  checkCombiner: typeof checkCombiner
+  compareTruth: typeof compareTruth
+}
+w.decodeCapture = decodeCapture
+w.checkCombiner = checkCombiner
+w.compareTruth = compareTruth

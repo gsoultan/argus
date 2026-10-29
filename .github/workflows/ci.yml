@@ -517,6 +517,8 @@ jobs:
             "| Size | \(.width)x\(.height) |",
             "| Commands | \(.commands) in \(.messages) messages |",
             "| Pictures decoded | \(.pictures) (\(.skipped) skipped waiting for a key frame, \(.failures) decoder failures) |",
+            "| Put together in full colour | \(.combined) |",
+            "| Colour space, as Chrome read it | `\(.colourSpace)` |",
             "| Codecs not drawn | \(.unknownCodecs | map(tostring) | join(", ") | if . == "" then "none" else . end) |",
             "", "The last screen is desktop.png in the desktop-measure artifact."' \
             ../measure/result.json >> "$GITHUB_STEP_SUMMARY"
@@ -721,6 +723,11 @@ jobs:
           bun build scripts/gfx-check/harness.ts --outfile "$out/harness.js" --target browser
           node scripts/gfx-check/fixture.mjs "$out/capture.bin"
           GFX_CHANNEL=chromium node scripts/gfx-check/run.mjs "$out/capture.bin" "$out"
+          # And in full colour: both of AVC444v2's views, put together on the
+          # GPU, against the 4:4:4 picture they were made from.
+          node scripts/gfx-check/fixture.mjs "$out/avc444.bin" avc444
+          GFX_TRUTH=scripts/gfx-check/avc444-truth.yuv GFX_CHANNEL=chromium \
+            node scripts/gfx-check/run.mjs "$out/avc444.bin" "$out"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

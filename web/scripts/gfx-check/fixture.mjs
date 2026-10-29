@@ -2,7 +2,12 @@
 // commands Windows sends for a desktop drawn in H.264 (AVC444v2, main view
 // only), one picture per frame, the larger ones split into parts.
 //
-//   node scripts/gfx-check/fixture.mjs <capture>
+//   node scripts/gfx-check/fixture.mjs <capture> [avc444]
+//
+// With avc444 it is built from avc444-main.h264 and avc444-aux.h264 instead,
+// the two views of a 4:4:4 picture (make-avc444.ts), sent together as
+// Windows sends them: the check then compares the screen with
+// avc444-truth.yuv, the last picture as it was before encoding.
 //
 // testsrc.h264 is ffmpeg's test pattern, 320x240, one slice per picture:
 //   ffmpeg -f lavfi -i testsrc2=size=320x240:rate=10 -frames:v 12 -c:v libx264 \
@@ -12,17 +17,20 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const out = process.argv[2]
+const [out, mode] = process.argv.slice(2)
 if (!out) {
-  console.error('usage: fixture.mjs <capture>')
+  console.error('usage: fixture.mjs <capture> [avc444]')
   process.exit(2)
 }
-const W = 320
-const H = 240
+const full = mode === 'avc444'
+const W = full ? 160 : 320
+const H = full ? 96 : 240
 // Smaller than the agent's 96 KiB, so the fixture's key frames come in parts.
 const PART = 8 << 10
 
-const stream = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'testsrc.h264'))
+const here = dirname(fileURLToPath(import.meta.url))
+const stream = readFileSync(join(here, full ? 'avc444-main.h264' : 'testsrc.h264'))
+const auxStream = full ? readFileSync(join(here, 'avc444-aux.h264')) : null
 
 /** Pictures: everything up to and including each slice NAL. */
 function pictures(b) {
@@ -70,9 +78,14 @@ messages.push(
     graphics(command(0x04, Buffer.concat([u16(1), Buffer.from([255, 0, 0, 0]), u16(1, 0, 0, W, H)]))),
   ]),
 )
+const auxPictures = auxStream ? pictures(auxStream) : []
 pictures(stream).forEach((h264, i) => {
-  const main = Buffer.concat([u32(1), u16(0, 0, W, H), Buffer.from([22, 100]), h264])
-  const bitmap = Buffer.concat([u32((1 << 30) >>> 0), main]) // LC 1: the main view only
+  const view = (h) => Buffer.concat([u32(1), u16(0, 0, W, H), Buffer.from([22, 100]), h])
+  const main = view(h264)
+  const aux = auxPictures[i]
+  const bitmap = aux
+    ? Buffer.concat([u32(main.length), main, view(aux)]) // LC 0: both views
+    : Buffer.concat([u32((1 << 30) >>> 0), main]) // LC 1: the main view only
   const wire = Buffer.concat([u16(1, 0x000f), Buffer.from([0x20]), u16(0, 0, W, H), u32(bitmap.length), bitmap])
   messages.push(
     Buffer.concat([

@@ -25,6 +25,9 @@ const files = {
   '/harness.js': ['text/javascript', readFileSync(join(dir, 'harness.js'))],
   '/capture.bin': ['application/octet-stream', readFileSync(capture)],
 }
+// GFX_TRUTH names the 4:4:4 picture the capture's last frame should show.
+const truth = process.env.GFX_TRUTH
+if (truth) files['/truth.yuv'] = ['application/octet-stream', readFileSync(truth)]
 const server = createServer((req, res) => {
   const f = files[req.url ?? '']
   if (!f) return res.writeHead(404).end()
@@ -44,6 +47,8 @@ try {
   await page.waitForFunction(() => 'decodeCapture' in window)
   const result = await page.evaluate(() => window.decodeCapture('/capture.bin'))
   result.browser = browser.version()
+  result.combinerDiff = await page.evaluate(() => window.checkCombiner())
+  if (truth) result.truth = await page.evaluate(() => window.compareTruth('/truth.yuv'))
   result.pageErrors = errors
   await page.locator('#screen').screenshot({ path: join(dir, 'desktop.png') })
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
@@ -54,6 +59,13 @@ try {
   if (requireH264 && result.pictures === 0) problems.push('no H.264 picture was decoded')
   if (result.failures > 0) problems.push(`a decoder failed ${result.failures} times: ${result.lastError}`)
   if (requireH264 && result.colours < 16) problems.push(`the screen has ${result.colours} colours: nothing was drawn`)
+  if (result.combinerDiff < 0) problems.push('no WebGL 2: AVC444 cannot be drawn in full colour')
+  if (result.combinerDiff > 1) problems.push(`the GPU's full-colour pictures differ from the CPU's by up to ${result.combinerDiff}`)
+  // The full-colour picture is within the encoder's loss of the truth, and
+  // well closer than 4:2:0 could be.
+  if (result.truth && (result.truth.full > 4 || result.truth.full > result.truth.at420 / 2)) {
+    problems.push(`the screen is ${result.truth.full.toFixed(2)} from the 4:4:4 picture; 4:2:0 would be ${result.truth.at420.toFixed(2)}`)
+  }
   if (errors.length > 0) problems.push(`the page threw: ${errors.join('; ')}`)
   for (const p of problems) console.error(`::error::${p}`)
   code = problems.length > 0 ? 1 : 0

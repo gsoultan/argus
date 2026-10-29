@@ -12,5 +12,5 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["e2e", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": ["e2e", "scripts/gfx-check/make-avc444.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }
