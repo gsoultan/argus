@@ -44,6 +44,8 @@ type desktopLogon struct {
 	Password string `json:"password"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
+	// Graphics says the browser decodes the graphics pipeline.
+	Graphics bool `json:"graphics"`
 }
 
 // handleDesktop serves GET /api/v1/desktop.
@@ -126,7 +128,8 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
 	st, answer, err := a.Tunnels.OpenWith(octx, host, tunnel.Header{
 		Service: agentDesktopService, Grant: grant,
-		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height},
+		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height,
+			Graphics: logon.Graphics},
 	})
 	cancel()
 	logon.Password = ""

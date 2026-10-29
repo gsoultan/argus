@@ -300,6 +300,7 @@ export type RiskFlag =
   | 'no-credential-injection'
   | 'legacy-credssp-binding'
   | 'no-network-level-auth'
+  | 'graphics-pipeline'
 
 /* ── Access requests (JIT) ───────────────────────────────────────────────── */
 

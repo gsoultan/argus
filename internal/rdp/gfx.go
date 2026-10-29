@@ -110,6 +110,9 @@ const (
 // GraphicsPDU is one graphics pipeline command, as the server sent it.
 type GraphicsPDU struct {
 	Cmd uint16
+	// Raw is the whole command, header included, as it would be passed on.
+	// Like Body, it aliases the client's buffers.
+	Raw []byte
 	// Body is the command without its eight-byte header. It aliases the
 	// client's buffers and is valid only until the next read.
 	Body []byte
@@ -140,7 +143,7 @@ func ParseGraphics(msg []byte) ([]GraphicsPDU, error) {
 		if n < gfxHeaderSize || n > len(msg) {
 			return nil, fmt.Errorf("%w: command 0x%04x claims %d bytes, %d remain", ErrGraphics, cmd, n, len(msg))
 		}
-		p := GraphicsPDU{Cmd: cmd, Body: msg[gfxHeaderSize:n]}
+		p := GraphicsPDU{Cmd: cmd, Raw: msg[:n], Body: msg[gfxHeaderSize:n]}
 		switch cmd {
 		case GfxWireToSurface1:
 			b := p.Body
@@ -218,4 +221,40 @@ func gfxFrameAcknowledge(frameID, decoded uint32) []byte {
 	b = binary.LittleEndian.AppendUint32(b, frameID)
 	b = binary.LittleEndian.AppendUint32(b, decoded)
 	return gfxPDU(GfxFrameAcknowledge, b)
+}
+
+// graphicsPart is the most of one command a display frame carries. An H.264
+// key frame is often larger, and a frame has to fit in a tunnel frame.
+const graphicsPart = 96 << 10
+
+// EncodeGraphics wraps one graphics command as display frames, for a browser
+// that decodes the pipeline itself:
+//
+//	offset 0   type        FrameGraphics
+//	       4   length      bytes of the command that follow (uint32 LE)
+//	      12   command     as Windows sent it, after bulk decompression,
+//	                       padded with zeros to a multiple of four
+//
+// A command larger than graphicsPart goes as FrameGraphicsPart frames
+// instead, the same but with the whole command's length at offset 8; the
+// browser joins them, in order, until it has that many bytes.
+func EncodeGraphics(raw []byte) []byte {
+	if len(raw) <= graphicsPart {
+		return graphicsFrame(FrameGraphics, raw, 0)
+	}
+	var out []byte
+	for at := 0; at < len(raw); at += graphicsPart {
+		out = append(out, graphicsFrame(FrameGraphicsPart, raw[at:min(at+graphicsPart, len(raw))], len(raw))...)
+	}
+	return out
+}
+
+func graphicsFrame(kind uint8, p []byte, total int) []byte {
+	padded := (len(p) + 3) &^ 3
+	out := make([]byte, FrameHeaderSize+padded)
+	out[0] = kind
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(p)))
+	binary.LittleEndian.PutUint32(out[8:12], uint32(total))
+	copy(out[FrameHeaderSize:], p)
+	return out
 }

@@ -148,3 +148,32 @@ func TestGraphicsAsksForThePipeline(t *testing.T) {
 		t.Fatal("a session with graphics did not ask for drdynvc")
 	}
 }
+
+func TestEncodeGraphicsSplitsLargeCommands(t *testing.T) {
+	small := EncodeGraphics([]byte{1, 2, 3, 4, 5})
+	if small[0] != FrameGraphics || binary.LittleEndian.Uint32(small[4:8]) != 5 ||
+		binary.LittleEndian.Uint32(small[8:12]) != 0 || len(small) != FrameHeaderSize+8 {
+		t.Fatalf("a small command framed as %x", small)
+	}
+
+	big := bytes.Repeat([]byte("abcdefg"), (graphicsPart*2+500)/7)
+	var joined []byte
+	parts := 0
+	for out := EncodeGraphics(big); len(out) > 0; parts++ {
+		if out[0] != FrameGraphicsPart {
+			t.Fatalf("part %d has type %d", parts, out[0])
+		}
+		n := int(binary.LittleEndian.Uint32(out[4:8]))
+		if n > graphicsPart {
+			t.Fatalf("part %d carries %d bytes", parts, n)
+		}
+		if total := int(binary.LittleEndian.Uint32(out[8:12])); total != len(big) {
+			t.Fatalf("part %d says the command is %d bytes, not %d", parts, total, len(big))
+		}
+		joined = append(joined, out[FrameHeaderSize:FrameHeaderSize+n]...)
+		out = out[FrameHeaderSize+(n+3)&^3:]
+	}
+	if parts != 3 || !bytes.Equal(joined, big) {
+		t.Fatalf("%d parts, rejoined equal: %v", parts, bytes.Equal(joined, big))
+	}
+}
