@@ -24,6 +24,13 @@ export interface CheckResult {
   failures: number
   lastError: string
   unknownCodecs: number[]
+  /** Commands by id, in hex, and the first few as they came. */
+  seen: Record<string, number>
+  firstCommands: string[]
+  regions: number
+  outside: number
+  posted: number
+  unmapped: number
   /** Distinct colours on the canvas at the end, up to 4096. */
   colours: number
 }
@@ -48,6 +55,8 @@ async function decodeCapture(url: string): Promise<CheckResult> {
   })
   const parts = new PartJoiner()
   const result = { width: 0, height: 0, messages: 0, commands: 0 }
+  const seen: Record<string, number> = {}
+  const firstCommands: string[] = []
 
   const all = new DataView(buf)
   for (let m = 0; m + 4 <= buf.byteLength; ) {
@@ -65,6 +74,10 @@ async function decodeCapture(url: string): Promise<CheckResult> {
         at += HEADER + ((n + 3) & ~3)
         if (command) {
           result.commands++
+          const id = command.byteLength >= 2 ? command[0]! | (command[1]! << 8) : -1
+          const name = '0x' + id.toString(16).padStart(4, '0')
+          seen[name] = (seen[name] ?? 0) + 1
+          if (firstCommands.length < 12) firstCommands.push(describe(command))
           await renderer.command(command)
         }
         continue
@@ -97,8 +110,19 @@ async function decodeCapture(url: string): Promise<CheckResult> {
     ...result,
     ...renderer.stats,
     unknownCodecs: [...renderer.unknownCodecs],
+    seen,
+    firstCommands,
     colours: colours.size,
   }
+}
+
+/** A few fields of a command, enough to tell what Windows asked for. */
+function describe(c: Uint8Array): string {
+  const v = new DataView(c.buffer, c.byteOffset, c.byteLength)
+  const id = v.getUint16(0, true)
+  const u16s: number[] = []
+  for (let at = 8; at + 2 <= Math.min(c.byteLength, 40); at += 2) u16s.push(v.getUint16(at, true))
+  return `0x${id.toString(16)} ${c.byteLength} bytes: ${u16s.join(' ')}`
 }
 
 ;(window as unknown as { decodeCapture: typeof decodeCapture }).decodeCapture = decodeCapture

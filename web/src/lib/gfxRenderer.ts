@@ -79,7 +79,19 @@ export class GraphicsRenderer {
    * What has happened to the H.264 handed in: pictures drawn, pictures
    * skipped while a decoder waited for a key frame, and decoders lost.
    */
-  readonly stats = { pictures: 0, skipped: 0, failures: 0, lastError: '' }
+  readonly stats = {
+    pictures: 0,
+    skipped: 0,
+    failures: 0,
+    lastError: '',
+    /** Picture regions drawn, and dropped for lying outside the picture. */
+    regions: 0,
+    outside: 0,
+    /** Rectangles handed to the screen. */
+    posted: 0,
+    /** Frames that ended with changes on surfaces not on the screen. */
+    unmapped: 0,
+  }
 
   private events: RendererEvents
 
@@ -119,7 +131,11 @@ export class GraphicsRenderer {
         this.surfaces.delete(id)
         return
       }
-      case Cmd.MapSurfaceToOutput: {
+      case Cmd.MapSurfaceToOutput:
+      case Cmd.MapSurfaceToScaledOutput: {
+        // The scaled form adds the size the surface is to be shown at, which
+        // Windows sets to the surface's own size unless asked for scaling,
+        // and which is not asked for.
         if (b.byteLength < 12) return
         const s = this.surfaces.get(b.getUint16(0, true))
         if (!s) return
@@ -269,8 +285,10 @@ export class GraphicsRenderer {
         const job = this.jobs.get(frame.timestamp)
         this.jobs.delete(frame.timestamp)
         if (job) {
-          drawPicture(job, frame)
+          const [drawn, outside] = drawPicture(job, frame)
           this.stats.pictures++
+          this.stats.regions += drawn
+          this.stats.outside += outside
           job.done()
         }
         frame.close()
@@ -334,7 +352,11 @@ export class GraphicsRenderer {
     const out: Array<Promise<DirtyRect>> = []
     for (const s of this.surfaces.values()) {
       const dirty = s.dirty.splice(0)
-      if (!s.output || dirty.length === 0) continue
+      if (dirty.length === 0) continue
+      if (!s.output) {
+        this.stats.unmapped++
+        continue
+      }
       for (const r of merge(dirty)) {
         const width = r.right - r.left
         const height = r.bottom - r.top
@@ -350,12 +372,18 @@ export class GraphicsRenderer {
         )
       }
     }
+    this.stats.posted += out.length
     if (out.length > 0) this.events.rects(await Promise.all(out))
   }
 }
 
-/** Draws a decoded picture's updated regions onto its surface. */
-function drawPicture(job: Job, frame: VideoFrame) {
+/**
+ * Draws a decoded picture's updated regions onto its surface. Returns how
+ * many were drawn, and how many lay outside the picture.
+ */
+function drawPicture(job: Job, frame: VideoFrame): [number, number] {
+  let drawn = 0
+  let outside = 0
   const { surface: s, dest } = job
   // Windows says which parts of the picture changed; an empty list means all
   // of it.
@@ -369,10 +397,15 @@ function drawPicture(job: Job, frame: VideoFrame) {
     // the destination's corner.
     const sx = r.left - dest.left
     const sy = r.top - dest.top
-    if (sx < 0 || sy < 0 || sx + w > frame.displayWidth || sy + h > frame.displayHeight) continue
+    if (sx < 0 || sy < 0 || sx + w > frame.displayWidth || sy + h > frame.displayHeight) {
+      outside++
+      continue
+    }
     s.ctx.drawImage(frame, sx, sy, w, h, r.left, r.top, w, h)
     s.dirty.push(r)
+    drawn++
   }
+  return [drawn, outside]
 }
 
 /** A rectangle cut to its surface, or null if nothing of it is left. */

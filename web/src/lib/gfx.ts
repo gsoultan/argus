@@ -36,6 +36,7 @@ export const Cmd = {
   EndFrame: 0x000c,
   ResetGraphics: 0x000e,
   MapSurfaceToOutput: 0x000f,
+  MapSurfaceToScaledOutput: 0x0017,
 } as const
 
 /** Codecs (MS-RDPEGFX 2.2.1.6). */
