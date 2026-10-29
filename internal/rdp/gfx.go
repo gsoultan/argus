@@ -98,8 +98,10 @@ const (
 	gfxCapVersion106    uint32 = 0x000A0600
 	gfxCapVersion107    uint32 = 0x000A0701
 	gfxCapAVC420Enabled uint32 = 0x00000010
-	// gfxCapAVCThinClient, from 10.3, asks for AVC420 rather than AVC444:
-	// AVC444 is two streams a browser would have to recombine.
+	// gfxCapAVCThinClient, from 10.3, asks for AVC420 rather than AVC444,
+	// which is two streams a browser has to recombine. Windows Server 2025
+	// confirms 10.7 and sends AVC444v2 regardless; the flag stays for
+	// servers that honour it.
 	gfxCapAVCThinClient uint32 = 0x00000040
 
 	gfxHeaderSize = 8
