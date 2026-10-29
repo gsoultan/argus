@@ -34,6 +34,8 @@ export interface CheckResult {
   unmapped: number
   /** Full-colour pictures put together on the GPU. */
   combined: number
+  /** The pixel in the middle of the screen at the end. */
+  middle: number[]
   /** Distinct colours on the canvas at the end, up to 4096. */
   colours: number
 }
@@ -104,6 +106,8 @@ async function decodeCapture(url: string): Promise<CheckResult> {
   }
 
   const colours = new Set<number>()
+  // The middle of the screen, to say what a blank one was blank with.
+  const middle = Array.from(ctx.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data)
   const px = ctx.getImageData(0, 0, canvas.width, canvas.height).data
   for (let i = 0; i < px.length && colours.size < 4096; i += 4 * 7) {
     colours.add(((px[i] ?? 0) << 16) | ((px[i + 1] ?? 0) << 8) | (px[i + 2] ?? 0))
@@ -116,6 +120,7 @@ async function decodeCapture(url: string): Promise<CheckResult> {
     seen,
     firstCommands,
     colours: colours.size,
+    middle,
   }
 }
 
@@ -147,8 +152,7 @@ function checkCombiner(): number {
   for (const colour of [{ bt709: false, fullRange: true }, { bt709: true, fullRange: false }]) {
     main.colour = colour
     const want = combineV2(main, aux)
-    gl.draw(main, aux)
-    const got = gl.read()
+    const got = gl.read(main, aux)
     for (let i = 0; i < want.length; i++) worst = Math.max(worst, Math.abs((want[i] ?? 0) - (got[i] ?? 0)))
   }
   return worst

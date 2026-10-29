@@ -386,10 +386,15 @@ export class Avc444Gl {
   }
 
   /**
-   * Draws the whole picture into the canvas: in full colour, or without the
-   * second view, as the main one's 4:2:0.
+   * Draws the whole picture: in full colour, or without the second view, as
+   * the main one's 4:2:0. The caller closes the bitmap.
    */
-  draw(main: Planes, aux: Planes | null) {
+  draw(main: Planes, aux: Planes | null): ImageBitmap {
+    this.render(main, aux)
+    return this.canvas.transferToImageBitmap()
+  }
+
+  private render(main: Planes, aux: Planes | null) {
     const gl = this.gl
     const { width, height } = main
     if (this.canvas.width !== width || this.canvas.height !== height) {
@@ -421,8 +426,9 @@ export class Avc444Gl {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   }
 
-  /** The canvas's pixels, top row first, for tests. */
-  read(): Uint8Array {
+  /** The picture's pixels, top row first, for tests. */
+  read(main: Planes, aux: Planes | null): Uint8Array {
+    this.render(main, aux)
     const gl = this.gl
     const { width, height } = this.canvas
     const raw = new Uint8Array(width * height * 4)

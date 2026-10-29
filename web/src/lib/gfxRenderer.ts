@@ -118,6 +118,10 @@ export class GraphicsRenderer {
     combined: 0,
     /** The colour space the first picture said it was in, as the browser read it. */
     colourSpace: '',
+    /** The first picture's pixel format and coded size, as the decoder gave it. */
+    format: '',
+    /** The average luma of the last main view copied out, to tell an empty copy. */
+    meanLuma: -1,
   }
 
   /** The GPU combiner, made on first use; null once it is known not to be had. */
@@ -348,6 +352,7 @@ export class GraphicsRenderer {
         }
         this.stats.pictures++
         this.stats.colourSpace ||= JSON.stringify(frame.colorSpace.toJSON())
+        this.stats.format ||= `${frame.format ?? 'opaque'} ${frame.codedWidth}x${frame.codedHeight}`
         if (!job.planes) {
           this.drawn(drawPicture(job, frame))
           frame.close()
@@ -362,6 +367,7 @@ export class GraphicsRenderer {
           .then((p) => {
             if (p && p.width % 4 === 0) {
               s[key] = p
+              if (job.stream === 'main') this.stats.meanLuma = meanOf(p.y)
               s.redraw.push({ dest: job.dest, regions: job.regions })
             } else if (job.stream === 'main') {
               // A layout the planes cannot be read from: this picture is
@@ -419,7 +425,9 @@ export class GraphicsRenderer {
       if (redraw.length === 0 || !main) continue
       // Until the second view's first picture, the main one alone, at 4:2:0.
       const aux = s.auxPlanes && s.auxPlanes.width === main.width && s.auxPlanes.height === main.height ? s.auxPlanes : null
-      gl.draw(main, aux)
+      // Taken out as a bitmap rather than drawn from the GL canvas directly:
+      // Chrome on Windows drew nothing from the canvas itself.
+      const picture = gl.draw(main, aux)
       this.stats.combined++
       for (const { dest, regions } of redraw) {
         for (const region of regions.length > 0 ? regions : [dest]) {
@@ -433,11 +441,12 @@ export class GraphicsRenderer {
             this.stats.outside++
             continue
           }
-          s.ctx.drawImage(gl.canvas, sx, sy, w, h, r.left, r.top, w, h)
+          s.ctx.drawImage(picture, sx, sy, w, h, r.left, r.top, w, h)
           s.dirty.push(r)
           this.stats.regions++
         }
       }
+      picture.close()
     }
   }
 
@@ -532,6 +541,12 @@ function drawPicture(job: Job, frame: VideoFrame): [number, number] {
     drawn++
   }
   return [drawn, outside]
+}
+
+function meanOf(b: Uint8Array): number {
+  let sum = 0
+  for (let i = 0; i < b.length; i += 97) sum += b[i] ?? 0
+  return Math.round((sum / Math.ceil(b.length / 97)) * 10) / 10
 }
 
 function closeSurface(s: Surface) {
