@@ -461,6 +461,18 @@ jobs:
             "| Busy window: decode (native) | \(.BusyDecodeShare * 1000 | floor / 10) % of a core |"' \
             "$tmp/desktop-measure.json" >> "$GITHUB_STEP_SUMMARY"
 
+          # The graphics pipeline through the agent, as the console asks for
+          # it, kept for Chrome to decode in the next step.
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill \
+            -password-env DRILL_PASSWORD -width 1920 -height 1080 -graphics \
+            -capture measure/graphics.capture -capture-for 15s 2>"$tmp/capture.err" || {
+              cat "$tmp/capture.err"; tail -40 "$log"; tail -40 "$tmp/control.log"
+              echo "::error::the graphics pipeline did not come through the agent"; exit 1; }
+          cat "$tmp/capture.err"
+
           # The same busy screen straight from Windows, with bitmap updates
           # and with the graphics pipeline, so the H.264 path is measured
           # against what the desktop above costs.
@@ -475,18 +487,6 @@ jobs:
             "", "| | Mbit/s | frames/s | what arrived |", "|---|---|---|---|",
             (to_entries[] | "| \(.key) | \(.value.MbitPerSec * 100 | floor / 100) | \(.value.FramesPerSec * 10 | floor / 10) | \(.value.CodecBytes | to_entries | map("\(.key) \(.value / 1024 | floor) KiB") | join(", ")) |")' \
             "$tmp/graphics.json" >> "$GITHUB_STEP_SUMMARY"
-
-          # The graphics pipeline through the agent, as the console asks for
-          # it, kept for Chrome to decode in the next step.
-          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
-            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
-          "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
-            -ticket "$tkt" -target "$host" -principal argusdrill \
-            -password-env DRILL_PASSWORD -width 1920 -height 1080 -graphics \
-            -capture measure/graphics.capture -capture-for 15s 2>"$tmp/capture.err" || {
-              cat "$tmp/capture.err"; tail -40 "$log"
-              echo "::error::the graphics pipeline did not come through the agent"; exit 1; }
-          cat "$tmp/capture.err"
 
           # Stopping the service seals and exits cleanly.
           "$agent" service stop
