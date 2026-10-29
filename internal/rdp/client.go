@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -42,6 +43,19 @@ type Client struct {
 	// hung session looks like, so it is also the case an operator most needs
 	// reported rather than absorbed.
 	readTimeout time.Duration
+
+	// wmu orders writes: input comes from one goroutine, and the replies the
+	// graphics pipeline needs from the one reading.
+	wmu sync.Mutex
+
+	// The graphics pipeline, when it was asked for.
+	graphics    func(GraphicsPDU)
+	dynvc       uint16 // MCS channel of drdynvc
+	static      staticChannel
+	dynamic     dynamicChannels
+	zgfx        *Decompressor
+	gfxDecoded  uint32
+	gfxMessages int
 }
 
 // ClientConfig configures a session.
@@ -61,6 +75,10 @@ type ClientConfig struct {
 	// an idle desktop and short enough to notice a wedged server.
 	ReadTimeout time.Duration
 	Log         *slog.Logger
+	// Graphics, when set, asks for the graphics pipeline and receives its
+	// commands as they arrive. Windows then stops sending bitmap updates, so
+	// NextBitmaps returns none and everything drawn comes through here.
+	Graphics func(GraphicsPDU)
 }
 
 // Connect runs the sequence on an established, authenticated connection.
@@ -90,6 +108,11 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 		conn: conn, log: cfg.Log, rea: NewReassembler(),
 		width: cfg.Width, height: cfg.Height, depth: cfg.Depth,
 		readTimeout: cfg.ReadTimeout,
+		graphics:    cfg.Graphics,
+	}
+	if c.graphics != nil {
+		c.depth = 32
+		c.zgfx = NewDecompressor()
 	}
 
 	// A server that stops answering mid-sequence would otherwise hold the
@@ -125,8 +148,8 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 
 func (c *Client) mcsConnect(cfg ClientConfig) error {
 	gcc := GCCRequest(ClientInfo{
-		Width: cfg.Width, Height: cfg.Height, Depth: cfg.Depth,
-		SelectedProtocol: cfg.SelectedProtocol,
+		Width: cfg.Width, Height: cfg.Height, Depth: c.depth,
+		SelectedProtocol: cfg.SelectedProtocol, Graphics: c.graphics != nil,
 	})
 	if _, err := c.conn.Write(x224Data(ConnectInitial(gcc))); err != nil {
 		return fmt.Errorf("send mcs connect initial: %w", err)
@@ -145,6 +168,13 @@ func (c *Client) mcsConnect(cfg ClientConfig) error {
 		return err
 	}
 	c.channel = channels.GlobalChannel
+	if c.graphics != nil {
+		if len(channels.Extra) == 0 || channels.Extra[0] == 0 {
+			return errors.New("the server did not open drdynvc, so the graphics pipeline is unavailable")
+		}
+		c.dynvc = channels.Extra[0]
+		c.log.Info("rdp graphics: drdynvc opened", "channel", c.dynvc)
+	}
 	return nil
 }
 
@@ -167,7 +197,11 @@ func (c *Client) mcsAttach() error {
 
 	// The user channel is joined before the global one; a server that receives
 	// them the other way round refuses the second.
-	for _, ch := range []uint16{c.userID, c.channel} {
+	join := []uint16{c.userID, c.channel}
+	if c.dynvc != 0 {
+		join = append(join, c.dynvc)
+	}
+	for _, ch := range join {
 		if _, err := c.conn.Write(ChannelJoinRequest(c.userID, ch)); err != nil {
 			return fmt.Errorf("send channel join %d: %w", ch, err)
 		}
@@ -244,9 +278,15 @@ func (c *Client) capabilities() error {
 		if err != nil {
 			return fmt.Errorf("read demand active: %w", err)
 		}
-		_, payload, err := ParseSendDataIndication(frame)
+		ch, payload, err := ParseSendDataIndication(frame)
 		if err != nil {
 			return err
+		}
+		if c.dynvc != 0 && ch == c.dynvc {
+			if err := c.virtual(payload); err != nil {
+				return err
+			}
+			continue
 		}
 		sc, err := ParseShareControl(payload)
 		if err != nil {
@@ -321,7 +361,88 @@ func (c *Client) NextBitmaps() ([]Bitmap, error) {
 	if c.tap != nil {
 		c.tap(frame)
 	}
+	if c.dynvc != 0 && frame[0]&actionMask == actionX224 {
+		if ch, payload, err := ParseSendDataIndication(frame); err == nil && ch == c.dynvc {
+			return nil, c.virtual(payload)
+		}
+	}
 	return ParsePDU(c.rea, frame)
+}
+
+// virtual follows drdynvc, answering what it must and handing graphics
+// commands to the caller.
+func (c *Client) virtual(pdu []byte) error {
+	msg, err := c.static.feed(pdu)
+	if err != nil || msg == nil {
+		return err
+	}
+	ev, err := c.dynamic.handle(msg)
+	if err != nil {
+		return err
+	}
+	if ev.note != "" {
+		c.log.Info("rdp graphics: "+ev.note, "opened", ev.opened)
+	}
+	if ev.reply != nil {
+		if err := c.writeVirtual(ev.reply); err != nil {
+			return err
+		}
+	}
+	if ev.opened {
+		c.log.Info("rdp graphics: offering capabilities", "pdu", fmt.Sprintf("%x", gfxCapsAdvertise()))
+		if err := c.writeGraphics(gfxCapsAdvertise()); err != nil {
+			return err
+		}
+	}
+	if ev.data == nil {
+		return nil
+	}
+	if c.gfxMessages == 0 {
+		c.log.Info("rdp graphics: the first message arrived on the graphics channel", "bytes", len(ev.data))
+	}
+	c.gfxMessages++
+	plain, err := c.zgfx.Decompress(ev.data)
+	if err != nil {
+		return err
+	}
+	pdus, err := ParseGraphics(plain)
+	if err != nil {
+		return err
+	}
+	for _, p := range pdus {
+		if p.Cmd == GfxCapsConfirm && len(p.Body) >= 4 {
+			c.log.Info("rdp graphics: the server confirmed capabilities",
+				"version", fmt.Sprintf("0x%08x", binary.LittleEndian.Uint32(p.Body[0:4])))
+		}
+		c.graphics(p)
+		if p.Cmd == GfxEndFrame {
+			c.gfxDecoded++
+			if err := c.writeGraphics(gfxFrameAcknowledge(p.FrameID, c.gfxDecoded)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Client) writeGraphics(msg []byte) error {
+	for _, m := range dvcMessages(c.dynamic.graphics, c.dynamic.cbID, msg) {
+		if err := c.writeVirtual(m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) writeVirtual(msg []byte) error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	for _, pdu := range channelPDUs(msg) {
+		if _, err := c.conn.Write(SendDataRequest(c.userID, c.dynvc, pdu)); err != nil {
+			return fmt.Errorf("send on drdynvc: %w", err)
+		}
+	}
+	return nil
 }
 
 // DecodePDU turns one PDU into screen rectangles.
@@ -393,6 +514,8 @@ func (c *Client) Send(e InputEvent) error {
 	if err != nil {
 		return err
 	}
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
 	_, err = c.conn.Write(pdu)
 	return err
 }
@@ -419,6 +542,8 @@ func (c *Client) Refresh() error {
 		return errors.New("session is not active")
 	}
 	pdu := RefreshRectPDU(c.shareID, c.userID, c.width, c.height)
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
 	_, err := c.conn.Write(SendDataRequest(c.userID, c.channel, pdu))
 	return err
 }
