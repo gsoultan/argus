@@ -131,6 +131,8 @@ type dvcEvent struct {
 	opened bool
 	// data is a whole message on the graphics channel.
 	data []byte
+	// note says what happened, for the log, when it is worth saying.
+	note string
 }
 
 func (d *dynamicChannels) handle(msg []byte) (dvcEvent, error) {
@@ -150,7 +152,8 @@ func (d *dynamicChannels) handle(msg []byte) (dvcEvent, error) {
 		version := min(int(binary.LittleEndian.Uint16(body[1:3])), dvcVersion)
 		reply := []byte{dvcCapability << 4, 0, 0, 0}
 		binary.LittleEndian.PutUint16(reply[2:4], uint16(version))
-		return dvcEvent{reply: reply}, nil
+		return dvcEvent{reply: reply, note: fmt.Sprintf("dynamic channels, server version %d, answered %d",
+			binary.LittleEndian.Uint16(body[1:3]), version)}, nil
 
 	case dvcCreate:
 		id, rest, err := dvcField(body, cbID)
@@ -166,7 +169,8 @@ func (d *dynamicChannels) handle(msg []byte) (dvcEvent, error) {
 		}
 		reply := append([]byte{dvcCreate<<4 | byte(cbID)}, dvcPut(id, cbID)...)
 		reply = binary.LittleEndian.AppendUint32(reply, status)
-		return dvcEvent{reply: reply, opened: accepted}, nil
+		return dvcEvent{reply: reply, opened: accepted,
+			note: fmt.Sprintf("the server asked to open %q", name)}, nil
 
 	case dvcDataFirst, dvcData:
 		id, rest, err := dvcField(body, cbID)

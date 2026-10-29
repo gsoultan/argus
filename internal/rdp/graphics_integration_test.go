@@ -51,7 +51,10 @@ func TestTargetGraphics(t *testing.T) {
 		}
 	}
 	g := report["graphics"]
-	if g.Commands == 0 {
+	if g.CodecCommands["bitmap"] > 0 {
+		t.Errorf("Windows sent %d bitmap updates with the graphics pipeline asked for", g.CodecCommands["bitmap"])
+	}
+	if g.Commands == g.CodecCommands["bitmap"] {
 		t.Fatal("the graphics pipeline drew nothing")
 	}
 	if g.Frames == 0 {

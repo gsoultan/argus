@@ -147,7 +147,7 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 
 func (c *Client) mcsConnect(cfg ClientConfig) error {
 	gcc := GCCRequest(ClientInfo{
-		Width: cfg.Width, Height: cfg.Height, Depth: cfg.Depth,
+		Width: cfg.Width, Height: cfg.Height, Depth: c.depth,
 		SelectedProtocol: cfg.SelectedProtocol, Graphics: c.graphics != nil,
 	})
 	if _, err := c.conn.Write(x224Data(ConnectInitial(gcc))); err != nil {
@@ -172,6 +172,7 @@ func (c *Client) mcsConnect(cfg ClientConfig) error {
 			return errors.New("the server did not open drdynvc, so the graphics pipeline is unavailable")
 		}
 		c.dynvc = channels.Extra[0]
+		c.log.Info("rdp graphics: drdynvc opened", "channel", c.dynvc)
 	}
 	return nil
 }
@@ -378,6 +379,9 @@ func (c *Client) virtual(pdu []byte) error {
 	if err != nil {
 		return err
 	}
+	if ev.note != "" {
+		c.log.Info("rdp graphics: "+ev.note, "opened", ev.opened)
+	}
 	if ev.reply != nil {
 		if err := c.writeVirtual(ev.reply); err != nil {
 			return err
@@ -400,6 +404,10 @@ func (c *Client) virtual(pdu []byte) error {
 		return err
 	}
 	for _, p := range pdus {
+		if p.Cmd == GfxCapsConfirm && len(p.Body) >= 4 {
+			c.log.Info("rdp graphics: the server confirmed capabilities",
+				"version", fmt.Sprintf("0x%08x", binary.LittleEndian.Uint32(p.Body[0:4])))
+		}
 		c.graphics(p)
 		if p.Cmd == GfxEndFrame {
 			c.gfxDecoded++
