@@ -75,6 +75,11 @@ export class GraphicsRenderer {
   private nextJob = 0
   /** Codecs seen that this console does not draw, reported once each. */
   readonly unknownCodecs = new Set<number>()
+  /**
+   * What has happened to the H.264 handed in: pictures drawn, pictures
+   * skipped while a decoder waited for a key frame, and decoders lost.
+   */
+  readonly stats = { pictures: 0, skipped: 0, failures: 0, lastError: '' }
 
   private events: RendererEvents
 
@@ -236,9 +241,9 @@ export class GraphicsRenderer {
       s.decoder = this.newDecoder()
       s.needKey = true
     }
-    if (s.needKey && !key) return
-    if (s.decoder.state === 'unconfigured') {
-      s.decoder.configure({ ...H264_CONFIG, codec: codecString(avc.h264) ?? H264_CONFIG.codec })
+    if (s.needKey && !key) {
+      this.stats.skipped++
+      return
     }
     s.needKey = false
     const id = this.nextJob++
@@ -248,8 +253,12 @@ export class GraphicsRenderer {
       }),
     )
     try {
+      if (s.decoder.state === 'unconfigured') {
+        s.decoder.configure({ ...H264_CONFIG, codec: codecString(avc.h264) ?? H264_CONFIG.codec })
+      }
       s.decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: id, data: avc.h264 }))
-    } catch {
+    } catch (err) {
+      this.stats.lastError = err instanceof Error ? err.message : String(err)
       this.fail(s)
     }
   }
@@ -261,11 +270,13 @@ export class GraphicsRenderer {
         this.jobs.delete(frame.timestamp)
         if (job) {
           drawPicture(job, frame)
+          this.stats.pictures++
           job.done()
         }
         frame.close()
       },
-      error: () => {
+      error: (err) => {
+        this.stats.lastError = err.message
         for (const s of this.surfaces.values()) if (s.decoder === decoder) this.fail(s)
       },
     })
@@ -274,6 +285,7 @@ export class GraphicsRenderer {
 
   /** Drops a surface's decoder; the next key frame starts a fresh one. */
   private fail(s: Surface) {
+    this.stats.failures++
     const decoder = s.decoder
     s.decoder = null
     s.needKey = true

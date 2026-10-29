@@ -476,6 +476,18 @@ jobs:
             (to_entries[] | "| \(.key) | \(.value.MbitPerSec * 100 | floor / 100) | \(.value.FramesPerSec * 10 | floor / 10) | \(.value.CodecBytes | to_entries | map("\(.key) \(.value / 1024 | floor) KiB") | join(", ")) |")' \
             "$tmp/graphics.json" >> "$GITHUB_STEP_SUMMARY"
 
+          # The graphics pipeline through the agent, as the console asks for
+          # it, kept for Chrome to decode in the next step.
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill \
+            -password-env DRILL_PASSWORD -width 1920 -height 1080 -graphics \
+            -capture measure/graphics.capture -capture-for 15s 2>"$tmp/capture.err" || {
+              cat "$tmp/capture.err"; tail -40 "$log"
+              echo "::error::the graphics pipeline did not come through the agent"; exit 1; }
+          cat "$tmp/capture.err"
+
           # Stopping the service seals and exits cleanly.
           "$agent" service stop
           for i in $(seq 1 30); do
@@ -485,6 +497,29 @@ jobs:
           sc.exe query argus-agent | grep -q STOPPED
           tail -5 "$log"
           grep -q 'shutdown complete' "$log"
+
+      # What the console would make of that: the captured stream decoded in
+      # Google Chrome, with the console's own graphics pipeline code. Chrome
+      # rather than Playwright's Chromium, as people use, decoding H.264 the
+      # way it does on Windows.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: Decode the Windows desktop's H.264 in Chrome
+        working-directory: web
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun build scripts/gfx-check/harness.ts --outfile ../measure/harness.js --target browser
+          node scripts/gfx-check/run.mjs ../measure/graphics.capture ../measure
+          jq -r '"### The Windows desktop in H.264, decoded in Chrome \(.browser)",
+            "", "| | |", "|---|---|",
+            "| Size | \(.width)x\(.height) |",
+            "| Commands | \(.commands) in \(.messages) messages |",
+            "| Pictures decoded | \(.pictures) (\(.skipped) skipped waiting for a key frame, \(.failures) decoder failures) |",
+            "| Codecs not drawn | \(.unknownCodecs | map(tostring) | join(", ") | if . == "" then "none" else . end) |",
+            "", "The last screen is desktop.png in the desktop-measure artifact."' \
+            ../measure/result.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the desktop measurement
         if: always()
@@ -673,6 +708,19 @@ jobs:
       - run: bun run e2e
         env:
           CI: "true"
+
+      # The graphics pipeline's drawing code on a known H.264 stream, split
+      # into parts as the agent splits key frames. The Windows job does the
+      # same with a real desktop in Chrome; this one runs on every change to
+      # the console.
+      - name: Decode H.264 with the graphics pipeline code
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/gfx"
+          mkdir -p "$out"
+          bun build scripts/gfx-check/harness.ts --outfile "$out/harness.js" --target browser
+          node scripts/gfx-check/fixture.mjs "$out/capture.bin"
+          GFX_CHANNEL=chromium node scripts/gfx-check/run.mjs "$out/capture.bin" "$out"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
