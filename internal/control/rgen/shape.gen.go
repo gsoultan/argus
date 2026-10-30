@@ -126,6 +126,8 @@ func _assertAssetShape(m m0.Asset) {
 		m.Domain,
 		m.ArchivedAt,
 		m.AgentConsoleOnly,
+		m.DirectSsh,
+		m.AgentDirectSsh,
 	}
 }
 
@@ -160,6 +162,25 @@ func _assertAuditEventShape(m m0.AuditEvent) {
 	}
 }
 
+// _assertDirectLoginRequestShape fails to compile if m0.DirectLoginRequest gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDirectLoginRequestShape(m m0.DirectLoginRequest) {
+	type shape m0.DirectLoginRequest
+	_ = shape{
+		m.ID,
+		m.Hostname,
+		m.Principal,
+		m.ClientAddr,
+		m.Command,
+		m.State,
+		m.CreatedAt,
+		m.ExpiresAt,
+		m.DecidedAt,
+		m.DecidedByEmail,
+		m.DecisionNote,
+	}
+}
+
 // _assertGatewayPolicyShape fails to compile if m0.GatewayPolicy gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
@@ -175,6 +196,7 @@ func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
 		m.RequireEbpfForRoot,
 		m.UpdatedAt,
 		m.UpdatedBy,
+		m.DirectSsh,
 	}
 }
 
