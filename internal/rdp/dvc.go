@@ -288,3 +288,35 @@ func dvcPut(v uint32, size int) []byte {
 	}
 	return binary.LittleEndian.AppendUint32(nil, v)
 }
+
+// graphicsChannel follows drdynvc's messages to the graphics pipeline's
+// commands. The live client and replay both read the pipeline through it, so
+// a recording is taken apart the way the session was.
+type graphicsChannel struct {
+	static  staticChannel
+	dynamic dynamicChannels
+	zgfx    *Decompressor
+	// messages counts whole messages on the graphics channel.
+	messages int
+}
+
+// feed takes one drdynvc channel PDU. It returns what the PDU meant to the
+// dynamic channel protocol, for the live client to answer, and the graphics
+// commands it completed, if any.
+func (g *graphicsChannel) feed(pdu []byte) (dvcEvent, []GraphicsPDU, error) {
+	msg, err := g.static.feed(pdu)
+	if err != nil || msg == nil {
+		return dvcEvent{}, nil, err
+	}
+	ev, err := g.dynamic.handle(msg)
+	if err != nil || ev.data == nil {
+		return ev, nil, err
+	}
+	g.messages++
+	plain, err := g.zgfx.Decompress(ev.data)
+	if err != nil {
+		return ev, nil, err
+	}
+	pdus, err := ParseGraphics(plain)
+	return ev, pdus, err
+}

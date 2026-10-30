@@ -9,7 +9,9 @@
 //	    -password-env DRILL_PASSWORD
 //
 // With -measure it stays, and reports what the desktop is like to use: see
-// measure.go.
+// measure.go. With -capture it keeps what arrives for a browser to decode:
+// see capture.go. -graphics asks for the graphics pipeline, as the console
+// does with ?graphics=h264.
 package main
 
 import (
@@ -42,6 +44,9 @@ func main() {
 	busy := flag.Duration("measure", 0, "measure the desktop, keeping a window busy this long")
 	keys := flag.Int("keys", 40, "keystrokes to time when measuring")
 	report := flag.String("report", "", "file to write the measurement to, as JSON")
+	graphics := flag.Bool("graphics", false, "ask for the graphics pipeline (H.264)")
+	capturePath := flag.String("capture", "", "file to keep the display messages in")
+	captureFor := flag.Duration("capture-for", 15*time.Second, "how long to capture, from the first screen")
 	flag.Parse()
 
 	pool := x509.NewCertPool()
@@ -65,7 +70,7 @@ func main() {
 	u.RawQuery = url.Values{"target": {*target}, "principal": {*principal},
 		"ticket": {*ticket}}.Encode()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second+4**busy)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second+4**busy+*captureFor)
 	defer cancel()
 	c, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
 		HTTPClient: client, HTTPHeader: http.Header{"Origin": {origin}}})
@@ -83,7 +88,7 @@ func main() {
 		password = os.Getenv(*passwordEnv)
 	}
 	logon, _ := json.Marshal(map[string]any{"type": "logon", "password": password,
-		"width": *width, "height": *height})
+		"width": *width, "height": *height, "graphics": *graphics})
 	if err := c.Write(ctx, websocket.MessageText, logon); err != nil {
 		fail("%v", err)
 	}
@@ -93,6 +98,10 @@ func main() {
 		if err := c.Write(ctx, websocket.MessageText, b); err != nil {
 			fail("%v", err)
 		}
+	}
+	if *capturePath != "" {
+		capture(ctx, c, send, *capturePath, *captureFor)
+		return
 	}
 	if *busy > 0 {
 		measure(ctx, c, send, *busy, *keys, *report)

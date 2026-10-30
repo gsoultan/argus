@@ -10,10 +10,17 @@
  * before it has been drawn.
  *
  * Each surface is its own H.264 stream, as in Windows, so each has its own
- * decoder. A decoder that fails is replaced and waits for the next key frame;
- * until then that surface keeps its last picture.
+ * decoder; with AVC444v2, two, one for each view. A decoder that fails is
+ * replaced and waits for the next key frame; until then that surface keeps its
+ * last picture.
+ *
+ * AVC444v2 is drawn in full colour on the GPU (avc444.ts) where there is
+ * WebGL 2: each view's planes are copied out of its decoder, and the two are
+ * put together when the pictures queued so far have all come out. Without it,
+ * the main view is drawn on its own, at 4:2:0.
  */
 
+import { Avc444Gl, combineRegion, framePlanes, type Planes } from './avc444'
 import {
   Cmd,
   Codec,
@@ -54,14 +61,30 @@ interface Surface {
   height: number
   /** Where the surface sits on screen, once it is mapped. */
   output: { x: number; y: number } | null
+  /** The surface's H.264 stream, and AVC444's second one. */
+  main: Stream
+  aux: Stream
+  /** The latest planes of each view, while the surface is drawn in full colour. */
+  mainPlanes: Planes | null
+  auxPlanes: Planes | null
+  /** Regions of full-colour pictures decoded but not yet drawn. */
+  redraw: Array<{ dest: Rect; regions: Rect[] }>
+  dirty: Rect[]
+}
+
+interface Stream {
   decoder: VideoDecoder | null
   /** The decoder needs a key frame before it can take anything else. */
   needKey: boolean
-  dirty: Rect[]
+  /** The last copy of a picture's planes: copies go one at a time, in order. */
+  copying: Promise<void>
 }
 
 interface Job {
   surface: Surface
+  stream: 'main' | 'aux'
+  /** Copy the picture's planes out for the GPU, rather than draw it. */
+  planes: boolean
   dest: Rect
   regions: Rect[]
   done: () => void
@@ -75,6 +98,36 @@ export class GraphicsRenderer {
   private nextJob = 0
   /** Codecs seen that this console does not draw, reported once each. */
   readonly unknownCodecs = new Set<number>()
+  /**
+   * What has happened to the H.264 handed in: pictures drawn, pictures
+   * skipped while a decoder waited for a key frame, and decoders lost.
+   */
+  readonly stats = {
+    pictures: 0,
+    skipped: 0,
+    failures: 0,
+    lastError: '',
+    /** Picture regions drawn, and dropped for lying outside the picture. */
+    regions: 0,
+    outside: 0,
+    /** Rectangles handed to the screen. */
+    posted: 0,
+    /** Frames that ended with changes on surfaces not on the screen. */
+    unmapped: 0,
+    /** Full-colour pictures put together on the GPU. */
+    combined: 0,
+    /** The colour space the first picture said it was in, as the browser read it. */
+    colourSpace: '',
+    /** The first picture's pixel format and coded size, as the decoder gave it. */
+    format: '',
+    /** The average luma of the last main view copied out, to tell an empty copy. */
+    meanLuma: -1,
+    /** The GPU context was lost, and full colour went on on the CPU. */
+    gpuLost: false,
+  }
+
+  /** The GPU combiner, made on first use; null once it is known not to be had. */
+  private gl: Avc444Gl | null | undefined
 
   private events: RendererEvents
 
@@ -90,7 +143,7 @@ export class GraphicsRenderer {
     switch (c.cmd) {
       case Cmd.ResetGraphics: {
         if (b.byteLength < 8) return
-        for (const s of this.surfaces.values()) s.decoder?.close()
+        for (const s of this.surfaces.values()) closeSurface(s)
         this.surfaces.clear()
         this.events.resize(b.getUint32(0, true), b.getUint32(4, true))
         return
@@ -100,21 +153,39 @@ export class GraphicsRenderer {
         const id = b.getUint16(0, true)
         const width = b.getUint16(2, true)
         const height = b.getUint16(4, true)
-        this.surfaces.get(id)?.decoder?.close()
+        const old = this.surfaces.get(id)
+        if (old) closeSurface(old)
         const canvas = new OffscreenCanvas(Math.max(width, 1), Math.max(height, 1))
         const ctx = canvas.getContext('2d')
         if (!ctx) return
-        this.surfaces.set(id, { canvas, ctx, width, height, output: null, decoder: null, needKey: true, dirty: [] })
+        this.surfaces.set(id, {
+          canvas,
+          ctx,
+          width,
+          height,
+          output: null,
+          main: { decoder: null, needKey: true, copying: Promise.resolve() },
+          aux: { decoder: null, needKey: true, copying: Promise.resolve() },
+          mainPlanes: null,
+          auxPlanes: null,
+          redraw: [],
+          dirty: [],
+        })
         return
       }
       case Cmd.DeleteSurface: {
         if (b.byteLength < 2) return
         const id = b.getUint16(0, true)
-        this.surfaces.get(id)?.decoder?.close()
+        const old = this.surfaces.get(id)
+        if (old) closeSurface(old)
         this.surfaces.delete(id)
         return
       }
-      case Cmd.MapSurfaceToOutput: {
+      case Cmd.MapSurfaceToOutput:
+      case Cmd.MapSurfaceToScaledOutput: {
+        // The scaled form adds the size the surface is to be shown at, which
+        // Windows sets to the surface's own size unless asked for scaling,
+        // and which is not asked for.
         if (b.byteLength < 12) return
         const s = this.surfaces.get(b.getUint16(0, true))
         if (!s) return
@@ -198,14 +269,16 @@ export class GraphicsRenderer {
         if (!w || !s) return
         switch (w.codec) {
           case Codec.AVC420:
-            this.decode(s, w.dest, parseAVC420(w.bitmap))
+            this.decode(s, 'main', false, w.dest, parseAVC420(w.bitmap))
             return
           case Codec.AVC444:
           case Codec.AVC444v2: {
-            // The main view only: a whole picture at 4:2:0. The extra chroma
-            // is left for the GPU step.
             const avc = parseAVC444(w.bitmap)
-            if (avc?.main) this.decode(s, w.dest, avc.main)
+            // Full colour needs the second view's layout, which is v2's, and
+            // somewhere to put the views together.
+            const full = w.codec === Codec.AVC444v2 && this.combiner() !== null
+            if (avc?.main) this.decode(s, 'main', full, w.dest, avc.main)
+            if (avc?.aux && full) this.decode(s, 'aux', true, w.dest, avc.aux)
             return
           }
           case Codec.Uncompressed:
@@ -224,33 +297,49 @@ export class GraphicsRenderer {
 
   /** Releases every decoder. */
   close() {
-    for (const s of this.surfaces.values()) s.decoder?.close()
+    for (const s of this.surfaces.values()) closeSurface(s)
     this.surfaces.clear()
     this.cache.clear()
   }
 
-  private decode(s: Surface, dest: Rect, avc: AVC420 | null) {
+  private combiner(): Avc444Gl | null {
+    if (this.gl === undefined) this.gl = Avc444Gl.create()
+    return this.gl
+  }
+
+  private decode(s: Surface, stream: 'main' | 'aux', planes: boolean, dest: Rect, avc: AVC420 | null) {
     if (!avc || avc.h264.byteLength === 0) return
+    const st = s[stream]
     const key = hasKeyFrame(avc.h264)
-    if (!s.decoder || s.decoder.state === 'closed') {
-      s.decoder = this.newDecoder()
-      s.needKey = true
+    if (!st.decoder || st.decoder.state === 'closed') {
+      st.decoder = this.newDecoder()
+      st.needKey = true
     }
-    if (s.needKey && !key) return
-    if (s.decoder.state === 'unconfigured') {
-      s.decoder.configure({ ...H264_CONFIG, codec: codecString(avc.h264) ?? H264_CONFIG.codec })
+    if (st.needKey && !key) {
+      this.stats.skipped++
+      return
     }
-    s.needKey = false
+    st.needKey = false
+    if (!planes && stream === 'main') {
+      // Drawn on its own from here: whatever full-colour planes were kept
+      // would only hold the picture back.
+      s.mainPlanes = null
+      s.auxPlanes = null
+    }
     const id = this.nextJob++
     this.pending.push(
       new Promise<void>((done) => {
-        this.jobs.set(id, { surface: s, dest, regions: avc.regions, done })
+        this.jobs.set(id, { surface: s, stream, planes, dest, regions: avc.regions, done })
       }),
     )
     try {
-      s.decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: id, data: avc.h264 }))
-    } catch {
-      this.fail(s)
+      if (st.decoder.state === 'unconfigured') {
+        st.decoder.configure({ ...H264_CONFIG, codec: codecString(avc.h264) ?? H264_CONFIG.codec })
+      }
+      st.decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: id, data: avc.h264 }))
+    } catch (err) {
+      this.stats.lastError = err instanceof Error ? err.message : String(err)
+      this.fail(s, stream)
     }
   }
 
@@ -259,31 +348,142 @@ export class GraphicsRenderer {
       output: (frame) => {
         const job = this.jobs.get(frame.timestamp)
         this.jobs.delete(frame.timestamp)
-        if (job) {
-          drawPicture(job, frame)
-          job.done()
+        if (!job) {
+          frame.close()
+          return
         }
-        frame.close()
+        this.stats.pictures++
+        this.stats.colourSpace ||= JSON.stringify(frame.colorSpace.toJSON())
+        this.stats.format ||= `${frame.format ?? 'opaque'} ${frame.codedWidth}x${frame.codedHeight}`
+        if (!job.planes) {
+          this.drawn(drawPicture(job, frame))
+          frame.close()
+          job.done()
+          return
+        }
+        const s = job.surface
+        const key = job.stream === 'main' ? 'mainPlanes' : 'auxPlanes'
+        const st = s[job.stream]
+        st.copying = st.copying
+          .then(() => framePlanes(frame, s[key] ?? undefined))
+          .then((p) => {
+            if (p && p.width % 4 === 0) {
+              s[key] = p
+              if (job.stream === 'main') this.stats.meanLuma = meanOf(p.y)
+              s.redraw.push({ dest: job.dest, regions: job.regions })
+            } else if (job.stream === 'main') {
+              // A layout the planes cannot be read from: this picture is
+              // drawn at 4:2:0, as the browser converts it.
+              this.drawn(drawPicture(job, frame))
+            }
+          })
+          .catch((err: unknown) => {
+            this.stats.lastError = err instanceof Error ? err.message : String(err)
+          })
+          .finally(() => {
+            frame.close()
+            job.done()
+          })
       },
-      error: () => {
-        for (const s of this.surfaces.values()) if (s.decoder === decoder) this.fail(s)
+      error: (err) => {
+        this.stats.lastError = err.message
+        for (const s of this.surfaces.values()) {
+          if (s.main.decoder === decoder) this.fail(s, 'main')
+          if (s.aux.decoder === decoder) this.fail(s, 'aux')
+        }
       },
     })
     return decoder
   }
 
-  /** Drops a surface's decoder; the next key frame starts a fresh one. */
-  private fail(s: Surface) {
-    const decoder = s.decoder
-    s.decoder = null
-    s.needKey = true
+  private drawn([drawn, outside]: [number, number]) {
+    this.stats.regions += drawn
+    this.stats.outside += outside
+  }
+
+  /** Drops one of a surface's decoders; the next key frame starts a fresh one. */
+  private fail(s: Surface, stream: 'main' | 'aux') {
+    this.stats.failures++
+    const st = s[stream]
+    const decoder = st.decoder
+    st.decoder = null
+    st.needKey = true
     for (const [id, job] of this.jobs) {
-      if (job.surface === s) {
+      if (job.surface === s && job.stream === stream) {
         this.jobs.delete(id)
         job.done()
       }
     }
     if (decoder && decoder.state !== 'closed') decoder.close()
+  }
+
+  /**
+   * Puts full-colour pictures together and draws their regions: on the GPU,
+   * or on the CPU if the GPU has gone, as a browser may take it away at any
+   * time. After that, pictures are drawn by the browser at 4:2:0.
+   */
+  private combine() {
+    for (const s of this.surfaces.values()) {
+      const redraw = s.redraw.splice(0)
+      const main = s.mainPlanes
+      if (redraw.length === 0 || !main) continue
+      // Until the second view's first picture, the main one alone, at 4:2:0.
+      const aux =
+        s.auxPlanes && s.auxPlanes.width === main.width && s.auxPlanes.height === main.height ? s.auxPlanes : null
+
+      // What to draw: each region cut to its surface, and where it is in
+      // the picture.
+      const parts: Array<{ to: Rect; from: Rect }> = []
+      for (const { dest, regions } of redraw) {
+        for (const region of regions.length > 0 ? regions : [dest]) {
+          const to = clip(region, s)
+          if (!to) continue
+          const from = {
+            left: to.left - dest.left,
+            top: to.top - dest.top,
+            right: to.right - dest.left,
+            bottom: to.bottom - dest.top,
+          }
+          if (from.left < 0 || from.top < 0 || from.right > main.width || from.bottom > main.height) {
+            this.stats.outside++
+            continue
+          }
+          parts.push({ to, from })
+        }
+      }
+      if (parts.length === 0) continue
+      const box = parts.map((p) => p.from).reduce((a, r) => ({
+        left: Math.min(a.left, r.left),
+        top: Math.min(a.top, r.top),
+        right: Math.max(a.right, r.right),
+        bottom: Math.max(a.bottom, r.bottom),
+      }))
+
+      let picture: ImageBitmap | null = null
+      if (this.gl) {
+        try {
+          // Taken out as a bitmap rather than drawn from the GL canvas.
+          picture = this.gl.draw(main, aux, box)
+        } catch (err) {
+          this.stats.lastError = err instanceof Error ? err.message : String(err)
+          this.stats.gpuLost = true
+          this.gl = null
+        }
+      }
+      this.stats.combined++
+      for (const { to, from } of parts) {
+        const w = to.right - to.left
+        const h = to.bottom - to.top
+        if (picture) {
+          s.ctx.drawImage(picture, from.left, from.top, w, h, to.left, to.top, w, h)
+        } else {
+          s.ctx.putImageData(new ImageData(combineRegion(main, aux, from), w, h), to.left, to.top)
+        }
+        s.dirty.push(to)
+        this.stats.regions++
+      }
+      picture?.close()
+    }
   }
 
   private uncompressed(s: Surface, dest: Rect, bitmap: Uint8Array) {
@@ -315,6 +515,7 @@ export class GraphicsRenderer {
       }),
     ])
     clearTimeout(timer)
+    this.combine()
   }
 
   private async endFrame() {
@@ -322,7 +523,11 @@ export class GraphicsRenderer {
     const out: Array<Promise<DirtyRect>> = []
     for (const s of this.surfaces.values()) {
       const dirty = s.dirty.splice(0)
-      if (!s.output || dirty.length === 0) continue
+      if (dirty.length === 0) continue
+      if (!s.output) {
+        this.stats.unmapped++
+        continue
+      }
       for (const r of merge(dirty)) {
         const width = r.right - r.left
         const height = r.bottom - r.top
@@ -338,12 +543,18 @@ export class GraphicsRenderer {
         )
       }
     }
+    this.stats.posted += out.length
     if (out.length > 0) this.events.rects(await Promise.all(out))
   }
 }
 
-/** Draws a decoded picture's updated regions onto its surface. */
-function drawPicture(job: Job, frame: VideoFrame) {
+/**
+ * Draws a decoded picture's updated regions onto its surface. Returns how
+ * many were drawn, and how many lay outside the picture.
+ */
+function drawPicture(job: Job, frame: VideoFrame): [number, number] {
+  let drawn = 0
+  let outside = 0
   const { surface: s, dest } = job
   // Windows says which parts of the picture changed; an empty list means all
   // of it.
@@ -357,10 +568,25 @@ function drawPicture(job: Job, frame: VideoFrame) {
     // the destination's corner.
     const sx = r.left - dest.left
     const sy = r.top - dest.top
-    if (sx < 0 || sy < 0 || sx + w > frame.displayWidth || sy + h > frame.displayHeight) continue
+    if (sx < 0 || sy < 0 || sx + w > frame.displayWidth || sy + h > frame.displayHeight) {
+      outside++
+      continue
+    }
     s.ctx.drawImage(frame, sx, sy, w, h, r.left, r.top, w, h)
     s.dirty.push(r)
+    drawn++
   }
+  return [drawn, outside]
+}
+
+function meanOf(b: Uint8Array): number {
+  let sum = 0
+  for (let i = 0; i < b.length; i += 97) sum += b[i] ?? 0
+  return Math.round((sum / Math.ceil(b.length / 97)) * 10) / 10
+}
+
+function closeSurface(s: Surface) {
+  for (const st of [s.main, s.aux]) if (st.decoder && st.decoder.state !== 'closed') st.decoder.close()
 }
 
 /** A rectangle cut to its surface, or null if nothing of it is left. */

@@ -30,5 +30,5 @@
   // become globals for every file in that program. With e2e and the configs in
   // here, `process.env.HOME` in a route typechecked clean — code that would be
   // undefined in a browser. Two programs keeps Node's surface where Node runs.
-  "include": ["src"]
+  "include": ["src", "scripts/gfx-check/harness.ts"]
 }

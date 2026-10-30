@@ -10,9 +10,10 @@
  * no decoding on the CPU.
  *
  * AVC444 is two H.264 streams, the picture at 4:2:0 and the chroma it left
- * out. Only the first is decoded for now, so colour is 4:2:0: correct, a
- * little soft around coloured text. Recombining the second is a GPU shader,
- * and a later step.
+ * out. With v2, which is what Windows sends, both are decoded and put back
+ * together on the GPU (avc444.ts), so coloured text is as sharp as on the
+ * host. Version 1 packs the second stream differently and is drawn from its
+ * first alone, at 4:2:0.
  *
  * Parsing is kept apart from drawing so it can be tested without a decoder.
  */
@@ -36,6 +37,7 @@ export const Cmd = {
   EndFrame: 0x000c,
   ResetGraphics: 0x000e,
   MapSurfaceToOutput: 0x000f,
+  MapSurfaceToScaledOutput: 0x0017,
 } as const
 
 /** Codecs (MS-RDPEGFX 2.2.1.6). */
