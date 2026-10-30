@@ -113,6 +113,13 @@ func runDaemon(args []string) int {
 
 	// Before anything is written there: on Windows a new directory is
 	// readable by every local user until it is locked down.
+	// When this agent was last alive, before the heartbeat below rewrites it:
+	// logins let in while it was down are read back from that point.
+	var downSince time.Time
+	if fi, err := os.Stat(*stateDir + "/heartbeat.json"); err == nil {
+		downSince = fi.ModTime()
+	}
+
 	for _, d := range []string{*stateDir, *dir} {
 		if err := agent.ProtectStateDir(d); err != nil {
 			log.Error("cannot make the agent's directory private", "dir", d, "error", err)
@@ -177,6 +184,9 @@ func runDaemon(args []string) int {
 		rep.Drain(ctx)
 		rep.StartDrainLoop(ctx, 30*time.Second)
 		log.Info("reporting to control plane", "url", *controlURL)
+	}
+	if !downSince.IsZero() {
+		go reportLoginsWhileDown(ctx, downSince, rep, log)
 	}
 
 	// The tunnel: one outbound connection the control plane opens streams
@@ -601,14 +611,18 @@ func runShim(args []string) int {
 	_ = fs.String("gateway-keys", "", "ignored: no longer used")
 	_ = fs.String("gateways", "", "ignored: no longer used")
 	_ = fs.Bool("skip-brokered", false, "ignored: no longer used")
-	failOpen := fs.Bool("fail-open", false, "allow unrecorded sessions when the collector is down")
+	failOpen := fs.Bool("fail-open", false,
+		"allow unrecorded sessions when the agent cannot record, not only when it is down")
+	failClosed := fs.Bool("fail-closed", false,
+		"refuse every login while the agent is not running")
 	shell := fs.String("shell", "", "override the login shell")
 	_ = fs.Parse(args)
 
 	return agent.RunShim(agent.ShimConfig{
-		SocketPath: *socket,
-		FailOpen:   *failOpen,
-		Shell:      *shell,
+		SocketPath:        *socket,
+		FailOpen:          *failOpen,
+		OpenWhenAgentDown: !*failClosed,
+		Shell:             *shell,
 	})
 }
 
@@ -687,6 +701,13 @@ func runInstall(args []string) int {
 # not use sshd at all; they reach the agent over its tunnel.
 
 ForceCommand %s shim
+
+# While the agent is not running (stopped, crashed, mid-upgrade) a login is let
+# in unrecorded rather than refused, and reported to the audit log once the
+# agent is back, so a stopped agent never locks everyone out. To refuse logins
+# then instead, which only the machine's own console gets past:
+#
+#   ForceCommand %[2]s shim --fail-closed
 
 # Recommended alongside it. These remove the ability to bypass rather than
 # merely recording it, which is the stronger control:
@@ -832,4 +853,29 @@ func runEnroll(args []string) int {
 	}
 	fmt.Println("start it with: " + startHint)
 	return 0
+}
+
+// reportLoginsWhileDown reports the logins sshd let in, unrecorded, while this
+// agent was not running. Each is an entry in the audit log: there is no
+// recording of it, and the auditor needs to know that more than anything.
+func reportLoginsWhileDown(ctx context.Context, since time.Time, rep *reporter.Client, log *slog.Logger) {
+	logins, err := agent.ReadUnrecordedLogins(ctx, since)
+	if err != nil {
+		log.Warn("could not read the logins let in while the agent was down", "error", err)
+		return
+	}
+	hostname, _ := os.Hostname()
+	for _, l := range logins {
+		log.Warn("a login was let in unrecorded while the agent was down",
+			"principal", l.Principal, "client_addr", l.ClientAddr, "at", l.At)
+		rep.Login(ctx, map[string]any{
+			"hostname":    hostname,
+			"principal":   l.Principal,
+			"client_addr": l.ClientAddr,
+			"command":     l.Command,
+			"origin":      string(agent.Direct),
+			"agent_down":  true,
+			"at":          l.At,
+		})
+	}
 }

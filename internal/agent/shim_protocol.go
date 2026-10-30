@@ -21,6 +21,16 @@ type ShimConfig struct {
 	// when locking every admin out of the fleet because a daemon crashed is a
 	// worse outcome than a gap in the audit trail.
 	FailOpen bool
+	// OpenWhenAgentDown lets a login in, unrecorded, when the daemon cannot
+	// be reached at all: stopped, crashed, or mid-upgrade. Narrower than
+	// FailOpen -- a daemon that answers and refuses is still obeyed -- and
+	// the login is written to the system log so the daemon reports it to the
+	// audit log once it is back.
+	//
+	// The default. A host whose every SSH login is refused because its agent
+	// stopped is one only its own console reaches, and people were locked out
+	// of live servers that way.
+	OpenWhenAgentDown bool
 	// Shell overrides the login shell; empty means look it up.
 	Shell string
 }

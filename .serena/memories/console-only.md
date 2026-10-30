@@ -73,3 +73,14 @@ is revoked (`POST /api/v1/report/deregister`, audited `agent.uninstalled`),
 because nothing can ship them afterwards. Recordings, `sessions.jsonl` and the
 spool are kept. The agent package's `agent-preremove.sh` refuses removal while
 the hook is still there.
+
+## A stopped agent lets SSH in (fail open while down)
+
+Decided by the owner after being locked out of a live server: when the shim
+cannot reach the daemon at all, it runs the login unrecorded
+(`ShimConfig.OpenWhenAgentDown`, the default; `--fail-closed` restores the
+refusal). A daemon that answers is still obeyed, so console-only and the
+direct SSH setting apply whenever the agent is up. The shim writes the login to
+syslog under `argus-shim`; on start the daemon reads the journal since
+heartbeat.json's mtime, takes the account from `_UID` (set by journald, not the
+writer), and reports each as `session.direct_unrecorded` with `agent_down`.

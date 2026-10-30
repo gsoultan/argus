@@ -228,8 +228,13 @@ if you change that secret on purpose, delete the file on each agent and
 restart it; until then those agents refuse sessions and say why in their log.
 
 Start the agent before adding the `sshd_config` lines. Once they are in, every
-login goes through the agent, and a login is refused while the agent is not
-running.
+login goes through the agent. While the agent is not running (stopped, crashed
+or mid-upgrade), a login is let in **unrecorded** rather than refused, so a
+stopped agent never locks you out. When the agent starts again it reports each
+such login to the audit log as a critical `session.direct_unrecorded` entry,
+naming the account the system log saw. To refuse logins while the agent is down
+instead, add `--fail-closed` to the `ForceCommand` line; then only the
+machine's own console gets past a stopped agent.
 
 ### macOS servers
 

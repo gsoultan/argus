@@ -25,8 +25,11 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		Refused bool `json:"refused"`
 		// Allowed is a login let in because the server is set to allow and
 		// record direct SSH logins. Believed only if it is.
-		Allowed bool      `json:"allowed"`
-		At      time.Time `json:"at"`
+		Allowed bool `json:"allowed"`
+		// AgentDown is a login sshd let in while the agent was not running,
+		// reported once it was back. Nothing recorded it.
+		AgentDown bool      `json:"agent_down"`
+		At        time.Time `json:"at"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/login"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -98,6 +101,25 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 	// server is set to allow it. A report of one otherwise is an agent that is
 	// not following the setting -- an old one, a misconfigured one, or a report that is not what it claims
 	// to be -- and the auditor is told, with the highest severity.
+	if in.AgentDown {
+		detail := fmt.Sprintf("%s logged in to %s from %s at %s and ran %s while the "+
+			"Argus agent on that server was not running. The server lets SSH in when its "+
+			"agent is down, so the login went ahead unrecorded: there is no replay, and no "+
+			"approval, time window or principal check was applied. The agent reported it "+
+			"when it started again.",
+			in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what)
+		if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+			Action:   "session.direct_unrecorded",
+			Severity: "critical",
+			Target:   in.Hostname,
+			Detail:   detail,
+		}); err != nil {
+			a.fail(w, "report login", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
+		return
+	}
 	detail := fmt.Sprintf("%s logged in to %s from %s at %s and ran %s without "+
 		"passing through Argus, and the agent reports it let the login through "+
 		"unrecorded: there is no replay, and no approval, time window or principal "+

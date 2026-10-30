@@ -37,7 +37,7 @@ func RunShim(cfg ShimConfig) int {
 
 	conn, err := net.DialTimeout("unix", cfg.SocketPath, 5*time.Second)
 	if err != nil {
-		if !cfg.FailOpen {
+		if !cfg.FailOpen && !cfg.OpenWhenAgentDown {
 			fmt.Fprintln(os.Stderr,
 				"argus: session recording is unavailable, refusing connection.")
 			fmt.Fprintln(os.Stderr,
@@ -45,7 +45,9 @@ func RunShim(cfg ShimConfig) int {
 			return 1
 		}
 		fmt.Fprintln(os.Stderr,
-			"argus: WARNING — recording unavailable, this session is NOT being recorded.")
+			"argus: WARNING — the Argus agent is not running, so this session is NOT "+
+				"being recorded. It will be reported to the audit log.")
+		noteUnrecordedLogin(currentUsername(), clientAddr, origCmd)
 		return execSession(cfg, origCmd, nil)
 	}
 	defer conn.Close()

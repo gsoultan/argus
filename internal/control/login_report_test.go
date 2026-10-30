@@ -123,3 +123,29 @@ func TestTheRecordingScopeRouteIsGone(t *testing.T) {
 		t.Errorf("PUT recording-scope = %d, want it gone", w.Code)
 	}
 }
+
+// A login sshd let in while the agent was down is reported as exactly that,
+// not as an agent ignoring its setting.
+func TestALoginWhileTheAgentWasDownIsCriticalAndSaysWhy(t *testing.T) {
+	s, h, _ := reportAPI(t)
+	asset, cred := enrolledAsset(t, s, h)
+
+	w := do(t, h, http.MethodPost, "/api/v1/report/login", cred,
+		`{"hostname":"`+asset.Hostname+`","principal":"ana","client_addr":"203.0.113.9",`+
+			`"origin":"direct","agent_down":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("report: %d %s", w.Code, w.Body)
+	}
+	e := lastAuditOn(t, s, asset.Hostname)
+	if e.Action != "session.direct_unrecorded" || e.Severity != "critical" {
+		t.Errorf("audit = %s/%s", e.Action, e.Severity)
+	}
+	for _, want := range []string{"ana", "203.0.113.9", "was not running", "no replay"} {
+		if !strings.Contains(e.Detail, want) {
+			t.Errorf("entry does not carry %q: %s", want, e.Detail)
+		}
+	}
+	if strings.Contains(e.Detail, "not following") {
+		t.Errorf("an agent that was down is not one ignoring its setting: %s", e.Detail)
+	}
+}
