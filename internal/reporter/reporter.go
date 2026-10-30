@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -133,6 +134,40 @@ func (c *Client) Login(ctx context.Context, v any) {
 // a reboot, not every thirty seconds.
 func (c *Client) Facts(ctx context.Context, v any) {
 	c.post(ctx, "/api/v1/report/facts", v)
+}
+
+// Deregister revokes this agent's own credential, for an uninstall. Never
+// spooled: an uninstall that cannot reach the control plane says so, and the
+// credential is revoked in the console instead.
+func (c *Client) Deregister(ctx context.Context, v any) error {
+	if !c.Enabled() {
+		return errors.New("no control plane is configured")
+	}
+	body, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return c.send(ctx, "/api/v1/report/deregister", body)
+}
+
+// Spooled returns how many reports are still waiting in the spool.
+func (c *Client) Spooled() int {
+	if c == nil || c.spoolPath == "" {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b, err := os.ReadFile(c.spoolPath)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 type spoolEntry struct {

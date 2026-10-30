@@ -423,3 +423,61 @@ func TestEnrollRejectsAnythingWithoutThePrefix(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+/* ── Uninstalling ────────────────────────────────────────────────────────── */
+
+// An agent being uninstalled revokes its own credential, and the chain says
+// it happened on the host rather than in the console.
+func TestAnUninstalledAgentRevokesItselfAndSaysSo(t *testing.T) {
+	_, s, h, _ := enrollAPI(t)
+	host := unique("enr-uninstall")
+	cred, _ := enrolled(t, s, h, host)
+
+	w := do(t, h, http.MethodPost, "/api/v1/report/deregister", cred,
+		`{"hostname":"`+host+`","ran_by":"ana"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("deregister: %d %s", w.Code, w.Body)
+	}
+	if w := heartbeatAs(t, h, cred, host); w.Code != http.StatusUnauthorized {
+		t.Fatalf("a deregistered credential still reports: %d", w.Code)
+	}
+	e := lastAuditOn(t, s, host)
+	if e.Action != "agent.uninstalled" || e.Severity != "warn" {
+		t.Fatalf("audit = %s (%s)", e.Action, e.Severity)
+	}
+	if !strings.Contains(e.Detail, `the host says "ana" ran it`) {
+		t.Errorf("the entry should give who ran it as the host's claim: %s", e.Detail)
+	}
+	var by string
+	_ = s.pool.QueryRow(context.Background(),
+		`SELECT revoked_by FROM agent_credentials WHERE lower(hostname) = lower($1)`, host).Scan(&by)
+	if by != "agent on "+host {
+		t.Errorf("revoked_by = %q", by)
+	}
+}
+
+// Deregistering is for the host's own credential. The shared reporter token
+// speaks for every host, so it may revoke none of them, and a credential may
+// not name another host.
+func TestOnlyAnAgentsOwnCredentialDeregistersIt(t *testing.T) {
+	_, s, h, _ := enrollAPI(t)
+	host := unique("enr-dereg")
+	other := unique("enr-dereg-b")
+	cred, _ := enrolled(t, s, h, host)
+	otherCred, _ := enrolled(t, s, h, other)
+
+	if w := do(t, h, http.MethodPost, "/api/v1/report/deregister", testReporterToken,
+		`{"hostname":"`+host+`"}`); w.Code != http.StatusForbidden {
+		t.Errorf("the shared token deregistered a host: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, h, http.MethodPost, "/api/v1/report/deregister", otherCred,
+		`{"hostname":"`+host+`"}`); w.Code != http.StatusForbidden {
+		t.Errorf("one host's credential deregistered another: %d %s", w.Code, w.Body)
+	}
+	if w := heartbeatAs(t, h, cred, host); w.Code != http.StatusOK {
+		t.Errorf("the refused attempts revoked the credential anyway: %d", w.Code)
+	}
+	if w := heartbeatAs(t, h, otherCred, other); w.Code != http.StatusOK {
+		t.Errorf("a refused attempt revoked the caller's own credential: %d", w.Code)
+	}
+}

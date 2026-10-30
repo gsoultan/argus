@@ -45,8 +45,26 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
-# Deliberately not enabled or started. These services need certificates,
-# secrets and an inventory before they can do anything, and a package that
+# An enrolled agent is one somebody set up, so after an upgrade it runs again,
+# on the new binary. Packages before this stopped and disabled it on every
+# upgrade, which left every SSH login refused while the sshd hook was in
+# place, so it is enabled here too rather than only restarted.
+#
+# A few seconds later, not now: an upgrade run from a console session goes
+# through this agent, and restarting it ends that session -- and the package
+# manager running in it -- before it has finished.
+if [ -x /usr/bin/argus-agent ] && [ -f /var/lib/argus/enrollment.json ] &&
+   command -v systemctl >/dev/null 2>&1 && systemctl cat argus-agent >/dev/null 2>&1; then
+    systemctl enable argus-agent >/dev/null 2>&1 || true
+    if ! systemd-run --quiet --on-active=10s --unit="argus-agent-upgrade-$$" \
+            systemctl restart argus-agent >/dev/null 2>&1; then
+        systemctl restart --no-block argus-agent >/dev/null 2>&1 || true
+    fi
+    echo "argus-agent restarts on the new version in about 10 seconds."
+fi
+
+# A fresh install is deliberately not enabled or started. These services need
+# certificates, secrets and an inventory before they can do anything, and a package that
 # starts a half-configured privileged-access service on install is a package
 # that fails loudly in the worst possible place.
 cat <<'MSG'

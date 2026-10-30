@@ -60,3 +60,16 @@ native RDP (before the target is dialled) and its own browser SSH terminal
 `Config.directPaths`, set by package tests, opens them. Browser RDP (rdpweb) is
 the one gateway session path left. argus-gateway refuses to start without
 `control.url`.
+
+## Uninstalling the agent (`argus-agent uninstall`)
+
+The ForceCommand hook is what makes a removed agent dangerous: left behind, it
+refuses every SSH login. So the uninstall checks someone could still get in
+over plain SSH first (`sshWaysIn`, from `sshd -T` and the posture key scan),
+comments out only ForceCommands whose command's basename starts `argus`,
+validates with `sshd -t` and `sshd -T` and restores on failure, then reloads
+sshd. It flushes the spool and upload queue before the agent's own credential
+is revoked (`POST /api/v1/report/deregister`, audited `agent.uninstalled`),
+because nothing can ship them afterwards. Recordings, `sessions.jsonl` and the
+spool are kept. The agent package's `agent-preremove.sh` refuses removal while
+the hook is still there.

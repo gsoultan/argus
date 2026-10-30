@@ -266,6 +266,9 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/report/direct-login/{id}/wait", a.agentReporter(a.postDirectLoginWait))
 	mux.HandleFunc("GET "+tunnel.UpgradePath, a.handleTunnelUpgrade)
 	mux.HandleFunc("POST /api/v1/report/facts", a.agentReporter(a.postFacts))
+	// An agent being uninstalled revokes its own credential; see
+	// enrollment_routes.go.
+	mux.HandleFunc("POST /api/v1/report/deregister", a.agentReporter(a.postDeregister))
 
 	// The exchange that gives an agent its credential. Throttled like a
 	// sign-in: the token is the only thing it checks.

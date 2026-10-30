@@ -215,6 +215,8 @@ connection cannot be intercepted. The server then shows its tunnel as
 network. macOS servers work the same way with the agent from the darwin archive;
 see [docs/install.md](docs/install.md#macos-servers).
 
+To take the agent off a server, run `sudo argus-agent uninstall` there before
+removing the package; see [docs/install.md](docs/install.md#uninstalling-the-agent).
 Uninstalling leaves `/var/lib/argus` and `/var/lib/argus-control` in place.
 Removing the software must never destroy the evidence it produced.
 
