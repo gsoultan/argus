@@ -481,7 +481,7 @@ jobs:
             [ "$st" = closed ] && break
             sleep 1
           done
-          "$tmp/replaydump.exe" "/c/ProgramData/Argus/recordings/$gsid.argusrdp" \
+          "$tmp/replaydump.exe" "C:/ProgramData/Argus/recordings/$gsid.argusrdp" \
             measure/graphics.replay || { echo "::error::the graphics session's recording did not replay"; exit 1; }
 
           # The same busy screen straight from Windows, with bitmap updates
