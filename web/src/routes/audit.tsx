@@ -19,6 +19,7 @@ import { AUDIT_CEILING } from '~/lib/live'
 import { useAuditChain } from '~/lib/useWorkers'
 import type { AuditSeverity } from '~/types/domain'
 import { guard } from '~/lib/guard'
+import { ActivityTabs } from '~/components/ActivityTabs'
 
 export const Route = createFileRoute('/audit')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
@@ -139,8 +140,8 @@ function Audit() {
   return (
     <Box>
       <PageHeader
-        title="Audit log"
-        description="Every privileged action, hash-chained so tampering is detectable rather than merely discouraged."
+        title="Activity"
+        description="Everything anyone changed, in order. Each entry is chained to the one before, so a removed or edited entry shows."
         actions={
           <>
             <Button
@@ -164,6 +165,7 @@ function Audit() {
       />
 
       <PageBody>
+        <ActivityTabs value="audit" />
         {/* The integrity panel is the product's core compliance claim, so it
             gets top billing rather than being buried in a settings page. */}
         <Card

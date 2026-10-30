@@ -1,22 +1,25 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Center, Grid, Group, Loader, PasswordInput, Radio, Select,
+  Alert, Badge, Box, Button, Center, Group, Loader, PasswordInput, Radio, Select,
   Stack, Text, ThemeIcon,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconDeviceDesktop, IconFolders, IconInfoCircle, IconPlugConnected,
-  IconPlugConnectedX, IconServer2, IconShieldLock, IconTerminal2, IconUser, IconX,
+  IconCircleCheck, IconDeviceDesktop, IconFolders, IconHourglassHigh, IconLock,
+  IconPlugConnectedX, IconTerminal2, IconX,
 } from '@tabler/icons-react'
+import { ButtonLink } from '~/components/links'
+import { ReachBadge, reachOf } from '~/components/myservers'
+import { relTime } from '~/components/primitives'
+import { isElevatedAccount, seesWholeFleet } from '~/lib/roles'
 import { PageBody, PageHeader } from '~/components/page'
 import type { TerminalState } from '~/components/LiveTerminal'
-import { assetsQuery } from '~/lib/queries'
+import { assetsQuery, meQuery } from '~/lib/queries'
 import {
   desktopEndpoint, filesEndpoint, terminalEndpoint, terminalTicket,
 } from '~/lib/live'
-import { HostKeyBadge } from '~/components/primitives'
-import { FS, SP } from '~/theme'
+import { FS } from '~/theme'
 
 /**
  * Loaded on demand.
@@ -69,7 +72,9 @@ export const Route = createFileRoute('/connect')({
 const DEFAULT_PRINCIPALS = ['ops', 'deploy']
 
 function Connect() {
-  const { data: assets } = useQuery(assetsQuery({}))
+  const { data: assets, refetch: refetchAssets, isFetching: assetsFetching } = useQuery(assetsQuery({}))
+  const { data: me } = useQuery(meQuery())
+  const whole = seesWholeFleet(me?.role)
 
   const [requesting, setRequesting] = useState(false)
   const [denied, setDenied] = useState<string>()
@@ -167,22 +172,22 @@ function Connect() {
     return (
       <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
-          crumbs={[{ label: 'Connect', to: '/connect' }, { label: session.target }]}
-          title={isRDP ? 'Remote Desktop' : isFiles ? 'Files' : 'Terminal'}
+          crumbs={[{ label: 'Servers', to: '/assets' }, { label: session.target.split('.')[0] ?? session.target }]}
+          title={`${session.principal} on ${session.target.split('.')[0] ?? session.target}`}
           status={
             <Badge
-              color={state === 'live' ? 'sky' : state === 'error' ? 'rose' : 'slate'}
+              color={state === 'live' ? 'teal' : state === 'error' ? 'rose' : 'slate'}
               variant="light"
             >
-              {state}
+              {{ connecting: 'Connecting', live: 'Recording', closed: 'Ended', error: 'Failed' }[state]}
             </Badge>
           }
           description={
             isRDP
-              ? 'Opened on the Windows server by its Argus agent, which records it there before anything reaches you.'
+              ? 'Windows desktop. Everything on screen is recorded.'
               : isFiles
-                ? `Read and written on the server by its Argus agent, as ${session.principal}. Every upload and download is in the audit log with its size and SHA-256.`
-                : 'Opened on the server by its Argus agent, which records it there before anything reaches you.'
+                ? 'Files on the server. Every upload and download is recorded.'
+                : 'Terminal. Everything you type and see is recorded.'
           }
           actions={
             <Button
@@ -198,6 +203,31 @@ function Connect() {
             </Button>
           }
         />
+        {state === 'closed' && (
+          <Alert
+            color="teal"
+            radius={0}
+            icon={<IconCircleCheck size={18} />}
+            title="Session ended"
+          >
+            <Group justify="space-between" wrap="wrap" gap="sm">
+              <Text size={FS.body}>It was recorded. You can find it under {whole ? 'Activity' : 'My activity'}.</Text>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  onClick={() => {
+                    heldTicket.current = null
+                    setState('connecting')
+                    setSession(null)
+                  }}
+                >
+                  Connect again
+                </Button>
+                <ButtonLink size="xs" variant="default" to="/assets">Back to servers</ButtonLink>
+              </Group>
+            </Group>
+          </Alert>
+        )}
         <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} p={isRDP ? 'md' : undefined}>
           <Suspense fallback={<TerminalLoading />}>
             {isFiles ? (
@@ -268,273 +298,223 @@ function Connect() {
     })
   }
 
+  const elevated = isElevatedAccount(principal)
+  const name = target ? (target.split('.')[0] ?? target) : ''
+
+  // Asked for by name and not in your list: you were not given it.
+  if (loaded && target && !selected) {
+    return (
+      <Centered>
+        <StateCard
+          icon={<IconLock size={26} />}
+          tone="slate"
+          title={`You can't connect to ${name} yet`}
+          body="Nobody has given you this server. Ask for access, and an approver decides. You get a note here when they do."
+        >
+          <ButtonLink size="md" to="/approvals" search={{ ask: target }}>Ask for access</ButtonLink>
+          <ButtonLink size="md" variant="default" to="/assets">Back to servers</ButtonLink>
+        </StateCard>
+      </Centered>
+    )
+  }
+
+  // The agent is the only way in, so a server without one is not reachable.
+  if (selected && agentDown) {
+    return (
+      <Centered>
+        <StateCard
+          icon={<IconPlugConnectedX size={26} />}
+          tone="amber"
+          title={`${name} is offline`}
+          body={`The Argus agent on it has not checked in${selected.agentLastSeenAt ? ` since ${relTime(selected.agentLastSeenAt)}` : ''}. It may be restarting. Try again in a minute, or tell an admin if it stays offline.`}
+        >
+          <Button size="md" loading={assetsFetching} onClick={() => void refetchAssets()}>Try again</Button>
+          <ButtonLink size="md" variant="default" to="/assets">Back to servers</ButtonLink>
+        </StateCard>
+      </Centered>
+    )
+  }
+
+  if (requesting) {
+    return (
+      <Centered>
+        <StateCard
+          icon={<Loader size={26} />}
+          tone="azure"
+          title={`Connecting to ${name}`}
+          body={`Checking you can log in as ${principal}, then opening it through the server’s agent. Everything you do is recorded.`}
+        />
+      </Centered>
+    )
+  }
+
+  if (denied && selected) {
+    return (
+      <Centered>
+        <StateCard
+          icon={<IconHourglassHigh size={26} />}
+          tone="amber"
+          title={elevated ? `${principal} needs approval` : `You can't log in as ${principal} here`}
+          body={elevated
+            ? `${principal} has full control of ${name}, so someone else approves it first, for a set time. Ask, and you can connect as soon as they say yes.`
+            : denied}
+        >
+          <ButtonLink size="md" to="/approvals" search={{ ask: selected.hostname, as: principal }}>
+            {elevated ? `Ask for ${principal}` : 'Ask for access'}
+          </ButtonLink>
+          {principals.length > 1 && (
+            <Button size="md" variant="default" onClick={() => setDenied(undefined)}>Pick another account</Button>
+          )}
+        </StateCard>
+      </Centered>
+    )
+  }
+
   return (
     <Box>
       <PageHeader
-        title="Connect"
-        description="Pick a server and an account, and the session opens here in the browser: a terminal or file transfer for SSH, a desktop for Remote Desktop."
+        crumbs={[{ label: 'Servers', to: '/assets' }, { label: name || 'Connect' }]}
+        title={selected ? `Connect to ${name}` : 'Connect'}
+        status={selected && <ReachBadge reach={reachOf(selected)} />}
+        description={selected
+          ? `${selected.os || (isRDPTarget ? 'Windows' : 'Linux')} · opens here in your browser, recorded.`
+          : 'Pick a server. It opens here in your browser, and the session is recorded.'}
       />
 
       <PageBody>
-        {state === 'error' && detail && (
-          <Alert color="rose" icon={<IconX size={16} />} title="Connection refused">
-            <Text size={FS.body} lh={1.5}>{detail}</Text>
-          </Alert>
-        )}
+        <Box maw={560} w="100%">
+          {state === 'error' && detail && (
+            <Alert color="rose" icon={<IconX size={16} />} title="The last session could not open" mb="md">
+              <Text size={FS.body} lh={1.5}>{detail}</Text>
+            </Alert>
+          )}
 
-        <Grid gap="sm">
-          {/* Two decisions, numbered, then one button. The form previously led
-              with a server address field — plumbing the operator has no
-              answer for and does not need, standing between them and the two
-              choices that actually matter. */}
-          <Grid.Col span={{ base: 12, lg: 7 }}>
-            <Stack gap="sm">
-              <Step n={1} icon={IconServer2} title="Choose a server">
-                {/* An empty inventory and an empty *assignment* look identical
-                    in a searchable Select — it answers "no host by that name"
-                    to every query — and they need opposite responses. Saying
-                    which one this is turns a dead form into a next step. */}
-                {assets?.length === 0 && (
-                  <Alert
-                    variant="light"
-                    color="amber"
-                    icon={<IconInfoCircle size={16} />}
-                    title="No hosts are assigned to you"
-                    mb="xs"
-                  >
-                    <Text size={FS.meta} lh={1.5}>
-                      An administrator assigns the hosts you may reach, and which account
-                      you may assume on each. If you need one for a specific piece of work,
-                      raise an access request and have an approver decide it.
-                    </Text>
-                  </Alert>
-                )}
+          <Box className="argus-panel" p={{ base: 'md', sm: 'xl' }}>
+            <Stack gap="lg">
+              {!host && (
                 <Select
-                  size="sm"
+                  size="md"
+                  label="Server"
                   placeholder={assets ? 'Type a server name' : 'Loading servers…'}
-                  // An enabled, searchable, empty Select reports "No host by
-                  // that name" for every query while the inventory is still on
-                  // its way, which is a wrong answer rather than a slow one.
                   disabled={!assets}
                   searchable
-                  nothingFoundMessage="No host by that name"
+                  nothingFoundMessage="You have no server by that name"
                   value={target}
                   onChange={setTarget}
                   data={assets?.map((a) => ({ value: a.hostname, label: a.hostname })) ?? []}
                 />
-                {selected && (
-                  <Group gap="xs" mt="xs" wrap="wrap">
-                    <Badge
-                      variant="light"
-                      color="slate"
-                      leftSection={
-                        isRDPTarget ? <IconDeviceDesktop size={11} /> : <IconTerminal2 size={11} />
-                      }
-                    >
-                      {selected.protocol}
-                    </Badge>
-                    <Badge variant="outline" color="slate" className="argus-digest">
-                      {selected.address}:{selected.port}
-                    </Badge>
-                    {/* The trust anchor, stated before connecting rather than
-                        discovered afterwards: Argus terminates SSH, so an
-                        unpinned target is one nobody has verified. */}
-                    <HostKeyBadge state={selected.hostKeyState} />
-                  </Group>
-                )}
-                {agentDown && (
-                  <Alert
-                    mt="sm"
-                    color="amber"
-                    icon={<IconPlugConnectedX size={16} />}
-                    title="This server's agent is not connected"
-                  >
-                    <Text size={FS.meta} lh={1.5}>
-                      Sessions and file transfers reach a server only through its Argus agent.
-                      Nothing can open until the agent on {selected.hostname} reconnects; its
-                      page under Servers shows when it last checked in.
-                    </Text>
-                  </Alert>
-                )}
-              </Step>
-
-              <Step n={2} icon={IconUser} title="Choose an account" disabled={!target}>
-                {!target ? (
-                  <Text size={FS.meta} c="dimmed">
-                    Pick a server first. The accounts you can use depend on it.
-                  </Text>
-                ) : principals.length === 0 ? (
-                  // An asset can list no principals at all — enrolled from
-                  // Coverage and not finished, say. An empty radio group would
-                  // look like a page that had not loaded.
-                  <Text size={FS.meta} c="dimmed">
-                    You have no account on this server yet. Ask an admin to add one for you.
-                  </Text>
-                ) : (
-                  <Radio.Group value={principal} onChange={setPrincipal}>
-                    <Group gap="lg">
-                      {principals.map((p) => (
-                        <Radio
-                          key={p}
-                          value={p}
-                          label={
-                            p === 'root' ? (
-                              <Group gap={SP.snug}>
-                                <Text size="sm">root</Text>
-                                <Badge size="xs" color="rose">elevated</Badge>
-                              </Group>
-                            ) : p
-                          }
-                        />
-                      ))}
-                    </Group>
-                  </Radio.Group>
-                )}
-                {/* Windows asks for the account's own password before it shows
-                    a desktop (network level authentication). It goes to the
-                    server's agent for this one sign-in and is kept nowhere. */}
-                {target && isRDPTarget && principals.length > 0 && (
-                  <PasswordInput
-                    mt="sm"
-                    size="sm"
-                    label={`Windows password for ${principal}`}
-                    description="Used once to sign in on the server, and not stored by Argus."
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.currentTarget.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !agentDown) void onConnect()
-                    }}
-                  />
-                )}
-              </Step>
-
-              {denied && (
-                <Alert color="rose" icon={<IconX size={16} />} title="Not permitted">
-                  <Text size={FS.body} lh={1.5}>{denied}</Text>
-                </Alert>
               )}
 
-              <Group justify="space-between" align="center">
-                <Text size={FS.micro} c="dimmed">
-                  {target
-                    ? `Opens ${principal}@${target.split('.')[0]} ${
-                        "through the server's Argus agent"
-                      }.`
-                    : 'Nothing is sent until you choose a host.'}
-                </Text>
-                <Group gap="xs">
-                  {/* Files move through the agent only: it reads and writes as
-                      the account, and the control plane hashes what crosses. */}
-                  {viaAgent && !isRDPTarget && (
-                    <Button
-                      size="sm"
-                      variant="light"
-                      leftSection={<IconFolders size={15} />}
-                      disabled={!target}
-                      loading={requesting}
-                      onClick={() => void onConnect('files')}
-                    >
-                      Transfer files
-                    </Button>
+              {target && (
+                <Box>
+                  <Text size="sm" fw={600} mb="sm">Log in as</Text>
+                  {principals.length === 0 ? (
+                    <Text size="sm" c="dimmed">
+                      You have no account on this server yet. Ask an admin to add one for you.
+                    </Text>
+                  ) : (
+                    <Radio.Group value={principal} onChange={setPrincipal}>
+                      <Stack gap="xs">
+                        {principals.map((p) => (
+                          <Radio.Card
+                            key={p}
+                            value={p}
+                            className="argus-pick"
+                            data-checked={p === principal || undefined}
+                          >
+                            <Group gap="sm" wrap="nowrap">
+                              <Radio.Indicator />
+                              <Box style={{ flex: 1, minWidth: 0 }}>
+                                <Text size="sm" fw={600} ff="monospace">{p}</Text>
+                                <Text size={FS.meta} c="dimmed">
+                                  {isElevatedAccount(p) ? 'Full control. Needs approval first.' : 'Your everyday account'}
+                                </Text>
+                              </Box>
+                              {isElevatedAccount(p) && <Badge color="amber" variant="light">approval</Badge>}
+                            </Group>
+                          </Radio.Card>
+                        ))}
+                      </Stack>
+                    </Radio.Group>
                   )}
+                </Box>
+              )}
+
+              {/* Windows asks for the account's own password before it shows
+                  a desktop. It goes to the server's agent for this one sign-in
+                  and is kept nowhere. */}
+              {target && isRDPTarget && principals.length > 0 && (
+                <PasswordInput
+                  size="md"
+                  label={`Windows password for ${principal}`}
+                  description="Used once to sign in on the server. Argus does not keep it."
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void onConnect()
+                  }}
+                />
+              )}
+
+              <Group justify="space-between" wrap="wrap" gap="sm">
+                {viaAgent && !isRDPTarget ? (
                   <Button
-                    size="sm"
-                    leftSection={<IconPlugConnected size={15} />}
-                    disabled={!target || agentDown}
-                    loading={requesting}
-                    onClick={() => void onConnect()}
+                    variant="default"
+                    leftSection={<IconFolders size={16} />}
+                    disabled={!target || principals.length === 0}
+                    onClick={() => void onConnect('files')}
                   >
-                    {isRDPTarget ? 'Open desktop' : 'Open terminal'}
+                    Files only
                   </Button>
-                </Group>
+                ) : <span />}
+                <Button
+                  size="md"
+                  leftSection={isRDPTarget ? <IconDeviceDesktop size={18} /> : <IconTerminal2 size={18} />}
+                  disabled={!target || principals.length === 0}
+                  onClick={() => void onConnect()}
+                >
+                  Connect
+                </Button>
               </Group>
             </Stack>
-          </Grid.Col>
-
-          <Grid.Col span={{ base: 12, lg: 5 }}>
-            <Stack gap="sm">
-              {/* Plain words first. The earlier panel was one paragraph of
-                  internals (principals, pins, hash-chained artefacts)
-                  that answered a question a security reviewer asks, not the
-                  one a person about to connect has. */}
-              <Card padding="md">
-                <Text fw={600} size="sm" mb={SP.snug}>What happens when you connect</Text>
-                <Stack gap={SP.snug}>
-                  {(isRDPTarget
-                    ? [
-                        'Argus checks you are allowed on that server as that account.',
-                        "The server's own agent checks Argus's signature, then signs you in to Windows with the password you typed. Argus does not keep it.",
-                        'Nothing reaches the server except through the agent it enrolled, so nothing can pose as it.',
-                        'The agent records the whole desktop session on the server before you see any of it.',
-                      ]
-                    : [
-                        'Argus checks you are allowed on that server as that account.',
-                        "The server's own agent checks Argus's signature, then signs you in. No password or key is involved.",
-                        'Nothing reaches the server except through the agent it enrolled, so nothing can pose as it.',
-                        'The agent records the whole session on the server before you see any of it.',
-                      ]
-                  ).map((line) => (
-                    <Group key={line} gap={SP.cozy} wrap="nowrap" align="flex-start">
-                      <IconInfoCircle size={15} style={{ marginTop: 2, flexShrink: 0, opacity: 0.55 }} />
-                      <Text size={FS.body} c="dimmed" lh={1.5}>{line}</Text>
-                    </Group>
-                  ))}
-                </Stack>
-              </Card>
-
-              <Card style={{ borderStyle: 'dashed' }}>
-                <Group gap={SP.cozy} mb={SP.snug}>
-                  <ThemeIcon variant="light" color="teal" size={22} radius="sm">
-                    <IconShieldLock size={13} />
-                  </ThemeIcon>
-                  <Text fw={600} size="sm">This console is the only way in</Text>
-                </Group>
-                <Text size={FS.meta} c="dimmed" lh={1.5}>
-                  Terminals, desktops and file transfers all open from this page. ssh, scp
-                  and sftp straight to a server are refused, and a refused attempt is
-                  written to the audit log.
-                </Text>
-              </Card>
-
-            </Stack>
-          </Grid.Col>
-        </Grid>
+          </Box>
+          <Text size={FS.meta} c="dimmed" mt="sm" lh={1.5}>
+            Argus checks you may use this account, then the server&rsquo;s own agent opens the
+            session and records it. No password or key of the server is shown to you.
+          </Text>
+        </Box>
       </PageBody>
     </Box>
   )
 }
 
-/** One numbered decision. Makes the page a sequence rather than a wall of cards. */
-function Step({
-  n, icon: Icon, title, disabled = false, children,
-}: {
-  n: number
-  icon: typeof IconServer2
+/** The full-height middle of the page, for the one-card states. */
+function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <Center mih="calc(100dvh - var(--app-shell-header-offset, 60px))" p="md">
+      {children}
+    </Center>
+  )
+}
+
+/** One state of connecting, said in a sentence, with what to do next. */
+function StateCard({ icon, tone, title, body, children }: {
+  icon: React.ReactNode
+  tone: 'azure' | 'amber' | 'slate' | 'teal'
   title: string
-  disabled?: boolean
-  children: React.ReactNode
+  body: string
+  children?: React.ReactNode
 }) {
   return (
-    <Card style={disabled ? { opacity: 0.65 } : undefined}>
-      <Group gap={SP.cozy} mb="sm" wrap="nowrap">
-        <Center
-          w={22}
-          h={22}
-          style={{
-            borderRadius: 999,
-            border: '1px solid var(--color-line)',
-            background: 'var(--color-raised)',
-            flexShrink: 0,
-          }}
-        >
-          <Text size={FS.micro} fw={700} c={disabled ? 'dimmed' : 'azure.3'}>{n}</Text>
-        </Center>
-        <Icon size={14} opacity={0.6} />
-        <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>{title}</Text>
-      </Group>
-      {children}
-    </Card>
+    <Box className="argus-panel" p="xl" maw={480} w="100%" ta="center">
+      <Center mb="md">
+        <ThemeIcon size={56} radius="xl" color={tone} variant="light">{icon}</ThemeIcon>
+      </Center>
+      <Text component="h1" fw={600} size="xl" style={{ margin: 0 }}>{title}</Text>
+      <Text size="sm" c="dimmed" mt="xs" lh={1.6}>{body}</Text>
+      {children && <Group justify="center" mt="lg" gap="sm">{children}</Group>}
+    </Box>
   )
 }
 

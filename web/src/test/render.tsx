@@ -15,7 +15,7 @@ export function renderWithProviders(node: React.ReactNode) {
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
   return rtlRender(
-    <MantineProvider theme={theme} defaultColorScheme="dark" forceColorScheme="dark">
+    <MantineProvider theme={theme} defaultColorScheme="light" forceColorScheme="light">
       <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>
     </MantineProvider>,
   )

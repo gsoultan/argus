@@ -174,6 +174,30 @@ export interface AssetAssignment {
   grantedAt: ISOTime
 }
 
+/** One team's access to one asset. Same rules as a person's. */
+export interface TeamAssignment {
+  assetId: UUID
+  hostname: string
+  teamId: UUID
+  teamName: string
+  principals: string[]
+  grantedBy: string
+  grantedAt: ISOTime
+}
+
+/**
+ * A named group of people. A server given to a team is given to everyone in
+ * it, and leaving the team is the whole revocation.
+ */
+export interface Team {
+  id: UUID
+  name: string
+  members: string[]
+  servers: TeamAssignment[]
+  createdBy: string
+  createdAt: ISOTime
+}
+
 /**
  * What the console submits to create or edit an asset.
  *

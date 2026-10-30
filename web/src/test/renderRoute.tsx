@@ -42,7 +42,7 @@ export async function renderRoute(path: string) {
   await router.load()
 
   const result = render(
-    <MantineProvider theme={theme} defaultColorScheme="dark" forceColorScheme="dark">
+    <MantineProvider theme={theme} defaultColorScheme="light" forceColorScheme="light">
       <QueryClientProvider client={queryClient}>
         <Notifications position="bottom-right" limit={4} />
         {/* The generated tree's context type is not visible from here. */}

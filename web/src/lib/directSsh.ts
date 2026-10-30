@@ -9,12 +9,12 @@ export const DIRECT_SSH_CHOICES: { value: DirectSsh; label: string; description:
   {
     value: 'refuse',
     label: 'Refuse',
-    description: 'The agent turns the login away before anything runs, tells the person to use the console, and writes it to the audit log.',
+    description: 'The agent turns the login away before anything runs, tells the person to use the console, and writes it to Activity.',
   },
   {
     value: 'approve',
     label: 'Ask for approval',
-    description: 'The login waits at the terminal while an admin or approver approves or denies it on Access requests. Nobody answering in two minutes, or Argus being unreachable, refuses it.',
+    description: 'The login waits at the terminal while an admin or approver approves or denies it under Approvals. Nobody answering in two minutes, or Argus being unreachable, refuses it.',
   },
   {
     value: 'allow',

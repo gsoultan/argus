@@ -19,11 +19,23 @@ import {
   whoami,
   saveGatewayPolicy,
   terminateSession as terminateLive,
+  teams as liveTeams,
+  createTeam as liveCreateTeam,
+  renameTeam as liveRenameTeam,
+  deleteTeam as liveDeleteTeam,
+  addTeamMember as liveAddTeamMember,
+  removeTeamMember as liveRemoveTeamMember,
+  assetTeamAssignments,
+  setAssetTeamAssignment,
+  removeAssetTeamAssignment,
+  setAccountRole,
+  setAccountDisabled,
+  createAccount,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
-  FleetStats, GatewayPolicy, Session, User,
+  FleetStats, GatewayPolicy, Session, Team, TeamAssignment, User,
 } from '~/types/domain'
 
 /**
@@ -62,6 +74,30 @@ const db = {
   assignments: new Map<string, AssetAssignment[]>(),
   /** Nothing is held in the fixture: no agent is asking. */
   directLogins: [] as DirectLogin[],
+  teams: [
+    {
+      id: 'team-ops', name: 'Ops', members: ['a.wijaya@northwind.id', 'siti.n@northwind.id'],
+      servers: [], createdBy: 'dewi.p@northwind.id', createdAt: new Date(EPOCH - 30 * 86_400_000).toISOString(),
+    },
+    {
+      id: 'team-dev', name: 'Developers', members: ['kevin.tan@northwind.id'],
+      servers: [], createdBy: 'dewi.p@northwind.id', createdAt: new Date(EPOCH - 12 * 86_400_000).toISOString(),
+    },
+  ] as Team[],
+  /** assetId -> team assignments. */
+  teamAssignments: new Map<string, TeamAssignment[]>(),
+}
+
+/** The fixture's teams with their servers filled in from the assignment map. */
+function fixtureTeams(): Team[] {
+  const all = [...db.teamAssignments.values()].flat()
+  return db.teams.map((t) => ({ ...t, servers: all.filter((g) => g.teamId === t.id) }))
+}
+
+function fixtureTeam(id: string): Team {
+  const t = fixtureTeams().find((x) => x.id === id)
+  if (!t) throw new Error('no such team')
+  return t
 }
 
 /**
@@ -194,6 +230,42 @@ export const api = {
     return live.orFallback(live.users, async () => {
       await latency()
       return users
+    })
+  },
+
+  async setRole(email: string, role: User['role']): Promise<void> {
+    if (isConfigured()) {
+      await setAccountRole(email, role)
+      return
+    }
+    await latency(200)
+    const u = users.find((x) => x.email === email)
+    if (!u) throw new Error(`no account for ${email}`)
+    if (u.email === currentUser.email) throw new Error('you cannot change your own role; ask another administrator')
+    u.role = role
+  },
+
+  async setDisabled(email: string, disabled: boolean): Promise<void> {
+    if (isConfigured()) {
+      await setAccountDisabled(email, disabled)
+      return
+    }
+    await latency(200)
+    const u = users.find((x) => x.email === email)
+    if (!u) throw new Error(`no account for ${email}`)
+    u.disabled = disabled
+  },
+
+  async addAccount(input: { email: string; displayName: string; role: User['role']; password: string }): Promise<void> {
+    if (isConfigured()) {
+      await createAccount(input)
+      return
+    }
+    await latency(250)
+    if (users.some((u) => u.email === input.email.toLowerCase())) throw new Error(`${input.email} already has an account`)
+    users.push({
+      id: crypto.randomUUID(), email: input.email.toLowerCase(), displayName: input.displayName || input.email.split('@')[0]!,
+      role: input.role, mfaEnrolled: false, lastSeenAt: null,
     })
   },
 
@@ -334,6 +406,97 @@ export const api = {
       id,
       (db.assignments.get(id) ?? []).filter((g) => g.userEmail !== email),
     )
+  },
+
+  /* ── Teams ─────────────────────────────────────────────────────────── */
+
+  async teams(): Promise<Team[]> {
+    if (isConfigured()) return liveTeams()
+    await latency(100)
+    return fixtureTeams()
+  },
+
+  async createTeam(name: string, members: string[]): Promise<Team> {
+    if (isConfigured()) return liveCreateTeam(name, members)
+    await latency(250)
+    const clean = name.trim().replace(/\s+/g, ' ')
+    if (!clean) throw new Error('a team needs a name')
+    if (db.teams.some((t) => t.name.toLowerCase() === clean.toLowerCase())) {
+      throw new Error(`there is already a team called "${clean}"`)
+    }
+    const t: Team = {
+      id: crypto.randomUUID(), name: clean, members: [...new Set(members.map((m) => m.toLowerCase()))],
+      servers: [], createdBy: currentUser.email, createdAt: new Date().toISOString(),
+    }
+    db.teams.push(t)
+    return fixtureTeam(t.id)
+  },
+
+  async renameTeam(id: string, name: string): Promise<Team> {
+    if (isConfigured()) return liveRenameTeam(id, name)
+    await latency(200)
+    const t = db.teams.find((x) => x.id === id)
+    if (!t) throw new Error('no such team')
+    t.name = name.trim()
+    return fixtureTeam(id)
+  },
+
+  async deleteTeam(id: string): Promise<void> {
+    if (isConfigured()) return liveDeleteTeam(id)
+    await latency(200)
+    db.teams = db.teams.filter((t) => t.id !== id)
+    for (const [k, v] of db.teamAssignments) db.teamAssignments.set(k, v.filter((g) => g.teamId !== id))
+  },
+
+  async addTeamMember(id: string, email: string): Promise<Team> {
+    if (isConfigured()) return liveAddTeamMember(id, email)
+    await latency(200)
+    const t = db.teams.find((x) => x.id === id)
+    if (!t) throw new Error('no such team')
+    const e = email.trim().toLowerCase()
+    if (!t.members.includes(e)) t.members = [...t.members, e].sort()
+    return fixtureTeam(id)
+  },
+
+  async removeTeamMember(id: string, email: string): Promise<Team> {
+    if (isConfigured()) return liveRemoveTeamMember(id, email)
+    await latency(200)
+    const t = db.teams.find((x) => x.id === id)
+    if (!t) throw new Error('no such team')
+    t.members = t.members.filter((m) => m !== email)
+    return fixtureTeam(id)
+  },
+
+  async teamAssignments(assetId: string): Promise<TeamAssignment[]> {
+    if (isConfigured()) return assetTeamAssignments(assetId)
+    await latency(100)
+    return db.teamAssignments.get(assetId) ?? []
+  },
+
+  async setTeamAssignment(assetId: string, teamId: string, principals: string[]): Promise<TeamAssignment[]> {
+    if (isConfigured()) return setAssetTeamAssignment(assetId, teamId, principals)
+    await latency(250)
+    const asset = db.assets.find((a) => a.id === assetId)
+    const team = db.teams.find((t) => t.id === teamId)
+    if (!asset) throw new Error('asset not found')
+    if (!team) throw new Error('no such team')
+    const unknown = principals.find((p) => !asset.principals.includes(p))
+    if (unknown) {
+      throw new Error(`${asset.hostname} does not permit the principal "${unknown}"; add it to the asset first`)
+    }
+    const rest = (db.teamAssignments.get(assetId) ?? []).filter((g) => g.teamId !== teamId)
+    const next = principals.length === 0 ? rest : [...rest, {
+      assetId, hostname: asset.hostname, teamId, teamName: team.name, principals,
+      grantedBy: currentUser.email, grantedAt: new Date().toISOString(),
+    }]
+    db.teamAssignments.set(assetId, next)
+    return next
+  },
+
+  async removeTeamAssignment(assetId: string, teamId: string): Promise<void> {
+    if (isConfigured()) return removeAssetTeamAssignment(assetId, teamId)
+    await latency(200)
+    db.teamAssignments.set(assetId, (db.teamAssignments.get(assetId) ?? []).filter((g) => g.teamId !== teamId))
   },
 
   /** Pin the currently-presented host key. The MITM's most important control. */

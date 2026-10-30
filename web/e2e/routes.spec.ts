@@ -2,18 +2,20 @@ import { test, expect } from '@playwright/test'
 import { watchErrors } from './helpers'
 
 const ROUTES: Array<[string, string]> = [
-  ['/', 'Overview'],
-  ['/sessions', 'Sessions'],
+  ['/', 'Servers'],
+  ['/sessions', 'Activity'],
   ['/assets', 'Servers'],
-  ['/assets/add', 'Add a server'],
-  ['/requests', 'Access requests'],
-  ['/audit', 'Audit log'],
-  ['/users', 'Users & roles'],
+  ['/assets/add', 'Add server'],
+  ['/approvals', 'Approvals'],
+  ['/audit', 'Activity'],
+  ['/teams', 'Teams'],
   ['/settings', 'Settings'],
-  ['/coverage', 'Coverage'],
   ['/connect', 'Connect'],
-  // The old address of My servers, now part of Servers.
+  // Old addresses, kept working: My servers, Overview's Coverage, Requests, Users.
   ['/mine', 'Servers'],
+  ['/coverage', 'Servers'],
+  ['/requests', 'Approvals'],
+  ['/users', 'Teams'],
 ]
 
 for (const [path, heading] of ROUTES) {
@@ -62,7 +64,7 @@ test('the audit chain verifies in the browser', async ({ page }) => {
 })
 
 test('no status badge is ever truncated', async ({ page }) => {
-  for (const path of ['/', '/sessions', '/assets', '/assets?view=manage']) {
+  for (const path of ['/assets', '/sessions', '/approvals', '/teams?tab=people']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     const clipped = await page.evaluate(() =>
@@ -89,7 +91,7 @@ test('no status badge is ever truncated', async ({ page }) => {
  */
 test('striped rows are a wash rather than a fill', async ({ page }) => {
   await page.goto('/sessions')
-  await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible()
 
   const alpha = await page.evaluate(() => {
     const rows = [...document.querySelectorAll('tbody tr')]

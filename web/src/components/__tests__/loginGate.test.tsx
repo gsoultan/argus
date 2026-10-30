@@ -18,7 +18,7 @@ async function renderGate() {
   const { Shell } = await import('~/components/Shell')
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MantineProvider theme={theme} defaultColorScheme="dark" forceColorScheme="dark">
+    <MantineProvider theme={theme} defaultColorScheme="light" forceColorScheme="light">
       <QueryClientProvider client={qc}>
         <Shell>
           <div>the console</div>

@@ -37,7 +37,7 @@ export function Logo({ markOnly = false, size = 26 }: { markOnly?: boolean; size
       <LogoMark size={size} />
       {!markOnly && (
         <Box>
-          <Text fw={600} size={rem(15)} lh={1.1} c="slate.0">
+          <Text fw={600} size={rem(15)} lh={1.1} c="slate.9">
             Argus
           </Text>
           <Text size={FS.micro} c="dimmed" lh={1.3}>

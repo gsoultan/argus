@@ -174,7 +174,7 @@ function SetupForm({ tokenFile, onCreated }: {
           <Alert color="sky" variant="light" icon={<IconShieldLock size={16} />} p="xs">
             <Text size="xs">Read it on the host:</Text>
             <Group gap={6} mt={4} wrap="nowrap">
-              <Text size={FS.digest} ff="monospace" c="slate.2" style={{ wordBreak: 'break-all' }}>
+              <Text size={FS.digest} ff="monospace" c="slate.7" style={{ wordBreak: 'break-all' }}>
                 {command}
               </Text>
               <CopyButton value={command} timeout={1200}>
@@ -320,7 +320,7 @@ function NotOffered() {
         could not write its setup token (its log says which). Create the first account on
         the host instead:
       </Text>
-      <Text size={FS.digest} ff="monospace" mt={6} c="slate.2">
+      <Text size={FS.digest} ff="monospace" mt={6} c="slate.7">
         argus-control users add you@example.com --role admin
       </Text>
     </Alert>

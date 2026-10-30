@@ -2,15 +2,16 @@ import { screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderRoute } from '~/test/renderRoute'
 import { api } from '~/lib/api'
-import { currentUser } from '~/lib/seed'
+import { assets, currentUser } from '~/lib/seed'
 import type { User } from '~/types/domain'
 
 /**
- * The inventory is an administrator's to edit, and an operator's to be given.
+ * Servers are an administrator's to add and give out, and everyone else's to
+ * be given.
  *
- * Both halves matter. A console that offers an operator an "Add by hand" button
- * the control plane will refuse is lying about what they can do; a console that
- * shows an operator every host in the fleet has handed them the map whether or
+ * Both halves matter. A console that offers a member an Add server button the
+ * control plane will refuse is lying about what they can do; a console that
+ * shows a member every host in the fleet has handed them the map whether or
  * not the buttons work.
  */
 
@@ -22,59 +23,49 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('who may edit the inventory', () => {
-  // The longer timeout is for the first render in this file, which pays for
-  // loading the Servers page and Mantine's modal code; on CI that alone took
-  // most of the default five seconds.
-  it('offers an administrator a way to add a host', async () => {
+describe('who may add and manage servers', () => {
+  it('offers an administrator Add server, and each server’s page', async () => {
     signedInAs('admin')
-    await renderRoute('/assets?view=manage')
-    expect(await screen.findByRole('button', { name: /add by hand/i })).toBeInTheDocument()
+    await renderRoute('/assets')
+    expect(await screen.findByRole('link', { name: /add server/i })).toHaveAttribute('href', '/assets/add')
+    expect((await screen.findAllByRole('link', { name: /^Manage / })).length).toBeGreaterThan(0)
   }, 15_000)
 
-  // The inventory is not an operator's view at all: even asked for by
-  // address, they get the cards of their own servers, not a read-only table.
-  it('shows an operator their own servers instead', async () => {
+  it('gives a member Connect and nothing to manage', async () => {
     signedInAs('operator')
-    await renderRoute('/assets?view=manage&agent=absent')
+    await renderRoute('/assets')
     expect(await screen.findByRole('textbox', { name: 'Find a server' })).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText(/filter by hostname/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /add by hand/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /add server/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Manage / })).not.toBeInTheDocument()
   })
 
-  // An auditor answers "who can reach this host", so the panel is theirs to
-  // read -- and nothing on the page is theirs to change.
-  it('lets an auditor see who is assigned but not edit', async () => {
+  // An auditor reads the fleet; nothing on the page is theirs to change.
+  it('gives a viewer the servers without the buttons that change them', async () => {
     signedInAs('auditor')
-    await renderRoute('/assets?view=manage')
-    // Waits for a row rather than the heading: the actions are per host, so
-    // asserting before the fixture resolves would pass for the wrong reason.
-    const seeWhoCan = await screen.findAllByLabelText(/^Who can reach/)
-    expect(seeWhoCan.length).toBeGreaterThan(0)
-    expect(screen.queryByLabelText(/^Edit /)).not.toBeInTheDocument()
+    await renderRoute('/assets')
+    expect(await screen.findByText(/every server in argus/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /add server/i })).not.toBeInTheDocument()
   })
 })
 
-describe('what the pages say they are about', () => {
-  it('frames the Overview as the fleet for an administrator', async () => {
+describe('a server’s page', () => {
+  const host = assets.find((a) => a.principals.length > 0)!
+
+  it('says who can connect, with admins always first', async () => {
     signedInAs('admin')
-    await renderRoute('/')
-    expect(await screen.findByText(/fleet posture/i)).toBeInTheDocument()
-  })
+    await renderRoute(`/assets/${host.id}`)
+    expect(await screen.findByText('Who can connect')).toBeInTheDocument()
+    expect(screen.getByText('Always, as any account')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add team or person/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^remove$/i })).toBeInTheDocument()
+  }, 15_000)
 
-  // Fleet posture is the wrong page to open on for someone who was only given
-  // servers: they land on the servers instead.
-  it('sends an operator to their own servers', async () => {
-    signedInAs('operator')
-    await renderRoute('/')
-    expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
-    expect(screen.queryByText(/fleet posture/i)).not.toBeInTheDocument()
-  })
-
-  it('keeps an operator on Servers rather than the session log', async () => {
-    signedInAs('operator')
-    await renderRoute('/sessions')
-    expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
+  it('shows a viewer who can connect without the buttons', async () => {
+    signedInAs('auditor')
+    await renderRoute(`/assets/${host.id}`)
+    expect(await screen.findByText('Who can connect')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add team or person/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^remove$/i })).not.toBeInTheDocument()
   })
 })
 
@@ -82,10 +73,8 @@ describe('connecting with nothing assigned', () => {
   it('says so, rather than showing an empty search box', async () => {
     signedInAs('operator')
     vi.spyOn(api, 'assets').mockResolvedValue([])
-    await renderRoute('/connect')
-    const alert = await screen.findByText(/no hosts are assigned to you/i)
-    // And says what to do about it. A dead form with no next step is a support
-    // ticket rather than a control.
-    expect(alert.closest('.mantine-Alert-root')).toHaveTextContent(/access request/i)
+    await renderRoute('/assets')
+    expect(await screen.findByText(/no servers have been given to you yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/ask your admin/i)).toBeInTheDocument()
   })
 })

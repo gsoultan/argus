@@ -11,7 +11,7 @@ import {
   ignoreHost,
   isConfigured,
 } from '~/lib/live'
-import type { AccessRequest, AssetInput, DirectSsh, Session } from '~/types/domain'
+import type { AccessRequest, AssetInput, DirectSsh, Session, User } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -282,5 +282,106 @@ export function useRemoveAssignment() {
     mutationFn: (v: { assetId: string; email: string }) =>
       api.removeAssignment(v.assetId, v.email),
     onSuccess: () => invalidateInventory(qc),
+  })
+}
+
+/* ── Teams ───────────────────────────────────────────────────────────────── */
+
+export const teamsQuery = () => queryOptions({ queryKey: ['teams'], queryFn: api.teams })
+
+export const teamAssignmentsQuery = (assetId: string) =>
+  queryOptions({
+    queryKey: ['team-assignments', assetId],
+    queryFn: () => api.teamAssignments(assetId),
+  })
+
+/** Teams change who reaches which server, so the inventory refreshes with them. */
+function invalidateTeams(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ['teams'] })
+  void qc.invalidateQueries({ queryKey: ['team-assignments'] })
+  invalidateInventory(qc)
+}
+
+export function useCreateTeam() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { name: string; members: string[] }) => api.createTeam(v.name, v.members),
+    onSuccess: () => invalidateTeams(qc),
+  })
+}
+
+export function useRenameTeam() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; name: string }) => api.renameTeam(v.id, v.name),
+    onSuccess: () => invalidateTeams(qc),
+  })
+}
+
+export function useDeleteTeam() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteTeam(id),
+    onSuccess: () => invalidateTeams(qc),
+  })
+}
+
+export function useAddTeamMember() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; email: string }) => api.addTeamMember(v.id, v.email),
+    onSuccess: () => invalidateTeams(qc),
+  })
+}
+
+export function useRemoveTeamMember() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; email: string }) => api.removeTeamMember(v.id, v.email),
+    onSuccess: () => invalidateTeams(qc),
+  })
+}
+
+export function useSetTeamAssignment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { assetId: string; teamId: string; principals: string[] }) =>
+      api.setTeamAssignment(v.assetId, v.teamId, v.principals),
+    onSuccess: () => invalidateTeams(qc),
+  })
+}
+
+export function useRemoveTeamAssignment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { assetId: string; teamId: string }) =>
+      api.removeTeamAssignment(v.assetId, v.teamId),
+    onSuccess: () => invalidateTeams(qc),
+  })
+}
+
+/* ── People ──────────────────────────────────────────────────────────────── */
+
+export function useSetRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { email: string; role: User['role'] }) => api.setRole(v.email, v.role),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useSetDisabled() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { email: string; disabled: boolean }) => api.setDisabled(v.email, v.disabled),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useAddAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.addAccount,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
   })
 }
