@@ -352,7 +352,7 @@ const RISK_LABEL: Record<RiskFlag, string> = {
   'no-network-level-auth':
     'TLS without CredSSP — the user met the host’s own logon screen through the tunnel, unauthenticated until they typed something',
   'graphics-pipeline':
-    'Drawn with the graphics pipeline (H.264). The recording holds every frame, but this console cannot replay it yet',
+    'Drawn with the graphics pipeline (H.264). Replay decodes it in the browser, as the session did, so it needs one that decodes H.264',
 }
 
 export function RiskFlags({ flags }: { flags: RiskFlag[] }) {

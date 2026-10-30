@@ -34,6 +34,10 @@ type ReplayInfo struct {
 	Timestamp int64  `json:"timestamp"`
 	// DurationMS is the timestamp of the last frame.
 	DurationMS int `json:"durationMs"`
+	// Graphics says the session drew through the graphics pipeline, whose
+	// commands the replay carries as they were sent, for the browser to
+	// decode as it did live.
+	Graphics bool `json:"graphics,omitempty"`
 }
 
 // DecodeRecording reads a recording and writes replay frames to w.
@@ -63,6 +67,7 @@ func DecodeRecording(r io.Reader, w io.Writer) (ReplayInfo, error) {
 	}
 
 	rea := NewReassembler()
+	gfx := replayGraphics{channel: header.Graphics}
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
@@ -92,6 +97,16 @@ func DecodeRecording(r io.Reader, w io.Writer) (ReplayInfo, error) {
 			info.DurationMS = ms
 		}
 
+		if cmds, ok := gfx.feed(pdu); ok {
+			info.Graphics = true
+			for _, raw := range cmds {
+				if err := writeReplay(w, ms, EncodeGraphics(raw)); err != nil {
+					return info, err
+				}
+			}
+			continue
+		}
+
 		// The same decoder the live path calls, not a second one that could
 		// disagree with it about what a session showed.
 		rects, err := DecodePDU(rea, pdu)
@@ -102,13 +117,88 @@ func DecodeRecording(r io.Reader, w io.Writer) (ReplayInfo, error) {
 			continue
 		}
 		for _, rect := range rects {
-			out := make([]byte, ReplayFrameHeader, ReplayFrameHeader+FrameHeaderSize+len(rect.Pixels))
-			binary.LittleEndian.PutUint32(out, uint32(ms))
-			out = append(out, EncodeRect(rect)...)
-			if _, werr := w.Write(out); werr != nil {
-				return info, werr
+			if err := writeReplay(w, ms, EncodeRect(rect)); err != nil {
+				return info, err
 			}
 		}
 	}
 	return info, sc.Err()
+}
+
+// writeReplay writes display frames, each behind the timestamp they were
+// received at.
+func writeReplay(w io.Writer, ms int, frames []byte) error {
+	for len(frames) >= FrameHeaderSize {
+		size := frameSize(frames)
+		if size > len(frames) {
+			return fmt.Errorf("replay frame of %d bytes runs past %d", size, len(frames))
+		}
+		var at [ReplayFrameHeader]byte
+		binary.LittleEndian.PutUint32(at[:], uint32(ms))
+		if _, err := w.Write(at[:]); err != nil {
+			return err
+		}
+		if _, err := w.Write(frames[:size]); err != nil {
+			return err
+		}
+		frames = frames[size:]
+	}
+	return nil
+}
+
+// frameSize is the whole size of the display frame at the start of f.
+func frameSize(f []byte) int {
+	switch f[0] {
+	case FrameGraphics, FrameGraphicsPart:
+		return FrameHeaderSize + int((binary.LittleEndian.Uint32(f[4:8])+3)&^3)
+	}
+	w := int(binary.LittleEndian.Uint16(f[6:8]))
+	h := int(binary.LittleEndian.Uint16(f[8:10]))
+	return FrameHeaderSize + w*h*4
+}
+
+// replayGraphics finds the graphics pipeline in a recording: drdynvc's
+// channel, followed as the live client followed it.
+type replayGraphics struct {
+	// channel is drdynvc's, from the header. Recordings made before the
+	// header said have it found instead, as the channel that opens with the
+	// dynamic channel protocol's first message.
+	channel uint16
+	ch      graphicsChannel
+	// broken stops following a channel that stopped making sense, since its
+	// decompressor's history is lost from that point on.
+	broken bool
+}
+
+// feed reports whether the PDU was on drdynvc, and the graphics commands it
+// completed.
+func (g *replayGraphics) feed(pdu []byte) ([][]byte, bool) {
+	if len(pdu) == 0 || pdu[0]&actionMask != actionX224 {
+		return nil, false
+	}
+	ch, payload, err := ParseSendDataIndication(pdu)
+	if err != nil || ch == ChannelGlobal || (g.channel != 0 && ch != g.channel) {
+		return nil, false
+	}
+	if g.channel == 0 {
+		if len(payload) < 9 || payload[8]>>4 != dvcCapability {
+			return nil, false
+		}
+		g.channel = ch
+	}
+	if g.broken {
+		return nil, true
+	}
+	if g.ch.zgfx == nil {
+		g.ch.zgfx = NewDecompressor()
+	}
+	_, pdus, err := g.ch.feed(payload)
+	if err != nil {
+		g.broken = true
+	}
+	cmds := make([][]byte, 0, len(pdus))
+	for _, p := range pdus {
+		cmds = append(cmds, p.Raw)
+	}
+	return cmds, true
 }

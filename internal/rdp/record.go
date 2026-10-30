@@ -49,13 +49,17 @@ const (
 
 // Header is the first line of a recording.
 type Header struct {
-	Version   int               `json:"version"`
-	Width     int               `json:"width"`
-	Height    int               `json:"height"`
-	Timestamp int64             `json:"timestamp"`
-	Title     string            `json:"title,omitempty"`
-	Protocol  string            `json:"protocol,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
+	Version   int    `json:"version"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	Timestamp int64  `json:"timestamp"`
+	Title     string `json:"title,omitempty"`
+	Protocol  string `json:"protocol,omitempty"`
+	// Graphics is the MCS channel of drdynvc, which the graphics pipeline
+	// rides on, when the session asked for the pipeline. Replay follows that
+	// channel to draw what the pipeline drew.
+	Graphics uint16            `json:"graphics,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
 }
 
 // Recorder serialises an RDP session under a tamper-evident hash chain.

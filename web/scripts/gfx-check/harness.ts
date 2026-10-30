@@ -9,6 +9,7 @@
 import { Avc444Gl, combineV2, rgb, splitV2 } from '../../src/lib/avc444'
 import { FRAME_GRAPHICS, FRAME_GRAPHICS_PART, PartJoiner } from '../../src/lib/gfx'
 import { GraphicsRenderer } from '../../src/lib/gfxRenderer'
+import { ReplayPlayer } from '../../src/lib/rdpReplay'
 
 const FRAME_BITMAP = 1
 const FRAME_READY = 3
@@ -40,8 +41,12 @@ export interface CheckResult {
   colours: number
 }
 
+/** The capture decodeCapture last drew, for replayCapture to replay. */
+let captured: ArrayBuffer | null = null
+
 async function decodeCapture(url: string): Promise<CheckResult> {
   const buf = await (await fetch(url)).arrayBuffer()
+  captured = buf
   const canvas = document.getElementById('screen') as HTMLCanvasElement
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('no 2D canvas')
@@ -191,11 +196,118 @@ async function compareTruth(url: string): Promise<{ full: number; at420: number 
   return { full: full / (w * h * 3), at420: at420 / (w * h * 3) }
 }
 
+export interface ReplayResult {
+  frames: number
+  durationMs: number
+  graphics: boolean
+  pictures: number
+  failures: number
+  gpuLost: boolean
+  /** Distinct colours on the replayed screen at the end, up to 4096. */
+  colours: number
+  /** The largest difference in any channel between playing straight through and seeking back. */
+  reseekDiff: number
+  /** The mean difference per channel from the screen decodeCapture drew. */
+  liveDiff: number
+}
+
+/**
+ * Plays a replay (the control plane's, or one made from the capture, a
+ * message every 40 ms) with the console's player: straight through in eight
+ * windows, then again after seeking back to the middle, which starts over.
+ * Both ends should show the same screen, and the screen decodeCapture drew.
+ */
+async function replayCapture(url: string | null): Promise<ReplayResult> {
+  const live = document.getElementById('screen') as HTMLCanvasElement
+  const { width, height } = live
+  const buffer = url ? await (await fetch(url)).arrayBuffer() : replayOf(captured!)
+  const player = new ReplayPlayer(buffer, width, height)
+  const canvas = new OffscreenCanvas(width, height)
+  const ctx = canvas.getContext('2d')!
+  const play = async (from: number, to: number) => {
+    for (const r of await player.window(from, to)) {
+      ctx.drawImage(r.bitmap, r.x, r.y)
+      r.bitmap.close()
+    }
+  }
+  const d = player.durationMs
+  for (let i = 0, from = 0; i < 8; i++) {
+    const to = Math.round((d * (i + 1)) / 8)
+    await play(from, to)
+    from = to
+  }
+  const straight = ctx.getImageData(0, 0, width, height).data
+  // Cleared, as the console clears its canvas on seeking back.
+  ctx.clearRect(0, 0, width, height)
+  await play(0, Math.round(d / 2))
+  await play(Math.round(d / 2), d)
+  const reseek = ctx.getImageData(0, 0, width, height).data
+  const shown = live.getContext('2d')!.getImageData(0, 0, width, height).data
+
+  let reseekDiff = 0
+  let liveDiff = 0
+  const colours = new Set<number>()
+  for (let i = 0; i < straight.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      reseekDiff = Math.max(reseekDiff, Math.abs((straight[i + c] ?? 0) - (reseek[i + c] ?? 0)))
+      liveDiff += Math.abs((straight[i + c] ?? 0) - (shown[i + c] ?? 0))
+    }
+    if (i % 28 === 0 && colours.size < 4096) {
+      colours.add(((straight[i] ?? 0) << 16) | ((straight[i + 1] ?? 0) << 8) | (straight[i + 2] ?? 0))
+    }
+  }
+  const stats = player.stats
+  player.close()
+  return {
+    frames: player.entries.length,
+    durationMs: d,
+    graphics: player.graphics,
+    pictures: stats?.pictures ?? 0,
+    failures: stats?.failures ?? 0,
+    gpuLost: stats?.gpuLost ?? false,
+    colours: colours.size,
+    reseekDiff,
+    liveDiff: liveDiff / (width * height * 3),
+  }
+}
+
+/** A replay of a capture's graphics frames, each message 40 ms after the last. */
+function replayOf(buf: ArrayBuffer): ArrayBuffer {
+  const out: Uint8Array[] = []
+  const all = new DataView(buf)
+  let ms = 0
+  for (let m = 0; m + 4 <= buf.byteLength; ms += 40) {
+    const length = all.getUint32(m, true)
+    const start = m + 4
+    m = start + length
+    const view = new DataView(buf, start, length)
+    for (let at = 0; at + HEADER <= length; ) {
+      const kind = view.getUint8(at)
+      if (kind !== FRAME_GRAPHICS && kind !== FRAME_GRAPHICS_PART) break
+      const size = HEADER + ((view.getUint32(at + 4, true) + 3) & ~3)
+      const entry = new Uint8Array(4 + size)
+      new DataView(entry.buffer).setUint32(0, ms, true)
+      entry.set(new Uint8Array(buf, start + at, size), 4)
+      out.push(entry)
+      at += size
+    }
+  }
+  const joined = new Uint8Array(out.reduce((n, e) => n + e.length, 0))
+  let at = 0
+  for (const e of out) {
+    joined.set(e, at)
+    at += e.length
+  }
+  return joined.buffer
+}
+
 const w = window as unknown as {
   decodeCapture: typeof decodeCapture
   checkCombiner: typeof checkCombiner
   compareTruth: typeof compareTruth
+  replayCapture: typeof replayCapture
 }
 w.decodeCapture = decodeCapture
 w.checkCombiner = checkCombiner
 w.compareTruth = compareTruth
+w.replayCapture = replayCapture

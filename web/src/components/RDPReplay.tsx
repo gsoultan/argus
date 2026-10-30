@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge, Box, Group, Loader, Text } from '@mantine/core'
 import { PlayerControls } from '~/components/PlayerControls'
+import { canDecodeH264 } from '~/lib/gfx'
 import type { ReplayResponse } from '~/workers/rdpreplay.worker'
 
 export interface RDPReplayProps {
@@ -76,6 +77,13 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
         case 'loaded':
           setDurationMs(m.durationMs)
           setReady(true)
+          if (m.graphics) {
+            // Drawn with H.264, which this browser's own decoder has to
+            // play back, as it did live.
+            void canDecodeH264().then((ok) => {
+              if (!ok) setError('this session was drawn in H.264, which this browser cannot decode')
+            })
+          }
           break
         case 'rects': {
           inFlight.current = false
@@ -103,7 +111,7 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
     }
 
     // Transferred: the main thread gives up the buffer entirely.
-    worker.postMessage({ type: 'load', buffer }, [buffer])
+    worker.postMessage({ type: 'load', buffer, width, height }, [buffer])
 
     return () => {
       worker.terminate()

@@ -49,13 +49,10 @@ type Client struct {
 	wmu sync.Mutex
 
 	// The graphics pipeline, when it was asked for.
-	graphics    func(GraphicsPDU)
-	dynvc       uint16 // MCS channel of drdynvc
-	static      staticChannel
-	dynamic     dynamicChannels
-	zgfx        *Decompressor
-	gfxDecoded  uint32
-	gfxMessages int
+	graphics   func(GraphicsPDU)
+	dynvc      uint16 // MCS channel of drdynvc
+	gfx        graphicsChannel
+	gfxDecoded uint32
 }
 
 // ClientConfig configures a session.
@@ -112,7 +109,7 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 	}
 	if c.graphics != nil {
 		c.depth = 32
-		c.zgfx = NewDecompressor()
+		c.gfx.zgfx = NewDecompressor()
 	}
 
 	// A server that stops answering mid-sequence would otherwise hold the
@@ -372,14 +369,7 @@ func (c *Client) NextBitmaps() ([]Bitmap, error) {
 // virtual follows drdynvc, answering what it must and handing graphics
 // commands to the caller.
 func (c *Client) virtual(pdu []byte) error {
-	msg, err := c.static.feed(pdu)
-	if err != nil || msg == nil {
-		return err
-	}
-	ev, err := c.dynamic.handle(msg)
-	if err != nil {
-		return err
-	}
+	ev, pdus, err := c.gfx.feed(pdu)
 	if ev.note != "" {
 		c.log.Info("rdp graphics: "+ev.note, "opened", ev.opened)
 	}
@@ -394,18 +384,9 @@ func (c *Client) virtual(pdu []byte) error {
 			return err
 		}
 	}
-	if ev.data == nil {
-		return nil
-	}
-	if c.gfxMessages == 0 {
+	if ev.data != nil && c.gfx.messages == 1 {
 		c.log.Info("rdp graphics: the first message arrived on the graphics channel", "bytes", len(ev.data))
 	}
-	c.gfxMessages++
-	plain, err := c.zgfx.Decompress(ev.data)
-	if err != nil {
-		return err
-	}
-	pdus, err := ParseGraphics(plain)
 	if err != nil {
 		return err
 	}
@@ -425,8 +406,13 @@ func (c *Client) virtual(pdu []byte) error {
 	return nil
 }
 
+// GraphicsChannel is the MCS channel the graphics pipeline rides on, inside
+// drdynvc, or zero when it was not asked for. A recording needs it to find
+// the pipeline again.
+func (c *Client) GraphicsChannel() uint16 { return c.dynvc }
+
 func (c *Client) writeGraphics(msg []byte) error {
-	for _, m := range dvcMessages(c.dynamic.graphics, c.dynamic.cbID, msg) {
+	for _, m := range dvcMessages(c.gfx.dynamic.graphics, c.gfx.dynamic.cbID, msg) {
 		if err := c.writeVirtual(m); err != nil {
 			return err
 		}

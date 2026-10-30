@@ -73,6 +73,9 @@ type DesktopInfo struct {
 	// Graphics collects the graphics pipeline's commands as the client reads
 	// them, when the browser asked for the pipeline. Nil means bitmaps.
 	Graphics *GraphicsSink
+	// GraphicsChannel is the channel the pipeline rides on, which the
+	// recording's header keeps so replay can find it.
+	GraphicsChannel uint16
 }
 
 // GraphicsSink holds graphics commands read but not yet sent, as display
@@ -177,6 +180,7 @@ func Desktop(cfg DesktopConfig) TunnelService {
 			Width: width, Height: height,
 			Title:    g.Principal + "@" + cfg.Hostname,
 			Protocol: rdp.ProtocolName(info.Protocol),
+			Graphics: info.GraphicsChannel,
 		}, desktopFlags(info), hangup)
 		if err != nil {
 			// Nothing was shown: the first screen update is read after this.
@@ -210,8 +214,8 @@ func desktopFlags(info DesktopInfo) []string {
 		flags = append(flags, "legacy-credssp-binding")
 	}
 	if info.Graphics != nil {
-		// Recorded whole, but the console's replay does not draw the
-		// graphics pipeline yet.
+		// Recorded whole and replayed by the browser's decoder, so replay
+		// needs a browser that decodes H.264, as the session did.
 		flags = append(flags, "graphics-pipeline")
 	}
 	if info.Protocol == rdp.ProtocolSSL {
@@ -288,6 +292,7 @@ func connectDesktop(cfg DesktopConfig, principal string, open tunnel.DesktopOpen
 		_ = conn.Close()
 		return nil, DesktopInfo{}, err
 	}
+	info.GraphicsChannel = client.GraphicsChannel()
 	return client, info, nil
 }
 

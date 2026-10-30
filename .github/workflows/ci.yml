@@ -290,6 +290,7 @@ jobs:
           go build -o "$tmp/argus-agent.exe" ./cmd/argus-agent
           go build -o "$tmp/termdrill.exe" ./scripts/tools/termdrill
           go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
+          go build -o "$tmp/replaydump.exe" ./scripts/tools/replaydump
           go run ./scripts/tools/gencerts "$tmp"
           # The Windows "chmod 600", which the control plane checks for.
           icacls "$(cygpath -w "$tmp/server.key")" /inheritance:r /grant:r "$USERNAME:R" \
@@ -472,6 +473,16 @@ jobs:
               cat "$tmp/capture.err"; tail -40 "$log"; tail -40 "$tmp/control.log"
               echo "::error::the graphics pipeline did not come through the agent"; exit 1; }
           cat "$tmp/capture.err"
+          # The same session as the agent recorded it, turned into the
+          # replay the control plane would serve, for Chrome to play next.
+          gsid=$(sed -n 's/^session=//p' "$tmp/capture.err" | tr -d '\r')
+          for i in $(seq 1 30); do
+            st=$(psql "$PGURL" -tAc "SELECT state FROM sessions WHERE id = '$gsid'::uuid")
+            [ "$st" = closed ] && break
+            sleep 1
+          done
+          "$tmp/replaydump.exe" "/c/ProgramData/Argus/recordings/$gsid.argusrdp" \
+            measure/graphics.replay || { echo "::error::the graphics session's recording did not replay"; exit 1; }
 
           # The same busy screen straight from Windows, with bitmap updates
           # and with the graphics pipeline, so the H.264 path is measured
@@ -511,7 +522,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile
           bun build scripts/gfx-check/harness.ts --outfile ../measure/harness.js --target browser
-          node scripts/gfx-check/run.mjs ../measure/graphics.capture ../measure
+          GFX_REPLAY=../measure/graphics.replay node scripts/gfx-check/run.mjs ../measure/graphics.capture ../measure
           jq -r '"### The Windows desktop in H.264, decoded in Chrome \(.browser)",
             "", "| | |", "|---|---|",
             "| Size | \(.width)x\(.height) |",
@@ -520,6 +531,7 @@ jobs:
             "| Put together in full colour | \(.combined)\(if .gpuLost then " (the GPU context was lost; drawn on the CPU, then at 4:2:0)" else " on the GPU" end) |",
             "| Colour space, as Chrome read it | `\(.colourSpace)` |",
             "| Codecs not drawn | \(.unknownCodecs | map(tostring) | join(", ") | if . == "" then "none" else . end) |",
+            "| Replayed from the agent'"'"'s recording | \(.replay.frames) frames over \(.replay.durationMs / 1000 | floor) s, \(.replay.pictures) pictures, \(.replay.failures) decoder failures; seeking back ended \(if .replay.reseekDiff == 0 then "on the same screen" else "up to \(.replay.reseekDiff) apart" end); \(.replay.liveDiff * 100 | floor / 100) per channel from the live screen |",
             "", "The last screen is desktop.png in the desktop-measure artifact."' \
             ../measure/result.json >> "$GITHUB_STEP_SUMMARY"
 

@@ -151,3 +151,142 @@ func TestOneBadFrameDoesNotStopTheReplay(t *testing.T) {
 		t.Error("a single bad frame suppressed the whole replay")
 	}
 }
+
+// serverOnDrdynvc wraps a drdynvc message as the server sends it: in static
+// channel chunks, each in a send data indication on the channel.
+func serverOnDrdynvc(t *testing.T, channel uint16, msg []byte) [][]byte {
+	t.Helper()
+	var out [][]byte
+	for _, pdu := range channelPDUs(msg) {
+		frame := SendDataRequest(1007, channel, pdu)
+		inner, err := Payload(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inner[3] = mcsSendDataIndication << 2
+		out = append(out, frame)
+	}
+	return out
+}
+
+// graphicsRecording records a session that drew through the graphics
+// pipeline: drdynvc opening the channel, then commands, the second large
+// enough to span several static channel chunks and dynamic channel PDUs.
+func graphicsRecording(t *testing.T, header Header) (string, [][]byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	rec, err := NewRecorder(&buf, header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const channel, id = 1004, 7
+	write := func(msg []byte) {
+		for _, f := range serverOnDrdynvc(t, channel, msg) {
+			if err := rec.Write(ServerOutput, f); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write([]byte{dvcCapability << 4, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	write(append([]byte{dvcCreate << 4, id}, append([]byte(graphicsChannelName), 0)...))
+
+	big := binary.LittleEndian.AppendUint16(nil, 0)          // surface
+	big = binary.LittleEndian.AppendUint16(big, CodecAVC420) // codec
+	big = append(big, 0x20)                                  // pixel format
+	for _, v := range []uint16{0, 0, 64, 64} {
+		big = binary.LittleEndian.AppendUint16(big, v)
+	}
+	big = binary.LittleEndian.AppendUint32(big, 5000)
+	for i := range 5000 {
+		big = append(big, byte(i))
+	}
+	cmds := [][]byte{
+		gfxPDU(GfxStartFrame, []byte{0, 0, 0, 0, 1, 0, 0, 0}),
+		gfxPDU(GfxWireToSurface1, big),
+		gfxPDU(GfxEndFrame, []byte{1, 0, 0, 0}),
+	}
+	for _, c := range cmds {
+		seg := append([]byte{zgfxSingle, zgfxTypeRDP8}, c...)
+		for _, m := range dvcMessages(id, 0, seg) {
+			write(m)
+		}
+	}
+	// A bitmap update alongside, which still replays as rectangles.
+	update := bitmapUpdateData(bitmapRect(t, 4, 8, 2, 1, 24, false, []byte{1, 2, 3, 4, 5, 6}))
+	if err := rec.Write(ServerOutput, fastPathUpdate(t, fastPathUpdateBitmap, fragSingle, update)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String(), cmds
+}
+
+// replayed splits a replay into its display frames.
+func replayed(t *testing.T, data []byte) [][]byte {
+	t.Helper()
+	var frames [][]byte
+	for len(data) > 0 {
+		if len(data) < ReplayFrameHeader+FrameHeaderSize {
+			t.Fatalf("%d bytes left over", len(data))
+		}
+		f := data[ReplayFrameHeader:]
+		size := frameSize(f)
+		frames = append(frames, f[:size])
+		data = f[size:]
+	}
+	return frames
+}
+
+// A session drawn by the graphics pipeline replays as the commands Windows
+// sent, the frames the browser decoded live, whether the header names the
+// channel or a recording from before it did leaves it to be found.
+func TestGraphicsRecordingReplaysItsCommands(t *testing.T) {
+	for _, channel := range []uint16{1004, 0} {
+		body, cmds := graphicsRecording(t, Header{Width: 640, Height: 480, Graphics: channel})
+		var out bytes.Buffer
+		info, err := DecodeRecording(strings.NewReader(body), &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Graphics {
+			t.Errorf("channel %d: replay does not say it carries the graphics pipeline", channel)
+		}
+		var got [][]byte
+		var bitmaps int
+		for _, f := range replayed(t, out.Bytes()) {
+			switch f[0] {
+			case FrameGraphics:
+				n := binary.LittleEndian.Uint32(f[4:8])
+				got = append(got, f[FrameHeaderSize:FrameHeaderSize+n])
+			case FrameBitmap:
+				bitmaps++
+			default:
+				t.Fatalf("channel %d: unexpected frame type %d", channel, f[0])
+			}
+		}
+		if len(got) != len(cmds) {
+			t.Fatalf("channel %d: %d commands replayed, want %d", channel, len(got), len(cmds))
+		}
+		for i := range cmds {
+			if !bytes.Equal(got[i], cmds[i]) {
+				t.Errorf("channel %d: command %d differs", channel, i)
+			}
+		}
+		if bitmaps != 1 {
+			t.Errorf("channel %d: %d bitmap rectangles, want 1", channel, bitmaps)
+		}
+	}
+}
+
+// A bitmap session says nothing of the graphics pipeline.
+func TestBitmapRecordingIsNotGraphics(t *testing.T) {
+	body, _ := buildRecording(t)
+	info, err := DecodeRecording(strings.NewReader(body), &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Graphics {
+		t.Error("a bitmap recording claims the graphics pipeline")
+	}
+}

@@ -25,6 +25,10 @@ const files = {
   '/harness.js': ['text/javascript', readFileSync(join(dir, 'harness.js'))],
   '/capture.bin': ['application/octet-stream', readFileSync(capture)],
 }
+// GFX_REPLAY names the control plane's replay of the same session
+// (replaydump); without it the capture is replayed.
+const replay = process.env.GFX_REPLAY
+if (replay) files['/replay.bin'] = ['application/octet-stream', readFileSync(replay)]
 // GFX_TRUTH names the 4:4:4 picture the capture's last frame should show.
 const truth = process.env.GFX_TRUTH
 if (truth) files['/truth.yuv'] = ['application/octet-stream', readFileSync(truth)]
@@ -49,6 +53,7 @@ try {
   result.browser = browser.version()
   result.combinerDiff = await page.evaluate(() => window.checkCombiner())
   if (truth) result.truth = await page.evaluate(() => window.compareTruth('/truth.yuv'))
+  result.replay = await page.evaluate((url) => window.replayCapture(url), replay ? '/replay.bin' : null)
   result.pageErrors = errors
   await page.locator('#screen').screenshot({ path: join(dir, 'desktop.png') })
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
@@ -66,6 +71,16 @@ try {
   if (result.truth && (result.truth.full > 4 || result.truth.full > result.truth.at420 / 2)) {
     problems.push(`the screen is ${result.truth.full.toFixed(2)} from the 4:4:4 picture; 4:2:0 would be ${result.truth.at420.toFixed(2)}`)
   }
+  const r = result.replay
+  if (!r.graphics) problems.push('the replay carries no graphics commands')
+  if (r.failures > 0) problems.push(`replaying, a decoder failed ${r.failures} times`)
+  if (requireH264 && r.pictures === 0) problems.push('replaying decoded no H.264 picture')
+  if (requireH264 && r.colours < 16) problems.push(`the replayed screen has ${r.colours} colours: nothing was drawn`)
+  // Seeking back starts over and must end on the same screen. Where the GPU
+  // went away part way, the two runs lost it at different points.
+  if (r.reseekDiff > 0 && !r.gpuLost) problems.push(`seeking back ended on a different screen, by up to ${r.reseekDiff}`)
+  // The capture's own replay has the commands drawn live, and no more.
+  if (!replay && r.liveDiff > 0.5 && !r.gpuLost && !result.gpuLost) problems.push(`the replay is ${r.liveDiff.toFixed(2)} from what was drawn live`)
   if (errors.length > 0) problems.push(`the page threw: ${errors.join('; ')}`)
   for (const p of problems) console.error(`::error::${p}`)
   code = problems.length > 0 ? 1 : 0
