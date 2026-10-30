@@ -5,6 +5,7 @@ import {
   createEnrollToken,
   discoveredHosts,
   enrolHost,
+  type EnrolGrant,
   enrolledAgents,
   revokeAgent,
   ignoreHost,
@@ -127,7 +128,8 @@ function invalidateCoverage(qc: ReturnType<typeof useQueryClient>) {
 export function useEnrolHost() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (hostname: string) => enrolHost(hostname),
+    mutationFn: ({ hostname, grant }: { hostname: string; grant?: EnrolGrant }) =>
+      enrolHost(hostname, grant),
     onSuccess: () => invalidateCoverage(qc),
   })
 }

@@ -273,3 +273,22 @@ button.argus-navsection:hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* A server card is one big button: its Open link is stretched over the card,
+   so clicking anywhere on it opens the server. Anything else clickable on the
+   card sits above the stretch. */
+.argus-server {
+  position: relative;
+}
+.argus-server:has(.argus-stretch):hover {
+  border-color: var(--mantine-color-azure-7);
+}
+.argus-stretch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.argus-server .argus-above {
+  position: relative;
+  z-index: 1;
+}

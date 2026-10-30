@@ -37,3 +37,12 @@ export function canSee(role: UserRole | undefined, audience: Audience | undefine
       return seesWholeFleet(role) || role === 'approver'
   }
 }
+
+/**
+ * Accounts that never come for free: the console's copy of
+ * `ElevatedPrincipals` in `internal/control/auth_routes.go`, used only to say
+ * so before someone picks one. The control plane decides either way.
+ */
+export function isElevatedAccount(name: string): boolean {
+  return ['root', 'admin', 'administrator'].includes(name.toLowerCase())
+}

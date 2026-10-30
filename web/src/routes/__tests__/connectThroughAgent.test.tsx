@@ -87,3 +87,47 @@ describe('console-only', () => {
     expect(screen.queryByRole('button', { name: /transfer files/i })).not.toBeInTheDocument()
   })
 })
+
+describe('opening straight from a server card', () => {
+  function ticketCalls() {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).endsWith('/api/v1/terminal/ticket')) {
+        return new Response(JSON.stringify({ error: 'refused for the test' }), { status: 403 })
+      }
+      throw new Error(`unexpected fetch ${String(input)}`)
+    })
+    return () =>
+      fetchSpy.mock.calls.filter(([u]) => String(u).endsWith('/api/v1/terminal/ticket'))
+  }
+  const principal = ssh.principals[0]!
+
+  it('asks for the session without a second click when the link says open', async () => {
+    withHost(true)
+    const calls = ticketCalls()
+    await renderRoute(
+      `/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}&open=true`,
+    )
+    // The control plane's answer is shown, so the request was made.
+    expect(await screen.findByText('refused for the test')).toBeInTheDocument()
+    expect(calls()).toHaveLength(1)
+    expect(JSON.parse(String(calls()[0]![1]!.body))).toEqual({ target: ssh.hostname, principal })
+  }, 15_000)
+
+  it('waits for the button without open', async () => {
+    withHost(true)
+    const calls = ticketCalls()
+    await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}`)
+    expect(await screen.findByRole('button', { name: /open terminal/i })).toBeEnabled()
+    expect(calls()).toHaveLength(0)
+  })
+
+  it('does not try when the agent is not connected', async () => {
+    withHost(false)
+    const calls = ticketCalls()
+    await renderRoute(
+      `/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}&open=true`,
+    )
+    expect(await screen.findByText(/agent is not connected/i)).toBeInTheDocument()
+    expect(calls()).toHaveLength(0)
+  })
+})

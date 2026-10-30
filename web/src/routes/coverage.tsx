@@ -11,9 +11,10 @@ import {
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
+import { ApproveServer } from '~/components/ApproveServer'
 import { Mono, Stat, relTime } from '~/components/primitives'
 import { FS, SP } from '~/theme'
-import { coverageQuery, discoveredQuery, useEnrolHost, useIgnoreHost } from '~/lib/queries'
+import { coverageQuery, discoveredQuery, useIgnoreHost } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import type { DiscoveredHost } from '~/types/domain'
 import { guard } from '~/lib/guard'
@@ -48,7 +49,7 @@ function CoverageView() {
 
   const [dismissing, setDismissing] = useState<DiscoveredHost | null>(null)
   const [note, setNote] = useState('')
-  const enrol = useEnrolHost()
+  const [approving, setApproving] = useState<DiscoveredHost | null>(null)
   const ignore = useIgnoreHost()
 
   if (!isConfigured()) {
@@ -69,25 +70,6 @@ function CoverageView() {
         </PageBody>
       </Box>
     )
-  }
-
-  const onEnrol = async (h: DiscoveredHost) => {
-    try {
-      await enrol.mutateAsync(h.hostname)
-    } catch (err) {
-      notifications.show({
-        color: 'rose',
-        title: 'Not enrolled',
-        message: err instanceof Error ? err.message : 'the control plane refused',
-      })
-      return
-    }
-    notifications.show({
-      color: 'teal',
-      title: 'Host enrolled',
-      // Saying this plainly avoids the assumption that enrolling granted access.
-      message: `${h.hostname} is now a managed asset with no principals. Add the accounts people may assume.`,
-    })
   }
 
   const onIgnore = async () => {
@@ -274,10 +256,9 @@ function CoverageView() {
                             size="compact-xs"
                             variant="light"
                             leftSection={<IconPlus size={12} />}
-                            loading={enrol.isPending && enrol.variables === h.hostname}
-                            onClick={() => void onEnrol(h)}
+                            onClick={() => setApproving(h)}
                           >
-                            Enrol
+                            Approve
                           </Button>
                           <Button
                             size="compact-xs"
@@ -321,6 +302,8 @@ function CoverageView() {
           </SectionCard>
         )}
       </PageBody>
+
+      <ApproveServer host={approving} onClose={() => setApproving(null)} />
 
       <Modal
         opened={!!dismissing}

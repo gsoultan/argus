@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  Alert, Button, Group, Modal, NumberInput, SegmentedControl, Select, Stack,
-  TagsInput, Text, TextInput,
+  Button, Group, Modal, NumberInput, SegmentedControl, Stack, TagsInput, TextInput,
 } from '@mantine/core'
-import { IconInfoCircle } from '@tabler/icons-react'
 import { useCreateAsset, useUpdateAsset } from '~/lib/queries'
 import { run } from '~/lib/notify'
-import { FS, SP } from '~/theme'
-import type { Asset, AssetInput, AssetProtocol, CredentialMode } from '~/types/domain'
+import { SP } from '~/theme'
+import type { Asset, AssetInput, AssetProtocol } from '~/types/domain'
 
 /**
  * Adding a host to the inventory, and editing one.
@@ -20,14 +18,6 @@ import type { Asset, AssetInput, AssetProtocol, CredentialMode } from '~/types/d
  * decided — host-key state, agent liveness, bypass posture. An administrator
  * declaring a host verified would be the opposite of verifying it.
  */
-
-const SSH_MODES: { value: CredentialMode; label: string }[] = [
-  { value: 'injected-key', label: 'Injected key — the gateway holds it' },
-  { value: 'ca-certificate', label: 'Certificate — no standing credential' },
-]
-const RDP_MODES: { value: CredentialMode; label: string }[] = [
-  { value: 'injected-password', label: 'Injected password — the gateway holds it' },
-]
 
 const empty: AssetInput = {
   hostname: '',
@@ -94,7 +84,6 @@ export function AssetForm({
     }))
 
   const isRDP = form.protocol === 'rdp'
-  const needsCredential = form.credentialMode !== 'ca-certificate'
   const pending = create.isPending || update.isPending
   const submit = async () => {
     const ok = await run(
@@ -105,10 +94,10 @@ export function AssetForm({
       {
         failure: asset ? 'Not saved' : 'Not added',
         success: asset
-          ? ['Asset saved', `${form.hostname} is updated.`]
+          ? ['Saved', `${form.hostname} is updated.`]
           : [
-              'Asset added',
-              `${form.hostname} is in the inventory. Nobody is assigned to it yet — assign it before anyone can connect.`,
+              'Server added',
+              `${form.hostname} is added. Pick who can connect on its page.`,
             ],
       },
     )
@@ -168,41 +157,17 @@ export function AssetForm({
         </Group>
 
         <TagsInput
-          label="Principals"
-          description="Accounts Argus may broker a session as. This list is the authority, not the target's own /etc/passwd — and assigning someone can never exceed it."
-          placeholder="ops, deploy"
+          label="Login accounts"
+          description="The accounts on the server people can log in as. Who can use which is set under Who can connect."
+          placeholder="ubuntu, deploy"
           value={form.principals}
           onChange={(v) => set('principals', v)}
         />
 
-        <Select
-          label="Credential"
-          description="How Argus authenticates to the target."
-          allowDeselect={false}
-          value={form.credentialMode ?? 'injected-key'}
-          onChange={(v) => set('credentialMode', (v as CredentialMode) ?? 'injected-key')}
-          data={isRDP ? RDP_MODES : SSH_MODES}
-        />
-
-        {needsCredential && (
-          <TextInput
-            required
-            label={isRDP ? 'Vault directory name' : 'Vault entry name'}
-            description={
-              isRDP
-                ? 'A directory in the gateway’s vault holding one file per principal, each containing that account’s password.'
-                : 'A file in the gateway’s vault holding the private key to inject.'
-            }
-            placeholder="pay-01"
-            value={form.credentialRef ?? ''}
-            onChange={(e) => set('credentialRef', e.currentTarget.value)}
-          />
-        )}
-
         {isRDP && (
           <TextInput
             label="Windows domain"
-            description="Empty means the account is local to the host — which is not the same as typing the host's own name."
+            description="Empty means the account is local to the server."
             placeholder="corp.example"
             value={form.domain ?? ''}
             onChange={(e) => set('domain', e.currentTarget.value)}
@@ -216,21 +181,11 @@ export function AssetForm({
           onChange={(v) => set('tags', v)}
         />
 
-        {/* Says where the secret is, because this is the step people get wrong:
-            the console never holds credential material, so naming one here does
-            not put it anywhere. */}
-        <Alert
-          variant="light"
-          color="azure"
-          icon={<IconInfoCircle size={16} />}
-          title="The credential stays on the gateway"
-        >
-          <Text size={FS.meta}>
-            Argus stores the name, never the secret. Put the key or password in the
-            gateway&rsquo;s <code>vault_dir</code> under exactly this name, readable only by
-            the service account. Nothing you type here can point outside that directory.
-          </Text>
-        </Alert>
+        {/* No credential fields. Sessions open on the server through its own
+            agent, which needs no vaulted key or password; the old Credential
+            and vault-name fields described the retired gateway and made the
+            first edit of an approved server fail. A value an older install
+            still holds is carried through untouched. */}
 
         <Group justify="flex-end" gap={SP.cozy} mt="xs">
           <Button variant="default" onClick={onClose} disabled={pending}>

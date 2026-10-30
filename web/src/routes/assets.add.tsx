@@ -5,19 +5,19 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconCheck, IconCircleCheck, IconCopy, IconEye, IconInfoCircle, IconKey, IconServer2,
+  IconCheck, IconCopy, IconEye, IconInfoCircle, IconKey, IconServer2,
   IconUserCheck,
 } from '@tabler/icons-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
-import { ButtonLink } from '~/components/links'
+import { ApproveServer } from '~/components/ApproveServer'
 import { Mono, relTime } from '~/components/primitives'
 import { controlPlaneVersion, fleetURL, isConfigured } from '~/lib/live'
 import { TunnelBadge } from '~/components/TunnelStatus'
 import { run } from '~/lib/notify'
 import type { EnrollToken } from '~/lib/live'
 import {
-  discoveredQuery, enrolledAgentsQuery, meQuery, useCreateEnrollToken, useEnrolHost,
+  discoveredQuery, enrolledAgentsQuery, meQuery, useCreateEnrollToken,
   useIgnoreHost, useRevokeAgent,
 } from '~/lib/queries'
 import type { DiscoveredHost } from '~/types/domain'
@@ -71,14 +71,18 @@ function AddServer() {
       <PageHeader
         crumbs={[{ label: 'Servers', to: '/assets' }, { label: 'Add a server' }]}
         title="Add a server"
-        description="Install the Argus agent on the server. It checks in by itself, you approve it here, and then people can connect to it."
+        description="Two steps: run one command on the server, then approve it here and pick who can connect."
       />
 
       <PageBody>
         <Grid gap="lg">
           <Grid.Col span={{ base: 12, lg: 8 }}>
             <Stack gap={0}>
-              <Step n={1} title="Install the agent" detail="Run this on the server you are adding.">
+              <Step
+                n={1}
+                title="Run this on the server"
+                detail="One paste: installs the agent, connects it to Argus and starts it."
+              >
                 <Group gap="sm" mb="sm" wrap="wrap">
                   <SegmentedControl
                     size="xs"
@@ -110,39 +114,13 @@ function AddServer() {
                     aria-label="Argus version"
                   />
                 </Group>
-                <Command text={install} />
-                <Text size={FS.meta} c="dimmed" mt={SP.snug}>
-                  Use the same version as your control plane. If the server cannot reach
-                  GitHub, download the package elsewhere and copy it over. Nothing starts
-                  on install.
-                </Text>
+                <EnrollStep install={install} controlURL={controlURL} setControlURL={setControlURL} />
               </Step>
 
               <Step
                 n={2}
-                title="Enroll it"
-                detail="Gives this server its own credential, so it can report as itself and nothing else."
-              >
-                <EnrollStep controlURL={controlURL} setControlURL={setControlURL} />
-              </Step>
-
-              <Step
-                n={3}
-                title="Turn on recording and start it"
-                detail="Makes sshd hand every login to the agent, including ones that skip Argus."
-              >
-                <Command text={START_COMMAND} />
-                <Text size={FS.meta} c="dimmed" mt={SP.snug} lh={1.55}>
-                  Sessions opened from the console reach the agent over its tunnel, so any login
-                  that arrives through sshd is one that skipped Argus.{' '}
-                  <Mono>argus-agent scan</Mono> then says whether anything can still get in around it.
-                </Text>
-              </Step>
-
-              <Step
-                n={4}
-                title="Approve it when it checks in"
-                detail="It appears below within a minute of starting."
+                title="Approve it"
+                detail="It appears here within a minute. Approving asks who on your team can connect."
                 last
               >
                 <Waiting />
@@ -171,8 +149,9 @@ function AddServer() {
  * hour, and buys a credential that speaks only for that server.
  */
 function EnrollStep({
-  controlURL, setControlURL,
+  install, controlURL, setControlURL,
 }: {
+  install: string
   controlURL: string
   setControlURL: (v: string) => void
 }) {
@@ -216,7 +195,7 @@ function EnrollStep({
               loading={mint.isPending}
               onClick={() => void make()}
             >
-              {tok ? 'Make another token' : 'Make a token'}
+              {tok ? 'Make a new command' : 'Make the command'}
             </Button>
           </Tooltip>
         ) : null}
@@ -231,20 +210,21 @@ function EnrollStep({
         </Alert>
       )}
 
-      <Command text={enrollCommand(controlURL, tok)} />
+      <Command text={[install, enrollCommand(controlURL, tok), START_COMMAND].join('\n')} />
 
       <Text size={FS.meta} c="dimmed" lh={1.55}>
         {tok ? (
           <>
-            The token works once, until {new Date(tok.expiresAt).toLocaleTimeString()}
+            The code in it works once, until {new Date(tok.expiresAt).toLocaleTimeString()}
             {tok.hostname ? `, and only for ${tok.hostname}` : ''}. It is not shown again.
             {!tok.pin &&
               ' This control plane sits behind a TLS proxy, so the server checks its certificate the usual way; add --control-ca if that certificate is from an internal CA.'}
           </>
         ) : (
           <>
-            Make a token, then run this on the server. It works once and expires in an hour,
-            so it is safe to paste into a terminal.
+            Click Make the command, then paste it into a terminal on the server. Its code
+            works once and expires in an hour. If the server cannot reach GitHub, download the
+            package elsewhere and copy it over.
           </>
         )}{' '}
         To keep it out of shell history, set <Mono>ARGUS_ENROLL_TOKEN</Mono> instead of
@@ -365,8 +345,9 @@ function HowItWorks() {
           itself.
         </Point>
         <Point icon={IconServer2} title="Then you choose who can connect">
-          Approving grants nobody access. On the server's page, list the accounts people
-          may use; after that it is in Connect for everyone allowed to reach it.
+          Approving asks which teammates may use the server and which account they log in
+          as. Admins can always connect. Everyone you pick sees it under Servers straight
+          away.
         </Point>
       </Stack>
       <Text size={FS.meta} c="dimmed" mt="md" lh={1.55}>
@@ -458,10 +439,9 @@ function Waiting() {
     ...discoveredQuery('unreviewed'),
     refetchInterval: 5_000,
   })
-  const [approved, setApproved] = useState<{ hostname: string; assetId: string }[]>([])
+  const [approving, setApproving] = useState<DiscoveredHost | null>(null)
   const [ignoring, setIgnoring] = useState<DiscoveredHost | null>(null)
   const [note, setNote] = useState('')
-  const enrol = useEnrolHost()
   const ignore = useIgnoreHost()
 
   if (!isConfigured()) {
@@ -473,17 +453,6 @@ function Waiting() {
         </Text>
       </Alert>
     )
-  }
-
-  const approve = async (h: DiscoveredHost) => {
-    let assetId = ''
-    const ok = await run(
-      async () => {
-        assetId = (await enrol.mutateAsync(h.hostname)).assetId
-      },
-      { failure: `${h.hostname} was not approved` },
-    )
-    if (ok) setApproved((a) => [...a, { hostname: h.hostname, assetId }])
   }
 
   const dismiss = async () => {
@@ -499,29 +468,6 @@ function Waiting() {
 
   return (
     <Stack gap="sm">
-      {approved.map((a) => (
-        <Alert
-          key={a.hostname}
-          color="teal"
-          icon={<IconCircleCheck size={16} />}
-          title={`${a.hostname} is approved`}
-        >
-          <Group justify="space-between" gap="sm" wrap="wrap">
-            <Text size={FS.body} lh={1.5}>
-              Nobody can connect yet. Choose which accounts people may use on it.
-            </Text>
-            <ButtonLink
-              size="xs"
-              variant="light"
-              color="teal"
-              to="/assets/$assetId"
-              params={{ assetId: a.assetId }}
-            >
-              Set up access
-            </ButtonLink>
-          </Group>
-        </Alert>
-      ))}
 
       {isPending ? (
         <Group gap="sm" py="sm">
@@ -565,8 +511,7 @@ function Waiting() {
                   <Button
                     size="xs"
                     disabled={!canApprove}
-                    loading={enrol.isPending && enrol.variables === h.hostname}
-                    onClick={() => void approve(h)}
+                    onClick={() => setApproving(h)}
                   >
                     Approve
                   </Button>
@@ -584,6 +529,8 @@ function Waiting() {
           </Text>
         </Group>
       )}
+
+      <ApproveServer host={approving} onClose={() => setApproving(null)} />
 
       <Modal
         opened={ignoring !== null}
