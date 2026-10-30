@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -289,4 +290,73 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 		out["caPem"] = string(a.Enroll.CAPEM)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// postDeregister is an agent being uninstalled: it revokes its own credential
+// so the server stops showing as enrolled, and says so in the audit chain.
+//
+// Only a per-host credential may do this, and only for itself, so the worst
+// it does is what the host's root could already do by deleting the agent --
+// except that this way the console is told, rather than left waiting for
+// heartbeats that will never come. Who ran it is the host's claim, and the
+// entry says it is.
+func (a *API) postDeregister(w http.ResponseWriter, r *http.Request) {
+	tok := bearer(r)
+	if !strings.HasPrefix(tok, agentCredentialPrefix) {
+		writeErr(w, http.StatusForbidden,
+			"only an enrolled agent can deregister itself; revoke it in the console")
+		return
+	}
+	var in struct {
+		Hostname string `json:"hostname"`
+		RanBy    string `json:"ran_by"`
+	}
+	if err := decodeReport(r, &in, a.log, "report/deregister"); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !a.mayReportFor(w, r, in.Hostname) {
+		return
+	}
+	id, hostname, err := a.store.agentCredentialHost(r.Context(), hashSecret(tok))
+	if err != nil {
+		// Revoked between the gate and here, most likely by someone in the
+		// console. Either way it is no longer live.
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	by := "agent on " + hostname
+	if _, err := a.store.RevokeAgentCredential(r.Context(), id, by); err != nil {
+		if errors.Is(err, ErrAgentCredentialNotFound) {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		a.fail(w, "deregister agent", err)
+		return
+	}
+	a.agentCreds.forget(id)
+	if a.Tunnels != nil {
+		a.Tunnels.Revoked(id)
+	}
+
+	ranBy := "the host did not say who ran it"
+	if in.RanBy = strings.TrimSpace(in.RanBy); in.RanBy != "" {
+		if len(in.RanBy) > 64 {
+			in.RanBy = in.RanBy[:64]
+		}
+		ranBy = "the host says " + strconv.Quote(in.RanBy) + " ran it"
+	}
+	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action:   "agent.uninstalled",
+		Severity: "warn",
+		Target:   hostname,
+		Detail: "The agent on " + hostname + " was uninstalled there and revoked its own " +
+			"credential (" + id + "); " + ranBy + ". Sessions on " + hostname +
+			" are no longer opened from the console or recorded. What it reported " +
+			"before is unchanged, and its recordings stay on the host.",
+	}); aerr != nil {
+		a.log.Error("audit append failed", "error", aerr)
+	}
+	a.log.Warn("agent uninstalled itself", "hostname", hostname, "credential", id)
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "hostname": hostname, "state": "revoked"})
 }

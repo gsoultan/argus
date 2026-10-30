@@ -10,11 +10,12 @@
 //	argus-agent daemon    # runs as root: owns recordings, scans posture, heartbeats
 //	argus-agent shim      # runs as the connecting user, invoked by sshd ForceCommand
 //
-// Plus three helpers:
+// Plus four helpers:
 //
 //	argus-agent enroll    # exchange a token from the console for this host's credential
 //	argus-agent scan      # one-shot posture report
 //	argus-agent install   # print the sshd_config needed to enable recording
+//	argus-agent uninstall # take the agent off this host, keeping its recordings
 package main
 
 import (
@@ -61,6 +62,8 @@ func main() {
 		os.Exit(runProbe())
 	case "install":
 		os.Exit(runInstall(os.Args[2:]))
+	case "uninstall":
+		os.Exit(runUninstall(os.Args[2:]))
 	case "enroll", "enrol":
 		os.Exit(runEnroll(os.Args[2:]))
 	case "service":
@@ -83,6 +86,7 @@ func usage() {
   argus-agent probe     report whether this kernel can observe command execution
   argus-agent install   print the sshd_config required to enable recording
   argus-agent service   install|uninstall|start|stop the Windows service
+  argus-agent uninstall take the agent off this host, keeping its recordings
 
 `)
 }

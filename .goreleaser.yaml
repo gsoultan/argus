@@ -178,7 +178,7 @@ nfpms:
         file_info: {mode: 0600}
     scripts:
       postinstall: packaging/scripts/postinstall.sh
-      preremove: packaging/scripts/preremove.sh
+      preremove: packaging/scripts/agent-preremove.sh
       postremove: packaging/scripts/postremove.sh
     # openssh-server is a hard requirement: without sshd there is no session to
     # record and the ForceCommand hook has nothing to hook into.

@@ -271,7 +271,10 @@ cd 'C:\Program Files\Argus'
 
 `service install` registers the `argus-agent` service to start at boot as
 LocalSystem, restarts it if it fails, and starts it. `service stop`,
-`service start` and `service uninstall` do what they say.
+`service start` and `service uninstall` do what they say. To take the agent off
+the server altogether, use `.\argus-agent.exe uninstall` (see
+[Uninstalling the agent](#uninstalling-the-agent)); `service uninstall` only
+removes the service.
 
 It works as on Linux, with these differences:
 
@@ -308,6 +311,53 @@ or physical) as the break-glass path.
 
 Every login that is admitted -- every session opened from the console -- is
 recorded. There is no setting to record fewer.
+
+### Uninstalling the agent
+
+On the server, as root (an elevated PowerShell on Windows):
+
+```sh
+sudo argus-agent uninstall
+```
+
+It asks first (pass `--yes` from a script), then, in this order:
+
+1. **Checks someone can still log in over SSH afterwards.** Once the agent is
+   gone, plain SSH is the way in. If no account has a key in
+   `authorized_keys` and password logins are off, it stops before changing
+   anything and says so. An `AuthorizedKeysCommand` or a non-default
+   `AuthorizedKeysFile` counts; certificates from Argus's CA do not, because
+   nothing signs them once the agent is gone. The result is printed:
+   `Plain SSH works for: ana with 2 key(s)`.
+2. **Stops the agent**, so it seals every open recording.
+3. **Ships what has not reached the control plane yet**: spooled reports and
+   queued recordings. If any are left, it starts the agent again and stops,
+   because nothing can send them once the credential is revoked.
+4. **Takes the agent out of sshd.** Every `ForceCommand` that runs the agent,
+   in `sshd_config` or `sshd_config.d/*.conf`, is commented out with
+   `# Removed by argus-agent uninstall:`. It then runs `sshd -t` and `sshd -T`.
+   If sshd rejects the result, or still runs the agent from a file it did not
+   read, the files are put back as they were, the agent is started again, and
+   it stops. Then it reloads sshd. A `ForceCommand` left pointing at a removed
+   binary would refuse every SSH login.
+5. **Revokes this server's credential** with the control plane. This writes
+   `agent.uninstalled` to the audit log, with who ran it as the server reports
+   it. If the control plane cannot be reached, it says to revoke the server in
+   the console instead.
+6. **Deletes the credential**, the CA and grant key it trusted, and its
+   working state, then **unregisters the service** (systemd, launchd or the
+   Windows service).
+
+Recordings, `sessions.jsonl` and the report spool stay in the state
+directory. Delete them yourself once you are sure they are no longer needed.
+Last, it prints what is left for you to do, usually removing the package
+(`apt purge argus-agent`, `dnf remove argus-agent`, `apk del argus-agent`) or
+deleting the binary. The package refuses to be removed while a `ForceCommand`
+still runs the agent, and says to run `argus-agent uninstall` first.
+
+`--force` uninstalls even when reports or recordings have not reached the
+control plane (they stay on the server), or when nobody could log in over SSH
+afterwards.
 
 ## 6. Check it end to end
 
