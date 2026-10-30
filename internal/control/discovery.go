@@ -151,7 +151,7 @@ var ErrAlreadyReviewed = errors.New("host has already been reviewed")
 // that nothing pointed at. The asset, its accounts and who may use them are
 // written in one transaction, so a half-approved server never exists.
 func (s *Store) EnrolHost(
-	ctx context.Context, hostname, actor string, principals, people []string,
+	ctx context.Context, hostname, actor string, principals, people, teams []string,
 ) (string, error) {
 	principals = dedupe(principals)
 	if len(principals) > maxPrincipals {
@@ -171,7 +171,8 @@ func (s *Store) EnrolHost(
 		}
 	}
 	emails = dedupe(emails)
-	if len(emails) > 0 && len(principals) == 0 {
+	teams = dedupe(teams)
+	if (len(emails) > 0 || len(teams) > 0) && len(principals) == 0 {
 		// "May connect, as nobody" is a state with no meaning; SetAssignment
 		// refuses it for the same reason.
 		return "", ErrInvalidAsset{Reason: "pick at least one login account for the people who may connect"}
@@ -246,6 +247,10 @@ func (s *Store) EnrolHost(
 			id, e, principals, strings.ToLower(actor)); err != nil {
 			return "", err
 		}
+	}
+
+	if err := insertTeamAssignments(ctx, tx, id, teams, principals, actor); err != nil {
+		return "", err
 	}
 
 	if _, err := tx.Exec(ctx, `
