@@ -130,6 +130,31 @@ export interface Asset {
    * did not come through Argus. Null until it says: unconfirmed, never applied.
    */
   agentConsoleOnly?: boolean | null
+  /** This server's own choice for direct SSH logins. Null follows Settings. */
+  directSsh?: DirectSsh | null
+  /** What the agent said at its last check-in it is applying. Null is unconfirmed. */
+  agentDirectSsh?: DirectSsh | null
+}
+
+/**
+ * What an agent does with a login that reached sshd without the console:
+ * refuse it, hold it until someone approves it, or let it in and record it.
+ */
+export type DirectSsh = 'refuse' | 'approve' | 'allow'
+
+/** A direct SSH login held for approval. */
+export interface DirectLogin {
+  id: UUID
+  hostname: string
+  principal: string
+  clientAddr: string
+  command: string
+  state: 'pending' | 'approved' | 'denied' | 'expired'
+  createdAt: ISOTime
+  expiresAt: ISOTime
+  decidedAt: ISOTime | null
+  decidedByEmail: string | null
+  decisionNote: string | null
 }
 
 /**
@@ -467,6 +492,8 @@ export interface GatewayPolicy {
   proxySftpSubsystem: boolean
   failClosedOnRecordingLoss: boolean
   requireEbpfForRoot: boolean
+  /** Not a toggle: three positions, so it is edited on its own. */
+  directSsh: DirectSsh
 }
 
-export type PolicyKey = keyof GatewayPolicy
+export type PolicyKey = Exclude<keyof GatewayPolicy, 'directSsh'>

@@ -65,15 +65,29 @@ that person, server and account, and expires in about a minute. The control
 plane checks it before relaying, and the agent checks the signature again
 before opening anything, so a compromised relay cannot open sessions by itself.
 
-### The console is the only way in
+### Direct SSH logins
 
-There is no setting for this and nothing to turn off.
+Sessions are meant to open from the console. What happens when someone runs
+`ssh`, `scp` or `sftp` straight to a server is a setting, **Settings → How
+people connect → Direct SSH logins**, and each server can override it on its
+own page:
+
+| Setting | What happens |
+|---|---|
+| **Refuse** (the default) | The agent refuses the login before anything runs, tells the person to use the console, and writes `session.direct_refused` to the audit log with the account, source address and command. |
+| **Ask for approval** | The person's terminal says the login is waiting. It shows on **Access requests** with the server, account, source address and command, for an approver, admin or owner to approve or deny. Nobody answering in two minutes, a denial, or the control plane being unreachable all refuse it. Each step is in the audit log (`session.direct_requested`, `_approved`, `_denied`, `_expired`). |
+| **Allow and record** | The login opens with nobody approving it and is reported as `session.direct_allowed`. |
+
+Whatever the setting, a login that is let in is recorded like any other
+session. A direct login only tells Argus the server account and the address it
+came from, not which person it was, so its recording is attributed to
+`account@server`; an approval records who let it in.
 
 | Path | What happens |
 |---|---|
-| `ssh`, `scp`, `sftp` straight to a server | The agent refuses the login before anything runs, tells the person to use the console, and writes `session.direct_refused` to the audit log with the account, source address and command. |
-| A server whose agent is not connected | Nothing opens. The Servers page says the agent is offline and when it last checked in. |
-| An agent restarted while the control plane is down | It keeps refusing direct logins; it remembers this in its state directory. |
+| A server whose agent is not connected | Nothing opens from the console. The Servers page says the agent is offline and when it last checked in. |
+| An agent restarted while the control plane is down | It keeps applying the last setting it heard; it remembers it in its state directory. Under **Ask for approval** that means refusing, since there is nobody to ask. |
+| An agent older than the setting | It refuses direct logins under **Refuse** and **Ask for approval**, and records them under **Allow and record**. |
 
 The machine's own console (hypervisor or physical) is not affected, and is the
 break-glass path when the control plane is down.

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ComponentType } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Group, List, Grid, Modal, NavLink, Select,
+  Alert, Badge, Box, Button, Card, Group, List, Grid, Modal, NavLink, Radio, Select,
   Skeleton, Stack, Switch, Text, ThemeIcon,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -16,7 +16,8 @@ import { meQuery, policyQuery, useSavePolicy } from '~/lib/queries'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { isConfigured } from '~/lib/live'
 import { FS, SP } from '~/theme'
-import type { GatewayPolicy, PolicyKey } from '~/types/domain'
+import type { DirectSsh, GatewayPolicy, PolicyKey } from '~/types/domain'
+import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
 import { guard } from '~/lib/guard'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
@@ -111,16 +112,22 @@ function Settings() {
   const showControl = canEdit && isConfigured()
   const ctl = useControlSettings(showControl)
 
-  const changes = useMemo(() => {
+  const toggled = useMemo(() => {
     if (!saved || !draft) return []
     return ALL_FIELDS.filter((f) => draft[f.key] !== saved[f.key])
   }, [saved, draft])
+  // Direct SSH logins has three positions, so it is counted beside the
+  // toggles rather than as one of them.
+  const directChanged = Boolean(saved && draft && draft.directSsh !== saved.directSsh)
+  const directLoosens = Boolean(saved && draft && directSshLoosens(saved.directSsh, draft.directSsh))
+  const changeCount = toggled.length + (directChanged ? 1 : 0)
 
-  const loosening = changes.filter((f) => f.riskOn === Boolean(draft?.[f.key]))
+  const loosening = toggled.filter((f) => f.riskOn === Boolean(draft?.[f.key])).length +
+    (directLoosens ? 1 : 0)
 
   const policyItems: NavItem[] = POLICY_SECTIONS.map((p) => ({
     ...p,
-    changed: changes.some((f) => POLICY_FIELDS[p.id].includes(f)),
+    changed: toggled.some((f) => POLICY_FIELDS[p.id].includes(f)) || (p.id === 'access' && directChanged),
   }))
   const controlItems: NavItem[] = showControl
     ? CONTROL_SECTIONS.map((c) => ({ id: c.id, label: c.label, icon: c.icon, changed: ctl.changedSections.includes(c) }))
@@ -134,6 +141,10 @@ function Settings() {
   const set = (key: PolicyKey, value: boolean) => {
     if (!saved) return
     setDraft({ ...(draft ?? saved), [key]: value })
+  }
+  const setDirectSsh = (value: DirectSsh) => {
+    if (!saved) return
+    setDraft({ ...(draft ?? saved), directSsh: value })
   }
 
   const discard = () => setDraft(null)
@@ -153,7 +164,7 @@ function Settings() {
     setDraft(null)
     notifyOk(
       'Session policy saved',
-      `${changes.length} change${changes.length === 1 ? '' : 's'} applied. New sessions use it immediately; sessions already open keep the policy they started under.`,
+      `${changeCount} change${changeCount === 1 ? '' : 's'} applied. New sessions use it immediately; sessions already open keep the policy they started under.`,
     )
   }
 
@@ -165,17 +176,17 @@ function Settings() {
         title="Settings"
         description="Session policy, and everything the control plane is configured with. Defaults are the safe choice."
         actions={
-          changes.length > 0 ? (
+          changeCount > 0 ? (
             <>
               <Button variant="subtle" color="slate" onClick={discard}>
                 Discard
               </Button>
               <Button
-                color={loosening.length > 0 ? 'amber' : 'azure'}
+                color={loosening > 0 ? 'amber' : 'azure'}
                 loading={savePolicy.isPending}
                 onClick={confirm.open}
               >
-                Review {changes.length} change{changes.length === 1 ? '' : 's'}
+                Review {changeCount} change{changeCount === 1 ? '' : 's'}
               </Button>
             </>
           ) : null
@@ -240,23 +251,26 @@ function Settings() {
               ]}
             />
 
-            {/* Not a setting: there is nothing to switch. Stated here because
-                this is where an admin looks for how people get in. */}
             {active === 'access' && (
-              <SectionCard
-                title="Console only, through the agent"
-                icon={IconShieldLock}
-                iconColor="teal"
-                description="Every terminal, desktop and file transfer opens here in the console, through the server's Argus agent."
-              >
-                <Text size={FS.meta} c="dimmed" lh={1.5}>
-                  The agent holds an outbound tunnel to the control plane, and sessions open over
-                  it. A direct login to a server's sshd is refused by its agent and written to the
-                  audit log. A server whose agent is not connected cannot be opened until it
-                  reconnects. This is how Argus works, not an option, so there is nothing to turn
-                  off.
-                </Text>
-              </SectionCard>
+              <>
+                <SectionCard
+                  title="Through the console"
+                  icon={IconShieldLock}
+                  iconColor="teal"
+                  description="Every terminal, desktop and file transfer opened here goes through the server's Argus agent."
+                >
+                  <Text size={FS.meta} c="dimmed" lh={1.5}>
+                    The agent holds an outbound tunnel to the control plane, and sessions open over
+                    it. A server whose agent is not connected cannot be opened until it reconnects.
+                  </Text>
+                </SectionCard>
+                <DirectSshCard
+                  value={current?.directSsh ?? null}
+                  saved={saved?.directSsh ?? null}
+                  disabled={policyDisabled}
+                  onChange={setDirectSsh}
+                />
+              </>
             )}
 
             {active === 'recording' && (
@@ -309,10 +323,10 @@ function Settings() {
         title="Apply session policy"
         size="md"
       >
-        {loosening.length > 0 && (
+        {loosening > 0 && (
           <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
             <Text size={FS.body} lh={1.5}>
-              {loosening.length === 1 ? 'One change loosens' : `${loosening.length} changes loosen`}{' '}
+              {loosening === 1 ? 'One change loosens' : `${loosening} changes loosen`}{' '}
               the policy. Every session opened after this uses it.
             </Text>
           </Alert>
@@ -322,7 +336,21 @@ function Settings() {
           your account.
         </Text>
         <List size="xs" spacing={SP.snug}>
-          {changes.map((f) => {
+          {directChanged && saved && draft && (
+            <List.Item
+              icon={
+                <ThemeIcon size={16} radius="sm" variant="light" color={directLoosens ? 'rose' : 'teal'}>
+                  {directLoosens ? <IconAlertTriangle size={10} /> : <IconLock size={10} />}
+                </ThemeIcon>
+              }
+            >
+              <Text size="xs" span>Direct SSH logins — </Text>
+              <Text size="xs" span fw={600} c={directLoosens ? 'rose.4' : 'teal.4'}>
+                {directSshLabel(saved.directSsh)} → {directSshLabel(draft.directSsh)}
+              </Text>
+            </List.Item>
+          )}
+          {toggled.map((f) => {
             const on = Boolean(draft?.[f.key])
             return (
               <List.Item
@@ -351,7 +379,7 @@ function Settings() {
             Cancel
           </Button>
           <Button
-            color={loosening.length > 0 ? 'rose' : 'teal'}
+            color={loosening > 0 ? 'rose' : 'teal'}
             loading={savePolicy.isPending}
             onClick={commit}
           >
@@ -415,6 +443,56 @@ function ControlSaveBar({ ctl }: { ctl: ControlSettingsState }) {
         </Group>
       </Group>
     </Alert>
+  )
+}
+
+/**
+ * Direct SSH logins: what a server's agent does with a login that reached
+ * sshd without the console. Each server can choose its own on its page.
+ */
+function DirectSshCard({ value, saved, disabled, onChange }: {
+  value: DirectSsh | null
+  saved: DirectSsh | null
+  disabled: boolean
+  onChange: (v: DirectSsh) => void
+}) {
+  return (
+    <SectionCard
+      title="Direct SSH logins"
+      icon={IconTerminal2}
+      description="What happens when someone runs ssh, scp or sftp straight to a server instead of opening it here."
+      badge={value !== null && saved !== null && value !== saved
+        ? <Badge size="xs" color="amber" variant="outline">unsaved</Badge>
+        : undefined}
+    >
+      {value === null ? (
+        <Skeleton h={120} />
+      ) : (
+        <Radio.Group value={value} onChange={(v) => onChange(v as DirectSsh)} aria-label="Direct SSH logins">
+          <Stack gap="sm">
+            {DIRECT_SSH_CHOICES.map((c) => (
+              <Radio
+                key={c.value}
+                value={c.value}
+                disabled={disabled}
+                label={
+                  <Group gap={SP.snug}>
+                    <Text size="xs" fw={500}>{c.label}</Text>
+                    {c.value === 'allow' && <Badge size="xs" color="rose">raises risk</Badge>}
+                  </Group>
+                }
+                description={c.description}
+              />
+            ))}
+          </Stack>
+        </Radio.Group>
+      )}
+      <Text size={FS.micro} c="dimmed" lh={1.5} mt="md">
+        A direct login tells Argus only the server account and the address it came from, not which
+        person it was, so its recording is attributed to the account. Every decision is written to
+        the audit log. A server can have its own setting on its page; servers without one use this.
+      </Text>
+    </SectionCard>
   )
 }
 

@@ -568,6 +568,11 @@ type Asset struct {
 	// AgentConsoleOnly is whether the agent said, at its last heartbeat, that
 	// it refuses logins that did not come through Argus. Nil is unconfirmed.
 	AgentConsoleOnly *bool `json:"agentConsoleOnly"`
+	// DirectSSH is this server's own choice for direct SSH logins; nil
+	// follows the deployment's. AgentDirectSSH is what its agent said, at
+	// its last heartbeat, it is applying; nil is unconfirmed.
+	DirectSSH      *string `json:"directSsh"`
+	AgentDirectSSH *string `json:"agentDirectSsh"`
 	// TunnelConnected is whether this host's agent holds a live tunnel, by
 	// the database's clock, so the console can open sessions through it.
 	TunnelConnected bool `json:"tunnelConnected"`
@@ -605,7 +610,7 @@ func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
 // nil from an agent too old to say.
 func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	activeSessions int, posture any, execTracing bool, execReason string,
-	appliedConsoleOnly *bool) error {
+	appliedConsoleOnly *bool, appliedDirectSSH *string) error {
 
 	var postureJSON []byte
 	if posture != nil {
@@ -650,10 +655,12 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 			bypass_posture        = COALESCE(NULLIF($2,''), bypass_posture),
 			unmanaged_key_count   = COALESCE($3, unmanaged_key_count),
 			agent_console_only    = $4,
+			agent_direct_ssh      = $5,
 			updated_at            = now()
 		WHERE hostname = $1
 		   OR agent_hostname = $1
-		   OR split_part(hostname, '.', 1) = $1`, hostname, rating, unmanaged, appliedConsoleOnly)
+		   OR split_part(hostname, '.', 1) = $1`, hostname, rating, unmanaged, appliedConsoleOnly,
+		appliedDirectSSH)
 	if err != nil {
 		return err
 	}

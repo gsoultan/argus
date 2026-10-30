@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -219,13 +220,34 @@ func runDaemon(args []string) int {
 		})
 	}
 
-	// Console-only survives a restart: an agent restarted during a control
-	// plane outage keeps refusing direct logins rather than reopening sshd
-	// until the next heartbeat gets through.
+	// The direct SSH setting survives a restart: an agent restarted during a
+	// control plane outage keeps refusing or holding direct logins rather than
+	// reopening sshd until the next heartbeat gets through. console-only is
+	// what an agent older than the setting wrote, and is read when the newer
+	// file is absent.
+	directSSHFile := *stateDir + "/direct-ssh"
 	consoleOnlyFile := *stateDir + "/console-only"
-	if b, err := os.ReadFile(consoleOnlyFile); err == nil && strings.TrimSpace(string(b)) == "1" {
+	if b, err := os.ReadFile(directSSHFile); err == nil {
+		col.SetDirectSSH(strings.TrimSpace(string(b)))
+		log.Info("direct ssh logins: applying the last setting heard", "mode", col.DirectSSH())
+	} else if b, err := os.ReadFile(consoleOnlyFile); err == nil && strings.TrimSpace(string(b)) == "1" {
 		col.SetConsoleOnly(true)
 		log.Info("console-only: direct logins to this host are refused until the console says otherwise")
+	}
+	col.AskApproval = func(ctx context.Context, m agent.SessionStart) agent.Approval {
+		return askDirectApproval(ctx, rep, m, log)
+	}
+	col.OnAllowed = func(m agent.SessionStart) {
+		hostname, _ := os.Hostname()
+		rep.Login(ctx, map[string]any{
+			"hostname":    hostname,
+			"principal":   m.Principal,
+			"client_addr": m.ClientAddr,
+			"command":     m.Command,
+			"origin":      m.Origin,
+			"allowed":     true,
+			"at":          time.Now().UTC(),
+		})
 	}
 	col.OnRefused = func(m agent.SessionStart) {
 		hostname, _ := os.Hostname()
@@ -339,6 +361,7 @@ func runDaemon(args []string) int {
 			"exec_tracing":    execCtx.Tracer != nil,
 			"exec_reason":     execCtx.Reason,
 			"console_only":    col.ConsoleOnly(),
+			"direct_ssh":      col.DirectSSH(),
 		})
 		// Only a delivered reply changes anything. An unreachable control
 		// plane leaves the last setting in place, not a default chosen by an
@@ -346,7 +369,15 @@ func runDaemon(args []string) int {
 		if ok {
 			// Absent from an older control plane, or one that could not read
 			// its policy: keep what was last heard.
-			if reply.ConsoleOnly != nil {
+			if reply.DirectSSH != nil {
+				if *reply.DirectSSH != col.DirectSSH() {
+					log.Warn("direct ssh logins changed by the console", "mode", *reply.DirectSSH)
+				}
+				col.SetDirectSSH(*reply.DirectSSH)
+				if err := os.WriteFile(directSSHFile, []byte(col.DirectSSH()+"\n"), 0o600); err != nil {
+					log.Error("direct ssh: cannot persist the setting", "error", err)
+				}
+			} else if reply.ConsoleOnly != nil {
 				on := *reply.ConsoleOnly
 				if on != col.ConsoleOnly() {
 					log.Warn("console-only changed by the console", "console_only", on,
@@ -360,6 +391,8 @@ func runDaemon(args []string) int {
 				if err := os.WriteFile(consoleOnlyFile, []byte(v+"\n"), 0o600); err != nil {
 					log.Error("console-only: cannot persist the setting", "error", err)
 				}
+				// Read first on a restart, so it must not hold an older answer.
+				_ = os.WriteFile(directSSHFile, []byte(col.DirectSSH()+"\n"), 0o600)
 			}
 		}
 	})
@@ -467,7 +500,78 @@ func sessionReport(rec agent.SessionRecord) map[string]any {
 		out["terminatedBy"] = rec.TerminatedBy
 		out["terminationReason"] = rec.TerminationReason
 	}
+	if rec.DirectApproval != "" {
+		out["directApproval"] = rec.DirectApproval
+		out["directLoginId"] = rec.DirectLoginID
+	}
 	return out
+}
+
+// askDirectApproval asks the control plane whether a direct login may go
+// ahead, and waits for an admin's answer while it is held.
+//
+// Fails closed: a control plane that cannot be reached, an answer that cannot
+// be read, or a deadline passing all refuse the login.
+func askDirectApproval(ctx context.Context, rep *reporter.Client, m agent.SessionStart,
+	log *slog.Logger) agent.Approval {
+	type answer struct {
+		ID, State, Reason, Mode string
+		DecidedBy               string `json:"decidedBy"`
+		Note                    string
+	}
+	hostname, _ := os.Hostname()
+	var a answer
+	if err := rep.Ask(ctx, "/api/v1/report/direct-login", map[string]any{
+		"hostname":    hostname,
+		"principal":   m.Principal,
+		"client_addr": m.ClientAddr,
+		"command":     m.Command,
+	}, &a); err != nil {
+		log.Warn("direct login: cannot ask the control plane; refusing", "error", err)
+		return agent.Approval{Reason: "Argus could not be reached to approve this login"}
+	}
+	for a.State == "pending" && a.ID != "" {
+		var next answer
+		err := rep.Ask(ctx, "/api/v1/report/direct-login/"+url.PathEscape(a.ID)+"/wait",
+			map[string]any{}, &next)
+		if ctx.Err() != nil {
+			return agent.Approval{ID: a.ID, Reason: "nobody approved this login in time"}
+		}
+		if err != nil {
+			// A dropped long poll is not an answer; ask again until the
+			// deadline does decide.
+			log.Warn("direct login: waiting for a decision failed; retrying", "error", err)
+			select {
+			case <-ctx.Done():
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+		next.ID = a.ID
+		a = next
+	}
+	switch a.State {
+	case "approved":
+		if a.Mode == agent.DirectSSHAllow {
+			return agent.Approval{Approved: true, Allowed: true}
+		}
+		return agent.Approval{Approved: true, ID: a.ID}
+	case "expired":
+		return agent.Approval{ID: a.ID, Reason: "nobody approved this login in time"}
+	case "denied":
+		reason := a.Reason
+		if reason == "" {
+			reason = "an admin denied this login"
+			if a.DecidedBy != "" {
+				reason = a.DecidedBy + " denied this login"
+			}
+			if a.Note != "" {
+				reason += ": " + a.Note
+			}
+		}
+		return agent.Approval{ID: a.ID, Reason: reason}
+	}
+	return agent.Approval{ID: a.ID, Reason: "Argus did not approve this login"}
 }
 
 // agentRiskFlags marks what the console highlights about a session the agent saw.

@@ -121,6 +121,10 @@ type Decision struct {
 	// recording that failed to open -- still refuses rather than skipping.
 	Refused bool   `json:"refused,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// Pending means the login is held for an admin to approve, and another
+	// decision follows. Sent with Refused and Error set, so a shim older than
+	// Pending refuses the login rather than letting it through.
+	Pending bool `json:"pending,omitempty"`
 }
 
 // Reply is anything the daemon sends a shim: a Decision, or an Ack, which has
@@ -131,6 +135,7 @@ type Reply struct {
 	SessionID string `json:"session_id"`
 	Reason    string `json:"reason"`
 	Refused   bool   `json:"refused"`
+	Pending   bool   `json:"pending"`
 	ChainHead string `json:"chain_head"`
 	Error     string `json:"error"`
 }

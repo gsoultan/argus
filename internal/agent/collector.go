@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -61,11 +62,27 @@ type Collector struct {
 	// mode, where nothing can switch console-only on.
 	OnRefused func(SessionStart)
 
-	// consoleOnly is the console's policy as of the last heartbeat: refuse
-	// any login that did not come through Argus. Off until the control plane
-	// says otherwise, so an agent installed before it can reach the control
-	// plane does not lock its host's administrators out.
-	consoleOnly atomic.Bool
+	// OnAllowed is called for a direct login let in because the server is
+	// set to allow and record them, so the console hears of it when it starts
+	// rather than when it ends.
+	OnAllowed func(SessionStart)
+
+	// AskApproval asks the control plane whether a direct login may go ahead
+	// and waits for the answer, when the server is set to "approve". Nil,
+	// or a control plane that cannot be reached, is a refusal.
+	AskApproval func(ctx context.Context, m SessionStart) Approval
+
+	// directSSH is the console's direct SSH mode as of the last heartbeat:
+	// DirectSSHRefuse, DirectSSHApprove or DirectSSHAllow. Unset until the
+	// control plane says, so an agent installed before it can reach the
+	// control plane does not lock its host's administrators out; it records
+	// every login meanwhile.
+	directSSH atomic.Pointer[string]
+
+	// stop is closed when the collector starts shutting down, so a login
+	// waiting for approval is refused rather than holding the shutdown.
+	stop     chan struct{}
+	stopOnce sync.Once
 
 	// Exec attributes kernel-observed executions to sessions. Nil, or holding
 	// no probe, on hosts without kernel support — the collector behaves
@@ -109,6 +126,11 @@ type SessionRecord struct {
 	// Flags are risk flags the service that opened the session knows of,
 	// on top of what the daemon derives itself.
 	Flags []string `json:"flags,omitempty"`
+	// DirectApproval says how a direct login was let in: "approved" by an
+	// admin, under the approval DirectLoginID, or "allowed" by the server's
+	// setting. Empty for a login let in before the agent heard any setting.
+	DirectApproval string `json:"direct_approval,omitempty"`
+	DirectLoginID  string `json:"direct_login_id,omitempty"`
 }
 
 type activeSession struct {
@@ -134,13 +156,75 @@ type activeSession struct {
 	execDropped uint64
 	// terminatedBy and terminationReason are set when the console ended it.
 	terminatedBy, terminationReason string
+	// directApproval and directLoginID say how a direct login was let in.
+	directApproval, directLoginID string
 }
 
-// SetConsoleOnly applies the control plane's console-only policy.
-func (c *Collector) SetConsoleOnly(on bool) { c.consoleOnly.Store(on) }
+// Direct SSH modes, as the control plane names them.
+const (
+	DirectSSHRefuse  = "refuse"
+	DirectSSHApprove = "approve"
+	DirectSSHAllow   = "allow"
+)
 
-// ConsoleOnly reports whether direct logins are being refused.
-func (c *Collector) ConsoleOnly() bool { return c.consoleOnly.Load() }
+// DirectApprovalWait bounds how long a direct login is held for a decision.
+// The control plane refuses one nobody decided after two minutes; this is
+// the agent's own limit in case that answer never arrives.
+const DirectApprovalWait = 2*time.Minute + 15*time.Second
+
+// Approval is the control plane's answer about one direct login.
+type Approval struct {
+	// Approved means the login may go ahead. Allowed means it went ahead
+	// because the server is set to allow, with nobody approving it.
+	Approved, Allowed bool
+	// ID is the approval the login was let in on, or refused under.
+	ID string
+	// Reason is said to the person when the login is refused.
+	Reason string
+}
+
+// SetDirectSSH applies the control plane's direct SSH mode. Anything other
+// than the three modes is a refusal.
+func (c *Collector) SetDirectSSH(mode string) {
+	switch mode {
+	case DirectSSHRefuse, DirectSSHApprove, DirectSSHAllow:
+	default:
+		mode = DirectSSHRefuse
+	}
+	c.directSSH.Store(&mode)
+}
+
+// DirectSSH is the mode being applied, or "" before the control plane has
+// said anything.
+func (c *Collector) DirectSSH() string {
+	if m := c.directSSH.Load(); m != nil {
+		return *m
+	}
+	return ""
+}
+
+// SetConsoleOnly applies a control plane older than the direct SSH setting,
+// which says only whether to refuse.
+func (c *Collector) SetConsoleOnly(on bool) {
+	if on {
+		c.SetDirectSSH(DirectSSHRefuse)
+		return
+	}
+	c.SetDirectSSH(DirectSSHAllow)
+}
+
+// ConsoleOnly reports whether a direct login is kept out unless someone
+// approves it: refused outright, or held for approval.
+func (c *Collector) ConsoleOnly() bool {
+	m := c.DirectSSH()
+	return m == DirectSSHRefuse || m == DirectSSHApprove
+}
+
+// stopping is closed once the collector starts shutting down.
+func (c *Collector) stopping() chan struct{} {
+	c.stopOnce.Do(func() { c.stop = make(chan struct{}) })
+	return c.stop
+}
 
 // ConsoleOnlyReason is what a refused direct login is told.
 const ConsoleOnlyReason = "this server accepts sessions from the Argus console only; " +
@@ -237,7 +321,11 @@ func (c *Collector) Close() error { return c.CloseWithin(DefaultDrain) }
 // sealed, has no chain head, and cannot be verified. On a fleet, an upgrade
 // did that to every host with an active session at once.
 func (c *Collector) CloseWithin(d time.Duration) error {
+	stop := c.stopping()
 	c.mu.Lock()
+	if !c.closing {
+		close(stop)
+	}
 	c.closing = true
 	ln := c.listener
 	c.mu.Unlock()
@@ -354,22 +442,11 @@ func (c *Collector) handle(conn net.Conn) {
 			// the socket is open to every local user, and a claim of having
 			// come through Argus is not something to take from one of them.
 			m.Origin = Direct
-			// Console-only: a login that did not come through Argus does not
-			// happen at all. Every login that is admitted is recorded.
-			if c.ConsoleOnly() {
-				c.log.Warn("DIRECT LOGIN REFUSED — this host is console-only",
-					"principal", m.Principal,
-					"client", m.ClientAddr,
-					"command", m.Command,
-					"detail", "the login reached sshd without Argus; whoever holds its "+
-						"key or password can still reach sshd directly")
-				_ = json.NewEncoder(conn).Encode(Decision{
-					Type: "decision", Record: false, Refused: true,
-					Reason: ConsoleOnlyReason, Error: ConsoleOnlyReason,
-				})
-				if c.OnRefused != nil {
-					c.OnRefused(m)
-				}
+			// A login that did not come through Argus happens only if the
+			// server's setting lets it: held for an admin, or allowed and
+			// recorded. Every login that is admitted is recorded.
+			approval, ok := c.admitDirect(conn, m)
+			if !ok {
 				return
 			}
 			sess, err = c.open(m)
@@ -377,6 +454,15 @@ func (c *Collector) handle(conn net.Conn) {
 				c.log.Error("cannot open recording", "error", err)
 				_ = json.NewEncoder(conn).Encode(Ack{Error: err.Error()})
 				return
+			}
+			switch {
+			case approval.Allowed:
+				sess.directApproval = "allowed"
+				if c.OnAllowed != nil {
+					c.OnAllowed(m)
+				}
+			case approval.Approved:
+				sess.directApproval, sess.directLoginID = "approved", approval.ID
 			}
 			_ = json.NewEncoder(conn).Encode(Decision{
 				Type: "decision", Record: true, SessionID: sess.id,
@@ -559,6 +645,9 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 
 		TerminatedBy:      by,
 		TerminationReason: why,
+
+		DirectApproval: sess.directApproval,
+		DirectLoginID:  sess.directLoginID,
 	}
 
 	c.log.Info("recording sealed",
@@ -640,4 +729,96 @@ func (s *activeSession) commandCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.execs
+}
+
+// admitDirect decides whether a direct login may go ahead, telling the shim
+// when it may not. ok is false when the login is refused and the connection
+// is done with.
+func (c *Collector) admitDirect(conn net.Conn, m SessionStart) (Approval, bool) {
+	refuse := func(reason string) (Approval, bool) {
+		_ = json.NewEncoder(conn).Encode(Decision{
+			Type: "decision", Record: false, Refused: true, Reason: reason, Error: reason,
+		})
+		return Approval{}, false
+	}
+	switch c.DirectSSH() {
+	case "":
+		// Never heard from the control plane: record, do not refuse.
+		return Approval{}, true
+	case DirectSSHAllow:
+		c.log.Warn("DIRECT LOGIN ALLOWED — this server is set to allow and record them",
+			"principal", m.Principal, "client", m.ClientAddr, "command", m.Command)
+		return Approval{Approved: true, Allowed: true}, true
+	case DirectSSHApprove:
+		return c.awaitApproval(conn, m, refuse)
+	}
+
+	c.log.Warn("DIRECT LOGIN REFUSED — this host is console-only",
+		"principal", m.Principal,
+		"client", m.ClientAddr,
+		"command", m.Command,
+		"detail", "the login reached sshd without Argus; whoever holds its "+
+			"key or password can still reach sshd directly")
+	a, ok := refuse(ConsoleOnlyReason)
+	if c.OnRefused != nil {
+		c.OnRefused(m)
+	}
+	return a, ok
+}
+
+// ApprovalPendingReason is what a person holding a direct login is told while
+// it waits.
+const ApprovalPendingReason = "this login is waiting for approval in the Argus console. " +
+	"An admin has been asked; it will be refused if nobody approves it in two minutes"
+
+// awaitApproval holds a direct login while the control plane asks an admin.
+func (c *Collector) awaitApproval(
+	conn net.Conn, m SessionStart, refuse func(string) (Approval, bool),
+) (Approval, bool) {
+	if c.AskApproval == nil {
+		c.log.Warn("DIRECT LOGIN REFUSED — approval is required and there is no control plane to ask",
+			"principal", m.Principal, "client", m.ClientAddr)
+		if c.OnRefused != nil {
+			c.OnRefused(m)
+		}
+		return refuse("this server needs an admin to approve direct logins, and Argus cannot be reached")
+	}
+	// Refused and Error as well as Pending: a shim older than Pending reads
+	// it as a refusal and stops there, rather than as a login to let through.
+	if err := json.NewEncoder(conn).Encode(Decision{
+		Type: "decision", Pending: true, Refused: true,
+		Reason: ApprovalPendingReason, Error: ApprovalPendingReason,
+	}); err != nil {
+		return Approval{}, false
+	}
+	c.log.Warn("direct login waiting for approval",
+		"principal", m.Principal, "client", m.ClientAddr, "command", m.Command)
+
+	ctx, cancel := context.WithTimeout(context.Background(), DirectApprovalWait)
+	defer cancel()
+	go func() {
+		select {
+		case <-c.stopping():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	a := c.AskApproval(ctx, m)
+	if !a.Approved {
+		reason := a.Reason
+		if reason == "" {
+			reason = "this login was not approved"
+		}
+		c.log.Warn("DIRECT LOGIN REFUSED — not approved",
+			"principal", m.Principal, "client", m.ClientAddr, "approval", a.ID, "reason", reason)
+		// A request the control plane never received is reported as a
+		// refusal; one it holds is already in the audit log with its outcome.
+		if a.ID == "" && c.OnRefused != nil {
+			c.OnRefused(m)
+		}
+		return refuse(reason)
+	}
+	c.log.Warn("DIRECT LOGIN APPROVED", "principal", m.Principal, "client", m.ClientAddr,
+		"approval", a.ID)
+	return a, true
 }

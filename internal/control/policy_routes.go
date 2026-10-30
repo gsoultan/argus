@@ -53,6 +53,15 @@ func (a *API) postPolicy(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "gateway policy", err)
 		return
 	}
+	// Left out by a console older than the setting: keep what is stored
+	// rather than read the absence as a choice.
+	if in.DirectSSH == "" {
+		in.DirectSSH = before.DirectSSH
+	}
+	if !validDirectSSH(in.DirectSSH) {
+		writeErr(w, http.StatusBadRequest, ErrInvalidDirectSSH.Error())
+		return
+	}
 
 	after, err := a.store.SaveGatewayPolicy(r.Context(), in, sess.Email)
 	if err != nil {

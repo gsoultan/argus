@@ -24,6 +24,11 @@ type GatewayPolicy struct {
 	FailClosedOnRecordingLoss bool `json:"failClosedOnRecordingLoss"`
 	RequireEbpfForRoot        bool `json:"requireEbpfForRoot"`
 
+	// DirectSSH is what an agent does with a login that reached sshd without
+	// the console: refuse it, hold it for an admin to approve, or allow it
+	// and record it. A server can choose its own; see EffectiveDirectSSH.
+	DirectSSH string `json:"directSsh"`
+
 	// ElevatedPrincipals is served, never stored. It is what this control plane
 	// enforces, sent so a gateway does not have to hold its own copy and drift.
 	// Read-only from the console's point of view: a deployment that could edit
@@ -51,6 +56,7 @@ func DefaultGatewayPolicy() GatewayPolicy {
 		ProxySftpSubsystem:        true,
 		FailClosedOnRecordingLoss: true,
 		RequireEbpfForRoot:        true,
+		DirectSSH:                 DirectSSHRefuse,
 	}
 }
 
@@ -62,12 +68,12 @@ func (s *Store) GatewayPolicy(ctx context.Context) (GatewayPolicy, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT allow_local_forward, allow_remote_forward, allow_agent_forward,
 		       allow_x11_forward, proxy_sftp_subsystem, fail_closed_on_recording_loss,
-		       require_ebpf_for_root,
+		       require_ebpf_for_root, direct_ssh,
 		       to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), updated_by
 		  FROM gateway_policy WHERE id = TRUE`).Scan(
 		&p.AllowLocalForward, &p.AllowRemoteForward, &p.AllowAgentForward,
 		&p.AllowX11Forward, &p.ProxySftpSubsystem, &p.FailClosedOnRecordingLoss,
-		&p.RequireEbpfForRoot,
+		&p.RequireEbpfForRoot, &p.DirectSSH,
 		&p.UpdatedAt, &p.UpdatedBy)
 	if err != nil {
 		return DefaultGatewayPolicy(), fmt.Errorf("read gateway policy: %w", err)
@@ -83,6 +89,9 @@ func (s *Store) GatewayPolicy(ctx context.Context) (GatewayPolicy, error) {
 func (s *Store) SaveGatewayPolicy(
 	ctx context.Context, p GatewayPolicy, actor string,
 ) (GatewayPolicy, error) {
+	if !validDirectSSH(p.DirectSSH) {
+		return GatewayPolicy{}, ErrInvalidDirectSSH
+	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE gateway_policy SET
 			allow_local_forward             = $1,
@@ -92,12 +101,13 @@ func (s *Store) SaveGatewayPolicy(
 			proxy_sftp_subsystem            = $5,
 			fail_closed_on_recording_loss   = $6,
 			require_ebpf_for_root           = $7,
+			direct_ssh                      = $9,
 			updated_at                      = now(),
 			updated_by                      = $8
 		WHERE id = TRUE`,
 		p.AllowLocalForward, p.AllowRemoteForward, p.AllowAgentForward,
 		p.AllowX11Forward, p.ProxySftpSubsystem, p.FailClosedOnRecordingLoss,
-		p.RequireEbpfForRoot, actor)
+		p.RequireEbpfForRoot, actor, p.DirectSSH)
 	if err != nil {
 		return GatewayPolicy{}, fmt.Errorf("save gateway policy: %w", err)
 	}
@@ -139,6 +149,9 @@ type PolicyChange struct {
 	Enabled   bool
 	Loosening bool
 	Rationale string
+	// Text describes a change that is not an on/off toggle, in place of
+	// "enabled"/"disabled" and the label.
+	Text string
 }
 
 // DiffGatewayPolicy reports what moved between two policies.
@@ -154,6 +167,15 @@ func DiffGatewayPolicy(before, after GatewayPolicy) []PolicyChange {
 			Enabled:   now,
 			Loosening: now == f.riskyOn,
 			Rationale: f.rationale,
+		})
+	}
+	if before.DirectSSH != after.DirectSSH {
+		out = append(out, PolicyChange{
+			Label:     "direct SSH logins",
+			Loosening: directSSHRank(after.DirectSSH) > directSSHRank(before.DirectSSH),
+			Rationale: "logins that reach sshd without the console " + directSSHConsequence(after.DirectSSH),
+			Text: "set direct SSH logins from " + directSSHLabel(before.DirectSSH) +
+				" to " + directSSHLabel(after.DirectSSH),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -174,6 +196,15 @@ func describePolicyChanges(changes []PolicyChange) (detail string, loosened bool
 	}
 	parts := make([]string, 0, len(changes))
 	for _, c := range changes {
+		if c.Text != "" {
+			if c.Loosening {
+				loosened = true
+				parts = append(parts, c.Text+" — "+c.Rationale)
+			} else {
+				parts = append(parts, c.Text)
+			}
+			continue
+		}
 		verb := "disabled"
 		if c.Enabled {
 			verb = "enabled"

@@ -11,7 +11,7 @@ import {
   ignoreHost,
   isConfigured,
 } from '~/lib/live'
-import type { AccessRequest, AssetInput, Session } from '~/types/domain'
+import type { AccessRequest, AssetInput, DirectSsh, Session } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -52,6 +52,10 @@ export const sessionQuery = (id: string) =>
 
 export const requestsQuery = (state?: AccessRequest['state']) =>
   queryOptions({ queryKey: qk.requests(state), queryFn: () => api.requests(state) })
+
+/** Direct SSH logins: polled, since someone is waiting at a terminal. */
+export const directLoginsQuery = () =>
+  queryOptions({ queryKey: ['direct-logins'], queryFn: api.directLogins, refetchInterval: 3_000 })
 
 export const policyQuery = () =>
   queryOptions({ queryKey: ['policy'], queryFn: api.policy })
@@ -192,6 +196,26 @@ export function useDecideRequest() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['requests'] })
       void qc.invalidateQueries({ queryKey: qk.stats })
+    },
+  })
+}
+
+export function useDecideDirectLogin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; approve: boolean; note: string }) =>
+      api.decideDirectLogin(v.id, v.approve, v.note),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['direct-logins'] }),
+  })
+}
+
+export function useSetAssetDirectSsh() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; mode: DirectSsh | null }) => api.setAssetDirectSsh(v.id, v.mode),
+    onSuccess: (asset) => {
+      qc.setQueryData(qk.asset(asset.id), asset)
+      void qc.invalidateQueries({ queryKey: ['assets'] })
     },
   })
 }

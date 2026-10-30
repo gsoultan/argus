@@ -96,9 +96,12 @@ describe('settings', () => {
 
   it('opens on how people connect', async () => {
     await renderRoute('/settings')
-    expect(await screen.findByText('Console only, through the agent')).toBeInTheDocument()
-    // Not a setting: there is no switch that lets native clients back in.
-    expect(screen.queryByRole('switch', { name: /native clients/i })).not.toBeInTheDocument()
+    expect(await screen.findByText('Through the console')).toBeInTheDocument()
+    // Direct SSH logins start refused, and opening them up is a change to
+    // review, not one that applies as the radio moves.
+    expect(screen.getByRole('radio', { name: /^refuse/i })).toBeChecked()
+    fireEvent.click(screen.getByRole('radio', { name: /allow and record/i }))
+    expect(await screen.findByRole('button', { name: /review 1 change/i })).toBeInTheDocument()
   })
 
   it('offers no switches for a gateway that no longer exists', async () => {

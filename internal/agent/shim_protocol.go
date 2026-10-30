@@ -40,7 +40,16 @@ type decision struct {
 	reason string
 	// consoleOnly: the login is not allowed at all, for reason.
 	consoleOnly bool
+	// pending: the login is held for an admin to approve, and another
+	// decision follows; reason says so to the person.
+	pending bool
+	// silent: nothing arrived before the deadline.
+	silent bool
 }
+
+// approvalWait bounds how long a held login waits for its decision: the
+// daemon's own limit, plus room for its answer to arrive.
+const approvalWait = DirectApprovalWait + 15*time.Second
 
 // awaitDecision reads the daemon's answer to a start.
 //
@@ -56,11 +65,13 @@ func awaitDecision(conn net.Conn, dec *json.Decoder, wait time.Duration) decisio
 	if err := dec.Decode(&r); err != nil {
 		var ne net.Error
 		if errors.As(err, &ne) && ne.Timeout() {
-			return decision{}
+			return decision{silent: true}
 		}
 		return decision{refused: true}
 	}
 	switch {
+	case r.Pending:
+		return decision{pending: true, reason: r.Reason}
 	case r.Refused:
 		reason := r.Reason
 		if reason == "" {
