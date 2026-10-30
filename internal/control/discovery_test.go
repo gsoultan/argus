@@ -25,7 +25,7 @@ func seedDiscovered(t *testing.T, s *Store, hostname string) {
 	ctx := context.Background()
 	// Heartbeat first, as a real agent does: it creates the row and, finding no
 	// matching asset, marks it unmatched.
-	if err := s.Heartbeat(ctx, hostname, "1.0.0", 0, nil, false, "", nil); err != nil &&
+	if err := s.Heartbeat(ctx, hostname, "1.0.0", 0, nil, false, "", nil, nil); err != nil &&
 		!errors.Is(err, ErrAgentUnmatched) {
 		t.Fatalf("Heartbeat: %v", err)
 	}

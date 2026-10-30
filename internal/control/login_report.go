@@ -22,7 +22,10 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		Scope      string `json:"scope"`
 		// Refused is a login the agent turned away because the deployment
 		// is console-only. Absent from an agent older than that.
-		Refused bool      `json:"refused"`
+		Refused bool `json:"refused"`
+		// Allowed is a login let in because the server is set to allow and
+		// record direct SSH logins. Believed only if it is.
+		Allowed bool      `json:"allowed"`
 		At      time.Time `json:"at"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/login"); err != nil {
@@ -70,15 +73,36 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Every deployment is console-only, so an agent never lets a direct login
-	// through on purpose. A report of one is an agent that is not following
-	// that -- an old one, a misconfigured one, or a report that is not what it
-	// claims to be -- and the auditor is told, with the highest severity.
+	if in.Allowed {
+		if mode, err := a.store.EffectiveDirectSSH(r.Context(), in.Hostname); err == nil &&
+			mode == DirectSSHAllow {
+			if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+				Action:   "session.direct_allowed",
+				Severity: "warning",
+				Target:   in.Hostname,
+				Detail: fmt.Sprintf("%s logged in to %s from %s at %s to run %s without the "+
+					"Argus console. The server is set to allow and record direct SSH logins, "+
+					"so nobody approved it; the session is being recorded and is attributed "+
+					"to the server account, not to a person.",
+					in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what),
+			}); err != nil {
+				a.fail(w, "report login", err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
+			return
+		}
+	}
+
+	// An agent only lets a direct login through when it was approved or the
+	// server is set to allow it. A report of one otherwise is an agent that is
+	// not following the setting -- an old one, a misconfigured one, or a report that is not what it claims
+	// to be -- and the auditor is told, with the highest severity.
 	detail := fmt.Sprintf("%s logged in to %s from %s at %s and ran %s without "+
 		"passing through Argus, and the agent reports it let the login through "+
 		"unrecorded: there is no replay, and no approval, time window or principal "+
-		"check was applied. Every server is console-only, so the agent was not "+
-		"following that; check the agent on this host.",
+		"check was applied. The server is not set to allow direct logins, so the "+
+		"agent was not following its setting; check the agent on this host.",
 		in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what)
 
 	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{

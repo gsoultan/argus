@@ -1,24 +1,25 @@
 import { useState } from 'react'
 import {
   Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, MultiSelect, Radio,
-  SegmentedControl, Stack, Text, Textarea, Tooltip,
+  SegmentedControl, Stack, Text, TextInput, Textarea, Tooltip,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconCheck, IconClipboardCheck, IconClockHour4, IconPlus, IconX,
+  IconAlertTriangle, IconCheck, IconClipboardCheck, IconClockHour4, IconPlus, IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, RequestStateBadge, absTime, relTime } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { notifyError, notifyWarn } from '~/lib/notify'
 import {
-  assetsQuery, meQuery, requestsQuery, useCreateRequest, useDecideRequest,
+  assetsQuery, directLoginsQuery, meQuery, requestsQuery, useCreateRequest, useDecideDirectLogin,
+  useDecideRequest,
 } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
-import type { AccessRequest } from '~/types/domain'
+import type { AccessRequest, DirectLogin } from '~/types/domain'
 
 export const Route = createFileRoute('/requests')({
   component: Requests,
@@ -102,6 +103,12 @@ function Requests() {
           />
         </Toolbar>
 
+        {decides && (
+          <DirectLoginQueue
+            canDecide={me?.role === 'approver' || me?.role === 'admin' || me?.role === 'owner'}
+          />
+        )}
+
         <Stack gap="sm">
           {requests?.map((r) => (
             <RequestCard
@@ -146,6 +153,100 @@ function Requests() {
       <NewRequestModal opened={newOpen} onClose={newModal.close} />
     </Box>
   )
+}
+
+/**
+ * Direct SSH logins waiting for a decision. Someone is sitting at a terminal
+ * for each of these, so they come first and the list polls.
+ */
+function DirectLoginQueue({ canDecide }: { canDecide: boolean }) {
+  const { data } = useQuery(directLoginsQuery())
+  const now = Date.now()
+  const waiting = (data ?? []).filter(
+    (d) => d.state === 'pending' && new Date(d.expiresAt).getTime() > now,
+  )
+  if (waiting.length === 0) return null
+  return (
+    <Stack gap="sm" mb="lg">
+      <Group gap={SP.cozy}>
+        <IconTerminal2 size={16} />
+        <Text fw={600} size="sm">Direct SSH logins waiting</Text>
+        <Badge size="xs" color="amber">{waiting.length}</Badge>
+      </Group>
+      {waiting.map((d) => <DirectLoginCard key={d.id} login={d} canDecide={canDecide} />)}
+    </Stack>
+  )
+}
+
+function DirectLoginCard({ login: d, canDecide }: { login: DirectLogin; canDecide: boolean }) {
+  const decide = useDecideDirectLogin()
+  const [note, setNote] = useState('')
+
+  const onDecide = async (approve: boolean) => {
+    try {
+      await decide.mutateAsync({ id: d.id, approve, note })
+    } catch (err) {
+      notifyError(approve ? 'Login not approved' : 'Login not denied', err)
+      return
+    }
+    notifications.show({
+      color: approve ? 'teal' : 'rose',
+      title: approve ? 'Login approved' : 'Login denied',
+      message: approve
+        ? `${d.principal} on ${d.hostname} is let in now, and the session is recorded.`
+        : `${d.principal} on ${d.hostname} is refused.`,
+    })
+  }
+
+  return (
+    <Card className="argus-direct-login" style={{ borderColor: 'var(--mantine-color-amber-6)' }}>
+      <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
+        <Box style={{ minWidth: 0 }}>
+          <Text fw={600} size="sm">
+            <Mono>{d.principal}</Mono> on <Mono>{d.hostname}</Mono>
+          </Text>
+          <Text size={FS.meta} c="dimmed" mt={SP.hair}>
+            From {d.clientAddr || 'an unknown address'}
+            {d.command ? <>, to run <Mono>{d.command}</Mono></> : ', for an interactive shell'}
+            {' · '}asked <Tooltip label={absTime(d.createdAt)}><span>{relTime(d.createdAt)}</span></Tooltip>
+            {' · '}refused in {secondsLeft(d.expiresAt)} if nobody answers
+          </Text>
+          <Text size={FS.micro} c="dimmed" mt={SP.tight} lh={1.5}>
+            The server already accepted this account&rsquo;s key or password. Argus cannot tell
+            which person is using it, so approve only a login you expect.
+          </Text>
+        </Box>
+        {canDecide && <Stack gap={SP.snug} style={{ flexShrink: 0 }}>
+          <TextInput
+            size="xs"
+            aria-label="Note for the audit log"
+            placeholder="Note for the audit log (optional)"
+            maxLength={1000}
+            value={note}
+            onChange={(e) => setNote(e.currentTarget.value)}
+            w={260}
+          />
+          <Group gap="xs" justify="flex-end">
+            <Button size="xs" variant="light" color="rose" leftSection={<IconX size={14} />}
+              loading={decide.isPending && decide.variables?.approve === false}
+              disabled={decide.isPending} onClick={() => void onDecide(false)}>
+              Deny
+            </Button>
+            <Button size="xs" color="teal" leftSection={<IconCheck size={14} />}
+              loading={decide.isPending && decide.variables?.approve === true}
+              disabled={decide.isPending} onClick={() => void onDecide(true)}>
+              Approve
+            </Button>
+          </Group>
+        </Stack>}
+      </Group>
+    </Card>
+  )
+}
+
+function secondsLeft(iso: string): string {
+  const s = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 1000))
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`
 }
 
 function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDecide: boolean }) {

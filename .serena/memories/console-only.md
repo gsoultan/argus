@@ -1,13 +1,34 @@
 # Console-only and login decisions
 
-Every deployment is console-only, with no switch. Migration `019` added
-`gateway_policy.allow_native_clients`; `020` dropped it. The per-asset
-recording scope (`017`: `every_login` / `argus_only`) was removed in `021`
-because console-only refused direct logins before the scope was consulted.
+Direct SSH logins are a setting again since `022`: `gateway_policy.direct_ssh`
+(`refuse` default / `approve` / `allow`), overridable per server in
+`assets.direct_ssh` (NULL follows the deployment). Narrower than the old
+`allow_native_clients` (`019`, dropped in `020`): an admitted login is always
+recorded. The per-asset recording scope (`017`) was removed in `021`.
+
+## Direct SSH (022)
+
+- Heartbeat reply carries `direct_ssh` (effective mode) and `console_only`
+  (= mode != allow, for agents older than the setting: they refuse under
+  approve, the closed side). The agent reports `direct_ssh` back into
+  `assets.agent_direct_ssh` and persists it to `<state>/direct-ssh`
+  (read before the legacy `<state>/console-only`).
+- `approve`: the daemon sends the shim `Decision{Pending, Refused, Error}`
+  (an old shim fails closed on it), then asks `POST /api/v1/report/direct-login`
+  and long-polls `.../{id}/wait` (25s per poll, never spooled -- `reporter.Ask`).
+  Rows live in `direct_login_requests`, expire after 2 minutes, max 20 pending
+  per host. Approver/admin/owner decide at `POST /api/v1/direct-logins/{id}/decision`;
+  the console shows them on Access requests. Unreachable control plane,
+  denial, expiry or a collector shutdown all refuse.
+- A finished direct session reports `directApproval` ("approved" + id, or
+  "allowed"); the control plane checks it against its own rows / setting and
+  writes `session.direct_recorded` (notice) only if it holds, otherwise the
+  usual critical `session.direct_detected`. Code: `internal/control/direct_login.go`,
+  `internal/agent/collector.go` (`admitDirect`).
 
 ## Agent
 
-The heartbeat reply always carries `console_only: true` (and no longer
+The heartbeat reply carries `console_only` (true unless direct_ssh is allow; no longer
 `recording_scope`; an older agent reads its absence as every_login). The agent
 persists it to `<state>/console-only` and reports what it applied as
 `assets.agent_console_only` (NULL = unconfirmed).

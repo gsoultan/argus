@@ -1,5 +1,5 @@
 import { Suspense, lazy, useState } from 'react'
-import { Alert, Badge, Box, Button, Card, Grid, Group, Stack, Table, Text } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Grid, Group, Select, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
@@ -15,8 +15,11 @@ import {
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
-  assetQuery, assignmentsQuery, meQuery, sessionsQuery, usePinHostKey,
+  assetQuery, assignmentsQuery, meQuery, policyQuery, sessionsQuery, usePinHostKey,
+  useSetAssetDirectSsh,
 } from '~/lib/queries'
+import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
+import type { Asset, DirectSsh } from '~/types/domain'
 import { guard } from '~/lib/guard'
 import { isElevatedAccount } from '~/lib/roles'
 
@@ -234,19 +237,7 @@ function AssetDetail() {
                 </Stack>
               </SectionCard>
 
-              <SectionCard
-                title="Connect"
-                icon={IconPlugConnected}
-                description="Terminals and file transfers to this server open from Connect, through its agent. Direct ssh, scp and sftp are refused."
-              >
-                <Text size={FS.meta} c="dimmed" lh={1.5}>
-                  {asset.agentConsoleOnly === true
-                    ? "This server's agent confirmed at its last check-in that it refuses direct logins."
-                    : asset.agentConsoleOnly === false
-                      ? "This server's agent has not applied console-only yet; it will at its next check-in."
-                      : "This server's agent has not confirmed console-only. An agent older than the setting still accepts direct logins until it is upgraded."}
-                </Text>
-              </SectionCard>
+              <DirectSshCard asset={asset} canEdit={canEdit} />
             </Stack>
           </Grid.Col>
 
@@ -372,5 +363,71 @@ function WhoCanConnect({ assetId }: { assetId: string }) {
         </Group>
       ))}
     </Stack>
+  )
+}
+
+const INHERIT = 'inherit'
+
+/**
+ * Direct SSH logins on this server: its own choice, or the one in Settings,
+ * and whether its agent has said it is applying it.
+ */
+function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
+  const { data: policy } = useQuery(policyQuery())
+  const setMode = useSetAssetDirectSsh()
+  const own = asset.directSsh ?? null
+  const global = policy?.directSsh ?? null
+  const effective: DirectSsh | null = own ?? global
+  const applied = asset.agentDirectSsh ?? null
+
+  const choose = (v: string | null) => {
+    if (!v) return
+    const next = v === INHERIT ? null : (v as DirectSsh)
+    if (next === own) return
+    const nextEffective = next ?? global
+    const loosens = effective && nextEffective ? directSshLoosens(effective, nextEffective) : false
+    void run(
+      () => setMode.mutateAsync({ id: asset.id, mode: next }),
+      {
+        success: ['Direct SSH logins changed',
+          `${asset.hostname}: ${next ? directSshLabel(next) : `the setting in Settings (${global ? directSshLabel(global) : 'unknown'})`}. ` +
+          (loosens ? 'This lets more logins in, and is in the audit log as a loosening. ' : '') +
+          'The agent applies it at its next check-in, within a minute.'],
+        failure: 'Direct SSH logins not changed',
+      },
+    )
+  }
+
+  return (
+    <SectionCard
+      title="Connect"
+      icon={IconPlugConnected}
+      description="Terminals and file transfers to this server open from Connect, through its agent."
+    >
+      <Stack gap="sm">
+        <Select
+          label="Direct ssh, scp and sftp"
+          size="xs"
+          allowDeselect={false}
+          disabled={!canEdit || setMode.isPending}
+          value={own ?? INHERIT}
+          onChange={choose}
+          data={[
+            { value: INHERIT, label: `Use Settings (${global ? directSshLabel(global) : '…'})` },
+            ...DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label })),
+          ]}
+          description={effective
+            ? DIRECT_SSH_CHOICES.find((c) => c.value === effective)?.description
+            : undefined}
+        />
+        <Text size={FS.meta} c="dimmed" lh={1.5}>
+          {applied === null
+            ? "This server's agent has not confirmed a setting. An agent older than this setting refuses direct logins under Refuse and Ask for approval, and accepts and records them under Allow; upgrade it to hold logins for approval."
+            : applied === effective
+              ? `This server's agent confirmed at its last check-in that it is applying ${directSshLabel(applied)}.`
+              : `This server's agent is still applying ${directSshLabel(applied)}; it picks up ${effective ? directSshLabel(effective) : 'the change'} at its next check-in.`}
+        </Text>
+      </Stack>
+    </SectionCard>
   )
 }

@@ -81,7 +81,18 @@ func RunShim(cfg ShimConfig) int {
 	// acknowledgement arrive on the same stream, and a second buffered reader
 	// would lose whatever the first had already read past.
 	dec := json.NewDecoder(bufio.NewReader(conn))
-	switch d := awaitDecision(conn, dec, decisionWait); {
+	d := awaitDecision(conn, dec, decisionWait)
+	if d.pending {
+		// Held for an admin. Said on the person's terminal so the wait is not
+		// mistaken for a hang, and a second answer is required: silence now
+		// is a refusal, not an old daemon.
+		fmt.Fprintf(os.Stderr, "argus: %s.\n", d.reason)
+		if d = awaitDecision(conn, dec, approvalWait); d.pending || d.silent {
+			fmt.Fprintln(os.Stderr, "argus: nobody approved this login in time, so it was refused.")
+			return 1
+		}
+	}
+	switch {
 	case d.consoleOnly:
 		// Not a recording failure, so FailOpen does not apply: the login is
 		// not allowed, recorded or not.

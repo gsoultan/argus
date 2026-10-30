@@ -200,6 +200,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/requests", a.getRequests)
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
+	mux.HandleFunc("GET /api/v1/direct-logins", a.user(a.getDirectLogins))
+	mux.HandleFunc("POST /api/v1/direct-logins/{id}/decision", a.postDirectLoginDecision)
 	mux.HandleFunc("GET /api/v1/grant", a.user(a.getGrant))
 
 	// Console read surface. Paths match what web/src/lib/api.ts already calls.
@@ -212,6 +214,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/assets", a.postAssetCreate)
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
@@ -259,6 +262,8 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/report/recording/{id}", a.agentReporter(a.putRecording))
 	mux.HandleFunc("POST /api/v1/report/heartbeat", a.agentReporter(a.postHeartbeat))
 	mux.HandleFunc("POST /api/v1/report/login", a.agentReporter(a.postLogin))
+	mux.HandleFunc("POST /api/v1/report/direct-login", a.agentReporter(a.postDirectLogin))
+	mux.HandleFunc("POST /api/v1/report/direct-login/{id}/wait", a.agentReporter(a.postDirectLoginWait))
 	mux.HandleFunc("GET "+tunnel.UpgradePath, a.handleTunnelUpgrade)
 	mux.HandleFunc("POST /api/v1/report/facts", a.agentReporter(a.postFacts))
 
@@ -490,11 +495,20 @@ func (a *API) getAudit(w http.ResponseWriter, r *http.Request, _ string) {
 /* ── Reporter handlers ───────────────────────────────────────────────────── */
 
 func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
-	var in Session
-	if err := decodeReport(r, &in, a.log, "report/session"); err != nil {
+	var report struct {
+		Session
+		// DirectLoginID is the approval a direct login was let in on, and
+		// DirectApproval is "approved" for one, or "allowed" for a login let
+		// in because the server is set to allow and record. Checked against
+		// what the control plane holds before either is believed.
+		DirectLoginID  string `json:"directLoginId"`
+		DirectApproval string `json:"directApproval"`
+	}
+	if err := decodeReport(r, &report, a.log, "report/session"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	in := report.Session
 	if in.ID == "" || in.AssetHostname == "" {
 		writeErr(w, http.StatusBadRequest, "id and assetHostname are required")
 		return
@@ -572,14 +586,19 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	// the audit chain rather than only the session table — the audit log is
 	// what an auditor reads, and it is the tamper-evident one.
 	if in.Origin == "direct" {
-		if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+		e := AuditEvent{
 			Action:     "session.direct_detected",
 			Severity:   "critical",
 			ActorEmail: in.UserEmail,
 			Target:     in.AssetHostname,
 			Detail: "Session reached the host without passing through Argus. " +
 				"It was recorded, but no approval, time window or principal check was applied.",
-		}); err != nil {
+		}
+		if ok, detail := a.directSessionAdmitted(r.Context(), in, report.DirectLoginID,
+			report.DirectApproval); ok {
+			e.Action, e.Severity, e.Detail = "session.direct_recorded", "notice", detail
+		}
+		if _, err := a.store.AppendAudit(r.Context(), e); err != nil {
 			a.log.Error("audit append failed", "error", err)
 		}
 	}
@@ -601,6 +620,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// ConsoleOnly is whether the agent is refusing direct logins now.
 		// Absent from an agent older than console-only.
 		ConsoleOnly *bool `json:"console_only"`
+		// DirectSSH is the direct SSH mode the agent is applying now.
+		// Absent from an agent older than the setting.
+		DirectSSH *string `json:"direct_ssh"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -613,14 +635,28 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !a.mayReportFor(w, r, in.Hostname) {
 		return
 	}
+	if in.DirectSSH != nil && !validDirectSSH(*in.DirectSSH) {
+		in.DirectSSH = nil
+	}
 	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
-		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.ConsoleOnly)
-	// Console-only rides the reply, and is always on: every session opens
-	// from the console, and there is no setting that turns direct logins back
-	// on. Sent rather than assumed so an agent that last heard otherwise from
-	// an older control plane is brought back in line. An older agent also
-	// reads the absent recording_scope as every_login.
+		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.ConsoleOnly,
+		in.DirectSSH)
+	// The direct SSH mode rides the reply. console_only is what an agent
+	// older than the setting understands, and it is on unless the mode is
+	// "allow": such an agent cannot hold a login for approval, so under
+	// "approve" it refuses, the closed side of what was asked. An agent that
+	// knows direct_ssh reads that instead.
+	//
+	// A setting that cannot be read is left out, so the agent keeps what it
+	// last heard rather than a value chosen by an outage; console_only stays
+	// on regardless.
 	reply := map[string]any{"status": "ok", "console_only": true}
+	if mode, merr := a.store.EffectiveDirectSSH(r.Context(), in.Hostname); merr == nil {
+		reply["direct_ssh"] = mode
+		reply["console_only"] = mode != DirectSSHAllow
+	} else {
+		a.log.Error("heartbeat: cannot read the direct ssh setting", "error", merr)
+	}
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,

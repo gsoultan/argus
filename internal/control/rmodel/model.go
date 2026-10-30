@@ -160,6 +160,8 @@ type Asset struct {
 	Domain               string
 	ArchivedAt           *time.Time
 	AgentConsoleOnly     *bool
+	DirectSsh            *string
+	AgentDirectSsh       *string
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -183,6 +185,8 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.Col(&m.CredentialRef).Default("''::text")
 	t.Col(&m.Domain).Default("''::text")
 	t.Index(&m.Hostname).Where("archived_at IS NULL").Named("assets_live_idx")
+	t.CheckNamed("assets_direct_ssh_check",
+		"direct_ssh IS NULL OR direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
 }
 
 // AssetAssignment is table asset_assignments: who may reach which host, as whom.
@@ -230,6 +234,35 @@ func (m *AuditEvent) Schema(t *storm.Table) {
 	t.Index(&m.Severity).Named("audit_severity_idx")
 }
 
+// DirectLoginRequest is table direct_login_requests: a direct SSH login held
+// for approval.
+type DirectLoginRequest struct {
+	ID             [16]byte
+	Hostname       string
+	Principal      string
+	ClientAddr     string
+	Command        string
+	State          string
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+	DecidedAt      *time.Time
+	DecidedByEmail *string
+	DecisionNote   *string
+}
+
+func (m *DirectLoginRequest) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.ClientAddr).Default("''::text")
+	t.Col(&m.Command).Default("''::text")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("direct_login_requests_state_check",
+		"state = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'expired'::text])")
+	t.CheckNamed("direct_login_requests_check", "(state = 'pending'::text) = (decided_at IS NULL)")
+	t.Index(storm.Desc(&m.CreatedAt)).Named("direct_login_requests_created_idx")
+	t.Index(storm.Lower(&m.Hostname)).Where("state = 'pending'::text").Named("direct_login_requests_pending_idx")
+}
+
 // GatewayPolicy is table gateway_policy.
 //
 // The table name is not what storm would derive from the type, so it is
@@ -245,6 +278,7 @@ type GatewayPolicy struct {
 	RequireEbpfForRoot        bool
 	UpdatedAt                 time.Time
 	UpdatedBy                 string
+	DirectSsh                 string
 }
 
 func (m *GatewayPolicy) Schema(t *storm.Table) {
@@ -260,6 +294,9 @@ func (m *GatewayPolicy) Schema(t *storm.Table) {
 	t.Col(&m.UpdatedAt).Default("now()")
 	t.Col(&m.UpdatedBy).Default("''::text")
 	t.CheckNamed("gateway_policy_id_check", "id")
+	t.Col(&m.DirectSsh).Default("'refuse'::text")
+	t.CheckNamed("gateway_policy_direct_ssh_check",
+		"direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
 }
 
 // HostKeyPin is table host_key_pins.
@@ -421,6 +458,7 @@ func All() []any {
 		&Asset{},
 		&AssetAssignment{},
 		&AuditEvent{},
+		&DirectLoginRequest{},
 		&GatewayPolicy{},
 		&HostKeyPin{},
 		&RecoveryCode{},

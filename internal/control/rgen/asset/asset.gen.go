@@ -50,6 +50,8 @@ type Row struct {
 	Domain               string
 	ArchivedAt           runtime.Null[time.Time]
 	AgentConsoleOnly     runtime.Null[bool]
+	DirectSsh            runtime.Null[string]
+	AgentDirectSsh       runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -88,7 +90,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 30
+const nCols = 32
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -399,6 +401,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.bools[q.nbo] = r.AgentConsoleOnly.V
 		q.nbo++
+	case 30:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.DirectSsh.V
+		q.ns++
+	case 31:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.AgentDirectSsh.V
+		q.ns++
 	}
 }
 
@@ -597,6 +613,8 @@ var (
 	Domain               = TextCol{27}
 	ArchivedAt           = NullTimeCol{28}
 	AgentConsoleOnly     = NullBoolCol{29}
+	DirectSsh            = NullTextCol{30}
+	AgentDirectSsh       = NullTextCol{31}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1111,6 +1129,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 30:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 31:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1316,6 +1348,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 30:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 31:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1527,90 +1573,116 @@ func (q Query) UnmanagedKeyCountIn(v ...int32) Query    { return q.Where(Unmanag
 func (q Query) UnmanagedKeyCountNotIn(v ...int32) Query {
 	return q.Where(UnmanagedKeyCount.NotIn(v...))
 }
-func (q Query) AgentHostnameEq(v string) Query       { return q.Where(AgentHostname.Eq(v)) }
-func (q Query) AgentHostnameNotEq(v string) Query    { return q.Where(AgentHostname.NotEq(v)) }
-func (q Query) AgentHostnameGt(v string) Query       { return q.Where(AgentHostname.Gt(v)) }
-func (q Query) AgentHostnameGte(v string) Query      { return q.Where(AgentHostname.Gte(v)) }
-func (q Query) AgentHostnameLt(v string) Query       { return q.Where(AgentHostname.Lt(v)) }
-func (q Query) AgentHostnameLte(v string) Query      { return q.Where(AgentHostname.Lte(v)) }
-func (q Query) AgentHostnameEqLower(v string) Query  { return q.Where(AgentHostname.EqLower(v)) }
-func (q Query) AgentHostnameLike(v string) Query     { return q.Where(AgentHostname.Like(v)) }
-func (q Query) AgentHostnameILike(v string) Query    { return q.Where(AgentHostname.ILike(v)) }
-func (q Query) AgentHostnameIn(v ...string) Query    { return q.Where(AgentHostname.In(v...)) }
-func (q Query) AgentHostnameNotIn(v ...string) Query { return q.Where(AgentHostname.NotIn(v...)) }
-func (q Query) AgentHostnameIsNull() Query           { return q.Where(AgentHostname.IsNull()) }
-func (q Query) AgentHostnameIsNotNull() Query        { return q.Where(AgentHostname.IsNotNull()) }
-func (q Query) DiscoveredByEq(v string) Query        { return q.Where(DiscoveredBy.Eq(v)) }
-func (q Query) DiscoveredByNotEq(v string) Query     { return q.Where(DiscoveredBy.NotEq(v)) }
-func (q Query) DiscoveredByGt(v string) Query        { return q.Where(DiscoveredBy.Gt(v)) }
-func (q Query) DiscoveredByGte(v string) Query       { return q.Where(DiscoveredBy.Gte(v)) }
-func (q Query) DiscoveredByLt(v string) Query        { return q.Where(DiscoveredBy.Lt(v)) }
-func (q Query) DiscoveredByLte(v string) Query       { return q.Where(DiscoveredBy.Lte(v)) }
-func (q Query) DiscoveredByEqLower(v string) Query   { return q.Where(DiscoveredBy.EqLower(v)) }
-func (q Query) DiscoveredByLike(v string) Query      { return q.Where(DiscoveredBy.Like(v)) }
-func (q Query) DiscoveredByILike(v string) Query     { return q.Where(DiscoveredBy.ILike(v)) }
-func (q Query) DiscoveredByIn(v ...string) Query     { return q.Where(DiscoveredBy.In(v...)) }
-func (q Query) DiscoveredByNotIn(v ...string) Query  { return q.Where(DiscoveredBy.NotIn(v...)) }
-func (q Query) DiscoveredByIsNull() Query            { return q.Where(DiscoveredBy.IsNull()) }
-func (q Query) DiscoveredByIsNotNull() Query         { return q.Where(DiscoveredBy.IsNotNull()) }
-func (q Query) ProtocolEq(v string) Query            { return q.Where(Protocol.Eq(v)) }
-func (q Query) ProtocolNotEq(v string) Query         { return q.Where(Protocol.NotEq(v)) }
-func (q Query) ProtocolGt(v string) Query            { return q.Where(Protocol.Gt(v)) }
-func (q Query) ProtocolGte(v string) Query           { return q.Where(Protocol.Gte(v)) }
-func (q Query) ProtocolLt(v string) Query            { return q.Where(Protocol.Lt(v)) }
-func (q Query) ProtocolLte(v string) Query           { return q.Where(Protocol.Lte(v)) }
-func (q Query) ProtocolEqLower(v string) Query       { return q.Where(Protocol.EqLower(v)) }
-func (q Query) ProtocolLike(v string) Query          { return q.Where(Protocol.Like(v)) }
-func (q Query) ProtocolILike(v string) Query         { return q.Where(Protocol.ILike(v)) }
-func (q Query) ProtocolIn(v ...string) Query         { return q.Where(Protocol.In(v...)) }
-func (q Query) ProtocolNotIn(v ...string) Query      { return q.Where(Protocol.NotIn(v...)) }
-func (q Query) SourceEq(v string) Query              { return q.Where(Source.Eq(v)) }
-func (q Query) SourceNotEq(v string) Query           { return q.Where(Source.NotEq(v)) }
-func (q Query) SourceGt(v string) Query              { return q.Where(Source.Gt(v)) }
-func (q Query) SourceGte(v string) Query             { return q.Where(Source.Gte(v)) }
-func (q Query) SourceLt(v string) Query              { return q.Where(Source.Lt(v)) }
-func (q Query) SourceLte(v string) Query             { return q.Where(Source.Lte(v)) }
-func (q Query) SourceEqLower(v string) Query         { return q.Where(Source.EqLower(v)) }
-func (q Query) SourceLike(v string) Query            { return q.Where(Source.Like(v)) }
-func (q Query) SourceILike(v string) Query           { return q.Where(Source.ILike(v)) }
-func (q Query) SourceIn(v ...string) Query           { return q.Where(Source.In(v...)) }
-func (q Query) SourceNotIn(v ...string) Query        { return q.Where(Source.NotIn(v...)) }
-func (q Query) CredentialRefEq(v string) Query       { return q.Where(CredentialRef.Eq(v)) }
-func (q Query) CredentialRefNotEq(v string) Query    { return q.Where(CredentialRef.NotEq(v)) }
-func (q Query) CredentialRefGt(v string) Query       { return q.Where(CredentialRef.Gt(v)) }
-func (q Query) CredentialRefGte(v string) Query      { return q.Where(CredentialRef.Gte(v)) }
-func (q Query) CredentialRefLt(v string) Query       { return q.Where(CredentialRef.Lt(v)) }
-func (q Query) CredentialRefLte(v string) Query      { return q.Where(CredentialRef.Lte(v)) }
-func (q Query) CredentialRefEqLower(v string) Query  { return q.Where(CredentialRef.EqLower(v)) }
-func (q Query) CredentialRefLike(v string) Query     { return q.Where(CredentialRef.Like(v)) }
-func (q Query) CredentialRefILike(v string) Query    { return q.Where(CredentialRef.ILike(v)) }
-func (q Query) CredentialRefIn(v ...string) Query    { return q.Where(CredentialRef.In(v...)) }
-func (q Query) CredentialRefNotIn(v ...string) Query { return q.Where(CredentialRef.NotIn(v...)) }
-func (q Query) DomainEq(v string) Query              { return q.Where(Domain.Eq(v)) }
-func (q Query) DomainNotEq(v string) Query           { return q.Where(Domain.NotEq(v)) }
-func (q Query) DomainGt(v string) Query              { return q.Where(Domain.Gt(v)) }
-func (q Query) DomainGte(v string) Query             { return q.Where(Domain.Gte(v)) }
-func (q Query) DomainLt(v string) Query              { return q.Where(Domain.Lt(v)) }
-func (q Query) DomainLte(v string) Query             { return q.Where(Domain.Lte(v)) }
-func (q Query) DomainEqLower(v string) Query         { return q.Where(Domain.EqLower(v)) }
-func (q Query) DomainLike(v string) Query            { return q.Where(Domain.Like(v)) }
-func (q Query) DomainILike(v string) Query           { return q.Where(Domain.ILike(v)) }
-func (q Query) DomainIn(v ...string) Query           { return q.Where(Domain.In(v...)) }
-func (q Query) DomainNotIn(v ...string) Query        { return q.Where(Domain.NotIn(v...)) }
-func (q Query) ArchivedAtEq(v time.Time) Query       { return q.Where(ArchivedAt.Eq(v)) }
-func (q Query) ArchivedAtNotEq(v time.Time) Query    { return q.Where(ArchivedAt.NotEq(v)) }
-func (q Query) ArchivedAtGt(v time.Time) Query       { return q.Where(ArchivedAt.Gt(v)) }
-func (q Query) ArchivedAtGte(v time.Time) Query      { return q.Where(ArchivedAt.Gte(v)) }
-func (q Query) ArchivedAtLt(v time.Time) Query       { return q.Where(ArchivedAt.Lt(v)) }
-func (q Query) ArchivedAtLte(v time.Time) Query      { return q.Where(ArchivedAt.Lte(v)) }
-func (q Query) ArchivedAtIsNull() Query              { return q.Where(ArchivedAt.IsNull()) }
-func (q Query) ArchivedAtIsNotNull() Query           { return q.Where(ArchivedAt.IsNotNull()) }
-func (q Query) AgentConsoleOnlyEq(v bool) Query      { return q.Where(AgentConsoleOnly.Eq(v)) }
-func (q Query) AgentConsoleOnlyNotEq(v bool) Query   { return q.Where(AgentConsoleOnly.NotEq(v)) }
-func (q Query) AgentConsoleOnlyIsNull() Query        { return q.Where(AgentConsoleOnly.IsNull()) }
-func (q Query) AgentConsoleOnlyIsNotNull() Query     { return q.Where(AgentConsoleOnly.IsNotNull()) }
+func (q Query) AgentHostnameEq(v string) Query        { return q.Where(AgentHostname.Eq(v)) }
+func (q Query) AgentHostnameNotEq(v string) Query     { return q.Where(AgentHostname.NotEq(v)) }
+func (q Query) AgentHostnameGt(v string) Query        { return q.Where(AgentHostname.Gt(v)) }
+func (q Query) AgentHostnameGte(v string) Query       { return q.Where(AgentHostname.Gte(v)) }
+func (q Query) AgentHostnameLt(v string) Query        { return q.Where(AgentHostname.Lt(v)) }
+func (q Query) AgentHostnameLte(v string) Query       { return q.Where(AgentHostname.Lte(v)) }
+func (q Query) AgentHostnameEqLower(v string) Query   { return q.Where(AgentHostname.EqLower(v)) }
+func (q Query) AgentHostnameLike(v string) Query      { return q.Where(AgentHostname.Like(v)) }
+func (q Query) AgentHostnameILike(v string) Query     { return q.Where(AgentHostname.ILike(v)) }
+func (q Query) AgentHostnameIn(v ...string) Query     { return q.Where(AgentHostname.In(v...)) }
+func (q Query) AgentHostnameNotIn(v ...string) Query  { return q.Where(AgentHostname.NotIn(v...)) }
+func (q Query) AgentHostnameIsNull() Query            { return q.Where(AgentHostname.IsNull()) }
+func (q Query) AgentHostnameIsNotNull() Query         { return q.Where(AgentHostname.IsNotNull()) }
+func (q Query) DiscoveredByEq(v string) Query         { return q.Where(DiscoveredBy.Eq(v)) }
+func (q Query) DiscoveredByNotEq(v string) Query      { return q.Where(DiscoveredBy.NotEq(v)) }
+func (q Query) DiscoveredByGt(v string) Query         { return q.Where(DiscoveredBy.Gt(v)) }
+func (q Query) DiscoveredByGte(v string) Query        { return q.Where(DiscoveredBy.Gte(v)) }
+func (q Query) DiscoveredByLt(v string) Query         { return q.Where(DiscoveredBy.Lt(v)) }
+func (q Query) DiscoveredByLte(v string) Query        { return q.Where(DiscoveredBy.Lte(v)) }
+func (q Query) DiscoveredByEqLower(v string) Query    { return q.Where(DiscoveredBy.EqLower(v)) }
+func (q Query) DiscoveredByLike(v string) Query       { return q.Where(DiscoveredBy.Like(v)) }
+func (q Query) DiscoveredByILike(v string) Query      { return q.Where(DiscoveredBy.ILike(v)) }
+func (q Query) DiscoveredByIn(v ...string) Query      { return q.Where(DiscoveredBy.In(v...)) }
+func (q Query) DiscoveredByNotIn(v ...string) Query   { return q.Where(DiscoveredBy.NotIn(v...)) }
+func (q Query) DiscoveredByIsNull() Query             { return q.Where(DiscoveredBy.IsNull()) }
+func (q Query) DiscoveredByIsNotNull() Query          { return q.Where(DiscoveredBy.IsNotNull()) }
+func (q Query) ProtocolEq(v string) Query             { return q.Where(Protocol.Eq(v)) }
+func (q Query) ProtocolNotEq(v string) Query          { return q.Where(Protocol.NotEq(v)) }
+func (q Query) ProtocolGt(v string) Query             { return q.Where(Protocol.Gt(v)) }
+func (q Query) ProtocolGte(v string) Query            { return q.Where(Protocol.Gte(v)) }
+func (q Query) ProtocolLt(v string) Query             { return q.Where(Protocol.Lt(v)) }
+func (q Query) ProtocolLte(v string) Query            { return q.Where(Protocol.Lte(v)) }
+func (q Query) ProtocolEqLower(v string) Query        { return q.Where(Protocol.EqLower(v)) }
+func (q Query) ProtocolLike(v string) Query           { return q.Where(Protocol.Like(v)) }
+func (q Query) ProtocolILike(v string) Query          { return q.Where(Protocol.ILike(v)) }
+func (q Query) ProtocolIn(v ...string) Query          { return q.Where(Protocol.In(v...)) }
+func (q Query) ProtocolNotIn(v ...string) Query       { return q.Where(Protocol.NotIn(v...)) }
+func (q Query) SourceEq(v string) Query               { return q.Where(Source.Eq(v)) }
+func (q Query) SourceNotEq(v string) Query            { return q.Where(Source.NotEq(v)) }
+func (q Query) SourceGt(v string) Query               { return q.Where(Source.Gt(v)) }
+func (q Query) SourceGte(v string) Query              { return q.Where(Source.Gte(v)) }
+func (q Query) SourceLt(v string) Query               { return q.Where(Source.Lt(v)) }
+func (q Query) SourceLte(v string) Query              { return q.Where(Source.Lte(v)) }
+func (q Query) SourceEqLower(v string) Query          { return q.Where(Source.EqLower(v)) }
+func (q Query) SourceLike(v string) Query             { return q.Where(Source.Like(v)) }
+func (q Query) SourceILike(v string) Query            { return q.Where(Source.ILike(v)) }
+func (q Query) SourceIn(v ...string) Query            { return q.Where(Source.In(v...)) }
+func (q Query) SourceNotIn(v ...string) Query         { return q.Where(Source.NotIn(v...)) }
+func (q Query) CredentialRefEq(v string) Query        { return q.Where(CredentialRef.Eq(v)) }
+func (q Query) CredentialRefNotEq(v string) Query     { return q.Where(CredentialRef.NotEq(v)) }
+func (q Query) CredentialRefGt(v string) Query        { return q.Where(CredentialRef.Gt(v)) }
+func (q Query) CredentialRefGte(v string) Query       { return q.Where(CredentialRef.Gte(v)) }
+func (q Query) CredentialRefLt(v string) Query        { return q.Where(CredentialRef.Lt(v)) }
+func (q Query) CredentialRefLte(v string) Query       { return q.Where(CredentialRef.Lte(v)) }
+func (q Query) CredentialRefEqLower(v string) Query   { return q.Where(CredentialRef.EqLower(v)) }
+func (q Query) CredentialRefLike(v string) Query      { return q.Where(CredentialRef.Like(v)) }
+func (q Query) CredentialRefILike(v string) Query     { return q.Where(CredentialRef.ILike(v)) }
+func (q Query) CredentialRefIn(v ...string) Query     { return q.Where(CredentialRef.In(v...)) }
+func (q Query) CredentialRefNotIn(v ...string) Query  { return q.Where(CredentialRef.NotIn(v...)) }
+func (q Query) DomainEq(v string) Query               { return q.Where(Domain.Eq(v)) }
+func (q Query) DomainNotEq(v string) Query            { return q.Where(Domain.NotEq(v)) }
+func (q Query) DomainGt(v string) Query               { return q.Where(Domain.Gt(v)) }
+func (q Query) DomainGte(v string) Query              { return q.Where(Domain.Gte(v)) }
+func (q Query) DomainLt(v string) Query               { return q.Where(Domain.Lt(v)) }
+func (q Query) DomainLte(v string) Query              { return q.Where(Domain.Lte(v)) }
+func (q Query) DomainEqLower(v string) Query          { return q.Where(Domain.EqLower(v)) }
+func (q Query) DomainLike(v string) Query             { return q.Where(Domain.Like(v)) }
+func (q Query) DomainILike(v string) Query            { return q.Where(Domain.ILike(v)) }
+func (q Query) DomainIn(v ...string) Query            { return q.Where(Domain.In(v...)) }
+func (q Query) DomainNotIn(v ...string) Query         { return q.Where(Domain.NotIn(v...)) }
+func (q Query) ArchivedAtEq(v time.Time) Query        { return q.Where(ArchivedAt.Eq(v)) }
+func (q Query) ArchivedAtNotEq(v time.Time) Query     { return q.Where(ArchivedAt.NotEq(v)) }
+func (q Query) ArchivedAtGt(v time.Time) Query        { return q.Where(ArchivedAt.Gt(v)) }
+func (q Query) ArchivedAtGte(v time.Time) Query       { return q.Where(ArchivedAt.Gte(v)) }
+func (q Query) ArchivedAtLt(v time.Time) Query        { return q.Where(ArchivedAt.Lt(v)) }
+func (q Query) ArchivedAtLte(v time.Time) Query       { return q.Where(ArchivedAt.Lte(v)) }
+func (q Query) ArchivedAtIsNull() Query               { return q.Where(ArchivedAt.IsNull()) }
+func (q Query) ArchivedAtIsNotNull() Query            { return q.Where(ArchivedAt.IsNotNull()) }
+func (q Query) AgentConsoleOnlyEq(v bool) Query       { return q.Where(AgentConsoleOnly.Eq(v)) }
+func (q Query) AgentConsoleOnlyNotEq(v bool) Query    { return q.Where(AgentConsoleOnly.NotEq(v)) }
+func (q Query) AgentConsoleOnlyIsNull() Query         { return q.Where(AgentConsoleOnly.IsNull()) }
+func (q Query) AgentConsoleOnlyIsNotNull() Query      { return q.Where(AgentConsoleOnly.IsNotNull()) }
+func (q Query) DirectSshEq(v string) Query            { return q.Where(DirectSsh.Eq(v)) }
+func (q Query) DirectSshNotEq(v string) Query         { return q.Where(DirectSsh.NotEq(v)) }
+func (q Query) DirectSshGt(v string) Query            { return q.Where(DirectSsh.Gt(v)) }
+func (q Query) DirectSshGte(v string) Query           { return q.Where(DirectSsh.Gte(v)) }
+func (q Query) DirectSshLt(v string) Query            { return q.Where(DirectSsh.Lt(v)) }
+func (q Query) DirectSshLte(v string) Query           { return q.Where(DirectSsh.Lte(v)) }
+func (q Query) DirectSshEqLower(v string) Query       { return q.Where(DirectSsh.EqLower(v)) }
+func (q Query) DirectSshLike(v string) Query          { return q.Where(DirectSsh.Like(v)) }
+func (q Query) DirectSshILike(v string) Query         { return q.Where(DirectSsh.ILike(v)) }
+func (q Query) DirectSshIn(v ...string) Query         { return q.Where(DirectSsh.In(v...)) }
+func (q Query) DirectSshNotIn(v ...string) Query      { return q.Where(DirectSsh.NotIn(v...)) }
+func (q Query) DirectSshIsNull() Query                { return q.Where(DirectSsh.IsNull()) }
+func (q Query) DirectSshIsNotNull() Query             { return q.Where(DirectSsh.IsNotNull()) }
+func (q Query) AgentDirectSshEq(v string) Query       { return q.Where(AgentDirectSsh.Eq(v)) }
+func (q Query) AgentDirectSshNotEq(v string) Query    { return q.Where(AgentDirectSsh.NotEq(v)) }
+func (q Query) AgentDirectSshGt(v string) Query       { return q.Where(AgentDirectSsh.Gt(v)) }
+func (q Query) AgentDirectSshGte(v string) Query      { return q.Where(AgentDirectSsh.Gte(v)) }
+func (q Query) AgentDirectSshLt(v string) Query       { return q.Where(AgentDirectSsh.Lt(v)) }
+func (q Query) AgentDirectSshLte(v string) Query      { return q.Where(AgentDirectSsh.Lte(v)) }
+func (q Query) AgentDirectSshEqLower(v string) Query  { return q.Where(AgentDirectSsh.EqLower(v)) }
+func (q Query) AgentDirectSshLike(v string) Query     { return q.Where(AgentDirectSsh.Like(v)) }
+func (q Query) AgentDirectSshILike(v string) Query    { return q.Where(AgentDirectSsh.ILike(v)) }
+func (q Query) AgentDirectSshIn(v ...string) Query    { return q.Where(AgentDirectSsh.In(v...)) }
+func (q Query) AgentDirectSshNotIn(v ...string) Query { return q.Where(AgentDirectSsh.NotIn(v...)) }
+func (q Query) AgentDirectSshIsNull() Query           { return q.Where(AgentDirectSsh.IsNull()) }
+func (q Query) AgentDirectSshIsNotNull() Query        { return q.Where(AgentDirectSsh.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only" FROM "assets"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh" FROM "assets"`
 const countPrefix = `SELECT count(*) FROM "assets"`
 const existsPrefix = `SELECT 1 FROM "assets"`
 const existsSuffix = ` LIMIT 1`
@@ -1827,6 +1899,18 @@ var orderTable = [nCols][4]string{
 		"\"agent_console_only\" ASC NULLS FIRST",
 		"\"agent_console_only\" DESC NULLS LAST",
 	},
+	{ // direct_ssh
+		"\"direct_ssh\"",
+		"\"direct_ssh\" DESC",
+		"\"direct_ssh\" ASC NULLS FIRST",
+		"\"direct_ssh\" DESC NULLS LAST",
+	},
+	{ // agent_direct_ssh
+		"\"agent_direct_ssh\"",
+		"\"agent_direct_ssh\" DESC",
+		"\"agent_direct_ssh\" ASC NULLS FIRST",
+		"\"agent_direct_ssh\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1862,6 +1946,8 @@ var identTable = [nCols]string{
 	"\"domain\"",
 	"\"archived_at\"",
 	"\"agent_console_only\"",
+	"\"direct_ssh\"",
+	"\"agent_direct_ssh\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1894,7 +1980,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [30][28]runtime.Frag{
+var fragTable = [32][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2795,6 +2881,66 @@ var fragTable = [30][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // direct_ssh
+		{}, // opNone
+		{A: "\"direct_ssh\" = $", B: ""},
+		{A: "\"direct_ssh\" <> $", B: ""},
+		{A: "\"direct_ssh\" > $", B: ""},
+		{A: "\"direct_ssh\" >= $", B: ""},
+		{A: "\"direct_ssh\" < $", B: ""},
+		{A: "\"direct_ssh\" <= $", B: ""},
+		{A: "lower(\"direct_ssh\") = lower($", B: ")"},
+		{A: "\"direct_ssh\" LIKE $", B: ""},
+		{A: "\"direct_ssh\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"direct_ssh\" = ANY($", B: ")"},
+		{A: "\"direct_ssh\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"direct_ssh\" IS NULL", B: ""},
+		{A: "\"direct_ssh\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // agent_direct_ssh
+		{}, // opNone
+		{A: "\"agent_direct_ssh\" = $", B: ""},
+		{A: "\"agent_direct_ssh\" <> $", B: ""},
+		{A: "\"agent_direct_ssh\" > $", B: ""},
+		{A: "\"agent_direct_ssh\" >= $", B: ""},
+		{A: "\"agent_direct_ssh\" < $", B: ""},
+		{A: "\"agent_direct_ssh\" <= $", B: ""},
+		{A: "lower(\"agent_direct_ssh\") = lower($", B: ")"},
+		{A: "\"agent_direct_ssh\" LIKE $", B: ""},
+		{A: "\"agent_direct_ssh\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"agent_direct_ssh\" = ANY($", B: ")"},
+		{A: "\"agent_direct_ssh\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"agent_direct_ssh\" IS NULL", B: ""},
+		{A: "\"agent_direct_ssh\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2988,6 +3134,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Domain = sl.Str(rv[27])
 	r.ArchivedAt = runtime.Nullable(rv[28], runtime.Timestamptz)
 	r.AgentConsoleOnly = runtime.Nullable(rv[29], runtime.Bool)
+	r.DirectSsh = runtime.NullText(rv[30], sl)
+	r.AgentDirectSsh = runtime.NullText(rv[31], sl)
 	return decErr
 }
 
@@ -3146,6 +3294,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 30:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 31:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3262,6 +3418,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 30:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 31:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -3399,7 +3563,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only"`
+const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh"`
 
 const updatePrefix = `UPDATE "assets" SET `
 const deletePrefix = `DELETE FROM "assets"`
@@ -3435,9 +3599,11 @@ const (
 	dDomain               uint64 = 1 << 25
 	dArchivedAt           uint64 = 1 << 26
 	dAgentConsoleOnly     uint64 = 1 << 27
+	dDirectSsh            uint64 = 1 << 28
+	dAgentDirectSsh       uint64 = 1 << 29
 )
 
-const nUpdatable = 28
+const nUpdatable = 30
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3469,6 +3635,8 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"domain\" = $", B: ""},                 // domain
 	{A: "\"archived_at\" = $", B: ""},            // archived_at
 	{A: "\"agent_console_only\" = $", B: ""},     // agent_console_only
+	{A: "\"direct_ssh\" = $", B: ""},             // direct_ssh
+	{A: "\"agent_direct_ssh\" = $", B: ""},       // agent_direct_ssh
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3503,6 +3671,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                    // domain has no server-side form
 	{A: "\"archived_at\" = now()", B: ""}, // archived_at = the database's clock
 	{},                                    // agent_console_only has no server-side form
+	{},                                    // direct_ssh has no server-side form
+	{},                                    // agent_direct_ssh has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3544,9 +3714,11 @@ const (
 	iDomain               uint64 = 1 << 27
 	iArchivedAt           uint64 = 1 << 28
 	iAgentConsoleOnly     uint64 = 1 << 29
+	iDirectSsh            uint64 = 1 << 30
+	iAgentDirectSsh       uint64 = 1 << 31
 )
 
-const nInsertable = 30
+const nInsertable = 32
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3580,6 +3752,8 @@ var insCols = [nInsertable]string{
 	"\"domain\"",
 	"\"archived_at\"",
 	"\"agent_console_only\"",
+	"\"direct_ssh\"",
+	"\"agent_direct_ssh\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3588,7 +3762,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"assets\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3607,7 +3781,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3991,6 +4165,34 @@ func (m *Mut) SetAgentConsoleOnlyNull() {
 	m.expr &^= dAgentConsoleOnly
 }
 
+func (m *Mut) SetDirectSsh(v string) {
+	m.row.DirectSsh = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dDirectSsh
+	m.expr &^= dDirectSsh
+}
+
+// SetDirectSshNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetDirectSshNull() {
+	m.row.DirectSsh = runtime.Null[string]{}
+	m.dirty |= dDirectSsh
+	m.expr &^= dDirectSsh
+}
+
+func (m *Mut) SetAgentDirectSsh(v string) {
+	m.row.AgentDirectSsh = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dAgentDirectSsh
+	m.expr &^= dAgentDirectSsh
+}
+
+// SetAgentDirectSshNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetAgentDirectSshNull() {
+	m.row.AgentDirectSsh = runtime.Null[string]{}
+	m.dirty |= dAgentDirectSsh
+	m.expr &^= dAgentDirectSsh
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -4265,6 +4467,30 @@ func (n *Ins) SetAgentConsoleOnlyNull() {
 	n.set |= iAgentConsoleOnly
 }
 
+func (n *Ins) SetDirectSsh(v string) {
+	n.row.DirectSsh = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iDirectSsh
+}
+
+// SetDirectSshNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetDirectSshNull() {
+	n.row.DirectSsh = runtime.Null[string]{}
+	n.set |= iDirectSsh
+}
+
+func (n *Ins) SetAgentDirectSsh(v string) {
+	n.row.AgentDirectSsh = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iAgentDirectSsh
+}
+
+// SetAgentDirectSshNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetAgentDirectSshNull() {
+	n.row.AgentDirectSsh = runtime.Null[string]{}
+	n.set |= iAgentDirectSsh
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4316,7 +4542,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 28)
+	set := make([]string, 0, 30)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -4403,6 +4629,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<29) != 0 {
 			set = append(set, "agent_console_only")
 		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "direct_ssh")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "agent_direct_ssh")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -4485,6 +4717,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<29) != 0 {
 			set = append(set, "agent_console_only")
 		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "direct_ssh")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "agent_direct_ssh")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -4566,6 +4804,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<29) != 0 {
 			set = append(set, "agent_console_only")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "direct_ssh")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "agent_direct_ssh")
 		}
 	}
 	return set
@@ -4681,6 +4925,8 @@ var assignFor = map[string]string{
 	"domain":                 "\"domain\" = EXCLUDED.\"domain\"",
 	"archived_at":            "\"archived_at\" = EXCLUDED.\"archived_at\"",
 	"agent_console_only":     "\"agent_console_only\" = EXCLUDED.\"agent_console_only\"",
+	"direct_ssh":             "\"direct_ssh\" = EXCLUDED.\"direct_ssh\"",
+	"agent_direct_ssh":       "\"agent_direct_ssh\" = EXCLUDED.\"agent_direct_ssh\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4791,6 +5037,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.ArchivedAt.Arg())
 		case 29:
 			args = append(args, n.row.AgentConsoleOnly.Arg())
+		case 30:
+			args = append(args, n.row.DirectSsh.Arg())
+		case 31:
+			args = append(args, n.row.AgentDirectSsh.Arg())
 		}
 	}
 	var out Row
@@ -4828,7 +5078,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 30)
+	args := make([]any, 0, 32)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4859,6 +5109,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.Domain)
 	args = append(args, r.ArchivedAt.Arg())
 	args = append(args, r.AgentConsoleOnly.Arg())
+	args = append(args, r.DirectSsh.Arg())
+	args = append(args, r.AgentDirectSsh.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4915,13 +5167,15 @@ var copyCols = []string{
 	"domain",
 	"archived_at",
 	"agent_console_only",
+	"direct_ssh",
+	"agent_direct_ssh",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [30]any
+	buf  [32]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4969,6 +5223,8 @@ func (s *rowSource) Values() []any {
 	s.buf[27] = &r.Domain
 	s.buf[28] = r.ArchivedAt.Ptr()
 	s.buf[29] = r.AgentConsoleOnly.Ptr()
+	s.buf[30] = r.DirectSsh.Ptr()
+	s.buf[31] = r.AgentDirectSsh.Ptr()
 	return s.buf[:]
 }
 
@@ -5029,8 +5285,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 27
 	mask |= 1 << 28
 	mask |= 1 << 29
+	mask |= 1 << 30
+	mask |= 1 << 31
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 30)
+	args := make([]any, 0, 32)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -5061,6 +5319,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.Domain)
 	args = append(args, r.ArchivedAt.Arg())
 	args = append(args, r.AgentConsoleOnly.Arg())
+	args = append(args, r.DirectSsh.Arg())
+	args = append(args, r.AgentDirectSsh.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -5154,6 +5414,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.ArchivedAt.Arg())
 		case 29:
 			args = append(args, n.row.AgentConsoleOnly.Arg())
+		case 30:
+			args = append(args, n.row.DirectSsh.Arg())
+		case 31:
+			args = append(args, n.row.AgentDirectSsh.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -5265,6 +5529,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.ArchivedAt.Arg())
 		case 27:
 			args = append(args, m.row.AgentConsoleOnly.Arg())
+		case 28:
+			args = append(args, m.row.DirectSsh.Arg())
+		case 29:
+			args = append(args, m.row.AgentDirectSsh.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5403,6 +5671,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.ArchivedAt.Arg())
 		case 27:
 			args = append(args, m.row.AgentConsoleOnly.Arg())
+		case 28:
+			args = append(args, m.row.DirectSsh.Arg())
+		case 29:
+			args = append(args, m.row.AgentDirectSsh.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5607,6 +5879,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.ArchivedAt.Arg())
 		case 27:
 			args = append(args, m.row.AgentConsoleOnly.Arg())
+		case 28:
+			args = append(args, m.row.DirectSsh.Arg())
+		case 29:
+			args = append(args, m.row.AgentDirectSsh.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

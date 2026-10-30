@@ -7,12 +7,14 @@ import {
   assetAssignments,
   createAsset as createOnControlPlane,
   createRequest,
+  decideDirectLogin,
   decideRequest,
   gatewayPolicy,
   isConfigured,
   live,
   removeAssetAssignment,
   setAssetAssignment,
+  setAssetDirectSsh,
   updateAsset as updateOnControlPlane,
   whoami,
   saveGatewayPolicy,
@@ -20,8 +22,8 @@ import {
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
 import type {
-  AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, FleetStats,
-  GatewayPolicy, Session, User,
+  AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
+  FleetStats, GatewayPolicy, Session, User,
 } from '~/types/domain'
 
 /**
@@ -47,6 +49,7 @@ const DEFAULT_POLICY: GatewayPolicy = {
   proxySftpSubsystem: true,
   failClosedOnRecordingLoss: true,
   requireEbpfForRoot: true,
+  directSsh: 'refuse',
 }
 
 // Mutable copies — mutations in the UI need somewhere to land.
@@ -57,6 +60,8 @@ const db = {
   policy: { ...DEFAULT_POLICY },
   /** assetId -> assignments, for the fixture. The control plane holds the real ones. */
   assignments: new Map<string, AssetAssignment[]>(),
+  /** Nothing is held in the fixture: no agent is asking. */
+  directLogins: [] as DirectLogin[],
 }
 
 /**
@@ -415,6 +420,37 @@ export const api = {
     await latency(400)
     db.policy = { ...next }
     return db.policy
+  },
+
+  async directLogins(): Promise<DirectLogin[]> {
+    return live.orFallback(
+      () => live.directLogins(),
+      async () => {
+        await latency(60)
+        return db.directLogins
+      },
+    )
+  },
+
+  async decideDirectLogin(id: string, approve: boolean, note: string): Promise<DirectLogin> {
+    if (isConfigured()) return decideDirectLogin(id, approve, note)
+    await latency(300)
+    const d = db.directLogins.find((x) => x.id === id)
+    if (!d) throw new Error('direct login not found')
+    d.state = approve ? 'approved' : 'denied'
+    d.decidedAt = new Date().toISOString()
+    d.decidedByEmail = currentUser.email
+    d.decisionNote = note || null
+    return d
+  },
+
+  async setAssetDirectSsh(id: string, mode: DirectSsh | null): Promise<Asset> {
+    if (isConfigured()) return setAssetDirectSsh(id, mode)
+    await latency(300)
+    const a = db.assets.find((x) => x.id === id)
+    if (!a) throw new Error('asset not found')
+    a.directSsh = mode
+    return a
   },
 
   async requests(state?: AccessRequest['state']): Promise<AccessRequest[]> {

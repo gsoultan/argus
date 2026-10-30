@@ -107,6 +107,10 @@ type HeartbeatReply struct {
 	// through Argus. Nil from a control plane older than the setting, or one
 	// that could not read its policy: the agent keeps what it last heard.
 	ConsoleOnly *bool `json:"console_only"`
+	// DirectSSH is what to do with a login that reached sshd without the
+	// console: "refuse", "approve" or "allow". Nil from a control plane older
+	// than the setting, which leaves ConsoleOnly to decide.
+	DirectSSH *string `json:"direct_ssh"`
 }
 
 // HeartbeatWithReply reports like Heartbeat and returns the control plane's
@@ -135,6 +139,41 @@ type spoolEntry struct {
 	Path string          `json:"path"`
 	Body json.RawMessage `json:"body"`
 	At   time.Time       `json:"at"`
+}
+
+// askTimeout bounds one Ask. The control plane holds a wait for a decision
+// for up to 25 seconds, so this is longer than that.
+const askTimeout = 40 * time.Second
+
+// Ask sends a request whose answer someone is waiting on, and decodes the
+// reply into out. It is never spooled: a question replayed after an outage
+// would be asked about a login that is long gone, and a failure is the
+// caller's to act on, which for a login means refusing it.
+func (c *Client) Ask(ctx context.Context, path string, v any, out any) error {
+	if !c.Enabled() {
+		return fmt.Errorf("no control plane is configured")
+	}
+	body, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	hc := *c.http
+	hc.Timeout = askTimeout
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("control plane returned %d", resp.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(out)
 }
 
 func (c *Client) post(ctx context.Context, path string, v any) {

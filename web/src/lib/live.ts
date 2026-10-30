@@ -5,6 +5,8 @@ import type {
   AssetAssignment,
   AssetInput,
   AuditEvent,
+  DirectLogin,
+  DirectSsh,
   Coverage,
   DiscoveredHost,
   FleetStats,
@@ -603,6 +605,16 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
   return parsed
 }
 
+/** Approves or denies a direct SSH login held for approval. */
+export async function decideDirectLogin(id: string, approve: boolean, note: string): Promise<DirectLogin> {
+  return post<DirectLogin>(`/api/v1/direct-logins/${encodeURIComponent(id)}/decision`, { approve, note })
+}
+
+/** Sets a server's own direct SSH choice; null follows Settings. */
+export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Promise<Asset> {
+  return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh`, { mode: mode ?? '' })
+}
+
 /** What an approval grants: the accounts allowed, and who may use them. */
 export interface EnrolGrant {
   principals: string[]
@@ -961,6 +973,8 @@ export const live = {
 
   requests: (state?: string) =>
     get<AccessRequest[]>(`/api/v1/requests${state ? `?state=${state}` : ''}`),
+
+  directLogins: () => get<DirectLogin[]>('/api/v1/direct-logins'),
 
   /**
    * Fetches a session's recording.
