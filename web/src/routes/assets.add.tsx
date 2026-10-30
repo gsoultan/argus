@@ -8,9 +8,8 @@ import {
   IconCheck, IconCopy, IconEye, IconInfoCircle, IconKey, IconServer2,
   IconUserCheck,
 } from '@tabler/icons-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { Suspense, lazy, useMemo, useState, type ReactNode } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
-import { ApproveServer } from '~/components/ApproveServer'
 import { Mono, relTime } from '~/components/primitives'
 import { controlPlaneVersion, fleetURL, isConfigured } from '~/lib/live'
 import { TunnelBadge } from '~/components/TunnelStatus'
@@ -43,6 +42,11 @@ import { guard } from '~/lib/guard'
  * agent to report to, so the waiting list says that instead of showing sample
  * servers as if they had checked in.
  */
+/** Opened only when an admin approves a server, so fetched only then. */
+const ApproveServer = lazy(() =>
+  import('~/components/ApproveServer').then((m) => ({ default: m.ApproveServer })),
+)
+
 export const Route = createFileRoute('/assets/add')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
   component: AddServer,
@@ -530,7 +534,11 @@ function Waiting() {
         </Group>
       )}
 
-      <ApproveServer host={approving} onClose={() => setApproving(null)} />
+      {approving && (
+        <Suspense fallback={null}>
+          <ApproveServer host={approving} onClose={() => setApproving(null)} />
+        </Suspense>
+      )}
 
       <Modal
         opened={ignoring !== null}
