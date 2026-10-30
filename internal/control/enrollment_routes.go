@@ -149,6 +149,9 @@ func (a *API) postEnrollToken(w http.ResponseWriter, r *http.Request) {
 			a.log.Error("could not compute the control plane's certificate pin", "error", perr)
 		} else if pin != "" {
 			out["pin"] = pin
+			// The same key, in the form curl's --pinnedpubkey reads, for the
+			// one-line install that fetches its script from here.
+			out["curlPin"] = curlPin(pin)
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

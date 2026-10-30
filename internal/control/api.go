@@ -282,6 +282,7 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	// The exchange that gives an agent its credential. Throttled like a
 	// sign-in: the token is the only thing it checks.
 	mux.HandleFunc("POST /api/v1/agents/enroll", a.limitLogin(a.postEnroll))
+	mux.HandleFunc("GET /api/v1/install/agent.sh", a.getInstallScript)
 }
 
 // securityHeaders sets the response headers a browser needs to protect the
