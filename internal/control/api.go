@@ -219,6 +219,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
+	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
