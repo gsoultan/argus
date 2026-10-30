@@ -26,7 +26,11 @@ if [ "$removing" = 1 ]; then
     done
 fi
 
-if command -v systemctl >/dev/null 2>&1; then
+# Only on removal. An upgrade used to stop and disable the agent here, and
+# nothing started it again: every session through it dropped, and with the
+# sshd hook in place every SSH login was refused until someone reached the
+# machine's own console. The new package's postinstall restarts it instead.
+if [ "$removing" = 1 ] && command -v systemctl >/dev/null 2>&1; then
     systemctl stop argus-agent >/dev/null 2>&1 || true
     systemctl disable argus-agent >/dev/null 2>&1 || true
 fi

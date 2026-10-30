@@ -312,6 +312,13 @@ or physical) as the break-glass path.
 Every login that is admitted -- every session opened from the console -- is
 recorded. There is no setting to record fewer.
 
+### Upgrading the agent
+
+Install the new package over the old one. An enrolled agent is restarted on
+the new version about 10 seconds after the package finishes, and enabled if an
+older package had disabled it. A console session to that server ends when the
+agent restarts; reconnect once the server shows connected again.
+
 ### Uninstalling the agent
 
 On the server, as root (an elevated PowerShell on Windows):
