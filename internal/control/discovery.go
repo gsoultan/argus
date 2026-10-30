@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -137,11 +138,45 @@ var ErrAlreadyReviewed = errors.New("host has already been reviewed")
 
 // EnrolHost promotes a discovered host into a managed asset.
 //
-// The asset is created with no principals. Discovery reports which accounts
-// exist; it does not get to decide which of them anyone may assume. Turning an
-// observation into an entitlement without a person in between would let anyone
-// who can start an agent grant themselves a login.
-func (s *Store) EnrolHost(ctx context.Context, hostname, actor string) (string, error) {
+// Discovery reports which accounts exist; it does not get to decide which of
+// them anyone may assume. Turning an observation into an entitlement without a
+// person in between would let anyone who can start an agent grant themselves a
+// login. So the principals and the people come from the approving admin, never
+// from the agent's report, and with neither the asset is created granting
+// nothing.
+//
+// Asking for them here rather than afterwards is the point. An approval that
+// granted nothing left the admin who had just added a server unable to reach
+// it, and the way on was an Edit dialog and a second dialog for assignments
+// that nothing pointed at. The asset, its accounts and who may use them are
+// written in one transaction, so a half-approved server never exists.
+func (s *Store) EnrolHost(
+	ctx context.Context, hostname, actor string, principals, people []string,
+) (string, error) {
+	principals = dedupe(principals)
+	if len(principals) > maxPrincipals {
+		return "", ErrInvalidAsset{Reason: fmt.Sprintf(
+			"a server may list at most %d login accounts", maxPrincipals)}
+	}
+	for _, p := range principals {
+		if !rePrincipal.MatchString(p) {
+			return "", ErrInvalidAsset{Reason: fmt.Sprintf(
+				"%q is not an account name: letters, digits, dot, underscore and hyphen", p)}
+		}
+	}
+	emails := make([]string, 0, len(people))
+	for _, e := range people {
+		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
+			emails = append(emails, e)
+		}
+	}
+	emails = dedupe(emails)
+	if len(emails) > 0 && len(principals) == 0 {
+		// "May connect, as nobody" is a state with no meaning; SetAssignment
+		// refuses it for the same reason.
+		return "", ErrInvalidAsset{Reason: "pick at least one login account for the people who may connect"}
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -188,15 +223,29 @@ func (s *Store) EnrolHost(ctx context.Context, hostname, actor string) (string, 
 		INSERT INTO assets (hostname, address, port, os, agent_hostname,
 		                    agent_state, agent_last_seen_at, discovered_by,
 		                    host_key_state, principals, source)
-		VALUES ($1,$2,$3,$4,$5,'healthy',now(),$6,'unpinned','{}','console')
+		VALUES ($1,$2,$3,$4,$5,'healthy',now(),$6,'unpinned',$7,'console')
 		ON CONFLICT (hostname) DO UPDATE SET
 			agent_hostname = EXCLUDED.agent_hostname,
 			source         = 'console',
+			principals     = ARRAY(SELECT DISTINCT unnest(assets.principals || EXCLUDED.principals)),
 			updated_at     = now()
 		RETURNING id::text`,
-		assetName, address, port, os, hostname, actor).Scan(&id)
+		assetName, address, port, os, hostname, actor, principals).Scan(&id)
 	if err != nil {
 		return "", err
+	}
+
+	for _, e := range emails {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO asset_assignments (asset_id, user_email, principals, granted_by)
+			VALUES ($1::uuid, $2, $3, $4)
+			ON CONFLICT (asset_id, user_email) DO UPDATE SET
+				principals = EXCLUDED.principals,
+				granted_by = EXCLUDED.granted_by,
+				granted_at = now()`,
+			id, e, principals, strings.ToLower(actor)); err != nil {
+			return "", err
+		}
 	}
 
 	if _, err := tx.Exec(ctx, `

@@ -1,23 +1,24 @@
 import { Suspense, lazy, useState } from 'react'
-import { Alert, Badge, Box, Button, Card, Code, Grid, Group, Stack, Table, Text } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Grid, Group, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconCertificate, IconHistory, IconPencil, IconPlugConnected,
-  IconRefresh, IconServer2, IconShieldCheck, IconUsers,
+  IconAlertTriangle, IconHistory, IconPencil, IconPlugConnected,
+  IconServer2, IconUsers,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { run } from '~/lib/notify'
 import {
-  ArtefactPending, CredentialBadge, Digest, Field, FidelityBadge, HealthDot,
+  ArtefactPending, Digest, Field, FidelityBadge, HealthDot,
   HostKeyBadge, Mono, SessionDuration, SessionStateBadge, absTime, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
-  assetQuery, meQuery, sessionsQuery, usePinHostKey, useRotateCredential,
+  assetQuery, assignmentsQuery, meQuery, sessionsQuery, usePinHostKey,
 } from '~/lib/queries'
 import { guard } from '~/lib/guard'
+import { isElevatedAccount } from '~/lib/roles'
 
 /** Opened only by an administrator, so their chunks are fetched only for one. */
 const AssetForm = lazy(() =>
@@ -41,7 +42,6 @@ function AssetDetail() {
   const { data: allSessions } = useQuery(sessionsQuery())
   const { data: me } = useQuery(meQuery())
   const pin = usePinHostKey()
-  const rotate = useRotateCredential()
 
   const canEdit = me?.role === 'admin' || me?.role === 'owner'
   const canSeeAssignments = canEdit || me?.role === 'auditor'
@@ -66,7 +66,6 @@ function AssetDetail() {
   }
 
   const history = (allSessions ?? []).filter((s) => s.assetId === asset.id).slice(0, 12)
-  const isCa = asset.credentialMode === 'ca-certificate'
 
   // Guarded. Pinning is the control an admin reaches for when they suspect
   // interception, so a refusal that looked like success would be the worst
@@ -80,14 +79,6 @@ function AssetDetail() {
       ],
     })
 
-  const onRotate = () =>
-    run(() => rotate.mutateAsync(asset.id), {
-      failure: 'Credential not rotated',
-      success: [
-        'Credential rotated',
-        'A new key was generated, installed and the old one revoked.',
-      ],
-    })
 
   return (
     <Box>
@@ -101,15 +92,14 @@ function AssetDetail() {
         description={`${asset.os} · ${asset.address}:${asset.port}`}
         actions={
           <Group gap={SP.cozy}>
-            {canSeeAssignments && (
-              <Button
-                variant="default"
-                leftSection={<IconUsers size={14} />}
-                onClick={() => setAssigning(true)}
-              >
-                Who can reach it
-              </Button>
-            )}
+            <ButtonLink
+              to="/connect"
+              search={{ host: asset.hostname, as: asset.principals[0], open: true }}
+              leftSection={<IconPlugConnected size={14} />}
+              disabled={asset.principals.length === 0}
+            >
+              Connect
+            </ButtonLink>
             {canEdit && (
               <Button
                 variant="default"
@@ -117,16 +107,6 @@ function AssetDetail() {
                 onClick={() => setEditing(true)}
               >
                 Edit
-              </Button>
-            )}
-            {!isCa && (
-              <Button
-                variant="default"
-                leftSection={<IconRefresh size={14} />}
-                loading={rotate.isPending}
-                onClick={onRotate}
-              >
-                Rotate credential
               </Button>
             )}
           </Group>
@@ -173,6 +153,50 @@ function AssetDetail() {
           <Grid.Col span={{ base: 12, md: 5 }}>
             <Stack gap="sm">
               <SectionCard
+                title="Who can connect"
+                icon={IconUsers}
+                action={
+                  canSeeAssignments && (
+                    <Button size="compact-xs" variant="light" onClick={() => setAssigning(true)}>
+                      {canEdit ? 'Change' : 'View'}
+                    </Button>
+                  )
+                }
+              >
+                <Stack gap="sm">
+                  {asset.principals.length === 0 ? (
+                    <Alert color="amber" variant="light">
+                      <Text size={FS.meta} lh={1.5}>
+                        Nobody can log in yet: this server has no login accounts.
+                        {canEdit && ' Click Edit and add the account you log in with.'}
+                      </Text>
+                    </Alert>
+                  ) : (
+                    <Text size={FS.meta} c="dimmed" lh={1.5}>
+                      Admins can always connect. Anyone else needs to be added here.
+                    </Text>
+                  )}
+                  {canSeeAssignments && <WhoCanConnect assetId={asset.id} />}
+                  <Field label="Login accounts">
+                    <Group gap={SP.snug}>
+                      {asset.principals.length === 0 && <Text size="xs" c="dimmed">None yet</Text>}
+                      {asset.principals.map((p) => (
+                        <Badge
+                          key={p}
+                          size="xs"
+                          color={isElevatedAccount(p) ? 'rose' : 'slate'}
+                          variant={isElevatedAccount(p) ? 'light' : 'outline'}
+                          tt="none"
+                        >
+                          {p}
+                        </Badge>
+                      ))}
+                    </Group>
+                  </Field>
+                </Stack>
+              </SectionCard>
+
+              <SectionCard
                 title="Identity"
                 icon={IconServer2}
                 badge={
@@ -204,62 +228,6 @@ function AssetDetail() {
                     <Group gap={SP.tight}>
                       {asset.tags.map((t) => (
                         <Badge key={t} size="xs" variant="outline" color="slate">{t}</Badge>
-                      ))}
-                    </Group>
-                  </Field>
-                </Stack>
-              </SectionCard>
-
-              <SectionCard
-                title="Authentication to target"
-                icon={isCa ? IconCertificate : IconShieldCheck}
-                iconColor={isCa ? 'teal' : 'slate'}
-              >
-                <Stack gap="sm">
-                  <Field label="Mode"><CredentialBadge mode={asset.credentialMode} /></Field>
-
-                  {isCa ? (
-                    <>
-                      <Text size={FS.micro} c="dimmed" lh={1.5}>
-                        Argus mints a short-lived certificate for each session. No reusable
-                        credential exists on the gateway or the host, so there is nothing to
-                        rotate and nothing to steal from the vault.
-                      </Text>
-                      <Field label="Required on host">
-                        <Code block fz={FS.micro}>
-                          TrustedUserCAKeys /etc/ssh/argus_ca.pub
-                        </Code>
-                      </Field>
-                    </>
-                  ) : (
-                    <>
-                      <Text size={FS.micro} c="dimmed" lh={1.5}>
-                        A vaulted secret is injected by the gateway — the user never sees it. It
-                        is still a standing credential. Moving this host to certificate auth
-                        removes that exposure entirely.
-                      </Text>
-                      <Group grow>
-                        <Field label="Last rotated">
-                          <Text size="xs">{relTime(asset.credentialRotatedAt)}</Text>
-                        </Field>
-                        <Field label="Interval">
-                          <Text size="xs">{asset.rotationIntervalDays} days</Text>
-                        </Field>
-                      </Group>
-                    </>
-                  )}
-
-                  <Field label="Available principals">
-                    <Group gap={SP.snug}>
-                      {asset.principals.map((p) => (
-                        <Badge
-                          key={p}
-                          size="xs"
-                          color={p === 'root' ? 'rose' : 'slate'}
-                          variant={p === 'root' ? 'light' : 'outline'}
-                        >
-                          {p}
-                        </Badge>
                       ))}
                     </Group>
                   </Field>
@@ -379,5 +347,30 @@ function AssetDetail() {
         )}
       </Suspense>
     </Box>
+  )
+}
+
+/**
+ * The people given this server, by name, on the page itself.
+ *
+ * They used to be behind a button in the header, and the page's own access
+ * section talked about credential modes and vaults, so an admin looking at a
+ * server could not see who could reach it.
+ */
+function WhoCanConnect({ assetId }: { assetId: string }) {
+  const { data: assignments } = useQuery(assignmentsQuery(assetId))
+  if (!assignments) return null
+  if (assignments.length === 0) {
+    return <Text size="xs" c="dimmed">No teammates added yet.</Text>
+  }
+  return (
+    <Stack gap={SP.tight}>
+      {assignments.map((g) => (
+        <Group key={g.userEmail} gap="xs" justify="space-between" wrap="nowrap">
+          <Text size="sm" truncate>{g.userEmail}</Text>
+          <Text size="xs" c="dimmed" ff="monospace">as {g.principals.join(', ')}</Text>
+        </Group>
+      ))}
+    </Stack>
   )
 }

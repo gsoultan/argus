@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -80,7 +81,7 @@ func TestEnrolCreatesAssetWithNoPrincipals(t *testing.T) {
 	cleanHost(t, s, "disc-02")
 	seedDiscovered(t, s, "disc-02")
 
-	id, err := s.EnrolHost(ctx, "disc-02", "admin@northwind.id")
+	id, err := s.EnrolHost(ctx, "disc-02", "admin@northwind.id", nil, nil)
 	if err != nil {
 		t.Fatalf("EnrolHost: %v", err)
 	}
@@ -121,16 +122,72 @@ func TestEnrolCreatesAssetWithNoPrincipals(t *testing.T) {
 	}
 }
 
+// The admin approving a server says who may use it, and those people can reach
+// it the moment the approval lands. Before, approval granted nothing and the
+// admin who had just added a server was told to "ask an admin".
+func TestEnrolGrantsWhatTheAdminPicked(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cleanHost(t, s, "disc-05")
+	seedDiscovered(t, s, "disc-05")
+	who := unique("teammate") + "@northwind.id"
+
+	id, err := s.EnrolHost(ctx, "disc-05", "admin@northwind.id", []string{"ops"}, []string{" " + strings.ToUpper(who) + " "})
+	if err != nil {
+		t.Fatalf("EnrolHost: %v", err)
+	}
+	asset, err := s.AssetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("AssetByID: %v", err)
+	}
+	if !slices.Equal(asset.Principals, []string{"ops"}) {
+		t.Errorf("principals = %v, want [ops]", asset.Principals)
+	}
+	ok, err := s.AssignmentAllows(ctx, who, asset.Hostname, "ops")
+	if err != nil {
+		t.Fatalf("AssignmentAllows: %v", err)
+	}
+	if !ok {
+		t.Error("the teammate picked at approval cannot reach the server")
+	}
+	// Only what was picked: root was reported by the agent and not chosen.
+	if ok, _ := s.AssignmentAllows(ctx, who, asset.Hostname, "root"); ok {
+		t.Error("approval granted root, which the admin did not pick")
+	}
+}
+
+// People with no account to log in as is refused rather than stored, and the
+// refusal leaves the host waiting rather than half approved.
+func TestEnrolRefusesPeopleWithNoAccount(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cleanHost(t, s, "disc-06")
+	seedDiscovered(t, s, "disc-06")
+
+	_, err := s.EnrolHost(ctx, "disc-06", "admin@northwind.id", nil, []string{"someone@northwind.id"})
+	var invalid ErrInvalidAsset
+	if !errors.As(err, &invalid) {
+		t.Fatalf("err = %v, want ErrInvalidAsset", err)
+	}
+	if _, err := s.EnrolHost(ctx, "disc-06", "admin@northwind.id", []string{"bad:name"}, nil); !errors.As(err, &invalid) {
+		t.Fatalf("a malformed account was accepted: %v", err)
+	}
+	hosts, _ := s.DiscoveredHosts(ctx, "unreviewed")
+	if !slices.ContainsFunc(hosts, func(h DiscoveredHost) bool { return h.Hostname == "disc-06" }) {
+		t.Error("a refused approval took the host off the waiting list")
+	}
+}
+
 func TestEnrolIsNotRepeatable(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	cleanHost(t, s, "disc-03")
 	seedDiscovered(t, s, "disc-03")
 
-	if _, err := s.EnrolHost(ctx, "disc-03", "admin@northwind.id"); err != nil {
+	if _, err := s.EnrolHost(ctx, "disc-03", "admin@northwind.id", nil, nil); err != nil {
 		t.Fatalf("first enrol: %v", err)
 	}
-	_, err := s.EnrolHost(ctx, "disc-03", "someone.else@northwind.id")
+	_, err := s.EnrolHost(ctx, "disc-03", "someone.else@northwind.id", nil, nil)
 	if !errors.Is(err, ErrAlreadyReviewed) {
 		t.Errorf("second enrol err = %v, want ErrAlreadyReviewed", err)
 	}
@@ -267,5 +324,31 @@ func TestCoverageStillCountsSSHAssetsWithoutAgents(t *testing.T) {
 	if after.AssetsUnmonitored != before.AssetsUnmonitored+1 {
 		t.Errorf("an SSH asset with no agent was not counted: %d → %d",
 			before.AssetsUnmonitored, after.AssetsUnmonitored)
+	}
+}
+
+// A server approved from the console has no vaulted credential, because
+// sessions open through its agent and need none. Editing it -- to add a login
+// account, say -- must not demand one.
+func TestEditingAnEnrolledServerNeedsNoCredential(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cleanHost(t, s, "disc-07")
+	seedDiscovered(t, s, "disc-07")
+
+	id, err := s.EnrolHost(ctx, "disc-07", "admin@northwind.id", nil, nil)
+	if err != nil {
+		t.Fatalf("EnrolHost: %v", err)
+	}
+	a, err := s.AssetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("AssetByID: %v", err)
+	}
+	_, err = s.UpdateAsset(ctx, id, AssetInput{
+		Hostname: a.Hostname, Address: a.Address, Port: a.Port, Protocol: "ssh",
+		OS: a.OS, Principals: []string{"ops"}, CredentialMode: a.CredentialMode,
+	})
+	if err != nil {
+		t.Fatalf("adding a login account to an approved server failed: %v", err)
 	}
 }

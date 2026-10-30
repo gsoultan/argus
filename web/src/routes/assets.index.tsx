@@ -179,9 +179,9 @@ function Servers() {
         title="Servers"
         description={
           !whole
-            ? 'The servers you have been given. Press Connect to open one in this browser, or pick the account to log in as.'
+            ? 'The servers you have been given. Click one to open it in this browser.'
             : view === 'connect'
-              ? 'As an administrator you can connect to every server. Press Connect to open a terminal or desktop in this browser.'
+              ? 'As an admin you can open every server. Click one to open it in this browser.'
               : 'Every server Argus looks after. Add new ones, approve the ones waiting, and check each one is set up safely.'
         }
         actions={

@@ -49,8 +49,13 @@ describe('the servers someone can reach', () => {
     await renderRoute('/mine')
     const cards = await screen.findAllByRole('heading', { level: 3 })
     expect(cards.map((c) => c.textContent)).toEqual(['db-02', 'pay-03', 'web-01'])
-    const asDeploy = screen.getByRole('link', { name: 'Connect to web-01 as deploy' })
-    expect(asDeploy.getAttribute('href')).toBe('/connect?host=web-01.prod.northwind.id&as=deploy')
+    // Clicking an account opens the session, rather than a form that asks again.
+    const asDeploy = screen.getByRole('link', { name: 'Open web-01 as deploy' })
+    expect(asDeploy.getAttribute('href')).toBe('/connect?host=web-01.prod.northwind.id&as=deploy&open=true')
+    // The card itself opens the first account.
+    const open = screen.getByRole('link', { name: 'Open web-01' })
+    expect(open).toHaveClass('argus-stretch')
+    expect(open.getAttribute('href')).toContain('open=true')
   }, 15_000)
 
   // Argus refuses SSH to a host whose key no longer matches its pin, so a
@@ -59,9 +64,9 @@ describe('the servers someone can reach', () => {
     signedInAs('operator')
     await renderRoute('/mine')
     const card = (await screen.findByRole('heading', { name: 'pay-03' })).closest('.argus-server')!
-    expect(within(card as HTMLElement).getByRole('button', { name: 'Connect' })).toBeDisabled()
+    expect(within(card as HTMLElement).getByRole('button', { name: 'Open' })).toBeDisabled()
     expect(card).toHaveTextContent(/identity changed/i)
-    expect(screen.getByRole('link', { name: 'Connect to web-01' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open web-01' })).toBeInTheDocument()
   })
 
   it('narrows by name and by status, and undoes it in one press', async () => {
@@ -93,7 +98,7 @@ describe('the servers someone can reach', () => {
   it('says an administrator is seeing every server, not their assignments', async () => {
     signedInAs('admin')
     await renderRoute('/mine')
-    expect(await screen.findByText(/you can connect to every server/i)).toBeInTheDocument()
+    expect(await screen.findByText(/you can open every server/i)).toBeInTheDocument()
   })
 })
 
@@ -127,11 +132,11 @@ describe('temporary access', () => {
     ])
     await renderRoute('/mine')
     expect(await screen.findByRole('heading', { name: 'Temporary access' })).toBeInTheDocument()
-    const link = screen.getByRole('link', { name: 'Connect to batch-09 as root' })
-    expect(link.getAttribute('href')).toBe('/connect?host=batch-09.prod.northwind.id&as=root')
+    const link = screen.getByRole('link', { name: 'Open batch-09 as root' })
+    expect(link.getAttribute('href')).toBe('/connect?host=batch-09.prod.northwind.id&as=root&open=true')
     expect(screen.queryByText('theirs-01')).not.toBeInTheDocument()
     expect(screen.queryByText('old-01')).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Connect to web-01 as ops' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Open web-01 as ops' })).toBeInTheDocument()
     expect(screen.getAllByRole('heading', { name: 'web-01' })).toHaveLength(1)
   })
 })

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import {
   Alert, Badge, Box, Button, Grid, Group, Modal, Stack, Table, Text, Textarea, Tooltip,
 } from '@mantine/core'
@@ -13,7 +13,7 @@ import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page
 import { ButtonLink } from '~/components/links'
 import { Mono, Stat, relTime } from '~/components/primitives'
 import { FS, SP } from '~/theme'
-import { coverageQuery, discoveredQuery, useEnrolHost, useIgnoreHost } from '~/lib/queries'
+import { coverageQuery, discoveredQuery, useIgnoreHost } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import type { DiscoveredHost } from '~/types/domain'
 import { guard } from '~/lib/guard'
@@ -26,6 +26,11 @@ import { guard } from '~/lib/guard'
  * for as long as the request was in flight. `Stat` renders a skeleton for a
  * count it does not have, which fixes that without blanking the console.
  */
+/** Opened only when an admin approves a server, so fetched only then. */
+const ApproveServer = lazy(() =>
+  import('~/components/ApproveServer').then((m) => ({ default: m.ApproveServer })),
+)
+
 export const Route = createFileRoute('/coverage')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: CoverageView,
@@ -48,7 +53,7 @@ function CoverageView() {
 
   const [dismissing, setDismissing] = useState<DiscoveredHost | null>(null)
   const [note, setNote] = useState('')
-  const enrol = useEnrolHost()
+  const [approving, setApproving] = useState<DiscoveredHost | null>(null)
   const ignore = useIgnoreHost()
 
   if (!isConfigured()) {
@@ -69,25 +74,6 @@ function CoverageView() {
         </PageBody>
       </Box>
     )
-  }
-
-  const onEnrol = async (h: DiscoveredHost) => {
-    try {
-      await enrol.mutateAsync(h.hostname)
-    } catch (err) {
-      notifications.show({
-        color: 'rose',
-        title: 'Not enrolled',
-        message: err instanceof Error ? err.message : 'the control plane refused',
-      })
-      return
-    }
-    notifications.show({
-      color: 'teal',
-      title: 'Host enrolled',
-      // Saying this plainly avoids the assumption that enrolling granted access.
-      message: `${h.hostname} is now a managed asset with no principals. Add the accounts people may assume.`,
-    })
   }
 
   const onIgnore = async () => {
@@ -274,10 +260,9 @@ function CoverageView() {
                             size="compact-xs"
                             variant="light"
                             leftSection={<IconPlus size={12} />}
-                            loading={enrol.isPending && enrol.variables === h.hostname}
-                            onClick={() => void onEnrol(h)}
+                            onClick={() => setApproving(h)}
                           >
-                            Enrol
+                            Approve
                           </Button>
                           <Button
                             size="compact-xs"
@@ -321,6 +306,12 @@ function CoverageView() {
           </SectionCard>
         )}
       </PageBody>
+
+      {approving && (
+        <Suspense fallback={null}>
+          <ApproveServer host={approving} onClose={() => setApproving(null)} />
+        </Suspense>
+      )}
 
       <Modal
         opened={!!dismissing}

@@ -4,6 +4,7 @@ import {
   ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   IconBrandWindows, IconClock, IconDeviceDesktop, IconLock, IconSearch, IconServer2,
   IconServerOff, IconTerminal2,
@@ -103,7 +104,7 @@ export function shortName(hostname: string): string {
  * one question, "can I get on it, and how", and the answer is the status, the
  * accounts they were given, and a button.
  */
-export function ServerCard({ asset: a }: { asset: Asset }) {
+export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: boolean }) {
   const reach = reachOf(a)
   const rdp = a.protocol === 'rdp'
   const KindIcon = kindOf(a) === 'windows' ? IconBrandWindows : IconServer2
@@ -140,10 +141,30 @@ export function ServerCard({ asset: a }: { asset: Asset }) {
           </Group>
         ) : noAccount ? (
           <Text size={FS.meta} c="dimmed" lh={1.5}>
-            You have no account on this server yet. Ask an admin to add one for you.
+            {admin ? (
+              <>
+                Nobody can log in yet.{' '}
+                <Link
+                  to="/assets/$assetId"
+                  params={{ assetId: a.id }}
+                  className="argus-above"
+                  style={{ color: 'var(--mantine-color-azure-4)' }}
+                >
+                  Add a login account
+                </Link>
+              </>
+            ) : (
+              'You have no account on this server yet. Ask an admin to add one for you.'
+            )}
+          </Text>
+        ) : a.principals.length === 1 ? (
+          <Text size={FS.meta} c="dimmed">
+            Logs you in as <Text span ff="monospace" size={FS.meta}>{a.principals[0]}</Text>
           </Text>
         ) : (
-          <Box>
+          // More than one account: each is its own way in, and the card itself
+          // opens the first.
+          <Box className="argus-above">
             <Text size={FS.micro} c="dimmed" mb={SP.tight}>
               Log in as
             </Text>
@@ -152,11 +173,11 @@ export function ServerCard({ asset: a }: { asset: Asset }) {
                 <ButtonLink
                   key={p}
                   to="/connect"
-                  search={{ host: a.hostname, as: p }}
+                  search={{ host: a.hostname, as: p, open: true }}
                   size="compact-xs"
                   variant="default"
                   ff="monospace"
-                  aria-label={`Connect to ${name} as ${p}`}
+                  aria-label={`Open ${name} as ${p}`}
                 >
                   {p}
                 </ButtonLink>
@@ -171,18 +192,19 @@ export function ServerCard({ asset: a }: { asset: Asset }) {
           </Text>
           {disabled ? (
             <Button size="xs" disabled leftSection={rdp ? <IconDeviceDesktop size={14} /> : <IconTerminal2 size={14} />}>
-              Connect
+              Open
             </Button>
           ) : (
             <ButtonLink
               to="/connect"
-              search={{ host: a.hostname }}
+              search={{ host: a.hostname, as: a.principals[0], open: true }}
               size="xs"
+              className="argus-stretch"
               variant={reach === 'offline' ? 'default' : 'filled'}
               leftSection={rdp ? <IconDeviceDesktop size={14} /> : <IconTerminal2 size={14} />}
-              aria-label={`Connect to ${name}`}
+              aria-label={`Open ${name}`}
             >
-              Connect
+              Open
             </ButtonLink>
           )}
         </Group>
@@ -242,12 +264,13 @@ export function GrantCard({
           </Text>
           <ButtonLink
             to="/connect"
-            search={{ host: hostname, as: principal }}
+            search={{ host: hostname, as: principal, open: true }}
             size="xs"
+            className="argus-stretch"
             leftSection={<IconTerminal2 size={14} />}
-            aria-label={`Connect to ${name} as ${principal}`}
+            aria-label={`Open ${name} as ${principal}`}
           >
-            Connect
+            Open
           </ButtonLink>
         </Group>
       </Stack>
@@ -274,6 +297,7 @@ export function ServerCards() {
   const { data: assets } = useQuery(assetsQuery({}))
   const { data: approved } = useQuery(requestsQuery('approved'))
   const whole = seesWholeFleet(me?.role)
+  const canAdmin = me?.role === 'admin' || me?.role === 'owner'
 
   const [text, setText] = useState('')
   const [show, setShow] = useState<Show>('all')
@@ -435,7 +459,7 @@ export function ServerCards() {
         />
       ) : (
         <CardGrid>
-          {visible.map((a) => <ServerCard key={a.id} asset={a} />)}
+          {visible.map((a) => <ServerCard key={a.id} asset={a} admin={canAdmin} />)}
         </CardGrid>
       )}
     </>

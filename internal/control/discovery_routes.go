@@ -54,9 +54,30 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := a.store.EnrolHost(r.Context(), hostname, sess.Email)
+	// Both optional, so an older console that posts an empty body still
+	// enrols a server granting nothing, as it always did.
+	var in struct {
+		Principals []string `json:"principals"`
+		People     []string `json:"people"`
+	}
+	if r.ContentLength != 0 {
+		if err := decode(r, &in); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	for i, e := range in.People {
+		in.People[i] = strings.ToLower(strings.TrimSpace(e))
+	}
+
+	id, err := a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People)
 	if errors.Is(err, ErrAlreadyReviewed) {
 		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	var invalid ErrInvalidAsset
+	if errors.As(err, &invalid) {
+		writeErr(w, http.StatusBadRequest, invalid.Reason)
 		return
 	}
 	if err != nil {
@@ -69,15 +90,50 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		Severity:   "info",
 		ActorEmail: sess.Email,
 		Target:     hostname,
-		Detail: "Enrolled discovered host " + hostname + " as a managed asset. " +
-			"No principals were granted and nobody is assigned to it; both are " +
-			"added deliberately, from the asset itself.",
+		Detail:     enrolDetail(hostname, in.Principals, in.People),
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
+	// One assignment entry per person, the same action the server page writes,
+	// so "who gave X access to Y" is answered by one search whichever door the
+	// access came through.
+	for _, e := range dedupe(in.People) {
+		if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
+			Action:     "asset.assigned",
+			Severity:   "notice",
+			ActorEmail: sess.Email,
+			Target:     hostname,
+			Detail: e + " may now open a session on " + hostname +
+				" as " + describePrincipals(dedupe(in.Principals)) + ", given when the server was approved.",
+		}); aerr != nil {
+			a.log.Error("audit append failed", "error", aerr)
+		}
+	}
 
 	a.log.Info("host enrolled", "hostname", hostname, "actor", sess.Email, "asset", id)
-	writeJSON(w, http.StatusOK, map[string]any{"assetId": id, "hostname": hostname})
+	// The asset may be named by the agent's FQDN rather than its short name,
+	// and the console connects by the asset's name, so say which it is.
+	assetName := hostname
+	if asset, aerr := a.store.AssetByID(r.Context(), id); aerr == nil {
+		assetName = asset.Hostname
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"assetId": id, "hostname": hostname, "assetHostname": assetName,
+	})
+}
+
+// enrolDetail says what an approval granted, in the words a reconstruction needs.
+func enrolDetail(hostname string, principals, people []string) string {
+	principals, people = dedupe(principals), dedupe(people)
+	d := "Enrolled discovered host " + hostname + " as a managed asset. "
+	if len(principals) == 0 {
+		return d + "No login accounts were allowed and nobody is assigned to it."
+	}
+	d += "Login accounts allowed: " + describePrincipals(principals) + "."
+	if len(people) == 0 {
+		return d + " Nobody is assigned to it yet."
+	}
+	return d + " Assigned to " + strings.Join(people, ", ") + "."
 }
 
 // postIgnoreHost records a deliberate decision not to manage a host.

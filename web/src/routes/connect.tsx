@@ -52,9 +52,16 @@ export const Route = createFileRoute('/connect')({
   // `?as=` preselects the account too, for the "log in as" buttons on My
   // servers. It is only a preselection: an account the server does not list
   // for this person is dropped below, and the control plane decides either way.
-  validateSearch: (s: Record<string, unknown>): { host?: string; as?: string } => ({
+  // `?open=true` goes one step further and opens the session as soon as the
+  // page knows the server, so clicking a server on Servers lands in a terminal
+  // rather than on a form that asks again what was just clicked. It is still
+  // only a request: the ticket is asked for exactly as the button asks.
+  validateSearch: (
+    s: Record<string, unknown>,
+  ): { host?: string; as?: string; open?: boolean } => ({
     ...(typeof s.host === 'string' && s.host ? { host: s.host } : {}),
     ...(typeof s.as === 'string' && s.as ? { as: s.as } : {}),
+    ...(s.open === true || s.open === 'true' || s.open === 1 ? { open: true } : {}),
   }),
 })
 
@@ -66,7 +73,7 @@ function Connect() {
 
   const [requesting, setRequesting] = useState(false)
   const [denied, setDenied] = useState<string>()
-  const { host, as } = Route.useSearch()
+  const { host, as, open } = Route.useSearch()
   const [target, setTarget] = useState<string | null>(host ?? null)
   const [principal, setPrincipal] = useState(as ?? 'ops')
   const [session, setSession] = useState<
@@ -140,6 +147,19 @@ function Connect() {
     }
     return res.ticket
   }, [session])
+
+  // Opened once, and only for what the link named: a server that is listed,
+  // whose agent is connected, as an account it lists for this person. A
+  // desktop is left to the button because Windows needs the password first.
+  const autoOpened = useRef(false)
+  useEffect(() => {
+    if (!open || autoOpened.current || !loaded || !selected || session) return
+    autoOpened.current = true
+    if (!viaAgent || isRDPTarget || !principals.includes(principal)) return
+    void onConnect()
+    // onConnect is recreated every render and reads the same state this
+    // effect already gates on.
+  }, [open, loaded, selected, viaAgent, isRDPTarget, principals, principal])
 
   if (session) {
     const isRDP = session.protocol === 'rdp'

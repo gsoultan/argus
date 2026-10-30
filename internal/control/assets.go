@@ -185,10 +185,12 @@ func (in AssetInput) normalise() (AssetInput, error) {
 		// a standing credential when the whole point of this mode is that it
 		// does not.
 		in.CredentialRef = ""
-	} else {
-		if in.CredentialRef == "" {
-			return bad("name the credential in the gateway's vault that should be injected")
-		}
+	} else if in.CredentialRef != "" {
+		// Optional now. Sessions open on the server through its own agent,
+		// which needs no vaulted key or password, so a server approved from
+		// the console has none -- and requiring one made the first edit of
+		// such a server fail until the admin invented a name for a file that
+		// nothing reads.
 		if !reCredentialRef.MatchString(in.CredentialRef) {
 			return bad("the credential is a name inside the gateway's vault, not a path: " +
 				"letters, digits, dot, underscore and hyphen only")

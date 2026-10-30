@@ -603,12 +603,25 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
   return parsed
 }
 
-/** Promotes a discovered host into a managed asset. Grants no principals. */
-export async function enrolHost(hostname: string): Promise<{ assetId: string }> {
-  return post<{ assetId: string }>(
+/** What an approval grants: the accounts allowed, and who may use them. */
+export interface EnrolGrant {
+  principals: string[]
+  people: string[]
+}
+
+/**
+ * Promotes a discovered host into a managed asset, with the login accounts and
+ * people the approving admin picked. Both may be empty, which grants nothing.
+ */
+export async function enrolHost(
+  hostname: string,
+  grant: EnrolGrant = { principals: [], people: [] },
+): Promise<{ assetId: string; assetHostname: string }> {
+  const res = await post<{ assetId: string; assetHostname?: string }>(
     `/api/v1/discovered/${encodeURIComponent(hostname)}/enrol`,
-    {},
+    grant,
   )
+  return { assetId: res.assetId, assetHostname: res.assetHostname ?? hostname }
 }
 
 /** A single-use token for one agent install. The secret is shown once. */

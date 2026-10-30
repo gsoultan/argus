@@ -53,9 +53,9 @@ export function AssetAssignments({
     const ok = await run(
       () => set.mutateAsync({ assetId: asset.id, email, principals }),
       {
-        failure: 'Not assigned',
+        failure: 'Not added',
         success: [
-          'Assigned',
+          'Added',
           `${email} can open ${asset.hostname} as ${principals.join(', ')}.`,
         ],
       },
@@ -80,24 +80,24 @@ export function AssetAssignments({
       size="lg"
       title={
         <Group gap={SP.cozy}>
-          <Text fw={600}>Who can reach</Text>
+          <Text fw={600}>Who can connect to</Text>
           <Mono>{asset.hostname}</Mono>
         </Group>
       }
     >
       <Stack gap="md">
         {asset.principals.length === 0 && (
-          <Alert variant="light" color="amber" icon={<IconInfoCircle size={16} />} title="No principals">
-            This host permits no accounts yet, so there is nothing to assign. Edit the
-            asset and list the accounts Argus may broker a session as.
+          <Alert variant="light" color="amber" icon={<IconInfoCircle size={16} />} title="No login accounts yet">
+            Nobody can log in to this server yet. Close this, click Edit, and add the
+            account people log in with.
           </Alert>
         )}
 
         <Table highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>Account</Table.Th>
-              <Table.Th>May open as</Table.Th>
+              <Table.Th>Person</Table.Th>
+              <Table.Th>Logs in as</Table.Th>
               <Table.Th>Assigned</Table.Th>
               {canEdit && <Table.Th />}
             </Table.Tr>
@@ -152,17 +152,17 @@ export function AssetAssignments({
         {canEdit && asset.principals.length > 0 && (
           <Stack gap={SP.cozy}>
             <Select
-              label="Assign to"
-              placeholder="Pick an account"
+              label="Add a teammate"
+              placeholder="Pick a person"
               searchable
               value={email}
               onChange={setEmail}
               data={candidates}
-              nothingFoundMessage="No account matches"
+              nothingFoundMessage="Nobody by that name"
             />
             <MultiSelect
-              label="As"
-              description="Only the accounts this host permits. Elevated ones still need an approved request on the day."
+              label="Logs in as"
+              description="Root and other admin accounts still need an approved request each time."
               placeholder="ops"
               value={principals}
               onChange={setPrincipals}
@@ -175,7 +175,7 @@ export function AssetAssignments({
                 disabled={!email || principals.length === 0}
                 onClick={() => void add()}
               >
-                Assign
+                Add
               </Button>
             </Group>
           </Stack>
