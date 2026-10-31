@@ -15,7 +15,6 @@ import { SignIn } from '~/components/SignIn'
 // Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
 // of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
 import { Setup } from '~/components/Setup'
-import { MySshKeyModal } from '~/components/MySshKey'
 import { canSee, roleLabel, seesWholeFleet } from '~/lib/roles'
 /**
  * Loaded on first open.
@@ -27,6 +26,10 @@ import { canSee, roleLabel, seesWholeFleet } from '~/lib/roles'
  */
 const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+)
+// Lazy for the same reason: eager, it put the first visit over its budget.
+const MySshKeyModal = lazy(() =>
+  import('~/components/MySshKey').then((m) => ({ default: m.MySshKeyModal })),
 )
 import {
   isActive, navFor, type NavCounts, type NavItem,
@@ -274,7 +277,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
-            <MySshKeyModal opened={sshKeyOpen} onClose={sshKeyModal.close} />
+            {sshKeyOpen && (
+              <Suspense fallback={null}>
+                <MySshKeyModal opened onClose={sshKeyModal.close} />
+              </Suspense>
+            )}
           </Group>
         </Group>
       </AppShell.Header>
