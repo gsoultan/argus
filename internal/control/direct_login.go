@@ -616,6 +616,14 @@ func (a *API) directSessionAdmitted(
 		}
 		return true, fmt.Sprintf("Direct login by %s on %s, approved by %s, was recorded as session %s.",
 			s.Principal, s.AssetHostname, by, s.ID)
+	case "personal":
+		p, ok, err := a.store.PersonalOwner(ctx, s.AssetHostname, s.Principal)
+		if err != nil || !ok || p.Direct != DirectSSHAllow || !strings.EqualFold(p.Owner, s.UserEmail) {
+			return false, ""
+		}
+		return true, fmt.Sprintf("Direct login by %s to their personal account %s on %s was let in "+
+			"because a team of theirs may SSH directly to it, and was recorded as session %s. "+
+			"Nobody approved it.", p.Owner, s.Principal, s.AssetHostname, s.ID)
 	case "allowed":
 		mode, err := a.store.EffectiveDirectSSH(ctx, s.AssetHostname)
 		if err != nil || mode != DirectSSHAllow {
@@ -626,4 +634,22 @@ func (a *API) directSessionAdmitted(
 			s.Principal, s.AssetHostname, s.ID)
 	}
 	return false, ""
+}
+
+// directSessionOwner is who a direct session is attributed to: the owner of
+// the personal account it used when the agent names them and the control
+// plane agrees, otherwise the account on the host, as every direct session
+// was before personal accounts.
+func (a *API) directSessionOwner(ctx context.Context, s Session) string {
+	account := s.Principal + "@" + s.AssetHostname
+	if s.UserEmail == "" || s.UserEmail == account {
+		return account
+	}
+	p, ok, err := a.store.PersonalOwner(ctx, s.AssetHostname, s.Principal)
+	if err != nil || !ok || !strings.EqualFold(p.Owner, s.UserEmail) {
+		a.log.Warn("direct session names a person the control plane does not know for that account",
+			"session", s.ID, "host", s.AssetHostname, "principal", s.Principal, "claimed", s.UserEmail)
+		return account
+	}
+	return p.Owner
 }

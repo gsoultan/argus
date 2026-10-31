@@ -25,14 +25,33 @@ type Team struct {
 
 // TeamAssignment is one team's access to one asset.
 type TeamAssignment struct {
-	AssetID    string    `json:"assetId"`
-	Hostname   string    `json:"hostname"`
-	TeamID     string    `json:"teamId"`
-	TeamName   string    `json:"teamName"`
-	Principals []string  `json:"principals"`
-	GrantedBy  string    `json:"grantedBy"`
-	GrantedAt  time.Time `json:"grantedAt"`
+	AssetID    string   `json:"assetId"`
+	Hostname   string   `json:"hostname"`
+	TeamID     string   `json:"teamId"`
+	TeamName   string   `json:"teamName"`
+	Principals []string `json:"principals"`
+	// PersonalAccounts gives each member an account of their own on the
+	// server; Sudo lets those accounts run anything as root without a
+	// password; DirectSSH is "off", "approve" or "allow" for SSH straight to
+	// them.
+	PersonalAccounts bool      `json:"personalAccounts"`
+	Sudo             bool      `json:"sudo"`
+	DirectSSH        string    `json:"directSsh"`
+	GrantedBy        string    `json:"grantedBy"`
+	GrantedAt        time.Time `json:"grantedAt"`
 }
+
+// TeamAccess is what a team is given on one server.
+type TeamAccess struct {
+	Principals       []string
+	PersonalAccounts bool
+	Sudo             bool
+	// DirectSSH is "off" (or ""), "approve" or "allow".
+	DirectSSH string
+}
+
+// Direct SSH to a personal account is off unless a team assignment says so.
+const DirectSSHOff = "off"
 
 func normaliseTeamName(name string) (string, error) {
 	name = strings.Join(strings.Fields(name), " ")
@@ -204,7 +223,11 @@ func (s *Store) AddTeamMember(ctx context.Context, teamID, email, actor string) 
 	if err != nil {
 		return err
 	}
-	return s.teamExists(ctx, teamID)
+	if err := s.teamExists(ctx, teamID); err != nil {
+		return err
+	}
+	// Joining a team with personal accounts somewhere means needing a name.
+	return s.ensurePersonalLoginNames(ctx)
 }
 
 // RemoveTeamMember takes a person out of a team, and with it every server
@@ -239,7 +262,7 @@ func (s *Store) TeamAssignments(ctx context.Context, assetID string) ([]TeamAssi
 func (s *Store) teamAssignments(ctx context.Context, where string, args ...any) ([]TeamAssignment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT ta.asset_id::text, a.hostname, ta.team_id::text, t.name, ta.principals,
-		       ta.granted_by, ta.granted_at
+		       ta.personal_accounts, ta.sudo, ta.direct_ssh, ta.granted_by, ta.granted_at
 		  FROM asset_team_assignments ta
 		  JOIN assets a ON a.id = ta.asset_id
 		  JOIN teams t ON t.id = ta.team_id
@@ -253,7 +276,7 @@ func (s *Store) teamAssignments(ctx context.Context, where string, args ...any) 
 	for rows.Next() {
 		var g TeamAssignment
 		if err := rows.Scan(&g.AssetID, &g.Hostname, &g.TeamID, &g.TeamName, &g.Principals,
-			&g.GrantedBy, &g.GrantedAt); err != nil {
+			&g.PersonalAccounts, &g.Sudo, &g.DirectSSH, &g.GrantedBy, &g.GrantedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -267,9 +290,28 @@ func (s *Store) teamAssignments(ctx context.Context, where string, args ...any) 
 func (s *Store) SetTeamAssignment(
 	ctx context.Context, assetID, teamID string, principals []string, actor string,
 ) error {
-	principals = dedupe(principals)
-	if len(principals) == 0 {
+	return s.SetTeamAccess(ctx, assetID, teamID, TeamAccess{Principals: principals}, actor)
+}
+
+// SetTeamAccess records what a team is given on an asset: shared accounts,
+// an account of each member's own, or both. Giving neither is a removal.
+func (s *Store) SetTeamAccess(
+	ctx context.Context, assetID, teamID string, in TeamAccess, actor string,
+) error {
+	principals := dedupe(in.Principals)
+	if len(principals) == 0 && !in.PersonalAccounts {
 		return s.RemoveTeamAssignment(ctx, assetID, teamID)
+	}
+	switch in.DirectSSH {
+	case "":
+		in.DirectSSH = DirectSSHOff
+	case DirectSSHOff, DirectSSHApprove, DirectSSHAllow:
+	default:
+		return ErrInvalidAsset{Reason: `direct SSH must be "off", "approve" or "allow"`}
+	}
+	if (in.Sudo || in.DirectSSH != DirectSSHOff) && !in.PersonalAccounts {
+		// On a shared account there is nobody in particular to give them to.
+		return ErrInvalidAsset{Reason: "sudo and direct SSH apply to personal accounts; turn those on first"}
 	}
 	if len(principals) > maxPrincipals {
 		return ErrInvalidAsset{Reason: fmt.Sprintf(
@@ -286,14 +328,24 @@ func (s *Store) SetTeamAssignment(
 		return err
 	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO asset_team_assignments (asset_id, team_id, principals, granted_by)
-		VALUES ($1::uuid, $2::uuid, $3, $4)
+		INSERT INTO asset_team_assignments
+		       (asset_id, team_id, principals, personal_accounts, sudo, direct_ssh, granted_by)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
 		ON CONFLICT (asset_id, team_id) DO UPDATE SET
-			principals = EXCLUDED.principals,
-			granted_by = EXCLUDED.granted_by,
-			granted_at = now()`,
-		assetID, teamID, principals, strings.ToLower(actor))
-	return err
+			principals        = EXCLUDED.principals,
+			personal_accounts = EXCLUDED.personal_accounts,
+			sudo              = EXCLUDED.sudo,
+			direct_ssh        = EXCLUDED.direct_ssh,
+			granted_by        = EXCLUDED.granted_by,
+			granted_at        = now()`,
+		assetID, teamID, principals, in.PersonalAccounts, in.Sudo, in.DirectSSH, strings.ToLower(actor))
+	if err != nil {
+		return err
+	}
+	if in.PersonalAccounts {
+		return s.ensurePersonalLoginNames(ctx)
+	}
+	return nil
 }
 
 // RemoveTeamAssignment ends a team's access to an asset.
@@ -307,17 +359,19 @@ func (s *Store) RemoveTeamAssignment(ctx context.Context, assetID, teamID string
 // insertTeamAssignments writes a team assignment per team inside a caller's
 // transaction, for approving a server and giving it out in one step.
 func insertTeamAssignments(
-	ctx context.Context, tx pgx.Tx, assetID string, teamIDs, principals []string, actor string,
+	ctx context.Context, tx pgx.Tx, assetID string, teamIDs, principals []string,
+	personal bool, actor string,
 ) error {
 	for _, id := range teamIDs {
 		tag, err := tx.Exec(ctx, `
-			INSERT INTO asset_team_assignments (asset_id, team_id, principals, granted_by)
-			SELECT $1::uuid, t.id, $3, $4 FROM teams t WHERE t.id = $2::uuid
+			INSERT INTO asset_team_assignments (asset_id, team_id, principals, personal_accounts, granted_by)
+			SELECT $1::uuid, t.id, $3, $5, $4 FROM teams t WHERE t.id = $2::uuid
 			ON CONFLICT (asset_id, team_id) DO UPDATE SET
-				principals = EXCLUDED.principals,
-				granted_by = EXCLUDED.granted_by,
-				granted_at = now()`,
-			assetID, id, principals, strings.ToLower(actor))
+				principals        = EXCLUDED.principals,
+				personal_accounts = EXCLUDED.personal_accounts,
+				granted_by        = EXCLUDED.granted_by,
+				granted_at        = now()`,
+			assetID, id, principals, strings.ToLower(actor), personal)
 		if err != nil {
 			return err
 		}

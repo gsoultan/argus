@@ -42,8 +42,13 @@ type Account struct {
 	MFAEnrolled  bool
 	Disabled     bool
 	// DisabledAt is when it was revoked, for a listing that says so rather
-	// than only that it happened.
+	// than only that it happened, and DisabledBy who revoked it.
 	DisabledAt *time.Time
+	DisabledBy string
+	// LoginName is their personal account name on servers, "" until needed.
+	LoginName string
+	// HasSSHKey is whether they have given a public key for it.
+	HasSSHKey bool
 }
 
 // Account looks a user up by email, case-insensitively.
@@ -285,6 +290,11 @@ func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, pas
 	if err != nil {
 		return "", fmt.Errorf("create account: %w", err)
 	}
+	// Someone added to a team before they had an account gets their server
+	// account name now.
+	if err := s.ensurePersonalLoginNames(ctx); err != nil {
+		return id, fmt.Errorf("name server account: %w", err)
+	}
 	return id, nil
 }
 
@@ -323,6 +333,11 @@ var ErrAlreadyInState = errors.New("the account is already in that state")
 // way out of it is direct SQL against the database, which is the thing this
 // exists to avoid needing.
 func (s *Store) SetAccountDisabled(ctx context.Context, email string, disabled bool) error {
+	return s.SetAccountDisabledBy(ctx, email, disabled, "")
+}
+
+// SetAccountDisabledBy is SetAccountDisabled, keeping who did it next to when.
+func (s *Store) SetAccountDisabledBy(ctx context.Context, email string, disabled bool, actor string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -361,8 +376,9 @@ func (s *Store) SetAccountDisabled(ctx context.Context, email string, disabled b
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE users SET disabled_at = CASE WHEN $2 THEN now() ELSE NULL END
-		 WHERE lower(email) = lower($1)`, email, disabled); err != nil {
+		UPDATE users SET disabled_at = CASE WHEN $2 THEN now() ELSE NULL END,
+		                 disabled_by = CASE WHEN $2 THEN NULLIF($3, '') ELSE NULL END
+		 WHERE lower(email) = lower($1)`, email, disabled, strings.ToLower(actor)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -375,7 +391,8 @@ func (s *Store) SetAccountDisabled(ctx context.Context, email string, disabled b
 // from and conclude it was never there.
 func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT email, display_name, role, mfa_enrolled, disabled_at
+		SELECT email, display_name, role, mfa_enrolled, disabled_at, COALESCE(disabled_by, ''),
+		       COALESCE(login_name, ''), ssh_public_key <> ''
 		  FROM users ORDER BY lower(email)`)
 	if err != nil {
 		return nil, err
@@ -386,7 +403,8 @@ func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
 	for rows.Next() {
 		var a Account
 		var disabledAt *time.Time
-		if err := rows.Scan(&a.Email, &a.DisplayName, &a.Role, &a.MFAEnrolled, &disabledAt); err != nil {
+		if err := rows.Scan(&a.Email, &a.DisplayName, &a.Role, &a.MFAEnrolled, &disabledAt,
+			&a.DisabledBy, &a.LoginName, &a.HasSSHKey); err != nil {
 			return nil, err
 		}
 		a.DisabledAt = disabledAt

@@ -103,7 +103,7 @@ func (a *API) postAccountDisabled(disabled bool) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "you cannot disable your own account; ask another administrator")
 			return
 		}
-		switch err := a.store.SetAccountDisabled(r.Context(), email, disabled); {
+		switch err := a.store.SetAccountDisabledBy(r.Context(), email, disabled, sess.Email); {
 		case err == nil:
 		case errors.Is(err, ErrLastAdmin):
 			writeErr(w, http.StatusConflict,

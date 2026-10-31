@@ -3,6 +3,7 @@ package control
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -25,8 +26,11 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		Refused bool `json:"refused"`
 		// Allowed is a login let in because the server is set to allow and
 		// record direct SSH logins. Believed only if it is.
-		Allowed bool      `json:"allowed"`
-		At      time.Time `json:"at"`
+		Allowed bool `json:"allowed"`
+		// Owner is set when the login used a personal account its owner may
+		// reach directly. Believed only if the control plane agrees.
+		Owner string    `json:"owner"`
+		At    time.Time `json:"at"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/login"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -73,6 +77,26 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if in.Allowed && in.Owner != "" {
+		if p, ok, err := a.store.PersonalOwner(r.Context(), in.Hostname, in.Principal); err == nil && ok &&
+			p.Direct == DirectSSHAllow && strings.EqualFold(p.Owner, in.Owner) {
+			if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+				Action:     "session.direct_allowed",
+				Severity:   "notice",
+				ActorEmail: p.Owner,
+				Target:     in.Hostname,
+				Detail: fmt.Sprintf("%s logged in to %s as their personal account %s from %s at %s to "+
+					"run %s without the Argus console. A team of theirs may SSH directly to this "+
+					"server, so nobody approved it; the session is being recorded in their name.",
+					p.Owner, in.Hostname, in.Principal, from, in.At.UTC().Format(time.RFC3339), what),
+			}); err != nil {
+				a.fail(w, "report login", err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
+			return
+		}
+	}
 	if in.Allowed {
 		if mode, err := a.store.EffectiveDirectSSH(r.Context(), in.Hostname); err == nil &&
 			mode == DirectSSHAllow {
