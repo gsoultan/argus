@@ -34,11 +34,13 @@ import {
   setAccountRole,
   setAccountDisabled,
   createAccount,
+  personServers as livePersonServers,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
-  FleetStats, GatewayPolicy, ServerAccount, Session, Team, TeamAccess, TeamAssignment, User,
+  FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
+  TeamAssignment, User,
 } from '~/types/domain'
 
 /**
@@ -407,8 +409,9 @@ export const api = {
     id: string,
     email: string,
     principals: string[],
+    own?: PersonOwnSetting | null,
   ): Promise<AssetAssignment[]> {
-    if (isConfigured()) return setAssetAssignment(id, email, principals)
+    if (isConfigured()) return setAssetAssignment(id, email, principals, own)
     await latency(300)
     const asset = db.assets.find((a) => a.id === id)
     if (!asset) throw new Error('asset not found')
@@ -420,7 +423,7 @@ export const api = {
     }
     const rest = (db.assignments.get(id) ?? []).filter((g) => g.userEmail !== email)
     const next =
-      principals.length === 0
+      principals.length === 0 && !own
         ? rest
         : [
             ...rest,
@@ -429,6 +432,9 @@ export const api = {
               hostname: asset.hostname,
               userEmail: email,
               principals,
+              personalAccounts: own ? own.personalAccounts : null,
+              sudo: own?.sudo ?? false,
+              directSsh: own?.directSsh ?? 'off',
               grantedBy: currentUser.email,
               grantedAt: new Date().toISOString(),
             },
@@ -447,6 +453,40 @@ export const api = {
       id,
       (db.assignments.get(id) ?? []).filter((g) => g.userEmail !== email),
     )
+  },
+
+  /** What one person may do on each server: their own setting replaces their teams'. */
+  async personServers(email: string): Promise<PersonServer[]> {
+    if (isConfigured()) return livePersonServers(email)
+    await latency(120)
+    const rank = { off: 0, approve: 1, allow: 2 } as const
+    const out: PersonServer[] = []
+    for (const asset of db.assets) {
+      const own = (db.assignments.get(asset.id) ?? []).find((g) => g.userEmail === email)
+      const held = (db.teamAssignments.get(asset.id) ?? []).filter((g) =>
+        db.teams.find((t) => t.id === g.teamId)?.members.includes(email))
+      if (!own && held.length === 0) continue
+      const ps: PersonServer = {
+        assetId: asset.id, hostname: asset.hostname,
+        principals: [...new Set([...(own?.principals ?? []), ...held.flatMap((g) => g.principals)])].sort(),
+        personalAccount: false, sudo: false, directSsh: 'off', source: '',
+        teams: held.map((g) => g.teamName), ownSetting: own?.personalAccounts != null,
+      }
+      if (own?.personalAccounts != null) {
+        if (own.personalAccounts) {
+          Object.assign(ps, { personalAccount: true, sudo: !!own.sudo, directSsh: own.directSsh ?? 'off', source: 'own' })
+        }
+      } else {
+        for (const g of held.filter((g) => g.personalAccounts)) {
+          ps.personalAccount = true
+          ps.source = 'teams'
+          ps.sudo ||= !!g.sudo
+          if (rank[g.directSsh ?? 'off'] > rank[ps.directSsh]) ps.directSsh = g.directSsh ?? 'off'
+        }
+      }
+      out.push(ps)
+    }
+    return out
   },
 
   /* ── Teams ─────────────────────────────────────────────────────────── */

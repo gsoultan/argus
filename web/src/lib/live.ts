@@ -3,6 +3,8 @@ import type {
   AccessRequest,
   Asset,
   AssetAssignment,
+  PersonOwnSetting,
+  PersonServer,
   AssetInput,
   AuditEvent,
   DirectLogin,
@@ -573,11 +575,18 @@ export async function setAssetAssignment(
   id: string,
   email: string,
   principals: string[],
+  own?: PersonOwnSetting | null,
 ): Promise<AssetAssignment[]> {
   return send<AssetAssignment[]>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/assignments`, {
     email,
     principals,
+    ...(own ? own : { personalAccounts: null }),
   })
+}
+
+/** What one person may do on each server, and where it comes from. */
+export async function personServers(email: string): Promise<PersonServer[]> {
+  return get<PersonServer[]>(`/api/v1/users/${encodeURIComponent(email)}/servers`)
 }
 
 export async function removeAssetAssignment(id: string, email: string): Promise<void> {

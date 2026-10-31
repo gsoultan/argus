@@ -11,7 +11,7 @@ import {
   ignoreHost,
   isConfigured,
 } from '~/lib/live'
-import type { AccessRequest, AssetInput, DirectSsh, Session, TeamAccess, User } from '~/types/domain'
+import type { AccessRequest, AssetInput, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -270,9 +270,12 @@ export function useArchiveAsset() {
 export function useSetAssignment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { assetId: string; email: string; principals: string[] }) =>
-      api.setAssignment(v.assetId, v.email, v.principals),
-    onSuccess: () => invalidateInventory(qc),
+    mutationFn: (v: { assetId: string; email: string; principals: string[]; own?: PersonOwnSetting | null }) =>
+      api.setAssignment(v.assetId, v.email, v.principals, v.own),
+    onSuccess: () => {
+      invalidateInventory(qc)
+      void qc.invalidateQueries({ queryKey: ['person-servers'] })
+    },
   })
 }
 
@@ -287,6 +290,9 @@ export function useRemoveAssignment() {
 
 /* ── Teams ───────────────────────────────────────────────────────────────── */
 
+export const personServersQuery = (email: string) =>
+  queryOptions({ queryKey: ['person-servers', email], queryFn: () => api.personServers(email) })
+
 export const teamsQuery = () => queryOptions({ queryKey: ['teams'], queryFn: api.teams })
 
 export const teamAssignmentsQuery = (assetId: string) =>
@@ -299,6 +305,7 @@ export const teamAssignmentsQuery = (assetId: string) =>
 function invalidateTeams(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ['teams'] })
   void qc.invalidateQueries({ queryKey: ['team-assignments'] })
+  void qc.invalidateQueries({ queryKey: ['person-servers'] })
   invalidateInventory(qc)
 }
 
