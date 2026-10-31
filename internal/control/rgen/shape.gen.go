@@ -128,6 +128,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.AgentConsoleOnly,
 		m.DirectSsh,
 		m.AgentDirectSsh,
+		m.AgentPersonalAccounts,
 	}
 }
 
@@ -154,6 +155,9 @@ func _assertAssetTeamAssignmentShape(m m0.AssetTeamAssignment) {
 		m.Principals,
 		m.GrantedBy,
 		m.GrantedAt,
+		m.PersonalAccounts,
+		m.Sudo,
+		m.DirectSsh,
 	}
 }
 
@@ -336,5 +340,8 @@ func _assertUserShape(m m0.User) {
 		m.TotpSecret,
 		m.MfaEnrolledAt,
 		m.DisabledAt,
+		m.LoginName,
+		m.SshPublicKey,
+		m.DisabledBy,
 	}
 }

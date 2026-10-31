@@ -31,6 +31,9 @@ type Row struct {
 	TotpSecret    runtime.Null[string]
 	MfaEnrolledAt runtime.Null[time.Time]
 	DisabledAt    runtime.Null[time.Time]
+	LoginName     runtime.Null[string]
+	SshPublicKey  string
+	DisabledBy    runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -69,7 +72,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 11
+const nCols = 14
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -259,6 +262,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.DisabledAt.V
 		q.ntm++
+	case 11:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.LoginName.V
+		q.ns++
+	case 12:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.SshPublicKey
+		q.ns++
+	case 13:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.DisabledBy.V
+		q.ns++
 	}
 }
 
@@ -436,6 +460,9 @@ var (
 	TotpSecret    = NullTextCol{8}
 	MfaEnrolledAt = NullTimeCol{9}
 	DisabledAt    = NullTimeCol{10}
+	LoginName     = NullTextCol{11}
+	SshPublicKey  = TextCol{12}
+	DisabledBy    = NullTextCol{13}
 )
 
 // UUIDCol addresses a uuid column.
@@ -755,6 +782,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 11:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 12:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 13:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -841,6 +889,27 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 11:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 12:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 13:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -941,8 +1010,45 @@ func (q Query) DisabledAtLt(v time.Time) Query       { return q.Where(DisabledAt
 func (q Query) DisabledAtLte(v time.Time) Query      { return q.Where(DisabledAt.Lte(v)) }
 func (q Query) DisabledAtIsNull() Query              { return q.Where(DisabledAt.IsNull()) }
 func (q Query) DisabledAtIsNotNull() Query           { return q.Where(DisabledAt.IsNotNull()) }
+func (q Query) LoginNameEq(v string) Query           { return q.Where(LoginName.Eq(v)) }
+func (q Query) LoginNameNotEq(v string) Query        { return q.Where(LoginName.NotEq(v)) }
+func (q Query) LoginNameGt(v string) Query           { return q.Where(LoginName.Gt(v)) }
+func (q Query) LoginNameGte(v string) Query          { return q.Where(LoginName.Gte(v)) }
+func (q Query) LoginNameLt(v string) Query           { return q.Where(LoginName.Lt(v)) }
+func (q Query) LoginNameLte(v string) Query          { return q.Where(LoginName.Lte(v)) }
+func (q Query) LoginNameEqLower(v string) Query      { return q.Where(LoginName.EqLower(v)) }
+func (q Query) LoginNameLike(v string) Query         { return q.Where(LoginName.Like(v)) }
+func (q Query) LoginNameILike(v string) Query        { return q.Where(LoginName.ILike(v)) }
+func (q Query) LoginNameIn(v ...string) Query        { return q.Where(LoginName.In(v...)) }
+func (q Query) LoginNameNotIn(v ...string) Query     { return q.Where(LoginName.NotIn(v...)) }
+func (q Query) LoginNameIsNull() Query               { return q.Where(LoginName.IsNull()) }
+func (q Query) LoginNameIsNotNull() Query            { return q.Where(LoginName.IsNotNull()) }
+func (q Query) SshPublicKeyEq(v string) Query        { return q.Where(SshPublicKey.Eq(v)) }
+func (q Query) SshPublicKeyNotEq(v string) Query     { return q.Where(SshPublicKey.NotEq(v)) }
+func (q Query) SshPublicKeyGt(v string) Query        { return q.Where(SshPublicKey.Gt(v)) }
+func (q Query) SshPublicKeyGte(v string) Query       { return q.Where(SshPublicKey.Gte(v)) }
+func (q Query) SshPublicKeyLt(v string) Query        { return q.Where(SshPublicKey.Lt(v)) }
+func (q Query) SshPublicKeyLte(v string) Query       { return q.Where(SshPublicKey.Lte(v)) }
+func (q Query) SshPublicKeyEqLower(v string) Query   { return q.Where(SshPublicKey.EqLower(v)) }
+func (q Query) SshPublicKeyLike(v string) Query      { return q.Where(SshPublicKey.Like(v)) }
+func (q Query) SshPublicKeyILike(v string) Query     { return q.Where(SshPublicKey.ILike(v)) }
+func (q Query) SshPublicKeyIn(v ...string) Query     { return q.Where(SshPublicKey.In(v...)) }
+func (q Query) SshPublicKeyNotIn(v ...string) Query  { return q.Where(SshPublicKey.NotIn(v...)) }
+func (q Query) DisabledByEq(v string) Query          { return q.Where(DisabledBy.Eq(v)) }
+func (q Query) DisabledByNotEq(v string) Query       { return q.Where(DisabledBy.NotEq(v)) }
+func (q Query) DisabledByGt(v string) Query          { return q.Where(DisabledBy.Gt(v)) }
+func (q Query) DisabledByGte(v string) Query         { return q.Where(DisabledBy.Gte(v)) }
+func (q Query) DisabledByLt(v string) Query          { return q.Where(DisabledBy.Lt(v)) }
+func (q Query) DisabledByLte(v string) Query         { return q.Where(DisabledBy.Lte(v)) }
+func (q Query) DisabledByEqLower(v string) Query     { return q.Where(DisabledBy.EqLower(v)) }
+func (q Query) DisabledByLike(v string) Query        { return q.Where(DisabledBy.Like(v)) }
+func (q Query) DisabledByILike(v string) Query       { return q.Where(DisabledBy.ILike(v)) }
+func (q Query) DisabledByIn(v ...string) Query       { return q.Where(DisabledBy.In(v...)) }
+func (q Query) DisabledByNotIn(v ...string) Query    { return q.Where(DisabledBy.NotIn(v...)) }
+func (q Query) DisabledByIsNull() Query              { return q.Where(DisabledBy.IsNull()) }
+func (q Query) DisabledByIsNotNull() Query           { return q.Where(DisabledBy.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at" FROM "users"`
+const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by" FROM "users"`
 const countPrefix = `SELECT count(*) FROM "users"`
 const existsPrefix = `SELECT 1 FROM "users"`
 const existsSuffix = ` LIMIT 1`
@@ -1045,6 +1151,24 @@ var orderTable = [nCols][4]string{
 		"\"disabled_at\" ASC NULLS FIRST",
 		"\"disabled_at\" DESC NULLS LAST",
 	},
+	{ // login_name
+		"\"login_name\"",
+		"\"login_name\" DESC",
+		"\"login_name\" ASC NULLS FIRST",
+		"\"login_name\" DESC NULLS LAST",
+	},
+	{ // ssh_public_key
+		"\"ssh_public_key\"",
+		"\"ssh_public_key\" DESC",
+		"\"ssh_public_key\" ASC NULLS FIRST",
+		"\"ssh_public_key\" DESC NULLS LAST",
+	},
+	{ // disabled_by
+		"\"disabled_by\"",
+		"\"disabled_by\" DESC",
+		"\"disabled_by\" ASC NULLS FIRST",
+		"\"disabled_by\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1061,6 +1185,9 @@ var identTable = [nCols]string{
 	"\"totp_secret\"",
 	"\"mfa_enrolled_at\"",
 	"\"disabled_at\"",
+	"\"login_name\"",
+	"\"ssh_public_key\"",
+	"\"disabled_by\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1093,7 +1220,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [11][28]runtime.Frag{
+var fragTable = [14][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1424,6 +1551,96 @@ var fragTable = [11][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // login_name
+		{}, // opNone
+		{A: "\"login_name\" = $", B: ""},
+		{A: "\"login_name\" <> $", B: ""},
+		{A: "\"login_name\" > $", B: ""},
+		{A: "\"login_name\" >= $", B: ""},
+		{A: "\"login_name\" < $", B: ""},
+		{A: "\"login_name\" <= $", B: ""},
+		{A: "lower(\"login_name\") = lower($", B: ")"},
+		{A: "\"login_name\" LIKE $", B: ""},
+		{A: "\"login_name\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"login_name\" = ANY($", B: ")"},
+		{A: "\"login_name\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"login_name\" IS NULL", B: ""},
+		{A: "\"login_name\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // ssh_public_key
+		{}, // opNone
+		{A: "\"ssh_public_key\" = $", B: ""},
+		{A: "\"ssh_public_key\" <> $", B: ""},
+		{A: "\"ssh_public_key\" > $", B: ""},
+		{A: "\"ssh_public_key\" >= $", B: ""},
+		{A: "\"ssh_public_key\" < $", B: ""},
+		{A: "\"ssh_public_key\" <= $", B: ""},
+		{A: "lower(\"ssh_public_key\") = lower($", B: ")"},
+		{A: "\"ssh_public_key\" LIKE $", B: ""},
+		{A: "\"ssh_public_key\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"ssh_public_key\" = ANY($", B: ")"},
+		{A: "\"ssh_public_key\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // disabled_by
+		{}, // opNone
+		{A: "\"disabled_by\" = $", B: ""},
+		{A: "\"disabled_by\" <> $", B: ""},
+		{A: "\"disabled_by\" > $", B: ""},
+		{A: "\"disabled_by\" >= $", B: ""},
+		{A: "\"disabled_by\" < $", B: ""},
+		{A: "\"disabled_by\" <= $", B: ""},
+		{A: "lower(\"disabled_by\") = lower($", B: ")"},
+		{A: "\"disabled_by\" LIKE $", B: ""},
+		{A: "\"disabled_by\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"disabled_by\" = ANY($", B: ")"},
+		{A: "\"disabled_by\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"disabled_by\" IS NULL", B: ""},
+		{A: "\"disabled_by\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1591,6 +1808,9 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.TotpSecret = runtime.NullText(rv[8], sl)
 	r.MfaEnrolledAt = runtime.Nullable(rv[9], runtime.Timestamptz)
 	r.DisabledAt = runtime.Nullable(rv[10], runtime.Timestamptz)
+	r.LoginName = runtime.NullText(rv[11], sl)
+	r.SshPublicKey = sl.Str(rv[12])
+	r.DisabledBy = runtime.NullText(rv[13], sl)
 	return nil
 }
 
@@ -1680,6 +1900,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 11:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 12:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 13:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -1728,6 +1960,18 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 11:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 12:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 13:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -1865,7 +2109,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at"`
+const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by"`
 
 const updatePrefix = `UPDATE "users" SET `
 const deletePrefix = `DELETE FROM "users"`
@@ -1883,9 +2127,12 @@ const (
 	dTotpSecret    uint64 = 1 << 7
 	dMfaEnrolledAt uint64 = 1 << 8
 	dDisabledAt    uint64 = 1 << 9
+	dLoginName     uint64 = 1 << 10
+	dSshPublicKey  uint64 = 1 << 11
+	dDisabledBy    uint64 = 1 << 12
 )
 
-const nUpdatable = 10
+const nUpdatable = 13
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1899,6 +2146,9 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"totp_secret\" = $", B: ""},     // totp_secret
 	{A: "\"mfa_enrolled_at\" = $", B: ""}, // mfa_enrolled_at
 	{A: "\"disabled_at\" = $", B: ""},     // disabled_at
+	{A: "\"login_name\" = $", B: ""},      // login_name
+	{A: "\"ssh_public_key\" = $", B: ""},  // ssh_public_key
+	{A: "\"disabled_by\" = $", B: ""},     // disabled_by
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1915,6 +2165,9 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                     // totp_secret has no server-side form
 	{A: "\"mfa_enrolled_at\" = now()", B: ""}, // mfa_enrolled_at = the database's clock
 	{A: "\"disabled_at\" = now()", B: ""},     // disabled_at = the database's clock
+	{},                                        // login_name has no server-side form
+	{},                                        // ssh_public_key has no server-side form
+	{},                                        // disabled_by has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1937,9 +2190,12 @@ const (
 	iTotpSecret    uint64 = 1 << 8
 	iMfaEnrolledAt uint64 = 1 << 9
 	iDisabledAt    uint64 = 1 << 10
+	iLoginName     uint64 = 1 << 11
+	iSshPublicKey  uint64 = 1 << 12
+	iDisabledBy    uint64 = 1 << 13
 )
 
-const nInsertable = 11
+const nInsertable = 14
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1954,6 +2210,9 @@ var insCols = [nInsertable]string{
 	"\"totp_secret\"",
 	"\"mfa_enrolled_at\"",
 	"\"disabled_at\"",
+	"\"login_name\"",
+	"\"ssh_public_key\"",
+	"\"disabled_by\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1962,7 +2221,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"users\""
-const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\""
+const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1981,7 +2240,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\""
+const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2173,6 +2432,40 @@ func (m *Mut) SetDisabledAtNull() {
 	m.expr &^= dDisabledAt
 }
 
+func (m *Mut) SetLoginName(v string) {
+	m.row.LoginName = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dLoginName
+	m.expr &^= dLoginName
+}
+
+// SetLoginNameNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetLoginNameNull() {
+	m.row.LoginName = runtime.Null[string]{}
+	m.dirty |= dLoginName
+	m.expr &^= dLoginName
+}
+
+func (m *Mut) SetSshPublicKey(v string) {
+	m.row.SshPublicKey = v
+	m.dirty |= dSshPublicKey
+	m.expr &^= dSshPublicKey
+}
+
+func (m *Mut) SetDisabledBy(v string) {
+	m.row.DisabledBy = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dDisabledBy
+	m.expr &^= dDisabledBy
+}
+
+// SetDisabledByNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetDisabledByNull() {
+	m.row.DisabledBy = runtime.Null[string]{}
+	m.dirty |= dDisabledBy
+	m.expr &^= dDisabledBy
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2288,6 +2581,35 @@ func (n *Ins) SetDisabledAtNull() {
 	n.set |= iDisabledAt
 }
 
+func (n *Ins) SetLoginName(v string) {
+	n.row.LoginName = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iLoginName
+}
+
+// SetLoginNameNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetLoginNameNull() {
+	n.row.LoginName = runtime.Null[string]{}
+	n.set |= iLoginName
+}
+
+func (n *Ins) SetSshPublicKey(v string) {
+	n.row.SshPublicKey = v
+	n.set |= iSshPublicKey
+}
+
+func (n *Ins) SetDisabledBy(v string) {
+	n.row.DisabledBy = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iDisabledBy
+}
+
+// SetDisabledByNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetDisabledByNull() {
+	n.row.DisabledBy = runtime.Null[string]{}
+	n.set |= iDisabledBy
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2331,11 +2653,12 @@ var conflictSpecs = []string{
 	" ON CONFLICT (\"id\")",
 	" ON CONFLICT (\"email\")",
 	" ON CONFLICT ((lower(email)))",
+	" ON CONFLICT (\"login_name\") WHERE login_name IS NOT NULL",
 }
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 10)
+	set := make([]string, 0, 13)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2368,6 +2691,15 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<10) != 0 {
 			set = append(set, "disabled_at")
 		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "login_name")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "ssh_public_key")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "disabled_by")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "display_name")
@@ -2395,6 +2727,15 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<10) != 0 {
 			set = append(set, "disabled_at")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "login_name")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "ssh_public_key")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "disabled_by")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -2427,6 +2768,52 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<10) != 0 {
 			set = append(set, "disabled_at")
 		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "login_name")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "ssh_public_key")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "disabled_by")
+		}
+	case 3:
+		if mask&(1<<1) != 0 {
+			set = append(set, "email")
+		}
+		if mask&(1<<2) != 0 {
+			set = append(set, "display_name")
+		}
+		if mask&(1<<3) != 0 {
+			set = append(set, "role")
+		}
+		if mask&(1<<4) != 0 {
+			set = append(set, "mfa_enrolled")
+		}
+		if mask&(1<<5) != 0 {
+			set = append(set, "last_seen_at")
+		}
+		if mask&(1<<6) != 0 {
+			set = append(set, "created_at")
+		}
+		if mask&(1<<7) != 0 {
+			set = append(set, "password_hash")
+		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "totp_secret")
+		}
+		if mask&(1<<9) != 0 {
+			set = append(set, "mfa_enrolled_at")
+		}
+		if mask&(1<<10) != 0 {
+			set = append(set, "disabled_at")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "ssh_public_key")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "disabled_by")
+		}
 	}
 	return set
 }
@@ -2458,6 +2845,16 @@ func (n *Ins) OnConflictEmail() *Ins {
 // entirely.
 func (n *Ins) OnConflictLowerEmail() *Ins {
 	n.conflict = 6
+	return n
+}
+
+// OnConflictLoginName upserts on the unique index over (login_name, where login_name IS NOT NULL).
+//
+// The row that already exists keeps every column this insert did
+// not assign. Follow with DoNothing() to leave it untouched
+// entirely.
+func (n *Ins) OnConflictLoginName() *Ins {
+	n.conflict = 8
 	return n
 }
 
@@ -2505,6 +2902,9 @@ var assignFor = map[string]string{
 	"totp_secret":     "\"totp_secret\" = EXCLUDED.\"totp_secret\"",
 	"mfa_enrolled_at": "\"mfa_enrolled_at\" = EXCLUDED.\"mfa_enrolled_at\"",
 	"disabled_at":     "\"disabled_at\" = EXCLUDED.\"disabled_at\"",
+	"login_name":      "\"login_name\" = EXCLUDED.\"login_name\"",
+	"ssh_public_key":  "\"ssh_public_key\" = EXCLUDED.\"ssh_public_key\"",
+	"disabled_by":     "\"disabled_by\" = EXCLUDED.\"disabled_by\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2570,6 +2970,12 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.MfaEnrolledAt.Arg())
 		case 10:
 			args = append(args, n.row.DisabledAt.Arg())
+		case 11:
+			args = append(args, n.row.LoginName.Arg())
+		case 12:
+			args = append(args, n.row.SshPublicKey)
+		case 13:
+			args = append(args, n.row.DisabledBy.Arg())
 		}
 	}
 	var out Row
@@ -2607,7 +3013,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 14)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -2619,6 +3025,9 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.TotpSecret.Arg())
 	args = append(args, r.MfaEnrolledAt.Arg())
 	args = append(args, r.DisabledAt.Arg())
+	args = append(args, r.LoginName.Arg())
+	args = append(args, r.SshPublicKey)
+	args = append(args, r.DisabledBy.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2656,13 +3065,16 @@ var copyCols = []string{
 	"totp_secret",
 	"mfa_enrolled_at",
 	"disabled_at",
+	"login_name",
+	"ssh_public_key",
+	"disabled_by",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [11]any
+	buf  [14]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2691,6 +3103,9 @@ func (s *rowSource) Values() []any {
 	s.buf[8] = r.TotpSecret.Ptr()
 	s.buf[9] = r.MfaEnrolledAt.Ptr()
 	s.buf[10] = r.DisabledAt.Ptr()
+	s.buf[11] = r.LoginName.Ptr()
+	s.buf[12] = &r.SshPublicKey
+	s.buf[13] = r.DisabledBy.Ptr()
 	return s.buf[:]
 }
 
@@ -2732,8 +3147,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 8
 	mask |= 1 << 9
 	mask |= 1 << 10
+	mask |= 1 << 11
+	mask |= 1 << 12
+	mask |= 1 << 13
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 14)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -2745,6 +3163,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.TotpSecret.Arg())
 	args = append(args, r.MfaEnrolledAt.Arg())
 	args = append(args, r.DisabledAt.Arg())
+	args = append(args, r.LoginName.Arg())
+	args = append(args, r.SshPublicKey)
+	args = append(args, r.DisabledBy.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2800,6 +3221,12 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.MfaEnrolledAt.Arg())
 		case 10:
 			args = append(args, n.row.DisabledAt.Arg())
+		case 11:
+			args = append(args, n.row.LoginName.Arg())
+		case 12:
+			args = append(args, n.row.SshPublicKey)
+		case 13:
+			args = append(args, n.row.DisabledBy.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2866,6 +3293,12 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.MfaEnrolledAt.Arg())
 		case 9:
 			args = append(args, m.row.DisabledAt.Arg())
+		case 10:
+			args = append(args, m.row.LoginName.Arg())
+		case 11:
+			args = append(args, m.row.SshPublicKey)
+		case 12:
+			args = append(args, m.row.DisabledBy.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2968,6 +3401,12 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.MfaEnrolledAt.Arg())
 		case 9:
 			args = append(args, m.row.DisabledAt.Arg())
+		case 10:
+			args = append(args, m.row.LoginName.Arg())
+		case 11:
+			args = append(args, m.row.SshPublicKey)
+		case 12:
+			args = append(args, m.row.DisabledBy.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3136,6 +3575,12 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.MfaEnrolledAt.Arg())
 		case 9:
 			args = append(args, m.row.DisabledAt.Arg())
+		case 10:
+			args = append(args, m.row.LoginName.Arg())
+		case 11:
+			args = append(args, m.row.SshPublicKey)
+		case 12:
+			args = append(args, m.row.DisabledBy.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)
