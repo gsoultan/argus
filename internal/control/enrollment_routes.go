@@ -313,6 +313,9 @@ func (a *API) postDeregister(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Hostname string `json:"hostname"`
 		RanBy    string `json:"ran_by"`
+		// SSHWays is how the server says people can still log in over plain
+		// SSH now the agent is gone. Nil from an agent that did not check.
+		SSHWays *[]string `json:"ssh_ways"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/deregister"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -349,6 +352,24 @@ func (a *API) postDeregister(w http.ResponseWriter, r *http.Request) {
 		}
 		ranBy = "the host says " + strconv.Quote(in.RanBy) + " ran it"
 	}
+	ssh := ""
+	if in.SSHWays != nil {
+		ways := *in.SSHWays
+		if len(ways) > 8 {
+			ways = ways[:8]
+		}
+		for i, w := range ways {
+			if len(w) > 80 {
+				ways[i] = w[:80]
+			}
+		}
+		if len(ways) == 0 {
+			ssh = " The server reports that nobody can log in to it over plain SSH: " +
+				"only its own console reaches it now."
+		} else {
+			ssh = " The server reports plain SSH works for: " + strings.Join(ways, ", ") + "."
+		}
+	}
 	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action:   "agent.uninstalled",
 		Severity: "warn",
@@ -356,7 +377,7 @@ func (a *API) postDeregister(w http.ResponseWriter, r *http.Request) {
 		Detail: "The agent on " + hostname + " was uninstalled there and revoked its own " +
 			"credential (" + id + "); " + ranBy + ". Sessions on " + hostname +
 			" are no longer opened from the console or recorded. What it reported " +
-			"before is unchanged, and its recordings stay on the host.",
+			"before is unchanged, and its recordings stay on the host." + ssh,
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}

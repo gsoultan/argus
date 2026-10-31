@@ -108,6 +108,9 @@ type HeartbeatReply struct {
 	// through Argus. Nil from a control plane older than the setting, or one
 	// that could not read its policy: the agent keeps what it last heard.
 	ConsoleOnly *bool `json:"console_only"`
+	// Uninstall is the server having been removed from Argus: the agent
+	// takes itself off this host.
+	Uninstall bool `json:"uninstall"`
 	// DirectSSH is what to do with a login that reached sshd without the
 	// console: "refuse", "approve" or "allow". Nil from a control plane older
 	// than the setting, which leaves ConsoleOnly to decide.

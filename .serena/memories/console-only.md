@@ -73,3 +73,14 @@ is revoked (`POST /api/v1/report/deregister`, audited `agent.uninstalled`),
 because nothing can ship them afterwards. Recordings, `sessions.jsonl` and the
 spool are kept. The agent package's `agent-preremove.sh` refuses removal while
 the hook is still there.
+
+## Removing a server uninstalls its agent
+
+`DELETE /api/v1/assets/{id}` archives the asset and sets
+`agent_credentials.uninstall_requested_at` (migration 028). Every heartbeat
+from that host then carries `"uninstall": true`, even though the host is now
+unmatched. The daemon's `selfUninstall` takes the sshd hook out first, flushes,
+deregisters (sending `ssh_ways`, so the audit entry says who can still SSH in),
+deletes the credential, then disables and stops its own service. A failed step
+retries on a later heartbeat, at most every ten minutes, and the credential is
+never deleted before it is revoked.

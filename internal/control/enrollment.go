@@ -360,3 +360,30 @@ func (c *agentCredCache) forget(id string) {
 		}
 	}
 }
+
+// RequestAgentUninstall asks the live agent on hostname to uninstall itself,
+// which it reads on its next heartbeat. Reports whether there was one to ask.
+// Asking twice keeps the first request.
+func (s *Store) RequestAgentUninstall(ctx context.Context, hostname, by string) (bool, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		WITH asked AS (
+			UPDATE agent_credentials
+			   SET uninstall_requested_at = COALESCE(uninstall_requested_at, now()),
+			       uninstall_requested_by = COALESCE(uninstall_requested_by, $2)
+			 WHERE lower(hostname) = lower($1) AND revoked_at IS NULL
+			RETURNING 1)
+		SELECT count(*) FROM asked`, hostname, by).Scan(&n)
+	return n > 0, err
+}
+
+// agentUninstallRequested reports whether hostname's live agent has been
+// asked to uninstall itself.
+func (s *Store) agentUninstallRequested(ctx context.Context, hostname string) (bool, error) {
+	var asked bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM agent_credentials
+		                WHERE lower(hostname) = lower($1) AND revoked_at IS NULL
+		                  AND uninstall_requested_at IS NOT NULL)`, hostname).Scan(&asked)
+	return asked, err
+}

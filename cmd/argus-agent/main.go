@@ -312,6 +312,9 @@ func runDaemon(args []string) int {
 		uploads = agent.NewUploads(*stateDir, rep, log)
 		go uploads.Run(ctx, time.Minute)
 	}
+	// Removing this server in the console asks, on a heartbeat, for the agent
+	// to take itself off; see selfUninstall.
+	removed := &selfUninstall{stateDir: *stateDir, rep: rep, uploads: uploads, log: log}
 	col.OnSession = func(rec agent.SessionRecord) {
 		// Always keep the local copy. The control plane is where a session
 		// becomes visible, not where it becomes real.
@@ -427,6 +430,9 @@ func runDaemon(args []string) int {
 				}
 				personalStates = provisioner.Reconcile(ctx, list)
 			}
+		}
+		if ok && reply.Uninstall {
+			removed.start(ctx)
 		}
 		if ok {
 			// Absent from an older control plane, or one that could not read

@@ -57,3 +57,13 @@ func removeAgentService() ([]string, error) {
 func reloadSSHD() (string, error) {
 	return "sshd reads the change on the next login", nil
 }
+
+// stopSelfForGood removes the launchd job, so it does not start at boot, and
+// unloads it, which stops this daemon the way a shutdown does.
+func stopSelfForGood() error {
+	if err := os.Remove(launchdPlist); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// Started, not waited on: it stops the process that would be waiting.
+	return exec.Command("launchctl", "bootout", launchdLabel).Start()
+}
