@@ -28,6 +28,9 @@ import {
   assetTeamAssignments,
   setAssetTeamAssignment,
   removeAssetTeamAssignment,
+  myServerAccount,
+  setMySshKey,
+  setLoginName,
   setAccountRole,
   setAccountDisabled,
   createAccount,
@@ -35,7 +38,7 @@ import {
 import type { AuditPage } from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
-  FleetStats, GatewayPolicy, Session, Team, TeamAssignment, User,
+  FleetStats, GatewayPolicy, ServerAccount, Session, Team, TeamAccess, TeamAssignment, User,
 } from '~/types/domain'
 
 /**
@@ -86,6 +89,8 @@ const db = {
   ] as Team[],
   /** assetId -> team assignments. */
   teamAssignments: new Map<string, TeamAssignment[]>(),
+  /** The fixture's signed-in person's own server account. */
+  serverAccount: { loginName: currentUser.email.split('@')[0]!, sshKey: '', sshFingerprint: '', directSsh: true } as ServerAccount,
 }
 
 /** The fixture's teams with their servers filled in from the assignment map. */
@@ -245,6 +250,40 @@ export const api = {
     u.role = role
   },
 
+  async myServerAccount(): Promise<ServerAccount> {
+    if (isConfigured()) return myServerAccount()
+    await latency(100)
+    return { ...db.serverAccount }
+  },
+
+  async setMySshKey(key: string): Promise<ServerAccount> {
+    if (isConfigured()) return setMySshKey(key)
+    await latency(200)
+    const k = key.trim()
+    if (k && !/^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com) [A-Za-z0-9+/=]+( .*)?$/.test(k)) {
+      throw new Error('paste one public SSH key, such as the contents of ~/.ssh/id_ed25519.pub')
+    }
+    db.serverAccount = { ...db.serverAccount, sshKey: k, sshFingerprint: k ? 'SHA256:sample-fingerprint' : '' }
+    return { ...db.serverAccount }
+  },
+
+  async setLoginName(email: string, name: string): Promise<void> {
+    if (isConfigured()) {
+      await setLoginName(email, name)
+      return
+    }
+    await latency(200)
+    if (!/^[a-z_][a-z0-9._-]{0,31}$/.test(name)) {
+      throw new Error('a server account name is 1 to 32 characters: lowercase letters, digits, dot, underscore and hyphen')
+    }
+    if (users.some((u) => u.email !== email && u.loginName === name)) {
+      throw new Error('another person already has that server account name')
+    }
+    const u = users.find((x) => x.email === email)
+    if (!u) throw new Error(`no account for ${email}`)
+    u.loginName = name
+  },
+
   async setDisabled(email: string, disabled: boolean): Promise<void> {
     if (isConfigured()) {
       await setAccountDisabled(email, disabled)
@@ -254,6 +293,8 @@ export const api = {
     const u = users.find((x) => x.email === email)
     if (!u) throw new Error(`no account for ${email}`)
     u.disabled = disabled
+    u.disabledAt = disabled ? new Date(EPOCH).toISOString() : null
+    u.disabledBy = disabled ? currentUser.email : ''
   },
 
   async addAccount(input: { email: string; displayName: string; role: User['role']; password: string }): Promise<void> {
@@ -473,8 +514,9 @@ export const api = {
     return db.teamAssignments.get(assetId) ?? []
   },
 
-  async setTeamAssignment(assetId: string, teamId: string, principals: string[]): Promise<TeamAssignment[]> {
-    if (isConfigured()) return setAssetTeamAssignment(assetId, teamId, principals)
+  async setTeamAssignment(assetId: string, teamId: string, access: TeamAccess): Promise<TeamAssignment[]> {
+    if (isConfigured()) return setAssetTeamAssignment(assetId, teamId, access)
+    const { principals, personalAccounts, sudo, directSsh } = access
     await latency(250)
     const asset = db.assets.find((a) => a.id === assetId)
     const team = db.teams.find((t) => t.id === teamId)
@@ -484,9 +526,13 @@ export const api = {
     if (unknown) {
       throw new Error(`${asset.hostname} does not permit the principal "${unknown}"; add it to the asset first`)
     }
+    if ((sudo || directSsh !== 'off') && !personalAccounts) {
+      throw new Error('sudo and direct SSH apply to personal accounts; turn those on first')
+    }
     const rest = (db.teamAssignments.get(assetId) ?? []).filter((g) => g.teamId !== teamId)
-    const next = principals.length === 0 ? rest : [...rest, {
+    const next = principals.length === 0 && !personalAccounts ? rest : [...rest, {
       assetId, hostname: asset.hostname, teamId, teamName: team.name, principals,
+      personalAccounts, sudo, directSsh,
       grantedBy: currentUser.email, grantedAt: new Date().toISOString(),
     }]
     db.teamAssignments.set(assetId, next)

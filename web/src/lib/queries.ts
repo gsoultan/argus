@@ -11,7 +11,7 @@ import {
   ignoreHost,
   isConfigured,
 } from '~/lib/live'
-import type { AccessRequest, AssetInput, DirectSsh, Session, User } from '~/types/domain'
+import type { AccessRequest, AssetInput, DirectSsh, Session, TeamAccess, User } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -345,8 +345,8 @@ export function useRemoveTeamMember() {
 export function useSetTeamAssignment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { assetId: string; teamId: string; principals: string[] }) =>
-      api.setTeamAssignment(v.assetId, v.teamId, v.principals),
+    mutationFn: (v: { assetId: string; teamId: string; access: TeamAccess }) =>
+      api.setTeamAssignment(v.assetId, v.teamId, v.access),
     onSuccess: () => invalidateTeams(qc),
   })
 }
@@ -366,6 +366,28 @@ export function useSetRole() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (v: { email: string; role: User['role'] }) => api.setRole(v.email, v.role),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export const myServerAccountQuery = () =>
+  queryOptions({ queryKey: ['me', 'server-account'] as const, queryFn: () => api.myServerAccount() })
+
+export function useSetMySshKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (key: string) => api.setMySshKey(key),
+    onSuccess: (acct) => {
+      qc.setQueryData(['me', 'server-account'], acct)
+      void qc.invalidateQueries({ queryKey: qk.users })
+    },
+  })
+}
+
+export function useSetLoginName() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { email: string; name: string }) => api.setLoginName(v.email, v.name),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
   })
 }

@@ -256,8 +256,11 @@ func (a *API) putTeamAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		TeamID     string   `json:"teamId"`
-		Principals []string `json:"principals"`
+		TeamID           string   `json:"teamId"`
+		Principals       []string `json:"principals"`
+		PersonalAccounts bool     `json:"personalAccounts"`
+		Sudo             bool     `json:"sudo"`
+		DirectSSH        string   `json:"directSsh"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -268,13 +271,15 @@ func (a *API) putTeamAssignment(w http.ResponseWriter, r *http.Request) {
 		a.failTeam(w, "team", err)
 		return
 	}
-	if err := a.store.SetTeamAssignment(r.Context(), id, in.TeamID, in.Principals, sess.Email); err != nil {
+	access := TeamAccess{Principals: dedupe(in.Principals), PersonalAccounts: in.PersonalAccounts, Sudo: in.Sudo,
+		DirectSSH: in.DirectSSH}
+	if err := a.store.SetTeamAccess(r.Context(), id, in.TeamID, access, sess.Email); err != nil {
 		a.failTeam(w, "assign team", err)
 		return
 	}
 	action, detail := "asset.team_assigned", "Everyone in the team "+team.Name+" ("+team.ID+
-		") may now open a session on "+asset.Hostname+" as "+describePrincipals(dedupe(in.Principals))+"."
-	if len(dedupe(in.Principals)) == 0 {
+		") may now open a session on "+asset.Hostname+" as "+describeTeamAccess(access)+"."
+	if len(access.Principals) == 0 && !access.PersonalAccounts {
 		action, detail = "asset.team_unassigned", "The team "+team.Name+" ("+team.ID+
 			") no longer has access to "+asset.Hostname+"."
 	}

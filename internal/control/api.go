@@ -225,6 +225,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
+	mux.HandleFunc("PUT /api/v1/users/{email}/login-name", a.putLoginName)
+	mux.HandleFunc("GET /api/v1/me/server-account", a.getMyServerAccount)
+	mux.HandleFunc("PUT /api/v1/me/ssh-key", a.putMySSHKey)
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
@@ -551,6 +554,12 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	if in.StartedAt.IsZero() {
 		in.StartedAt = time.Now().UTC()
 	}
+	// A direct login names a person only through their personal account, and
+	// only while it is theirs on this server. Anything else an agent claims
+	// for one is not believed: it is attributed to the account, as always.
+	if in.Origin == "direct" {
+		in.UserEmail = a.directSessionOwner(r.Context(), in)
+	}
 	created, err := a.store.RecordSession(r.Context(), in)
 	if err != nil {
 		a.fail(w, "report session", err)
@@ -642,6 +651,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// DirectSSH is the direct SSH mode the agent is applying now.
 		// Absent from an agent older than the setting.
 		DirectSSH *string `json:"direct_ssh"`
+		// PersonalAccounts is what the agent did with the personal accounts
+		// it was last given. Absent from an agent older than them.
+		PersonalAccounts *[]PersonalAccountState `json:"personal_accounts"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -675,6 +687,23 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		reply["console_only"] = mode != DirectSSHAllow
 	} else {
 		a.log.Error("heartbeat: cannot read the direct ssh setting", "error", merr)
+	}
+	// The personal accounts this server should hold, for a heartbeat from a
+	// server the inventory knows. Left out on an unknown host or a failed
+	// read, so the agent keeps what it has rather than locking everyone out
+	// because of an outage; an empty list is a real answer and locks them.
+	if !errors.Is(err, ErrAgentUnmatched) {
+		if list, perr := a.store.PersonalAccountsFor(r.Context(), in.Hostname); perr == nil {
+			reply["personal_accounts"] = list
+		} else {
+			a.log.Error("heartbeat: cannot read personal accounts", "error", perr)
+		}
+		if in.PersonalAccounts != nil {
+			if perr := a.store.RecordPersonalAccountStates(r.Context(), in.Hostname,
+				capStates(*in.PersonalAccounts)); perr != nil {
+				a.log.Error("heartbeat: cannot keep personal account states", "error", perr)
+			}
+		}
 	}
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",

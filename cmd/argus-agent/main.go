@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -238,6 +239,24 @@ func runDaemon(args []string) int {
 		col.SetConsoleOnly(true)
 		log.Info("console-only: direct logins to this host are refused until the console says otherwise")
 	}
+	// Personal accounts survive a restart the same way: the last list heard
+	// decides which direct logins are a person's own until the next heartbeat.
+	personalFile := *stateDir + "/personal-accounts.json"
+	provisioner := &agent.Provisioner{
+		Sudoers: "/etc/sudoers.d/argus-personal",
+		Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		},
+		Log: log,
+	}
+	var personalStates []agent.PersonalAccountState
+	if b, err := os.ReadFile(personalFile); err == nil {
+		var list []agent.PersonalAccount
+		if err := json.Unmarshal(b, &list); err == nil {
+			col.SetPersonalAccounts(list)
+			log.Info("personal accounts: applying the last list heard", "accounts", len(list))
+		}
+	}
 	col.AskApproval = func(ctx context.Context, m agent.SessionStart) agent.Approval {
 		return askDirectApproval(ctx, rep, m, log)
 	}
@@ -250,7 +269,10 @@ func runDaemon(args []string) int {
 			"command":     m.Command,
 			"origin":      m.Origin,
 			"allowed":     true,
-			"at":          time.Now().UTC(),
+			// Set when the login used a personal account its owner may
+			// reach directly, which is what let it in.
+			"owner": m.Actor,
+			"at":    time.Now().UTC(),
 		})
 	}
 	col.OnRefused = func(m agent.SessionStart) {
@@ -366,10 +388,27 @@ func runDaemon(args []string) int {
 			"exec_reason":     execCtx.Reason,
 			"console_only":    col.ConsoleOnly(),
 			"direct_ssh":      col.DirectSSH(),
+			// nil until the first list has been applied, so the console
+			// can tell "none" from "not yet".
+			"personal_accounts": personalStates,
 		})
 		// Only a delivered reply changes anything. An unreachable control
 		// plane leaves the last setting in place, not a default chosen by an
 		// outage.
+		if ok && len(reply.PersonalAccounts) > 0 && string(reply.PersonalAccounts) != "null" {
+			var list []agent.PersonalAccount
+			if err := json.Unmarshal(reply.PersonalAccounts, &list); err != nil {
+				log.Error("personal accounts: cannot read the list", "error", err)
+			} else {
+				col.SetPersonalAccounts(list)
+				if b, err := json.Marshal(list); err == nil {
+					if err := os.WriteFile(personalFile, b, 0o600); err != nil {
+						log.Error("personal accounts: cannot persist the list", "error", err)
+					}
+				}
+				personalStates = provisioner.Reconcile(ctx, list)
+			}
+		}
 		if ok {
 			// Absent from an older control plane, or one that could not read
 			// its policy: keep what was last heard.

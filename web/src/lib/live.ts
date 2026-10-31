@@ -13,7 +13,9 @@ import type {
   GatewayPolicy,
   Session,
   Team,
+  TeamAccess,
   TeamAssignment,
+  ServerAccount,
   User,
 } from '~/types/domain'
 
@@ -641,17 +643,32 @@ export async function assetTeamAssignments(id: string): Promise<TeamAssignment[]
   return get<TeamAssignment[]>(`/api/v1/assets/${encodeURIComponent(id)}/team-assignments`)
 }
 
-/** Gives a team a server. An empty principal list takes it away. */
+/** Gives a team a server. No shared accounts and no personal ones takes it away. */
 export async function setAssetTeamAssignment(
   id: string,
   teamId: string,
-  principals: string[],
+  access: TeamAccess,
 ): Promise<TeamAssignment[]> {
   return send<TeamAssignment[]>(
     'PUT',
     `/api/v1/assets/${encodeURIComponent(id)}/team-assignments`,
-    { teamId, principals },
+    { teamId, ...access },
   )
+}
+
+/** The signed-in person's own server account and SSH key. */
+export async function myServerAccount(): Promise<ServerAccount> {
+  return get<ServerAccount>('/api/v1/me/server-account')
+}
+
+/** Sets or, with an empty string, removes the signed-in person's SSH key. */
+export async function setMySshKey(key: string): Promise<ServerAccount> {
+  return send<ServerAccount>('PUT', '/api/v1/me/ssh-key', { key })
+}
+
+/** Renames someone's personal server account. */
+export async function setLoginName(email: string, name: string): Promise<{ loginName: string }> {
+  return send('PUT', `/api/v1/users/${encodeURIComponent(email)}/login-name`, { name })
 }
 
 export async function removeAssetTeamAssignment(id: string, teamId: string): Promise<void> {
@@ -688,6 +705,8 @@ export interface EnrolGrant {
   people: string[]
   /** Team ids. Everyone in each team gets the same accounts. */
   teams?: string[]
+  /** Give each member of those teams an account of their own. */
+  personalAccounts?: boolean
 }
 
 /**

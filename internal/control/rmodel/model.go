@@ -162,6 +162,9 @@ type Asset struct {
 	AgentConsoleOnly     *bool
 	DirectSsh            *string
 	AgentDirectSsh       *string
+	// AgentPersonalAccounts is what the agent last said about the personal
+	// accounts it keeps.
+	AgentPersonalAccounts *storm.JSON
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -216,6 +219,11 @@ type AssetTeamAssignment struct {
 	Principals []string
 	GrantedBy  string
 	GrantedAt  time.Time
+	// PersonalAccounts gives each member an account of their own; Sudo and
+	// DirectSsh apply to those accounts only.
+	PersonalAccounts bool
+	Sudo             bool
+	DirectSsh        string
 }
 
 func (m *AssetTeamAssignment) Schema(t *storm.Table) {
@@ -228,6 +236,13 @@ func (m *AssetTeamAssignment) Schema(t *storm.Table) {
 	t.Col(&m.GrantedAt).Default("now()")
 	t.Index(&m.Team).Named("asset_team_assignments_team_idx")
 	t.Index(&m.Asset).Named("asset_team_assignments_asset_idx")
+	t.Col(&m.PersonalAccounts).Default("false")
+	t.Col(&m.Sudo).Default("false")
+	t.Col(&m.DirectSsh).Default("'off'::text")
+	t.CheckNamed("asset_team_assignments_direct_ssh_check",
+		"direct_ssh = ANY (ARRAY['off'::text, 'approve'::text, 'allow'::text])")
+	t.CheckNamed("asset_team_assignments_personal_check",
+		"personal_accounts OR ((NOT sudo) AND (direct_ssh = 'off'::text))")
 }
 
 // AuditEvent is table audit_events.
@@ -493,6 +508,11 @@ type User struct {
 	TotpSecret    *string
 	MfaEnrolledAt *time.Time
 	DisabledAt    *time.Time
+	// LoginName is the person's account on servers; SshPublicKey the key
+	// they reach it directly with; DisabledBy who removed them.
+	LoginName    *string
+	SshPublicKey string
+	DisabledBy   *string
 }
 
 func (m *User) Schema(t *storm.Table) {
@@ -502,6 +522,10 @@ func (m *User) Schema(t *storm.Table) {
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("users_email_key", &m.Email)
 	t.Index(storm.Lower(&m.Email)).Unique().Named("users_email_lower_key")
+	t.Col(&m.SshPublicKey).Default("''::text")
+	t.Index(&m.LoginName).Unique().Where("login_name IS NOT NULL").Named("users_login_name_key")
+	t.CheckNamed("users_login_name_check",
+		"(login_name IS NULL) OR (login_name ~ '^[a-z_][a-z0-9._-]{0,31}$'::text)")
 }
 
 // All is what you pass to storm.Build.

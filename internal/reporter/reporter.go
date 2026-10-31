@@ -112,6 +112,10 @@ type HeartbeatReply struct {
 	// console: "refuse", "approve" or "allow". Nil from a control plane older
 	// than the setting, which leaves ConsoleOnly to decide.
 	DirectSSH *string `json:"direct_ssh"`
+	// PersonalAccounts is the personal accounts this host should hold, as
+	// the agent decodes them. Absent from a control plane older than them,
+	// or one that could not read them: the agent keeps what it has.
+	PersonalAccounts json.RawMessage `json:"personal_accounts"`
 }
 
 // HeartbeatWithReply reports like Heartbeat and returns the control plane's

@@ -7,10 +7,10 @@ import { useDisclosure } from '@mantine/hooks'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconChevronDown, IconLogout, IconSearch,
+  IconAlertTriangle, IconChevronDown, IconKey, IconLogout, IconSearch,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
-import { coverageQuery, directLoginsQuery, meQuery, statsQuery } from '~/lib/queries'
+import { coverageQuery, directLoginsQuery, meQuery, myServerAccountQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
 // Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
 // of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
@@ -26,6 +26,10 @@ import { canSee, roleLabel, seesWholeFleet } from '~/lib/roles'
  */
 const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+)
+// Lazy for the same reason: eager, it put the first visit over its budget.
+const MySshKeyModal = lazy(() =>
+  import('~/components/MySshKey').then((m) => ({ default: m.MySshKeyModal })),
 )
 import {
   isActive, navFor, type NavCounts, type NavItem,
@@ -118,7 +122,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
 function ShellInner({ children }: { children: React.ReactNode }) {
   const [opened, { toggle, close }] = useDisclosure()
   const [paletteOpen, palette] = useDisclosure(false)
+  const [sshKeyOpen, sshKeyModal] = useDisclosure(false)
   const { data: me } = useQuery(meQuery())
+  // A key is only asked of people a team lets SSH straight to a server; the
+  // rest connect from the console and have no use for one. Someone who lost
+  // direct SSH still sees it while a key is saved, so they can take it off.
+  const { data: serverAccount } = useQuery({ ...myServerAccountQuery(), enabled: !!me, retry: false })
+  const wantsKey = !!(serverAccount?.directSsh || serverAccount?.sshKey)
   const statsQuery_ = useQuery(statsQuery())
   const stats = statsQuery_.data
   const source = dataSource(statsQuery_.isPending)
@@ -257,6 +267,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                   <Text size={FS.meta} className="argus-source-title">{sourceSentence(source)}</Text>
                 </Menu.Item>
                 <Menu.Divider />
+                {wantsKey && (
+                  <Menu.Item leftSection={<IconKey size={14} />} onClick={sshKeyModal.open}>
+                    My SSH key
+                  </Menu.Item>
+                )}
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
                   color="rose"
@@ -269,6 +284,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
+            {sshKeyOpen && (
+              <Suspense fallback={null}>
+                <MySshKeyModal opened onClose={sshKeyModal.close} />
+              </Suspense>
+            )}
           </Group>
         </Group>
       </AppShell.Header>

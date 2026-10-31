@@ -60,6 +60,9 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		Principals []string `json:"principals"`
 		People     []string `json:"people"`
 		Teams      []string `json:"teams"`
+		// PersonalAccounts gives each member of the teams an account of
+		// their own on the server.
+		PersonalAccounts bool `json:"personalAccounts"`
 	}
 	if r.ContentLength != 0 {
 		if err := decode(r, &in); err != nil {
@@ -71,7 +74,8 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		in.People[i] = strings.ToLower(strings.TrimSpace(e))
 	}
 
-	id, err := a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams)
+	id, err := a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams,
+		in.PersonalAccounts)
 	if errors.Is(err, ErrAlreadyReviewed) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -133,7 +137,8 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 				ActorEmail: sess.Email,
 				Target:     hostname,
 				Detail: "Everyone in the team " + name + " (" + tid + ") may now open a session on " +
-					hostname + " as " + describePrincipals(dedupe(in.Principals)) +
+					hostname + " as " + describeTeamAccess(TeamAccess{
+					Principals: dedupe(in.Principals), PersonalAccounts: in.PersonalAccounts}) +
 					", given when the server was approved.",
 			})
 		}

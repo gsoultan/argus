@@ -26,6 +26,44 @@ export interface User {
    * somewhere to assign a host.
    */
   disabled?: boolean
+  /** When they were removed, and which admin removed them. */
+  disabledAt?: ISOTime | null
+  disabledBy?: string
+  /** Their personal account on servers; empty until a team first needs one. */
+  loginName?: string
+  /** Whether they have added a public key to SSH directly with. */
+  hasSshKey?: boolean
+}
+
+/** The signed-in person's own server account. */
+export interface ServerAccount {
+  loginName: string
+  sshKey: string
+  sshFingerprint: string
+  /** Whether any team of theirs may SSH straight to a server. */
+  directSsh: boolean
+}
+
+/** What the agent last said about one personal account on a server. */
+export interface PersonalAccountState {
+  name: string
+  owner?: string
+  state: 'ready' | 'locked' | 'taken' | 'failed'
+  detail?: string
+}
+
+/**
+ * Whether a team may SSH straight to its personal accounts on a server:
+ * not at all, once an admin approves each login, or let in. Recorded either way.
+ */
+export type TeamDirectSsh = 'off' | 'approve' | 'allow'
+
+/** What a team is given on one server. */
+export interface TeamAccess {
+  principals: string[]
+  personalAccounts: boolean
+  sudo: boolean
+  directSsh: TeamDirectSsh
 }
 
 /* ── Assets ──────────────────────────────────────────────────────────────── */
@@ -134,6 +172,8 @@ export interface Asset {
   directSsh?: DirectSsh | null
   /** What the agent said at its last check-in it is applying. Null is unconfirmed. */
   agentDirectSsh?: DirectSsh | null
+  /** What the agent said about the personal accounts it keeps. Admins only. */
+  agentPersonalAccounts?: PersonalAccountState[]
 }
 
 /**
@@ -181,6 +221,11 @@ export interface TeamAssignment {
   teamId: UUID
   teamName: string
   principals: string[]
+  /** Each member has an account of their own on the server. */
+  personalAccounts?: boolean
+  /** Those accounts run anything as root without a password. */
+  sudo?: boolean
+  directSsh?: TeamDirectSsh
   grantedBy: string
   grantedAt: ISOTime
 }

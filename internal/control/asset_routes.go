@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
 )
@@ -67,6 +68,9 @@ func (a *API) getAssets(w http.ResponseWriter, r *http.Request) {
 		assets, err = a.store.Assets(r.Context())
 	} else {
 		assets, err = a.store.AssetsForUser(r.Context(), sess.Email)
+		for i := range assets {
+			assets[i].AgentPersonalAccounts = nil
+		}
 	}
 	if err != nil {
 		a.fail(w, "assets", err)
@@ -418,6 +422,32 @@ func describePrincipals(ps []string) string {
 	return strings.Join(ps, ", ")
 }
 
+// describeTeamAccess says what a team was given on a server, for the audit
+// log: the shared accounts, and whether each member has one of their own.
+func describeTeamAccess(in TeamAccess) string {
+	var parts []string
+	if len(in.Principals) > 0 {
+		parts = append(parts, describePrincipals(in.Principals))
+	}
+	if in.PersonalAccounts {
+		own := "their own personal account, which Argus creates on the server"
+		if in.Sudo {
+			own += ", with sudo that asks no password"
+		}
+		switch in.DirectSSH {
+		case DirectSSHAllow:
+			own += ", reachable by SSH straight to the server (recorded)"
+		case DirectSSHApprove:
+			own += ", reachable by SSH straight to the server once an admin approves each login (recorded)"
+		}
+		parts = append(parts, own)
+	}
+	if len(parts) == 0 {
+		return "no principals"
+	}
+	return strings.Join(parts, " or ")
+}
+
 func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -444,6 +474,13 @@ type consoleUser struct {
 	Role        string `json:"role"`
 	MFAEnrolled bool   `json:"mfaEnrolled"`
 	Disabled    bool   `json:"disabled"`
+	// DisabledAt and DisabledBy say when someone was removed, and by whom.
+	DisabledAt *time.Time `json:"disabledAt"`
+	DisabledBy string     `json:"disabledBy"`
+	// LoginName is their personal account on servers; HasSSHKey whether they
+	// gave a key to reach it directly with.
+	LoginName string `json:"loginName"`
+	HasSSHKey bool   `json:"hasSshKey"`
 	// LastSeenAt is null: the column exists but nothing writes it yet, and a
 	// console that invented a plausible time would be worse than one that says
 	// it does not know.
@@ -481,6 +518,10 @@ func (a *API) getUsers(w http.ResponseWriter, r *http.Request) {
 			Role:        acct.Role,
 			MFAEnrolled: acct.MFAEnrolled,
 			Disabled:    acct.Disabled,
+			DisabledAt:  acct.DisabledAt,
+			DisabledBy:  acct.DisabledBy,
+			LoginName:   acct.LoginName,
+			HasSSHKey:   acct.HasSSHKey,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

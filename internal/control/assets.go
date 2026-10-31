@@ -35,7 +35,7 @@ const assetSelect = `
 	       a.health, a.last_checked_at, a.principals,
 	       a.agent_state, a.agent_last_seen_at, a.bypass_posture,
 	       a.unmanaged_key_count, a.agent_console_only,
-	       a.direct_ssh, a.agent_direct_ssh,
+	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
@@ -49,7 +49,8 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.HostKeyState, &a.HostKeyFingerprint, &a.HostKeyPinnedAt,
 		&a.Health, &a.LastCheckedAt, &a.Principals,
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
-		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.TunnelConnected)
+		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts,
+		&a.TunnelConnected)
 	return a, err
 }
 
@@ -502,8 +503,17 @@ func (s *Store) AssetsForUser(ctx context.Context, email string) ([]Asset, error
 	if err != nil {
 		return nil, err
 	}
+	personal, err := s.personalPrincipals(ctx, email)
+	if err != nil {
+		return nil, err
+	}
 	for i := range assets {
 		assets[i].Principals = intersect(assets[i].Principals, granted[assets[i].ID])
+		// Their own account is not on the asset's list: it exists because
+		// they do, and the team's assignment is what put it there.
+		if name, ok := personal[assets[i].ID]; ok {
+			assets[i].Principals = dedupe(append(assets[i].Principals, name))
+		}
 	}
 	return assets, nil
 }
@@ -552,6 +562,9 @@ func intersect(a, b []string) []string {
 // the assignment would let an account removed from the asset survive in
 // whatever assignments still mention it.
 //
+// The one exception is a person's own personal account, which no asset lists:
+// it is allowed where a team of theirs holds the asset with personal accounts.
+//
 // The target may be the stored hostname or its short form, matching how the
 // gateway resolves a target typed at an ssh(1) command line.
 func (s *Store) AssignmentAllows(ctx context.Context, email, target, principal string) (bool, error) {
@@ -564,6 +577,12 @@ func (s *Store) AssignmentAllows(ctx context.Context, email, target, principal s
 			  AND (a.hostname = lower($2) OR split_part(a.hostname, '.', 1) = lower($2))
 			  AND $3 = ANY(g.principals)
 			  AND $3 = ANY(a.principals)
+		) OR EXISTS (
+			SELECT 1 FROM assets a
+			JOIN (`+personalPrincipalsSQL+`) p ON p.asset_id = a.id
+			WHERE a.archived_at IS NULL
+			  AND (a.hostname = lower($2) OR split_part(a.hostname, '.', 1) = lower($2))
+			  AND p.login_name = $3
 		)`, email, target, principal).Scan(&ok)
 	return ok, err
 }

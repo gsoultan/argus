@@ -235,7 +235,7 @@ func TestEnrolGivesTheServerToTeams(t *testing.T) {
 	who := unique("member") + "@corp.example"
 	team := testTeam(t, s, who)
 
-	id, err := s.EnrolHost(ctx, "disc-08", "admin@northwind.id", []string{"ops"}, nil, []string{team})
+	id, err := s.EnrolHost(ctx, "disc-08", "admin@northwind.id", []string{"ops"}, nil, []string{team}, false)
 	if err != nil {
 		t.Fatalf("EnrolHost: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestEnrolWithAMissingTeamApprovesNothing(t *testing.T) {
 	seedDiscovered(t, s, "disc-09")
 
 	_, err := s.EnrolHost(ctx, "disc-09", "admin@northwind.id", []string{"ops"}, nil,
-		[]string{"00000000-0000-0000-0000-000000000000"})
+		[]string{"00000000-0000-0000-0000-000000000000"}, false)
 	if !errors.Is(err, ErrTeamNotFound) {
 		t.Fatalf("err = %v, want ErrTeamNotFound", err)
 	}

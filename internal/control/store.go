@@ -573,6 +573,11 @@ type Asset struct {
 	// its last heartbeat, it is applying; nil is unconfirmed.
 	DirectSSH      *string `json:"directSsh"`
 	AgentDirectSSH *string `json:"agentDirectSsh"`
+	// AgentPersonalAccounts is what the agent last said about the personal
+	// accounts it keeps: ready, locked, taken by an account Argus did not
+	// make, or failed. Nil from an agent older than them; left out for
+	// anyone who does not see the whole fleet, since it names other people.
+	AgentPersonalAccounts []PersonalAccountState `json:"agentPersonalAccounts,omitempty"`
 	// TunnelConnected is whether this host's agent holds a live tunnel, by
 	// the database's clock, so the console can open sessions through it.
 	TunnelConnected bool `json:"tunnelConnected"`

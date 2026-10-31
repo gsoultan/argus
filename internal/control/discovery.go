@@ -150,8 +150,12 @@ var ErrAlreadyReviewed = errors.New("host has already been reviewed")
 // it, and the way on was an Edit dialog and a second dialog for assignments
 // that nothing pointed at. The asset, its accounts and who may use them are
 // written in one transaction, so a half-approved server never exists.
+//
+// personal gives each member of the teams an account of their own on the
+// server, so a team can be given a server without naming any shared account.
 func (s *Store) EnrolHost(
 	ctx context.Context, hostname, actor string, principals, people, teams []string,
+	personal bool,
 ) (string, error) {
 	principals = dedupe(principals)
 	if len(principals) > maxPrincipals {
@@ -172,7 +176,10 @@ func (s *Store) EnrolHost(
 	}
 	emails = dedupe(emails)
 	teams = dedupe(teams)
-	if (len(emails) > 0 || len(teams) > 0) && len(principals) == 0 {
+	if len(teams) == 0 {
+		personal = false
+	}
+	if (len(emails) > 0 || (len(teams) > 0 && !personal)) && len(principals) == 0 {
 		// "May connect, as nobody" is a state with no meaning; SetAssignment
 		// refuses it for the same reason.
 		return "", ErrInvalidAsset{Reason: "pick at least one login account for the people who may connect"}
@@ -249,7 +256,7 @@ func (s *Store) EnrolHost(
 		}
 	}
 
-	if err := insertTeamAssignments(ctx, tx, id, teams, principals, actor); err != nil {
+	if err := insertTeamAssignments(ctx, tx, id, teams, principals, personal, actor); err != nil {
 		return "", err
 	}
 
@@ -259,7 +266,15 @@ func (s *Store) EnrolHost(
 		WHERE hostname = $1`, hostname, actor); err != nil {
 		return "", err
 	}
-	return id, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	if personal {
+		if err := s.ensurePersonalLoginNames(ctx); err != nil {
+			return id, err
+		}
+	}
+	return id, nil
 }
 
 // IgnoreHost records a deliberate decision not to manage a host.

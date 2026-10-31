@@ -79,6 +79,11 @@ type Collector struct {
 	// every login meanwhile.
 	directSSH atomic.Pointer[string]
 
+	// personal is the personal accounts this server holds, by name, as of
+	// the last heartbeat. Nil until the control plane says: no account is
+	// treated as personal before then.
+	personal atomic.Pointer[map[string]PersonalAccount]
+
 	// stop is closed when the collector starts shutting down, so a login
 	// waiting for approval is refused rather than holding the shutdown.
 	stop     chan struct{}
@@ -177,6 +182,11 @@ type Approval struct {
 	// Approved means the login may go ahead. Allowed means it went ahead
 	// because the server is set to allow, with nobody approving it.
 	Approved, Allowed bool
+	// Owner is the person whose personal account the login used, when the
+	// control plane has said it is one they may reach directly. Personal
+	// means it was let in on that alone, with nobody approving it.
+	Owner    string
+	Personal bool
 	// ID is the approval the login was let in on, or refused under.
 	ID string
 	// Reason is said to the person when the login is refused.
@@ -449,6 +459,9 @@ func (c *Collector) handle(conn net.Conn) {
 			if !ok {
 				return
 			}
+			// A personal account names its owner, so the session is theirs
+			// and not only the account's.
+			m.Actor = approval.Owner
 			sess, err = c.open(m)
 			if err != nil {
 				c.log.Error("cannot open recording", "error", err)
@@ -456,6 +469,11 @@ func (c *Collector) handle(conn net.Conn) {
 				return
 			}
 			switch {
+			case approval.Personal:
+				sess.directApproval = "personal"
+				if c.OnAllowed != nil {
+					c.OnAllowed(m)
+				}
 			case approval.Allowed:
 				sess.directApproval = "allowed"
 				if c.OnAllowed != nil {
@@ -740,6 +758,20 @@ func (c *Collector) admitDirect(conn net.Conn, m SessionStart) (Approval, bool) 
 			Type: "decision", Record: false, Refused: true, Reason: reason, Error: reason,
 		})
 		return Approval{}, false
+	}
+	// A personal account a team may reach directly decides for itself,
+	// whatever the server's setting for every other account.
+	if p, ok := c.PersonalAccount(m.Principal); ok {
+		switch p.Direct {
+		case DirectSSHAllow:
+			c.log.Warn("DIRECT LOGIN ALLOWED — a personal account its owner may reach directly",
+				"principal", m.Principal, "owner", p.Owner, "client", m.ClientAddr, "command", m.Command)
+			return Approval{Approved: true, Allowed: true, Personal: true, Owner: p.Owner}, true
+		case DirectSSHApprove:
+			a, ok := c.awaitApproval(conn, m, refuse)
+			a.Owner = p.Owner
+			return a, ok
+		}
 	}
 	switch c.DirectSSH() {
 	case "":
