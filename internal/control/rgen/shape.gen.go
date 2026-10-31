@@ -142,6 +142,9 @@ func _assertAssetAssignmentShape(m m0.AssetAssignment) {
 		m.Principals,
 		m.GrantedBy,
 		m.GrantedAt,
+		m.PersonalAccounts,
+		m.Sudo,
+		m.DirectSsh,
 	}
 }
 

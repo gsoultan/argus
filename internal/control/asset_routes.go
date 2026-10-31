@@ -249,21 +249,27 @@ func (a *API) putAssignment(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Email      string   `json:"email"`
 		Principals []string `json:"principals"`
+		// Omitted or null: their own account here follows their teams.
+		PersonalAccounts *bool  `json:"personalAccounts"`
+		Sudo             bool   `json:"sudo"`
+		DirectSSH        string `json:"directSsh"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	access := PersonAccess{Principals: dedupe(in.Principals), PersonalAccounts: in.PersonalAccounts,
+		Sudo: in.Sudo, DirectSSH: in.DirectSSH}
 
-	if err := a.store.SetAssignment(r.Context(), id, in.Email, in.Principals, sess.Email); err != nil {
+	if err := a.store.SetPersonAccess(r.Context(), id, in.Email, access, sess.Email); err != nil {
 		a.failAsset(w, "assign asset", err)
 		return
 	}
 
 	action, detail := "asset.assigned", in.Email+" may now open a session on "+
-		asset.Hostname+" as "+describePrincipals(in.Principals)+"."
-	if len(in.Principals) == 0 {
+		asset.Hostname+" as "+describePersonAccess(access)+"."
+	if len(access.Principals) == 0 && access.PersonalAccounts == nil {
 		action, detail = "asset.unassigned", in.Email+" no longer has access to "+asset.Hostname+"."
 	}
 	a.auditAsset(r, AuditEvent{
@@ -446,6 +452,24 @@ func describeTeamAccess(in TeamAccess) string {
 		return "no principals"
 	}
 	return strings.Join(parts, " or ")
+}
+
+// describePersonAccess is describeTeamAccess for one person, saying when
+// their own setting replaces what their teams give them.
+func describePersonAccess(in PersonAccess) string {
+	if in.PersonalAccounts == nil {
+		return describeTeamAccess(TeamAccess{Principals: in.Principals})
+	}
+	if !*in.PersonalAccounts {
+		d := "no personal account of their own, whatever their teams give them here"
+		if len(in.Principals) > 0 {
+			d = describePrincipals(in.Principals) + ", and " + d
+		}
+		return d
+	}
+	return describeTeamAccess(TeamAccess{Principals: in.Principals, PersonalAccounts: true,
+		Sudo: in.Sudo, DirectSSH: in.DirectSSH}) +
+		". This is their own setting and replaces what their teams give them on this server"
 }
 
 func sameStrings(a, b []string) bool {

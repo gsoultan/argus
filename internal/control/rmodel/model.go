@@ -199,6 +199,11 @@ type AssetAssignment struct {
 	Principals []string
 	GrantedBy  string
 	GrantedAt  time.Time
+	// PersonalAccounts is nil to follow the person's teams; true or false is
+	// their own setting, which replaces their teams' on this server.
+	PersonalAccounts *bool
+	Sudo             bool
+	DirectSsh        string
 }
 
 func (m *AssetAssignment) Schema(t *storm.Table) {
@@ -209,6 +214,12 @@ func (m *AssetAssignment) Schema(t *storm.Table) {
 	t.Col(&m.GrantedAt).Default("now()")
 	t.Index(&m.UserEmail).Named("asset_assignments_user_idx")
 	t.Index(&m.Asset).Named("asset_assignments_asset_idx")
+	t.Col(&m.Sudo).Default("false")
+	t.Col(&m.DirectSsh).Default("'off'::text")
+	t.CheckNamed("asset_assignments_direct_ssh_check",
+		"direct_ssh = ANY (ARRAY['off'::text, 'approve'::text, 'allow'::text])")
+	t.CheckNamed("asset_assignments_personal_check",
+		"(personal_accounts IS TRUE) OR ((NOT sudo) AND (direct_ssh = 'off'::text))")
 }
 
 // AssetTeamAssignment is table asset_team_assignments: which team may reach
