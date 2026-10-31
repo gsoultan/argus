@@ -6,7 +6,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconPencil, IconPlus, IconShieldCheck, IconUser, IconUsersGroup, IconX,
+  IconAlertTriangle, IconInfoCircle, IconPencil, IconPlus, IconShieldCheck, IconUser, IconUsersGroup, IconX,
 } from '@tabler/icons-react'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
@@ -15,7 +15,7 @@ import {
 } from '~/lib/queries'
 import { isElevatedAccount } from '~/lib/roles'
 import { FS, SP } from '~/theme'
-import type { Asset, TeamAssignment, TeamDirectSsh } from '~/types/domain'
+import type { Asset, AssetAssignment, PersonOwnSetting, TeamAssignment, TeamDirectSsh } from '~/types/domain'
 
 /**
  * Who can connect to one server: admins always, then every team and person it
@@ -31,7 +31,7 @@ export function WhoCanConnect({ asset, canEdit }: { asset: Asset; canEdit: boole
   const removePerson = useRemoveAssignment()
   const removeTeam = useRemoveTeamAssignment()
   const [adding, add] = useDisclosure(false)
-  const [editing, setEditing] = useState<TeamAssignment | null>(null)
+  const [editing, setEditing] = useState<Editing | null>(null)
   const names = new Map((users ?? []).map((u) => [u.email, u.displayName]))
 
   const remove = async (kind: 'team' | 'person', id: string, label: string) => {
@@ -59,7 +59,7 @@ export function WhoCanConnect({ asset, canEdit }: { asset: Asset; canEdit: boole
           icon={<IconUsersGroup size={16} />}
           name={g.teamName}
           sub={`Team · ${describeTeamAccess(g)}`}
-          onEdit={canEdit ? () => setEditing(g) : undefined}
+          onEdit={canEdit ? () => setEditing({ kind: 'team', g }) : undefined}
           onRemove={canEdit ? () => void remove('team', g.teamId, g.teamName) : undefined}
         />
       ))}
@@ -68,7 +68,8 @@ export function WhoCanConnect({ asset, canEdit }: { asset: Asset; canEdit: boole
           key={g.userEmail}
           icon={<IconUser size={16} />}
           name={names.get(g.userEmail) ?? g.userEmail}
-          sub={`as ${g.principals.join(', ')}`}
+          sub={`Person · ${describePersonAccess(g)}`}
+          onEdit={canEdit ? () => setEditing({ kind: 'person', g }) : undefined}
           onRemove={canEdit ? () => void remove('person', g.userEmail, g.userEmail) : undefined}
         />
       ))}
@@ -109,6 +110,19 @@ export function describeTeamAccess(g: Pick<TeamAssignment, 'principals' | 'perso
   if (g.personalAccounts && g.directSsh === 'approve') parts.push('direct SSH after approval')
   return parts.join(' · ')
 }
+
+/** What one person was given by name, in a few words for their row. */
+export function describePersonAccess(g: Pick<AssetAssignment, 'principals' | 'personalAccounts' | 'sudo' | 'directSsh'>): string {
+  if (g.personalAccounts == null) return `as ${g.principals.join(', ')}`
+  if (!g.personalAccounts) {
+    const parts = ['no own account here, whatever their teams give']
+    if (g.principals.length > 0) parts.unshift(`as ${g.principals.join(', ')}`)
+    return parts.join(' · ')
+  }
+  return `${describeTeamAccess({ ...g, personalAccounts: true }).replace('own accounts', 'own account')} · their own setting`
+}
+
+type Editing = { kind: 'team'; g: TeamAssignment } | { kind: 'person'; g: AssetAssignment }
 
 /**
  * Personal accounts the agent could not make or keep, said where the access
@@ -173,28 +187,51 @@ function Row({ icon, name, sub, onEdit, onRemove }: {
  * Give this server to a team or one person. Starts on Team, with an account
  * of each person's own, because that is the way meant to be used most.
  *
- * With `editing`, changes what one team already has.
+ * One person can be given their own account, sudo and direct SSH as a team
+ * can. Their setting replaces what their teams give them on this server, more
+ * or less, and the dialog says which teams it replaces.
+ *
+ * With `editing`, changes what one team or person already has.
  */
 function AddAccessModal({ asset, opened, onClose, editing }: {
   asset: Asset
   opened: boolean
   onClose: () => void
-  editing?: TeamAssignment
+  editing?: Editing
 }) {
   const { data: teams } = useQuery(teamsQuery())
   const { data: users } = useQuery(usersQuery())
+  const { data: teamsHere } = useQuery(teamAssignmentsQuery(asset.id))
   const setTeam = useSetTeamAssignment()
   const setPerson = useSetAssignment()
-  const [kind, setKind] = useState<'team' | 'person'>('team')
-  const [who, setWho] = useState<string | null>(editing?.teamId ?? null)
-  const plain = asset.principals.filter((p) => !isElevatedAccount(p))
-  const [personal, setPersonal] = useState(editing ? !!editing.personalAccounts : true)
-  const [sudo, setSudo] = useState(!!editing?.sudo)
-  const [direct, setDirect] = useState<TeamDirectSsh>(editing?.directSsh ?? 'off')
-  const [accounts, setAccounts] = useState<string[]>(
-    editing ? editing.principals : personal ? [] : plain.length > 0 ? [plain[0]!] : [],
+  const [kind, setKind] = useState<'team' | 'person'>(editing?.kind ?? 'team')
+  const [who, setWho] = useState<string | null>(
+    editing ? (editing.kind === 'team' ? editing.g.teamId : editing.g.userEmail) : null,
   )
-  const ownAccounts = kind === 'team' && personal
+  const plain = asset.principals.filter((p) => !isElevatedAccount(p))
+  // A person's row with no setting of their own follows their teams; left
+  // untouched, it keeps doing so.
+  const followsTeams = editing?.kind === 'person' && editing.g.personalAccounts == null
+  const [personal, setPersonal] = useState(editing ? editing.g.personalAccounts === true : true)
+  const [sudo, setSudo] = useState(!!editing?.g.sudo)
+  const [direct, setDirect] = useState<TeamDirectSsh>(editing?.g.directSsh ?? 'off')
+  const [touched, setTouched] = useState(false)
+  const [accounts, setAccounts] = useState<string[]>(
+    editing ? editing.g.principals : personal ? [] : plain.length > 0 ? [plain[0]!] : [],
+  )
+  const ownAccounts = personal
+
+  // The teams of this person that give them their own account here: what a
+  // setting of their own replaces.
+  const replaced = kind === 'person' && who
+    ? (teamsHere ?? []).filter((g) => g.personalAccounts
+      && teams?.find((t) => t.id === g.teamId)?.members.includes(who))
+    : []
+
+  const change = <T,>(set: (v: T) => void) => (v: T) => {
+    setTouched(true)
+    set(v)
+  }
 
   const close = () => {
     if (!editing) setWho(null)
@@ -212,13 +249,17 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
           },
         })
       } else {
-        await setPerson.mutateAsync({ assetId: asset.id, email: who, principals: accounts })
+        let own: PersonOwnSetting | null
+        if (followsTeams && !touched) own = null
+        else if (personal) own = { personalAccounts: true, sudo, directSsh: direct }
+        // Off with no team giving them an account here is simply shared
+        // accounts; off over a team's account is a setting of their own.
+        else own = replaced.length > 0 ? { personalAccounts: false, sudo: false, directSsh: 'off' } : null
+        await setPerson.mutateAsync({ assetId: asset.id, email: who, principals: accounts, own })
       }
       const label = kind === 'team' ? (teams?.find((t) => t.id === who)?.name ?? 'The team') : who
-      const how = kind === 'team'
-        ? describeTeamAccess({ principals: accounts, personalAccounts: personal, sudo, directSsh: direct })
-        : `as ${accounts.join(', ')}`
-      notifyOk(editing ? 'Access changed' : 'Access given', `${label} can connect to ${asset.hostname}: ${how}.`)
+      const how = describeTeamAccess({ principals: accounts, personalAccounts: personal, sudo, directSsh: direct })
+      notifyOk(editing ? 'Access changed' : 'Access given', `${label} can connect to ${asset.hostname}: ${how || 'as their teams give them'}.`)
       close()
     } catch (err) {
       notifyError(editing ? 'Access not changed' : 'Access not given', err)
@@ -233,13 +274,16 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
           .map((u) => ({ value: u.email, label: `${u.displayName} (${u.email})` }))
 
   const short = asset.hostname.split('.')[0]
-  const canSave = !!who && (accounts.length > 0 || ownAccounts)
+  const canSave = !!who && (accounts.length > 0 || ownAccounts || (kind === 'person' && replaced.length > 0))
+  const editingName = editing?.kind === 'team'
+    ? editing.g.teamName
+    : editing ? (users?.find((u) => u.email === editing.g.userEmail)?.displayName ?? editing.g.userEmail) : ''
 
   return (
     <Modal
       opened={opened}
       onClose={close}
-      title={editing ? `What ${editing.teamName} gets on ${short}` : `Who else can connect to ${short}`}
+      title={editing ? `What ${editingName} gets on ${short}` : `Who else can connect to ${short}`}
     >
       <Stack gap="md">
         {!editing && (
@@ -267,21 +311,23 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
             nothingFoundMessage={kind === 'team' ? 'No teams yet. Make one on Teams.' : 'Nobody to add'}
           />
         )}
-        {kind === 'team' && (
-          <Switch
-            checked={personal}
-            onChange={(e) => setPersonal(e.currentTarget.checked)}
-            label="Give each person their own account"
-            description={`Argus makes a login on ${short} for everyone in the team, named after them, and locks it when they leave.`}
-          />
-        )}
+        <Switch
+          checked={personal}
+          onChange={(e) => change(setPersonal)(e.currentTarget.checked)}
+          label={kind === 'team' ? 'Give each person their own account' : 'Give them their own account'}
+          description={kind === 'team'
+            ? `Argus makes a login on ${short} for everyone in the team, named after them, and locks it when they leave.`
+            : `Argus makes a login on ${short} named after them, and locks it when they lose access.`}
+        />
         {ownAccounts && (
           <Stack gap="sm" pl="xl">
             <Switch
               checked={sudo}
-              onChange={(e) => setSudo(e.currentTarget.checked)}
+              onChange={(e) => change(setSudo)(e.currentTarget.checked)}
               label="Sudo without a password"
-              description="Their accounts can run anything as root. They have no password to type."
+              description={kind === 'team'
+                ? 'Their accounts can run anything as root. They have no password to type.'
+                : 'Their account can run anything as root. It has no password to type.'}
             />
             <Box>
               <Text size="sm" fw={500}>SSH straight to the server</Text>
@@ -291,7 +337,7 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
               <SegmentedControl
                 fullWidth
                 value={direct}
-                onChange={(v) => setDirect(v as TeamDirectSsh)}
+                onChange={(v) => change(setDirect)(v as TeamDirectSsh)}
                 data={[
                   { value: 'off', label: 'No' },
                   { value: 'approve', label: 'Ask an admin' },
@@ -300,6 +346,14 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
               />
             </Box>
           </Stack>
+        )}
+        {replaced.length > 0 && !(followsTeams && !touched) && (
+          <Alert color="azure" icon={<IconInfoCircle size={16} />} p="xs">
+            <Text size={FS.meta}>
+              This replaces what {replaced.map((g) => `${g.teamName} (${describeTeamAccess({ ...g, principals: [] })})`).join(' and ')}{' '}
+              gives them on {short}. The rest of the team keeps it.
+            </Text>
+          </Alert>
         )}
         {asset.principals.length > 0 && (
           <Checkbox.Group
@@ -323,11 +377,11 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
             </Stack>
           </Checkbox.Group>
         )}
-        {!ownAccounts && asset.principals.length === 0 && (
+        {!ownAccounts && asset.principals.length === 0 && replaced.length === 0 && (
           <Text size={FS.meta} c="dimmed">
             {kind === 'team'
               ? 'This server has no shared accounts yet, so give the team their own accounts, or add one with Edit at the top.'
-              : 'Add a login account first, with Edit at the top.'}
+              : 'This server has no shared accounts yet, so give them their own account, or add one with Edit at the top.'}
           </Text>
         )}
         <Group justify="flex-end">

@@ -226,6 +226,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
 	mux.HandleFunc("PUT /api/v1/users/{email}/login-name", a.putLoginName)
+	mux.HandleFunc("GET /api/v1/users/{email}/servers", a.getPersonServers)
 	mux.HandleFunc("GET /api/v1/me/server-account", a.getMyServerAccount)
 	mux.HandleFunc("PUT /api/v1/me/ssh-key", a.putMySSHKey)
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)

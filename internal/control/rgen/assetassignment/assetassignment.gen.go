@@ -20,11 +20,14 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	AssetID    [16]byte
-	UserEmail  string
-	Principals []string
-	GrantedBy  string
-	GrantedAt  time.Time
+	AssetID          [16]byte
+	UserEmail        string
+	Principals       []string
+	GrantedBy        string
+	GrantedAt        time.Time
+	PersonalAccounts runtime.Null[bool]
+	Sudo             bool
+	DirectSsh        string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -63,7 +66,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 5
+const nCols = 8
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -73,10 +76,11 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs        [6]string
-	raws        [4][16]byte
-	tims        [4]time.Time
-	ns, nr, ntm uint8
+	strs             [6]string
+	raws             [4][16]byte
+	tims             [4]time.Time
+	bools            [4]bool
+	ns, nr, ntm, nbo uint8
 
 	anyRaw   [3][][16]byte
 	anyStr   [3][]string
@@ -203,6 +207,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.GrantedAt
 		q.ntm++
+	case 5:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.PersonalAccounts.V
+		q.nbo++
+	case 6:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.Sudo
+		q.nbo++
+	case 7:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.DirectSsh
+		q.ns++
 	}
 }
 
@@ -354,18 +379,30 @@ type Pred struct {
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
+}
+
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	AssetID    = UUIDCol{0}
-	UserEmail  = TextCol{1}
-	Principals = TextArrayCol{2}
-	GrantedBy  = TextCol{3}
-	GrantedAt  = TimeCol{4}
+	AssetID          = UUIDCol{0}
+	UserEmail        = TextCol{1}
+	Principals       = TextArrayCol{2}
+	GrantedBy        = TextCol{3}
+	GrantedAt        = TimeCol{4}
+	PersonalAccounts = NullBoolCol{5}
+	Sudo             = BoolCol{6}
+	DirectSsh        = TextCol{7}
 )
 
 // UUIDCol addresses a uuid column.
@@ -464,6 +501,38 @@ func (h TimeCol) Gt(v time.Time) Pred    { return Pred{col: h.c, op: opGt, tim: 
 func (h TimeCol) Gte(v time.Time) Pred   { return Pred{col: h.c, op: opGte, tim: v} }
 func (h TimeCol) Lt(v time.Time) Pred    { return Pred{col: h.c, op: opLt, tim: v} }
 func (h TimeCol) Lte(v time.Time) Pred   { return Pred{col: h.c, op: opLte, tim: v} }
+
+// NullBoolCol addresses a bool column.
+type NullBoolCol struct{ c uint8 }
+
+func (h NullBoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullBoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullBoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullBoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullBoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h NullBoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
+func (h NullBoolCol) IsNull() Pred      { return Pred{col: h.c, op: opIsNull} }
+func (h NullBoolCol) IsNotNull() Pred   { return Pred{col: h.c, op: opIsNotNull} }
+
+// BoolCol addresses a bool column.
+type BoolCol struct{ c uint8 }
+
+func (h BoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h BoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h BoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h BoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -634,6 +703,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 7:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -671,6 +747,27 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 5:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 6:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 7:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -711,8 +808,25 @@ func (q Query) GrantedAtGt(v time.Time) Query           { return q.Where(Granted
 func (q Query) GrantedAtGte(v time.Time) Query          { return q.Where(GrantedAt.Gte(v)) }
 func (q Query) GrantedAtLt(v time.Time) Query           { return q.Where(GrantedAt.Lt(v)) }
 func (q Query) GrantedAtLte(v time.Time) Query          { return q.Where(GrantedAt.Lte(v)) }
+func (q Query) PersonalAccountsEq(v bool) Query         { return q.Where(PersonalAccounts.Eq(v)) }
+func (q Query) PersonalAccountsNotEq(v bool) Query      { return q.Where(PersonalAccounts.NotEq(v)) }
+func (q Query) PersonalAccountsIsNull() Query           { return q.Where(PersonalAccounts.IsNull()) }
+func (q Query) PersonalAccountsIsNotNull() Query        { return q.Where(PersonalAccounts.IsNotNull()) }
+func (q Query) SudoEq(v bool) Query                     { return q.Where(Sudo.Eq(v)) }
+func (q Query) SudoNotEq(v bool) Query                  { return q.Where(Sudo.NotEq(v)) }
+func (q Query) DirectSshEq(v string) Query              { return q.Where(DirectSsh.Eq(v)) }
+func (q Query) DirectSshNotEq(v string) Query           { return q.Where(DirectSsh.NotEq(v)) }
+func (q Query) DirectSshGt(v string) Query              { return q.Where(DirectSsh.Gt(v)) }
+func (q Query) DirectSshGte(v string) Query             { return q.Where(DirectSsh.Gte(v)) }
+func (q Query) DirectSshLt(v string) Query              { return q.Where(DirectSsh.Lt(v)) }
+func (q Query) DirectSshLte(v string) Query             { return q.Where(DirectSsh.Lte(v)) }
+func (q Query) DirectSshEqLower(v string) Query         { return q.Where(DirectSsh.EqLower(v)) }
+func (q Query) DirectSshLike(v string) Query            { return q.Where(DirectSsh.Like(v)) }
+func (q Query) DirectSshILike(v string) Query           { return q.Where(DirectSsh.ILike(v)) }
+func (q Query) DirectSshIn(v ...string) Query           { return q.Where(DirectSsh.In(v...)) }
+func (q Query) DirectSshNotIn(v ...string) Query        { return q.Where(DirectSsh.NotIn(v...)) }
 
-const selectPrefix = `SELECT "asset_id", "user_email", "principals", "granted_by", "granted_at" FROM "asset_assignments"`
+const selectPrefix = `SELECT "asset_id", "user_email", "principals", "granted_by", "granted_at", "personal_accounts", "sudo", "direct_ssh" FROM "asset_assignments"`
 const countPrefix = `SELECT count(*) FROM "asset_assignments"`
 const existsPrefix = `SELECT 1 FROM "asset_assignments"`
 const existsSuffix = ` LIMIT 1`
@@ -779,6 +893,24 @@ var orderTable = [nCols][4]string{
 		"\"granted_at\" ASC NULLS FIRST",
 		"\"granted_at\" DESC NULLS LAST",
 	},
+	{ // personal_accounts
+		"\"personal_accounts\"",
+		"\"personal_accounts\" DESC",
+		"\"personal_accounts\" ASC NULLS FIRST",
+		"\"personal_accounts\" DESC NULLS LAST",
+	},
+	{ // sudo
+		"\"sudo\"",
+		"\"sudo\" DESC",
+		"\"sudo\" ASC NULLS FIRST",
+		"\"sudo\" DESC NULLS LAST",
+	},
+	{ // direct_ssh
+		"\"direct_ssh\"",
+		"\"direct_ssh\" DESC",
+		"\"direct_ssh\" ASC NULLS FIRST",
+		"\"direct_ssh\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -789,6 +921,9 @@ var identTable = [nCols]string{
 	"\"principals\"",
 	"\"granted_by\"",
 	"\"granted_at\"",
+	"\"personal_accounts\"",
+	"\"sudo\"",
+	"\"direct_ssh\"",
 }
 
 var lowering = runtime.Lowering{
@@ -821,7 +956,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [5][28]runtime.Frag{
+var fragTable = [8][28]runtime.Frag{
 	{ // asset_id
 		{}, // opNone
 		{A: "\"asset_id\" = $", B: ""},
@@ -960,6 +1095,96 @@ var fragTable = [5][28]runtime.Frag{
 		{},
 		{},
 		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // personal_accounts
+		{}, // opNone
+		{A: "\"personal_accounts\" = $", B: ""},
+		{A: "\"personal_accounts\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"personal_accounts\" IS NULL", B: ""},
+		{A: "\"personal_accounts\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // sudo
+		{}, // opNone
+		{A: "\"sudo\" = $", B: ""},
+		{A: "\"sudo\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // direct_ssh
+		{}, // opNone
+		{A: "\"direct_ssh\" = $", B: ""},
+		{A: "\"direct_ssh\" <> $", B: ""},
+		{A: "\"direct_ssh\" > $", B: ""},
+		{A: "\"direct_ssh\" >= $", B: ""},
+		{A: "\"direct_ssh\" < $", B: ""},
+		{A: "\"direct_ssh\" <= $", B: ""},
+		{A: "lower(\"direct_ssh\") = lower($", B: ")"},
+		{A: "\"direct_ssh\" LIKE $", B: ""},
+		{A: "\"direct_ssh\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"direct_ssh\" = ANY($", B: ")"},
+		{A: "\"direct_ssh\" <> ALL($", B: ")"},
 		{},
 		{},
 		{},
@@ -1136,6 +1361,9 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	}
 	r.GrantedBy = sl.Str(rv[3])
 	r.GrantedAt = runtime.Timestamptz(rv[4])
+	r.PersonalAccounts = runtime.Nullable(rv[5], runtime.Bool)
+	r.Sudo = runtime.Bool(rv[6])
+	r.DirectSsh = sl.Str(rv[7])
 	return decErr
 }
 
@@ -1144,6 +1372,7 @@ type binder struct {
 	strs   [6]string
 	raws   [4][16]byte
 	tims   [4]time.Time
+	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	limit  int64
@@ -1184,7 +1413,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nr, ntm, nar, nas uint8
+	var ns, nr, ntm, nbo, nar, nas uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1216,6 +1445,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 7:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -1236,6 +1469,18 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 5:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 6:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 7:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v

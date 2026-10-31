@@ -22,6 +22,7 @@ import {
 import { canSee, roleLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 import type { Team, User, UserRole } from '~/types/domain'
+import { PersonServersModal } from '~/components/PersonServers'
 
 /**
  * Teams, and the people in them.
@@ -361,6 +362,7 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
   const [search, setSearch] = useState('')
   const [show, setShow] = useState<'active' | 'removed'>('active')
   const [renaming, setRenaming] = useState<User | null>(null)
+  const [viewing, setViewing] = useState<User | null>(null)
 
   const teamsOf = useMemo(() => {
     const m = new Map<string, string[]>()
@@ -506,6 +508,9 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                       )}
                     </Table.Td>
                     <Table.Td ta="right">
+                      <Button size="compact-sm" variant="subtle" onClick={() => setViewing(u)}>
+                        Servers
+                      </Button>
                       {admin && !self && (
                         <Button
                           size="compact-sm"
@@ -535,6 +540,7 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
         minute. Nothing is deleted: their sessions, recordings and activity stay under their name.
       </Text>
       {renaming && <RenameLoginModal user={renaming} onClose={() => setRenaming(null)} />}
+      {viewing && <PersonServersModal user={viewing} onClose={() => setViewing(null)} />}
     </Stack>
   )
 }
