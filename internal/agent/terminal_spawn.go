@@ -95,6 +95,13 @@ func systemdRunning() bool {
 // the login shell, and -l makes it read the profile as an ssh login would.
 const launcher = `read -r _ < "$1" || exit 1; exec "$0" -l`
 
+// directLauncher is launcher for a direct child, which waits on the pipe it
+// inherited as fd 3. Read from the descriptor, not reopened through
+// /dev/fd/3: a pipe belongs to the agent, so reopening it after the switch
+// to the account is refused, and every session for anyone but root ended
+// before it began.
+const directLauncher = `read -r _ <&3 || exit 1; exec 3<&-; exec "$0" -l`
+
 /* ── A direct child ──────────────────────────────────────────────────────── */
 
 type directProc struct {
@@ -112,7 +119,7 @@ func spawnDirect(a loginAccount, tty *os.File, actor string) (shellProc, error) 
 		return nil, err
 	}
 	defer release.Close()
-	cmd := exec.Command("/bin/sh", "-c", launcher, a.shell, "/dev/fd/3")
+	cmd := exec.Command("/bin/sh", "-c", directLauncher, a.shell)
 	cmd.Dir = a.home
 	cmd.Env = []string{
 		"HOME=" + a.home, "USER=" + a.name, "LOGNAME=" + a.name, "SHELL=" + a.shell,
