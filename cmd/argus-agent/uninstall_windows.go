@@ -73,3 +73,13 @@ func removeSSHDHook() (notes, left []string, err error) {
 // remainingSSHWaysIn has nothing to check: the agent never stood between
 // Windows' OpenSSH server and its logins.
 func remainingSSHWaysIn() ([]string, bool) { return nil, false }
+
+// stopSelfForGood deletes the service, which Windows does once it has
+// stopped, and asks it to stop: the same request a shutdown makes.
+func stopSelfForGood() error {
+	err := uninstallService()
+	if err != nil && err.Error() != "not installed" {
+		return err
+	}
+	return nil
+}

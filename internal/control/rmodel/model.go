@@ -119,6 +119,9 @@ type AgentCredential struct {
 	TunnelConnectedAt *time.Time
 	TunnelSeenAt      *time.Time
 	TunnelRttUs       *int32
+
+	UninstallRequestedAt *time.Time
+	UninstallRequestedBy *string
 }
 
 func (m *AgentCredential) Schema(t *storm.Table) {

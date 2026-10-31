@@ -85,3 +85,17 @@ func systemctl(args ...string) error {
 func quiet(name string, args ...string) bool {
 	return exec.Command(name, args...).Run() == nil
 }
+
+// stopSelfForGood switches the unit off from inside it: disabled so a reboot
+// does not bring it back, then stopped without waiting, since waiting would be
+// the daemon waiting for its own exit. systemd's stop is the ordinary
+// SIGTERM, so open recordings are sealed as on any shutdown.
+func stopSelfForGood() error {
+	if !haveUnit() {
+		return errors.New("the argus-agent unit is not installed")
+	}
+	if err := systemctl("disable", agentUnit); err != nil {
+		return err
+	}
+	return systemctl("stop", "--no-block", agentUnit)
+}

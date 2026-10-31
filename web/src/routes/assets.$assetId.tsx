@@ -385,30 +385,47 @@ function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
 
 /**
  * Takes a server out of Argus. Its recordings and its activity stay; nobody
- * can connect to it from here any more.
+ * can connect to it from here any more, and its agent uninstalls itself so
+ * plain SSH works again. Left running, the agent kept refusing direct logins
+ * to a server the console could no longer open.
  */
 function RemoveServer({ asset }: { asset: Asset }) {
   const navigate = useNavigate()
   const archive = useArchiveAsset()
   const [open, modal] = useDisclosure(false)
+  const connected = asset.tunnelConnected === true
   return (
     <Card>
       <Group justify="space-between" wrap="nowrap" gap="md">
         <Box>
           <Text size="sm" fw={600}>Remove server</Text>
           <Text size={FS.meta} c="dimmed">
-            Nobody can connect to it from Argus any more. Its recordings and activity are kept.
+            Takes it out of Argus and uninstalls the agent from it. Its recordings and activity
+            are kept.
           </Text>
         </Box>
         <Button variant="light" color="rose" leftSection={<IconTrash size={16} />} onClick={modal.open}>
           Remove
         </Button>
       </Group>
-      <Modal opened={open} onClose={modal.close} title={`Remove ${asset.hostname}?`}>
-        <Text size="sm" mb="md">
-          Everyone loses access to it from Argus, right away. The agent on the server keeps running
-          until you uninstall it there.
-        </Text>
+      <Modal opened={open} onClose={modal.close} title={`Remove ${asset.hostname} from Argus?`}>
+        <Stack gap="sm" mb="md">
+          <Text size="sm">
+            Everyone loses access to it from Argus, right away. Its recordings and activity are
+            kept.
+          </Text>
+          <Text size="sm">
+            {connected
+              ? 'The agent then uninstalls itself from the server: it takes itself out of SSH, so people can log in to the server directly again, and switches itself off.'
+              : 'The agent is not connected right now, so it uninstalls itself when it next connects. To do it now, run "sudo argus-agent uninstall" on the server.'}
+          </Text>
+          <Alert color="amber" icon={<IconAlertTriangle size={16} />} title="Adding it back means installing the agent again">
+            <Text size={FS.meta} lh={1.5}>
+              Once removed, this server cannot simply be switched back on. To add it to Argus
+              again, install and enroll the agent on it again from Servers, Add a server.
+            </Text>
+          </Alert>
+        </Stack>
         <Group justify="flex-end">
           <Button variant="default" onClick={modal.close}>Keep it</Button>
           <Button
@@ -417,11 +434,16 @@ function RemoveServer({ asset }: { asset: Asset }) {
             onClick={() =>
               void run(() => archive.mutateAsync(asset.id), {
                 failure: 'Server not removed',
-                success: ['Server removed', `${asset.hostname} is no longer in Argus.`],
+                success: [
+                  'Server removed',
+                  connected
+                    ? `${asset.hostname} is out of Argus, and its agent is uninstalling itself.`
+                    : `${asset.hostname} is out of Argus. Its agent uninstalls itself when it next connects.`,
+                ],
               }).then((ok) => { if (ok) void navigate({ to: '/assets' }) })
             }
           >
-            Remove server
+            Remove and uninstall agent
           </Button>
         </Group>
       </Modal>

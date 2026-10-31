@@ -326,7 +326,16 @@ agent restarts; reconnect once the server shows connected again.
 
 ### Uninstalling the agent
 
-On the server, as root (an elevated PowerShell on Windows):
+**From the console:** open the server under **Servers** and choose **Remove
+server**. It leaves Argus at once, and its agent uninstalls itself on its next
+heartbeat: it takes itself out of sshd (checked with `sshd -t`, then reloaded),
+sends what is still queued, revokes its own credential, deletes it, and
+switches its service off. Plain SSH works again. Recordings stay on the server,
+and the package stays installed but off; remove it whenever you like. An agent
+that is not connected does this when it next connects. To add the server back,
+install and enroll the agent again.
+
+**On the server**, as root (an elevated PowerShell on Windows):
 
 ```sh
 sudo argus-agent uninstall

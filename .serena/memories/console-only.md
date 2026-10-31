@@ -84,3 +84,14 @@ direct SSH setting apply whenever the agent is up. The shim writes the login to
 syslog under `argus-shim`; on start the daemon reads the journal since
 heartbeat.json's mtime, takes the account from `_UID` (set by journald, not the
 writer), and reports each as `session.direct_unrecorded` with `agent_down`.
+
+## Removing a server uninstalls its agent
+
+`DELETE /api/v1/assets/{id}` archives the asset and sets
+`agent_credentials.uninstall_requested_at` (migration 024). Every heartbeat
+from that host then carries `"uninstall": true`, even though the host is now
+unmatched. The daemon's `selfUninstall` takes the sshd hook out first, flushes,
+deregisters (sending `ssh_ways`, so the audit entry says who can still SSH in),
+deletes the credential, then disables and stops its own service. A failed step
+retries on a later heartbeat, at most every ten minutes, and the credential is
+never deleted before it is revoked.

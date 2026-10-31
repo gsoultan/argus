@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	xterm "golang.org/x/term"
@@ -229,4 +230,108 @@ func step(msg string) { fmt.Println("- " + msg) }
 
 func warn(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "  warning: "+format+"\n", a...)
+}
+
+// selfUninstall is the agent taking itself off this host because its server
+// was removed from Argus in the console. The same steps as `argus-agent
+// uninstall`, in the same order, from inside the running daemon: out of sshd
+// first, so plain SSH works whatever happens next, then what is still queued,
+// then the credential, then the service.
+//
+// A step that fails leaves the rest for the next heartbeat that asks again,
+// at most every ten minutes, rather than revoking a credential the agent may
+// still need to finish.
+type selfUninstall struct {
+	stateDir string
+	rep      *reporter.Client
+	uploads  *agent.Uploads
+	log      *slog.Logger
+	// The host-wide steps, replaced in tests: nil is the real one.
+	sshdHook func() (notes, left []string, err error)
+	waysIn   func() ([]string, bool)
+	stopSelf func() error
+
+	mu      sync.Mutex
+	running bool
+	lastTry time.Time
+	done    bool
+}
+
+func (u *selfUninstall) start(ctx context.Context) {
+	u.mu.Lock()
+	if u.running || u.done || time.Since(u.lastTry) < 10*time.Minute {
+		u.mu.Unlock()
+		return
+	}
+	u.running, u.lastTry = true, time.Now()
+	u.mu.Unlock()
+	go func() {
+		ok := u.run(ctx)
+		u.mu.Lock()
+		u.running, u.done = false, ok
+		u.mu.Unlock()
+	}()
+}
+
+func (u *selfUninstall) run(ctx context.Context) bool {
+	log := u.log
+	log.Warn("this server was removed from Argus; uninstalling the agent")
+
+	hook, waysIn, stopSelf := removeSSHDHook, remainingSSHWaysIn, stopSelfForGood
+	if u.sshdHook != nil {
+		hook, waysIn, stopSelf = u.sshdHook, u.waysIn, u.stopSelf
+	}
+	ways, known := waysIn()
+	notes, left, err := hook()
+	if err != nil {
+		log.Error("uninstall: sshd's configuration could not be changed; will try again", "error", err)
+		return false
+	}
+	for _, n := range notes {
+		log.Info("uninstall: " + n)
+	}
+	for _, l := range left {
+		log.Error("uninstall: " + l)
+	}
+
+	if u.rep.Enabled() {
+		u.rep.Drain(ctx)
+		recordings := u.uploads.Pass(ctx)
+		if reports := u.rep.Spooled(); reports > 0 || recordings > 0 {
+			log.Warn("uninstall: some evidence never reached the control plane; it stays on this host",
+				"recordings", recordings, "reports", reports, "dir", u.stateDir)
+		}
+		hostname, _ := os.Hostname()
+		if enr, _ := agent.LoadEnrollment(u.stateDir); enr != nil {
+			hostname = enr.Hostname
+		}
+		body := map[string]any{"hostname": hostname, "ran_by": "the Argus console (server removed)"}
+		if known {
+			if ways == nil {
+				ways = []string{}
+			}
+			body["ssh_ways"] = ways
+		}
+		dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := u.rep.Deregister(dctx, body)
+		cancel()
+		if err != nil {
+			log.Error("uninstall: the control plane could not be told; will try again", "error", err)
+			return false
+		}
+	}
+
+	for _, name := range secretStateFiles {
+		p := filepath.Join(u.stateDir, name)
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Error("uninstall: could not delete "+p, "error", err)
+		}
+	}
+	log.Warn("uninstalled: plain SSH works, the credential is revoked, and the service is "+
+		"switched off; recordings stay on this host. The package can be removed at any time.",
+		"recordings", u.stateDir)
+	if err := stopSelf(); err != nil {
+		log.Error("uninstall: the service could not switch itself off", "error", err)
+	}
+	return true
 }

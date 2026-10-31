@@ -187,17 +187,31 @@ func (a *API) deleteAsset(w http.ResponseWriter, r *http.Request) {
 		a.failAsset(w, "archive asset", err)
 		return
 	}
+	// Its agent goes too. Left running, it kept sshd's hook and refused
+	// direct logins to a server the console could no longer open.
+	agentAsked, uerr := a.store.RequestAgentUninstall(r.Context(), asset.Hostname, sess.Email)
+	if uerr != nil {
+		a.log.Error("asking the agent to uninstall failed", "hostname", asset.Hostname, "error", uerr)
+	}
 
+	agent := "There was no enrolled agent on it to uninstall."
+	state := "none"
+	if agentAsked {
+		state = "uninstalling"
+		agent = "Its agent was asked to uninstall itself, which it does when it next checks in: " +
+			"it takes itself out of sshd, so plain SSH works again, and revokes its own " +
+			"credential. Adding the server back means installing the agent again."
+	}
 	a.auditAsset(r, AuditEvent{
 		Action:     "asset.archived",
 		Severity:   "notice",
 		ActorEmail: sess.Email,
 		Target:     asset.Hostname,
 		Detail: "Retired " + asset.Hostname + ". It leaves the inventory and can no " +
-			"longer be opened; its sessions and audit history are kept.",
+			"longer be opened; its sessions and audit history are kept. " + agent,
 	})
-	a.log.Warn("asset archived", "hostname", asset.Hostname, "actor", sess.Email)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
+	a.log.Warn("asset archived", "hostname", asset.Hostname, "actor", sess.Email, "agent", state)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "archived", "agent": state})
 }
 
 func (a *API) getAssignments(w http.ResponseWriter, r *http.Request) {
