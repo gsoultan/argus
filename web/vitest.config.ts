@@ -24,5 +24,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     globals: true,
+    // See asyncUtilTimeout in src/test/setup.ts.
+    testTimeout: 15_000,
   },
 })

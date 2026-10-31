@@ -1013,8 +1013,8 @@ func (s *Store) StatsFor(ctx context.Context, email string) (FleetStats, error) 
 	err := s.pool.QueryRow(ctx, `
 		WITH mine AS (
 		  SELECT a.* FROM assets a
-		    JOIN asset_assignments g ON g.asset_id = a.id
-		   WHERE a.archived_at IS NULL AND g.user_email = lower($2)
+		   WHERE a.archived_at IS NULL
+		     AND a.id IN (SELECT asset_id FROM (`+strings.ReplaceAll(heldAssignmentsSQL, "$1", "$2")+`) g)
 		)
 		SELECT
 		  (SELECT count(*) FROM mine),

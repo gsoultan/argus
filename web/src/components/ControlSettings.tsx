@@ -1,23 +1,21 @@
 import { useState, type ComponentType } from 'react'
 import {
-  Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput, ScrollArea,
+  Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconBell, IconCertificate, IconCloudUpload, IconDatabase,
-  IconDownload, IconKey, IconNetwork, IconUserPlus, IconUsers, type IconProps,
+  IconDownload, IconKey, IconNetwork, type IconProps,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
 import { PemField } from '~/components/Install'
-import { generatePassword } from '~/components/Setup'
 import {
-  controlSettings, createAccount, saveControlSettings, setAccountDisabled,
+  controlSettings, saveControlSettings,
   testDatabase, waitForControlPlane, type ControlSettings as Settings,
 } from '~/lib/live'
-import { usersQuery } from '~/lib/queries'
 import { downloadText } from '~/lib/download'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
 import { FS } from '~/theme'
@@ -25,7 +23,7 @@ import { FS } from '~/theme'
 const settingsKey = ['control-settings'] as const
 
 export type ControlSectionId =
-  | 'addresses' | 'signin' | 'database' | 'certificate' | 'storage' | 'alerts' | 'people'
+  | 'addresses' | 'signin' | 'database' | 'certificate' | 'storage' | 'alerts'
 
 export interface ControlSectionSpec {
   id: ControlSectionId
@@ -45,7 +43,6 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
   { id: 'storage', label: 'Object storage', icon: IconCloudUpload, keys: ['storage'] },
   { id: 'alerts', label: 'Session alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm'] },
-  { id: 'people', label: 'People', icon: IconUsers, keys: [] },
 ]
 
 export type ControlSettingsState = ReturnType<typeof useControlSettings>
@@ -139,14 +136,11 @@ export function ControlSection({ id, ctl }: { id: ControlSectionId; ctl: Control
       {id === 'certificate' && <Certificate {...card} />}
       {id === 'storage' && <Storage {...card} />}
       {id === 'alerts' && <Alerts {...card} />}
-      {id === 'people' && <People />}
-      {id !== 'people' && (
-        <Text size={FS.micro} c="dimmed">
-          Saved to <Mono>{s.configFile}</Mono>. Saving restarts the control plane on the new
-          settings in a few seconds: people stay signed in and agents reconnect. Settings it
-          cannot start on are put back automatically.
-        </Text>
-      )}
+      <Text size={FS.micro} c="dimmed">
+        Saved to <Mono>{s.configFile}</Mono>. Saving restarts the control plane on the new
+        settings in a few seconds: people stay signed in and agents reconnect. Settings it
+        cannot start on are put back automatically.
+      </Text>
     </Stack>
   )
 }
@@ -530,96 +524,5 @@ function SecretInput({ label, description, set, value, onChange }: {
     <PasswordInput size="xs" label={label} description={description} autoComplete="new-password"
       placeholder={set ? 'Set. Type to replace it.' : 'Not set'}
       value={value ?? ''} onChange={(e) => onChange(e.currentTarget.value || undefined)} />
-  )
-}
-
-const ROLES = ['admin', 'approver', 'operator', 'auditor', 'owner']
-
-function People() {
-  const qc = useQueryClient()
-  const { data: users } = useQuery(usersQuery())
-  const [opened, modal] = useDisclosure(false)
-  const [email, setEmail] = useState('')
-  const [name, setName] = useState('')
-  const [role, setRole] = useState('operator')
-  const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState<string>()
-
-  const add = async () => {
-    setBusy('add')
-    try {
-      await createAccount({ email, displayName: name, role, password })
-      notifyOk('Account added', `${email} can sign in as ${role}. Give them the password over a channel you trust; they are asked to enrol a second factor.`)
-      setEmail(''); setName(''); setPassword('')
-      modal.close()
-      void qc.invalidateQueries({ queryKey: ['users'] })
-    } catch (err) {
-      notifyError('Account not added', err)
-    } finally {
-      setBusy(undefined)
-    }
-  }
-  const toggle = async (address: string, disabled: boolean) => {
-    setBusy(address)
-    try {
-      await setAccountDisabled(address, disabled)
-      notifyOk(disabled ? 'Account disabled' : 'Account enabled', address)
-      void qc.invalidateQueries({ queryKey: ['users'] })
-    } catch (err) {
-      notifyError(disabled ? 'Account not disabled' : 'Account not enabled', err)
-    } finally {
-      setBusy(undefined)
-    }
-  }
-
-  return (
-    <SectionCard title="People" icon={IconUsers} flush
-      description="Who can sign in. Accounts are disabled rather than deleted, because the audit log names them. Changes here take effect at once."
-      action={<Button size="xs" variant="light" leftSection={<IconUserPlus size={14} />} onClick={modal.open}>Add</Button>}>
-      {/* A long list scrolls inside the card, so the page itself never does. */}
-      <ScrollArea.Autosize mah="calc(100dvh - 380px)">
-        <Table fz={FS.body} verticalSpacing={4}>
-          <Table.Tbody>
-            {(users ?? []).map((u) => (
-              <Table.Tr key={u.email}>
-                <Table.Td>
-                  <Text size={FS.body} c={u.disabled ? 'dimmed' : undefined} td={u.disabled ? 'line-through' : undefined}>
-                    {u.email}
-                  </Text>
-                </Table.Td>
-                <Table.Td><Badge size="xs" variant="light" color="slate">{u.role}</Badge></Table.Td>
-                <Table.Td>{!u.mfaEnrolled && !u.disabled && <Badge size="xs" variant="light" color="amber">no second factor</Badge>}</Table.Td>
-                <Table.Td ta="right">
-                  <Button size="compact-xs" variant="subtle" color={u.disabled ? 'azure' : 'rose'}
-                    loading={busy === u.email} onClick={() => void toggle(u.email, !u.disabled)}>
-                    {u.disabled ? 'Enable' : 'Disable'}
-                  </Button>
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </ScrollArea.Autosize>
-      <Modal opened={opened} onClose={modal.close} title="Add an account">
-        <Stack gap="sm">
-          <TextInput size="sm" label="Email" type="email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
-          <TextInput size="sm" label="Name" description="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} />
-          <Select size="sm" label="Role" data={ROLES} value={role} allowDeselect={false}
-            onChange={(v) => setRole(v ?? 'operator')} />
-          <Group align="flex-end" gap="xs" wrap="nowrap">
-            <TextInput size="sm" label="First password" description="At least 12 characters" style={{ flex: 1 }}
-              value={password} onChange={(e) => setPassword(e.currentTarget.value)}
-              styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
-            <Button size="sm" variant="light" color="slate" onClick={() => setPassword(generatePassword())}>Generate</Button>
-          </Group>
-          <Group justify="flex-end">
-            <Button size="sm" loading={busy === 'add'} disabled={!email.includes('@') || [...password].length < 12}
-              onClick={() => void add()}>
-              Add account
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </SectionCard>
   )
 }

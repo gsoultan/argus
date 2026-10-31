@@ -59,6 +59,7 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Principals []string `json:"principals"`
 		People     []string `json:"people"`
+		Teams      []string `json:"teams"`
 	}
 	if r.ContentLength != 0 {
 		if err := decode(r, &in); err != nil {
@@ -70,9 +71,13 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		in.People[i] = strings.ToLower(strings.TrimSpace(e))
 	}
 
-	id, err := a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People)
+	id, err := a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams)
 	if errors.Is(err, ErrAlreadyReviewed) {
 		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if errors.Is(err, ErrTeamNotFound) {
+		writeErr(w, http.StatusBadRequest, "one of the teams picked no longer exists")
 		return
 	}
 	var invalid ErrInvalidAsset
@@ -107,6 +112,30 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 				" as " + describePrincipals(dedupe(in.Principals)) + ", given when the server was approved.",
 		}); aerr != nil {
 			a.log.Error("audit append failed", "error", aerr)
+		}
+	}
+
+	if len(in.Teams) > 0 {
+		names := map[string]string{}
+		if ts, terr := a.store.Teams(r.Context()); terr == nil {
+			for _, t := range ts {
+				names[t.ID] = t.Name
+			}
+		}
+		for _, tid := range dedupe(in.Teams) {
+			name := names[tid]
+			if name == "" {
+				name = tid
+			}
+			a.auditAsset(r, AuditEvent{
+				Action:     "asset.team_assigned",
+				Severity:   "notice",
+				ActorEmail: sess.Email,
+				Target:     hostname,
+				Detail: "Everyone in the team " + name + " (" + tid + ") may now open a session on " +
+					hostname + " as " + describePrincipals(dedupe(in.Principals)) +
+					", given when the server was approved.",
+			})
 		}
 	}
 

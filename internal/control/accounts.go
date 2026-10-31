@@ -404,3 +404,49 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 		`SELECT count(*) FROM users WHERE role IN ('owner','admin') AND disabled_at IS NULL`).Scan(&n)
 	return n, err
 }
+
+// SetAccountRole changes what an account may do. Roles are read from the
+// account on every request, so the change applies to the next one.
+//
+// Refuses to demote the last administrator, for the same reason
+// SetAccountDisabled does, and counts inside the transaction with the row
+// locked so two demotions racing each other cannot both pass. Returns the role
+// the account had, for the audit entry.
+func (s *Store) SetAccountRole(ctx context.Context, email, role string) (string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var before string
+	err = tx.QueryRow(ctx,
+		`SELECT role FROM users WHERE lower(email) = lower($1) FOR UPDATE`, email).Scan(&before)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNoAccount
+	}
+	if err != nil {
+		return "", err
+	}
+	if before == role {
+		return before, ErrAlreadyInState
+	}
+	administers := func(r string) bool { return r == "admin" || r == "owner" }
+	if administers(before) && !administers(role) {
+		var others int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM users
+			  WHERE role IN ('owner','admin') AND disabled_at IS NULL
+			    AND lower(email) <> lower($1)`, email).Scan(&others); err != nil {
+			return "", err
+		}
+		if others == 0 {
+			return "", ErrLastAdmin
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE users SET role = $2 WHERE lower(email) = lower($1)`, email, role); err != nil {
+		return "", err
+	}
+	return before, tx.Commit(ctx)
+}

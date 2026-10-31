@@ -81,7 +81,7 @@ func TestEnrolCreatesAssetWithNoPrincipals(t *testing.T) {
 	cleanHost(t, s, "disc-02")
 	seedDiscovered(t, s, "disc-02")
 
-	id, err := s.EnrolHost(ctx, "disc-02", "admin@northwind.id", nil, nil)
+	id, err := s.EnrolHost(ctx, "disc-02", "admin@northwind.id", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("EnrolHost: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestEnrolGrantsWhatTheAdminPicked(t *testing.T) {
 	seedDiscovered(t, s, "disc-05")
 	who := unique("teammate") + "@northwind.id"
 
-	id, err := s.EnrolHost(ctx, "disc-05", "admin@northwind.id", []string{"ops"}, []string{" " + strings.ToUpper(who) + " "})
+	id, err := s.EnrolHost(ctx, "disc-05", "admin@northwind.id", []string{"ops"}, []string{" " + strings.ToUpper(who) + " "}, nil)
 	if err != nil {
 		t.Fatalf("EnrolHost: %v", err)
 	}
@@ -164,12 +164,12 @@ func TestEnrolRefusesPeopleWithNoAccount(t *testing.T) {
 	cleanHost(t, s, "disc-06")
 	seedDiscovered(t, s, "disc-06")
 
-	_, err := s.EnrolHost(ctx, "disc-06", "admin@northwind.id", nil, []string{"someone@northwind.id"})
+	_, err := s.EnrolHost(ctx, "disc-06", "admin@northwind.id", nil, []string{"someone@northwind.id"}, nil)
 	var invalid ErrInvalidAsset
 	if !errors.As(err, &invalid) {
 		t.Fatalf("err = %v, want ErrInvalidAsset", err)
 	}
-	if _, err := s.EnrolHost(ctx, "disc-06", "admin@northwind.id", []string{"bad:name"}, nil); !errors.As(err, &invalid) {
+	if _, err := s.EnrolHost(ctx, "disc-06", "admin@northwind.id", []string{"bad:name"}, nil, nil); !errors.As(err, &invalid) {
 		t.Fatalf("a malformed account was accepted: %v", err)
 	}
 	hosts, _ := s.DiscoveredHosts(ctx, "unreviewed")
@@ -184,10 +184,10 @@ func TestEnrolIsNotRepeatable(t *testing.T) {
 	cleanHost(t, s, "disc-03")
 	seedDiscovered(t, s, "disc-03")
 
-	if _, err := s.EnrolHost(ctx, "disc-03", "admin@northwind.id", nil, nil); err != nil {
+	if _, err := s.EnrolHost(ctx, "disc-03", "admin@northwind.id", nil, nil, nil); err != nil {
 		t.Fatalf("first enrol: %v", err)
 	}
-	_, err := s.EnrolHost(ctx, "disc-03", "someone.else@northwind.id", nil, nil)
+	_, err := s.EnrolHost(ctx, "disc-03", "someone.else@northwind.id", nil, nil, nil)
 	if !errors.Is(err, ErrAlreadyReviewed) {
 		t.Errorf("second enrol err = %v, want ErrAlreadyReviewed", err)
 	}
@@ -336,7 +336,7 @@ func TestEditingAnEnrolledServerNeedsNoCredential(t *testing.T) {
 	cleanHost(t, s, "disc-07")
 	seedDiscovered(t, s, "disc-07")
 
-	id, err := s.EnrolHost(ctx, "disc-07", "admin@northwind.id", nil, nil)
+	id, err := s.EnrolHost(ctx, "disc-07", "admin@northwind.id", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("EnrolHost: %v", err)
 	}

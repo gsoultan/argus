@@ -377,6 +377,21 @@ type Assignment struct {
 	GrantedAt  time.Time `json:"grantedAt"`
 }
 
+// heldAssignmentsSQL is every (asset, principals) a person holds, given to
+// them by name or through a team they are in. $1 is their email.
+//
+// Every question about what one person may reach goes through this, so the
+// console's list, the Overview's counts and the check a session start makes
+// cannot disagree about a team member. A second copy of the union somewhere
+// would be the place a removed member kept their access.
+const heldAssignmentsSQL = `
+	SELECT asset_id, principals FROM asset_assignments WHERE user_email = lower($1)
+	UNION ALL
+	SELECT ta.asset_id, ta.principals
+	  FROM asset_team_assignments ta
+	  JOIN team_members m ON m.team_id = ta.team_id
+	 WHERE m.user_email = lower($1)`
+
 // Assignments lists who may reach one asset.
 func (s *Store) Assignments(ctx context.Context, assetID string) ([]Assignment, error) {
 	rows, err := s.pool.Query(ctx, `
@@ -431,16 +446,8 @@ func (s *Store) SetAssignment(
 	if err != nil {
 		return err
 	}
-	allowed := map[string]bool{}
-	for _, p := range asset.Principals {
-		allowed[p] = true
-	}
-	for _, p := range principals {
-		if !allowed[p] {
-			return ErrInvalidAsset{Reason: fmt.Sprintf(
-				"%s does not permit the principal %q; add it to the asset first",
-				asset.Hostname, p)}
-		}
+	if err := checkPrincipalsAllowed(asset, principals); err != nil {
+		return err
 	}
 
 	_, err = s.pool.Exec(ctx, `
@@ -471,8 +478,8 @@ func (s *Store) RemoveAssignment(ctx context.Context, assetID, email string) err
 // intersection is computed, not stored.
 func (s *Store) AssetsForUser(ctx context.Context, email string) ([]Asset, error) {
 	rows, err := s.pool.Query(ctx, assetSelect+`
-		JOIN asset_assignments g ON g.asset_id = a.id
-		WHERE a.archived_at IS NULL AND g.user_email = lower($1)
+		WHERE a.archived_at IS NULL
+		  AND a.id IN (SELECT asset_id FROM (`+heldAssignmentsSQL+`) g)
 		ORDER BY a.hostname`, email)
 	if err != nil {
 		return nil, err
@@ -503,8 +510,7 @@ func (s *Store) AssetsForUser(ctx context.Context, email string) ([]Asset, error
 
 func (s *Store) grantedPrincipals(ctx context.Context, email string) (map[string][]string, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT asset_id::text, principals FROM asset_assignments WHERE user_email = lower($1)`,
-		email)
+		`SELECT asset_id::text, principals FROM (`+heldAssignmentsSQL+`) g`, email)
 	if err != nil {
 		return nil, err
 	}
@@ -517,7 +523,9 @@ func (s *Store) grantedPrincipals(ctx context.Context, email string) (map[string
 		if err := rows.Scan(&id, &ps); err != nil {
 			return nil, err
 		}
-		out[id] = ps
+		// Held both directly and through a team, or through two teams: what
+		// they may assume is everything any of those gave them.
+		out[id] = dedupe(append(out[id], ps...))
 	}
 	return out, rows.Err()
 }
@@ -551,10 +559,9 @@ func (s *Store) AssignmentAllows(ctx context.Context, email, target, principal s
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM assets a
-			JOIN asset_assignments g ON g.asset_id = a.id
+			JOIN (`+heldAssignmentsSQL+`) g ON g.asset_id = a.id
 			WHERE a.archived_at IS NULL
 			  AND (a.hostname = lower($2) OR split_part(a.hostname, '.', 1) = lower($2))
-			  AND g.user_email = lower($1)
 			  AND $3 = ANY(g.principals)
 			  AND $3 = ANY(a.principals)
 		)`, email, target, principal).Scan(&ok)

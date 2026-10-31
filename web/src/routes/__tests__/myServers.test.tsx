@@ -7,7 +7,7 @@ import { reachOf } from '~/components/myservers'
 import type { AccessRequest, Asset, User } from '~/types/domain'
 
 /**
- * My servers: what someone who was given servers sees first.
+ * Servers: what someone who was given servers sees first.
  *
  * The list is whatever the control plane sent -- it narrows it to assignments
  * on the server -- so these assert the page shows that list faithfully, never
@@ -50,10 +50,10 @@ describe('the servers someone can reach', () => {
     const cards = await screen.findAllByRole('heading', { level: 3 })
     expect(cards.map((c) => c.textContent)).toEqual(['db-02', 'pay-03', 'web-01'])
     // Clicking an account opens the session, rather than a form that asks again.
-    const asDeploy = screen.getByRole('link', { name: 'Open web-01 as deploy' })
+    const asDeploy = screen.getByRole('link', { name: 'Connect to web-01 as deploy' })
     expect(asDeploy.getAttribute('href')).toBe('/connect?host=web-01.prod.northwind.id&as=deploy&open=true')
     // The card itself opens the first account.
-    const open = screen.getByRole('link', { name: 'Open web-01' })
+    const open = screen.getByRole('link', { name: 'Connect to web-01' })
     expect(open).toHaveClass('argus-stretch')
     expect(open.getAttribute('href')).toContain('open=true')
   }, 15_000)
@@ -64,9 +64,9 @@ describe('the servers someone can reach', () => {
     signedInAs('operator')
     await renderRoute('/mine')
     const card = (await screen.findByRole('heading', { name: 'pay-03' })).closest('.argus-server')!
-    expect(within(card as HTMLElement).getByRole('button', { name: 'Open' })).toBeDisabled()
+    expect(within(card as HTMLElement).getByRole('button', { name: 'Connect' })).toBeDisabled()
     expect(card).toHaveTextContent(/identity changed/i)
-    expect(screen.getByRole('link', { name: 'Open web-01' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Connect to web-01' })).toBeInTheDocument()
   })
 
   it('narrows by name and by status, and undoes it in one press', async () => {
@@ -98,7 +98,7 @@ describe('the servers someone can reach', () => {
   it('says an administrator is seeing every server, not their assignments', async () => {
     signedInAs('admin')
     await renderRoute('/mine')
-    expect(await screen.findByText(/you can open every server/i)).toBeInTheDocument()
+    expect(await screen.findByText(/every server in argus/i)).toBeInTheDocument()
   })
 })
 
@@ -132,11 +132,11 @@ describe('temporary access', () => {
     ])
     await renderRoute('/mine')
     expect(await screen.findByRole('heading', { name: 'Temporary access' })).toBeInTheDocument()
-    const link = screen.getByRole('link', { name: 'Open batch-09 as root' })
+    const link = screen.getByRole('link', { name: 'Connect to batch-09 as root' })
     expect(link.getAttribute('href')).toBe('/connect?host=batch-09.prod.northwind.id&as=root&open=true')
     expect(screen.queryByText('theirs-01')).not.toBeInTheDocument()
     expect(screen.queryByText('old-01')).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Open web-01 as ops' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Connect to web-01 as ops' })).toBeInTheDocument()
     expect(screen.getAllByRole('heading', { name: 'web-01' })).toHaveLength(1)
   })
 })
@@ -165,8 +165,8 @@ describe('asking for more', () => {
   it('shows an operator their own requests, without buttons they cannot use', async () => {
     signedInAs('operator', MINE, [pending(currentUser.email)])
     await renderRoute('/mine')
-    fireEvent.click(await screen.findByRole('link', { name: /request more access/i }))
-    expect(await screen.findByRole('heading', { name: 'My access requests' })).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('link', { name: /ask for access/i }))
+    expect(await screen.findByRole('heading', { name: 'My requests' })).toBeInTheDocument()
     expect(await screen.findByText('Waiting for an approver.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /deny/i })).not.toBeInTheDocument()
@@ -174,82 +174,73 @@ describe('asking for more', () => {
 
   it('lets an approver decide someone else’s request but not their own', async () => {
     signedInAs('approver', MINE, [pending('someone.else@northwind.id'), pending(currentUser.email)])
-    await renderRoute('/requests')
-    expect(await screen.findByRole('heading', { name: 'Access requests' })).toBeInTheDocument()
+    await renderRoute('/approvals')
+    expect(await screen.findByRole('heading', { name: 'Approvals' })).toBeInTheDocument()
     expect(await screen.findAllByRole('button', { name: /approve/i })).toHaveLength(1)
     expect(screen.getByText('Waiting for an approver.')).toBeInTheDocument()
   })
 })
 
 describe('the menu follows the role', () => {
-  // Asked for in so many words: an ordinary user's console is their servers,
-  // and nothing else.
-  it('shows an operator Servers and nothing else', async () => {
-    signedInAs('operator')
-    await renderRoute('/mine')
-    const nav = await screen.findByRole('navigation')
+  const menu = async () => {
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
     await within(nav).findByRole('link', { name: /^servers/i })
-    expect(within(nav).getAllByRole('link')).toHaveLength(1)
-    expect(within(nav).queryByRole('button', { name: /admin/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /connect to a server/i })).not.toBeInTheDocument()
+    return within(nav).getAllByRole('link').map((l) => l.textContent?.replace(/\d+$/, ''))
+  }
+
+  // Asked for in so many words: an ordinary user's console is their servers,
+  // and what they did on them.
+  it('shows a member Servers and My activity', async () => {
+    signedInAs('operator')
+    await renderRoute('/assets')
+    expect(await menu()).toEqual(['Servers', 'My activity'])
     expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument()
-    // The inventory view is the fleet's; an operator gets the cards alone.
-    expect(screen.queryByRole('radio', { name: /manage/i })).not.toBeInTheDocument()
   })
 
-  // The request queue is an approver's job, so it stays theirs.
-  it('keeps Access requests for an approver', async () => {
+  // Approvals are an approver's job, so they stay theirs.
+  it('adds Approvals for an approver', async () => {
     signedInAs('approver')
-    await renderRoute('/mine')
-    const nav = await screen.findByRole('navigation')
-    await within(nav).findByRole('link', { name: /access requests/i })
-    expect(within(nav).getAllByRole('link')).toHaveLength(2)
+    await renderRoute('/assets')
+    expect(await menu()).toEqual(['Servers', 'Approvals', 'My activity'])
   })
 
-  it('shows an administrator all of it', async () => {
+  it('shows an administrator the five', async () => {
     signedInAs('admin')
-    await renderRoute('/mine')
-    const nav = await screen.findByRole('navigation')
-    expect(await within(nav).findByRole('link', { name: /^Overview/ })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /^Servers/ })).toBeInTheDocument()
-    fireEvent.click(within(nav).getByRole('button', { name: /admin/i }))
-    expect(within(nav).getByRole('link', { name: /users & roles/i })).toBeInTheDocument()
-  })
-
-  // People and roles are an administrator's page. An auditor reads the fleet
-  // but has nothing to do there.
-  it('keeps Users & roles from an auditor, in the menu and at its address', async () => {
-    signedInAs('auditor')
-    await renderRoute('/mine')
-    const nav = await screen.findByRole('navigation')
-    fireEvent.click(await within(nav).findByRole('button', { name: /admin/i }))
-    expect(within(nav).getByRole('link', { name: /audit log/i })).toBeInTheDocument()
-    expect(within(nav).queryByRole('link', { name: /users & roles/i })).not.toBeInTheDocument()
+    await renderRoute('/assets')
+    expect(await menu()).toEqual(['Servers', 'Approvals', 'Teams', 'Activity', 'Settings'])
   })
 
   it.each([
-    ['/', 'operator'], ['/assets', 'operator'], ['/assets/add', 'auditor'], ['/sessions', 'approver'],
-    ['/coverage', 'operator'], ['/audit', 'operator'], ['/settings', 'operator'], ['/users', 'auditor'],
+    ['/assets/add', 'auditor'], ['/audit', 'operator'], ['/settings', 'operator'],
+    ['/teams', 'operator'], ['/assets/id-web-01', 'operator'],
   ] as const)('sends %s to Servers for an %s', async (path, role) => {
     signedInAs(role)
     await renderRoute(path)
     expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
   })
+
+  it.each(['/', '/mine', '/coverage', '/requests'] as const)('keeps the old address %s working', async (path) => {
+    signedInAs('admin')
+    await renderRoute(path)
+    expect(await screen.findByRole('heading', { name: /Servers|Approvals/ })).toBeInTheDocument()
+  })
 })
 
 describe('connecting from a card', () => {
+  const online = [host('web-01', { tunnelConnected: true })]
+
   it('arrives with the account already chosen', async () => {
-    signedInAs('operator')
+    signedInAs('operator', online)
     await renderRoute('/connect?host=web-01.prod.northwind.id&as=deploy')
-    expect(await screen.findByRole('radio', { name: 'deploy' })).toBeChecked()
+    expect(await screen.findByRole('radio', { name: /^deploy/ })).toBeChecked()
   })
 
   // Only a preselection: an account the server does not list for this person
   // falls back to one it does, rather than being sent to the control plane.
   it('drops an account the server does not offer', async () => {
-    signedInAs('operator')
+    signedInAs('operator', online)
     await renderRoute('/connect?host=web-01.prod.northwind.id&as=root')
-    expect(await screen.findByRole('radio', { name: 'ops' })).toBeChecked()
+    expect(await screen.findByRole('radio', { name: /^ops/ })).toBeChecked()
   })
 })
 

@@ -148,7 +148,7 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
                   to="/assets/$assetId"
                   params={{ assetId: a.id }}
                   className="argus-above"
-                  style={{ color: 'var(--mantine-color-azure-4)' }}
+                  style={{ color: 'var(--mantine-color-azure-7)' }}
                 >
                   Add a login account
                 </Link>
@@ -174,10 +174,10 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
                   key={p}
                   to="/connect"
                   search={{ host: a.hostname, as: p, open: true }}
-                  size="compact-xs"
+                  size="compact-sm"
                   variant="default"
                   ff="monospace"
-                  aria-label={`Open ${name} as ${p}`}
+                  aria-label={`Connect to ${name} as ${p}`}
                 >
                   {p}
                 </ButtonLink>
@@ -187,24 +187,36 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
         )}
 
         <Group justify="space-between" align="center" mt="auto" wrap="nowrap" gap="sm">
-          <Text size={FS.micro} c="dimmed">
-            Checked {relTime(a.lastCheckedAt)}
-          </Text>
+          {admin ? (
+            <Link
+              to="/assets/$assetId"
+              params={{ assetId: a.id }}
+              className="argus-above"
+              aria-label={`Manage ${name}`}
+              style={{ color: 'var(--mantine-color-azure-7)', fontSize: 13, fontWeight: 500, textDecoration: 'none' }}
+            >
+              Who can connect, settings
+            </Link>
+          ) : (
+            <Text size={FS.micro} c="dimmed">
+              Checked {relTime(a.lastCheckedAt)}
+            </Text>
+          )}
           {disabled ? (
-            <Button size="xs" disabled leftSection={rdp ? <IconDeviceDesktop size={14} /> : <IconTerminal2 size={14} />}>
-              Open
+            <Button size="sm" disabled leftSection={rdp ? <IconDeviceDesktop size={16} /> : <IconTerminal2 size={16} />}>
+              Connect
             </Button>
           ) : (
             <ButtonLink
               to="/connect"
               search={{ host: a.hostname, as: a.principals[0], open: true }}
-              size="xs"
+              size="sm"
               className="argus-stretch"
               variant={reach === 'offline' ? 'default' : 'filled'}
-              leftSection={rdp ? <IconDeviceDesktop size={14} /> : <IconTerminal2 size={14} />}
-              aria-label={`Open ${name}`}
+              leftSection={rdp ? <IconDeviceDesktop size={16} /> : <IconTerminal2 size={16} />}
+              aria-label={`Connect to ${name}`}
             >
-              Open
+              Connect
             </ButtonLink>
           )}
         </Group>
@@ -259,18 +271,18 @@ export function GrantCard({
           </Box>
         </Group>
         <Group justify="space-between" align="center" mt="auto" wrap="nowrap" gap="sm">
-          <Text size={FS.micro} c="amber.4">
+          <Text size={FS.micro} c="amber.7">
             {expiresAt ? `Access ends ${relTime(expiresAt)}` : 'Approved'}
           </Text>
           <ButtonLink
             to="/connect"
             search={{ host: hostname, as: principal, open: true }}
-            size="xs"
+            size="sm"
             className="argus-stretch"
-            leftSection={<IconTerminal2 size={14} />}
-            aria-label={`Open ${name} as ${principal}`}
+            leftSection={<IconTerminal2 size={16} />}
+            aria-label={`Connect to ${name} as ${principal}`}
           >
-            Open
+            Connect
           </ButtonLink>
         </Group>
       </Stack>
@@ -437,14 +449,14 @@ export function ServerCards() {
           title={whole ? 'There are no servers yet.' : 'No servers have been given to you yet.'}
           description={
             whole
-              ? 'Install the Argus agent on a server and approve it, and it will appear here.'
+              ? 'Add your first server. It takes one line on the server and about a minute.'
               : // Not "request access": the request form can only offer the
                 // servers the control plane sent, which for this person is
                 // none, so pointing at it would be a next step that cannot be
                 // taken. Assignment is an administrator's, so say so.
                 'An admin decides who can reach each server. Ask your admin to give you the servers you need, and they will appear here.'
           }
-          action={whole && <ButtonLink to="/assets/add">Add a server</ButtonLink>}
+          action={canAdmin && <ButtonLink to="/assets/add">Add server</ButtonLink>}
         />
       ) : visible.length === 0 ? (
         <EmptyState

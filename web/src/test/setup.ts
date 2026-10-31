@@ -1,5 +1,14 @@
 import '@testing-library/jest-dom/vitest'
+import { configure } from '@testing-library/react'
 import { vi } from 'vitest'
+
+/**
+ * Route tests render the whole console, lazy chunks and all. In a full run
+ * every file does that at once, and findBy's default second was the slowest
+ * route's time on an idle machine, not a busy one. Waiting longer costs
+ * nothing when the page is there sooner.
+ */
+configure({ asyncUtilTimeout: 4_000 })
 
 /**
  * jsdom implements neither of these, and Mantine uses both on mount.
@@ -28,6 +37,13 @@ if (!globalThis.ResizeObserver) {
     unobserve() {}
     disconnect() {}
   } as unknown as typeof ResizeObserver
+}
+
+// Mantine 9.7's autosizing Textarea listens for web fonts finishing loading.
+if (!(document as { fonts?: unknown }).fonts) {
+  Object.defineProperty(document, 'fonts', {
+    value: { addEventListener: vi.fn(), removeEventListener: vi.fn(), ready: Promise.resolve() },
+  })
 }
 
 if (!Element.prototype.scrollIntoView) {

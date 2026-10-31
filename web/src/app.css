@@ -19,27 +19,7 @@
 /* Mantine baseline: resets, CSS variables and global rules. Must precede every
    component stylesheet. */
 @import '@mantine/core/styles/baseline.layer.css';
-@import '@mantine/core/styles/default-css-variables.layer.css';
 @import '@mantine/core/styles/global.layer.css';
-
-/* Per component, rather than the 267 kB monolith.
-
-   Mantine ships one stylesheet per component and one that concatenates all 98.
-   This console renders 40, so the monolith shipped roughly 13 kB gzipped of
-   rules for components it never uses, on every first load.
-
-   THE ORDER BELOW IS LOAD-BEARING and is Mantine's own, not alphabetical.
-   Several components are built on others at the same specificity — Card on
-   Paper, NavLink on UnstyledButton — so the base has to come first or the
-   component layered over it loses the cascade. Sorted by name instead, a Card
-   computes `display: block` rather than `flex`: a broken layout that compiles,
-   type-checks and passes every test that does not measure rendered geometry.
-
-   Entries after the ones we import directly are internals: Select and
-   MultiSelect are built from Combobox, Input, Pill and Popover. If you add a
-   Mantine component, add its stylesheet here and keep this order — regenerate
-   with the offsets in @mantine/core/styles.layer.css rather than by hand. */
-
 @import '@mantine/core/styles/ScrollArea.layer.css';
 @import '@mantine/core/styles/UnstyledButton.layer.css';
 @import '@mantine/core/styles/VisuallyHidden.layer.css';
@@ -59,6 +39,8 @@
 @import '@mantine/core/styles/AppShell.layer.css';
 @import '@mantine/core/styles/Combobox.layer.css';
 @import '@mantine/core/styles/InlineInput.layer.css';
+@import '@mantine/core/styles/CheckboxCard.layer.css';
+@import '@mantine/core/styles/CheckboxIndicator.layer.css';
 @import '@mantine/core/styles/Checkbox.layer.css';
 @import '@mantine/core/styles/Avatar.layer.css';
 @import '@mantine/core/styles/Badge.layer.css';
@@ -78,14 +60,38 @@
 @import '@mantine/core/styles/NavLink.layer.css';
 @import '@mantine/core/styles/Notification.layer.css';
 @import '@mantine/core/styles/Progress.layer.css';
+@import '@mantine/core/styles/RadioCard.layer.css';
+@import '@mantine/core/styles/RadioIndicator.layer.css';
 @import '@mantine/core/styles/Radio.layer.css';
 @import '@mantine/core/styles/Tooltip.layer.css';
 @import '@mantine/core/styles/SegmentedControl.layer.css';
+@import '@mantine/core/styles/SimpleGrid.layer.css';
 @import '@mantine/core/styles/Skeleton.layer.css';
 @import '@mantine/core/styles/Slider.layer.css';
 @import '@mantine/core/styles/Stack.layer.css';
 @import '@mantine/core/styles/Switch.layer.css';
 @import '@mantine/core/styles/Table.layer.css';
+@import '@mantine/core/styles/Tabs.layer.css';
 @import '@mantine/core/styles/ThemeIcon.layer.css';
+@import '@mantine/core/styles/default-css-variables.layer.css';
+
+/* Per component, rather than the 267 kB monolith.
+
+   Mantine ships one stylesheet per component and one that concatenates all 98.
+   This console renders 40, so the monolith shipped roughly 13 kB gzipped of
+   rules for components it never uses, on every first load.
+
+   THE ORDER BELOW IS LOAD-BEARING and is Mantine's own, not alphabetical.
+   Several components are built on others at the same specificity — Card on
+   Paper, NavLink on UnstyledButton — so the base has to come first or the
+   component layered over it loses the cascade. Sorted by name instead, a Card
+   computes `display: block` rather than `flex`: a broken layout that compiles,
+   type-checks and passes every test that does not measure rendered geometry.
+
+   Entries after the ones we import directly are internals: Select and
+   MultiSelect are built from Combobox, Input, Pill and Popover. If you add a
+   Mantine component, add its stylesheet here and keep this order — regenerate
+   with the offsets in @mantine/core/styles.layer.css rather than by hand. */
+
 
 @import './app.tokens.css';

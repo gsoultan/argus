@@ -48,10 +48,8 @@ import type { KernelExec } from '~/lib/castDecode'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
 import { live, rdpReplay, shadowTicket, watchEndpoint } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
-import { guard } from '~/lib/guard'
 
 export const Route = createFileRoute('/sessions/$sessionId')({
-  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: SessionDetail,
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(sessionQuery(params.sessionId)),
@@ -207,7 +205,7 @@ function SessionDetail() {
   if (!session) {
     return (
       <Box>
-        <PageHeader crumbs={[{ label: 'Sessions', to: '/sessions' }]} title="Session not found" />
+        <PageHeader crumbs={[{ label: 'Activity', to: '/sessions' }]} title="Session not found" />
         <PageBody>
           <Card>
             <EmptyState
@@ -290,7 +288,7 @@ function SessionDetail() {
           live session — so the cheapest and the most destructive action on the
           page were the same size, colour weight and distance apart. */}
       <PageHeader
-        crumbs={[{ label: 'Sessions', to: '/sessions' }, { label: `${session.principal}@${host}` }]}
+        crumbs={[{ label: 'Activity', to: '/sessions' }, { label: `${session.principal}@${host}` }]}
         title={`${session.principal}@${host}`}
         status={
           <SessionStateBadge

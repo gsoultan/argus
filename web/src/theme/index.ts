@@ -1,7 +1,9 @@
 import { createTheme, type MantineColorsTuple, rem } from '@mantine/core'
 
 /**
- * Argus is an operations console read in low light, often next to a terminal.
+ * Argus is light: a pale grey page, white cards, one blue for everything you
+ * can press. The terminal and the remote desktop stay dark, because they are
+ * the server's screen, not the console's.
  *
  * Two colour systems, and keeping them apart is the whole design:
  *
@@ -35,8 +37,8 @@ import { createTheme, type MantineColorsTuple, rem } from '@mantine/core'
  * read as signals again.
  */
 const slate: MantineColorsTuple = [
-  '#f1f3f6', '#e1e5eb', '#c8ced8', '#a6afbd', '#8a94a5',
-  '#626b7a', '#464e5b', '#262c36', '#1a1f27', '#13171d',
+  '#f6f7f9', '#eef0f3', '#e4e7ec', '#d0d5dd', '#98a2b3',
+  '#667085', '#475467', '#344054', '#1d2939', '#101828',
 ]
 
 /**
@@ -47,28 +49,28 @@ const slate: MantineColorsTuple = [
  * and a live-session badge read as the same colour. White on shade 6 is 5.0:1.
  */
 const azure: MantineColorsTuple = [
-  '#eef0ff', '#dfe2ff', '#bfc5ff', '#9ca4fd', '#8089f8',
-  '#6c74f0', '#5a61e0', '#4a50c2', '#3b3f9c', '#2b2d70',
+  '#eff6ff', '#dbeafe', '#bfdbfe', '#93c5fd', '#60a5fa',
+  '#3b82f6', '#2563eb', '#1d4ed8', '#1e40af', '#1e3a8a',
 ]
 
 const teal: MantineColorsTuple = [
-  '#e6fff8', '#c9fdef', '#94f8de', '#5df0cc', '#33e9bd',
-  '#2dd4a7', '#1fb98f', '#159474', '#0a6f57', '#00483a',
+  '#ecfdf3', '#d1fadf', '#a6f4c5', '#6ce9a6', '#32d583',
+  '#12b76a', '#039855', '#027a48', '#05603a', '#054f31',
 ]
 
 const amber: MantineColorsTuple = [
-  '#fff8e1', '#ffefc7', '#ffdd93', '#ffca5b', '#f8ba30',
-  '#f0b429', '#d59a1c', '#a97814', '#7c570b', '#4d3502',
+  '#fffaeb', '#fef0c7', '#fedf89', '#fec84b', '#fdb022',
+  '#f79009', '#dc6803', '#b54708', '#93370d', '#7a2e0e',
 ]
 
 const rose: MantineColorsTuple = [
-  '#ffe9ec', '#ffd1d7', '#ffa1af', '#ff6d84', '#f4576b',
-  '#e33c53', '#c62d43', '#9c2134', '#741726', '#4a0a15',
+  '#fef3f2', '#fee4e2', '#fecdca', '#fda29b', '#f97066',
+  '#f04438', '#d92d20', '#b42318', '#912018', '#7a271a',
 ]
 
 const sky: MantineColorsTuple = [
-  '#e3f6ff', '#c3e9ff', '#8ed6ff', '#54c1ff', '#38bdf8',
-  '#1aa5e6', '#0b83bb', '#046492', '#00476b', '#002b42',
+  '#f0f9ff', '#e0f2fe', '#b9e6fe', '#7cd4fd', '#36bffa',
+  '#0ba5ec', '#0086c9', '#026aa2', '#065986', '#0b4a6f',
 ]
 
 /**
@@ -126,7 +128,8 @@ export const theme = createTheme({
   // 6 in both schemes: white on azure.6 is 5.0:1, where a lighter shade would
   // leave button labels short of AA.
   primaryShade: { light: 6, dark: 6 },
-  colors: { slate, azure, teal, amber, rose, sky, dark: slate },
+  colors: { slate, azure, teal, amber, rose, sky },
+  black: '#101828',
 
   // IBM Plex Sans, from @fontsource-variable/ibm-plex-sans. An engineering face
   // with open, distinct letterforms (Il1, 0O) that holds up at the small sizes
@@ -165,7 +168,7 @@ export const theme = createTheme({
   },
 
   defaultRadius: 'md',
-  radius: { xs: rem(3), sm: rem(5), md: rem(7), lg: rem(11), xl: rem(16) },
+  radius: { xs: rem(4), sm: rem(6), md: rem(10), lg: rem(12), xl: rem(16) },
 
   components: {
     /* ── Surfaces ───────────────────────────────────────────────────────── */
@@ -184,7 +187,7 @@ export const theme = createTheme({
       },
     },
     Modal: {
-      defaultProps: { radius: 'lg', centered: true, overlayProps: { blur: 3, opacity: 0.6 } },
+      defaultProps: { radius: 'lg', centered: true, overlayProps: { blur: 2, opacity: 0.35 } },
       styles: {
         content: { border: '1px solid var(--color-line)' },
         title: { fontWeight: 600, fontSize: rem(14) },
@@ -201,15 +204,15 @@ export const theme = createTheme({
     // consistent by omission rather than by remembering.
     // The few controls a page is *for* (Connect, Add a server) ask for `sm`
     // explicitly, so the main action is never the same size as a filter.
-    Button: { defaultProps: { size: 'xs' } },
-    TextInput: { defaultProps: { size: 'xs' } },
-    PasswordInput: { defaultProps: { size: 'xs' } },
-    Textarea: { defaultProps: { size: 'xs' } },
-    Select: { defaultProps: { size: 'xs' } },
-    MultiSelect: { defaultProps: { size: 'xs' } },
-    SegmentedControl: { defaultProps: { size: 'xs' } },
-    Checkbox: { defaultProps: { size: 'xs' } },
-    Radio: { defaultProps: { size: 'xs' } },
+    Button: { defaultProps: { size: 'sm' } },
+    TextInput: { defaultProps: { size: 'sm' } },
+    PasswordInput: { defaultProps: { size: 'sm' } },
+    Textarea: { defaultProps: { size: 'sm' } },
+    Select: { defaultProps: { size: 'sm' } },
+    MultiSelect: { defaultProps: { size: 'sm' } },
+    SegmentedControl: { defaultProps: { size: 'sm' } },
+    Checkbox: { defaultProps: { size: 'sm' } },
+    Radio: { defaultProps: { size: 'sm' } },
     Switch: { defaultProps: { size: 'sm' } },
     ThemeIcon: { defaultProps: { radius: 'sm', variant: 'light' } },
 
@@ -229,15 +232,15 @@ export const theme = createTheme({
         verticalSpacing: SP.cozy,
         horizontalSpacing: 'md',
         highlightOnHover: true,
-        stripedColor: 'rgba(255, 255, 255, 0.022)',
-        highlightOnHoverColor: 'rgba(108, 116, 240, 0.08)',
+        stripedColor: 'rgba(16, 24, 40, 0.018)',
+        highlightOnHoverColor: 'rgba(37, 99, 235, 0.04)',
       },
       styles: {
         // Sentence case. Uppercase headers on every table made each list read
         // as shouting, and are slower to scan than the words they spell.
         th: {
           fontSize: FS.meta,
-          color: 'var(--mantine-color-slate-4)',
+          color: 'var(--mantine-color-slate-5)',
           fontWeight: 500,
           whiteSpace: 'nowrap',
         },
