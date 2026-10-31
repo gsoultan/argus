@@ -144,6 +144,19 @@ func _assertAssetAssignmentShape(m m0.AssetAssignment) {
 	}
 }
 
+// _assertAssetTeamAssignmentShape fails to compile if m0.AssetTeamAssignment gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertAssetTeamAssignmentShape(m m0.AssetTeamAssignment) {
+	type shape m0.AssetTeamAssignment
+	_ = shape{
+		m.Asset,
+		m.Team,
+		m.Principals,
+		m.GrantedBy,
+		m.GrantedAt,
+	}
+}
+
 // _assertAuditEventShape fails to compile if m0.AuditEvent gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertAuditEventShape(m m0.AuditEvent) {
@@ -280,6 +293,30 @@ func _assertSessionShape(m m0.Session) {
 		m.TerminationReason,
 		m.EndInferred,
 		m.LastReportedAt,
+	}
+}
+
+// _assertTeamShape fails to compile if m0.Team gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertTeamShape(m m0.Team) {
+	type shape m0.Team
+	_ = shape{
+		m.ID,
+		m.Name,
+		m.CreatedBy,
+		m.CreatedAt,
+	}
+}
+
+// _assertTeamMemberShape fails to compile if m0.TeamMember gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertTeamMemberShape(m m0.TeamMember) {
+	type shape m0.TeamMember
+	_ = shape{
+		m.Team,
+		m.UserEmail,
+		m.AddedBy,
+		m.AddedAt,
 	}
 }
 

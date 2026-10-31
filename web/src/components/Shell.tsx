@@ -1,22 +1,21 @@
 import {
-  ActionIcon, Alert, AppShell, Avatar, Badge, Box, Burger, Center, Group, Indicator,
-  Loader, Menu, NavLink as MantineNavLink, ScrollArea, Stack, Text, Tooltip,
+  ActionIcon, Alert, AppShell, Avatar, Badge, Box, Burger, Center, Group,
+  Loader, Menu, NavLink as MantineNavLink, Stack, Text, Tooltip,
   UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconBell, IconChevronDown, IconChevronRight, IconLogout, IconSearch,
-  IconSettings,
+  IconAlertTriangle, IconChevronDown, IconLogout, IconSearch,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
-import { coverageQuery, meQuery, statsQuery } from '~/lib/queries'
+import { coverageQuery, directLoginsQuery, meQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
 // Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
 // of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
 import { Setup } from '~/components/Setup'
-import { canSee, seesWholeFleet } from '~/lib/roles'
+import { canSee, roleLabel, seesWholeFleet } from '~/lib/roles'
 /**
  * Loaded on first open.
  *
@@ -29,16 +28,15 @@ const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
 import {
-  isActive, navFor, type NavCounts, type NavSection,
+  isActive, navFor, type NavCounts, type NavItem,
 } from '~/components/nav'
-import { Logo } from '~/components/Logo'
+import { LogoMark } from '~/components/Logo'
 import {
   controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
 } from '~/lib/live'
 import { FS, SP } from '~/theme'
 
-const HEADER_H = 56
-const NAVBAR_W = 260
+const HEADER_H = 60
 
 /**
  * Blocks the console until the user is signed in.
@@ -125,24 +123,21 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const stats = statsQuery_.data
   const source = dataSource(statsQuery_.isPending)
   const { data: cov } = useQuery(coverageQuery())
-  // Someone who was only given servers gets a console that is a list of their
-  // servers: no search across the fleet and no live-session counters. An
-  // approver keeps the request bell, because the queue is their job.
   const whole = seesWholeFleet(me?.role)
   const approves = canSee(me?.role, 'approvers')
+  // Held logins are counted with requests: both are someone waiting on a
+  // decision, and the person deciding should not have to add them up.
+  const { data: held } = useQuery({ ...directLoginsQuery(), enabled: approves })
 
-  // Both directions count as a gap: an unmanaged host and a managed host with
-  // no agent are each somewhere a privileged session goes unrecorded.
-  const navStats = {
-    requestsPending: stats?.requestsPending ?? 0,
-    sessionsActive: stats?.sessionsActive ?? 0,
-    coverageGaps: cov ? cov.unreviewedHosts + cov.assetsUnmonitored : 0,
-    // Servers whose agent has checked in and is waiting for someone to approve
-    // it. Only for those who can approve one: on anyone else's Servers entry it
-    // would be a number they can do nothing about.
+  const counts: NavCounts = {
+    approvalsPending:
+      (stats?.requestsPending ?? 0) + (held?.filter((d) => d.state === 'pending').length ?? 0),
+    // Only for those who can finish adding one: on anyone else's Servers entry
+    // it would be a number they can do nothing about.
     serversWaiting: canSee(me?.role, 'admin') ? (cov?.unreviewedHosts ?? 0) : 0,
   }
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const items = navFor(me?.role)
 
   // Cmd-K anywhere. Captured on the document so it works while focus is inside
   // a table, a filter or the replay player.
@@ -164,7 +159,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   return (
     <AppShell
       header={{ height: HEADER_H }}
-      navbar={{ width: NAVBAR_W, breakpoint: 'sm', collapsed: { mobile: !opened } }}
+      // The menu lives in the top bar. On a phone the same items open from the
+      // burger as a panel down the side.
+      navbar={{ width: 260, breakpoint: 'md', collapsed: { mobile: !opened, desktop: true } }}
       padding={0}
       styles={{
         header: { background: 'var(--color-surface)', borderColor: 'var(--color-line)' },
@@ -173,73 +170,40 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       }}
     >
       <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between" wrap="nowrap" gap="md">
-          <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+        <Group h="100%" px={{ base: 'md', sm: 'xl' }} justify="space-between" wrap="nowrap" gap="md">
+          <Group gap="lg" wrap="nowrap" style={{ minWidth: 0 }}>
             <Burger
               opened={opened}
               onClick={toggle}
-              hiddenFrom="sm"
+              hiddenFrom="md"
               size="sm"
               aria-label={opened ? 'Close navigation' : 'Open navigation'}
             />
-            <Box hiddenFrom="sm">
-              <Logo markOnly />
-            </Box>
-            {/* On a phone the sidebar, and the source line in it, is hidden
-                behind the burger. A warning is never hidden by breakpoint, so
-                the badge comes back up here when there is one to give. */}
-            {source !== 'live' && source !== 'connecting' && (
-              <Box hiddenFrom="sm">
-                <DataSourceBadge source={source} />
-              </Box>
-            )}
+            <Link to="/assets" style={{ textDecoration: 'none', color: 'inherit' }} aria-label="Argus home">
+              <Group gap={SP.cozy} wrap="nowrap">
+                <LogoMark size={28} />
+                <Text fw={700} size="md" visibleFrom="xs">Argus</Text>
+              </Group>
+            </Link>
+            <Group component="nav" aria-label="Main" gap={4} wrap="nowrap" visibleFrom="md">
+              {items.map((item) => (
+                <TopNavLink key={item.to} item={item} pathname={pathname} counts={counts} />
+              ))}
+            </Group>
           </Group>
 
-          {/* A search field rather than an icon: the shortcut is discoverable
-              only if something on screen says it exists. */}
-          {whole ? <UnstyledButton
-            onClick={palette.open}
-            visibleFrom="md"
-            aria-label="Search pages, hosts, sessions and people"
-            style={{
-              flex: 1,
-              maxWidth: 420,
-              border: '1px solid var(--color-line)',
-              background: 'var(--color-raised)',
-              borderRadius: 8,
-              padding: '7px 12px',
-            }}
-          >
-            <Group gap={SP.cozy} wrap="nowrap">
-              <IconSearch size={15} opacity={0.6} />
-              <Text size={FS.body} c="dimmed" style={{ flex: 1 }}>
-                Find a server, session or person
-              </Text>
-              <Badge size="xs" variant="default" color="slate" className="argus-digest">
-                ⌘K
-              </Badge>
-            </Group>
-          </UnstyledButton> : <Box style={{ flex: 1 }} />}
-
           <Group gap="xs" wrap="nowrap">
-            {whole && (
-              <ActionIcon
-                hiddenFrom="md"
-                variant="subtle"
-                color="slate"
-                aria-label="Search"
-                onClick={palette.open}
-              >
-                <IconSearch size={17} />
-              </ActionIcon>
-            )}
+            {source !== 'live' && source !== 'connecting' && <DataSourceBadge source={source} />}
 
             {whole && stats && stats.sessionsActive > 0 && (
               <Tooltip label={`${stats.sessionsActive} sessions in progress right now`}>
                 <Badge
+                  component={Link}
+                  to="/activity"
                   color="sky"
                   variant="light"
-                  visibleFrom="xs"
+                  visibleFrom="sm"
+                  style={{ cursor: 'pointer' }}
                   leftSection={
                     <Box
                       w={6}
@@ -254,53 +218,33 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               </Tooltip>
             )}
 
-            {/* Beside the live count rather than added to it. These sessions
-                were counted as live until now — fifteen of them in dev, one for
-                nineteen days — which is exactly the number an operator glances
-                at to decide whether anything is happening. */}
-            {whole && stats && stats.sessionsSilent > 0 && (
-              <Tooltip
-                label={`${stats.sessionsSilent} ${stats.sessionsSilent === 1 ? 'session is' : 'sessions are'} recorded as active but have not been reported in minutes. Their agent most likely went away without reporting the end. Sessions › Unknown.`}
-                multiline
-                maw={300}
-              >
-                <Badge color="amber" variant="light" visibleFrom="sm">
-                  {stats.sessionsSilent} unknown
-                </Badge>
+            {whole && (
+              <Tooltip label="Find a server, session or person (⌘K)">
+                <ActionIcon
+                  variant="subtle"
+                  color="slate"
+                  size="lg"
+                  aria-label="Search pages, hosts, sessions and people"
+                  onClick={palette.open}
+                >
+                  <IconSearch size={18} />
+                </ActionIcon>
               </Tooltip>
             )}
 
-            {approves && <Indicator
-              disabled={!stats?.requestsPending}
-              label={stats?.requestsPending}
-              size={15}
-              color="amber"
-              offset={5}
-            >
-              <ActionIcon
-                aria-label={`Access requests${stats?.requestsPending ? ` — ${stats.requestsPending} pending` : ''}`}
-                variant="subtle"
-                color="slate"
-                component={Link}
-                to="/requests"
-              >
-                <IconBell size={17} />
-              </ActionIcon>
-            </Indicator>}
-
-            <Menu position="bottom-end" width={220} withArrow>
+            <Menu position="bottom-end" width={240} withArrow>
               <Menu.Target>
                 <UnstyledButton aria-label="Account menu">
                   <Group gap={SP.cozy} wrap="nowrap">
-                    <Avatar size={27} radius="sm" color="azure" variant="light">
+                    <Avatar size={32} radius="xl" color="azure" variant="light">
                       {me?.displayName.slice(0, 2).toUpperCase() ?? '··'}
                     </Avatar>
                     <Box visibleFrom="sm" ta="left">
                       <Text size={FS.meta} fw={600} lh={1.15}>
                         {me?.displayName}
                       </Text>
-                      <Text size={FS.micro} c="dimmed" lh={1.15} tt="capitalize">
-                        {me?.role}
+                      <Text size={FS.micro} c="dimmed" lh={1.15}>
+                        {me ? roleLabel(me.role) : ''}
                       </Text>
                     </Box>
                     <IconChevronDown size={13} opacity={0.5} />
@@ -309,15 +253,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>{me?.email}</Menu.Label>
-                {/* Settings is a fleet page; anyone else would be sent away. */}
-                {whole && (
-                  <>
-                    <Menu.Item leftSection={<IconSettings size={14} />} component={Link} to="/settings">
-                      Settings
-                    </Menu.Item>
-                    <Menu.Divider />
-                  </>
-                )}
+                <Menu.Item disabled leftSection={<SourceDot source={source} />}>
+                  <Text size={FS.meta} className="argus-source-title">{sourceSentence(source)}</Text>
+                </Menu.Item>
+                <Menu.Divider />
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
                   color="rose"
@@ -334,35 +273,33 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar p={0}>
-        <Box px="md" pt="md" pb="sm" visibleFrom="sm">
-          <Logo />
-        </Box>
-
-        <AppShell.Section grow component={ScrollArea} px="sm" pb="xs">
-          <Stack gap="lg" pt={SP.tight}>
-            {navFor(me?.role).map((section, si) => (
-              <NavSectionView
-                key={section.label ?? si}
-                section={section}
-                pathname={pathname}
-                counts={navStats}
+      <AppShell.Navbar p="sm" hiddenFrom="md">
+        <Stack gap={2}>
+          {items.map((item) => {
+            const count = item.badge ? item.badge(counts) : 0
+            return (
+              <MantineNavLink
+                key={item.to}
+                component={Link}
+                to={item.to as never}
+                label={item.label}
+                active={isActive(pathname, item.to)}
+                variant="light"
+                color="azure"
+                leftSection={<item.icon size={18} stroke={1.6} />}
+                rightSection={count > 0 ? <Badge size="sm" circle color="rose" variant="filled">{count}</Badge> : null}
+                className="argus-navlink"
               />
-            ))}
-          </Stack>
-        </AppShell.Section>
-
-        {/* Where the figures on screen come from, said once, in the same place
-            on every page. It used to be a badge in the header competing with
-            the live count and the bell for the same glance. */}
-        <AppShell.Section p="sm" visibleFrom="sm">
-          <SourceLine source={source} />
-        </AppShell.Section>
+            )
+          })}
+        </Stack>
       </AppShell.Navbar>
 
       <AppShell.Main>
         {source === 'unreachable' && <FallbackBanner />}
-        {children}
+        <Box maw={1200} mx="auto">
+          {children}
+        </Box>
       </AppShell.Main>
 
       {/* Mounted only while open, so the chunk is fetched on the first ⌘K
@@ -374,6 +311,50 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       )}
     </AppShell>
   )
+}
+
+/** One word in the top bar, with a red count when something waits on you. */
+function TopNavLink({ item, pathname, counts }: { item: NavItem; pathname: string; counts: NavCounts }) {
+  const count = item.badge ? item.badge(counts) : 0
+  const active = isActive(pathname, item.to)
+  return (
+    <Link
+      to={item.to as never}
+      className="argus-topnav"
+      data-active={active || undefined}
+      aria-current={active ? 'page' : undefined}
+    >
+      {item.label}
+      {count > 0 && (
+        <Badge size="sm" circle color="rose" variant="filled" aria-label={`${count} waiting`}>
+          {count}
+        </Badge>
+      )}
+    </Link>
+  )
+}
+
+function SourceDot({ source }: { source: DataSource }) {
+  const dot = {
+    live: 'var(--color-verified)',
+    connecting: 'var(--mantine-color-slate-4)',
+    fixture: 'var(--color-pending)',
+    unreachable: 'var(--color-denied)',
+  }[source]
+  return <Box w={8} h={8} className="rounded-full shrink-0" style={{ background: dot }} />
+}
+
+function sourceSentence(source: DataSource): string {
+  switch (source) {
+    case 'live':
+      return `Connected to ${controlPlaneHost()}`
+    case 'connecting':
+      return 'Connecting…'
+    case 'fixture':
+      return 'Sample data, not your servers'
+    case 'unreachable':
+      return `${controlPlaneHost()} is not answering`
+  }
 }
 
 /**
@@ -411,89 +392,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
  * fixture data" is the whole point of the control and stays.
  */
 type DataSource = 'fixture' | 'live' | 'connecting' | 'unreachable'
-
-/**
- * One section of the menu.
- *
- * A collapsible one starts folded, opens by itself while you are on one of its
- * pages, and while folded carries the sum of its items' counts so nothing that
- * needs you is hidden by the fold.
- */
-function NavSectionView({
-  section, pathname, counts,
-}: {
-  section: NavSection
-  pathname: string
-  counts: NavCounts
-}) {
-  const inside = section.items.some((i) => isActive(pathname, i.to))
-  const [open, setOpen] = useState(inside)
-  useEffect(() => {
-    if (inside) setOpen(true)
-  }, [inside])
-  const shown = !section.collapsible || open
-  const folded = section.items.reduce((n, i) => n + (i.badge ? i.badge(counts) : 0), 0)
-
-  return (
-    <Box>
-      {section.label &&
-        (section.collapsible ? (
-          <UnstyledButton
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            className="argus-navsection"
-            w="100%"
-          >
-            <Group gap={SP.snug} justify="space-between" wrap="nowrap">
-              <Text className="argus-navsection-label">{section.label}</Text>
-              <Group gap={SP.snug} wrap="nowrap">
-                {!open && folded > 0 && (
-                  <Badge size="sm" circle color="amber">
-                    {folded}
-                  </Badge>
-                )}
-                <IconChevronRight
-                  size={14}
-                  opacity={0.6}
-                  style={{ transform: open ? 'rotate(90deg)' : undefined, transition: 'transform 120ms' }}
-                />
-              </Group>
-            </Group>
-          </UnstyledButton>
-        ) : (
-          <Text className="argus-navsection argus-navsection-label">{section.label}</Text>
-        ))}
-      {shown && (
-        <Stack gap={2}>
-          {section.items.map((item) => {
-            const count = item.badge ? item.badge(counts) : 0
-            return (
-              <MantineNavLink
-                key={item.to}
-                component={Link}
-                to={item.to as never}
-                activeOptions={{ exact: item.to === '/' }}
-                label={item.label}
-                active={isActive(pathname, item.to)}
-                variant="light"
-                color="azure"
-                leftSection={<item.icon size={18} stroke={1.6} />}
-                rightSection={
-                  count > 0 ? (
-                    <Badge size="sm" circle color={item.badgeColor ?? 'amber'}>
-                      {count}
-                    </Badge>
-                  ) : null
-                }
-                className="argus-navlink"
-              />
-            )
-          })}
-        </Stack>
-      )}
-    </Box>
-  )
-}
 
 /**
  * Which data is on screen, decided once.
@@ -538,57 +436,6 @@ function FallbackBanner() {
         running and reachable.
       </Text>
     </Alert>
-  )
-}
-
-/**
- * The sidebar's footer: which data is on screen, as a sentence with a dot.
- *
- * The same four states as the badge, with room to say what each one means
- * rather than leaving it to a tooltip.
- */
-function SourceLine({ source }: { source: DataSource }) {
-  const tone = {
-    live: { dot: 'var(--color-verified)', title: controlPlaneHost(), sub: 'Connected' },
-    connecting: { dot: 'var(--mantine-color-slate-5)', title: 'Connecting…', sub: controlPlaneHost() },
-    fixture: { dot: 'var(--color-pending)', title: 'Local fixture', sub: 'Sample data, not your servers' },
-    unreachable: { dot: 'var(--color-denied)', title: 'Not answering', sub: `${controlPlaneHost()} is unreachable` },
-  }[source]
-  return (
-    <Tooltip
-      label={
-        source === 'live'
-          ? `Connected to ${controlPlaneHost()}. Sessions open through each server's Argus agent.`
-          : source === 'fixture'
-            ? 'No control plane is configured. Every figure on this screen is generated demo data, not your fleet.'
-            : source === 'unreachable'
-              ? `${controlPlaneHost()} has not answered. The console falls back to sample data rather than showing nothing, so treat anything on screen as unverified.`
-              : 'Waiting for the control plane to answer.'
-      }
-      multiline
-      maw={280}
-      position="right"
-    >
-      <Group
-        gap={SP.cozy}
-        wrap="nowrap"
-        px="sm"
-        py={SP.cozy}
-        style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}
-        className="argus-source"
-        data-source={source}
-      >
-        <Box w={8} h={8} className="rounded-full shrink-0" style={{ background: tone.dot }} />
-        <Box style={{ minWidth: 0 }}>
-          <Text size={FS.meta} fw={500} truncate className="argus-source-title">
-            {tone.title}
-          </Text>
-          <Text size={FS.micro} c="dimmed" truncate>
-            {tone.sub}
-          </Text>
-        </Box>
-      </Group>
-    </Tooltip>
   )
 }
 

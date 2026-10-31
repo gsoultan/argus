@@ -366,7 +366,7 @@ export function TokenStep({ tokenFile, token, setToken, onError }: {
       <Alert color="sky" variant="light" icon={<IconShieldLock size={16} />} p="xs">
         <Text size="xs">Read it on the host:</Text>
         <Group gap={6} mt={4} wrap="nowrap">
-          <Text size={FS.digest} ff="monospace" c="slate.2" style={{ wordBreak: 'break-all' }}>
+          <Text size={FS.digest} ff="monospace" c="slate.7" style={{ wordBreak: 'break-all' }}>
             {command}
           </Text>
           <CopyButton value={command} timeout={1200}>

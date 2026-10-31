@@ -208,6 +208,28 @@ func (m *AssetAssignment) Schema(t *storm.Table) {
 	t.Index(&m.Asset).Named("asset_assignments_asset_idx")
 }
 
+// AssetTeamAssignment is table asset_team_assignments: which team may reach
+// which host, as whom.
+type AssetTeamAssignment struct {
+	Asset      Asset
+	Team       Team
+	Principals []string
+	GrantedBy  string
+	GrantedAt  time.Time
+}
+
+func (m *AssetTeamAssignment) Schema(t *storm.Table) {
+	t.Col(&m.Asset).ConstraintName("asset_team_assignments_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Team).ConstraintName("asset_team_assignments_team_id_fkey")
+	t.Col(&m.Team).OnDelete(storm.Cascade)
+	t.Col(&m.Principals).Default("'{}'::text[]")
+	t.Col(&m.GrantedBy).Default("''::text")
+	t.Col(&m.GrantedAt).Default("now()")
+	t.Index(&m.Team).Named("asset_team_assignments_team_idx")
+	t.Index(&m.Asset).Named("asset_team_assignments_asset_idx")
+}
+
 // AuditEvent is table audit_events.
 type AuditEvent struct {
 	Seq        int64
@@ -357,6 +379,40 @@ func (m *SchemaMigration) Schema(t *storm.Table) {
 	t.Col(&m.AppliedAt).Default("now()")
 }
 
+// Team is table teams: a named group of people.
+type Team struct {
+	ID        [16]byte
+	Name      string
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+func (m *Team) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.CreatedBy).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("teams_name_check",
+		"length(btrim(name)) >= 1 AND length(btrim(name)) <= 80")
+	t.Index(storm.Lower(&m.Name)).Unique().Named("teams_name_lower_key")
+}
+
+// TeamMember is table team_members.
+type TeamMember struct {
+	Team      Team
+	UserEmail string
+	AddedBy   string
+	AddedAt   time.Time
+}
+
+func (m *TeamMember) Schema(t *storm.Table) {
+	t.Col(&m.Team).ConstraintName("team_members_team_id_fkey")
+	t.Col(&m.Team).OnDelete(storm.Cascade)
+	t.Col(&m.AddedBy).Default("''::text")
+	t.Col(&m.AddedAt).Default("now()")
+	t.Index(&m.UserEmail).Named("team_members_user_idx")
+	t.Index(&m.Team).Named("team_members_team_idx")
+}
+
 // Session is table sessions.
 type Session struct {
 	ID             [16]byte
@@ -457,6 +513,7 @@ func All() []any {
 		&AgentEnrollmentToken{},
 		&Asset{},
 		&AssetAssignment{},
+		&AssetTeamAssignment{},
 		&AuditEvent{},
 		&DirectLoginRequest{},
 		&GatewayPolicy{},
@@ -465,6 +522,8 @@ func All() []any {
 		&RedeemedTicket{},
 		&SchemaMigration{},
 		&Session{},
+		&Team{},
+		&TeamMember{},
 		&User{},
 	}
 }

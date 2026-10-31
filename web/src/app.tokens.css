@@ -22,18 +22,21 @@
    live — and nothing decorative is allowed to spend them. See src/theme.
    --------------------------------------------------------------------------- */
 @theme {
-  --color-void: #0d1014;
-  --color-surface: #13171d;
-  --color-raised: #1a1f27;
-  --color-line: #262c36;
+  --color-void: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-raised: #f2f4f7;
+  --color-line: #e4e7ec;
 
-  --color-brand: #5a61e0;
-  --color-brand-bright: #8089f8;
+  --color-brand: #2563eb;
+  --color-brand-bright: #3b82f6;
 
-  --color-verified: #2dd4a7;
-  --color-pending: #f0b429;
-  --color-denied: #f4576b;
-  --color-live: #38bdf8;
+  --color-verified: #039855;
+  --color-pending: #dc6803;
+  --color-denied: #d92d20;
+  --color-live: #0086c9;
+
+  /* The server's own screen: commands, terminal, desktop. Always dark. */
+  --color-screen: #0f172a;
 
   --font-sans: 'IBM Plex Sans Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     Helvetica, Arial, sans-serif;
@@ -41,7 +44,7 @@
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 /* Mantine derives `c="dimmed"` from dark-2, which in this palette is a near-white
@@ -49,7 +52,7 @@
    Pinned to the step that was actually designed for secondary text: 5.5:1 on
    --color-surface, comfortably past AA at the small sizes this console uses it. */
 :root {
-  --mantine-color-dimmed: var(--mantine-color-slate-4);
+  --mantine-color-dimmed: var(--mantine-color-slate-5);
 }
 
 html,
@@ -84,7 +87,7 @@ body {
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #3a4250; }
+::-webkit-scrollbar-thumb:hover { background: #d0d5dd; }
 
 /* Table row striping and hover live in the theme, as `stripedColor` and
    `highlightOnHoverColor` props. They were declared here as CSS variables and
@@ -143,10 +146,10 @@ body {
   margin-inline-end: 12px;
 }
 .argus-navlink:not([data-active]) {
-  color: var(--mantine-color-slate-2);
+  color: var(--mantine-color-slate-6);
 }
 .argus-navlink:not([data-active]) .mantine-NavLink-section[data-position='left'] {
-  color: var(--mantine-color-slate-4);
+  color: var(--mantine-color-slate-5);
 }
 .argus-navlink:not([data-active]):hover {
   background: var(--color-raised);
@@ -189,9 +192,9 @@ button.argus-navsection:hover {
    here" without competing with the warnings below it. */
 .argus-hero {
   background:
-    radial-gradient(120% 140% at 100% 0%, rgba(108, 116, 240, 0.16), transparent 55%),
+    radial-gradient(120% 140% at 100% 0%, rgba(37, 99, 235, 0.08), transparent 55%),
     var(--color-surface) !important;
-  border-color: rgba(108, 116, 240, 0.35) !important;
+  border-color: rgba(37, 99, 235, 0.25) !important;
 }
 
 /* One finding per row. The tone shows in the icon and a 2px edge, not in a
@@ -212,9 +215,9 @@ button.argus-navsection:hover {
   place-items: center;
   font-size: 13px;
   font-weight: 600;
-  color: var(--mantine-color-azure-2);
-  background: rgba(108, 116, 240, 0.14);
-  border: 1px solid rgba(108, 116, 240, 0.4);
+  color: var(--mantine-color-azure-7);
+  background: var(--mantine-color-azure-0);
+  border: 1px solid var(--mantine-color-azure-2);
 }
 .argus-step-rule {
   flex: 1;
@@ -234,8 +237,8 @@ button.argus-navsection:hover {
   animation: argus-pulse 1.8s ease-out infinite;
 }
 @keyframes argus-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.55); }
-  100% { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(0, 134, 201, 0.45); }
+  100% { box-shadow: 0 0 0 10px rgba(0, 134, 201, 0); }
 }
 
 /* Commands people copy into a terminal on the server. Selecting the text by
@@ -249,9 +252,9 @@ button.argus-navsection:hover {
   margin: 0;
   padding: 12px 52px 12px 14px;
   border-radius: 8px;
-  background: var(--color-void);
-  border: 1px solid var(--color-line);
-  color: var(--mantine-color-slate-1);
+  background: var(--color-screen);
+  border: 1px solid var(--color-screen);
+  color: #e2e8f0;
 }
 
 /* Page headers stay put while a long table scrolls under them, so the title,
@@ -281,7 +284,8 @@ button.argus-navsection:hover {
   position: relative;
 }
 .argus-server:has(.argus-stretch):hover {
-  border-color: var(--mantine-color-azure-7);
+  border-color: var(--mantine-color-azure-3);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.05);
 }
 .argus-stretch::after {
   content: '';
@@ -291,4 +295,84 @@ button.argus-navsection:hover {
 .argus-server .argus-above {
   position: relative;
   z-index: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   The top bar. One row: the name, the menu, and you. The page you are on is
+   the only item drawn in the brand colour.
+   --------------------------------------------------------------------------- */
+.argus-topnav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--mantine-color-slate-6);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.argus-topnav:hover {
+  background: var(--color-raised);
+  color: var(--mantine-color-slate-9);
+}
+.argus-topnav[data-active] {
+  background: var(--mantine-color-azure-0);
+  color: var(--mantine-color-azure-7);
+  font-weight: 600;
+}
+
+/* A card that is the whole step on a wizard page. */
+.argus-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+/* Step dots at the top of Add server. */
+.argus-stepper-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid var(--color-line);
+  color: var(--mantine-color-slate-5);
+  background: var(--color-surface);
+}
+.argus-stepper-dot[data-state='current'] {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+.argus-stepper-dot[data-state='done'] {
+  border-color: var(--color-brand);
+  background: var(--color-brand);
+  color: #fff;
+}
+
+/* A pickable row: a checkbox list of teams or people, a login account. */
+.argus-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.argus-pick:hover {
+  border-color: var(--mantine-color-azure-3);
+}
+.argus-pick[data-checked] {
+  border-color: var(--color-brand);
+  background: var(--mantine-color-azure-0);
 }

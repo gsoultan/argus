@@ -11,8 +11,11 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/agentenrollmenttoken"
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
+	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
+	"github.com/gsoultan/argus/internal/control/rgen/team"
+	"github.com/gsoultan/argus/internal/control/rgen/teammember"
 	"github.com/gsoultan/argus/internal/control/rgen/user"
 	"github.com/gsoultan/storm/runtime"
 )
@@ -33,10 +36,13 @@ var FlushOrder = map[string]int{
 	"redeemed_tickets":        8,
 	"schema_migrations":       9,
 	"sessions":                10,
-	"users":                   11,
-	"agent_credentials":       12,
-	"asset_assignments":       13,
-	"recovery_codes":          14,
+	"teams":                   11,
+	"users":                   12,
+	"agent_credentials":       13,
+	"asset_assignments":       14,
+	"asset_team_assignments":  15,
+	"recovery_codes":          16,
+	"team_members":            17,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -284,6 +290,240 @@ func (p AssetAssignmentWithAssetQuery) All(ctx context.Context, ex runtime.Execu
 	return out, nil
 }
 
+// AssetTeamAssignmentWithAssetRow is asset_team_assignments with its Asset loaded.
+type AssetTeamAssignmentWithAssetRow struct {
+	assetteamassignment.Row
+	Asset asset.Row
+}
+
+type AssetTeamAssignmentWithAssetQuery struct {
+	q assetteamassignment.Query
+}
+
+// AssetTeamAssignmentWithAsset starts the plan.
+func AssetTeamAssignmentWithAsset() AssetTeamAssignmentWithAssetQuery {
+	return AssetTeamAssignmentWithAssetQuery{q: assetteamassignment.New()}
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) Where(ps ...assetteamassignment.Pred) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) WhereIf(cond bool, pr assetteamassignment.Pred) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) Any(ps ...assetteamassignment.Pred) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) Not(pr assetteamassignment.Pred) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) NotAny(ps ...assetteamassignment.Pred) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) Order(ts ...assetteamassignment.Sort) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) Limit(n int64) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p AssetTeamAssignmentWithAssetQuery) Offset(n int64) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p AssetTeamAssignmentWithAssetQuery) After(r AssetTeamAssignmentWithAssetRow) AssetTeamAssignmentWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p AssetTeamAssignmentWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p AssetTeamAssignmentWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]AssetTeamAssignmentWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]AssetTeamAssignmentWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = AssetTeamAssignmentWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "asset_team_assignments", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
+// AssetTeamAssignmentWithTeamRow is asset_team_assignments with its Team loaded.
+type AssetTeamAssignmentWithTeamRow struct {
+	assetteamassignment.Row
+	Team team.Row
+}
+
+type AssetTeamAssignmentWithTeamQuery struct {
+	q assetteamassignment.Query
+}
+
+// AssetTeamAssignmentWithTeam starts the plan.
+func AssetTeamAssignmentWithTeam() AssetTeamAssignmentWithTeamQuery {
+	return AssetTeamAssignmentWithTeamQuery{q: assetteamassignment.New()}
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) Where(ps ...assetteamassignment.Pred) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) WhereIf(cond bool, pr assetteamassignment.Pred) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) Any(ps ...assetteamassignment.Pred) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) Not(pr assetteamassignment.Pred) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) NotAny(ps ...assetteamassignment.Pred) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) Order(ts ...assetteamassignment.Sort) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) Limit(n int64) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p AssetTeamAssignmentWithTeamQuery) Offset(n int64) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p AssetTeamAssignmentWithTeamQuery) After(r AssetTeamAssignmentWithTeamRow) AssetTeamAssignmentWithTeamQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p AssetTeamAssignmentWithTeamQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p AssetTeamAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Executor) ([]AssetTeamAssignmentWithTeamRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]AssetTeamAssignmentWithTeamRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = AssetTeamAssignmentWithTeamRow{Row: r}
+		key := r.TeamID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := team.New().Unordered().
+		Where(team.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.TeamID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "asset_team_assignments", "teams")
+		}
+		out[i].Team = targets[j]
+	}
+	return out, nil
+}
+
 // RecoveryCodeWithUserRow is recovery_codes with its User loaded.
 type RecoveryCodeWithUserRow struct {
 	recoverycode.Row
@@ -520,6 +760,123 @@ func (p SessionWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "sessions", "assets")
 		}
 		out[i].Asset = &targets[j]
+	}
+	return out, nil
+}
+
+// TeamMemberWithTeamRow is team_members with its Team loaded.
+type TeamMemberWithTeamRow struct {
+	teammember.Row
+	Team team.Row
+}
+
+type TeamMemberWithTeamQuery struct {
+	q teammember.Query
+}
+
+// TeamMemberWithTeam starts the plan.
+func TeamMemberWithTeam() TeamMemberWithTeamQuery {
+	return TeamMemberWithTeamQuery{q: teammember.New()}
+}
+
+func (p TeamMemberWithTeamQuery) Where(ps ...teammember.Pred) TeamMemberWithTeamQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p TeamMemberWithTeamQuery) WhereIf(cond bool, pr teammember.Pred) TeamMemberWithTeamQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p TeamMemberWithTeamQuery) Any(ps ...teammember.Pred) TeamMemberWithTeamQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p TeamMemberWithTeamQuery) Not(pr teammember.Pred) TeamMemberWithTeamQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p TeamMemberWithTeamQuery) NotAny(ps ...teammember.Pred) TeamMemberWithTeamQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p TeamMemberWithTeamQuery) Order(ts ...teammember.Sort) TeamMemberWithTeamQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p TeamMemberWithTeamQuery) Limit(n int64) TeamMemberWithTeamQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p TeamMemberWithTeamQuery) Offset(n int64) TeamMemberWithTeamQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p TeamMemberWithTeamQuery) After(r TeamMemberWithTeamRow) TeamMemberWithTeamQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p TeamMemberWithTeamQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p TeamMemberWithTeamQuery) All(ctx context.Context, ex runtime.Executor) ([]TeamMemberWithTeamRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]TeamMemberWithTeamRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = TeamMemberWithTeamRow{Row: r}
+		key := r.TeamID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := team.New().Unordered().
+		Where(team.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.TeamID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "team_members", "teams")
+		}
+		out[i].Team = targets[j]
 	}
 	return out, nil
 }

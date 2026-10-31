@@ -136,7 +136,7 @@ export function SignIn({ identity, onSignedIn }: {
                     ? 'Create the first one in the browser, with the one-time token the control plane wrote on its host, or on that host with:'
                     : 'Create the first one on the host running the control plane:'}
                 </Text>
-                <Text size={FS.digest} ff="monospace" mt={6} c="slate.2">
+                <Text size={FS.digest} ff="monospace" mt={6} c="slate.7">
                   argus-control users add you@example.com --role admin
                 </Text>
                 {identity.setupAvailable && (

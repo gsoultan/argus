@@ -19,6 +19,7 @@ import { FS, SP } from '~/theme'
 import type { DirectSsh, GatewayPolicy, PolicyKey } from '~/types/domain'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
 import { guard } from '~/lib/guard'
+import { EnrolledAgents } from '~/components/EnrolledAgents'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
@@ -73,9 +74,9 @@ interface NavItem {
 }
 
 const POLICY_SECTIONS: { id: PolicySectionId; label: string; icon: ComponentType<IconProps> }[] = [
-  { id: 'access', label: 'How people connect', icon: IconNetwork },
+  { id: 'access', label: 'Logins', icon: IconNetwork },
   { id: 'recording', label: 'Recording', icon: IconLock },
-  { id: 'hosts', label: 'Hosts and trust', icon: IconShieldLock },
+  { id: 'hosts', label: 'Server agents', icon: IconShieldLock },
 ]
 
 const POLICY_FIELDS: Record<PolicySectionId, FieldSpec[]> = {
@@ -174,7 +175,7 @@ function Settings() {
     <Box>
       <PageHeader
         title="Settings"
-        description="Session policy, and everything the control plane is configured with. Defaults are the safe choice."
+        description="The rules for sessions, and how Argus itself runs. The defaults are the safe choice."
         actions={
           changeCount > 0 ? (
             <>
@@ -215,13 +216,11 @@ function Settings() {
           <Alert
             color="amber"
             icon={<IconAlertTriangle size={16} />}
-            title="Not connected to a control plane"
+            title="Not connected to Argus"
             p="xs"
           >
             <Text size={FS.body} lh={1.5}>
-              Changes are held in this browser session only and reach no control plane. Point{' '}
-              <Mono>VITE_CONTROL_URL</Mono> at a running control plane to make this page
-              authoritative.
+              This is sample data. Changes are kept in this browser tab only.
             </Text>
           </Alert>
         )}
@@ -230,9 +229,9 @@ function Settings() {
             further down a long page than the screen. */}
         <Group align="flex-start" gap="lg" wrap="nowrap">
           <Box component="nav" aria-label="Settings sections" w={210} visibleFrom="md" style={{ flexShrink: 0 }}>
-            <SectionNav title="Session policy" items={policyItems} active={active} onOpen={open} />
+            <SectionNav title="Sessions" items={policyItems} active={active} onOpen={open} />
             {controlItems.length > 0 && (
-              <SectionNav title="Control plane" items={controlItems} active={active} onOpen={open} />
+              <SectionNav title="Advanced" items={controlItems} active={active} onOpen={open} />
             )}
           </Box>
 
@@ -244,9 +243,9 @@ function Settings() {
               value={active}
               onChange={open}
               data={[
-                { group: 'Session policy', items: policyItems.map(navOption) },
+                { group: 'Sessions', items: policyItems.map(navOption) },
                 ...(controlItems.length > 0
-                  ? [{ group: 'Control plane', items: controlItems.map(navOption) }]
+                  ? [{ group: 'Advanced', items: controlItems.map(navOption) }]
                   : []),
               ]}
             />
@@ -301,7 +300,12 @@ function Settings() {
               </>
             )}
 
-            {active === 'hosts' && <HostsAndTrust />}
+            {active === 'hosts' && (
+              <>
+                <EnrolledAgents />
+                <HostsAndTrust />
+              </>
+            )}
 
             {showControl && controlItems.some((c) => c.id === active) && (
               <>
@@ -458,7 +462,7 @@ function DirectSshCard({ value, saved, disabled, onChange }: {
 }) {
   return (
     <SectionCard
-      title="Direct SSH logins"
+      title="Logins that don't go through Argus"
       icon={IconTerminal2}
       description="What happens when someone runs ssh, scp or sftp straight to a server instead of opening it here."
       badge={value !== null && saved !== null && value !== saved

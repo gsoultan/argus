@@ -12,6 +12,8 @@ import type {
   FleetStats,
   GatewayPolicy,
   Session,
+  Team,
+  TeamAssignment,
   User,
 } from '~/types/domain'
 
@@ -605,6 +607,71 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
   return parsed
 }
 
+/* ── Teams ──────────────────────────────────────────────────────────────── */
+
+export async function teams(): Promise<Team[]> {
+  return get<Team[]>('/api/v1/teams')
+}
+
+export async function createTeam(name: string, members: string[]): Promise<Team> {
+  return post<Team>('/api/v1/teams', { name, members })
+}
+
+export async function renameTeam(id: string, name: string): Promise<Team> {
+  return send<Team>('PATCH', `/api/v1/teams/${encodeURIComponent(id)}`, { name })
+}
+
+export async function deleteTeam(id: string): Promise<void> {
+  await send('DELETE', `/api/v1/teams/${encodeURIComponent(id)}`)
+}
+
+export async function addTeamMember(id: string, email: string): Promise<Team> {
+  return send<Team>('PUT', `/api/v1/teams/${encodeURIComponent(id)}/members`, { email })
+}
+
+export async function removeTeamMember(id: string, email: string): Promise<Team> {
+  return send<Team>(
+    'DELETE',
+    `/api/v1/teams/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`,
+  )
+}
+
+export async function assetTeamAssignments(id: string): Promise<TeamAssignment[]> {
+  if (!isConfigured()) return []
+  return get<TeamAssignment[]>(`/api/v1/assets/${encodeURIComponent(id)}/team-assignments`)
+}
+
+/** Gives a team a server. An empty principal list takes it away. */
+export async function setAssetTeamAssignment(
+  id: string,
+  teamId: string,
+  principals: string[],
+): Promise<TeamAssignment[]> {
+  return send<TeamAssignment[]>(
+    'PUT',
+    `/api/v1/assets/${encodeURIComponent(id)}/team-assignments`,
+    { teamId, principals },
+  )
+}
+
+export async function removeAssetTeamAssignment(id: string, teamId: string): Promise<void> {
+  await send(
+    'DELETE',
+    `/api/v1/assets/${encodeURIComponent(id)}/team-assignments/${encodeURIComponent(teamId)}`,
+  )
+}
+
+/**
+ * The one line an administrator pastes on a new Linux server. The script it
+ * fetches installs the agent, links it and hooks sshd, in that order.
+ */
+export function installOneLiner(t: EnrollToken, version: string): string {
+  const base = fleetURL()
+  const q = new URLSearchParams({ token: t.token, version, url: base })
+  const pin = t.curlPin ? `-k --pinnedpubkey '${t.curlPin}' ` : ''
+  return `curl -fsSL ${pin}'${base}/api/v1/install/agent.sh?${q.toString()}' | sudo sh`
+}
+
 /** Approves or denies a direct SSH login held for approval. */
 export async function decideDirectLogin(id: string, approve: boolean, note: string): Promise<DirectLogin> {
   return post<DirectLogin>(`/api/v1/direct-logins/${encodeURIComponent(id)}/decision`, { approve, note })
@@ -619,6 +686,8 @@ export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Pro
 export interface EnrolGrant {
   principals: string[]
   people: string[]
+  /** Team ids. Everyone in each team gets the same accounts. */
+  teams?: string[]
 }
 
 /**
@@ -644,6 +713,8 @@ export interface EnrollToken {
   expiresAt: string
   /** sha256 pin of the control plane's key; absent behind a TLS proxy. */
   pin?: string
+  /** The same pin in curl's --pinnedpubkey form. */
+  curlPin?: string
 }
 
 /** Makes an enrollment token. Admin or owner; audited by the control plane. */
@@ -883,6 +954,11 @@ export async function createAccount(input: {
   password: string
 }): Promise<{ email: string; role: string }> {
   return post('/api/v1/users', input)
+}
+
+/** Changes someone's role. Not your own; only an owner makes an owner. */
+export async function setAccountRole(email: string, role: string): Promise<{ email: string; role: string }> {
+  return send('PUT', `/api/v1/users/${encodeURIComponent(email)}/role`, { role })
 }
 
 export async function setAccountDisabled(email: string, disabled: boolean): Promise<{ email: string }> {

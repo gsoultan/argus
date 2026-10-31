@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ActivityRouteImport } from './routes/activity'
+import { Route as ApprovalsRouteImport } from './routes/approvals'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as CoverageRouteImport } from './routes/coverage'
@@ -17,6 +19,7 @@ import { Route as MineRouteImport } from './routes/mine'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
@@ -27,6 +30,16 @@ import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessio
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ActivityRoute = ActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApprovalsRoute = ApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuditRoute = AuditRouteImport.update({
@@ -64,6 +77,11 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TeamsRoute = TeamsRouteImport.update({
+  id: '/teams',
+  path: '/teams',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -97,6 +115,8 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
+  '/approvals': typeof ApprovalsRoute
   '/audit': typeof AuditRoute
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
@@ -104,6 +124,7 @@ export interface FileRoutesByFullPath {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -113,6 +134,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
+  '/approvals': typeof ApprovalsRoute
   '/audit': typeof AuditRoute
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
@@ -120,6 +143,7 @@ export interface FileRoutesByTo {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -130,6 +154,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
+  '/approvals': typeof ApprovalsRoute
   '/audit': typeof AuditRoute
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
@@ -137,6 +163,7 @@ export interface FileRoutesById {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -148,6 +175,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/activity'
+    | '/approvals'
     | '/audit'
     | '/connect'
     | '/coverage'
@@ -155,6 +184,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/setup'
+    | '/teams'
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
@@ -164,6 +194,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/activity'
+    | '/approvals'
     | '/audit'
     | '/connect'
     | '/coverage'
@@ -171,6 +203,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/setup'
+    | '/teams'
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
@@ -180,6 +213,8 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/activity'
+    | '/approvals'
     | '/audit'
     | '/connect'
     | '/coverage'
@@ -187,6 +222,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/setup'
+    | '/teams'
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
@@ -197,6 +233,8 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ActivityRoute: typeof ActivityRoute
+  ApprovalsRoute: typeof ApprovalsRoute
   AuditRoute: typeof AuditRoute
   ConnectRoute: typeof ConnectRoute
   CoverageRoute: typeof CoverageRoute
@@ -204,6 +242,7 @@ export interface RootRouteChildren {
   RequestsRoute: typeof RequestsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
+  TeamsRoute: typeof TeamsRoute
   UsersRoute: typeof UsersRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
@@ -219,6 +258,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/activity': {
+      id: '/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof ActivityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/approvals': {
+      id: '/approvals'
+      path: '/approvals'
+      fullPath: '/approvals'
+      preLoaderRoute: typeof ApprovalsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/audit': {
@@ -270,6 +323,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/teams': {
+      id: '/teams'
+      path: '/teams'
+      fullPath: '/teams'
+      preLoaderRoute: typeof TeamsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/users': {
       id: '/users'
       path: '/users'
@@ -317,6 +377,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ActivityRoute: ActivityRoute,
+  ApprovalsRoute: ApprovalsRoute,
   AuditRoute: AuditRoute,
   ConnectRoute: ConnectRoute,
   CoverageRoute: CoverageRoute,
@@ -324,6 +386,7 @@ const rootRouteChildren: RootRouteChildren = {
   RequestsRoute: RequestsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
+  TeamsRoute: TeamsRoute,
   UsersRoute: UsersRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,

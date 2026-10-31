@@ -129,3 +129,76 @@ func (a *API) postAccountDisabled(disabled bool) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]string{"email": email})
 	}
 }
+
+// putAccountRole changes someone's role from the People page.
+//
+// Nobody changes their own: an administrator who could would need no one's
+// agreement to become an owner, and one who demoted themselves by mistake
+// could not undo it. Only an owner makes or unmakes an owner.
+func (a *API) putAccountRole(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if sess.Role != "admin" && sess.Role != "owner" {
+		writeErr(w, http.StatusForbidden, "changing a role requires the admin or owner role")
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	email := normaliseEmail(r.PathValue("email"))
+	if strings.EqualFold(email, sess.Email) {
+		writeErr(w, http.StatusBadRequest, "you cannot change your own role; ask another administrator")
+		return
+	}
+	switch in.Role {
+	case "admin", "approver", "operator", "auditor", "owner":
+	default:
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown role %q", in.Role))
+		return
+	}
+	acct, err := a.store.Account(r.Context(), email)
+	if errors.Is(err, ErrNoAccount) {
+		writeErr(w, http.StatusNotFound, "no account for "+email)
+		return
+	}
+	if err != nil {
+		a.fail(w, "look up account", err)
+		return
+	}
+	if (in.Role == "owner" || acct.Role == "owner") && sess.Role != "owner" {
+		writeErr(w, http.StatusForbidden, "only an owner can make or change an owner")
+		return
+	}
+	before, err := a.store.SetAccountRole(r.Context(), email, in.Role)
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrAlreadyInState):
+		writeJSON(w, http.StatusOK, map[string]string{"email": email, "role": in.Role})
+		return
+	case errors.Is(err, ErrLastAdmin):
+		writeErr(w, http.StatusConflict,
+			"refusing: "+err.Error()+". Give another account the admin or owner role first.")
+		return
+	case errors.Is(err, ErrNoAccount):
+		writeErr(w, http.StatusNotFound, "no account for "+email)
+		return
+	default:
+		a.fail(w, "change role", err)
+		return
+	}
+	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action: "account.role_changed", Severity: "notice", ActorEmail: sess.Email,
+		Target: email,
+		Detail: fmt.Sprintf("Role of %s changed from %s to %s from the console.", email, before, in.Role),
+	}); err != nil {
+		a.log.Error("audit append failed", "error", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"email": email, "role": in.Role})
+}

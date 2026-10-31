@@ -1,21 +1,24 @@
 import { Suspense, lazy, useState } from 'react'
-import { Alert, Badge, Box, Button, Card, Grid, Group, Select, Stack, Table, Text } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Grid, Group, Modal, Select, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconHistory, IconPencil, IconPlugConnected,
-  IconServer2, IconUsers,
+  IconAlertTriangle, IconHistory, IconPencil, IconPlugConnected, IconRouteOff,
+  IconServer2, IconTrash, IconUsers,
 } from '@tabler/icons-react'
+import { useDisclosure } from '@mantine/hooks'
+import { WhoCanConnect } from '~/components/WhoCanConnect'
+import { ReachBadge, reachOf } from '~/components/myservers'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { run } from '~/lib/notify'
 import {
-  ArtefactPending, Digest, Field, FidelityBadge, HealthDot,
+  ArtefactPending, Digest, Field, FidelityBadge,
   HostKeyBadge, Mono, SessionDuration, SessionStateBadge, absTime, relTime, rowNav,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
-  assetQuery, assignmentsQuery, meQuery, policyQuery, sessionsQuery, usePinHostKey,
+  assetQuery, meQuery, policyQuery, sessionsQuery, useArchiveAsset, usePinHostKey,
   useSetAssetDirectSsh,
 } from '~/lib/queries'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
@@ -26,9 +29,6 @@ import { isElevatedAccount } from '~/lib/roles'
 /** Opened only by an administrator, so their chunks are fetched only for one. */
 const AssetForm = lazy(() =>
   import('~/components/AssetForm').then((m) => ({ default: m.AssetForm })),
-)
-const AssetAssignments = lazy(() =>
-  import('~/components/AssetAssignments').then((m) => ({ default: m.AssetAssignments })),
 )
 
 export const Route = createFileRoute('/assets/$assetId')({
@@ -47,9 +47,7 @@ function AssetDetail() {
   const pin = usePinHostKey()
 
   const canEdit = me?.role === 'admin' || me?.role === 'owner'
-  const canSeeAssignments = canEdit || me?.role === 'auditor'
   const [editing, setEditing] = useState(false)
-  const [assigning, setAssigning] = useState(false)
 
   if (!asset) {
     return (
@@ -91,27 +89,28 @@ function AssetDetail() {
           { label: asset.hostname.split('.')[0] ?? asset.hostname },
         ]}
         title={asset.hostname}
-        status={<HealthDot health={asset.health} />}
-        description={`${asset.os} · ${asset.address}:${asset.port}`}
+        status={<ReachBadge reach={reachOf(asset)} />}
+        description={`${asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')} · ${asset.address}`}
         actions={
           <Group gap={SP.cozy}>
-            <ButtonLink
-              to="/connect"
-              search={{ host: asset.hostname, as: asset.principals[0], open: true }}
-              leftSection={<IconPlugConnected size={14} />}
-              disabled={asset.principals.length === 0}
-            >
-              Connect
-            </ButtonLink>
             {canEdit && (
               <Button
                 variant="default"
-                leftSection={<IconPencil size={14} />}
+                leftSection={<IconPencil size={16} />}
                 onClick={() => setEditing(true)}
               >
                 Edit
               </Button>
             )}
+            <ButtonLink
+              size="md"
+              to="/connect"
+              search={{ host: asset.hostname }}
+              leftSection={<IconPlugConnected size={18} />}
+              disabled={asset.principals.length === 0}
+            >
+              Connect
+            </ButtonLink>
           </Group>
         }
       />
@@ -155,41 +154,24 @@ function AssetDetail() {
         <Grid gap="sm">
           <Grid.Col span={{ base: 12, md: 5 }}>
             <Stack gap="sm">
-              <SectionCard
-                title="Who can connect"
-                icon={IconUsers}
-                action={
-                  canSeeAssignments && (
-                    <Button size="compact-xs" variant="light" onClick={() => setAssigning(true)}>
-                      {canEdit ? 'Change' : 'View'}
-                    </Button>
-                  )
-                }
-              >
+              <SectionCard title="Who can connect" icon={IconUsers}>
                 <Stack gap="sm">
-                  {asset.principals.length === 0 ? (
-                    <Alert color="amber" variant="light">
-                      <Text size={FS.meta} lh={1.5}>
-                        Nobody can log in yet: this server has no login accounts.
-                        {canEdit && ' Click Edit and add the account you log in with.'}
-                      </Text>
-                    </Alert>
-                  ) : (
-                    <Text size={FS.meta} c="dimmed" lh={1.5}>
-                      Admins can always connect. Anyone else needs to be added here.
-                    </Text>
-                  )}
-                  {canSeeAssignments && <WhoCanConnect assetId={asset.id} />}
-                  <Field label="Login accounts">
+                  <WhoCanConnect asset={asset} canEdit={canEdit} />
+                  <Field label="Login accounts on this server">
                     <Group gap={SP.snug}>
-                      {asset.principals.length === 0 && <Text size="xs" c="dimmed">None yet</Text>}
+                      {asset.principals.length === 0 && (
+                        <Text size="xs" c="dimmed">
+                          None yet.{canEdit && ' Press Edit and add the account you log in with.'}
+                        </Text>
+                      )}
                       {asset.principals.map((p) => (
                         <Badge
                           key={p}
-                          size="xs"
+                          size="sm"
                           color={isElevatedAccount(p) ? 'rose' : 'slate'}
                           variant={isElevatedAccount(p) ? 'light' : 'outline'}
                           tt="none"
+                          ff="monospace"
                         >
                           {p}
                         </Badge>
@@ -199,8 +181,10 @@ function AssetDetail() {
                 </Stack>
               </SectionCard>
 
+              <DirectSshCard asset={asset} canEdit={canEdit} />
+
               <SectionCard
-                title="Identity"
+                title="Server details"
                 icon={IconServer2}
                 badge={
                   <Badge size="xs" variant="light" color="slate" tt="capitalize">
@@ -237,7 +221,7 @@ function AssetDetail() {
                 </Stack>
               </SectionCard>
 
-              <DirectSshCard asset={asset} canEdit={canEdit} />
+              {canEdit && <RemoveServer asset={asset} />}
             </Stack>
           </Grid.Col>
 
@@ -328,41 +312,8 @@ function AssetDetail() {
         {editing && canEdit && (
           <AssetForm opened={editing} onClose={() => setEditing(false)} asset={asset} />
         )}
-        {assigning && canSeeAssignments && (
-          <AssetAssignments
-            asset={asset}
-            opened={assigning}
-            onClose={() => setAssigning(false)}
-            canEdit={Boolean(canEdit)}
-          />
-        )}
       </Suspense>
     </Box>
-  )
-}
-
-/**
- * The people given this server, by name, on the page itself.
- *
- * They used to be behind a button in the header, and the page's own access
- * section talked about credential modes and vaults, so an admin looking at a
- * server could not see who could reach it.
- */
-function WhoCanConnect({ assetId }: { assetId: string }) {
-  const { data: assignments } = useQuery(assignmentsQuery(assetId))
-  if (!assignments) return null
-  if (assignments.length === 0) {
-    return <Text size="xs" c="dimmed">No teammates added yet.</Text>
-  }
-  return (
-    <Stack gap={SP.tight}>
-      {assignments.map((g) => (
-        <Group key={g.userEmail} gap="xs" justify="space-between" wrap="nowrap">
-          <Text size="sm" truncate>{g.userEmail}</Text>
-          <Text size="xs" c="dimmed" ff="monospace">as {g.principals.join(', ')}</Text>
-        </Group>
-      ))}
-    </Stack>
   )
 }
 
@@ -400,13 +351,13 @@ function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
 
   return (
     <SectionCard
-      title="Connect"
-      icon={IconPlugConnected}
-      description="Terminals and file transfers to this server open from Connect, through its agent."
+      title="Logins that don't go through Argus"
+      icon={IconRouteOff}
+      description="Someone with a key or password can still reach the server with ssh, scp or sftp. Pick what happens then."
     >
       <Stack gap="sm">
         <Select
-          label="Direct ssh, scp and sftp"
+          label="When someone logs in directly"
           size="xs"
           allowDeselect={false}
           disabled={!canEdit || setMode.isPending}
@@ -429,5 +380,51 @@ function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
         </Text>
       </Stack>
     </SectionCard>
+  )
+}
+
+/**
+ * Takes a server out of Argus. Its recordings and its activity stay; nobody
+ * can connect to it from here any more.
+ */
+function RemoveServer({ asset }: { asset: Asset }) {
+  const navigate = useNavigate()
+  const archive = useArchiveAsset()
+  const [open, modal] = useDisclosure(false)
+  return (
+    <Card>
+      <Group justify="space-between" wrap="nowrap" gap="md">
+        <Box>
+          <Text size="sm" fw={600}>Remove server</Text>
+          <Text size={FS.meta} c="dimmed">
+            Nobody can connect to it from Argus any more. Its recordings and activity are kept.
+          </Text>
+        </Box>
+        <Button variant="light" color="rose" leftSection={<IconTrash size={16} />} onClick={modal.open}>
+          Remove
+        </Button>
+      </Group>
+      <Modal opened={open} onClose={modal.close} title={`Remove ${asset.hostname}?`}>
+        <Text size="sm" mb="md">
+          Everyone loses access to it from Argus, right away. The agent on the server keeps running
+          until you uninstall it there.
+        </Text>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={modal.close}>Keep it</Button>
+          <Button
+            color="rose"
+            loading={archive.isPending}
+            onClick={() =>
+              void run(() => archive.mutateAsync(asset.id), {
+                failure: 'Server not removed',
+                success: ['Server removed', `${asset.hostname} is no longer in Argus.`],
+              }).then((ok) => { if (ok) void navigate({ to: '/assets' }) })
+            }
+          >
+            Remove server
+          </Button>
+        </Group>
+      </Modal>
+    </Card>
   )
 }

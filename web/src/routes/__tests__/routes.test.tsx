@@ -13,56 +13,48 @@ import { assets, sessions } from '~/lib/seed'
  */
 
 const ROUTES: Array<[path: string, heading: string]> = [
-  ['/', 'Overview'],
-  ['/sessions', 'Sessions'],
   ['/assets', 'Servers'],
-  ['/assets/add', 'Add a server'],
-  ['/requests', 'Access requests'],
-  ['/audit', 'Audit log'],
-  ['/users', 'Users & roles'],
+  ['/assets/add', 'Add server'],
+  ['/approvals', 'Approvals'],
+  ['/teams', 'Teams'],
+  ['/activity', 'Activity'],
+  ['/sessions', 'Activity'],
+  ['/audit', 'Activity'],
   ['/settings', 'Settings'],
-  ['/coverage', 'Coverage'],
   ['/connect', 'Connect'],
-  // The old address of My servers, now part of Servers.
+  // Old addresses, kept so a bookmark lands somewhere sensible.
+  ['/', 'Servers'],
   ['/mine', 'Servers'],
+  ['/coverage', 'Servers'],
+  ['/requests', 'Approvals'],
+  ['/users', 'Teams'],
 ]
 
 describe('every route mounts', () => {
   it.each(ROUTES)('%s renders "%s"', async (path, heading) => {
     await renderRoute(path)
-    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
-  })
-})
-
-describe('overview', () => {
-  it('shows fleet counters once the fixture resolves', async () => {
-    await renderRoute('/')
-    // Twice: the counter, and the table of them further down.
-    expect((await screen.findAllByText('Live sessions')).length).toBeGreaterThan(0)
-    expect(screen.getByText('Pending approvals')).toBeInTheDocument()
-    expect(screen.getByText('Unverified hosts')).toBeInTheDocument()
-    // The coverage gap leads the page: an unmonitored host is a session nobody
-    // will ever hear about, which outranks one you can see and fix.
-    expect(screen.getByText('Bypassed Argus')).toBeInTheDocument()
-  })
+    // The redirecting addresses load a second route first, which on a busy
+    // machine takes longer than findBy's default second.
+    expect(await screen.findByRole('heading', { name: heading }, { timeout: 5_000 })).toBeInTheDocument()
+  }, 15_000)
 })
 
 describe('sessions', () => {
   it('renders rows that are reachable by keyboard', async () => {
     const { container } = await renderRoute('/sessions')
-    await screen.findByRole('heading', { name: 'Sessions' })
+    await screen.findByRole('heading', { name: 'Activity' }, { timeout: 5_000 })
 
     const rows = await waitFor(() => {
       const found = container.querySelectorAll('tbody tr[role="link"]')
       expect(found.length).toBeGreaterThan(0)
       return found
-    })
+    }, { timeout: 5_000 })
     // The page copy tells the user to click a row. It said so for a while
     // before any row had a handler.
     for (const row of rows) {
       expect(row).toHaveAttribute('tabindex', '0')
     }
-  })
+  }, 15_000)
 
   it('filters by the search box', async () => {
     await renderRoute('/sessions')
@@ -94,9 +86,10 @@ describe('settings', () => {
     expect(screen.getAllByText('unsaved')).toHaveLength(2)
   })
 
-  it('opens on how people connect', async () => {
+  it('opens on logins', async () => {
     await renderRoute('/settings')
     expect(await screen.findByText('Through the console')).toBeInTheDocument()
+    expect(screen.getByText("Logins that don't go through Argus")).toBeInTheDocument()
     // Direct SSH logins start refused, and opening them up is a change to
     // review, not one that applies as the radio moves.
     expect(screen.getByRole('radio', { name: /^refuse/i })).toBeChecked()
@@ -117,7 +110,7 @@ describe('settings', () => {
     await screen.findByRole('switch', { name: EBPF })
     expect(screen.queryByText('Threat model, stated plainly')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /^hosts and trust/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^server agents/i }))
     expect(await screen.findByText('Threat model, stated plainly')).toBeInTheDocument()
     expect(screen.queryByRole('switch', { name: EBPF })).not.toBeInTheDocument()
   })
@@ -144,20 +137,20 @@ describe('settings', () => {
 
 describe('assets', () => {
   it('filters to nothing when the search matches no host', async () => {
-    await renderRoute('/assets?view=manage')
-    const search = await screen.findByPlaceholderText(/filter by hostname/i)
+    await renderRoute('/assets')
+    const search = await screen.findByRole('textbox', { name: 'Find a server' })
     fireEvent.change(search, { target: { value: 'zzz-not-a-host' } })
-    expect(await screen.findByText('No servers match.')).toBeInTheDocument()
+    expect(await screen.findByText('No server matches.')).toBeInTheDocument()
   })
 })
 
-describe('users', () => {
-  it('states where roles are actually changed', async () => {
-    await renderRoute('/users')
-    // The page cannot change a role and no longer implies it can.
-    expect(
-      await screen.findByText(/Roles are set on the host with/i),
-    ).toBeInTheDocument()
+describe('people', () => {
+  // Roles change on the page now. It used to send an administrator to a shell
+  // on the control plane host.
+  it('changes a role from the list, not from a command line', async () => {
+    await renderRoute('/teams?tab=people')
+    expect((await screen.findAllByLabelText(/^Role of /)).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/argus-control users/)).not.toBeInTheDocument()
   })
 })
 
@@ -170,64 +163,30 @@ describe('unknown routes', () => {
 })
 
 /**
- * The console's information architecture.
- *
- * Nine flat destinations were grouped into three sections without changing a
- * single path, so these assert the grouping exists and that the links inside it
- * still point where they always did.
+ * The console's menu: five words across the top for an administrator, and
+ * one of them lit for the page you are on.
  */
 describe('navigation', () => {
-  // "Connect to a server", "My servers" and "Servers" were three ways to the
-  // same machines, and people asked which was which. Now there is one.
   it('has one entry for servers, and no separate Connect', async () => {
-    await renderRoute('/')
-    const nav = await screen.findByRole('navigation')
+    await renderRoute('/assets')
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
     const servers = await within(nav).findByRole('link', { name: /^Servers/ })
     expect(servers).toHaveAttribute('href', '/assets')
     expect(within(nav).queryByRole('link', { name: /connect/i })).not.toBeInTheDocument()
-    expect(within(nav).queryByRole('link', { name: /my servers/i })).not.toBeInTheDocument()
   })
 
-  it('opens Servers on the cards to connect from, with the inventory one switch away', async () => {
-    await renderRoute('/assets')
-    expect(await screen.findByRole('textbox', { name: 'Find a server' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('radio', { name: /manage/i }))
-    expect(await screen.findByPlaceholderText(/filter by hostname/i)).toBeInTheDocument()
-  })
-
-  // A link from Coverage or the Overview carries a filter, and must land on
-  // the table it narrows rather than on the cards.
-  it('opens the inventory by itself for a filtered link', async () => {
-    await renderRoute('/assets?bypass=open')
-    expect(await screen.findByPlaceholderText(/filter by hostname/i)).toBeInTheDocument()
-  })
-
-  /**
-   * Admin pages are a minority of visits. Folded, they stop competing with the
-   * four everyday ones, but they must open by themselves on one of their own
-   * pages, or a deep link to the audit log would land with no menu item lit.
-   */
-  it('keeps admin pages folded until they are wanted', async () => {
-    await renderRoute('/')
-    const nav = await screen.findByRole('navigation')
-    expect(within(nav).queryByRole('link', { name: /audit log/i })).not.toBeInTheDocument()
-    fireEvent.click(within(nav).getByRole('button', { name: /admin/i }))
-    expect(within(nav).getByRole('link', { name: /audit log/i })).toBeInTheDocument()
-  })
-
-  it('opens the admin section by itself on one of its pages', async () => {
+  it('puts the audit log under Activity', async () => {
     await renderRoute('/audit')
-    const nav = await screen.findByRole('navigation')
-    expect(await within(nav).findByRole('link', { name: /audit log/i })).toHaveAttribute('data-active')
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
+    expect(await within(nav).findByRole('link', { name: /^Activity/ })).toHaveAttribute('data-active')
+    expect(screen.getByRole('tab', { name: /audit log/i })).toHaveAttribute('aria-selected', 'true')
   })
 
   /** Adding a server is part of Servers, so Servers stays lit while doing it. */
   it('lights exactly one item, and Servers while adding one', async () => {
     await renderRoute('/assets/add')
-    await screen.findByRole('heading', { name: 'Add a server' })
-    const nav = screen.getByRole('navigation')
-    // Servers is an administrator's entry, so it appears once the identity
-    // lookup says this is one.
+    await screen.findByRole('heading', { name: 'Add server' })
+    const nav = screen.getByRole('navigation', { name: 'Main' })
     await within(nav).findByRole('link', { name: /^Servers/ })
     const current = within(nav)
       .getAllByRole('link')
@@ -238,10 +197,11 @@ describe('navigation', () => {
 })
 
 describe('add a server', () => {
-  it('gives the install commands, then an enroll command', async () => {
+  it('asks for a name first, then shows one line to paste', async () => {
     await renderRoute('/assets/add')
-    expect(await screen.findByText(/sudo dpkg -i argus-agent_/)).toBeInTheDocument()
-    expect(screen.getByText(/sudo argus-agent enroll/)).toBeInTheDocument()
+    fireEvent.change(await screen.findByRole('textbox', { name: /name/i }), { target: { value: 'web-01' } })
+    fireEvent.click(screen.getByRole('button', { name: /next: install/i }))
+    expect(await screen.findByText(/curl -fsSL .*\/api\/v1\/install\/agent\.sh.*\| sudo sh/)).toBeInTheDocument()
   })
 
   /**
@@ -251,40 +211,28 @@ describe('add a server', () => {
    */
   it('never asks for the shared reporter token', async () => {
     await renderRoute('/assets/add')
-    await screen.findByText(/sudo argus-agent enroll/)
+    fireEvent.click(await screen.findByRole('button', { name: /next: install/i }))
+    await screen.findByText(/install\/agent\.sh/)
     expect(document.body.textContent).not.toMatch(/REPORTER[-_]TOKEN|--control-token/)
   })
 
-  /** With no control plane there is nothing to mint a token on, and it says so. */
-  it('does not offer a token it cannot make', async () => {
+  it('gives Windows its own block, for PowerShell', async () => {
     await renderRoute('/assets/add')
-    expect(await screen.findByText(/cannot make\s+an enrollment token/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /make a token/i })).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByText('Windows'))
+    fireEvent.click(screen.getByRole('button', { name: /next: install/i }))
+    expect(await screen.findByText(/argus-agent\.exe" service install/)).toBeInTheDocument()
   })
 
   /**
-   * The waiting list is the one part of this page that could be faked to look
-   * finished. With no control plane nothing can check in, and it says so rather
-   * than listing sample servers as if their agents had reported.
+   * Waiting is the one part of this page that could be faked to look finished.
+   * With no control plane nothing can check in, and it says so rather than
+   * moving on as if an agent had reported.
    */
-  it('shows no servers waiting when there is no control plane to report to', async () => {
+  it('does not pretend a server arrived when there is nothing to report to', async () => {
     await renderRoute('/assets/add')
-    expect(await screen.findByText(/no agent can\s+check in to it/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
-  })
-})
-
-describe('overview alerts', () => {
-  /**
-   * This button said "Review coverage" and navigated to /assets — the inventory
-   * table, which lists hosts and answers nothing about whether an agent is
-   * reporting from each one. The alert it sits in is specifically about hosts
-   * that would not record a bypass, which is the Coverage page's whole subject.
-   */
-  it('sends a coverage gap to Coverage rather than to the inventory', async () => {
-    await renderRoute('/')
-    const link = await screen.findByRole('link', { name: /review coverage/i })
-    expect(link).toHaveAttribute('href', '/coverage')
+    fireEvent.click(await screen.findByRole('button', { name: /next: install/i }))
+    expect(await screen.findByText(/no agent can check in to sample data/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /who can use it/i })).not.toBeInTheDocument()
   })
 })
 
@@ -333,57 +281,15 @@ describe('sessions by server', () => {
 
 describe('command palette', () => {
   it('opens on the keyboard and reaches a host by name from any page', async () => {
-    await renderRoute('/')
+    await renderRoute('/assets')
     fireEvent.keyDown(document, { key: 'k', metaKey: true })
 
     const input = await screen.findByPlaceholderText(/search pages, hosts/i)
     fireEvent.change(input, { target: { value: 'db-01' } })
 
-    // Within the palette: the Overview's own server picker lists the same name.
+    // Within the palette: the Servers page lists the same name.
     const palette = await screen.findByRole('dialog')
     expect(await within(palette).findByText('db-01.data.northwind.id')).toBeInTheDocument()
-  })
-})
-
-/**
- * Assets and Coverage answer different questions about the same fleet, and
- * deliberately stayed separate pages: the inventory lists what Argus manages,
- * so a machine nobody enrolled is invisible there by construction, which is
- * exactly what Coverage is for.
- *
- * What they lacked was a way to get from one to the other. Coverage counted
- * hosts with no agent and could not say which ones; the inventory had no agent
- * filter to be pointed at. These cover the join.
- */
-describe('assets and coverage', () => {
-  it('filters the inventory from the URL, so a finding can be linked to', async () => {
-    await renderRoute('/assets?agent=stale')
-    await screen.findByRole('heading', { name: 'Servers' })
-
-    // Every row the filter admits says the agent went quiet. The badge reads
-    // "silent" -- the word the operator sees for a stale agent.
-    const badges = await screen.findAllByText('silent')
-    expect(badges.length).toBeGreaterThan(0)
-    expect(screen.queryByText('no agent')).not.toBeInTheDocument()
-  })
-
-  it('drops a filter value the controls cannot show', async () => {
-    // A hand-edited URL must not put the table into a state with no visible
-    // cause -- rows filtered by something none of the selects can display.
-    await renderRoute('/assets?view=manage&agent=not-a-state')
-    await screen.findByRole('heading', { name: 'Servers' })
-    expect(await screen.findAllByText('no agent')).not.toHaveLength(0)
-  })
-
-  it('says on the inventory that it is not the whole fleet', async () => {
-    await renderRoute('/assets?view=manage')
-    // Scoped to the page header: the sidebar links to Coverage from every page,
-    // and what is under test is that this page points at it too.
-    const heading = await screen.findByRole('heading', { name: 'Servers' })
-    const header = heading.closest('.argus-pagehead')
-    expect(header).not.toBeNull()
-    const link = within(header as HTMLElement).getByRole('link', { name: /coverage/i })
-    expect(link).toHaveAttribute('href', '/coverage')
   })
 })
 
@@ -401,8 +307,8 @@ describe('the header says which data is on screen', () => {
    * showing a real fleet.
    */
   it('names the fixture as the fixture when no control plane is configured', async () => {
-    await renderRoute('/')
-    expect(await screen.findByText('Local fixture')).toBeInTheDocument()
+    await renderRoute('/assets')
+    expect(await screen.findByText('Sample data')).toBeInTheDocument()
     expect(screen.queryByText(/northwind-prod/)).not.toBeInTheDocument()
   })
 
@@ -416,8 +322,8 @@ describe('the header says which data is on screen', () => {
    * test in this file.
    */
   it('does not cry fallback when there is no control plane to have lost', async () => {
-    await renderRoute('/')
-    await screen.findByText('Local fixture')
+    await renderRoute('/assets')
+    await screen.findByText('Sample data')
     expect(screen.queryByText(/nothing below is your fleet/)).not.toBeInTheDocument()
   })
 })

@@ -62,7 +62,7 @@ async function renderApp() {
   await router.load()
 
   return render(
-    <MantineProvider theme={theme} defaultColorScheme="dark" forceColorScheme="dark">
+    <MantineProvider theme={theme} defaultColorScheme="light" forceColorScheme="light">
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router as never} />
       </QueryClientProvider>

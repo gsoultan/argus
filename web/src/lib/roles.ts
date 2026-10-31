@@ -46,3 +46,13 @@ export function canSee(role: UserRole | undefined, audience: Audience | undefine
 export function isElevatedAccount(name: string): boolean {
   return ['root', 'admin', 'administrator'].includes(name.toLowerCase())
 }
+
+/**
+ * The role in the words the console uses. The control plane's names stay as
+ * they are; an operator is a Member and an auditor a Viewer on screen.
+ */
+export function roleLabel(role: UserRole): string {
+  return {
+    owner: 'Owner', admin: 'Admin', approver: 'Approver', operator: 'Member', auditor: 'Viewer',
+  }[role]
+}

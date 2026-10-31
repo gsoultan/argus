@@ -36,8 +36,8 @@ const SHIPPED = 'http://localhost:5510'
 const REFERENCE = 'http://localhost:5512'
 
 const ROUTES = [
-  '/', '/sessions', '/assets', '/assets?view=manage', '/requests', '/audit', '/users',
-  '/settings', '/connect', '/coverage',
+  '/assets', '/assets/add', '/sessions', '/approvals', '/audit', '/teams', '/teams?tab=people',
+  '/settings', '/connect',
 ]
 
 /**
@@ -51,10 +51,12 @@ const ROUTES = [
  * The id is resolved against the shipped build and then used verbatim against
  * both, so the two are never compared at different records.
  */
-const DETAIL_ROUTES: Array<[label: string, listPath: string]> = [
-  ['a session detail', '/sessions'],
-  // The rows are on the Manage view; Servers opens on cards.
-  ['an asset detail', '/assets?view=manage'],
+const DETAIL_ROUTES: Array<[label: string, listPath: string, opener: string]> = [
+  // rowNav makes the row a keyboard-reachable link without an href, so the
+  // path has to come from following it rather than from reading one.
+  ['a session detail', '/sessions', 'tbody tr[role="link"]'],
+  // Servers is cards; an admin's card links to the server's page.
+  ['an asset detail', '/assets', 'a[aria-label^="Manage "]'],
 ]
 
 /**
@@ -176,13 +178,11 @@ for (const route of ROUTES) {
   })
 }
 
-for (const [label, listPath] of DETAIL_ROUTES) {
+for (const [label, listPath, opener] of DETAIL_ROUTES) {
   test(`${label} computes the same styles as Mantine's own stylesheet order`, async ({ page }) => {
     await page.goto(SHIPPED + listPath)
     await page.waitForLoadState('networkidle')
-    // rowNav makes the row a keyboard-reachable link without an href, so the
-    // path has to come from following it rather than from reading one.
-    await page.locator('tbody tr[role="link"]').first().click()
+    await page.locator(opener).first().click()
     await page.waitForURL(/\/(sessions|assets)\/[^/]+$/)
 
     await expectSameCascade(page, new URL(page.url()).pathname)

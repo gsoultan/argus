@@ -31,14 +31,18 @@ const BUDGET_KB = {
    * above the router on a fresh install. 9.5 kB, of which Grid and
    * SegmentedControl, which the shell did not load before, are 4.6 kB. Lazy
    * measured 258.0 kB and split the shared components into 11 more files.
+   *
+   * 264.6 kB with the redesign: the top menu's count badges and account menu
+   * replaced the sidebar, and `/` now lands on Servers rather than Overview.
    */
-  overview: 263,
+  overview: 266,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
    * likely to grow quietly, because everything about a session lands on it.
+   * 370.6 kB with the redesign, which the new shell accounts for, as above.
    */
-  sessionDetail: 370,
+  sessionDetail: 373,
 }
 
 /**

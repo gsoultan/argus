@@ -219,12 +219,22 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
+	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
+	mux.HandleFunc("GET /api/v1/assets/{id}/team-assignments", a.getTeamAssignments)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/team-assignments", a.putTeamAssignment)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}/team-assignments/{team}", a.deleteTeamAssignment)
+	mux.HandleFunc("GET /api/v1/teams", a.getTeams)
+	mux.HandleFunc("POST /api/v1/teams", a.postTeam)
+	mux.HandleFunc("PATCH /api/v1/teams/{id}", a.patchTeam)
+	mux.HandleFunc("DELETE /api/v1/teams/{id}", a.deleteTeam)
+	mux.HandleFunc("PUT /api/v1/teams/{id}/members", a.putTeamMember)
+	mux.HandleFunc("DELETE /api/v1/teams/{id}/members/{email}", a.deleteTeamMember)
 	mux.HandleFunc("GET /api/v1/sessions", a.getSessions)
 	mux.HandleFunc("GET /api/v1/sessions/{id}", a.getSession)
 	mux.HandleFunc("GET /api/v1/audit", a.user(a.getAudit))
@@ -273,6 +283,7 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	// The exchange that gives an agent its credential. Throttled like a
 	// sign-in: the token is the only thing it checks.
 	mux.HandleFunc("POST /api/v1/agents/enroll", a.limitLogin(a.postEnroll))
+	mux.HandleFunc("GET /api/v1/install/agent.sh", a.getInstallScript)
 }
 
 // securityHeaders sets the response headers a browser needs to protect the

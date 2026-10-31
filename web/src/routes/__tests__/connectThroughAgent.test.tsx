@@ -11,7 +11,7 @@ import { desktopEndpoint, terminalEndpoint } from '~/lib/live'
  * Terminals and desktops open through the server's agent and nothing else. A
  * server whose agent holds a tunnel opens through it, and the page must not
  * describe a gateway or ask for its address. A server whose agent is not
- * connected cannot be opened at all, and the page says why.
+ * connected is offline: the page says so, with nothing to press but Try again.
  */
 
 const ssh = assets.find((a) => a.protocol !== 'rdp')!
@@ -30,16 +30,16 @@ describe('opening a terminal', () => {
   it("goes through the server's agent when it is connected", async () => {
     withHost(true)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByText(/through the server's Argus agent/i)).toBeInTheDocument()
+    expect(await screen.findByText(/server.s own agent opens the\s+session/i)).toBeInTheDocument()
     expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /open terminal/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled()
   }, 15_000)
 
   it('does not open at all when the agent is not connected', async () => {
     withHost(false)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByText(/agent is not connected/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /open terminal/i })).toBeDisabled()
+    expect(await screen.findByRole('heading', { name: /is offline/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^connect$/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/through the gateway/i)).not.toBeInTheDocument()
     expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
   })
@@ -54,20 +54,19 @@ describe('opening a desktop', () => {
   it("goes through the Windows server's agent, asking for the account's password", async () => {
     withHost(true, rdp)
     await renderRoute(`/connect?host=${encodeURIComponent(rdp.hostname)}`)
-    expect(await screen.findByText(/through the server's Argus agent/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/windows password for/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /open desktop/i })).toBeEnabled()
+    expect(await screen.findByLabelText(/windows password for/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled()
     expect(screen.queryByText(/through the gateway/i)).not.toBeInTheDocument()
     expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
     // Files are the terminal's; a desktop has none to offer yet.
-    expect(screen.queryByRole('button', { name: /transfer files/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /files only/i })).not.toBeInTheDocument()
   }, 15_000)
 
   it('does not open when the agent is not connected', async () => {
     withHost(false, rdp)
     await renderRoute(`/connect?host=${encodeURIComponent(rdp.hostname)}`)
-    expect(await screen.findByText(/agent is not connected/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /open desktop/i })).toBeDisabled()
+    expect(await screen.findByRole('heading', { name: /is offline/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^connect$/i })).not.toBeInTheDocument()
   })
 })
 
@@ -75,16 +74,15 @@ describe('console-only', () => {
   it('offers file transfer through the agent, and no native client', async () => {
     withHost(true)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByRole('button', { name: /transfer files/i })).toBeEnabled()
-    expect(screen.getByText(/this console is the only way in/i)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /files only/i })).toBeEnabled()
     expect(screen.queryByText(/prefer your own client/i)).not.toBeInTheDocument()
   }, 15_000)
 
   it('does not offer file transfer without the agent', async () => {
     withHost(false)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByText(/agent is not connected/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /transfer files/i })).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /is offline/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /files only/i })).not.toBeInTheDocument()
   })
 })
 
@@ -108,7 +106,7 @@ describe('opening straight from a server card', () => {
       `/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}&open=true`,
     )
     // The control plane's answer is shown, so the request was made.
-    expect(await screen.findByText('refused for the test')).toBeInTheDocument()
+    expect(await screen.findByText(/refused for the test/)).toBeInTheDocument()
     expect(calls()).toHaveLength(1)
     expect(JSON.parse(String(calls()[0]![1]!.body))).toEqual({ target: ssh.hostname, principal })
   }, 15_000)
@@ -117,7 +115,7 @@ describe('opening straight from a server card', () => {
     withHost(true)
     const calls = ticketCalls()
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}`)
-    expect(await screen.findByRole('button', { name: /open terminal/i })).toBeEnabled()
+    expect(await screen.findByRole('button', { name: /^connect$/i })).toBeEnabled()
     expect(calls()).toHaveLength(0)
   })
 
@@ -127,7 +125,30 @@ describe('opening straight from a server card', () => {
     await renderRoute(
       `/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}&open=true`,
     )
-    expect(await screen.findByText(/agent is not connected/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /is offline/i })).toBeInTheDocument()
     expect(calls()).toHaveLength(0)
+  })
+})
+
+describe('the states around connecting', () => {
+  it('offers to ask for a server you were not given', async () => {
+    withHost(true)
+    await renderRoute('/connect?host=not-mine-01')
+    expect(await screen.findByRole('heading', { name: /can.t connect to not-mine-01/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /ask for access/i })).toHaveAttribute(
+      'href', expect.stringContaining('/approvals?ask=not-mine-01'),
+    )
+  })
+
+  it('says root needs approval, and how to ask for it', async () => {
+    vi.spyOn(api, 'me').mockResolvedValue({ ...currentUser, role: 'operator' })
+    vi.spyOn(api, 'assets').mockResolvedValue([{ ...ssh, tunnelConnected: true, principals: ['ops', 'root'] }])
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ error: 'root on this host requires an approved request' }), { status: 403 }))
+    await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}&as=root&open=true`)
+    expect(await screen.findByRole('heading', { name: /root needs approval/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /ask for root/i })).toHaveAttribute(
+      'href', expect.stringContaining('as=root'),
+    )
   })
 })

@@ -14,7 +14,7 @@ import {
 import { FS, SP } from '~/theme'
 import { meQuery, sessionsQuery } from '~/lib/queries'
 import type { Session } from '~/types/domain'
-import { guard } from '~/lib/guard'
+import { ActivityTabs } from '~/components/ActivityTabs'
 
 const FILTERS = ['all', 'active', 'silent', 'direct', 'flagged'] as const
 type Filter = (typeof FILTERS)[number]
@@ -42,8 +42,9 @@ interface SessionSearch {
   host?: string
 }
 
+// Open to everyone: the control plane sends someone who is not a fleet role
+// only their own sessions, which is what My activity is.
 export const Route = createFileRoute('/sessions/')({
-  beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
   component: Sessions,
   // In the URL rather than in component state, so "the sessions nobody is
   // reporting" is a place that can be linked to -- the Overview alert and the
@@ -139,15 +140,16 @@ function Sessions() {
   return (
     <Box>
       <PageHeader
-        title="Sessions"
+        title={wholeFleet ? 'Activity' : 'My activity'}
         description={
           wholeFleet
-            ? 'Every connection Argus knows about, live and historical. Open any row to replay it.'
-            : 'Your own sessions, live and historical. Open any row to replay it. Other people\u2019s sessions are an auditor\u2019s to review.'
+            ? 'Who connected where, live and earlier. Open any row to watch the recording.'
+            : 'Your sessions, live and earlier. Open any row to watch the recording.'
         }
       />
 
       <PageBody>
+        {wholeFleet && <ActivityTabs value="sessions" />}
         {/* Both controls narrow the same table, so they sit together directly
             above it. The segmented filter used to live in the page header's
             action slot — beside buttons that perform operations — while the
