@@ -1107,7 +1107,10 @@ export const live = {
     let res: Response
     try {
       res = await fetch(`${BASE}/api/v1/sessions/${id}/recording`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
+        // The session cookie is the credential, as for every other console
+        // call; the bearer token is the development fallback.
+        credentials: 'include',
+        headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
       })
     } catch {
       return { kind: 'unavailable', reason: 'The control plane could not be reached.' }

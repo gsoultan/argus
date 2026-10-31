@@ -51,12 +51,12 @@ func (a *API) getRDPReplay(w http.ResponseWriter, r *http.Request, actor string)
 			"recording is not in object storage; it exists only on the host that produced it")
 		return
 	}
-	if a.storage == nil {
-		writeErr(w, http.StatusServiceUnavailable, "object storage is not configured")
+	if a.recordings == nil {
+		writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
 		return
 	}
 
-	obj, err := a.storage.Get(r.Context(), *sess.RecordingKey)
+	obj, err := a.recordings.Get(r.Context(), *sess.RecordingKey)
 	if err != nil {
 		a.fail(w, "fetch recording", err)
 		return

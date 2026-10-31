@@ -139,22 +139,22 @@ describe('how long a session ran', () => {
  * plane are in that state, and every list showed the fidelity badge, the byte
  * count and a Replay button for all of them.
  */
-describe('a recording that has not reached object storage', () => {
+describe('a recording that has not reached the control plane', () => {
   it('is marked on a finished session', () => {
     ui(<ArtefactPending session={{ state: 'closed', recordingKey: null }} />)
-    expect(screen.getByLabelText('Recording not in object storage')).toBeInTheDocument()
+    expect(screen.getByLabelText('Recording not on the control plane yet')).toBeInTheDocument()
   })
 
   it('says nothing when the artefact is there', () => {
     ui(<ArtefactPending session={{ state: 'closed', recordingKey: 'recordings/x.cast' }} />)
-    expect(screen.queryByLabelText('Recording not in object storage')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Recording not on the control plane yet')).not.toBeInTheDocument()
   })
 
   // An active session's recording is still being written and has no business
   // being in storage yet, so this would be noise on every live row.
   it('says nothing about a session still running', () => {
     ui(<ArtefactPending session={{ state: 'active', recordingKey: null }} />)
-    expect(screen.queryByLabelText('Recording not in object storage')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Recording not on the control plane yet')).not.toBeInTheDocument()
   })
 })
 
