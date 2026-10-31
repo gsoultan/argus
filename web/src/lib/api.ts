@@ -90,7 +90,7 @@ const db = {
   /** assetId -> team assignments. */
   teamAssignments: new Map<string, TeamAssignment[]>(),
   /** The fixture's signed-in person's own server account. */
-  serverAccount: { loginName: currentUser.email.split('@')[0]!, sshKey: '', sshFingerprint: '' } as ServerAccount,
+  serverAccount: { loginName: currentUser.email.split('@')[0]!, sshKey: '', sshFingerprint: '', directSsh: true } as ServerAccount,
 }
 
 /** The fixture's teams with their servers filled in from the assignment map. */

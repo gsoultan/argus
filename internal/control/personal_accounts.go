@@ -250,12 +250,39 @@ func normaliseSSHKey(text string) (string, error) {
 	return out, nil
 }
 
+// ErrNoDirectSSH is setting a key when no team of the person's may SSH
+// directly to any server: the key would open nothing, so it is not taken.
+var ErrNoDirectSSH = errors.New("none of your teams may SSH straight to a server, so you do not need a key; " +
+	"connect from the console instead")
+
+// hasDirectSSHSQL says whether a person ($1) may SSH directly to at least one
+// live server through their own personal account.
+const hasDirectSSHSQL = `
+	SELECT EXISTS (
+		SELECT 1
+		  FROM asset_team_assignments ta
+		  JOIN team_members m ON m.team_id = ta.team_id
+		  JOIN assets a ON a.id = ta.asset_id AND a.archived_at IS NULL
+		 WHERE m.user_email = lower($1)
+		   AND ta.personal_accounts
+		   AND ta.direct_ssh <> 'off')`
+
 // SetSSHKey stores a person's own public key. It returns the fingerprint of
-// what was stored, or "" when cleared.
+// what was stored, or "" when cleared. A key is taken only from someone who
+// may SSH directly somewhere; clearing one is always allowed.
 func (s *Store) SetSSHKey(ctx context.Context, email, text string) (string, error) {
 	key, err := normaliseSSHKey(text)
 	if err != nil {
 		return "", err
+	}
+	if key != "" {
+		var direct bool
+		if err := s.pool.QueryRow(ctx, hasDirectSSHSQL, email).Scan(&direct); err != nil {
+			return "", err
+		}
+		if !direct {
+			return "", ErrNoDirectSSH
+		}
 	}
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE users SET ssh_public_key = $2 WHERE lower(email) = lower($1)`, email, key)
@@ -284,6 +311,9 @@ type ServerAccount struct {
 	LoginName      string `json:"loginName"`
 	SSHKey         string `json:"sshKey"`
 	SSHFingerprint string `json:"sshFingerprint"`
+	// DirectSSH is whether any team of theirs may SSH straight to a server.
+	// Without it a key opens nothing, and the console does not ask for one.
+	DirectSSH bool `json:"directSsh"`
 }
 
 // ServerAccountOf reads one person's server account settings.
@@ -303,6 +333,9 @@ func (s *Store) ServerAccountOf(ctx context.Context, email string) (ServerAccoun
 		out.LoginName = *name
 	}
 	out.SSHFingerprint = keyFingerprint(out.SSHKey)
+	if err := s.pool.QueryRow(ctx, hasDirectSSHSQL, email).Scan(&out.DirectSSH); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 

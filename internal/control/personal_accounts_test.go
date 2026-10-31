@@ -132,9 +132,6 @@ func TestPersonalDirectSSHIsPerTeam(t *testing.T) {
 	ctx := context.Background()
 	asset, cred := enrolledAsset(t, s, h)
 	ana, _ := newAccount(t, s, "operator")
-	if _, err := s.SetSSHKey(ctx, ana, testKey); err != nil {
-		t.Fatalf("SetSSHKey: %v", err)
-	}
 	ops := testTeam(t, s, ana)
 	deploy := testTeam(t, s, ana)
 
@@ -145,6 +142,9 @@ func TestPersonalDirectSSHIsPerTeam(t *testing.T) {
 		}
 	}
 	set(ops, TeamAccess{PersonalAccounts: true, DirectSSH: DirectSSHApprove})
+	if _, err := s.SetSSHKey(ctx, ana, testKey); err != nil {
+		t.Fatalf("SetSSHKey: %v", err)
+	}
 	got := personalReply(t, h, cred, asset.Hostname)
 	if len(got) != 1 || got[0].Direct != DirectSSHApprove || len(got[0].Keys) != 1 || got[0].Sudo {
 		t.Fatalf("ops: %+v", got)
@@ -304,9 +304,11 @@ func TestPersonalSSHKeyIsOneKeyAlone(t *testing.T) {
 	}
 }
 
-// Only the person sets their own key, and the change is audited.
+// Only the person sets their own key, only once a team of theirs may SSH
+// directly somewhere, and the change is audited.
 func TestPersonalSSHKeyIsSetByItsOwner(t *testing.T) {
 	a, s, h, _ := enrollAPI(t)
+	ctx := context.Background()
 	ana, _ := newAccount(t, s, "operator")
 	a.UserTokens["ana-token"] = ana
 
@@ -314,11 +316,46 @@ func TestPersonalSSHKeyIsSetByItsOwner(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("junk key: %d %s", w.Code, w.Body)
 	}
+
+	// Console only: a key would open nothing, so none is taken or asked for.
+	w = do(t, h, http.MethodPut, "/api/v1/me/ssh-key", "ana-token", `{"key":"`+testKey+`"}`)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("key with no direct SSH: %d %s", w.Code, w.Body)
+	}
+	if acct, err := s.ServerAccountOf(ctx, ana); err != nil || acct.DirectSSH {
+		t.Fatalf("console-only person told they may SSH directly: %+v %v", acct, err)
+	}
+	asset := testAsset(t, s, "ops")
+	team := testTeam(t, s, ana)
+	if err := s.SetTeamAccess(ctx, asset.ID, team, TeamAccess{PersonalAccounts: true},
+		"admin@corp.example"); err != nil {
+		t.Fatal(err)
+	}
+	if w = do(t, h, http.MethodPut, "/api/v1/me/ssh-key", "ana-token", `{"key":"`+testKey+`"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("key with an own account but no direct SSH: %d %s", w.Code, w.Body)
+	}
+	if err := s.SetTeamAccess(ctx, asset.ID, team, TeamAccess{PersonalAccounts: true, DirectSSH: DirectSSHApprove},
+		"admin@corp.example"); err != nil {
+		t.Fatal(err)
+	}
+	if acct, err := s.ServerAccountOf(ctx, ana); err != nil || !acct.DirectSSH {
+		t.Fatalf("direct SSH not reported: %+v %v", acct, err)
+	}
+
 	w = do(t, h, http.MethodPut, "/api/v1/me/ssh-key", "ana-token", `{"key":"`+testKey+`"}`)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "SHA256:") {
 		t.Fatalf("set key: %d %s", w.Code, w.Body)
 	}
 	if e := lastAuditOn(t, s, ana); e.Action != "account.ssh_key_changed" || e.ActorEmail != ana {
 		t.Errorf("audited as %+v", e)
+	}
+
+	// Taking a key off is always allowed, direct SSH or not.
+	if err := s.SetTeamAccess(ctx, asset.ID, team, TeamAccess{PersonalAccounts: true},
+		"admin@corp.example"); err != nil {
+		t.Fatal(err)
+	}
+	if w = do(t, h, http.MethodPut, "/api/v1/me/ssh-key", "ana-token", `{"key":""}`); w.Code != http.StatusOK {
+		t.Fatalf("clear key: %d %s", w.Code, w.Body)
 	}
 }

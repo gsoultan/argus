@@ -50,6 +50,9 @@ func (a *API) putMySSHKey(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrNoAccount):
 		writeErr(w, http.StatusNotFound, "this sign-in has no account of its own to hold a key")
 		return
+	case errors.Is(err, ErrNoDirectSSH):
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
 	case errors.As(err, new(ErrInvalidAsset)):
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

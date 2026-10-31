@@ -10,7 +10,7 @@ import {
   IconAlertTriangle, IconChevronDown, IconKey, IconLogout, IconSearch,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
-import { coverageQuery, directLoginsQuery, meQuery, statsQuery } from '~/lib/queries'
+import { coverageQuery, directLoginsQuery, meQuery, myServerAccountQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
 // Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
 // of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
@@ -124,6 +124,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [paletteOpen, palette] = useDisclosure(false)
   const [sshKeyOpen, sshKeyModal] = useDisclosure(false)
   const { data: me } = useQuery(meQuery())
+  // A key is only asked of people a team lets SSH straight to a server; the
+  // rest connect from the console and have no use for one. Someone who lost
+  // direct SSH still sees it while a key is saved, so they can take it off.
+  const { data: serverAccount } = useQuery({ ...myServerAccountQuery(), enabled: !!me, retry: false })
+  const wantsKey = !!(serverAccount?.directSsh || serverAccount?.sshKey)
   const statsQuery_ = useQuery(statsQuery())
   const stats = statsQuery_.data
   const source = dataSource(statsQuery_.isPending)
@@ -262,9 +267,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                   <Text size={FS.meta} className="argus-source-title">{sourceSentence(source)}</Text>
                 </Menu.Item>
                 <Menu.Divider />
-                <Menu.Item leftSection={<IconKey size={14} />} onClick={sshKeyModal.open}>
-                  My SSH key
-                </Menu.Item>
+                {wantsKey && (
+                  <Menu.Item leftSection={<IconKey size={14} />} onClick={sshKeyModal.open}>
+                    My SSH key
+                  </Menu.Item>
+                )}
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
                   color="rose"

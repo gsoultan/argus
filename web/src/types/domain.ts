@@ -40,6 +40,8 @@ export interface ServerAccount {
   loginName: string
   sshKey: string
   sshFingerprint: string
+  /** Whether any team of theirs may SSH straight to a server. */
+  directSsh: boolean
 }
 
 /** What the agent last said about one personal account on a server. */
