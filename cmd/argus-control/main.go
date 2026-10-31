@@ -60,6 +60,10 @@ type config struct {
 	// told. Short on purpose: silence is how a killed agent looks.
 	AgentStaleAfter time.Duration   `yaml:"agent_stale_after,omitempty"`
 	Storage         *storage.Config `yaml:"storage,omitempty"`
+	// RecordingsDir is where recordings agents ship are kept when there is
+	// no object storage. Empty means /var/lib/argus-control/recordings when
+	// that directory exists, and beside the config file otherwise.
+	RecordingsDir string `yaml:"recordings_dir,omitempty"`
 	// SigningSecret signs session cookies and terminal tickets.
 	SigningSecret string `yaml:"signing_secret,omitempty"`
 	ConsoleURL    string `yaml:"console_url,omitempty"`
@@ -434,6 +438,19 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	api.SetThrottles(throttles)
 	api.SetStorage(storageClient)
+	if storageClient == nil {
+		// No bucket: keep what agents ship on this host, so a session can
+		// still be replayed from the console. Without this, an install
+		// that never configured object storage -- which the setup page does
+		// not ask about -- left every recording on the server it was made on.
+		dir, err := storage.NewDir(recordingsDir(cfg.RecordingsDir, loc.Path))
+		if err != nil {
+			return err
+		}
+		api.SetRecordingDir(dir)
+		log.Info("serving recordings from this host; configure object storage to keep them off it",
+			"dir", dir.Root())
+	}
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process
 	// only ever sees plain HTTP.
@@ -807,6 +824,22 @@ func absolutize(cfg *config, base string) {
 	if cfg.Console != nil && cfg.Console.Dir != "" && !filepath.IsAbs(cfg.Console.Dir) {
 		cfg.Console.Dir = filepath.Join(base, cfg.Console.Dir)
 	}
+	if cfg.RecordingsDir != "" && !filepath.IsAbs(cfg.RecordingsDir) {
+		cfg.RecordingsDir = filepath.Join(base, cfg.RecordingsDir)
+	}
+}
+
+// recordingsDir decides where shipped recordings are kept without object
+// storage, by the same rule as the setup token: the packaged unit may write
+// only under its state directory.
+func recordingsDir(configured, configPath string) string {
+	if configured != "" {
+		return configured
+	}
+	if info, err := os.Stat(packagedStateDir); err == nil && info.IsDir() {
+		return filepath.Join(packagedStateDir, "recordings")
+	}
+	return filepath.Join(filepath.Dir(configPath), "recordings")
 }
 
 // setupTokenPath decides where the one-time setup token goes.

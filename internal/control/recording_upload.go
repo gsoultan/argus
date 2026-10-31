@@ -91,8 +91,8 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stored", "key": *sess.RecordingKey})
 		return
 	}
-	if a.storage == nil && a.storeRecording == nil {
-		writeErr(w, http.StatusServiceUnavailable, "object storage is not configured")
+	if a.recordings == nil && a.storeRecording == nil {
+		writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
 		return
 	}
 
@@ -145,16 +145,16 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 
 	store := a.storeRecording
 	if store == nil {
-		store = a.storage.Upload
+		store = a.recordings.Upload
 	}
 	key, err := store(r.Context(), tmp.Name(), id, head, sess.StartedAt)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotConfigured) {
-			writeErr(w, http.StatusServiceUnavailable, "object storage is not configured")
+			writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
 			return
 		}
 		a.log.Error("storing a shipped recording failed", "session", id, "error", err)
-		writeErr(w, http.StatusServiceUnavailable, "object storage did not take the recording")
+		writeErr(w, http.StatusServiceUnavailable, "recording storage did not take the recording")
 		return
 	}
 	if err := a.store.StoreRecordingKey(r.Context(), id, head, key); err != nil {

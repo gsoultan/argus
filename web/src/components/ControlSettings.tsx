@@ -372,7 +372,7 @@ function Storage({ s, edit }: CardProps) {
   const set = (patch: Partial<Settings['storage']>) => edit({ storage: { ...st, ...patch } })
   return (
     <SectionCard title="Object storage" icon={IconCloudUpload}
-      description="An S3-compatible bucket recordings are copied to, so the evidence is not only on this host. Give Argus a key that can write and not delete.">
+      description="An S3-compatible bucket recordings are copied to, so the evidence is not only on this host. Without one, recordings are kept on this host's disk. Give Argus a key that can write and not delete.">
       <Stack gap="xs">
         <Switch size="xs" label="Copy recordings to a bucket" checked={st.enabled}
           onChange={(e) => set({ enabled: e.currentTarget.checked })} />

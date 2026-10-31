@@ -963,6 +963,17 @@ jobs:
           n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'terminal.opened'
                 AND actor_email = 'admin@ci.example' AND target = '$(hostname)' AND detail LIKE '%$sid%'")
           [ "$n" = 1 ] || { echo "::error::no audit entry for the session"; exit 1; }
+          # And it replays from the console. No object storage is configured
+          # here, as setup leaves it, so the control plane keeps the recording
+          # the agent ships on its own disk and serves it from there.
+          for i in $(seq 1 30); do
+            $c "https://localhost:8080/api/v1/sessions/$sid/recording" -D "$tmp/rec.h" -o "$tmp/rec.cast" 2>/dev/null && break
+            sleep 2
+          done
+          grep -q through-argus "$tmp/rec.cast" && grep -qi '^x-argus-chain-verified: intact' "$tmp/rec.h" || {
+            sudo journalctl -u argus-agent -u argus-control --no-pager | grep -i recording | tail -20
+            echo "::error::the session's recording cannot be replayed from the console"; exit 1; }
+          sudo test -d /var/lib/argus-control/recordings
 
           # A backup through the shipped unit, then proof that it restores.
           sudo systemctl start argus-backup.service

@@ -13,10 +13,24 @@ import (
 	"github.com/gsoultan/argus/internal/storage"
 )
 
-// Storage is set when object storage is configured. Without it the control
-// plane can still track sessions; it simply cannot serve their recordings,
-// because they never left the host that produced them.
-func (a *API) SetStorage(c *storage.Client) { a.storage = c }
+// SetStorage is called when object storage is configured: shipped recordings
+// go to the bucket, and are read back from it.
+func (a *API) SetStorage(c *storage.Client) {
+	a.storage = c
+	if c != nil {
+		a.recordings = c
+	}
+}
+
+// SetRecordingDir keeps shipped recordings in a directory on this host when
+// there is no object storage. Without either, the control plane can still
+// track sessions; it simply cannot serve their recordings, because they never
+// left the host that produced them.
+func (a *API) SetRecordingDir(d *storage.Dir) {
+	if a.storage == nil && d != nil {
+		a.recordings = d
+	}
+}
 
 // getRecording streams a session's recording to the console.
 //
@@ -49,12 +63,12 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 			"recording is not in object storage; it exists only on the host that produced it")
 		return
 	}
-	if a.storage == nil {
-		writeErr(w, http.StatusServiceUnavailable, "object storage is not configured")
+	if a.recordings == nil {
+		writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
 		return
 	}
 
-	obj, err := a.storage.Get(r.Context(), *sess.RecordingKey)
+	obj, err := a.recordings.Get(r.Context(), *sess.RecordingKey)
 	if err != nil {
 		a.fail(w, "fetch recording", err)
 		return
