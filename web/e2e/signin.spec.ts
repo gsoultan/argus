@@ -280,7 +280,7 @@ test.describe('counts land on exactly what they counted', () => {
     await signIn(page)
     await page.goto('/sessions')
 
-    const marker = page.getByLabel('Recording not in object storage')
+    const marker = page.getByLabel('Recording not on the control plane yet')
     // Exactly the one stranded session in the stub, not every row: the marker
     // is only useful if it distinguishes.
     await expect(marker).toHaveCount(1)
@@ -290,7 +290,7 @@ test.describe('counts land on exactly what they counted', () => {
     // And it is not shown on the live rows, whose recordings are still being
     // written and have no business being in storage yet.
     const live = page.locator('tbody tr', { hasText: 'live' })
-    await expect(live.getByLabel('Recording not in object storage')).toHaveCount(0)
+    await expect(live.getByLabel('Recording not on the control plane yet')).toHaveCount(0)
   })
 
   /**

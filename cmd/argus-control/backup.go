@@ -142,8 +142,15 @@ func runBackup(configPath string, args []string) error {
 		}
 		recordings = total
 		fmt.Printf("  recordings %d (%d new)\n", total, added)
+	} else if d, ok := localRecordings(cfg, configPath); ok {
+		added, total, err := mirrorRecordings(ctx, d, filepath.Join(*out, "recordings"))
+		if err != nil {
+			return err
+		}
+		recordings = total
+		fmt.Printf("  recordings %d (%d new) from %s\n", total, added, d.Root())
 	} else {
-		fmt.Println("  recordings: no object storage configured; recordings live on the agents only")
+		fmt.Println("  recordings: none stored by the control plane yet")
 	}
 
 	m := manifest{
@@ -167,8 +174,20 @@ func runBackup(configPath string, args []string) error {
 	return nil
 }
 
+// localRecordings is the directory the control plane keeps recordings in when
+// there is no object storage, if it has made one. Never created here: the
+// backup unit may not write there, and an empty directory has nothing to copy.
+func localRecordings(cfg config, configPath string) (*storage.Dir, bool) {
+	root := recordingsDir(cfg.RecordingsDir, configPath)
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return nil, false
+	}
+	d, err := storage.NewDir(root)
+	return d, err == nil
+}
+
 // mirrorRecordings copies every object not already present at its size.
-func mirrorRecordings(ctx context.Context, sc *storage.Client, root string) (added, total int, err error) {
+func mirrorRecordings(ctx context.Context, sc storage.Store, root string) (added, total int, err error) {
 	objs, err := sc.List(ctx)
 	if err != nil {
 		return 0, 0, err

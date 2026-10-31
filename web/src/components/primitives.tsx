@@ -154,7 +154,7 @@ export function ArtefactPending({ session }: { session: Pick<Session, 'state' | 
   if (session.state === 'active' || session.recordingKey) return null
   return (
     <Tooltip
-      label="Recorded, but the artefact has not reached object storage — it is still on the server whose agent recorded it, queued for retry. There is nothing to replay here until it lands."
+      label="Recorded, but the artefact has not reached the control plane — it is still on the server whose agent recorded it, queued for retry. There is nothing to replay here until it lands."
       multiline
       maw={320}
     >
@@ -165,7 +165,7 @@ export function ArtefactPending({ session }: { session: Pick<Session, 'state' | 
         color="amber"
         size={18}
         radius="sm"
-        aria-label="Recording not in object storage"
+        aria-label="Recording not on the control plane yet"
       >
         <IconCloudOff size={12} />
       </ThemeIcon>

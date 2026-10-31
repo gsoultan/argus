@@ -25,8 +25,10 @@ You also need:
   issues itself a certificate from it, so none are needed.
   Bring your own from an internal or public CA if browsers should trust it
   without installing that CA (step 2).
-- **Optional:** S3-compatible object storage for recordings. Without it,
-  recordings stay on the servers' and the control plane's disks.
+- **Optional:** S3-compatible object storage for recordings. Without it, the
+  control plane keeps the recordings agents ship in
+  `/var/lib/argus-control/recordings` (`recordings_dir` in `control.yaml`), and
+  the console replays them from there.
 
 ## 1. Download and verify
 
@@ -165,8 +167,9 @@ journalctl -u argus-backup -n 30
 ```
 
 A backup lands in `/var/backups/argus/<timestamp>/`: a `pg_dump` of the
-database, a manifest of checksums, and, when object storage is configured, an
-incremental mirror of the recordings. It first checks that the audit chain is
+database, a manifest of checksums, and an incremental mirror of the
+recordings, from the bucket or, without one, from the control plane's
+recordings directory. It first checks that the audit chain is
 intact, so a backup never silently preserves a broken chain. The last 14 are
 kept; set `ARGUS_BACKUP_KEEP` and `ARGUS_BACKUP_DIR` in `/etc/argus/backup.env`
 to change that.

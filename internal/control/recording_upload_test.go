@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/recorder"
+	"github.com/gsoultan/argus/internal/storage"
 )
 
 /*
@@ -144,5 +145,46 @@ func TestAnEndedSessionIsNotMadeActiveAgain(t *testing.T) {
 	}
 	if len(got.RiskFlags) != 1 {
 		t.Errorf("risk flags %v; a late active report replaced the final ones", got.RiskFlags)
+	}
+}
+
+// With no object storage, the control plane keeps what an agent ships on its
+// own disk and replays it from there. Before, an install that never set up a
+// bucket -- the setup page does not ask for one -- refused every recording,
+// and the console could replay none of them.
+func TestARecordingIsReplayedFromThisHostWithoutObjectStorage(t *testing.T) {
+	a, s, h, _ := enrollAPI(t)
+	dir, err := storage.NewDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetStorage(nil)
+	a.SetRecordingDir(dir)
+	host := unique("local")
+	cred, _ := enrolled(t, s, h, host)
+	var id string
+	_ = s.pool.QueryRow(context.Background(), `SELECT gen_random_uuid()::text`).Scan(&id)
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(), `DELETE FROM sessions WHERE id::text = $1`, id)
+	})
+	cast, head := castFor(t)
+	if w := do(t, h, http.MethodPost, "/api/v1/report/session", cred,
+		`{"id":"`+id+`","assetHostname":"`+host+`","principal":"root","protocol":"ssh",`+
+			`"state":"closed","chainHead":"`+head+`"}`); w.Code != http.StatusOK {
+		t.Fatalf("report: %d %s", w.Code, w.Body)
+	}
+	if w := putRecordingAs(h, cred, id, head, "cast", cast); w.Code != http.StatusOK {
+		t.Fatalf("ship: %d %s", w.Code, w.Body)
+	}
+
+	w := do(t, h, http.MethodGet, "/api/v1/sessions/"+id+"/recording", "admin-token", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("replay: %d %s", w.Code, w.Body)
+	}
+	if !bytes.Equal(w.Body.Bytes(), cast) {
+		t.Error("the replayed recording is not the one shipped")
+	}
+	if v := w.Header().Get("X-Argus-Chain-Verified"); v != "intact" {
+		t.Errorf("verified %q", v)
 	}
 }
