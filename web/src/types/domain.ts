@@ -210,8 +210,38 @@ export interface AssetAssignment {
   userEmail: string
   /** The accounts this person may assume there. Empty is not a state: it is a removal. */
   principals: string[]
+  /**
+   * Their own setting for their personal account here, which replaces their
+   * teams' on this server: true with sudo and direct SSH as below, false for
+   * none here. Null or absent: their teams decide.
+   */
+  personalAccounts?: boolean | null
+  sudo?: boolean
+  directSsh?: TeamDirectSsh
   grantedBy: string
   grantedAt: ISOTime
+}
+
+/** A person's own setting for their personal account on one server. */
+export interface PersonOwnSetting {
+  personalAccounts: boolean
+  sudo: boolean
+  directSsh: TeamDirectSsh
+}
+
+/** What one person may do on one server, and where it comes from. */
+export interface PersonServer {
+  assetId: UUID
+  hostname: string
+  principals: string[]
+  personalAccount: boolean
+  sudo: boolean
+  directSsh: TeamDirectSsh
+  /** "own" for their own setting, "teams" for their teams', "" for no own account. */
+  source: 'own' | 'teams' | ''
+  teams: string[]
+  /** An admin gave them a setting of their own here, even one with no account. */
+  ownSetting: boolean
 }
 
 /** One team's access to one asset. Same rules as a person's. */

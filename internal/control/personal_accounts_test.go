@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -357,5 +358,139 @@ func TestPersonalSSHKeyIsSetByItsOwner(t *testing.T) {
 	}
 	if w = do(t, h, http.MethodPut, "/api/v1/me/ssh-key", "ana-token", `{"key":""}`); w.Code != http.StatusOK {
 		t.Fatalf("clear key: %d %s", w.Code, w.Body)
+	}
+}
+
+// A person's own setting on a server replaces their teams' there, either way,
+// and without one the most open of their teams applies.
+func TestPersonSettingReplacesTheirTeams(t *testing.T) {
+	s, h, _ := reportAPI(t)
+	ctx := context.Background()
+	asset, cred := enrolledAsset(t, s, h)
+	budi, _ := newAccount(t, s, "operator")  // Ops, given more
+	citra, _ := newAccount(t, s, "operator") // Deploy, given less
+	dewi, _ := newAccount(t, s, "operator")  // Deploy, given no account here
+	eko, _ := newAccount(t, s, "operator")   // in no team at all
+	fajar, _ := newAccount(t, s, "operator") // Deploy, no setting of their own
+	ops := testTeam(t, s, budi)
+	deploy := testTeam(t, s, citra, dewi, fajar)
+	const admin = "admin@corp.example"
+	yes, no := true, false
+
+	for team, in := range map[string]TeamAccess{
+		ops:    {PersonalAccounts: true, DirectSSH: DirectSSHApprove},
+		deploy: {PersonalAccounts: true, DirectSSH: DirectSSHAllow, Sudo: true},
+	} {
+		if err := s.SetTeamAccess(ctx, asset.ID, team, in, admin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for email, in := range map[string]PersonAccess{
+		budi:  {PersonalAccounts: &yes, DirectSSH: DirectSSHAllow, Sudo: true},
+		citra: {PersonalAccounts: &yes},
+		dewi:  {PersonalAccounts: &no},
+		eko:   {PersonalAccounts: &yes, DirectSSH: DirectSSHApprove},
+	} {
+		if err := s.SetPersonAccess(ctx, asset.ID, email, in, admin); err != nil {
+			t.Fatalf("%s: %v", email, err)
+		}
+	}
+
+	byOwner := map[string]PersonalAccount{}
+	for _, p := range personalReply(t, h, cred, asset.Hostname) {
+		byOwner[p.Owner] = p
+	}
+	want := map[string]struct {
+		direct string
+		sudo   bool
+	}{
+		budi:  {DirectSSHAllow, true},    // more than Ops
+		citra: {"", false},               // less than Deploy
+		eko:   {DirectSSHApprove, false}, // no team needed
+		fajar: {DirectSSHAllow, true},    // Deploy, as before
+	}
+	if _, ok := byOwner[dewi]; ok || len(byOwner) != len(want) {
+		t.Fatalf("accounts sent: %+v", byOwner)
+	}
+	for email, w := range want {
+		got, ok := byOwner[email]
+		if !ok || got.Direct != w.direct || got.Sudo != w.sudo {
+			t.Errorf("%s: got %+v, want direct %q sudo %v", email, got, w.direct, w.sudo)
+		}
+	}
+
+	// The person's page says the same, and where it comes from.
+	for email, w := range want {
+		list, err := s.PersonServers(ctx, email)
+		if err != nil || len(list) != 1 {
+			t.Fatalf("%s servers: %+v %v", email, list, err)
+		}
+		ps := list[0]
+		direct := ps.DirectSSH
+		if direct == DirectSSHOff {
+			direct = ""
+		}
+		source := "own"
+		if email == fajar {
+			source = "teams"
+		}
+		if !ps.PersonalAccount || direct != w.direct || ps.Sudo != w.sudo || ps.Source != source {
+			t.Errorf("%s page: %+v", email, ps)
+		}
+	}
+	if list, _ := s.PersonServers(ctx, dewi); len(list) != 1 || list[0].PersonalAccount || !list[0].OwnSetting {
+		t.Errorf("dewi page: %+v", list)
+	}
+
+	// Citra may not SSH directly anywhere now, so she is not asked for a key.
+	if _, err := s.SetSSHKey(ctx, citra, testKey); !errors.Is(err, ErrNoDirectSSH) {
+		t.Errorf("citra's key: %v", err)
+	}
+
+	// Taking Citra's own setting away puts her back on Deploy's.
+	if err := s.SetPersonAccess(ctx, asset.ID, citra, PersonAccess{}, admin); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range personalReply(t, h, cred, asset.Hostname) {
+		if p.Owner == citra && (p.Direct != DirectSSHAllow || !p.Sudo) {
+			t.Errorf("citra after her setting was removed: %+v", p)
+		}
+	}
+
+	// Sudo and direct SSH still need an account of their own.
+	for _, in := range []PersonAccess{
+		{Principals: []string{"ops"}, Sudo: true},
+		{PersonalAccounts: &no, DirectSSH: DirectSSHAllow},
+	} {
+		if err := s.SetPersonAccess(ctx, asset.ID, citra, in, admin); err == nil {
+			t.Errorf("accepted %+v", in)
+		}
+	}
+}
+
+// The console sets a person's own setting through the same route as their
+// shared accounts, it is audited as replacing their teams', and only those
+// who see the whole fleet may read someone's servers.
+func TestPersonSettingThroughTheAPI(t *testing.T) {
+	a, s, h, _ := enrollAPI(t)
+	asset := testAsset(t, s, "ops")
+	budi, _ := newAccount(t, s, "operator")
+	a.UserTokens["budi-token"] = budi
+
+	w := do(t, h, http.MethodPut, "/api/v1/assets/"+asset.ID+"/assignments", "admin-token",
+		`{"email":"`+budi+`","principals":[],"personalAccounts":true,"directSsh":"allow","sudo":true}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"directSsh":"allow"`) {
+		t.Fatalf("set: %d %s", w.Code, w.Body)
+	}
+	if e := lastAuditOn(t, s, asset.Hostname); !strings.Contains(e.Detail, "replaces what their teams give them") {
+		t.Errorf("audited as %q", e.Detail)
+	}
+
+	w = do(t, h, http.MethodGet, "/api/v1/users/"+budi+"/servers", "admin-token", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"source":"own"`) {
+		t.Fatalf("servers: %d %s", w.Code, w.Body)
+	}
+	if w = do(t, h, http.MethodGet, "/api/v1/users/"+budi+"/servers", "budi-token", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("an operator read someone's servers: %d", w.Code)
 	}
 }

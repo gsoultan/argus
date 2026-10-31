@@ -136,8 +136,7 @@ func (s *Store) ensurePersonalLoginNames(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT u.email
 		  FROM users u
-		  JOIN team_members m ON m.user_email = lower(u.email)
-		  JOIN asset_team_assignments ta ON ta.team_id = m.team_id AND ta.personal_accounts
+		  JOIN (`+effectivePersonalSQL+`) e ON e.user_email = lower(u.email)
 		 WHERE u.login_name IS NULL`)
 	if err != nil {
 		return err
@@ -257,15 +256,12 @@ var ErrNoDirectSSH = errors.New("none of your teams may SSH straight to a server
 
 // hasDirectSSHSQL says whether a person ($1) may SSH directly to at least one
 // live server through their own personal account.
-const hasDirectSSHSQL = `
+var hasDirectSSHSQL = `
 	SELECT EXISTS (
 		SELECT 1
-		  FROM asset_team_assignments ta
-		  JOIN team_members m ON m.team_id = ta.team_id
-		  JOIN assets a ON a.id = ta.asset_id AND a.archived_at IS NULL
-		 WHERE m.user_email = lower($1)
-		   AND ta.personal_accounts
-		   AND ta.direct_ssh <> 'off')`
+		  FROM (` + effectivePersonalSQL + `) e
+		  JOIN assets a ON a.id = e.asset_id AND a.archived_at IS NULL
+		 WHERE e.user_email = lower($1) AND e.direct > 0)`
 
 // SetSSHKey stores a person's own public key. It returns the fingerprint of
 // what was stored, or "" when cleared. A key is taken only from someone who
@@ -349,25 +345,45 @@ const heartbeatAssetSQL = `
 	 ORDER BY (hostname = $1) DESC, (agent_hostname = $1) DESC
 	 LIMIT 1`
 
+// directRank orders direct SSH from closed to open, so the most open of a
+// person's teams can be taken with max().
+const directRankSQL = `CASE %s WHEN 'allow' THEN 2 WHEN 'approve' THEN 1 ELSE 0 END`
+
+// effectivePersonalSQL is what each person is given on each server through
+// a personal account: (asset_id, user_email, sudo, direct) with direct ranked
+// as directRankSQL. A person's own setting on a server replaces their teams'
+// there, either way; without one, the most open of their teams applies.
+// Removed people are still listed: callers that hand out access filter them.
+var effectivePersonalSQL = `
+	SELECT g.asset_id, g.user_email, g.sudo, ` + fmt.Sprintf(directRankSQL, "g.direct_ssh") + ` AS direct
+	  FROM asset_assignments g
+	 WHERE g.personal_accounts
+	UNION ALL
+	SELECT ta.asset_id, m.user_email, bool_or(ta.sudo),
+	       max(` + fmt.Sprintf(directRankSQL, "ta.direct_ssh") + `)
+	  FROM asset_team_assignments ta
+	  JOIN team_members m ON m.team_id = ta.team_id
+	 WHERE ta.personal_accounts
+	   AND NOT EXISTS (
+		SELECT 1 FROM asset_assignments g
+		 WHERE g.asset_id = ta.asset_id AND g.user_email = m.user_email
+		   AND g.personal_accounts IS NOT NULL)
+	 GROUP BY ta.asset_id, m.user_email`
+
 // PersonalAccountsFor lists the personal accounts one server should hold.
 //
 // Removed people, people who left the team and teams that lost the server
 // are simply absent, which is what tells the agent to lock their account.
-// A person in two teams with the server holds one account, with whatever is
-// most open between them: sudo if either gives it, and allow over approve
-// over off for direct SSH.
+// What each person gets is effectivePersonalSQL: their own setting if they
+// have one here, otherwise the most open of their teams.
 func (s *Store) PersonalAccountsFor(ctx context.Context, hostname string) ([]PersonalAccount, error) {
 	rows, err := s.pool.Query(ctx, `
 		WITH a AS (`+heartbeatAssetSQL+`)
-		SELECT u.login_name, lower(u.email), bool_or(ta.sudo),
-		       max(CASE ta.direct_ssh WHEN 'allow' THEN 2 WHEN 'approve' THEN 1 ELSE 0 END),
-		       u.ssh_public_key
+		SELECT u.login_name, lower(u.email), e.sudo, e.direct, u.ssh_public_key
 		  FROM a
-		  JOIN asset_team_assignments ta ON ta.asset_id = a.id AND ta.personal_accounts
-		  JOIN team_members m ON m.team_id = ta.team_id
-		  JOIN users u ON lower(u.email) = m.user_email
+		  JOIN (`+effectivePersonalSQL+`) e ON e.asset_id = a.id
+		  JOIN users u ON lower(u.email) = e.user_email
 		 WHERE u.disabled_at IS NULL AND u.login_name IS NOT NULL
-		 GROUP BY u.login_name, lower(u.email), u.ssh_public_key
 		 ORDER BY u.login_name`, hostname)
 	if err != nil {
 		return nil, err
@@ -426,13 +442,11 @@ func (s *Store) RecordPersonalAccountStates(ctx context.Context, hostname string
 
 // personalPrincipalsSQL is every (asset, account name) a person holds as
 // their own personal account. $1 is their email.
-const personalPrincipalsSQL = `
-	SELECT ta.asset_id, u.login_name
-	  FROM asset_team_assignments ta
-	  JOIN team_members m ON m.team_id = ta.team_id
-	  JOIN users u ON lower(u.email) = m.user_email
-	 WHERE m.user_email = lower($1)
-	   AND ta.personal_accounts
+var personalPrincipalsSQL = `
+	SELECT e.asset_id, u.login_name
+	  FROM (` + effectivePersonalSQL + `) e
+	  JOIN users u ON lower(u.email) = e.user_email
+	 WHERE e.user_email = lower($1)
 	   AND u.login_name IS NOT NULL
 	   AND u.disabled_at IS NULL`
 
@@ -482,4 +496,113 @@ func capStates(in []PersonalAccountState) []PersonalAccountState {
 		})
 	}
 	return out
+}
+
+// PersonServer is what one person may do on one server, and where it comes
+// from, for the person's page in People.
+type PersonServer struct {
+	AssetID  string `json:"assetId"`
+	Hostname string `json:"hostname"`
+	// Principals are the shared accounts they may use, from anywhere.
+	Principals []string `json:"principals"`
+	// PersonalAccount, Sudo and DirectSSH are what their own account here
+	// gets; Source says whether that is their own setting ("own"), their
+	// teams' ("teams"), or there is no own account here ("").
+	PersonalAccount bool   `json:"personalAccount"`
+	Sudo            bool   `json:"sudo"`
+	DirectSSH       string `json:"directSsh"`
+	Source          string `json:"source"`
+	// Teams are the teams of theirs that hold the server.
+	Teams []string `json:"teams"`
+	// OwnSetting is set when an admin gave them their own setting here, even
+	// one that leaves them without an account, so the page can say so.
+	OwnSetting bool `json:"ownSetting"`
+}
+
+var directRanks = map[string]int{DirectSSHOff: 0, DirectSSHApprove: 1, DirectSSHAllow: 2}
+
+// PersonServers lists every live server a person holds anything on, by name
+// or through a team, with the same rule as effectivePersonalSQL: their own
+// setting replaces their teams', and otherwise the most open team wins.
+func (s *Store) PersonServers(ctx context.Context, email string) ([]PersonServer, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	rows, err := s.pool.Query(ctx, `
+		SELECT a.id::text, a.hostname, '' AS team, g.principals, g.personal_accounts, g.sudo, g.direct_ssh
+		  FROM asset_assignments g JOIN assets a ON a.id = g.asset_id
+		 WHERE g.user_email = $1 AND a.archived_at IS NULL
+		UNION ALL
+		SELECT a.id::text, a.hostname, t.name, ta.principals, ta.personal_accounts, ta.sudo, ta.direct_ssh
+		  FROM asset_team_assignments ta
+		  JOIN team_members m ON m.team_id = ta.team_id
+		  JOIN teams t ON t.id = ta.team_id
+		  JOIN assets a ON a.id = ta.asset_id
+		 WHERE m.user_email = $1 AND a.archived_at IS NULL
+		 ORDER BY 2, 3`, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type teamPart struct {
+		personal, sudo bool
+		direct         string
+	}
+	byAsset := map[string]*PersonServer{}
+	own := map[string]*bool{}
+	ownRow := map[string]teamPart{}
+	teams := map[string][]teamPart{}
+	var order []string
+	for rows.Next() {
+		var id, host, team, direct string
+		var principals []string
+		var personal *bool
+		var sudo bool
+		if err := rows.Scan(&id, &host, &team, &principals, &personal, &sudo, &direct); err != nil {
+			return nil, err
+		}
+		ps, ok := byAsset[id]
+		if !ok {
+			ps = &PersonServer{AssetID: id, Hostname: host, Principals: []string{}, Teams: []string{},
+				DirectSSH: DirectSSHOff}
+			byAsset[id] = ps
+			order = append(order, id)
+		}
+		ps.Principals = append(ps.Principals, principals...)
+		if team == "" {
+			own[id] = personal
+			ownRow[id] = teamPart{personal: personal != nil && *personal, sudo: sudo, direct: direct}
+			continue
+		}
+		ps.Teams = append(ps.Teams, team)
+		teams[id] = append(teams[id], teamPart{personal: personal != nil && *personal, sudo: sudo, direct: direct})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]PersonServer, 0, len(order))
+	for _, id := range order {
+		ps := byAsset[id]
+		ps.Principals = dedupe(ps.Principals)
+		if p := own[id]; p != nil {
+			ps.OwnSetting = true
+			if *p {
+				r := ownRow[id]
+				ps.PersonalAccount, ps.Sudo, ps.DirectSSH, ps.Source = true, r.sudo, r.direct, "own"
+			}
+		} else {
+			for _, t := range teams[id] {
+				if !t.personal {
+					continue
+				}
+				ps.PersonalAccount, ps.Source = true, "teams"
+				ps.Sudo = ps.Sudo || t.sudo
+				if directRanks[t.direct] > directRanks[ps.DirectSSH] {
+					ps.DirectSSH = t.direct
+				}
+			}
+		}
+		out = append(out, *ps)
+	}
+	return out, nil
 }

@@ -370,12 +370,28 @@ func isUniqueViolation(err error) bool {
 
 // Assignment is one person's access to one asset.
 type Assignment struct {
-	AssetID    string    `json:"assetId"`
-	Hostname   string    `json:"hostname"`
-	UserEmail  string    `json:"userEmail"`
-	Principals []string  `json:"principals"`
-	GrantedBy  string    `json:"grantedBy"`
-	GrantedAt  time.Time `json:"grantedAt"`
+	AssetID    string   `json:"assetId"`
+	Hostname   string   `json:"hostname"`
+	UserEmail  string   `json:"userEmail"`
+	Principals []string `json:"principals"`
+	// PersonalAccounts is nil when this person's own account here follows
+	// their teams; true or false is their own setting, which replaces their
+	// teams' on this server, with Sudo and DirectSSH as for a team.
+	PersonalAccounts *bool     `json:"personalAccounts"`
+	Sudo             bool      `json:"sudo"`
+	DirectSSH        string    `json:"directSsh"`
+	GrantedBy        string    `json:"grantedBy"`
+	GrantedAt        time.Time `json:"grantedAt"`
+}
+
+// PersonAccess is what one person is given on one server by name. The same
+// as TeamAccess, except that PersonalAccounts may be nil: no setting of their
+// own, so their teams decide.
+type PersonAccess struct {
+	Principals       []string
+	PersonalAccounts *bool
+	Sudo             bool
+	DirectSSH        string
 }
 
 // heldAssignmentsSQL is every (asset, principals) a person holds, given to
@@ -397,7 +413,7 @@ const heldAssignmentsSQL = `
 func (s *Store) Assignments(ctx context.Context, assetID string) ([]Assignment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT g.asset_id::text, a.hostname, g.user_email, g.principals,
-		       g.granted_by, g.granted_at
+		       g.personal_accounts, g.sudo, g.direct_ssh, g.granted_by, g.granted_at
 		FROM asset_assignments g JOIN assets a ON a.id = g.asset_id
 		WHERE g.asset_id = $1::uuid
 		ORDER BY g.user_email`, assetID)
@@ -410,7 +426,7 @@ func (s *Store) Assignments(ctx context.Context, assetID string) ([]Assignment, 
 	for rows.Next() {
 		var g Assignment
 		if err := rows.Scan(&g.AssetID, &g.Hostname, &g.UserEmail, &g.Principals,
-			&g.GrantedBy, &g.GrantedAt); err != nil {
+			&g.PersonalAccounts, &g.Sudo, &g.DirectSSH, &g.GrantedBy, &g.GrantedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -430,13 +446,33 @@ func (s *Store) Assignments(ctx context.Context, assetID string) ([]Assignment, 
 func (s *Store) SetAssignment(
 	ctx context.Context, assetID, email string, principals []string, actor string,
 ) error {
+	return s.SetPersonAccess(ctx, assetID, email, PersonAccess{Principals: principals}, actor)
+}
+
+// SetPersonAccess records what one person is given on an asset: shared
+// accounts, and optionally a setting of their own for their personal
+// account, which replaces their teams' on this server. Giving neither is a
+// removal.
+func (s *Store) SetPersonAccess(
+	ctx context.Context, assetID, email string, in PersonAccess, actor string,
+) error {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
 		return ErrInvalidAsset{Reason: "an assignment needs an account to assign to"}
 	}
-	principals = dedupe(principals)
-	if len(principals) == 0 {
+	principals := dedupe(in.Principals)
+	if len(principals) == 0 && in.PersonalAccounts == nil {
 		return s.RemoveAssignment(ctx, assetID, email)
+	}
+	switch in.DirectSSH {
+	case "":
+		in.DirectSSH = DirectSSHOff
+	case DirectSSHOff, DirectSSHApprove, DirectSSHAllow:
+	default:
+		return ErrInvalidAsset{Reason: `direct SSH must be "off", "approve" or "allow"`}
+	}
+	if (in.Sudo || in.DirectSSH != DirectSSHOff) && (in.PersonalAccounts == nil || !*in.PersonalAccounts) {
+		return ErrInvalidAsset{Reason: "sudo and direct SSH apply to personal accounts; turn those on first"}
 	}
 	if len(principals) > maxPrincipals {
 		return ErrInvalidAsset{Reason: fmt.Sprintf(
@@ -452,14 +488,24 @@ func (s *Store) SetAssignment(
 	}
 
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO asset_assignments (asset_id, user_email, principals, granted_by)
-		VALUES ($1::uuid, $2, $3, $4)
+		INSERT INTO asset_assignments
+		       (asset_id, user_email, principals, personal_accounts, sudo, direct_ssh, granted_by)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (asset_id, user_email) DO UPDATE SET
-			principals = EXCLUDED.principals,
-			granted_by = EXCLUDED.granted_by,
-			granted_at = now()`,
-		assetID, email, principals, strings.ToLower(actor))
-	return err
+			principals        = EXCLUDED.principals,
+			personal_accounts = EXCLUDED.personal_accounts,
+			sudo              = EXCLUDED.sudo,
+			direct_ssh        = EXCLUDED.direct_ssh,
+			granted_by        = EXCLUDED.granted_by,
+			granted_at        = now()`,
+		assetID, email, principals, in.PersonalAccounts, in.Sudo, in.DirectSSH, strings.ToLower(actor))
+	if err != nil {
+		return err
+	}
+	if in.PersonalAccounts != nil && *in.PersonalAccounts {
+		return s.ensurePersonalLoginNames(ctx)
+	}
+	return nil
 }
 
 // RemoveAssignment ends a person's access to an asset.

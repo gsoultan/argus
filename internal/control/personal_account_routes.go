@@ -126,3 +126,25 @@ func (a *API) putLoginName(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"email": email, "loginName": name})
 }
+
+// getPersonServers is what one person may do on each server and where it
+// comes from: their own setting or their teams'. It answers "what can Citra
+// do?" in one place.
+func (a *API) getPersonServers(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !seesWholeFleet(sess.Role) {
+		writeErr(w, http.StatusForbidden,
+			"seeing someone's servers requires the admin, owner or auditor role")
+		return
+	}
+	list, err := a.store.PersonServers(r.Context(), normaliseEmail(r.PathValue("email")))
+	if err != nil {
+		a.fail(w, "person servers", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
