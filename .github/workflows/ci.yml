@@ -414,6 +414,30 @@ jobs:
             sleep 1
           done
           netstat -an | grep ':3389 ' || { echo "::error::Remote Desktop is not listening on the runner"; exit 1; }
+          # Each desktop below is a new logon for argusdrill. A client that
+          # hangs up leaves its Windows session behind, disconnected, and the
+          # next logon is handed that session back, mid-teardown: it was
+          # refused ("the server denied the connection") or ended moments in
+          # (server error 0), which is how this step failed now and then. So
+          # before the next desktop, log off whatever session the account
+          # still has and wait until it is gone.
+          desktop_ids() {
+            # A row naming the account with a session id and a state. "No
+            # session exists for argusdrill" names it too, so the state counts.
+            qwinsta argusdrill 2>&1 | awk '/argusdrill/ {for (i = 1; i < NF; i++)
+              if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^(Active|Disc|Conn|Init|Down)/) print $i}'
+          }
+          desktop_gone() {
+            for i in $(seq 1 30); do
+              ids=$(desktop_ids)
+              [ -z "$ids" ] && return 0
+              [ "$i" = 1 ] && echo "argusdrill still has Windows session $ids; logging it off"
+              for id in $ids; do logoff "$id" >/dev/null 2>&1 || true; done
+              sleep 1
+            done
+            qwinsta argusdrill || true
+            echo "::error::argusdrill's last desktop never ended on the runner"; return 1
+          }
           tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
             -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
           "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
@@ -440,6 +464,7 @@ jobs:
           # What that desktop is like to use at 1080p: keystroke to screen,
           # and a busy window's frame rate and bandwidth. Reported, not yet
           # held to a number; docs/capacity.md has the targets.
+          desktop_gone
           tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
             -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
           "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
@@ -464,6 +489,7 @@ jobs:
 
           # The graphics pipeline through the agent, as the console asks for
           # it, kept for Chrome to decode in the next step.
+          desktop_gone
           tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
             -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
           "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
