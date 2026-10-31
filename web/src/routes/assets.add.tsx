@@ -1,6 +1,6 @@
 import {
   ActionIcon, Alert, Anchor, Badge, Box, Button, Checkbox, CopyButton, Group, Loader, Modal,
-  SegmentedControl, Stack, Text, TextInput, Textarea, Tooltip,
+  SegmentedControl, Stack, Switch, Text, TextInput, Textarea, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -348,6 +348,7 @@ function AccessStep({ hostname }: { hostname: string }) {
   const [extra, setExtra] = useState('')
   const [pickedTeams, setPickedTeams] = useState<string[]>([])
   const [pickedPeople, setPickedPeople] = useState<string[]>([])
+  const [personal, setPersonal] = useState(true)
   const [ignoring, setIgnoring] = useState(false)
 
   // Offer what the server reported, with the first ordinary account ticked:
@@ -379,6 +380,7 @@ function AccessStep({ hostname }: { hostname: string }) {
           principals: picked,
           people: giveAccess ? pickedPeople : [],
           teams: giveAccess ? pickedTeams : [],
+          personalAccounts: giveAccess && pickedTeams.length > 0 && personal,
         },
       })
       notifyOk('Server added', giveAccess && (pickedTeams.length || pickedPeople.length)
@@ -402,6 +404,10 @@ function AccessStep({ hostname }: { hostname: string }) {
   }
 
   const choosing = pickedTeams.length + pickedPeople.length
+  // Teams with their own accounts need no shared one; people picked one by
+  // one still do.
+  const ownOnly = personal && pickedTeams.length > 0 && pickedPeople.length === 0
+  const needShared = picked.length === 0 && !ownOnly
 
   return (
     <Box>
@@ -450,7 +456,7 @@ function AccessStep({ hostname }: { hostname: string }) {
               }
             />
           </Group>
-          {picked.length === 0 && (
+          {needShared && (
             <Text size={FS.meta} c="rose.7" mt="xs">Pick at least one, or nobody can log in.</Text>
           )}
         </Box>
@@ -466,6 +472,14 @@ function AccessStep({ hostname }: { hostname: string }) {
           value={pickedTeams}
           onChange={setPickedTeams}
         />
+        {pickedTeams.length > 0 && (
+          <Switch
+            checked={personal}
+            onChange={(e) => setPersonal(e.currentTarget.checked)}
+            label="Give each person in these teams their own account"
+            description={`Argus makes a login on ${hostname} for each of them, named after them, and locks it when they leave the team. Sudo and SSH straight to the server can be turned on later on the server's page.`}
+          />
+        )}
 
         <PickList
           title="People"
@@ -491,7 +505,7 @@ function AccessStep({ hostname }: { hostname: string }) {
             </Button>
             <Button
               size="md"
-              disabled={picked.length === 0 || choosing === 0}
+              disabled={needShared || choosing === 0}
               loading={enrol.isPending && choosing > 0}
               onClick={() => void finish(true)}
             >

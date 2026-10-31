@@ -7,7 +7,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconChevronDown, IconLogout, IconSearch,
+  IconAlertTriangle, IconChevronDown, IconKey, IconLogout, IconSearch,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, directLoginsQuery, meQuery, statsQuery } from '~/lib/queries'
@@ -15,6 +15,7 @@ import { SignIn } from '~/components/SignIn'
 // Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
 // of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
 import { Setup } from '~/components/Setup'
+import { MySshKeyModal } from '~/components/MySshKey'
 import { canSee, roleLabel, seesWholeFleet } from '~/lib/roles'
 /**
  * Loaded on first open.
@@ -118,6 +119,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 function ShellInner({ children }: { children: React.ReactNode }) {
   const [opened, { toggle, close }] = useDisclosure()
   const [paletteOpen, palette] = useDisclosure(false)
+  const [sshKeyOpen, sshKeyModal] = useDisclosure(false)
   const { data: me } = useQuery(meQuery())
   const statsQuery_ = useQuery(statsQuery())
   const stats = statsQuery_.data
@@ -257,6 +259,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                   <Text size={FS.meta} className="argus-source-title">{sourceSentence(source)}</Text>
                 </Menu.Item>
                 <Menu.Divider />
+                <Menu.Item leftSection={<IconKey size={14} />} onClick={sshKeyModal.open}>
+                  My SSH key
+                </Menu.Item>
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
                   color="rose"
@@ -269,6 +274,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
+            <MySshKeyModal opened={sshKeyOpen} onClose={sshKeyModal.close} />
           </Group>
         </Group>
       </AppShell.Header>

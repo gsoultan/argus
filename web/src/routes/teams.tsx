@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
-  ActionIcon, Avatar, Badge, Box, Button, Card, Group, Menu, Modal, MultiSelect, Select,
-  SimpleGrid, Stack, Table, Tabs, Text, TextInput, Tooltip,
+  ActionIcon, Avatar, Badge, Box, Button, Card, Group, Menu, Modal, MultiSelect, SegmentedControl, Select,
+  SimpleGrid, Stack, Table, Tabs, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
@@ -17,7 +17,7 @@ import { guard } from '~/lib/guard'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
   meQuery, teamsQuery, useAddAccount, useAddTeamMember, useCreateTeam, useDeleteTeam,
-  useRemoveTeamMember, useRenameTeam, useSetDisabled, useSetRole, usersQuery,
+  useRemoveTeamMember, useRenameTeam, useSetDisabled, useSetLoginName, useSetRole, usersQuery,
 } from '~/lib/queries'
 import { canSee, roleLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
@@ -359,6 +359,8 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
   const setRole = useSetRole()
   const setDisabled = useSetDisabled()
   const [search, setSearch] = useState('')
+  const [show, setShow] = useState<'active' | 'removed'>('active')
+  const [renaming, setRenaming] = useState<User | null>(null)
 
   const teamsOf = useMemo(() => {
     const m = new Map<string, string[]>()
@@ -367,8 +369,11 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
   }, [teams])
 
   const needle = search.trim().toLowerCase()
+  const removedCount = (users ?? []).filter((u) => u.disabled).length
   const rows = (users ?? []).filter(
-    (u) => !needle || `${u.displayName} ${u.email}`.toLowerCase().includes(needle),
+    (u) =>
+      (show === 'removed' ? !!u.disabled : !u.disabled) &&
+      (!needle || `${u.displayName} ${u.email} ${u.loginName ?? ''}`.toLowerCase().includes(needle)),
   )
 
   const changeRole = async (u: User, role: UserRole) => {
@@ -391,6 +396,14 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
   return (
     <Stack gap="md">
       <Toolbar right={users && <Text size={FS.meta} c="dimmed">{rows.length} of {users.length}</Text>}>
+        <SegmentedControl
+          value={show}
+          onChange={(v) => setShow(v as 'active' | 'removed')}
+          data={[
+            { value: 'active', label: 'Can sign in' },
+            { value: 'removed', label: `Removed (${removedCount})` },
+          ]}
+        />
         <TextInput
           w={300}
           placeholder="Find a person"
@@ -400,14 +413,15 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
         />
       </Toolbar>
       <Card padding={0}>
-        <Table.ScrollContainer minWidth={720}>
+        <Table.ScrollContainer minWidth={860}>
           <Table verticalSpacing="sm">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Person</Table.Th>
                 <Table.Th>Role</Table.Th>
                 <Table.Th>Teams</Table.Th>
-                <Table.Th>Last seen</Table.Th>
+                <Table.Th>Server account</Table.Th>
+                <Table.Th>{show === 'removed' ? 'Removed' : 'Last seen'}</Table.Th>
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
@@ -463,7 +477,33 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Text size={FS.meta} c="dimmed">{relTime(u.lastSeenAt)}</Text>
+                      {u.loginName ? (
+                        <Tooltip
+                          label={admin ? 'Their login on servers. Click to rename it.' : 'Their login on servers'}
+                        >
+                          <UnstyledButton
+                            onClick={admin ? () => setRenaming(u) : undefined}
+                            aria-label={`Server account of ${u.email}`}
+                          >
+                            <Group gap={SP.tight} wrap="nowrap">
+                              <Mono>{u.loginName}</Mono>
+                              {u.hasSshKey && <Badge size="xs" variant="light" color="azure">SSH key</Badge>}
+                            </Group>
+                          </UnstyledButton>
+                        </Tooltip>
+                      ) : (
+                        <Text size={FS.meta} c="dimmed">none yet</Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      {show === 'removed' ? (
+                        <Text size={FS.meta} c="dimmed">
+                          {u.disabledAt ? relTime(u.disabledAt) : 'yes'}
+                          {u.disabledBy ? ` by ${u.disabledBy}` : ''}
+                        </Text>
+                      ) : (
+                        <Text size={FS.meta} c="dimmed">{relTime(u.lastSeenAt)}</Text>
+                      )}
                     </Table.Td>
                     <Table.Td ta="right">
                       {admin && !self && (
@@ -485,13 +525,55 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
           </Table>
         </Table.ScrollContainer>
         {rows.length === 0 && (
-          <EmptyState icon={IconUsers} title="Nobody matches" description="Clear the search to see everyone." />
+          show === 'removed' && !needle
+            ? <EmptyState icon={IconUsers} title="Nobody removed" description="People you remove are listed here." />
+            : <EmptyState icon={IconUsers} title="Nobody matches" description="Clear the search to see everyone." />
         )}
       </Card>
       <Text size={FS.meta} c="dimmed">
-        Removing someone stops them signing in. They stay in the activity log under their name.
+        Removing someone stops them signing in, and locks their own accounts on every server within a
+        minute. Nothing is deleted: their sessions, recordings and activity stay under their name.
       </Text>
+      {renaming && <RenameLoginModal user={renaming} onClose={() => setRenaming(null)} />}
     </Stack>
+  )
+}
+
+/** Rename someone's server account, for a name a server already has. */
+function RenameLoginModal({ user, onClose }: { user: User; onClose: () => void }) {
+  const rename = useSetLoginName()
+  const [name, setName] = useState(user.loginName ?? '')
+  const save = async () => {
+    try {
+      await rename.mutateAsync({ email: user.email, name: name.trim() })
+      notifyOk('Server account renamed', `${user.displayName} logs in as ${name.trim()} now. Their old account is locked, not deleted.`)
+      onClose()
+    } catch (err) {
+      notifyError('Not renamed', err)
+    }
+  }
+  return (
+    <Modal opened onClose={onClose} title={`Server account of ${user.displayName}`}>
+      <Stack gap="md">
+        <TextInput
+          label="Account name"
+          description="Lowercase letters, digits, dot, underscore and hyphen. The old account is locked on every server and this one made in its place."
+          value={name}
+          onChange={(e) => setName(e.currentTarget.value)}
+          data-autofocus
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button
+            loading={rename.isPending}
+            disabled={!name.trim() || name.trim() === user.loginName}
+            onClick={() => void save()}
+          >
+            Rename
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }
 
