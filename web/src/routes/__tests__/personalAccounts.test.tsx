@@ -1,6 +1,8 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderRoute } from '~/test/renderRoute'
+import { renderWithProviders } from '~/test/render'
+import { MySshKeyModal } from '~/components/MySshKey'
 import { api } from '~/lib/api'
 import { currentUser, users } from '~/lib/seed'
 import type { User } from '~/types/domain'
@@ -71,5 +73,31 @@ describe('people who were removed', () => {
     fireEvent.click(screen.getByRole('radio', { name: /removed \(1\)/i }))
     expect(await screen.findByText(gone.email)).toBeInTheDocument()
     expect(screen.getByText(/by boss@northwind\.id/)).toBeInTheDocument()
+  }, 20_000)
+})
+
+describe('a key Argus makes', () => {
+  it('sends only the public half and hands over the private half once', async () => {
+    const set = vi.spyOn(api, 'setMySshKey')
+    const saved = vi.fn<(blob: Blob) => void>()
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((b) => {
+      saved(b as Blob)
+      return 'blob:key'
+    })
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    renderWithProviders(<MySshKeyModal opened onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: /generate a key for me/i }))
+
+    expect(await screen.findByText(/your new ssh key/i)).toBeInTheDocument()
+    expect(set).toHaveBeenCalledTimes(1)
+    const sent = set.mock.calls[0]![0]
+    expect(sent).toMatch(/^ssh-ed25519 AAAA\S+ \S+@argus$/)
+    expect(sent).not.toMatch(/PRIVATE/)
+
+    expect(saved).toHaveBeenCalledTimes(1)
+    const file = await saved.mock.calls[0]![0].text()
+    expect(file).toMatch(/^-----BEGIN OPENSSH PRIVATE KEY-----\n/)
   }, 20_000)
 })
