@@ -68,6 +68,9 @@ func (a *API) getAssets(w http.ResponseWriter, r *http.Request) {
 		assets, err = a.store.Assets(r.Context())
 	} else {
 		assets, err = a.store.AssetsForUser(r.Context(), sess.Email)
+		for i := range assets {
+			assets[i].AgentPersonalAccounts = nil
+		}
 	}
 	if err != nil {
 		a.fail(w, "assets", err)

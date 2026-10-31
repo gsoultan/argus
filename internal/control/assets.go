@@ -35,7 +35,7 @@ const assetSelect = `
 	       a.health, a.last_checked_at, a.principals,
 	       a.agent_state, a.agent_last_seen_at, a.bypass_posture,
 	       a.unmanaged_key_count, a.agent_console_only,
-	       a.direct_ssh, a.agent_direct_ssh,
+	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
@@ -49,7 +49,8 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.HostKeyState, &a.HostKeyFingerprint, &a.HostKeyPinnedAt,
 		&a.Health, &a.LastCheckedAt, &a.Principals,
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
-		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.TunnelConnected)
+		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts,
+		&a.TunnelConnected)
 	return a, err
 }
 
