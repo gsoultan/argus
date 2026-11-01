@@ -30,9 +30,17 @@ type AccessRequest struct {
 	DecisionNote    *string
 	ExpiresAt       *time.Time
 	BreakGlass      bool
+	// Database and DatabaseLevel make the request one for a database at a
+	// level, instead of hosts as a principal (migration 026).
+	Database      *Database
+	DatabaseLevel *string
 }
 
 func (m *AccessRequest) Schema(t *storm.Table) {
+	t.Col(&m.Database).ConstraintName("access_requests_database_id_fkey")
+	t.Col(&m.Database).NoIndex()
+	t.CheckNamed("access_requests_database_level_check",
+		"(database_level IS NULL) OR (database_level = ANY (ARRAY['read'::text, 'write'::text, 'owner'::text, 'dba'::text]))")
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.AssetHostnames).Default("'{}'::text[]")
 	t.Col(&m.State).Default("'pending'::text")
@@ -483,6 +491,10 @@ type Session struct {
 	// minute, so silence becomes measurable instead of indistinguishable
 	// from life.
 	LastReportedAt time.Time
+	// Kind is terminal or database; Database is set for the latter
+	// (migration 026).
+	Kind     string
+	Database *Database
 }
 
 func (m *Session) Schema(t *storm.Table) {
@@ -504,6 +516,78 @@ func (m *Session) Schema(t *storm.Table) {
 	t.Index(storm.Desc(&m.StartedAt)).Named("sessions_started_idx")
 	t.Index(&m.State).Named("sessions_state_idx")
 	t.Index(&m.TerminatedBy).Where("terminated_by IS NOT NULL").Named("sessions_terminated_idx")
+	t.Col(&m.Kind).Default("'terminal'::text")
+	t.Col(&m.Database).ConstraintName("sessions_database_id_fkey")
+	t.Col(&m.Database).NoIndex()
+}
+
+// Database is table databases: a Postgres database on a server, opened
+// through that server's agent (migration 026). Policy holds the safety limits
+// the console writes; empty means every default.
+type Database struct {
+	ID        [16]byte
+	Asset     Asset
+	Engine    string
+	Host      string
+	Port      int32
+	Dbname    string
+	AdminUser string
+	Label     string
+	Policy    storm.JSON
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+func (m *Database) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Asset).ConstraintName("databases_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Engine).Default("'postgres'::text")
+	t.Col(&m.Host).Default("'/var/run/postgresql'::text")
+	t.Col(&m.Port).Default("5432")
+	t.Col(&m.AdminUser).Default("'postgres'::text")
+	t.Col(&m.Label).Default("'production'::text")
+	t.Col(&m.Policy).Default("'{}'::jsonb")
+	t.Col(&m.CreatedBy).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.UniqueNamed("databases_asset_id_port_dbname_key", &m.Asset, &m.Port, &m.Dbname)
+	t.CheckNamed("databases_dbname_check", "(length(dbname) >= 1) AND (length(dbname) <= 63)")
+	t.CheckNamed("databases_engine_check", "engine = 'postgres'::text")
+	t.CheckNamed("databases_label_check",
+		"label = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
+	t.CheckNamed("databases_port_check", "(port >= 1) AND (port <= 65535)")
+	t.Index(&m.Asset).Named("databases_asset_idx")
+}
+
+// DatabaseAssignment is table database_assignments: who may open a database
+// and at what level; a team's row or a person's, never both.
+type DatabaseAssignment struct {
+	ID            [16]byte
+	Database      Database
+	Team          *Team
+	UserEmail     *string
+	Level         string
+	NeedsApproval bool
+	GrantedBy     string
+	GrantedAt     time.Time
+}
+
+func (m *DatabaseAssignment) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Database).ConstraintName("database_assignments_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Team).ConstraintName("database_assignments_team_id_fkey")
+	t.Col(&m.Team).OnDelete(storm.Cascade)
+	t.Col(&m.Team).NoIndex()
+	t.Col(&m.NeedsApproval).Default("false")
+	t.Col(&m.GrantedBy).Default("''::text")
+	t.Col(&m.GrantedAt).Default("now()")
+	t.CheckNamed("database_assignments_check", "(team_id IS NULL) <> (user_email IS NULL)")
+	t.CheckNamed("database_assignments_level_check",
+		"level = ANY (ARRAY['read'::text, 'write'::text, 'owner'::text, 'dba'::text])")
+	t.Index(&m.Database).Named("database_assignments_db_idx")
+	t.Index(&m.Database, &m.Team).Unique().Where("team_id IS NOT NULL").Named("database_assignments_team_key")
+	t.Index(&m.Database, &m.UserEmail).Unique().Where("user_email IS NOT NULL").Named("database_assignments_user_key")
 }
 
 // User is table users.
@@ -550,6 +634,8 @@ func All() []any {
 		&AssetAssignment{},
 		&AssetTeamAssignment{},
 		&AuditEvent{},
+		&Database{},
+		&DatabaseAssignment{},
 		&DirectLoginRequest{},
 		&GatewayPolicy{},
 		&HostKeyPin{},

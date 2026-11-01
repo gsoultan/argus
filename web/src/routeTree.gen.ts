@@ -25,8 +25,11 @@ import { Route as UsersRouteImport } from './routes/users'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
 import { Route as AssetsAddRouteImport } from './routes/assets.add'
+import { Route as DatabasesIndexRouteImport } from './routes/databases.index'
+import { Route as DatabasesDbIdRouteImport } from './routes/databases.$dbId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
+import { Route as DatabasesDbIdSettingsRouteImport } from './routes/databases.$dbId_.settings'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -108,6 +111,16 @@ const AssetsAddRoute = AssetsAddRouteImport.update({
   path: '/assets/add',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DatabasesIndexRoute = DatabasesIndexRouteImport.update({
+  id: '/databases/',
+  path: '/databases/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DatabasesDbIdRoute = DatabasesDbIdRouteImport.update({
+  id: '/databases/$dbId',
+  path: '/databases/$dbId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SessionsIndexRoute = SessionsIndexRouteImport.update({
   id: '/sessions/',
   path: '/sessions/',
@@ -116,6 +129,11 @@ const SessionsIndexRoute = SessionsIndexRouteImport.update({
 const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   id: '/sessions/$sessionId',
   path: '/sessions/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DatabasesDbIdSettingsRoute = DatabasesDbIdSettingsRouteImport.update({
+  id: '/databases/$dbId_/settings',
+  path: '/databases/$dbId/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -135,9 +153,12 @@ export interface FileRoutesByFullPath {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
+  '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -155,9 +176,12 @@ export interface FileRoutesByTo {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets': typeof AssetsIndexRoute
+  '/databases': typeof DatabasesIndexRoute
   '/sessions': typeof SessionsIndexRoute
+  '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -176,9 +200,12 @@ export interface FileRoutesById {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
+  '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/databases/$dbId_/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -198,9 +225,12 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets/'
+    | '/databases/'
     | '/sessions/'
+    | '/databases/$dbId/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -218,9 +248,12 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets'
+    | '/databases'
     | '/sessions'
+    | '/databases/$dbId/settings'
   id:
     | '__root__'
     | '/'
@@ -238,9 +271,12 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets/'
+    | '/databases/'
     | '/sessions/'
+    | '/databases/$dbId_/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -259,9 +295,12 @@ export interface RootRouteChildren {
   UsersRoute: typeof UsersRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
+  DatabasesDbIdRoute: typeof DatabasesDbIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   AssetsIndexRoute: typeof AssetsIndexRoute
+  DatabasesIndexRoute: typeof DatabasesIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
+  DatabasesDbIdSettingsRoute: typeof DatabasesDbIdSettingsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -378,6 +417,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssetsAddRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/databases/': {
+      id: '/databases/'
+      path: '/databases'
+      fullPath: '/databases/'
+      preLoaderRoute: typeof DatabasesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/databases/$dbId': {
+      id: '/databases/$dbId'
+      path: '/databases/$dbId'
+      fullPath: '/databases/$dbId'
+      preLoaderRoute: typeof DatabasesDbIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sessions/': {
       id: '/sessions/'
       path: '/sessions'
@@ -390,6 +443,13 @@ declare module '@tanstack/react-router' {
       path: '/sessions/$sessionId'
       fullPath: '/sessions/$sessionId'
       preLoaderRoute: typeof SessionsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/databases/$dbId_/settings': {
+      id: '/databases/$dbId_/settings'
+      path: '/databases/$dbId/settings'
+      fullPath: '/databases/$dbId/settings'
+      preLoaderRoute: typeof DatabasesDbIdSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -411,9 +471,12 @@ const rootRouteChildren: RootRouteChildren = {
   UsersRoute: UsersRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,
+  DatabasesDbIdRoute: DatabasesDbIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   AssetsIndexRoute: AssetsIndexRoute,
+  DatabasesIndexRoute: DatabasesIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
+  DatabasesDbIdSettingsRoute: DatabasesDbIdSettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

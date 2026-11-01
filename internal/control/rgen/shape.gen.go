@@ -26,6 +26,8 @@ func _assertAccessRequestShape(m m0.AccessRequest) {
 		m.DecisionNote,
 		m.ExpiresAt,
 		m.BreakGlass,
+		m.Database,
+		m.DatabaseLevel,
 	}
 }
 
@@ -182,6 +184,41 @@ func _assertAuditEventShape(m m0.AuditEvent) {
 	}
 }
 
+// _assertDatabaseShape fails to compile if m0.Database gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseShape(m m0.Database) {
+	type shape m0.Database
+	_ = shape{
+		m.ID,
+		m.Asset,
+		m.Engine,
+		m.Host,
+		m.Port,
+		m.Dbname,
+		m.AdminUser,
+		m.Label,
+		m.Policy,
+		m.CreatedBy,
+		m.CreatedAt,
+	}
+}
+
+// _assertDatabaseAssignmentShape fails to compile if m0.DatabaseAssignment gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseAssignmentShape(m m0.DatabaseAssignment) {
+	type shape m0.DatabaseAssignment
+	_ = shape{
+		m.ID,
+		m.Database,
+		m.Team,
+		m.UserEmail,
+		m.Level,
+		m.NeedsApproval,
+		m.GrantedBy,
+		m.GrantedAt,
+	}
+}
+
 // _assertDirectLoginRequestShape fails to compile if m0.DirectLoginRequest gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertDirectLoginRequestShape(m m0.DirectLoginRequest) {
@@ -300,6 +337,8 @@ func _assertSessionShape(m m0.Session) {
 		m.TerminationReason,
 		m.EndInferred,
 		m.LastReportedAt,
+		m.Kind,
+		m.Database,
 	}
 }
 

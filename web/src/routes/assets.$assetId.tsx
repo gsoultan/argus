@@ -8,6 +8,7 @@ import {
 } from '@tabler/icons-react'
 import { useDisclosure } from '@mantine/hooks'
 import { WhoCanConnect } from '~/components/WhoCanConnect'
+import { DatabasesOnServer } from '~/components/DatabasesOnServer'
 import { ReachBadge, reachOf } from '~/components/myservers'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -182,6 +183,8 @@ function AssetDetail() {
               </SectionCard>
 
               <DirectSshCard asset={asset} canEdit={canEdit} />
+
+              <DatabasesOnServer asset={asset} canEdit={canEdit} />
 
               <SectionCard
                 title="Server details"

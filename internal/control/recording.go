@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/gsoultan/argus/internal/recorder"
 	"github.com/gsoultan/argus/internal/storage"
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 // SetStorage is called when object storage is configured: shipped recordings
@@ -84,13 +85,26 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 		return
 	}
 
+	// A database session's recording is statements, not terminal output, with
+	// its own chain; the file says which it is, and the session agrees.
+	isDB := sess.Protocol == "postgres" || tunnel.IsPGRecording(body[:min(len(body), 16)])
 	verdict := "unverified"
 	if sess.ChainHead != nil && *sess.ChainHead != "" {
-		v, verr := recorder.Verify(bytes.NewReader(body), *sess.ChainHead)
+		var ok bool
+		var verr error
+		if isDB {
+			var v tunnel.PGVerification
+			v, verr = tunnel.VerifyPGRecording(bytes.NewReader(body), *sess.ChainHead)
+			ok = v.OK
+		} else {
+			var v recorder.Verification
+			v, verr = recorder.Verify(bytes.NewReader(body), *sess.ChainHead)
+			ok = v.OK
+		}
 		switch {
 		case verr != nil:
 			verdict = "error"
-		case v.OK:
+		case ok:
 			verdict = "intact"
 		default:
 			verdict = "tampered"
@@ -123,7 +137,11 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 		// changed. The header is what tells them not to trust the contents.
 	}
 
-	w.Header().Set("Content-Type", "application/x-asciicast")
+	if isDB {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+	} else {
+		w.Header().Set("Content-Type", "application/x-asciicast")
+	}
 	w.Header().Set("X-Argus-Chain-Verified", verdict)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)

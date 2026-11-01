@@ -242,7 +242,31 @@ func (f *fileSession) resolve(p string) (string, error) {
 
 // run starts one file-op as the account and waits for it.
 func (f *fileSession) run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	helper := f.cfg.Helper
+	return runAs(ctx, helperRun{acct: f.acct, helper: f.cfg.Helper, spawn: f.cfg.Spawn,
+		env: f.cfg.HelperEnv, args: append([]string{"file-op"}, args...), stdin: stdin,
+		stdout: stdout, actor: f.actor, home: true})
+}
+
+// helperRun is one run of this executable as another account.
+type helperRun struct {
+	acct   loginAccount
+	helper string
+	spawn  SpawnMode
+	env    []string
+	args   []string
+	stdin  io.Reader
+	stdout io.Writer
+	actor  string
+	// home runs it from the account's home directory.
+	home bool
+}
+
+// runAs starts this executable (or h.helper) as h.acct and waits for it: in a
+// transient unit on a systemd host, because the agent's own sandbox would be
+// inherited otherwise, and as a direct child with the account's credentials
+// elsewhere.
+func runAs(ctx context.Context, h helperRun) error {
+	helper := h.helper
 	if helper == "" {
 		exe, err := os.Executable()
 		if err != nil {
@@ -250,9 +274,7 @@ func (f *fileSession) run(ctx context.Context, args []string, stdin io.Reader, s
 		}
 		helper = exe
 	}
-	full := append([]string{"file-op"}, args...)
-
-	mode := f.cfg.Spawn
+	mode := h.spawn
 	if mode == SpawnAuto {
 		mode = SpawnDirect
 		if os.Geteuid() == 0 && systemdRunning() {
@@ -262,35 +284,40 @@ func (f *fileSession) run(ctx context.Context, args []string, stdin io.Reader, s
 	var cmd *exec.Cmd
 	if mode == SpawnSystemd {
 		// --pipe hands the unit our stdin and stdout; the unit runs outside
-		// the agent's sandbox, as the account, from its home.
+		// the agent's sandbox, as the account.
 		sargs := []string{"--pipe", "--wait", "--quiet", "--collect",
-			"--service-type=exec", "--uid=" + f.acct.name,
-			"-p", "WorkingDirectory=~",
-			"--setenv=ARGUS_SESSION_FOR=" + f.actor}
-		for _, e := range f.cfg.HelperEnv {
+			"--service-type=exec", "--uid=" + h.acct.name,
+			"--setenv=ARGUS_SESSION_FOR=" + h.actor}
+		if h.home {
+			sargs = append(sargs, "-p", "WorkingDirectory=~")
+		}
+		for _, e := range h.env {
 			sargs = append(sargs, "--setenv="+e)
 		}
-		cmd = exec.CommandContext(ctx, "systemd-run", append(append(sargs, helper), full...)...)
+		cmd = exec.CommandContext(ctx, "systemd-run", append(append(sargs, helper), h.args...)...)
 	} else {
-		cmd = exec.CommandContext(ctx, helper, full...)
-		cmd.Dir = f.acct.home
+		cmd = exec.CommandContext(ctx, helper, h.args...)
+		cmd.Dir = "/"
+		if h.home {
+			cmd.Dir = h.acct.home
+		}
 		cmd.Env = append([]string{
-			"HOME=" + f.acct.home, "USER=" + f.acct.name, "LOGNAME=" + f.acct.name,
+			"HOME=" + h.acct.home, "USER=" + h.acct.name, "LOGNAME=" + h.acct.name,
 			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-			"ARGUS_SESSION_FOR=" + f.actor,
-		}, f.cfg.HelperEnv...)
-		if f.acct.uid != os.Geteuid() {
+			"ARGUS_SESSION_FOR=" + h.actor,
+		}, h.env...)
+		if h.acct.uid != os.Geteuid() {
 			cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{
-				Uid: uint32(f.acct.uid), Gid: uint32(f.acct.gid), Groups: f.acct.groups}}
+				Uid: uint32(h.acct.uid), Gid: uint32(h.acct.gid), Groups: h.acct.groups}}
 		}
 	}
 	var stderr bytes.Buffer
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, &stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = h.stdin, h.stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return errors.New(lastLine(msg))
 		}
-		return fmt.Errorf("the file operation failed: %w", err)
+		return fmt.Errorf("the helper failed: %w", err)
 	}
 	return nil
 }

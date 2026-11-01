@@ -1,5 +1,6 @@
 import {
-  IconCirclePlus, IconClipboardCheck, IconHistory, IconInfoCircle, IconServer2, IconSettings, IconUsersGroup,
+  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconInfoCircle, IconServer2, IconSettings,
+  IconUsersGroup,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -13,6 +14,8 @@ import type { UserRole } from '~/types/domain'
  *
  * - **Servers**: every server you can open, with Connect on each. An admin
  *   also adds and manages them here.
+ * - **Databases**: every database you can open, in a query workspace. Listed
+ *   next to Servers because people think "open orders", not "open core-db-01".
  * - **Approvals**: everything waiting on a person. Logins straight to a server
  *   that the rule holds, root asked for, and access asked for. It is a menu
  *   item of its own, with a count, because someone is waiting at a terminal.
@@ -51,6 +54,12 @@ export const NAV_ITEMS: NavItem[] = [
     icon: IconServer2,
     blurb: 'Connect to a server, or add one',
     badge: (s) => s.serversWaiting,
+  },
+  {
+    to: '/databases',
+    label: 'Databases',
+    icon: IconDatabase,
+    blurb: 'Open a database in the browser; every statement is recorded',
   },
   {
     to: '/approvals',

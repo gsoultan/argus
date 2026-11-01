@@ -46,6 +46,8 @@ type Row struct {
 	TerminationReason runtime.Null[string]
 	EndInferred       bool
 	LastReportedAt    time.Time
+	Kind              string
+	DatabaseID        runtime.Null[[16]byte]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -84,7 +86,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 26
+const nCols = 28
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -375,6 +377,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.LastReportedAt
 		q.ntm++
+	case 26:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Kind
+		q.ns++
+	case 27:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.DatabaseID.V
+		q.nr++
 	}
 }
 
@@ -570,6 +586,8 @@ var (
 	TerminationReason = NullTextCol{23}
 	EndInferred       = BoolCol{24}
 	LastReportedAt    = TimeCol{25}
+	Kind              = TextCol{26}
+	DatabaseID        = NullUUIDCol{27}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1098,6 +1116,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 26:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 27:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1282,6 +1314,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 26:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 27:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1535,8 +1581,25 @@ func (q Query) LastReportedAtGt(v time.Time) Query    { return q.Where(LastRepor
 func (q Query) LastReportedAtGte(v time.Time) Query   { return q.Where(LastReportedAt.Gte(v)) }
 func (q Query) LastReportedAtLt(v time.Time) Query    { return q.Where(LastReportedAt.Lt(v)) }
 func (q Query) LastReportedAtLte(v time.Time) Query   { return q.Where(LastReportedAt.Lte(v)) }
+func (q Query) KindEq(v string) Query                 { return q.Where(Kind.Eq(v)) }
+func (q Query) KindNotEq(v string) Query              { return q.Where(Kind.NotEq(v)) }
+func (q Query) KindGt(v string) Query                 { return q.Where(Kind.Gt(v)) }
+func (q Query) KindGte(v string) Query                { return q.Where(Kind.Gte(v)) }
+func (q Query) KindLt(v string) Query                 { return q.Where(Kind.Lt(v)) }
+func (q Query) KindLte(v string) Query                { return q.Where(Kind.Lte(v)) }
+func (q Query) KindEqLower(v string) Query            { return q.Where(Kind.EqLower(v)) }
+func (q Query) KindLike(v string) Query               { return q.Where(Kind.Like(v)) }
+func (q Query) KindILike(v string) Query              { return q.Where(Kind.ILike(v)) }
+func (q Query) KindIn(v ...string) Query              { return q.Where(Kind.In(v...)) }
+func (q Query) KindNotIn(v ...string) Query           { return q.Where(Kind.NotIn(v...)) }
+func (q Query) DatabaseIDEq(v [16]byte) Query         { return q.Where(DatabaseID.Eq(v)) }
+func (q Query) DatabaseIDNotEq(v [16]byte) Query      { return q.Where(DatabaseID.NotEq(v)) }
+func (q Query) DatabaseIDIn(v ...[16]byte) Query      { return q.Where(DatabaseID.In(v...)) }
+func (q Query) DatabaseIDNotIn(v ...[16]byte) Query   { return q.Where(DatabaseID.NotIn(v...)) }
+func (q Query) DatabaseIDIsNull() Query               { return q.Where(DatabaseID.IsNull()) }
+func (q Query) DatabaseIDIsNotNull() Query            { return q.Where(DatabaseID.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at" FROM "sessions"`
+const selectPrefix = `SELECT "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id" FROM "sessions"`
 const countPrefix = `SELECT count(*) FROM "sessions"`
 const existsPrefix = `SELECT 1 FROM "sessions"`
 const existsSuffix = ` LIMIT 1`
@@ -1729,6 +1792,18 @@ var orderTable = [nCols][4]string{
 		"\"last_reported_at\" ASC NULLS FIRST",
 		"\"last_reported_at\" DESC NULLS LAST",
 	},
+	{ // kind
+		"\"kind\"",
+		"\"kind\" DESC",
+		"\"kind\" ASC NULLS FIRST",
+		"\"kind\" DESC NULLS LAST",
+	},
+	{ // database_id
+		"\"database_id\"",
+		"\"database_id\" DESC",
+		"\"database_id\" ASC NULLS FIRST",
+		"\"database_id\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1760,6 +1835,8 @@ var identTable = [nCols]string{
 	"\"termination_reason\"",
 	"\"end_inferred\"",
 	"\"last_reported_at\"",
+	"\"kind\"",
+	"\"database_id\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1792,7 +1869,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [26][28]runtime.Frag{
+var fragTable = [28][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2573,6 +2650,66 @@ var fragTable = [26][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // kind
+		{}, // opNone
+		{A: "\"kind\" = $", B: ""},
+		{A: "\"kind\" <> $", B: ""},
+		{A: "\"kind\" > $", B: ""},
+		{A: "\"kind\" >= $", B: ""},
+		{A: "\"kind\" < $", B: ""},
+		{A: "\"kind\" <= $", B: ""},
+		{A: "lower(\"kind\") = lower($", B: ")"},
+		{A: "\"kind\" LIKE $", B: ""},
+		{A: "\"kind\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"kind\" = ANY($", B: ")"},
+		{A: "\"kind\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // database_id
+		{}, // opNone
+		{A: "\"database_id\" = $", B: ""},
+		{A: "\"database_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"database_id\" = ANY($", B: ")"},
+		{A: "\"database_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"database_id\" IS NULL", B: ""},
+		{A: "\"database_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2759,6 +2896,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.TerminationReason = runtime.NullText(rv[23], sl)
 	r.EndInferred = runtime.Bool(rv[24])
 	r.LastReportedAt = runtime.Timestamptz(rv[25])
+	r.Kind = sl.Str(rv[26])
+	r.DatabaseID = runtime.Nullable(rv[27], runtime.UUID)
 	return decErr
 }
 
@@ -2917,6 +3056,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 26:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 27:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
 			}
 			continue
 		}
@@ -3021,6 +3168,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 26:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 27:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
 		}
 	}
 	b.vals = v
@@ -3158,7 +3313,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "sessions" ("id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at"`
+const insertSQL = `INSERT INTO "sessions" ("id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id"`
 
 const updatePrefix = `UPDATE "sessions" SET `
 const deletePrefix = `DELETE FROM "sessions"`
@@ -3191,9 +3346,11 @@ const (
 	dTerminationReason uint64 = 1 << 22
 	dEndInferred       uint64 = 1 << 23
 	dLastReportedAt    uint64 = 1 << 24
+	dKind              uint64 = 1 << 25
+	dDatabaseID        uint64 = 1 << 26
 )
 
-const nUpdatable = 25
+const nUpdatable = 27
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3222,6 +3379,8 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"termination_reason\" = $", B: ""}, // termination_reason
 	{A: "\"end_inferred\" = $", B: ""},       // end_inferred
 	{A: "\"last_reported_at\" = $", B: ""},   // last_reported_at
+	{A: "\"kind\" = $", B: ""},               // kind
+	{A: "\"database_id\" = $", B: ""},        // database_id
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3253,6 +3412,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                   // termination_reason has no server-side form
 	{},                                   // end_inferred has no server-side form
 	{A: "\"last_reported_at\" = now()", B: ""}, // last_reported_at = the database's clock
+	{}, // kind has no server-side form
+	{}, // database_id has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3290,9 +3451,11 @@ const (
 	iTerminationReason uint64 = 1 << 23
 	iEndInferred       uint64 = 1 << 24
 	iLastReportedAt    uint64 = 1 << 25
+	iKind              uint64 = 1 << 26
+	iDatabaseID        uint64 = 1 << 27
 )
 
-const nInsertable = 26
+const nInsertable = 28
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3322,6 +3485,8 @@ var insCols = [nInsertable]string{
 	"\"termination_reason\"",
 	"\"end_inferred\"",
 	"\"last_reported_at\"",
+	"\"kind\"",
+	"\"database_id\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3330,7 +3495,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"sessions\""
-const insReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\""
+const insReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\", \"kind\", \"database_id\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3349,7 +3514,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\""
+const updReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\", \"kind\", \"database_id\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3701,6 +3866,26 @@ func (m *Mut) SetLastReportedAtNow() {
 	m.dirty &^= dLastReportedAt
 }
 
+func (m *Mut) SetKind(v string) {
+	m.row.Kind = v
+	m.dirty |= dKind
+	m.expr &^= dKind
+}
+
+func (m *Mut) SetDatabaseID(v [16]byte) {
+	m.row.DatabaseID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dDatabaseID
+	m.expr &^= dDatabaseID
+}
+
+// SetDatabaseIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetDatabaseIDNull() {
+	m.row.DatabaseID = runtime.Null[[16]byte]{}
+	m.dirty |= dDatabaseID
+	m.expr &^= dDatabaseID
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -3946,6 +4131,23 @@ func (n *Ins) SetLastReportedAt(v time.Time) {
 	n.set |= iLastReportedAt
 }
 
+func (n *Ins) SetKind(v string) {
+	n.row.Kind = v
+	n.set |= iKind
+}
+
+func (n *Ins) SetDatabaseID(v [16]byte) {
+	n.row.DatabaseID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iDatabaseID
+}
+
+// SetDatabaseIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetDatabaseIDNull() {
+	n.row.DatabaseID = runtime.Null[[16]byte]{}
+	n.set |= iDatabaseID
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3995,7 +4197,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 25)
+	set := make([]string, 0, 27)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -4072,6 +4274,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<25) != 0 {
 			set = append(set, "last_reported_at")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "kind")
+		}
+		if mask&(1<<27) != 0 {
+			set = append(set, "database_id")
 		}
 	}
 	return set
@@ -4162,6 +4370,8 @@ var assignFor = map[string]string{
 	"termination_reason": "\"termination_reason\" = EXCLUDED.\"termination_reason\"",
 	"end_inferred":       "\"end_inferred\" = EXCLUDED.\"end_inferred\"",
 	"last_reported_at":   "\"last_reported_at\" = EXCLUDED.\"last_reported_at\"",
+	"kind":               "\"kind\" = EXCLUDED.\"kind\"",
+	"database_id":        "\"database_id\" = EXCLUDED.\"database_id\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4264,6 +4474,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.EndInferred)
 		case 25:
 			args = append(args, n.row.LastReportedAt)
+		case 26:
+			args = append(args, n.row.Kind)
+		case 27:
+			args = append(args, n.row.DatabaseID.Arg())
 		}
 	}
 	var out Row
@@ -4301,7 +4515,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 28)
 	args = append(args, r.ID)
 	args = append(args, r.UserEmail)
 	args = append(args, r.AssetID.Arg())
@@ -4328,6 +4542,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.TerminationReason.Arg())
 	args = append(args, r.EndInferred)
 	args = append(args, r.LastReportedAt)
+	args = append(args, r.Kind)
+	args = append(args, r.DatabaseID.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4380,13 +4596,15 @@ var copyCols = []string{
 	"termination_reason",
 	"end_inferred",
 	"last_reported_at",
+	"kind",
+	"database_id",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [26]any
+	buf  [28]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4430,6 +4648,8 @@ func (s *rowSource) Values() []any {
 	s.buf[23] = r.TerminationReason.Ptr()
 	s.buf[24] = &r.EndInferred
 	s.buf[25] = &r.LastReportedAt
+	s.buf[26] = &r.Kind
+	s.buf[27] = r.DatabaseID.Ptr()
 	return s.buf[:]
 }
 
@@ -4486,8 +4706,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 23
 	mask |= 1 << 24
 	mask |= 1 << 25
+	mask |= 1 << 26
+	mask |= 1 << 27
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 28)
 	args = append(args, r.ID)
 	args = append(args, r.UserEmail)
 	args = append(args, r.AssetID.Arg())
@@ -4514,6 +4736,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.TerminationReason.Arg())
 	args = append(args, r.EndInferred)
 	args = append(args, r.LastReportedAt)
+	args = append(args, r.Kind)
+	args = append(args, r.DatabaseID.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4599,6 +4823,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.EndInferred)
 		case 25:
 			args = append(args, n.row.LastReportedAt)
+		case 26:
+			args = append(args, n.row.Kind)
+		case 27:
+			args = append(args, n.row.DatabaseID.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4704,6 +4932,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.EndInferred)
 		case 24:
 			args = append(args, m.row.LastReportedAt)
+		case 25:
+			args = append(args, m.row.Kind)
+		case 26:
+			args = append(args, m.row.DatabaseID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4836,6 +5068,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.EndInferred)
 		case 24:
 			args = append(args, m.row.LastReportedAt)
+		case 25:
+			args = append(args, m.row.Kind)
+		case 26:
+			args = append(args, m.row.DatabaseID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5034,6 +5270,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.EndInferred)
 		case 24:
 			args = append(args, m.row.LastReportedAt)
+		case 25:
+			args = append(args, m.row.Kind)
+		case 26:
+			args = append(args, m.row.DatabaseID.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

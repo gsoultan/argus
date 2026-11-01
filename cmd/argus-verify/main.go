@@ -13,11 +13,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
 
 	"github.com/gsoultan/argus/internal/recorder"
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 // Stamped by the release build.
@@ -59,10 +61,26 @@ func main() {
 	}
 	defer f.Close()
 
-	v, err := recorder.Verify(f, expected)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
-		os.Exit(2)
+	// A database session's recording (.argussql) is JSON lines with its own
+	// chain; the first bytes say which kind this is.
+	br := bufio.NewReader(f)
+	peek, _ := br.Peek(16)
+	var v recorder.Verification
+	var broken int64
+	if tunnel.IsPGRecording(peek) {
+		pv, perr := tunnel.VerifyPGRecording(br, expected)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", perr)
+			os.Exit(2)
+		}
+		v = recorder.Verification{OK: pv.OK, Lines: pv.Lines, Head: pv.Head}
+		broken = pv.Broken
+	} else {
+		v, err = recorder.Verify(br, expected)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+			os.Exit(2)
+		}
 	}
 
 	if *headOnly {
@@ -84,6 +102,11 @@ func main() {
 		fmt.Printf("  lines     %d\n", v.Lines)
 		fmt.Printf("  expected  %s\n", expected)
 		fmt.Printf("  computed  %s\n", v.Head)
+		if broken > 0 {
+			// A database recording's lines each carry their own hash, so a
+			// changed line is found exactly, not only by the head.
+			fmt.Printf("  broken    line %d does not match its own hash or the one before it\n", broken)
+		}
 		fmt.Println()
 		fmt.Println("  The recording on disk differs from what was sealed.")
 		fmt.Println("  Preserve it as evidence and treat this as an incident.")
