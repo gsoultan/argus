@@ -128,6 +128,17 @@ type Provisioner struct {
 	state map[string]string
 }
 
+// passwd is the account list Reconcile reads. The agent leaves Passwd empty,
+// and on Linux "" must mean /etc/passwd: openPasswd reads "" as the platform's
+// account directory, which Linux does not have, so every pass failed and no
+// personal account was ever made or locked.
+func (p *Provisioner) passwd() string {
+	if p.Passwd != "" {
+		return p.Passwd
+	}
+	return systemPasswd
+}
+
 // commentFor is the comment field of an account made for owner. Anything
 // passwd(5) would read as a field separator is dropped.
 func commentFor(owner string) string {
@@ -153,7 +164,7 @@ func (p *Provisioner) Reconcile(ctx context.Context, want []PersonalAccount) []P
 		}
 		return out
 	}
-	existing, err := readPasswdEntries(p.Passwd)
+	existing, err := readPasswdEntries(p.passwd())
 	if err != nil {
 		p.Log.Error("personal accounts: cannot read the account list", "error", err)
 		out := make([]PersonalAccountState, 0, len(want))
@@ -223,7 +234,7 @@ func (p *Provisioner) keep(ctx context.Context, a PersonalAccount, existing map[
 			return fail("useradd failed: " + firstLine(out, err))
 		}
 		p.Log.Warn("personal account created", "account", a.Name, "owner", a.Owner)
-		fresh, err := readPasswdEntries(p.Passwd)
+		fresh, err := readPasswdEntries(p.passwd())
 		if err != nil {
 			return fail("the account was created and cannot be read back")
 		}
