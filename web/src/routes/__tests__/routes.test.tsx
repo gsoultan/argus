@@ -22,6 +22,7 @@ const ROUTES: Array<[path: string, heading: string]> = [
   ['/audit', 'Activity'],
   ['/settings', 'Settings'],
   ['/connect', 'Connect'],
+  ['/about', 'About Argus'],
   // Old addresses, kept so a bookmark lands somewhere sensible.
   ['/', 'Servers'],
   ['/mine', 'Servers'],
