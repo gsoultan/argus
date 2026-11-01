@@ -21,9 +21,18 @@ type ShimConfig struct {
 	// when locking every admin out of the fleet because a daemon crashed is a
 	// worse outcome than a gap in the audit trail.
 	FailOpen bool
+	// BreakGlassGroups may log in unrecorded while the recorder is down, so
+	// a stopped agent cannot lock the administrators out of the host. Root
+	// always may. A list of just "none" turns break-glass off entirely.
+	BreakGlassGroups []string
 	// Shell overrides the login shell; empty means look it up.
 	Shell string
 }
+
+// DefaultBreakGlassGroups are the groups that administer a Linux or BSD host:
+// sudo on Debian and Ubuntu, wheel on RHEL, Fedora and the BSDs, admin on
+// older Ubuntu and macOS.
+var DefaultBreakGlassGroups = []string{"sudo", "wheel", "admin"}
 
 // decisionWait bounds how long a login waits for the daemon's answer.
 //

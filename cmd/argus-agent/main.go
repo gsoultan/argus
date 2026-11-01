@@ -660,13 +660,22 @@ func runShim(args []string) int {
 	_ = fs.String("gateways", "", "ignored: no longer used")
 	_ = fs.Bool("skip-brokered", false, "ignored: no longer used")
 	failOpen := fs.Bool("fail-open", false, "allow unrecorded sessions when the collector is down")
+	breakGlass := fs.String("break-glass", strings.Join(agent.DefaultBreakGlassGroups, ","),
+		`groups that may log in unrecorded while the agent is down (root always may); "none" turns it off`)
 	shell := fs.String("shell", "", "override the login shell")
 	_ = fs.Parse(args)
 
+	var groups []string
+	for _, g := range strings.Split(*breakGlass, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			groups = append(groups, g)
+		}
+	}
 	return agent.RunShim(agent.ShimConfig{
-		SocketPath: *socket,
-		FailOpen:   *failOpen,
-		Shell:      *shell,
+		SocketPath:       *socket,
+		FailOpen:         *failOpen,
+		BreakGlassGroups: groups,
+		Shell:            *shell,
 	})
 }
 
@@ -745,6 +754,11 @@ func runInstall(args []string) int {
 # not use sshd at all; they reach the agent over its tunnel.
 
 ForceCommand %s shim
+
+# If the agent is ever stopped, root and members of sudo, wheel or admin can
+# still log in (unrecorded, with a warning and a line in the auth log) so they
+# can start it again. Change who with --break-glass=group1,group2, or turn it
+# off with --break-glass=none, on the ForceCommand line.
 
 # Recommended alongside it. These remove the ability to bypass rather than
 # merely recording it, which is the stronger control:

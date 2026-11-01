@@ -37,16 +37,7 @@ func RunShim(cfg ShimConfig) int {
 
 	conn, err := net.DialTimeout("unix", cfg.SocketPath, 5*time.Second)
 	if err != nil {
-		if !cfg.FailOpen {
-			fmt.Fprintln(os.Stderr,
-				"argus: session recording is unavailable, refusing connection.")
-			fmt.Fprintln(os.Stderr,
-				"argus: contact your administrator — the host agent is not running.")
-			return 1
-		}
-		fmt.Fprintln(os.Stderr,
-			"argus: WARNING — recording unavailable, this session is NOT being recorded.")
-		return execSession(cfg, origCmd, nil)
+		return recorderDown(cfg, origCmd, "the host agent is not running")
 	}
 	defer conn.Close()
 
@@ -70,11 +61,7 @@ func RunShim(cfg ShimConfig) int {
 
 	enc := json.NewEncoder(conn)
 	if err := enc.Encode(start); err != nil {
-		if !cfg.FailOpen {
-			fmt.Fprintln(os.Stderr, "argus: cannot start recording, refusing connection.")
-			return 1
-		}
-		return execSession(cfg, origCmd, nil)
+		return recorderDown(cfg, origCmd, "the host agent closed the connection")
 	}
 
 	// One decoder for the life of the connection: the decision and the final
@@ -99,13 +86,7 @@ func RunShim(cfg ShimConfig) int {
 		fmt.Fprintf(os.Stderr, "argus: %s.\n", d.reason)
 		return 1
 	case d.refused:
-		if !cfg.FailOpen {
-			fmt.Fprintln(os.Stderr, "argus: cannot start recording, refusing connection.")
-			return 1
-		}
-		fmt.Fprintln(os.Stderr,
-			"argus: WARNING — recording unavailable, this session is NOT being recorded.")
-		return execSession(cfg, origCmd, nil)
+		return recorderDown(cfg, origCmd, "the host agent could not open a recording")
 	case d.skip:
 		// The host's recording scope, set in the console, not something the
 		// shim decided. Said to the user, because a login that is reported but
@@ -128,6 +109,90 @@ func RunShim(cfg ShimConfig) int {
 			ack.SessionID, ack.ChainHead[:12])
 	}
 	return code
+}
+
+// recorderDown is what a login gets when the recorder cannot take it: the
+// agent is stopped, crashed, or mid-restart.
+//
+// Refusing everyone is right for an ordinary user, and wrong for the
+// administrator who has to log in to start the agent again. Before break-glass
+// existed, a stopped agent refused every login on the host, root included,
+// and the only way back in was the hosting provider's console. So whoever is
+// on the break-glass list (root and the admin groups, by default) is let in
+// unrecorded, told so on their terminal, and logged to the system's auth log.
+//
+// This is only for a recorder that is down. A login the agent answered and
+// turned away (console-only, or an approval that never came) is refused
+// here exactly as before: the agent is up, so there is nothing to break out of.
+func recorderDown(cfg ShimConfig, origCmd, why string) int {
+	switch {
+	case cfg.FailOpen:
+		fmt.Fprintln(os.Stderr,
+			"argus: WARNING — recording unavailable, this session is NOT being recorded.")
+		return execSession(cfg, origCmd, nil)
+	case breakGlassAllowed(cfg.BreakGlassGroups, currentUserInfo):
+		fmt.Fprintf(os.Stderr, "argus: WARNING — %s, so this session is NOT being recorded.\n", why)
+		fmt.Fprintln(os.Stderr,
+			"argus: you are let in as break-glass. Start the agent again: sudo systemctl start argus-agent")
+		logBreakGlass(why)
+		return execSession(cfg, origCmd, nil)
+	}
+	fmt.Fprintf(os.Stderr, "argus: session recording is unavailable (%s), refusing connection.\n", why)
+	fmt.Fprintln(os.Stderr,
+		"argus: contact your administrator to start the host agent again.")
+	return 1
+}
+
+// userInfo is who is logging in, as break-glass needs it.
+type userInfo struct {
+	uid    string
+	groups []string // group names
+}
+
+// currentUserInfo looks up the connecting user. A lookup that fails gives no
+// groups, so the answer falls back to refusing.
+func currentUserInfo() userInfo {
+	u, err := user.Current()
+	if err != nil {
+		return userInfo{uid: strconv.Itoa(os.Getuid())}
+	}
+	info := userInfo{uid: u.Uid}
+	ids, _ := u.GroupIds()
+	for _, id := range ids {
+		if g, err := user.LookupGroupId(id); err == nil {
+			info.groups = append(info.groups, g.Name)
+		}
+	}
+	return info
+}
+
+// breakGlassAllowed reports whether the connecting user may log in while the
+// recorder is down. Root always may, unless the list is "none".
+func breakGlassAllowed(groups []string, who func() userInfo) bool {
+	if len(groups) == 1 && groups[0] == "none" {
+		return false
+	}
+	info := who()
+	if info.uid == "0" {
+		return true
+	}
+	for _, have := range info.groups {
+		for _, want := range groups {
+			if have == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// logBreakGlass leaves a line in the auth log, so a session the recorder never
+// saw still leaves a trace someone can find. Best effort: logger may be absent.
+func logBreakGlass(why string) {
+	clientAddr, _, _ := strings.Cut(os.Getenv("SSH_CONNECTION"), " ")
+	msg := fmt.Sprintf("break-glass login by %s from %s, NOT recorded: %s",
+		currentUsername(), clientAddr, why)
+	_ = exec.Command("logger", "-p", "authpriv.warning", "-t", "argus-agent", msg).Run()
 }
 
 // stream serialises frames onto the collector connection.

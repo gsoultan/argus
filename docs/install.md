@@ -309,8 +309,17 @@ refuses any `ssh`, `scp` or `sftp` login that reached
 sshd without going through Argus, before anything runs, tells the person to use
 the console, and writes a `session.direct_refused` entry to the audit log. The
 agent remembers this in its state directory, so a restart during a
-control-plane outage keeps refusing. Use the machine's own console (hypervisor
-or physical) as the break-glass path.
+control-plane outage keeps refusing.
+
+**When the agent itself is stopped**, it cannot record or decide anything, so
+ordinary users are refused. Root and members of `sudo`, `wheel` or `admin` are
+still let in, unrecorded, with a warning on their terminal and an
+`argus-agent` line in the auth log, so they can run
+`sudo systemctl start argus-agent`. Without this a crashed agent locked every
+account out of the server. Pick the groups with
+`ForceCommand /usr/bin/argus-agent shim --break-glass=oncall,ops`, or turn it
+off with `--break-glass=none` and rely on the machine's own console
+(hypervisor or physical) instead.
 
 Every login that is admitted -- every session opened from the console -- is
 recorded. There is no setting to record fewer.
