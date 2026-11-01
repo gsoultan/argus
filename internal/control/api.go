@@ -205,6 +205,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/databases/{id}", a.getDatabase)
 	mux.HandleFunc("PATCH /api/v1/databases/{id}", a.dbAdmin(a.patchDatabase))
 	mux.HandleFunc("DELETE /api/v1/databases/{id}", a.dbAdmin(a.deleteDatabase))
+	mux.HandleFunc("GET /api/v1/databases/{id}/pooler-setup", a.dbAdmin(a.getDBPoolerSetup))
 	mux.HandleFunc("POST /api/v1/databases/{id}/ticket", a.limitTickets(a.handleDatabaseTicket))
 	mux.HandleFunc("GET /api/v1/databases/{id}/assignments", a.getDBAssignments)
 	mux.HandleFunc("PUT /api/v1/databases/{id}/assignments", a.dbAdmin(a.putDBAssignment))

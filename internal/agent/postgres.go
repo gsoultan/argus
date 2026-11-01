@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -175,6 +176,13 @@ type pgSession struct {
 	conn    *pgconn.PgConn
 	types   map[uint32]string
 	version string
+	// pooled is set when the connection goes through PgBouncer. Nothing may
+	// then be left on the connection between statements: PgBouncer in
+	// transaction mode hands it to the person's next statement or, after
+	// they leave, to nobody Argus knows about. Every statement runs in its
+	// own transaction with SET LOCAL for the role and the limits.
+	pooled  bool
+	prelude string
 
 	rec    *os.File
 	seq    int64
@@ -215,7 +223,7 @@ func openPGSession(ctx context.Context, cfg PostgresConfig, admin pgAdminRunner,
 	uses.add(s.useKey(), 1)
 	res := admin(octx, PGAdminRequest{Op: "open", Database: db.Name, Socket: socketDir(db),
 		Port: db.Port, AdminUser: cfg.AdminUser, Role: g.Principal, Owner: g.Email,
-		Level: db.Level, Verifier: verifier, ValidUntil: time.Now().Add(maxSession)})
+		Level: db.Level, Verifier: verifier, ValidUntil: time.Now().Add(maxSession), Pooled: db.PoolPort > 0})
 	if !res.OK {
 		uses.add(s.useKey(), -1)
 		if res.Error == "" {
@@ -266,47 +274,66 @@ func ms(n int, def time.Duration) time.Duration {
 	return time.Duration(n) * time.Millisecond
 }
 
-// connect signs in as the person's role. TCP to localhost first, which every
-// stock pg_hba.conf allows with a password; then the socket, which needs the
-// "+argus_people scram-sha-256" line.
+// connect signs in as the person's role. Through PgBouncer when the database
+// has one, then straight to Postgres: where the database says, then the other
+// local way in.
 func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgConn, error) {
-	params := map[string]string{
-		"application_name":                    "argus:" + s.id,
+	settings := map[string]string{
 		"statement_timeout":                   strconv.FormatInt(ms(s.db.StatementTimeoutMS, defaultStmtTimeout).Milliseconds(), 10),
 		"idle_in_transaction_session_timeout": strconv.FormatInt(ms(s.db.IdleTxTimeoutMS, defaultIdleTxTimeout).Milliseconds(), 10),
 		"lock_timeout":                        strconv.FormatInt(lockTimeout.Milliseconds(), 10),
 	}
-	if s.db.Level == tunnel.LevelRead {
-		// A convenience, not the control: the role has no write grants.
-		params["default_transaction_read_only"] = "on"
-	}
-	// Where the database says, then the other local way in. A socket
-	// directory is usually under "local all all peer", which refuses a role
-	// with no matching account, while 127.0.0.1 is usually password
+	// A socket directory is usually under "local all all peer", which refuses
+	// a role with no matching account, while 127.0.0.1 is usually password
 	// authenticated; trying both means most servers need no pg_hba change.
-	hosts := []string{s.db.Host}
+	type way struct {
+		host   string
+		port   int
+		pooled bool
+	}
+	var ways []way
+	if s.db.PoolPort > 0 {
+		ph := s.db.PoolHost
+		if ph == "" {
+			ph = "127.0.0.1"
+		}
+		ways = append(ways, way{ph, s.db.PoolPort, true})
+	}
+	ways = append(ways, way{s.db.Host, s.db.Port, false})
 	if strings.HasPrefix(s.db.Host, "/") {
-		hosts = append(hosts, "127.0.0.1")
+		ways = append(ways, way{"127.0.0.1", s.db.Port, false})
 	} else {
-		hosts = append(hosts, socketDir(s.db))
+		ways = append(ways, way{socketDir(s.db), s.db.Port, false})
 	}
 	var lastErr error
-	for _, host := range hosts {
+	for _, w := range ways {
 		cfg, err := pgconn.ParseConfig("sslmode=prefer")
 		if err != nil {
 			return nil, err
 		}
-		cfg.Host, cfg.Port, cfg.Database = host, uint16(s.db.Port), s.db.Name
+		cfg.Host, cfg.Port, cfg.Database = w.host, uint16(w.port), s.db.Name
 		cfg.User, cfg.Password = s.g.Principal, password
-		cfg.RuntimeParams = params
+		// PgBouncer refuses startup parameters it does not track, so a
+		// pooled session carries only its name and sets the rest per
+		// statement.
+		cfg.RuntimeParams = map[string]string{"application_name": "argus:" + s.id}
+		if !w.pooled {
+			for k, v := range settings {
+				cfg.RuntimeParams[k] = v
+			}
+			if s.db.Level == tunnel.LevelRead {
+				// A convenience, not the control: the role has no write grants.
+				cfg.RuntimeParams["default_transaction_read_only"] = "on"
+			}
+		}
 		cfg.Fallbacks = nil
-		if strings.HasPrefix(host, "/") {
+		if strings.HasPrefix(w.host, "/") {
 			cfg.TLSConfig = nil
 		} else if cfg.TLSConfig != nil {
 			// Localhost: TLS when the server offers it, plain when it does
 			// not; no certificate to check on a loopback connection.
 			cfg.TLSConfig.InsecureSkipVerify = true
-			cfg.Fallbacks = []*pgconn.FallbackConfig{{Host: host, Port: uint16(s.db.Port)}}
+			cfg.Fallbacks = []*pgconn.FallbackConfig{{Host: w.host, Port: uint16(w.port)}}
 		}
 		cfg.ConnectTimeout = 10 * time.Second
 		// A cancelled statement sends Postgres a cancel request and keeps
@@ -315,18 +342,48 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 			return &pgconn.CancelRequestContextWatcherHandler{Conn: c, DeadlineDelay: 10 * time.Second}
 		}
 		conn, err := pgconn.ConnectConfig(ctx, cfg)
-		if err == nil {
-			if s.db.Level == tunnel.LevelOwner || s.db.Level == tunnel.LevelDBA {
-				// What an owner creates belongs to the level, not to one
-				// person whose role is locked when they leave.
-				if _, err := conn.Exec(ctx, "SET ROLE "+pgx(levelRole(s.db.Level, s.db.Name))).ReadAll(); err != nil {
-					_ = conn.Close(ctx)
-					return nil, err
-				}
+		if err != nil {
+			lastErr = err
+			if w.pooled {
+				s.log.Warn("postgres: PgBouncer refused the session, going straight to Postgres",
+					"database", s.db.Name, "pooler", net.JoinHostPort(w.host, strconv.Itoa(w.port)), "err", err)
+			}
+			continue
+		}
+		s.pooled = w.pooled
+		role := ""
+		if s.db.Level == tunnel.LevelOwner || s.db.Level == tunnel.LevelDBA {
+			// What an owner creates belongs to the level, not to one
+			// person whose role is locked when they leave.
+			role = pgx(levelRole(s.db.Level, s.db.Name))
+		}
+		if w.pooled {
+			var b strings.Builder
+			b.WriteString("BEGIN")
+			for _, k := range []string{"statement_timeout", "idle_in_transaction_session_timeout", "lock_timeout"} {
+				fmt.Fprintf(&b, "; SET LOCAL %s = %s", k, settings[k])
+			}
+			if s.db.Level == tunnel.LevelRead {
+				b.WriteString("; SET LOCAL transaction_read_only = on")
+			}
+			if role != "" {
+				b.WriteString("; SET LOCAL ROLE " + role)
+			}
+			s.prelude = b.String()
+			// Prove the role and the pooler agree before saying ready.
+			if _, err := conn.Exec(ctx, s.prelude+"; COMMIT").ReadAll(); err != nil {
+				_ = conn.Close(ctx)
+				return nil, err
 			}
 			return conn, nil
 		}
-		lastErr = err
+		if role != "" {
+			if _, err := conn.Exec(ctx, "SET ROLE "+role).ReadAll(); err != nil {
+				_ = conn.Close(ctx)
+				return nil, err
+			}
+		}
+		return conn, nil
 	}
 	return nil, fmt.Errorf("could not sign in to Postgres as %s: %w; the server's pg_hba.conf "+
 		"must let it in with a password, over localhost or with the line "+
@@ -427,8 +484,16 @@ func (s *pgSession) serve(ctx context.Context, st tunnel.Stream) {
 		Level: s.db.Level, Grant: s.g.ID}) != nil {
 		return
 	}
+	via := "direct"
+	if s.pooled {
+		via = "pgbouncer"
+	}
+	levels := make(map[string]string, 4)
+	for _, l := range []string{tunnel.LevelRead, tunnel.LevelWrite, tunnel.LevelOwner, tunnel.LevelDBA} {
+		levels[l] = levelRole(l, s.db.Name)
+	}
 	if s.send(tunnel.PGAnswer{Type: "ready", Role: s.g.Principal, Level: s.db.Level,
-		Version: s.version, Session: s.id, ReadOnly: s.db.Level == tunnel.LevelRead}) != nil {
+		Version: s.version, Session: s.id, ReadOnly: s.db.Level == tunnel.LevelRead, Via: via, Levels: levels}) != nil {
 		return
 	}
 
@@ -574,6 +639,23 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	}()
 
 	start := time.Now()
+	// Pooled: open our own transaction with the role and limits, unless the
+	// person is inside one of theirs, which already carries them.
+	wrapped := false
+	if s.pooled && s.conn.TxStatus() == 'I' {
+		if _, err := s.conn.Exec(sctx, s.prelude).ReadAll(); err != nil {
+			return s.statementFailed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
+		}
+		wrapped = true
+		if beginSQL(sql) {
+			// Their BEGIN is the one already open; it ends when they say.
+			elapsed := time.Since(start).Milliseconds()
+			if rerr := s.record(tunnel.PGRecord{Kind: "done", Request: req.ID, Tag: "BEGIN", MS: elapsed}); rerr != nil {
+				return rerr
+			}
+			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: "BEGIN", MS: elapsed})
+		}
+	}
 	rr := s.conn.ExecParams(sctx, sql, nil, nil, nil, []int16{0})
 	h := sha256.New()
 	enc := tunnel.NewRowEncoder(req.ID)
@@ -610,13 +692,26 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 		}
 	}
 	flush()
-	if truncated && s.conn.TxStatus() == 'I' {
+	if truncated && (wrapped || s.conn.TxStatus() == 'I') {
 		// Outside a transaction, stop Postgres producing rows nobody will
-		// see. Inside one, a cancel would abort the person's transaction,
-		// so the rest is read and dropped instead.
+		// see. Inside one of the person's, a cancel would abort it, so the
+		// rest is read and dropped instead.
 		cancel()
 	}
 	tag, err := rr.Close()
+	if wrapped && !s.conn.IsClosed() {
+		// Ours to end: commit what worked, roll back what failed, and leave
+		// nothing on the connection for the pool. Unless the statement
+		// itself ended the transaction (a COMMIT typed inside our BEGIN).
+		switch s.conn.TxStatus() {
+		case 'T':
+			if _, cerr := s.conn.Exec(context.WithoutCancel(sctx), "COMMIT").ReadAll(); cerr != nil && err == nil {
+				err = cerr
+			}
+		case 'E':
+			_, _ = s.conn.Exec(context.WithoutCancel(sctx), "ROLLBACK").ReadAll()
+		}
+	}
 	elapsed := time.Since(start).Milliseconds()
 	if sendErr != nil {
 		return sendErr
@@ -633,23 +728,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	}
 	resultSum := hex.EncodeToString(h.Sum(nil))
 	if err != nil {
-		a := tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error(), MS: elapsed}
-		if errors.As(err, &pgErr) {
-			a.Error, a.Code, a.Position, a.Detail, a.Hint =
-				pgErr.Message, pgErr.Code, int(pgErr.Position), pgErr.Detail, pgErr.Hint
-			if pgErr.Code == "57014" && ctx.Err() == nil {
-				a.Error = "cancelled: " + pgErr.Message
-			}
-		} else if s.conn.IsClosed() {
-			_ = s.record(tunnel.PGRecord{Kind: "error", Request: req.ID, Error: err.Error(), MS: elapsed})
-			_ = s.send(a)
-			return errors.New("the connection to Postgres ended")
-		}
-		if rerr := s.record(tunnel.PGRecord{Kind: "error", Request: req.ID, Code: a.Code,
-			Error: a.Error, MS: elapsed, Rows: rows}); rerr != nil {
-			return rerr
-		}
-		return s.send(a)
+		return s.statementFailed(ctx, req.ID, err, rows, elapsed)
 	}
 	tagText := tag.String()
 	if rerr := s.record(tunnel.PGRecord{Kind: "done", Request: req.ID, Tag: tagText, Rows: rowsOf(tag, rows),
@@ -658,6 +737,44 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	}
 	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: tagText, Rows: rowsOf(tag, rows),
 		MS: elapsed, Truncated: truncated})
+}
+
+// statementFailed records and answers a statement's failure. Postgres's own
+// error is passed on as it is; a lost connection ends the session.
+func (s *pgSession) statementFailed(ctx context.Context, id uint32, err error, rows, elapsed int64) error {
+	a := tunnel.PGAnswer{ID: id, Type: "error", Error: err.Error(), MS: elapsed}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		a.Error, a.Code, a.Position, a.Detail, a.Hint =
+			pgErr.Message, pgErr.Code, int(pgErr.Position), pgErr.Detail, pgErr.Hint
+		if pgErr.Code == "57014" && ctx.Err() == nil {
+			a.Error = "cancelled: " + pgErr.Message
+		}
+	} else if s.conn.IsClosed() {
+		_ = s.record(tunnel.PGRecord{Kind: "error", Request: id, Error: err.Error(), MS: elapsed})
+		_ = s.send(a)
+		return errors.New("the connection to Postgres ended")
+	}
+	if rerr := s.record(tunnel.PGRecord{Kind: "error", Request: id, Code: a.Code,
+		Error: a.Error, MS: elapsed, Rows: rows}); rerr != nil {
+		return rerr
+	}
+	return s.send(a)
+}
+
+// beginSQL reports whether a statement opens a transaction.
+func beginSQL(sql string) bool {
+	f := strings.Fields(strings.ToLower(strings.TrimRight(sql, "; \t\r\n")))
+	if len(f) == 0 {
+		return false
+	}
+	switch f[0] {
+	case "begin":
+		return true
+	case "start":
+		return len(f) > 1 && f[1] == "transaction"
+	}
+	return false
 }
 
 // rowsOf is how many rows a statement touched: what it returned for a query,

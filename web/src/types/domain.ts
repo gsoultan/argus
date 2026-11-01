@@ -620,6 +620,9 @@ export interface Database {
   engine: 'postgres'
   host: string
   port: number
+  /** A PgBouncer sessions go through; a port of 0 is none. */
+  poolerHost: string
+  poolerPort: number
   dbname: string
   adminUser: string
   label: DBLabel
@@ -627,6 +630,17 @@ export interface Database {
   createdBy: string
   createdAt: string
   tunnelConnected: boolean
+}
+
+/** The one-time PgBouncer setup for a database, from the control plane. */
+export interface DBPoolerSetup {
+  authRole: string
+  authQuery: string
+  sql: string[]
+  grant: string
+  ini: string
+  poolerHost: string
+  poolerPort: number
 }
 
 /** What one person may do on one database right now. */

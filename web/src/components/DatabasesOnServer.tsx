@@ -77,10 +77,12 @@ function AddDatabase({ asset, opened, onClose }: { asset: Asset; opened: boolean
   const [dbname, setDbname] = useState('')
   const [port, setPort] = useState<number | string>(5432)
   const [label, setLabel] = useState<DBLabel>('production')
+  const [poolerPort, setPoolerPort] = useState<number | string>('')
   const valid = /^[A-Za-z_][A-Za-z0-9_$-]{0,62}$/.test(dbname)
   const submit = async () => {
     try {
-      const db = await create.mutateAsync({ assetId: asset.id, dbname, port: Number(port) || 5432, label })
+      const db = await create.mutateAsync({ assetId: asset.id, dbname, port: Number(port) || 5432, label,
+        poolerPort: Number(poolerPort) || 0 })
       notifyOk('Database added', `${db.dbname} on ${asset.hostname}. Give a team access from its page; nobody can open it until you do.`)
       onClose()
       setDbname('')
@@ -96,6 +98,8 @@ function AddDatabase({ asset, opened, onClose }: { asset: Asset; opened: boolean
           description="As Postgres knows it. The agent connects over the local socket as the postgres account." />
         <NumberInput label="Port" value={port} onChange={setPort} min={1} max={65535}
           description="Only if Postgres listens somewhere other than 5432." />
+        <NumberInput label="PgBouncer port" value={poolerPort} onChange={setPoolerPort} min={1} max={65535} placeholder="none"
+          description="If applications here connect through PgBouncer, sessions can too. Its address and one-time setup are on the database's Connection tab." />
         <Stack gap={4}>
           <Text size={FS.meta} fw={500}>Label</Text>
           <SegmentedControl value={label} onChange={(v) => setLabel(v as DBLabel)}

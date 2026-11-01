@@ -13,6 +13,7 @@ import {
   databases as liveDatabases,
   databasesOnAsset as liveDatabasesOnAsset,
   database as liveDatabase,
+  databasePoolerSetup as liveDatabasePoolerSetup,
   dbAssignments as liveDBAssignments,
   createDatabase as liveCreateDatabase,
   updateDatabase as liveUpdateDatabase,
@@ -441,6 +442,8 @@ export const databasesOnAssetQuery = (assetId: string) =>
 
 export const databaseQuery = (id: string) =>
   queryOptions({ queryKey: dbqk.database(id), queryFn: () => liveDatabase(id), enabled: isConfigured() })
+export const databasePoolerSetupQuery = (id: string) =>
+  queryOptions({ queryKey: [...dbqk.database(id), 'pooler-setup'] as const, queryFn: () => liveDatabasePoolerSetup(id), enabled: isConfigured() })
 
 export const dbAssignmentsQuery = (id: string) =>
   queryOptions({ queryKey: dbqk.dbAssignments(id), queryFn: () => liveDBAssignments(id), enabled: isConfigured() })
@@ -456,8 +459,9 @@ export function useCreateDatabase() {
 export function useUpdateDatabase() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { id: string } & Parameters<typeof liveUpdateDatabase>[1]) =>
-      liveUpdateDatabase(v.id, v),
+    // The id goes in the path only; the control plane refuses unknown fields.
+    mutationFn: ({ id, ...patch }: { id: string } & Parameters<typeof liveUpdateDatabase>[1]) =>
+      liveUpdateDatabase(id, patch),
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: dbqk.databases })
       void qc.invalidateQueries({ queryKey: dbqk.database(v.id) })
@@ -476,8 +480,8 @@ export function useDeleteDatabase() {
 export function useSetDBAssignment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { id: string } & Parameters<typeof liveSetDBAssignment>[1]) =>
-      liveSetDBAssignment(v.id, v),
+    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof liveSetDBAssignment>[1]) =>
+      liveSetDBAssignment(id, input),
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: dbqk.dbAssignments(v.id) })
       void qc.invalidateQueries({ queryKey: dbqk.databases })
@@ -499,8 +503,8 @@ export function useRemoveDBAssignment() {
 export function useRequestDatabaseAccess() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { id: string } & Parameters<typeof liveRequestDatabaseAccess>[1]) =>
-      liveRequestDatabaseAccess(v.id, v),
+    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof liveRequestDatabaseAccess>[1]) =>
+      liveRequestDatabaseAccess(id, input),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['requests'] }),
   })
 }

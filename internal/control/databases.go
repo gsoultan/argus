@@ -30,18 +30,22 @@ person's level is the highest of their other rows, which may be nothing.
 
 // Database is one database on one server.
 type Database struct {
-	ID        string    `json:"id"`
-	AssetID   string    `json:"assetId"`
-	Hostname  string    `json:"hostname"`
-	Engine    string    `json:"engine"`
-	Host      string    `json:"host"`
-	Port      int       `json:"port"`
-	Name      string    `json:"dbname"`
-	AdminUser string    `json:"adminUser"`
-	Label     string    `json:"label"`
-	Policy    DBPolicy  `json:"policy"`
-	CreatedBy string    `json:"createdBy"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID       string `json:"id"`
+	AssetID  string `json:"assetId"`
+	Hostname string `json:"hostname"`
+	Engine   string `json:"engine"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	// PoolerHost and PoolerPort are a PgBouncer sessions go through; a port
+	// of 0 is none. Provisioning never goes through it.
+	PoolerHost string    `json:"poolerHost"`
+	PoolerPort int       `json:"poolerPort"`
+	Name       string    `json:"dbname"`
+	AdminUser  string    `json:"adminUser"`
+	Label      string    `json:"label"`
+	Policy     DBPolicy  `json:"policy"`
+	CreatedBy  string    `json:"createdBy"`
+	CreatedAt  time.Time `json:"createdAt"`
 	// TunnelConnected says the server's agent is reachable, so the database
 	// can be opened now.
 	TunnelConnected bool `json:"tunnelConnected"`
@@ -111,6 +115,21 @@ func (d *Database) validate() error {
 	if d.Port < 1 || d.Port > 65535 {
 		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
 	}
+	d.PoolerHost = strings.TrimSpace(d.PoolerHost)
+	switch {
+	case d.PoolerPort < 0 || d.PoolerPort > 65535:
+		return ErrInvalidDatabase{"the PgBouncer port must be between 1 and 65535"}
+	case d.PoolerPort == 0:
+		d.PoolerHost = ""
+	case d.PoolerHost == "":
+		d.PoolerHost = "127.0.0.1"
+	case !tunnel.LocalPGHost(d.PoolerHost):
+		return ErrInvalidDatabase{"PgBouncer must be on the server itself: a socket directory " +
+			"or a loopback address, not " + d.PoolerHost}
+	}
+	if d.PoolerPort != 0 && d.PoolerPort == d.Port && d.PoolerHost == d.Host {
+		return ErrInvalidDatabase{"PgBouncer cannot be at the same address and port as Postgres"}
+	}
 	if d.AdminUser == "" {
 		d.AdminUser = "postgres"
 	}
@@ -145,7 +164,7 @@ func (d *Database) validate() error {
 	return nil
 }
 
-const databaseCols = `d.id::text, d.asset_id::text, a.hostname, d.engine, d.host, d.port, d.dbname,
+const databaseCols = `d.id::text, d.asset_id::text, a.hostname, d.engine, d.host, d.port, d.pooler_host, d.pooler_port, d.dbname,
 	d.admin_user, d.label, d.policy, d.created_by, d.created_at,
 	EXISTS (SELECT 1 FROM agent_credentials c WHERE lower(c.hostname) = lower(a.hostname)
 	        AND c.revoked_at IS NULL AND c.tunnel_seen_at > now() - $1::interval)`
@@ -153,7 +172,7 @@ const databaseCols = `d.id::text, d.asset_id::text, a.hostname, d.engine, d.host
 func scanDatabase(row pgx.Row) (Database, error) {
 	var d Database
 	var policy []byte
-	if err := row.Scan(&d.ID, &d.AssetID, &d.Hostname, &d.Engine, &d.Host, &d.Port, &d.Name,
+	if err := row.Scan(&d.ID, &d.AssetID, &d.Hostname, &d.Engine, &d.Host, &d.Port, &d.PoolerHost, &d.PoolerPort, &d.Name,
 		&d.AdminUser, &d.Label, &policy, &d.CreatedBy, &d.CreatedAt, &d.TunnelConnected); err != nil {
 		return d, err
 	}
@@ -169,11 +188,14 @@ func (s *Store) CreateDatabase(ctx context.Context, d Database, actor string) (D
 	policy, _ := json.Marshal(d.Policy)
 	var id string
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO databases (asset_id, engine, host, port, dbname, admin_user, label, policy, created_by)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (asset_id, port, dbname) DO UPDATE SET host = EXCLUDED.host
+		INSERT INTO databases (asset_id, engine, host, port, dbname, admin_user, label, policy, created_by,
+			pooler_host, pooler_port)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (asset_id, port, dbname) DO UPDATE SET host = EXCLUDED.host,
+			pooler_host = EXCLUDED.pooler_host, pooler_port = EXCLUDED.pooler_port
 		RETURNING id::text`,
-		d.AssetID, d.Engine, d.Host, d.Port, d.Name, d.AdminUser, d.Label, policy, actor).Scan(&id)
+		d.AssetID, d.Engine, d.Host, d.Port, d.Name, d.AdminUser, d.Label, policy, actor,
+		d.PoolerHost, d.PoolerPort).Scan(&id)
 	if err != nil {
 		if strings.Contains(err.Error(), "foreign key") || strings.Contains(err.Error(), "invalid input syntax for type uuid") {
 			return d, ErrInvalidDatabase{"no such server"}
@@ -190,8 +212,8 @@ func (s *Store) UpdateDatabase(ctx context.Context, d Database) (Database, error
 	}
 	policy, _ := json.Marshal(d.Policy)
 	tag, err := s.pool.Exec(ctx, `UPDATE databases SET host = $2, port = $3, admin_user = $4,
-		label = $5, policy = $6 WHERE id = $1::uuid`,
-		d.ID, d.Host, d.Port, d.AdminUser, d.Label, policy)
+		label = $5, policy = $6, pooler_host = $7, pooler_port = $8 WHERE id = $1::uuid`,
+		d.ID, d.Host, d.Port, d.AdminUser, d.Label, policy, d.PoolerHost, d.PoolerPort)
 	if err != nil {
 		return d, fmt.Errorf("update database: %w", err)
 	}

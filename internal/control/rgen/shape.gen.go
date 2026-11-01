@@ -194,6 +194,8 @@ func _assertDatabaseShape(m m0.Database) {
 		m.Engine,
 		m.Host,
 		m.Port,
+		m.PoolerHost,
+		m.PoolerPort,
 		m.Dbname,
 		m.AdminUser,
 		m.Label,

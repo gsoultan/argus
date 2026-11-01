@@ -96,7 +96,29 @@ Postgres's own local socket.
   ended by an admin while it runs, and replays as the list of statements with
   what Postgres answered. The recording (`.argussql`) is JSON lines, each
   hashing the one before; `argus-verify` checks it like a terminal recording
-  and names the first altered line.
+  and names the first altered line. Results are never recorded, only each
+  one's row count and SHA-256.
+- **DBA work is in the workspace, and recorded too.** *Activity & locks*
+  shows every connection to the database, who is waiting on whom and the
+  statement each one runs, with *Cancel* and *End* for a DBA. *Roles &
+  access* shows every role on the server, what it holds here and how many
+  connections it has; a DBA can give an application's own role a level, take
+  it back, or end its connections. Both panels are ordinary statements run as
+  the person's role, so they are in the session recording like anything else,
+  and Postgres, not the console, decides what each level may see and do.
+- **It lives beside your applications.** Argus adds roles named `argus_…`
+  and grants to them; it never alters, revokes from, drops or disconnects a
+  role it did not make. An application's users, grants and default privileges
+  are exactly as they were (there is a test that takes a snapshot and checks).
+- **PgBouncer works.** If applications on the server connect through
+  PgBouncer, set its address under the database's **Connection** tab and
+  sessions go through it too, in session or transaction pooling: every
+  statement carries its own `SET LOCAL` role and limits, so nothing of Argus's
+  is left on a pooled connection. The tab shows the one-time setup: a lookup
+  function PgBouncer's `auth_query` can use that answers only for roles Argus
+  made, so PgBouncer learns nothing about anyone else's password. If PgBouncer
+  refuses a session, Argus goes straight to Postgres and says so in the
+  workspace header.
 
 The grant that opens a session is the same single-use, signed, minute-long
 grant as a terminal's, bound to the person, the server, the database and the

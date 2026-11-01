@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +54,10 @@ type pgHarness struct {
 	rec    []tunnel.PGRecord
 	dir    string
 	done   chan struct{}
+	ready  tunnel.PGAnswer
+	// close ends the session as the browser leaving would, and waits for
+	// the agent side to finish locking the role.
+	close func()
 }
 
 // openPG opens a session as the control plane would and returns the browser
@@ -81,13 +86,14 @@ func openPG(t *testing.T, level string, extra func(*tunnel.GrantDB)) *pgHarness 
 	a, b := net.Pipe()
 	done := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() { cancel(); _ = a.Close(); _ = b.Close(); <-done })
+	closeOnce := sync.OnceFunc(func() { cancel(); _ = a.Close(); _ = b.Close(); <-done })
+	t.Cleanup(closeOnce)
 	go func() {
 		defer close(done)
 		svc(ctx, &Call{Header: tunnel.Header{Service: tunnel.PostgresService, Grant: tok},
 			Stream: pipeStream{a}, GrantKey: pub})
 	}()
-	h := &pgHarness{t: t, stream: pipeStream{b}, fr: tunnel.NewFrameReader(b), dir: dir, done: done}
+	h := &pgHarness{t: t, stream: pipeStream{b}, fr: tunnel.NewFrameReader(b), dir: dir, done: done, close: closeOnce}
 	var ans tunnel.Answer
 	if err := tunnel.ReadJSON(b, &ans); err != nil {
 		t.Fatal(err)
@@ -95,8 +101,8 @@ func openPG(t *testing.T, level string, extra func(*tunnel.GrantDB)) *pgHarness 
 	if !ans.OK {
 		t.Fatalf("the session was refused: %s", ans.Error)
 	}
-	if ready := h.answer(); ready.Type != "ready" || ready.Level != level {
-		t.Fatalf("expected ready at %s, got %+v", level, ready)
+	if h.ready = h.answer(); h.ready.Type != "ready" || h.ready.Level != level {
+		t.Fatalf("expected ready at %s, got %+v", level, h.ready)
 	}
 	return h
 }

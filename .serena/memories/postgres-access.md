@@ -35,6 +35,42 @@ payload, row encoding, recording chain), `internal/agent/postgres*.go`
   peer`, which refuses our roles; loopback is usually scram. Most servers need
   no pg_hba change; `argus-agent install` prints the line if they do.
 
+## Living beside other applications
+
+- Argus only ever creates and alters roles that carry its `argus-managed`
+  comment, and only adds grants to its own level roles. Nothing revokes,
+  drops or terminates anything else; `TestPostgresLeavesOtherRolesAlone`
+  snapshots an application's roles, ACLs and default privileges around
+  sessions at every level. Keep it that way.
+- The DBA level role holds read/write/owner `WITH ADMIN OPTION`, which is how
+  the console's Roles panel grants a level to an application role; nothing
+  below DBA can.
+- PgBouncer: `GrantDB.PoolHost/PoolPort` (from `databases.pooler_host/port`)
+  make the agent connect through the pooler first, falling back to Postgres.
+  A pooled session sends no startup parameters but application_name
+  (PgBouncer refuses unknown ones) and runs every statement as
+  `BEGIN; SET LOCAL …; SET LOCAL ROLE …; <stmt>; COMMIT` unless the person is
+  inside their own transaction, so transaction pooling is safe. PgBouncer
+  authenticates Argus roles via `auth_query` against
+  `argus_auth.pgbouncer_lookup(text)`, a SECURITY DEFINER function that
+  answers only for argus-managed members of `argus_people`;
+  `tunnel.PoolerAuthSetupSQL` is the only copy, run by the agent before every
+  pooled open and shown by the console's Connection tab. The schema is
+  `argus_auth`, not `argus`, because a role named `argus` would otherwise get
+  its unqualified tables created there (`$user` in search_path).
+- `TestPostgresPooledSession` runs a real PgBouncer in transaction mode when
+  `pgbouncer` is on PATH (as `postgres` or `nobody` if root, since PgBouncer
+  refuses to run as root).
+
+## Console administration panels
+
+`web/src/components/DatabaseAdmin.tsx`: Activity & locks and Roles & access
+are plain recorded statements through `collect()` in DatabaseWorkspace, which
+gathers one request's rows by id without touching the editor's result. The
+`ready` answer carries `levels` (level role names) and `via`. Non-DBA levels
+see a real gate on Roles; Activity works at every level with Postgres hiding
+what the level may not see.
+
 ## Wire and cost
 
 - Frames: `q` request, `a` answer (JSON), `r` row batch (binary: uint32 id
@@ -70,3 +106,6 @@ as a statement list (`PostgresReplay`).
   silently failing every upsert.
 - The settings route is `databases.$dbId_.settings.tsx`: the underscore keeps
   it out from under the workspace route, which has no `<Outlet/>`.
+- The control plane decodes request bodies with DisallowUnknownFields, so a
+  console mutation must not pass its `{id, ...}` variables object as the
+  body; strip the id first (this silently 400'd every settings save once).
