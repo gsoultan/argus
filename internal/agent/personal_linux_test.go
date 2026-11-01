@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -246,5 +247,90 @@ func TestAProvisionerWithNoPasswdReadsTheServersAccounts(t *testing.T) {
 	}
 	if _, ok := got["root"]; !ok {
 		t.Errorf("root is not among the %d accounts read", len(got))
+	}
+}
+
+// On a systemd host each pass crosses to `argus-agent personal-apply`, outside
+// the agent's sandbox, where useradd and the sudoers drop-in can be written.
+// The pass over there is the same one, and what it last did comes back so an
+// account is not unlocked again on every pass.
+func TestAPassOutsideTheSandboxIsTheSamePass(t *testing.T) {
+	h := newFakeHost(t, "root:x:0:0:root:/root:/bin/bash")
+	inner := h.provisioner()
+	var requests []personalRequest
+	p := &Provisioner{
+		Passwd:  h.passwd,
+		Sudoers: inner.Sudoers,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Run: func(context.Context, string, ...string) ([]byte, error) {
+			t.Fatal("a pass with Outside set ran a command inside the agent")
+			return nil, nil
+		},
+		Outside: func(ctx context.Context, request []byte) ([]byte, []byte, error) {
+			var req personalRequest
+			if err := json.Unmarshal(request, &req); err != nil {
+				t.Fatal(err)
+			}
+			requests = append(requests, req)
+			// What RunPersonalApply does, with the fake host's commands.
+			helper := h.provisioner()
+			helper.Passwd, helper.Sudoers, helper.state = req.Passwd, req.Sudoers, req.State
+			states := helper.reconcile(ctx, req.Want)
+			b, _ := json.Marshal(personalReply{States: states, State: helper.state})
+			return b, []byte("level=WARN msg=\"personal account created\"\n"), nil
+		},
+	}
+	want := []PersonalAccount{{Name: "ana", Owner: "ana@corp.example", Direct: DirectSSHAllow, Keys: []string{aKey}}}
+	if st := p.Reconcile(context.Background(), want); stateOf(st, "ana") != "ready" {
+		t.Fatalf("states %+v", st)
+	}
+	if k := h.keys("ana"); !strings.Contains(k, aKey) {
+		t.Errorf("ana's key not written: %q", k)
+	}
+	h.ran = nil
+	p.Reconcile(context.Background(), want)
+	if h.ranAny("usermod") {
+		t.Errorf("the second pass unlocked ana again: %v", h.ran)
+	}
+	if len(requests) != 2 || requests[1].State["ana"] != "ready" {
+		t.Errorf("what the first pass did did not reach the second: %+v", requests)
+	}
+}
+
+// A helper that cannot run fails every wanted account, saying why, rather
+// than reporting them as they were.
+func TestAnAccountHelperThatFailsFailsEveryAccount(t *testing.T) {
+	p := &Provisioner{
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Outside: func(context.Context, []byte) ([]byte, []byte, error) {
+			return nil, []byte("Failed to start transient service unit\n"), fmt.Errorf("exit status 1")
+		},
+	}
+	st := p.Reconcile(context.Background(), []PersonalAccount{{Name: "ana", Owner: "ana@corp.example"}})
+	if len(st) != 1 || st[0].State != "failed" || !strings.Contains(st[0].Detail, "account helper") {
+		t.Fatalf("states %+v", st)
+	}
+}
+
+// The helper's own wire: a request on stdin, a reply on stdout. An account it
+// did not make is reported taken and nothing is run for it.
+func TestRunPersonalApplyAnswersOnStdout(t *testing.T) {
+	h := newFakeHost(t)
+	h.write(h.line("deploy", "Deploy bot"))
+	req, _ := json.Marshal(personalRequest{
+		Want:    []PersonalAccount{{Name: "deploy", Owner: "ana@corp.example"}},
+		Passwd:  h.passwd,
+		Sudoers: filepath.Join(h.dir, "sudoers.d", "argus-personal"),
+	})
+	var out, errs strings.Builder
+	if code := RunPersonalApply(strings.NewReader(string(req)), &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	var reply personalReply
+	if err := json.Unmarshal([]byte(out.String()), &reply); err != nil {
+		t.Fatalf("reply %q: %v", out.String(), err)
+	}
+	if stateOf(reply.States, "deploy") != "taken" {
+		t.Errorf("states %+v, want deploy taken", reply.States)
 	}
 }

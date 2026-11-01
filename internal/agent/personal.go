@@ -122,6 +122,10 @@ type Provisioner struct {
 	// Run runs a system command. Replaced in tests.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	Log *slog.Logger
+	// Outside, when set, carries each pass to a process outside the agent's
+	// own sandbox (see personal_apply.go). The daemon sets it on a systemd
+	// host; nil runs the pass here, as tests and non-systemd hosts do.
+	Outside func(ctx context.Context, request []byte) (reply, log []byte, err error)
 
 	// state is what was last done to each account, so an account is
 	// unlocked or locked once rather than on every pass.
@@ -153,6 +157,13 @@ func commentFor(owner string) string {
 
 // Reconcile makes the accounts match want and says what each one is now.
 func (p *Provisioner) Reconcile(ctx context.Context, want []PersonalAccount) []PersonalAccountState {
+	if p.Outside != nil && personalSupported {
+		return p.reconcileOutside(ctx, want)
+	}
+	return p.reconcile(ctx, want)
+}
+
+func (p *Provisioner) reconcile(ctx context.Context, want []PersonalAccount) []PersonalAccountState {
 	if p.state == nil {
 		p.state = map[string]string{}
 	}
