@@ -17,6 +17,11 @@ const COPYRIGHT_YEAR = 2026
  * own, stamped from the release tag when it was built (see `argusVersion`).
  */
 export const Route = createFileRoute('/about')({
+  // In the main bundle rather than a chunk of its own. Split, this one small
+  // page made Rollup carve live.ts, react-dom and ScrollArea out of the entry
+  // into shared chunks, and the first visit grew 1.4 kB past its budget
+  // (e2e/weight.spec.ts). Inline it costs 0.7 kB.
+  codeSplitGroupings: [],
   component: AboutPage,
 })
 
