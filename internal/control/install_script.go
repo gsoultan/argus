@@ -101,9 +101,11 @@ die() { printf '\nArgus install stopped: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run it with sudo"
 
+# Release packages are named argus-agent_<version>_linux_<arch>.<format>,
+# goreleaser's default, with Go's names for the processor in every format.
 case "$(uname -m)" in
-  x86_64|amd64) DEB=amd64; RPM=x86_64; APK=x86_64 ;;
-  aarch64|arm64) DEB=arm64; RPM=aarch64; APK=aarch64 ;;
+  x86_64|amd64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
   *) die "this processor ($(uname -m)) has no agent package" ;;
 esac
 
@@ -113,15 +115,15 @@ cd "$TMP"
 
 say "Installing the Argus agent ${VERSION}"
 if command -v apt-get >/dev/null 2>&1; then
-  F="argus-agent_${VERSION}_${DEB}.deb"
+  F="argus-agent_${VERSION}_linux_${ARCH}.deb"
   curl -fsSLO "${BASE}/${F}"
   DEBIAN_FRONTEND=noninteractive apt-get install -y "./${F}" >/dev/null
 elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
-  F="argus-agent-${VERSION}-1.${RPM}.rpm"
+  F="argus-agent_${VERSION}_linux_${ARCH}.rpm"
   curl -fsSLO "${BASE}/${F}"
   if command -v dnf >/dev/null 2>&1; then dnf install -y "./${F}" >/dev/null; else yum install -y "./${F}" >/dev/null; fi
 elif command -v apk >/dev/null 2>&1; then
-  F="argus-agent_${VERSION}_${APK}.apk"
+  F="argus-agent_${VERSION}_linux_${ARCH}.apk"
   curl -fsSLO "${BASE}/${F}"
   apk add --allow-untrusted "./${F}" >/dev/null
 else
@@ -145,6 +147,11 @@ CONF=/etc/ssh/sshd_config
 if [ -f "$CONF" ] && ! grep -q '^ForceCommand .*argus-agent' "$CONF"; then
   say "Recording logins that do not go through Argus"
   cp -p "$CONF" "$CONF.before-argus"
+  # Appended after a Match block, ForceCommand would apply only to the logins
+  # that block matches. Match all ends the block first.
+  if grep -qiE '^[[:space:]]*Match[[:space:]]' "$CONF"; then
+    printf '\nMatch all\n' >> "$CONF"
+  fi
   argus-agent install --shim /usr/bin/argus-agent >> "$CONF"
   if sshd -t 2>/dev/null; then
     systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
