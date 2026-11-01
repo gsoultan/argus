@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Group, Loader, Menu, ScrollArea, Switch, Table, Text, Tooltip,
+  ActionIcon, Badge, Box, Button, Group, Loader, ScrollArea, Switch, Table, Text, Tooltip,
 } from '@mantine/core'
-import { IconArrowLeft, IconDotsVertical, IconLock, IconRefresh } from '@tabler/icons-react'
+import { IconArrowLeft, IconLock, IconRefresh } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import type { DBLevel } from '~/types/domain'
 
@@ -193,6 +193,43 @@ export function ActivityPanel({ collect, level, narrow, onBack }: AdminPanelProp
 
 /* ── Roles & access ─────────────────────────────────────────────────────── */
 
+/**
+ * The actions on one role, as a plain select: it weighs nothing (a Mantine
+ * Menu here made the bundler split the shell's shared components into a
+ * dozen extra files for every first visit) and works the same on a phone.
+ */
+function RowActions({ name, app, levels, held, conns, run }: {
+  name: string; app: boolean; levels: Partial<Record<DBLevel, string>>; held: DBLevel[]; conns: number
+  run: (sql: string, confirmText?: string) => Promise<void>
+}) {
+  const cap = (l: string) => l[0]!.toUpperCase() + l.slice(1)
+  const onChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.currentTarget.value
+    e.currentTarget.value = ''
+    const [kind, l] = v.split(':') as [string, DBLevel]
+    if (kind === 'give' && levels[l]) void run(`GRANT ${ident(levels[l]!)} TO ${ident(name)}`)
+    if (kind === 'take' && levels[l]) {
+      void run(`REVOKE ${ident(levels[l]!)} FROM ${ident(name)}`,
+        `Take ${l} on this database from ${name}? Its own grants are untouched; only the Argus level goes.`)
+    }
+    if (kind === 'end') {
+      void run(`SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE usename = ${literal(name)} AND datname = current_database() AND pid <> pg_backend_pid()`,
+        `End all ${conns} connection(s) of ${name} to this database? Their transactions are rolled back.`)
+    }
+  }
+  return (
+    <select defaultValue="" onChange={onChange} aria-label={`Actions for ${name}`}
+      style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--color-line)', background: 'var(--color-surface)', color: 'inherit', maxWidth: 160 }}>
+      <option value="" disabled>Actions…</option>
+      {app && (['read', 'write', 'owner'] as DBLevel[]).filter((l) => levels[l] && !held.includes(l)).map((l) => (
+        <option key={'g' + l} value={`give:${l}`}>Give {cap(l)} here</option>
+      ))}
+      {app && held.map((l) => <option key={'t' + l} value={`take:${l}`}>Take back {cap(l)}</option>)}
+      {conns > 0 && <option value="end">End its {conns} connection{conns === 1 ? '' : 's'}</option>}
+    </select>
+  )
+}
+
 const LEVEL_ORDER: DBLevel[] = ['read', 'write', 'owner', 'dba']
 
 export function RolesPanel({ collect, level, levels, narrow, onBack, onAskForAccess }: AdminPanelProps) {
@@ -299,40 +336,7 @@ LIMIT 1000`, 1000)
                     <Table.Td>{conns || <span style={{ color: 'var(--mantine-color-dimmed)' }}>0</span>}</Table.Td>
                     <Table.Td ta="right">
                       {(app || conns > 0) && r[2] !== 'true' && (
-                        <Menu position="bottom-end" withArrow shadow="md">
-                          <Menu.Target>
-                            <ActionIcon variant="subtle" size="sm" aria-label={`Actions for ${name}`}><IconDotsVertical size={14} /></ActionIcon>
-                          </Menu.Target>
-                          <Menu.Dropdown>
-                            {app && (
-                              <>
-                                <Menu.Label>Give a level on this database</Menu.Label>
-                                {(['read', 'write', 'owner'] as DBLevel[]).filter((l) => levels[l] && !heldLevels.includes(l)).map((l) => (
-                                  <Menu.Item key={l} onClick={() => void run(`GRANT ${ident(levels[l]!)} TO ${ident(name)}`)}>
-                                    {l[0]!.toUpperCase() + l.slice(1)}
-                                  </Menu.Item>
-                                ))}
-                                {heldLevels.length > 0 && <Menu.Label>Take back</Menu.Label>}
-                                {heldLevels.map((l) => (
-                                  <Menu.Item key={'r' + l} color="rose" onClick={() => void run(`REVOKE ${ident(levels[l]!)} FROM ${ident(name)}`,
-                                    `Take ${l} on this database from ${name}? Its own grants are untouched; only the Argus level goes.`)}>
-                                    {l[0]!.toUpperCase() + l.slice(1)}
-                                  </Menu.Item>
-                                ))}
-                              </>
-                            )}
-                            {conns > 0 && (
-                              <>
-                                <Menu.Divider />
-                                <Menu.Item color="rose" onClick={() => void run(
-                                  `SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE usename = ${literal(name)} AND datname = current_database() AND pid <> pg_backend_pid()`,
-                                  `End all ${conns} connection(s) of ${name} to this database? Their transactions are rolled back.`)}>
-                                  End its {conns} connection{conns === 1 ? '' : 's'}
-                                </Menu.Item>
-                              </>
-                            )}
-                          </Menu.Dropdown>
-                        </Menu>
+                        <RowActions name={name} app={app} levels={levels} held={heldLevels} conns={conns} run={run} />
                       )}
                     </Table.Td>
                   </Table.Tr>
