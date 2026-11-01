@@ -25,6 +25,7 @@ when UDP is blocked). Nothing needs to reach the servers, and nothing on them
 listens beyond a local Unix socket.
 
 **[docs/install.md](docs/install.md) is the production install, step by step.**
+**Locked out of a server? [docs/lockout.md](docs/lockout.md) is the admin runbook.**
 This page is the overview and the reference behind it.
 
 ## Contents
@@ -558,6 +559,7 @@ cmd/argus-verify      standalone recording verifier
 internal/             tunnel, agent, control, recorder, hashchain, …
 web/                  React 19 · Mantine 9 · TanStack Router/Query/Form · Vite 8
 docs/install.md       the production install
+docs/lockout.md       what to do when nobody can SSH into a server
 packaging/            systemd units, launchd job, packaged config
 scripts/              setup · dev · deps · check · build
 ```
