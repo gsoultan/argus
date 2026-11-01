@@ -67,6 +67,20 @@ export function controlPlaneVersion(): string | undefined {
   return v && /^\d+\.\d+\.\d+/.test(v) ? v : undefined
 }
 
+/**
+ * The serving control plane's version, as the console shows it.
+ *
+ * The control plane is stamped at build time from the git tag (GoReleaser's
+ * `{{.Version}}`, or `git describe` in scripts/build.sh), so a release reads
+ * "v0.6.0" and a build between tags reads like "v0.6.0-3-gabc1234". "dev" is
+ * a binary built without a tag, or the console running with no control plane.
+ */
+export function argusVersion(): string {
+  const v = runtimeConfig()?.version?.trim()
+  if (!v || v === 'dev') return 'dev'
+  return /^\d/.test(v) ? `v${v}` : v
+}
+
 export function isConfigured(): boolean {
   return RAW_BASE !== ''
 }

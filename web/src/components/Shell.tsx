@@ -7,7 +7,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconChevronDown, IconKey, IconLogout, IconSearch,
+  IconAlertTriangle, IconChevronDown, IconInfoCircle, IconKey, IconLogout, IconSearch,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, directLoginsQuery, meQuery, myServerAccountQuery, statsQuery } from '~/lib/queries'
@@ -36,7 +36,7 @@ import {
 } from '~/components/nav'
 import { LogoMark } from '~/components/Logo'
 import {
-  controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
+  argusVersion, controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
 } from '~/lib/live'
 import { FS, SP } from '~/theme'
 
@@ -272,6 +272,16 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                     My SSH key
                   </Menu.Item>
                 )}
+                <Menu.Item
+                  component={Link}
+                  to="/about"
+                  leftSection={<IconInfoCircle size={14} />}
+                  rightSection={
+                    <Text size={FS.micro} c="dimmed" className="argus-digest">{argusVersion()}</Text>
+                  }
+                >
+                  About Argus
+                </Menu.Item>
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
                   color="rose"

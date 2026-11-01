@@ -122,10 +122,25 @@ type Provisioner struct {
 	// Run runs a system command. Replaced in tests.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	Log *slog.Logger
+	// Outside, when set, carries each pass to a process outside the agent's
+	// own sandbox (see personal_apply.go). The daemon sets it on a systemd
+	// host; nil runs the pass here, as tests and non-systemd hosts do.
+	Outside func(ctx context.Context, request []byte) (reply, log []byte, err error)
 
 	// state is what was last done to each account, so an account is
 	// unlocked or locked once rather than on every pass.
 	state map[string]string
+}
+
+// passwd is the account list Reconcile reads. The agent leaves Passwd empty,
+// and on Linux "" must mean /etc/passwd: openPasswd reads "" as the platform's
+// account directory, which Linux does not have, so every pass failed and no
+// personal account was ever made or locked.
+func (p *Provisioner) passwd() string {
+	if p.Passwd != "" {
+		return p.Passwd
+	}
+	return systemPasswd
 }
 
 // commentFor is the comment field of an account made for owner. Anything
@@ -142,6 +157,13 @@ func commentFor(owner string) string {
 
 // Reconcile makes the accounts match want and says what each one is now.
 func (p *Provisioner) Reconcile(ctx context.Context, want []PersonalAccount) []PersonalAccountState {
+	if p.Outside != nil && personalSupported {
+		return p.reconcileOutside(ctx, want)
+	}
+	return p.reconcile(ctx, want)
+}
+
+func (p *Provisioner) reconcile(ctx context.Context, want []PersonalAccount) []PersonalAccountState {
 	if p.state == nil {
 		p.state = map[string]string{}
 	}
@@ -153,7 +175,7 @@ func (p *Provisioner) Reconcile(ctx context.Context, want []PersonalAccount) []P
 		}
 		return out
 	}
-	existing, err := readPasswdEntries(p.Passwd)
+	existing, err := readPasswdEntries(p.passwd())
 	if err != nil {
 		p.Log.Error("personal accounts: cannot read the account list", "error", err)
 		out := make([]PersonalAccountState, 0, len(want))
@@ -223,7 +245,7 @@ func (p *Provisioner) keep(ctx context.Context, a PersonalAccount, existing map[
 			return fail("useradd failed: " + firstLine(out, err))
 		}
 		p.Log.Warn("personal account created", "account", a.Name, "owner", a.Owner)
-		fresh, err := readPasswdEntries(p.Passwd)
+		fresh, err := readPasswdEntries(p.passwd())
 		if err != nil {
 			return fail("the account was created and cannot be read back")
 		}

@@ -1,5 +1,6 @@
 import {
-  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconServer2, IconSettings, IconUsersGroup,
+  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconInfoCircle, IconServer2, IconSettings,
+  IconUsersGroup,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -102,6 +103,12 @@ export const ALL_PAGES: NavItem[] = [
     icon: IconCirclePlus,
     blurb: 'Install the agent and say who can use it',
     audience: 'admin',
+  },
+  {
+    to: '/about',
+    label: 'About Argus',
+    icon: IconInfoCircle,
+    blurb: 'Version, description and copyright',
   },
 ]
 

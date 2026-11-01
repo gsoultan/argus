@@ -54,6 +54,9 @@ func main() {
 		os.Exit(runDaemon(os.Args[2:]))
 	case "shim":
 		os.Exit(runShim(os.Args[2:]))
+	case "personal-apply":
+		// Run by the daemon, outside its sandbox, to make personal accounts.
+		os.Exit(agent.RunPersonalApply(os.Stdin, os.Stdout, os.Stderr))
 	case "file-op":
 		// Run by the files service as the account, one per operation.
 		os.Exit(agent.RunFileOp(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
@@ -259,6 +262,11 @@ func runDaemon(args []string) int {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
 		Log: log,
+	}
+	// useradd, sudoers and authorized_keys are all out of reach of the
+	// unit's sandbox, so on a systemd host a pass runs as a unit of its own.
+	if exe, err := os.Executable(); err == nil {
+		provisioner.Outside = agent.SystemdOutside(exe)
 	}
 	var personalStates []agent.PersonalAccountState
 	if b, err := os.ReadFile(personalFile); err == nil {
