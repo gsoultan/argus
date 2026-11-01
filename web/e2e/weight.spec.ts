@@ -34,15 +34,22 @@ const BUDGET_KB = {
    *
    * 264.6 kB with the redesign: the top menu's count badges and account menu
    * replaced the sidebar, and `/` now lands on Servers rather than Overview.
+   *
+   * 267.9 kB when Databases joined the menu: the item and its icon, the
+   * command palette searching databases, and the query hooks, which every
+   * route shares. The workspace itself is its own 9 kB chunk, paid only
+   * when a database is opened.
    */
-  overview: 266,
+  overview: 269,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
    * likely to grow quietly, because everything about a session lands on it.
    * 370.6 kB with the redesign, which the new shell accounts for, as above.
+   * 374.3 kB with database sessions: the shared Databases weight above plus
+   * the branch that replays statements, itself lazy.
    */
-  sessionDetail: 373,
+  sessionDetail: 376,
 }
 
 /**
