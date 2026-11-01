@@ -989,6 +989,28 @@ jobs:
           n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'terminal.opened'
                 AND actor_email = 'admin@ci.example' AND target = '$(hostname)' AND detail LIKE '%$sid%'")
           [ "$n" = 1 ] || { echo "::error::no audit entry for the session"; exit 1; }
+          # A person's own account: add the server the way the console's Add
+          # server does, with personal accounts on, and the agent must make
+          # the account and open a session as it. An agent that could not read
+          # /etc/passwd made none and said so only in its log.
+          $c -X POST "https://localhost:8080/api/v1/discovered/$(hostname)/enrol" \
+            -d '{"principals":["argusdrill"],"people":["admin@ci.example"],"personalAccounts":true}' >/dev/null
+          own=$($c https://localhost:8080/api/v1/me/server-account | jq -r .loginName)
+          for i in $(seq 1 60); do getent passwd "$own" >/dev/null && break; sleep 1; done
+          getent passwd "$own" >/dev/null || { sudo journalctl -u argus-agent --no-pager | grep -i personal | tail -20
+            echo "::error::the agent never made $own, the person's own account"; exit 1; }
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$(hostname)\",\"principal\":\"$own\"}" | jq -r .ticket)
+          # Exits 5 only as that account; the prompt alone would name it.
+          set +e
+          out=$("$tmp/termdrill" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$(hostname)" -principal "$own" \
+            -input "[ \"\$(id -un)\" = $own ] && exit 5; exit 1"$'\n' 2>&1)
+          code=$?
+          set -e
+          [ "$code" = 5 ] || { echo "$out"
+            echo "::error::a session as the person's own account did not open (exit $code)"; exit 1; }
+
           # And it replays from the console. No object storage is configured
           # here, as setup leaves it, so the control plane keeps the recording
           # the agent ships on its own disk and serves it from there.
