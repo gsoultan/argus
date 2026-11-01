@@ -57,6 +57,8 @@ type Grant struct {
 	// terminal, which is all a grant could open before files existed, so a
 	// files grant cannot be spent on a shell nor a terminal grant on files.
 	Service string `json:"svc,omitempty"`
+	// DB is the database a postgres grant opens; nil for every other service.
+	DB *GrantDB `json:"db,omitempty"`
 }
 
 // ForService reports whether g may open svc.

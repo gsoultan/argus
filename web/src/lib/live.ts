@@ -19,6 +19,7 @@ import type {
   TeamAssignment,
   ServerAccount,
   User,
+  Database, DBAccess, DBAssignment, DBLabel, DBLevel, DBPolicy,
 } from '~/types/domain'
 
 /**
@@ -1135,3 +1136,86 @@ export const live = {
     }
   },
 }
+
+/* ── Databases ──────────────────────────────────────────────────────────── */
+
+export async function databases(): Promise<{ databases: Database[]; access: Record<string, DBAccess> }> {
+  return get('/api/v1/databases')
+}
+
+/** The databases on one server; for fleet roles, who see the server's page. */
+export async function databasesOnAsset(assetId: string): Promise<{ databases: Database[]; access: Record<string, DBAccess> }> {
+  return get(`/api/v1/databases?asset=${encodeURIComponent(assetId)}`)
+}
+
+export async function database(id: string): Promise<{ database: Database; access: DBAccess }> {
+  return get(`/api/v1/databases/${encodeURIComponent(id)}`)
+}
+
+export async function createDatabase(input: {
+  assetId: string; dbname: string; host?: string; port?: number; adminUser?: string; label?: DBLabel
+}): Promise<Database> {
+  return post<Database>('/api/v1/databases', input)
+}
+
+export async function updateDatabase(
+  id: string,
+  patch: { label?: DBLabel; host?: string; port?: number; adminUser?: string; policy?: DBPolicy },
+): Promise<Database> {
+  return send<Database>('PATCH', `/api/v1/databases/${encodeURIComponent(id)}`, patch)
+}
+
+export async function deleteDatabase(id: string): Promise<void> {
+  await send('DELETE', `/api/v1/databases/${encodeURIComponent(id)}`)
+}
+
+export async function dbAssignments(id: string): Promise<DBAssignment[]> {
+  return get<DBAssignment[]>(`/api/v1/databases/${encodeURIComponent(id)}/assignments`)
+}
+
+export async function setDBAssignment(
+  id: string,
+  input: { teamId?: string; userEmail?: string; level: DBLevel; needsApproval: boolean },
+): Promise<DBAssignment[]> {
+  return send<DBAssignment[]>('PUT', `/api/v1/databases/${encodeURIComponent(id)}/assignments`, input)
+}
+
+export async function removeDBAssignment(id: string, assignmentId: string): Promise<void> {
+  await send('DELETE',
+    `/api/v1/databases/${encodeURIComponent(id)}/assignments/${encodeURIComponent(assignmentId)}`)
+}
+
+export async function requestDatabaseAccess(
+  id: string,
+  input: { level: DBLevel; justification: string; durationMinutes: number },
+): Promise<AccessRequest> {
+  return post<AccessRequest>(`/api/v1/databases/${encodeURIComponent(id)}/requests`, input)
+}
+
+/**
+ * A ticket to open a database. The answer names the level the session will
+ * open at and the Postgres role it opens as; the WebSocket's principal is
+ * `role@level`, which the ticket is bound to.
+ */
+export async function databaseTicket(
+  id: string,
+  level?: DBLevel,
+): Promise<{ ticket: string; level: DBLevel; role: string } | { error: string }> {
+  const res = await fetch(`${BASE}/api/v1/databases/${encodeURIComponent(id)}/ticket`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+    },
+    body: JSON.stringify(level ? { level } : {}),
+  })
+  const body = (await res.json()) as { ticket?: string; level?: DBLevel; role?: string; error?: string }
+  if (!res.ok || !body.ticket || !body.level || !body.role) {
+    return { error: body.error ?? `request failed (${res.status})` }
+  }
+  return { ticket: body.ticket, level: body.level, role: body.role }
+}
+
+/** The WebSocket a database session runs over. */
+export const postgresEndpoint = `${BASE}/api/v1/postgres`

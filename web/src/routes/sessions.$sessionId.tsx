@@ -33,6 +33,9 @@ const RDPReplay = lazy(() =>
 const RDPScreen = lazy(() =>
   import('~/components/RDPScreen').then((m) => ({ default: m.RDPScreen })),
 )
+const PostgresReplay = lazy(() =>
+  import('~/components/PostgresReplay').then((m) => ({ default: m.PostgresReplay })),
+)
 const ShadowTerminal = lazy(() =>
   import('~/components/ShadowTerminal').then((m) => ({ default: m.ShadowTerminal })),
 )
@@ -152,7 +155,11 @@ function SessionDetail() {
     return () => { cancelled = true }
   }, [castUrl, session])
 
+  // A database session's recording is statements, not a cast; the terminal
+  // decoder never sees it.
+  const isPG = session?.protocol === 'postgres'
   const cast = useMemo(() => {
+    if (isPG) return undefined
     if (realCast) return realCast
     // Only fall back to a generated cast once the real fetch has been tried and
     // failed, or the console would briefly replay a fixture and then swap it
@@ -172,7 +179,7 @@ function SessionDetail() {
       ? buildCast(session.assetHostname, session.principal, session.startedAt,
           session.fidelity === 'ebpf' ? 'ebpf' : 'pty')
       : undefined
-  }, [realCast, fetched, session, castError])
+  }, [realCast, fetched, session, castError, isPG])
 
   const decoded = useCastDecoder(cast)
 
@@ -224,6 +231,15 @@ function SessionDetail() {
    * not a re-serialisation of the player's state. `asciinema play` and any
    * other v2 reader consume it unchanged, and its hash still matches the chain.
    */
+  // A database session exports its statement recording as it was sealed.
+  const onExportStatements = () => {
+    if (!realCast) return
+    downloadText(
+      realCast,
+      `argus-${session.assetHostname.split('.')[0]}-${session.principal}-${stamp(new Date(session.startedAt))}.argussql`,
+      'application/x-ndjson',
+    )
+  }
   const onExportCast = () => {
     if (!cast) return
     downloadText(
@@ -304,10 +320,10 @@ function SessionDetail() {
             <Button
               variant="default"
               leftSection={<IconDownload size={14} />}
-              disabled={!cast}
-              onClick={onExportCast}
+              disabled={isPG ? !realCast : !cast}
+              onClick={isPG ? onExportStatements : onExportCast}
             >
-              Export .cast
+              {isPG ? 'Export statements' : 'Export .cast'}
             </Button>
             {canShadow && (
               <Button
@@ -423,7 +439,11 @@ function SessionDetail() {
         <Grid gap="sm">
           <Grid.Col span={{ base: 12, xl: 8 }}>
             <Card padding={0} style={{ overflow: 'hidden' }}>
-              {isRDP ? (
+              {isPG ? (
+                <Suspense fallback={<PlayerFallback label="Loading statements…" />}>
+                  <PostgresReplay text={realCast} verified={verified ?? undefined} error={castError} />
+                </Suspense>
+              ) : isRDP ? (
                 rdpFrames ? (
                   <Box p="sm">
                     <Suspense fallback={<PlayerFallback label="Loading desktop replay…" />}>
@@ -544,6 +564,9 @@ function SessionDetail() {
                 </Stack>
               </SectionCard>
 
+              {/* A database session has no terminal stream; its statements are the
+                  replay itself, above. */}
+              {!isPG && (
               <SectionCard
                 title="Command timeline"
                 icon={IconListDetails}
@@ -598,6 +621,7 @@ function SessionDetail() {
                   </Stack>
                 </ScrollArea.Autosize>
               </SectionCard>
+              )}
             </Stack>
           </Grid.Col>
         </Grid>

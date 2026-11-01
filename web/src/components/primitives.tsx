@@ -328,6 +328,13 @@ export function FidelityBadge({ fidelity }: { fidelity: RecordingFidelity }) {
       </Tooltip>
     )
   }
+  if (fidelity === 'statement') {
+    return (
+      <Tooltip label="Every statement, written on the server before it ran, with what Postgres answered.">
+        <Badge color="teal" leftSection={<IconLock size={11} />}>every statement</Badge>
+      </Tooltip>
+    )
+  }
   return <Badge color="rose">not recorded</Badge>
 }
 

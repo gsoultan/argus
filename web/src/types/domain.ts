@@ -306,7 +306,7 @@ export interface AssetGroup {
 /* ── Sessions ────────────────────────────────────────────────────────────── */
 
 export type SessionState = 'active' | 'closed' | 'terminated' | 'rejected'
-export type SessionProtocol = 'ssh' | 'sftp' | 'rdp'
+export type SessionProtocol = 'ssh' | 'sftp' | 'rdp' | 'postgres'
 
 /**
  * How the session reached the host.
@@ -337,7 +337,7 @@ export type SessionOrigin = 'brokered' | 'direct'
  * shows what was on screen and carries no command list at all, so treating it
  * as a terminal capture would promise a timeline that does not exist.
  */
-export type RecordingFidelity = 'pty' | 'ebpf' | 'rdp' | 'none'
+export type RecordingFidelity = 'pty' | 'ebpf' | 'rdp' | 'statement' | 'none'
 
 export interface Session {
   id: UUID
@@ -596,3 +596,58 @@ export interface GatewayPolicy {
 }
 
 export type PolicyKey = Exclude<keyof GatewayPolicy, 'directSsh'>
+
+/* ── Databases ──────────────────────────────────────────────────────────── */
+
+/** What a person may do on a database, least to most. */
+export type DBLevel = 'read' | 'write' | 'owner' | 'dba'
+export type DBLabel = 'production' | 'staging' | 'development'
+
+/** The safety settings of one database. 0 or absent means the default. */
+export interface DBPolicy {
+  statementTimeoutS?: number
+  idleTxTimeoutS?: number
+  maxRows?: number
+  idleTimeoutS?: number
+  maxSessionS?: number
+}
+
+/** One database on one server. */
+export interface Database {
+  id: UUID
+  assetId: UUID
+  hostname: string
+  engine: 'postgres'
+  host: string
+  port: number
+  dbname: string
+  adminUser: string
+  label: DBLabel
+  policy: DBPolicy
+  createdBy: string
+  createdAt: string
+  tunnelConnected: boolean
+}
+
+/** What one person may do on one database right now. */
+export interface DBAccess {
+  /** What they can open without asking; '' is nothing. */
+  level: DBLevel | ''
+  /** The highest level they could ask for; absent is none. */
+  approvable?: DBLevel
+  /** Set when `level` comes from an approved request. */
+  grantExpires?: string
+}
+
+/** Who may open a database, at what level: a team or a person. */
+export interface DBAssignment {
+  id: UUID
+  databaseId: UUID
+  teamId?: UUID
+  teamName?: string
+  userEmail?: string
+  level: DBLevel
+  needsApproval: boolean
+  grantedBy: string
+  grantedAt: string
+}

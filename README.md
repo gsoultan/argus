@@ -65,6 +65,47 @@ that person, server and account, and expires in about a minute. The control
 plane checks it before relaying, and the agent checks the signature again
 before opening anything, so a compromised relay cannot open sessions by itself.
 
+### Databases
+
+A Postgres database on a server is opened the same way: **Databases** lists
+the ones you have been given, **Open** puts a query workspace in the browser
+(object tree on the left, SQL in the middle, results below; on a phone the
+tree folds into a drawer), and every statement is recorded on the server
+before it runs. Nothing extra is installed: the server's agent connects over
+Postgres's own local socket.
+
+- **Access is a word, not a grant list.** An admin gives a team or a person
+  *Read*, *Write*, *Owner* or *DBA* on a database, from the database's page or
+  the server's. Argus turns the level into Postgres group roles
+  (`argus_read_<db>` … `argus_dba_<db>`) and gives each person a role of their
+  own, so a statement the level does not allow is refused by Postgres itself,
+  not by a parser in front of it. *DBA* is never a superuser.
+- **No standing password anywhere.** The person's role is `NOLOGIN` until a
+  session opens; the agent then sets a one-time SCRAM password that expires
+  with the session and locks the role again when it ends. The agent itself
+  signs in as the `postgres` account over the socket (peer authentication),
+  as a short-lived helper, never from the daemon's own process. Argus stores
+  no database password, in any table or file.
+- **Production is careful by default.** *Write* and above on a database
+  labelled production asks for approval each time unless an admin turns that
+  off for a row; approvals land on the same page as server requests. Every
+  statement runs with a statement timeout, an idle-in-transaction timeout, a
+  lock timeout, a row ceiling and a rate limit, all set per database under
+  **Safety**.
+- **A session is a session.** It shows under Activity with the others, can be
+  ended by an admin while it runs, and replays as the list of statements with
+  what Postgres answered. The recording (`.argussql`) is JSON lines, each
+  hashing the one before; `argus-verify` checks it like a terminal recording
+  and names the first altered line.
+
+The grant that opens a session is the same single-use, signed, minute-long
+grant as a terminal's, bound to the person, the server, the database and the
+level; the agent checks it before touching Postgres. If the server's
+`pg_hba.conf` only lets local roles in with `peer`, add the line
+`argus-agent install` prints (`local all +argus_people scram-sha-256`), or
+leave `host ... 127.0.0.1/32 scram-sha-256` in place: the agent tries the
+socket and then loopback.
+
 ### Direct SSH logins
 
 Sessions are meant to open from the console. What happens when someone runs

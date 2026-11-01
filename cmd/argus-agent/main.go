@@ -57,6 +57,10 @@ func main() {
 	case "file-op":
 		// Run by the files service as the account, one per operation.
 		os.Exit(agent.RunFileOp(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	case "pg-admin":
+		// Run by the postgres service as the postgres account: one request
+		// on stdin, one answer on stdout, over the local socket.
+		os.Exit(agent.PGAdminMain(context.Background(), os.Stdin, os.Stdout))
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
 	case "probe":
@@ -200,6 +204,13 @@ func runDaemon(args []string) int {
 		services[agent.FilesService] = agent.Files(agent.FilesConfig{
 			Verifier: &tunnel.GrantVerifier{Host: hostname},
 			Log:      log,
+		})
+		// Postgres on this server, as the person's own role, every statement
+		// recorded before it runs.
+		services[agent.PostgresService] = agent.Postgres(agent.PostgresConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
 		})
 		// Remote Desktop, to this host's own listener, on Windows: the agent is
 		// the RDP client and records the session before it is shown.
@@ -736,6 +747,15 @@ ForceCommand %s shim
 
 # Verify with:
 #   argus-agent scan
+
+# Databases. If this server runs Postgres and you add its databases in the
+# console, the agent signs people in with a Postgres role of their own, made
+# as the postgres account over the local socket (peer authentication, no
+# password stored anywhere). Those roles sign in with a one-time password that
+# lasts for their session, so pg_hba.conf needs this line ABOVE any "local all
+# all peer" line, then: pg_ctl reload (or systemctl reload postgresql)
+#
+#   local   all   +argus_people   scram-sha-256
 `, reloadSSHDHint, *shimPath)
 	return 0
 }

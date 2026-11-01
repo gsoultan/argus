@@ -7,11 +7,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gsoultan/argus/internal/control/rgen/accessrequest"
 	"github.com/gsoultan/argus/internal/control/rgen/agentcredential"
 	"github.com/gsoultan/argus/internal/control/rgen/agentenrollmenttoken"
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
+	"github.com/gsoultan/argus/internal/control/rgen/database"
+	"github.com/gsoultan/argus/internal/control/rgen/databaseassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
 	"github.com/gsoultan/argus/internal/control/rgen/team"
@@ -25,11 +28,11 @@ import (
 // runtime code inspects a schema and no constraint has to be deferred for
 // a graph write to succeed.
 var FlushOrder = map[string]int{
-	"access_requests":         0,
-	"agent_enrollment_tokens": 1,
-	"agents":                  2,
-	"assets":                  3,
-	"audit_events":            4,
+	"agent_enrollment_tokens": 0,
+	"agents":                  1,
+	"assets":                  2,
+	"audit_events":            3,
+	"databases":               4,
 	"direct_login_requests":   5,
 	"gateway_policy":          6,
 	"host_key_pins":           7,
@@ -38,11 +41,13 @@ var FlushOrder = map[string]int{
 	"sessions":                10,
 	"teams":                   11,
 	"users":                   12,
-	"agent_credentials":       13,
-	"asset_assignments":       14,
-	"asset_team_assignments":  15,
-	"recovery_codes":          16,
-	"team_members":            17,
+	"access_requests":         13,
+	"agent_credentials":       14,
+	"asset_assignments":       15,
+	"asset_team_assignments":  16,
+	"database_assignments":    17,
+	"recovery_codes":          18,
+	"team_members":            19,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -55,6 +60,131 @@ func NewUnit() *runtime.Unit { return runtime.NewUnit(FlushOrder) }
 // reaching it: an error, never a partial result. Override per plan with
 // ChildLimit.
 const defaultChildLimit = 1 << 20
+
+// AccessRequestWithDatabaseRow is access_requests with its Database loaded.
+type AccessRequestWithDatabaseRow struct {
+	accessrequest.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Database, which is different from having one that failed to load.
+	Database *database.Row
+}
+
+type AccessRequestWithDatabaseQuery struct {
+	q accessrequest.Query
+}
+
+// AccessRequestWithDatabase starts the plan.
+func AccessRequestWithDatabase() AccessRequestWithDatabaseQuery {
+	return AccessRequestWithDatabaseQuery{q: accessrequest.New()}
+}
+
+func (p AccessRequestWithDatabaseQuery) Where(ps ...accessrequest.Pred) AccessRequestWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p AccessRequestWithDatabaseQuery) WhereIf(cond bool, pr accessrequest.Pred) AccessRequestWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p AccessRequestWithDatabaseQuery) Any(ps ...accessrequest.Pred) AccessRequestWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p AccessRequestWithDatabaseQuery) Not(pr accessrequest.Pred) AccessRequestWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p AccessRequestWithDatabaseQuery) NotAny(ps ...accessrequest.Pred) AccessRequestWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p AccessRequestWithDatabaseQuery) Order(ts ...accessrequest.Sort) AccessRequestWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p AccessRequestWithDatabaseQuery) Limit(n int64) AccessRequestWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p AccessRequestWithDatabaseQuery) Offset(n int64) AccessRequestWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p AccessRequestWithDatabaseQuery) After(r AccessRequestWithDatabaseRow) AccessRequestWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p AccessRequestWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p AccessRequestWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]AccessRequestWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]AccessRequestWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = AccessRequestWithDatabaseRow{Row: r}
+		key, ok := r.DatabaseID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.DatabaseID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "access_requests", "databases")
+		}
+		out[i].Database = &targets[j]
+	}
+	return out, nil
+}
 
 // AgentCredentialWithTokenRow is agent_credentials with its Token loaded.
 type AgentCredentialWithTokenRow struct {
@@ -524,6 +654,363 @@ func (p AssetTeamAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Ex
 	return out, nil
 }
 
+// DatabaseAssignmentWithDatabaseRow is database_assignments with its Database loaded.
+type DatabaseAssignmentWithDatabaseRow struct {
+	databaseassignment.Row
+	Database database.Row
+}
+
+type DatabaseAssignmentWithDatabaseQuery struct {
+	q databaseassignment.Query
+}
+
+// DatabaseAssignmentWithDatabase starts the plan.
+func DatabaseAssignmentWithDatabase() DatabaseAssignmentWithDatabaseQuery {
+	return DatabaseAssignmentWithDatabaseQuery{q: databaseassignment.New()}
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) Where(ps ...databaseassignment.Pred) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) WhereIf(cond bool, pr databaseassignment.Pred) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) Any(ps ...databaseassignment.Pred) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) Not(pr databaseassignment.Pred) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) NotAny(ps ...databaseassignment.Pred) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) Order(ts ...databaseassignment.Sort) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) Limit(n int64) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseAssignmentWithDatabaseQuery) Offset(n int64) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseAssignmentWithDatabaseQuery) After(r DatabaseAssignmentWithDatabaseRow) DatabaseAssignmentWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseAssignmentWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseAssignmentWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseAssignmentWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseAssignmentWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseAssignmentWithDatabaseRow{Row: r}
+		key := r.DatabaseID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.DatabaseID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_assignments", "databases")
+		}
+		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseAssignmentWithTeamRow is database_assignments with its Team loaded.
+type DatabaseAssignmentWithTeamRow struct {
+	databaseassignment.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Team, which is different from having one that failed to load.
+	Team *team.Row
+}
+
+type DatabaseAssignmentWithTeamQuery struct {
+	q databaseassignment.Query
+}
+
+// DatabaseAssignmentWithTeam starts the plan.
+func DatabaseAssignmentWithTeam() DatabaseAssignmentWithTeamQuery {
+	return DatabaseAssignmentWithTeamQuery{q: databaseassignment.New()}
+}
+
+func (p DatabaseAssignmentWithTeamQuery) Where(ps ...databaseassignment.Pred) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithTeamQuery) WhereIf(cond bool, pr databaseassignment.Pred) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseAssignmentWithTeamQuery) Any(ps ...databaseassignment.Pred) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithTeamQuery) Not(pr databaseassignment.Pred) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseAssignmentWithTeamQuery) NotAny(ps ...databaseassignment.Pred) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithTeamQuery) Order(ts ...databaseassignment.Sort) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseAssignmentWithTeamQuery) Limit(n int64) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseAssignmentWithTeamQuery) Offset(n int64) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseAssignmentWithTeamQuery) After(r DatabaseAssignmentWithTeamRow) DatabaseAssignmentWithTeamQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseAssignmentWithTeamQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseAssignmentWithTeamRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseAssignmentWithTeamRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseAssignmentWithTeamRow{Row: r}
+		key, ok := r.TeamID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := team.New().Unordered().
+		Where(team.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.TeamID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_assignments", "teams")
+		}
+		out[i].Team = &targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseWithAssetRow is databases with its Asset loaded.
+type DatabaseWithAssetRow struct {
+	database.Row
+	Asset asset.Row
+}
+
+type DatabaseWithAssetQuery struct {
+	q database.Query
+}
+
+// DatabaseWithAsset starts the plan.
+func DatabaseWithAsset() DatabaseWithAssetQuery { return DatabaseWithAssetQuery{q: database.New()} }
+
+func (p DatabaseWithAssetQuery) Where(ps ...database.Pred) DatabaseWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseWithAssetQuery) WhereIf(cond bool, pr database.Pred) DatabaseWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseWithAssetQuery) Any(ps ...database.Pred) DatabaseWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseWithAssetQuery) Not(pr database.Pred) DatabaseWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseWithAssetQuery) NotAny(ps ...database.Pred) DatabaseWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseWithAssetQuery) Order(ts ...database.Sort) DatabaseWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseWithAssetQuery) Limit(n int64) DatabaseWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseWithAssetQuery) Offset(n int64) DatabaseWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseWithAssetQuery) After(r DatabaseWithAssetRow) DatabaseWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "databases", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
 // RecoveryCodeWithUserRow is recovery_codes with its User loaded.
 type RecoveryCodeWithUserRow struct {
 	recoverycode.Row
@@ -760,6 +1247,131 @@ func (p SessionWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "sessions", "assets")
 		}
 		out[i].Asset = &targets[j]
+	}
+	return out, nil
+}
+
+// SessionWithDatabaseRow is sessions with its Database loaded.
+type SessionWithDatabaseRow struct {
+	session.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Database, which is different from having one that failed to load.
+	Database *database.Row
+}
+
+type SessionWithDatabaseQuery struct {
+	q session.Query
+}
+
+// SessionWithDatabase starts the plan.
+func SessionWithDatabase() SessionWithDatabaseQuery {
+	return SessionWithDatabaseQuery{q: session.New()}
+}
+
+func (p SessionWithDatabaseQuery) Where(ps ...session.Pred) SessionWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p SessionWithDatabaseQuery) WhereIf(cond bool, pr session.Pred) SessionWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p SessionWithDatabaseQuery) Any(ps ...session.Pred) SessionWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p SessionWithDatabaseQuery) Not(pr session.Pred) SessionWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p SessionWithDatabaseQuery) NotAny(ps ...session.Pred) SessionWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p SessionWithDatabaseQuery) Order(ts ...session.Sort) SessionWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p SessionWithDatabaseQuery) Limit(n int64) SessionWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p SessionWithDatabaseQuery) Offset(n int64) SessionWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p SessionWithDatabaseQuery) After(r SessionWithDatabaseRow) SessionWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p SessionWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p SessionWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]SessionWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]SessionWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = SessionWithDatabaseRow{Row: r}
+		key, ok := r.DatabaseID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.DatabaseID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "sessions", "databases")
+		}
+		out[i].Database = &targets[j]
 	}
 	return out, nil
 }

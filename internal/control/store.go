@@ -183,6 +183,11 @@ type Session struct {
 	RecordingKey *string `json:"recordingKey,omitempty"`
 	// RecordingPath is what a reporter sends; it becomes RecordingKey.
 	RecordingPath string `json:"recordingPath,omitempty"`
+	// Kind is "terminal", "desktop", "files" or "database": what the
+	// recording is, and so what the session page shows.
+	Kind string `json:"kind,omitempty"`
+	// DatabaseID is set on a database session.
+	DatabaseID *string `json:"databaseId,omitempty"`
 
 	// LastReportedAt is when a reporter last said this session existed, and
 	// Silent is whether that was long enough ago to stop believing it.
@@ -341,8 +346,9 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 			origin, origin_reason, state, started_at, ended_at, client_ip,
 			fidelity, recording_bytes, command_count, exit_code, chain_head,
 			risk_flags, reported_by, recording_key, terminated_by,
-			termination_reason
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+			termination_reason, kind, database_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
+		          COALESCE(NULLIF($23, ''), 'terminal'), $24::uuid)
 		ON CONFLICT (id) DO UPDATE SET
 			-- An ended session does not start again. The agent says a tunnel
 			-- session is active every minute and that it ended once, through a
@@ -361,6 +367,7 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 			-- not erase why a session was stopped.
 			terminated_by      = COALESCE(EXCLUDED.terminated_by, sessions.terminated_by),
 			termination_reason = COALESCE(EXCLUDED.termination_reason, sessions.termination_reason),
+			database_id        = COALESCE(EXCLUDED.database_id, sessions.database_id),
 			-- Every report is a sign of life, whatever else it carries. A
 			-- session nothing has said anything about for hours is not running
 			-- and has not ended; it is unknown, and this is what lets the
@@ -374,7 +381,7 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 		in.Origin, in.OriginReason, in.State, in.StartedAt, in.EndedAt, in.ClientIP,
 		in.Fidelity, in.RecordingBytes, in.CommandCount, in.ExitCode, in.ChainHead,
 		in.RiskFlags, in.ReportedBy, nullIfEmpty(in.RecordingPath),
-		in.TerminatedBy, in.TerminationReason).Scan(&created)
+		in.TerminatedBy, in.TerminationReason, in.Kind, in.DatabaseID).Scan(&created)
 	if err != nil {
 		return false, fmt.Errorf("upsert session: %w", err)
 	}
@@ -509,14 +516,15 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 		       protocol, origin, origin_reason, state, started_at, ended_at,
 		       client_ip, fidelity, recording_bytes, command_count, exit_code,
 		       chain_head, risk_flags, reported_by, recording_key,
-		       terminated_by, termination_reason, last_reported_at, end_inferred
+		       terminated_by, termination_reason, last_reported_at, end_inferred,
+		       kind, database_id::text
 		FROM sessions WHERE id = $1`, id).Scan(
 		&v.ID, &v.UserEmail, &v.AssetID, &v.AssetHostname, &v.Principal,
 		&v.Protocol, &v.Origin, &v.OriginReason, &v.State, &v.StartedAt,
 		&v.EndedAt, &v.ClientIP, &v.Fidelity, &v.RecordingBytes,
 		&v.CommandCount, &v.ExitCode, &v.ChainHead, &v.RiskFlags, &v.ReportedBy,
 		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason, &v.LastReportedAt,
-		&v.EndInferred)
+		&v.EndInferred, &v.Kind, &v.DatabaseID)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}

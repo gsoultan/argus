@@ -10,6 +10,16 @@ import {
   revokeAgent,
   ignoreHost,
   isConfigured,
+  databases as liveDatabases,
+  databasesOnAsset as liveDatabasesOnAsset,
+  database as liveDatabase,
+  dbAssignments as liveDBAssignments,
+  createDatabase as liveCreateDatabase,
+  updateDatabase as liveUpdateDatabase,
+  deleteDatabase as liveDeleteDatabase,
+  setDBAssignment as liveSetDBAssignment,
+  removeDBAssignment as liveRemoveDBAssignment,
+  requestDatabaseAccess as liveRequestDatabaseAccess,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -412,5 +422,85 @@ export function useAddAccount() {
   return useMutation({
     mutationFn: api.addAccount,
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+/* ── Databases ──────────────────────────────────────────────────────────── */
+
+export const dbqk = {
+  databases: ['databases'] as const,
+  database: (id: string) => ['database', id] as const,
+  dbAssignments: (id: string) => ['database', id, 'assignments'] as const,
+}
+
+export const databasesQuery = () =>
+  queryOptions({ queryKey: dbqk.databases, queryFn: liveDatabases, enabled: isConfigured() })
+
+export const databasesOnAssetQuery = (assetId: string) =>
+  queryOptions({ queryKey: [...dbqk.databases, 'asset', assetId] as const, queryFn: () => liveDatabasesOnAsset(assetId), enabled: isConfigured() })
+
+export const databaseQuery = (id: string) =>
+  queryOptions({ queryKey: dbqk.database(id), queryFn: () => liveDatabase(id), enabled: isConfigured() })
+
+export const dbAssignmentsQuery = (id: string) =>
+  queryOptions({ queryKey: dbqk.dbAssignments(id), queryFn: () => liveDBAssignments(id), enabled: isConfigured() })
+
+export function useCreateDatabase() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: liveCreateDatabase,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: dbqk.databases }),
+  })
+}
+
+export function useUpdateDatabase() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string } & Parameters<typeof liveUpdateDatabase>[1]) =>
+      liveUpdateDatabase(v.id, v),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: dbqk.databases })
+      void qc.invalidateQueries({ queryKey: dbqk.database(v.id) })
+    },
+  })
+}
+
+export function useDeleteDatabase() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: liveDeleteDatabase,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: dbqk.databases }),
+  })
+}
+
+export function useSetDBAssignment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string } & Parameters<typeof liveSetDBAssignment>[1]) =>
+      liveSetDBAssignment(v.id, v),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: dbqk.dbAssignments(v.id) })
+      void qc.invalidateQueries({ queryKey: dbqk.databases })
+    },
+  })
+}
+
+export function useRemoveDBAssignment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; assignmentId: string }) => liveRemoveDBAssignment(v.id, v.assignmentId),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: dbqk.dbAssignments(v.id) })
+      void qc.invalidateQueries({ queryKey: dbqk.databases })
+    },
+  })
+}
+
+export function useRequestDatabaseAccess() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string } & Parameters<typeof liveRequestDatabaseAccess>[1]) =>
+      liveRequestDatabaseAccess(v.id, v),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['requests'] }),
   })
 }

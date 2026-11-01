@@ -328,7 +328,11 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
           </Group>
           <Text size={FS.body} c="dimmed" mb="xs" lh={1.5}>{r.justification}</Text>
           <Group gap={SP.snug} wrap="wrap">
-            <Badge size="xs" variant="outline" color="slate">as {r.principal}</Badge>
+            {r.principal.startsWith('db:') ? (
+              <Badge size="xs" variant="light" color="azure">{r.principal.slice(3)} on a database</Badge>
+            ) : (
+              <Badge size="xs" variant="outline" color="slate">as {r.principal}</Badge>
+            )}
             <Badge size="xs" variant="outline" color="slate">{r.durationMinutes / 60}h window</Badge>
             {r.assetHostnames.slice(0, 3).map((h) => (
               <Badge key={h} size="xs" variant="outline" color="slate" className="argus-digest">

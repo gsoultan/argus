@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { IconCornerDownLeft, IconSearch } from '@tabler/icons-react'
 import type { IconProps } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
-import { assetsQuery, meQuery, sessionsQuery, usersQuery } from '~/lib/queries'
+import { assetsQuery, databasesQuery, meQuery, sessionsQuery, usersQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 import { pagesFor } from '~/components/nav'
@@ -26,7 +26,7 @@ interface Item {
   id: string
   label: string
   hint?: string
-  kind: 'Page' | 'Host' | 'Session' | 'User'
+  kind: 'Page' | 'Host' | 'Database' | 'Session' | 'User'
   icon?: ComponentType<IconProps>
   go: () => void
 }
@@ -43,6 +43,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
   // for a search index nobody has asked for yet.
   const { data: assets } = useQuery({ ...assetsQuery({}), enabled: opened })
   const { data: sessions } = useQuery({ ...sessionsQuery(), enabled: opened })
+  const { data: dbs } = useQuery({ ...databasesQuery(), enabled: opened })
   const { data: me } = useQuery(meQuery())
   const whole = seesWholeFleet(me?.role)
   // People are an administrator's page; nobody else is offered it in the menu.
@@ -82,6 +83,18 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
         })
       }
 
+      for (const d of dbs?.databases ?? []) {
+        if (!`${d.dbname} ${d.hostname} ${d.label}`.toLowerCase().includes(needle)) continue
+        if (out.filter((i) => i.kind === 'Database').length >= PER_GROUP) break
+        out.push({
+          id: `db:${d.id}`,
+          label: d.dbname,
+          hint: `${d.hostname.split('.')[0]} · ${d.label} · ${dbs?.access[d.id]?.level || 'ask for access'}`,
+          kind: 'Database',
+          go: () => navigate({ to: '/databases/$dbId', params: { dbId: d.id } }),
+        })
+      }
+
       for (const s of (sessions ?? []).slice(0, 400)) {
         if (!`${s.userEmail} ${s.assetHostname} ${s.principal}`.toLowerCase().includes(needle)) {
           continue
@@ -110,7 +123,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
     }
 
     return out
-  }, [q, assets, sessions, users, navigate, me?.role, whole])
+  }, [q, assets, dbs, sessions, users, navigate, me?.role, whole])
 
   // The highlighted row must never point past the end of a list that just got
   // shorter because another character was typed.
