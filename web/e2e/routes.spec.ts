@@ -11,6 +11,7 @@ const ROUTES: Array<[string, string]> = [
   ['/teams', 'Teams'],
   ['/settings', 'Settings'],
   ['/connect', 'Connect'],
+  ['/about', 'About Argus'],
   // Old addresses, kept working: My servers, Overview's Coverage, Requests, Users.
   ['/mine', 'Servers'],
   ['/coverage', 'Servers'],
