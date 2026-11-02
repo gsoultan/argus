@@ -15,6 +15,7 @@ func TestTheServiceLogStaysBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer r.Close()
 	line := bytes.Repeat([]byte("x"), 99)
 	line = append(line, '\n')
 	for i := 0; i < 1000; i++ {

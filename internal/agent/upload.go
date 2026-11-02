@@ -280,7 +280,13 @@ func gzipFile(path string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	// Closed before the original is removed: Windows will not delete a
+	// file that is still open.
+	defer func() {
+		if in != nil {
+			_ = in.Close()
+		}
+	}()
 	tmp := path + ".gz.tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -305,5 +311,7 @@ func gzipFile(path string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	_ = in.Close()
+	in = nil
 	return os.Remove(path)
 }

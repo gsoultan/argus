@@ -69,3 +69,10 @@ func (r *rotatingFile) Write(p []byte) (int, error) {
 	r.size += int64(n)
 	return n, err
 }
+
+// Close closes the file being written.
+func (r *rotatingFile) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.f.Close()
+}
