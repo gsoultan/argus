@@ -719,6 +719,13 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// The server was removed from Argus: the agent takes itself off it, sshd
+	// hook and all, and revokes its own credential when it is done.
+	if asked, uerr := a.store.agentUninstallRequested(r.Context(), in.Hostname); uerr == nil && asked {
+		reply["uninstall"] = true
+	} else if uerr != nil {
+		a.log.Error("heartbeat: cannot read whether the agent should uninstall", "error", uerr)
+	}
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",
 			"hostname", in.Hostname,

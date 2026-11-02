@@ -20,18 +20,20 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID                [16]byte
-	Hostname          string
-	SecretHash        string
-	TokenID           [16]byte
-	CreatedAt         time.Time
-	RevokedAt         runtime.Null[time.Time]
-	RevokedBy         runtime.Null[string]
-	TunnelTransport   runtime.Null[string]
-	TunnelReplica     runtime.Null[string]
-	TunnelConnectedAt runtime.Null[time.Time]
-	TunnelSeenAt      runtime.Null[time.Time]
-	TunnelRttUs       runtime.Null[int32]
+	ID                   [16]byte
+	Hostname             string
+	SecretHash           string
+	TokenID              [16]byte
+	CreatedAt            time.Time
+	RevokedAt            runtime.Null[time.Time]
+	RevokedBy            runtime.Null[string]
+	TunnelTransport      runtime.Null[string]
+	TunnelReplica        runtime.Null[string]
+	TunnelConnectedAt    runtime.Null[time.Time]
+	TunnelSeenAt         runtime.Null[time.Time]
+	TunnelRttUs          runtime.Null[int32]
+	UninstallRequestedAt runtime.Null[time.Time]
+	UninstallRequestedBy runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -70,7 +72,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 12
+const nCols = 14
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -268,6 +270,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.nums[q.nn] = int64(r.TunnelRttUs.V)
 		q.nn++
+	case 12:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.UninstallRequestedAt.V
+		q.ntm++
+	case 13:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.UninstallRequestedBy.V
+		q.ns++
 	}
 }
 
@@ -427,18 +443,20 @@ type Pred struct {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID                = UUIDCol{0}
-	Hostname          = TextCol{1}
-	SecretHash        = TextCol{2}
-	TokenID           = UUIDCol{3}
-	CreatedAt         = TimeCol{4}
-	RevokedAt         = NullTimeCol{5}
-	RevokedBy         = NullTextCol{6}
-	TunnelTransport   = NullTextCol{7}
-	TunnelReplica     = NullTextCol{8}
-	TunnelConnectedAt = NullTimeCol{9}
-	TunnelSeenAt      = NullTimeCol{10}
-	TunnelRttUs       = NullInt32Col{11}
+	ID                   = UUIDCol{0}
+	Hostname             = TextCol{1}
+	SecretHash           = TextCol{2}
+	TokenID              = UUIDCol{3}
+	CreatedAt            = TimeCol{4}
+	RevokedAt            = NullTimeCol{5}
+	RevokedBy            = NullTextCol{6}
+	TunnelTransport      = NullTextCol{7}
+	TunnelReplica        = NullTextCol{8}
+	TunnelConnectedAt    = NullTimeCol{9}
+	TunnelSeenAt         = NullTimeCol{10}
+	TunnelRttUs          = NullInt32Col{11}
+	UninstallRequestedAt = NullTimeCol{12}
+	UninstallRequestedBy = NullTextCol{13}
 )
 
 // UUIDCol addresses a uuid column.
@@ -784,6 +802,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyI32[q.nai32] = p.anyI32
 			q.nai32++
+		case 13:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -877,6 +902,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.nums[q.nn] = p.num
 		q.nn++
+	case 12:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 13:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -991,8 +1030,49 @@ func (q Query) TunnelRttUsIn(v ...int32) Query           { return q.Where(Tunnel
 func (q Query) TunnelRttUsNotIn(v ...int32) Query        { return q.Where(TunnelRttUs.NotIn(v...)) }
 func (q Query) TunnelRttUsIsNull() Query                 { return q.Where(TunnelRttUs.IsNull()) }
 func (q Query) TunnelRttUsIsNotNull() Query              { return q.Where(TunnelRttUs.IsNotNull()) }
+func (q Query) UninstallRequestedAtEq(v time.Time) Query { return q.Where(UninstallRequestedAt.Eq(v)) }
+func (q Query) UninstallRequestedAtNotEq(v time.Time) Query {
+	return q.Where(UninstallRequestedAt.NotEq(v))
+}
+func (q Query) UninstallRequestedAtGt(v time.Time) Query { return q.Where(UninstallRequestedAt.Gt(v)) }
+func (q Query) UninstallRequestedAtGte(v time.Time) Query {
+	return q.Where(UninstallRequestedAt.Gte(v))
+}
+func (q Query) UninstallRequestedAtLt(v time.Time) Query { return q.Where(UninstallRequestedAt.Lt(v)) }
+func (q Query) UninstallRequestedAtLte(v time.Time) Query {
+	return q.Where(UninstallRequestedAt.Lte(v))
+}
+func (q Query) UninstallRequestedAtIsNull() Query { return q.Where(UninstallRequestedAt.IsNull()) }
+func (q Query) UninstallRequestedAtIsNotNull() Query {
+	return q.Where(UninstallRequestedAt.IsNotNull())
+}
+func (q Query) UninstallRequestedByEq(v string) Query { return q.Where(UninstallRequestedBy.Eq(v)) }
+func (q Query) UninstallRequestedByNotEq(v string) Query {
+	return q.Where(UninstallRequestedBy.NotEq(v))
+}
+func (q Query) UninstallRequestedByGt(v string) Query  { return q.Where(UninstallRequestedBy.Gt(v)) }
+func (q Query) UninstallRequestedByGte(v string) Query { return q.Where(UninstallRequestedBy.Gte(v)) }
+func (q Query) UninstallRequestedByLt(v string) Query  { return q.Where(UninstallRequestedBy.Lt(v)) }
+func (q Query) UninstallRequestedByLte(v string) Query { return q.Where(UninstallRequestedBy.Lte(v)) }
+func (q Query) UninstallRequestedByEqLower(v string) Query {
+	return q.Where(UninstallRequestedBy.EqLower(v))
+}
+func (q Query) UninstallRequestedByLike(v string) Query { return q.Where(UninstallRequestedBy.Like(v)) }
+func (q Query) UninstallRequestedByILike(v string) Query {
+	return q.Where(UninstallRequestedBy.ILike(v))
+}
+func (q Query) UninstallRequestedByIn(v ...string) Query {
+	return q.Where(UninstallRequestedBy.In(v...))
+}
+func (q Query) UninstallRequestedByNotIn(v ...string) Query {
+	return q.Where(UninstallRequestedBy.NotIn(v...))
+}
+func (q Query) UninstallRequestedByIsNull() Query { return q.Where(UninstallRequestedBy.IsNull()) }
+func (q Query) UninstallRequestedByIsNotNull() Query {
+	return q.Where(UninstallRequestedBy.IsNotNull())
+}
 
-const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us" FROM "agent_credentials"`
+const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by" FROM "agent_credentials"`
 const countPrefix = `SELECT count(*) FROM "agent_credentials"`
 const existsPrefix = `SELECT 1 FROM "agent_credentials"`
 const existsSuffix = ` LIMIT 1`
@@ -1101,6 +1181,18 @@ var orderTable = [nCols][4]string{
 		"\"tunnel_rtt_us\" ASC NULLS FIRST",
 		"\"tunnel_rtt_us\" DESC NULLS LAST",
 	},
+	{ // uninstall_requested_at
+		"\"uninstall_requested_at\"",
+		"\"uninstall_requested_at\" DESC",
+		"\"uninstall_requested_at\" ASC NULLS FIRST",
+		"\"uninstall_requested_at\" DESC NULLS LAST",
+	},
+	{ // uninstall_requested_by
+		"\"uninstall_requested_by\"",
+		"\"uninstall_requested_by\" DESC",
+		"\"uninstall_requested_by\" ASC NULLS FIRST",
+		"\"uninstall_requested_by\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1118,6 +1210,8 @@ var identTable = [nCols]string{
 	"\"tunnel_connected_at\"",
 	"\"tunnel_seen_at\"",
 	"\"tunnel_rtt_us\"",
+	"\"uninstall_requested_at\"",
+	"\"uninstall_requested_by\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1150,7 +1244,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [12][28]runtime.Frag{
+var fragTable = [14][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1511,6 +1605,66 @@ var fragTable = [12][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // uninstall_requested_at
+		{}, // opNone
+		{A: "\"uninstall_requested_at\" = $", B: ""},
+		{A: "\"uninstall_requested_at\" <> $", B: ""},
+		{A: "\"uninstall_requested_at\" > $", B: ""},
+		{A: "\"uninstall_requested_at\" >= $", B: ""},
+		{A: "\"uninstall_requested_at\" < $", B: ""},
+		{A: "\"uninstall_requested_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"uninstall_requested_at\" IS NULL", B: ""},
+		{A: "\"uninstall_requested_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // uninstall_requested_by
+		{}, // opNone
+		{A: "\"uninstall_requested_by\" = $", B: ""},
+		{A: "\"uninstall_requested_by\" <> $", B: ""},
+		{A: "\"uninstall_requested_by\" > $", B: ""},
+		{A: "\"uninstall_requested_by\" >= $", B: ""},
+		{A: "\"uninstall_requested_by\" < $", B: ""},
+		{A: "\"uninstall_requested_by\" <= $", B: ""},
+		{A: "lower(\"uninstall_requested_by\") = lower($", B: ")"},
+		{A: "\"uninstall_requested_by\" LIKE $", B: ""},
+		{A: "\"uninstall_requested_by\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"uninstall_requested_by\" = ANY($", B: ")"},
+		{A: "\"uninstall_requested_by\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"uninstall_requested_by\" IS NULL", B: ""},
+		{A: "\"uninstall_requested_by\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1679,6 +1833,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.TunnelConnectedAt = runtime.Nullable(rv[9], runtime.Timestamptz)
 	r.TunnelSeenAt = runtime.Nullable(rv[10], runtime.Timestamptz)
 	r.TunnelRttUs = runtime.Nullable(rv[11], runtime.Int4)
+	r.UninstallRequestedAt = runtime.Nullable(rv[12], runtime.Timestamptz)
+	r.UninstallRequestedBy = runtime.NullText(rv[13], sl)
 	return nil
 }
 
@@ -1780,6 +1936,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyI32[nai32] = q.anyI32[nai32]
 				v = append(v, &b.anyI32[nai32])
 				nai32++
+			case 13:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -1832,6 +1992,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.nums[nn] = q.nums[nn]
 			v = append(v, &b.nums[nn])
 			nn++
+		case 12:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 13:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -1969,7 +2137,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us"`
+const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by"`
 
 const updatePrefix = `UPDATE "agent_credentials" SET `
 const deletePrefix = `DELETE FROM "agent_credentials"`
@@ -1977,34 +2145,38 @@ const deletePrefix = `DELETE FROM "agent_credentials"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dHostname          uint64 = 1 << 0
-	dSecretHash        uint64 = 1 << 1
-	dTokenID           uint64 = 1 << 2
-	dCreatedAt         uint64 = 1 << 3
-	dRevokedAt         uint64 = 1 << 4
-	dRevokedBy         uint64 = 1 << 5
-	dTunnelTransport   uint64 = 1 << 6
-	dTunnelReplica     uint64 = 1 << 7
-	dTunnelConnectedAt uint64 = 1 << 8
-	dTunnelSeenAt      uint64 = 1 << 9
-	dTunnelRttUs       uint64 = 1 << 10
+	dHostname             uint64 = 1 << 0
+	dSecretHash           uint64 = 1 << 1
+	dTokenID              uint64 = 1 << 2
+	dCreatedAt            uint64 = 1 << 3
+	dRevokedAt            uint64 = 1 << 4
+	dRevokedBy            uint64 = 1 << 5
+	dTunnelTransport      uint64 = 1 << 6
+	dTunnelReplica        uint64 = 1 << 7
+	dTunnelConnectedAt    uint64 = 1 << 8
+	dTunnelSeenAt         uint64 = 1 << 9
+	dTunnelRttUs          uint64 = 1 << 10
+	dUninstallRequestedAt uint64 = 1 << 11
+	dUninstallRequestedBy uint64 = 1 << 12
 )
 
-const nUpdatable = 11
+const nUpdatable = 13
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"hostname\" = $", B: ""},            // hostname
-	{A: "\"secret_hash\" = $", B: ""},         // secret_hash
-	{A: "\"token_id\" = $", B: ""},            // token_id
-	{A: "\"created_at\" = $", B: ""},          // created_at
-	{A: "\"revoked_at\" = $", B: ""},          // revoked_at
-	{A: "\"revoked_by\" = $", B: ""},          // revoked_by
-	{A: "\"tunnel_transport\" = $", B: ""},    // tunnel_transport
-	{A: "\"tunnel_replica\" = $", B: ""},      // tunnel_replica
-	{A: "\"tunnel_connected_at\" = $", B: ""}, // tunnel_connected_at
-	{A: "\"tunnel_seen_at\" = $", B: ""},      // tunnel_seen_at
-	{A: "\"tunnel_rtt_us\" = $", B: ""},       // tunnel_rtt_us
+	{A: "\"hostname\" = $", B: ""},               // hostname
+	{A: "\"secret_hash\" = $", B: ""},            // secret_hash
+	{A: "\"token_id\" = $", B: ""},               // token_id
+	{A: "\"created_at\" = $", B: ""},             // created_at
+	{A: "\"revoked_at\" = $", B: ""},             // revoked_at
+	{A: "\"revoked_by\" = $", B: ""},             // revoked_by
+	{A: "\"tunnel_transport\" = $", B: ""},       // tunnel_transport
+	{A: "\"tunnel_replica\" = $", B: ""},         // tunnel_replica
+	{A: "\"tunnel_connected_at\" = $", B: ""},    // tunnel_connected_at
+	{A: "\"tunnel_seen_at\" = $", B: ""},         // tunnel_seen_at
+	{A: "\"tunnel_rtt_us\" = $", B: ""},          // tunnel_rtt_us
+	{A: "\"uninstall_requested_at\" = $", B: ""}, // uninstall_requested_at
+	{A: "\"uninstall_requested_by\" = $", B: ""}, // uninstall_requested_by
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2022,6 +2194,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"tunnel_connected_at\" = now()", B: ""},           // tunnel_connected_at = the database's clock
 	{A: "\"tunnel_seen_at\" = now()", B: ""},                // tunnel_seen_at = the database's clock
 	{A: "\"tunnel_rtt_us\" = \"tunnel_rtt_us\" + 1", B: ""}, // tunnel_rtt_us = its own value plus one
+	{A: "\"uninstall_requested_at\" = now()", B: ""},        // uninstall_requested_at = the database's clock
+	{}, // uninstall_requested_by has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2033,21 +2207,23 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID                uint64 = 1 << 0
-	iHostname          uint64 = 1 << 1
-	iSecretHash        uint64 = 1 << 2
-	iTokenID           uint64 = 1 << 3
-	iCreatedAt         uint64 = 1 << 4
-	iRevokedAt         uint64 = 1 << 5
-	iRevokedBy         uint64 = 1 << 6
-	iTunnelTransport   uint64 = 1 << 7
-	iTunnelReplica     uint64 = 1 << 8
-	iTunnelConnectedAt uint64 = 1 << 9
-	iTunnelSeenAt      uint64 = 1 << 10
-	iTunnelRttUs       uint64 = 1 << 11
+	iID                   uint64 = 1 << 0
+	iHostname             uint64 = 1 << 1
+	iSecretHash           uint64 = 1 << 2
+	iTokenID              uint64 = 1 << 3
+	iCreatedAt            uint64 = 1 << 4
+	iRevokedAt            uint64 = 1 << 5
+	iRevokedBy            uint64 = 1 << 6
+	iTunnelTransport      uint64 = 1 << 7
+	iTunnelReplica        uint64 = 1 << 8
+	iTunnelConnectedAt    uint64 = 1 << 9
+	iTunnelSeenAt         uint64 = 1 << 10
+	iTunnelRttUs          uint64 = 1 << 11
+	iUninstallRequestedAt uint64 = 1 << 12
+	iUninstallRequestedBy uint64 = 1 << 13
 )
 
-const nInsertable = 12
+const nInsertable = 14
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2063,6 +2239,8 @@ var insCols = [nInsertable]string{
 	"\"tunnel_connected_at\"",
 	"\"tunnel_seen_at\"",
 	"\"tunnel_rtt_us\"",
+	"\"uninstall_requested_at\"",
+	"\"uninstall_requested_by\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2071,7 +2249,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"agent_credentials\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2090,7 +2268,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2314,6 +2492,45 @@ func (m *Mut) SetTunnelRttUsNull() {
 	m.expr &^= dTunnelRttUs
 }
 
+func (m *Mut) SetUninstallRequestedAt(v time.Time) {
+	m.row.UninstallRequestedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dUninstallRequestedAt
+	m.expr &^= dUninstallRequestedAt
+}
+
+// SetUninstallRequestedAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetUninstallRequestedAtNow() {
+	m.expr |= dUninstallRequestedAt
+	m.dirty &^= dUninstallRequestedAt
+}
+
+// SetUninstallRequestedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetUninstallRequestedAtNull() {
+	m.row.UninstallRequestedAt = runtime.Null[time.Time]{}
+	m.dirty |= dUninstallRequestedAt
+	m.expr &^= dUninstallRequestedAt
+}
+
+func (m *Mut) SetUninstallRequestedBy(v string) {
+	m.row.UninstallRequestedBy = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dUninstallRequestedBy
+	m.expr &^= dUninstallRequestedBy
+}
+
+// SetUninstallRequestedByNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetUninstallRequestedByNull() {
+	m.row.UninstallRequestedBy = runtime.Null[string]{}
+	m.dirty |= dUninstallRequestedBy
+	m.expr &^= dUninstallRequestedBy
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2448,6 +2665,30 @@ func (n *Ins) SetTunnelRttUsNull() {
 	n.set |= iTunnelRttUs
 }
 
+func (n *Ins) SetUninstallRequestedAt(v time.Time) {
+	n.row.UninstallRequestedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iUninstallRequestedAt
+}
+
+// SetUninstallRequestedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetUninstallRequestedAtNull() {
+	n.row.UninstallRequestedAt = runtime.Null[time.Time]{}
+	n.set |= iUninstallRequestedAt
+}
+
+func (n *Ins) SetUninstallRequestedBy(v string) {
+	n.row.UninstallRequestedBy = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iUninstallRequestedBy
+}
+
+// SetUninstallRequestedByNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetUninstallRequestedByNull() {
+	n.row.UninstallRequestedBy = runtime.Null[string]{}
+	n.set |= iUninstallRequestedBy
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2495,7 +2736,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 11)
+	set := make([]string, 0, 13)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2531,6 +2772,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<11) != 0 {
 			set = append(set, "tunnel_rtt_us")
 		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "uninstall_requested_at")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "uninstall_requested_by")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -2561,6 +2808,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<11) != 0 {
 			set = append(set, "tunnel_rtt_us")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "uninstall_requested_at")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "uninstall_requested_by")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -2595,6 +2848,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<11) != 0 {
 			set = append(set, "tunnel_rtt_us")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "uninstall_requested_at")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "uninstall_requested_by")
 		}
 	}
 	return set
@@ -2664,17 +2923,19 @@ func joinAssign(set []string) string {
 }
 
 var assignFor = map[string]string{
-	"hostname":            "\"hostname\" = EXCLUDED.\"hostname\"",
-	"secret_hash":         "\"secret_hash\" = EXCLUDED.\"secret_hash\"",
-	"token_id":            "\"token_id\" = EXCLUDED.\"token_id\"",
-	"created_at":          "\"created_at\" = EXCLUDED.\"created_at\"",
-	"revoked_at":          "\"revoked_at\" = EXCLUDED.\"revoked_at\"",
-	"revoked_by":          "\"revoked_by\" = EXCLUDED.\"revoked_by\"",
-	"tunnel_transport":    "\"tunnel_transport\" = EXCLUDED.\"tunnel_transport\"",
-	"tunnel_replica":      "\"tunnel_replica\" = EXCLUDED.\"tunnel_replica\"",
-	"tunnel_connected_at": "\"tunnel_connected_at\" = EXCLUDED.\"tunnel_connected_at\"",
-	"tunnel_seen_at":      "\"tunnel_seen_at\" = EXCLUDED.\"tunnel_seen_at\"",
-	"tunnel_rtt_us":       "\"tunnel_rtt_us\" = EXCLUDED.\"tunnel_rtt_us\"",
+	"hostname":               "\"hostname\" = EXCLUDED.\"hostname\"",
+	"secret_hash":            "\"secret_hash\" = EXCLUDED.\"secret_hash\"",
+	"token_id":               "\"token_id\" = EXCLUDED.\"token_id\"",
+	"created_at":             "\"created_at\" = EXCLUDED.\"created_at\"",
+	"revoked_at":             "\"revoked_at\" = EXCLUDED.\"revoked_at\"",
+	"revoked_by":             "\"revoked_by\" = EXCLUDED.\"revoked_by\"",
+	"tunnel_transport":       "\"tunnel_transport\" = EXCLUDED.\"tunnel_transport\"",
+	"tunnel_replica":         "\"tunnel_replica\" = EXCLUDED.\"tunnel_replica\"",
+	"tunnel_connected_at":    "\"tunnel_connected_at\" = EXCLUDED.\"tunnel_connected_at\"",
+	"tunnel_seen_at":         "\"tunnel_seen_at\" = EXCLUDED.\"tunnel_seen_at\"",
+	"tunnel_rtt_us":          "\"tunnel_rtt_us\" = EXCLUDED.\"tunnel_rtt_us\"",
+	"uninstall_requested_at": "\"uninstall_requested_at\" = EXCLUDED.\"uninstall_requested_at\"",
+	"uninstall_requested_by": "\"uninstall_requested_by\" = EXCLUDED.\"uninstall_requested_by\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2742,6 +3003,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.TunnelSeenAt.Arg())
 		case 11:
 			args = append(args, n.row.TunnelRttUs.Arg())
+		case 12:
+			args = append(args, n.row.UninstallRequestedAt.Arg())
+		case 13:
+			args = append(args, n.row.UninstallRequestedBy.Arg())
 		}
 	}
 	var out Row
@@ -2779,7 +3044,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 12)
+	args := make([]any, 0, 14)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -2792,6 +3057,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.TunnelConnectedAt.Arg())
 	args = append(args, r.TunnelSeenAt.Arg())
 	args = append(args, r.TunnelRttUs.Arg())
+	args = append(args, r.UninstallRequestedAt.Arg())
+	args = append(args, r.UninstallRequestedBy.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2830,13 +3097,15 @@ var copyCols = []string{
 	"tunnel_connected_at",
 	"tunnel_seen_at",
 	"tunnel_rtt_us",
+	"uninstall_requested_at",
+	"uninstall_requested_by",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [12]any
+	buf  [14]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2866,6 +3135,8 @@ func (s *rowSource) Values() []any {
 	s.buf[9] = r.TunnelConnectedAt.Ptr()
 	s.buf[10] = r.TunnelSeenAt.Ptr()
 	s.buf[11] = r.TunnelRttUs.Ptr()
+	s.buf[12] = r.UninstallRequestedAt.Ptr()
+	s.buf[13] = r.UninstallRequestedBy.Ptr()
 	return s.buf[:]
 }
 
@@ -2908,8 +3179,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 9
 	mask |= 1 << 10
 	mask |= 1 << 11
+	mask |= 1 << 12
+	mask |= 1 << 13
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 12)
+	args := make([]any, 0, 14)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -2922,6 +3195,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.TunnelConnectedAt.Arg())
 	args = append(args, r.TunnelSeenAt.Arg())
 	args = append(args, r.TunnelRttUs.Arg())
+	args = append(args, r.UninstallRequestedAt.Arg())
+	args = append(args, r.UninstallRequestedBy.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2979,6 +3254,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.TunnelSeenAt.Arg())
 		case 11:
 			args = append(args, n.row.TunnelRttUs.Arg())
+		case 12:
+			args = append(args, n.row.UninstallRequestedAt.Arg())
+		case 13:
+			args = append(args, n.row.UninstallRequestedBy.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3047,6 +3326,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.TunnelSeenAt.Arg())
 		case 10:
 			args = append(args, m.row.TunnelRttUs.Arg())
+		case 11:
+			args = append(args, m.row.UninstallRequestedAt.Arg())
+		case 12:
+			args = append(args, m.row.UninstallRequestedBy.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3151,6 +3434,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.TunnelSeenAt.Arg())
 		case 10:
 			args = append(args, m.row.TunnelRttUs.Arg())
+		case 11:
+			args = append(args, m.row.UninstallRequestedAt.Arg())
+		case 12:
+			args = append(args, m.row.UninstallRequestedBy.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3321,6 +3608,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.TunnelSeenAt.Arg())
 		case 10:
 			args = append(args, m.row.TunnelRttUs.Arg())
+		case 11:
+			args = append(args, m.row.UninstallRequestedAt.Arg())
+		case 12:
+			args = append(args, m.row.UninstallRequestedBy.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

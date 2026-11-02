@@ -76,6 +76,8 @@ func _assertAgentCredentialShape(m m0.AgentCredential) {
 		m.TunnelConnectedAt,
 		m.TunnelSeenAt,
 		m.TunnelRttUs,
+		m.UninstallRequestedAt,
+		m.UninstallRequestedBy,
 	}
 }
 
