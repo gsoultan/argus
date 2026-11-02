@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
 )
 
@@ -73,9 +74,24 @@ func runUsersAdd(configPath string, args []string) error {
 	}
 	defer store.Close()
 
+	// CreateAccount overwrites an existing row's password and role. From here
+	// that was a silent way to reset somebody, leaving their sessions and
+	// second factor as they were and the audit saying "created". Recovery has
+	// its own commands, each of which says what it did.
+	if existing, err := store.Account(ctx, email); err == nil && existing.PasswordHash != "" {
+		return fmt.Errorf("%s already has an account.\n"+
+			"To recover it use: argus-control users set-password|reset-mfa|set-role|enable %s",
+			email, email)
+	} else if err != nil && !errors.Is(err, control.ErrNoAccount) {
+		return err
+	}
+
 	password, err := readPassword()
 	if err != nil {
 		return err
+	}
+	if len([]rune(password)) < auth.MinPasswordLength {
+		return fmt.Errorf("the password must be at least %d characters", auth.MinPasswordLength)
 	}
 
 	if _, err := store.CreateAccount(ctx, email, name, role, password); err != nil {
@@ -255,4 +271,149 @@ func hostActor() string {
 		return u.Username + "@host"
 	}
 	return "unknown@host"
+}
+
+/* ── Recovery ────────────────────────────────────────────────────────────── */
+
+// Getting an administrator back in, from the control plane host.
+//
+// The console cannot do this for the last administrator: the person who would
+// click the button is the one who is locked out. So these run where
+// `users add` runs, with the same privilege boundary -- a shell on the host
+// that can read the configuration file and so reach the database -- and each
+// one signs the account out everywhere and lands in the audit chain under the
+// host user who ran it. See docs/admin-recovery.md.
+
+// openForRecovery is the common start of every recovery command.
+func openForRecovery(configPath string, args []string, usage string) (
+	*control.Store, string, context.Context, func(), error) {
+	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
+		return nil, "", nil, nil, errors.New("usage: argus-control users " + usage)
+	}
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	store, err := control.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		cancel()
+		return nil, "", nil, nil, err
+	}
+	email := strings.ToLower(strings.TrimSpace(args[0]))
+	if _, err := store.Account(ctx, email); err != nil {
+		store.Close()
+		cancel()
+		if errors.Is(err, control.ErrNoAccount) {
+			return nil, "", nil, nil, fmt.Errorf("no account for %s", email)
+		}
+		return nil, "", nil, nil, err
+	}
+	return store, email, ctx, func() { store.Close(); cancel() }, nil
+}
+
+// auditRecovery writes the entry every recovery command owes. Severity
+// warning: getting into an account by a way other than its credentials is
+// what an investigator looks for first.
+func auditRecovery(ctx context.Context, store *control.Store, action, email, detail string) {
+	if _, err := store.AppendAudit(ctx, control.AuditEvent{
+		Action: action, Severity: "warning", ActorEmail: hostActor(),
+		Target: email, Detail: detail + " Done with argus-control on the control plane host.",
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: done, but could not write the audit entry: %v\n", err)
+	}
+}
+
+// `argus-control users reset-mfa <email>`: for an administrator who has lost
+// their authenticator and their recovery codes.
+func runUsersResetMFA(configPath string, args []string) error {
+	store, email, ctx, done, err := openForRecovery(configPath, args, "reset-mfa <email>")
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := store.ResetMFA(ctx, email); err != nil {
+		return err
+	}
+	auditRecovery(ctx, store, "auth.mfa_reset", email,
+		"Second factor and recovery codes removed; every session signed out.")
+	fmt.Printf("Removed the second factor of %s and signed it out everywhere.\n"+
+		"At the next sign-in, the console asks them to set up a new one before anything else.\n", email)
+	return nil
+}
+
+// `argus-control users set-password <email>`: a forgotten password. The new
+// one is read without echo, as in `users add`.
+func runUsersSetPassword(configPath string, args []string) error {
+	store, email, ctx, done, err := openForRecovery(configPath, args, "set-password <email>")
+	if err != nil {
+		return err
+	}
+	defer done()
+	password, err := readPassword()
+	if err != nil {
+		return err
+	}
+	if len([]rune(password)) < auth.MinPasswordLength {
+		return fmt.Errorf("the password must be at least %d characters", auth.MinPasswordLength)
+	}
+	if err := store.SetPassword(ctx, email, password); err != nil {
+		return err
+	}
+	auditRecovery(ctx, store, "auth.password_reset", email,
+		"Password replaced; every session signed out. The second factor was left as it was.")
+	fmt.Printf("Set a new password for %s and signed it out everywhere.\n"+
+		"Their second factor is unchanged; if that is lost too, run users reset-mfa.\n", email)
+	return nil
+}
+
+// `argus-control users set-role <email> <role>`: put an account back in
+// charge when nobody who administers the deployment can sign in.
+func runUsersSetRole(configPath string, args []string) error {
+	if len(args) != 2 {
+		return errors.New("usage: argus-control users set-role <email> owner|admin|approver|operator|auditor")
+	}
+	switch args[1] {
+	case "owner", "admin", "approver", "operator", "auditor":
+	default:
+		return fmt.Errorf("unknown role %q", args[1])
+	}
+	store, email, ctx, done, err := openForRecovery(configPath, args, "set-role <email> <role>")
+	if err != nil {
+		return err
+	}
+	defer done()
+	before, err := store.SetAccountRole(ctx, email, args[1])
+	switch {
+	case errors.Is(err, control.ErrAlreadyInState):
+		fmt.Printf("%s is already %s.\n", email, args[1])
+		return nil
+	case errors.Is(err, control.ErrLastAdmin):
+		return fmt.Errorf("refusing: %w. Make another account owner or admin first", err)
+	case err != nil:
+		return err
+	}
+	if err := store.RevokeAllSessions(ctx, email); err != nil {
+		return err
+	}
+	auditRecovery(ctx, store, "user.role_changed", email,
+		fmt.Sprintf("Role changed from %s to %s; every session signed out.", before, args[1]))
+	fmt.Printf("%s is now %s (was %s), and was signed out everywhere.\n", email, args[1], before)
+	return nil
+}
+
+// `argus-control users sign-out <email>`: end every session an account has,
+// for a cookie that may have been stolen.
+func runUsersSignOut(configPath string, args []string) error {
+	store, email, ctx, done, err := openForRecovery(configPath, args, "sign-out <email>")
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := store.RevokeAllSessions(ctx, email); err != nil {
+		return err
+	}
+	auditRecovery(ctx, store, "auth.sessions_revoked", email, "Every session signed out.")
+	fmt.Printf("Signed %s out everywhere.\n", email)
+	return nil
 }

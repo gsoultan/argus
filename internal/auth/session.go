@@ -41,12 +41,23 @@ var (
 
 // Session is what a console cookie carries.
 type Session struct {
+	// ID names this one sign-in, so it can be revoked on its own (sign out)
+	// without signing the person out everywhere. Empty on a cookie issued
+	// before session ids existed; such a cookie is still subject to every
+	// account-level revocation, and expires on its own.
+	ID        string    `json:"sid,omitempty"`
 	Email     string    `json:"email"`
 	Name      string    `json:"name"`
 	Role      string    `json:"role"`
 	Subject   string    `json:"sub"`
 	IssuedAt  time.Time `json:"iat"`
 	ExpiresAt time.Time `json:"exp"`
+	// Purpose is never set on a session. Read so that a token of another kind
+	// that happens to carry an email and an expiry is refused as a cookie.
+	Purpose string `json:"purpose,omitempty"`
+	// TicketID is never set on a session either; a terminal ticket carries
+	// one, and a ticket is not a cookie.
+	TicketID string `json:"jti,omitempty"`
 }
 
 // Ticket authorises exactly one terminal session.
@@ -233,16 +244,33 @@ func (s *Signer) sweep() {
 
 // IssueSession signs a session for the cookie.
 func (s *Signer) IssueSession(sess Session, ttl time.Duration) (string, error) {
+	if sess.ID == "" {
+		id, err := randomID()
+		if err != nil {
+			return "", err
+		}
+		sess.ID = id
+	}
 	sess.IssuedAt = time.Now().UTC()
 	sess.ExpiresAt = sess.IssuedAt.Add(ttl)
 	return s.sign(sess)
 }
 
 // VerifySession checks a cookie value.
+//
+// A valid signature proves the control plane issued it, not that it is still
+// good: the caller must also check the account is active and the session has
+// not been revoked. See control.API.authenticate.
 func (s *Signer) VerifySession(token string) (Session, error) {
 	var sess Session
 	if err := s.verify(token, &sess); err != nil {
 		return Session{}, err
+	}
+	// Every other signed type (tickets, challenges, device tokens) is also
+	// JSON under the same key. A session must name an account and an expiry,
+	// so one of those can never be presented as a cookie.
+	if sess.Email == "" || sess.ExpiresAt.IsZero() || sess.Purpose != "" || sess.TicketID != "" {
+		return Session{}, ErrInvalid
 	}
 	if time.Now().After(sess.ExpiresAt) {
 		return Session{}, ErrExpired
@@ -473,4 +501,44 @@ func (s *Signer) RedeemMFAChallenge(token string) (string, error) {
 		return "", fmt.Errorf("%w: challenge carries no account", ErrInvalid)
 	}
 	return c.Email, nil
+}
+
+/* ── Known devices ───────────────────────────────────────────────────────── */
+
+// deviceToken marks a browser that has completed a sign-in for an account.
+//
+// It is how a per-account lockout avoids becoming a way to lock someone out:
+// when an account is being guessed at from many addresses, sign-ins without
+// this cookie are refused for a while, and the account holder's own browser,
+// which has it, is not. It proves nothing by itself -- the password and the
+// second factor are still required -- it only exempts a browser from a
+// throttle aimed at strangers.
+type deviceToken struct {
+	Email     string    `json:"email"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Purpose   string    `json:"purpose"`
+}
+
+const devicePurpose = "known-device"
+
+// IssueDeviceToken returns a token marking this browser as one that signed in
+// as email.
+func (s *Signer) IssueDeviceToken(email string, ttl time.Duration) (string, error) {
+	return s.sign(deviceToken{
+		Email: strings.ToLower(strings.TrimSpace(email)), ExpiresAt: time.Now().Add(ttl),
+		Purpose: devicePurpose,
+	})
+}
+
+// DeviceKnownFor reports whether token is a valid device token for email.
+func (s *Signer) DeviceKnownFor(token, email string) bool {
+	if token == "" {
+		return false
+	}
+	var d deviceToken
+	if err := s.verify(token, &d); err != nil {
+		return false
+	}
+	return d.Purpose == devicePurpose && time.Now().Before(d.ExpiresAt) &&
+		d.Email == strings.ToLower(strings.TrimSpace(email))
 }

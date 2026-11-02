@@ -8,6 +8,7 @@ import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconChevronDown, IconInfoCircle, IconKey, IconLogout, IconSearch,
+  IconShieldLock,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, directLoginsQuery, meQuery, myServerAccountQuery, statsQuery } from '~/lib/queries'
@@ -31,12 +32,21 @@ const CommandPalette = lazy(() =>
 const MySshKeyModal = lazy(() =>
   import('~/components/MySshKey').then((m) => ({ default: m.MySshKeyModal })),
 )
+// Lazy too: the QR code generator and the enrolment flow are for the first
+// sign-in of a privileged account, and never again for most.
+const TwoFactorModal = lazy(() =>
+  import('~/components/TwoFactor').then((m) => ({ default: m.TwoFactorModal })),
+)
+const TwoFactorRequired = lazy(() =>
+  import('~/components/TwoFactor').then((m) => ({ default: m.TwoFactorRequired })),
+)
 import {
   isActive, navFor, type NavCounts, type NavItem,
 } from '~/components/nav'
 import { LogoMark } from '~/components/Logo'
 import {
-  argusVersion, controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
+  argusVersion, controlPlaneHost, isConfigured, isLive, logout, signOutEverywhere, whoami,
+  type Identity,
 } from '~/lib/live'
 import { FS, SP } from '~/theme'
 
@@ -108,6 +118,17 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     return <SignIn identity={identity} onSignedIn={handleSignedIn} />
   }
 
+  // Signed in, but the role must have a second step and has none. The
+  // control plane refuses every other request, so drawing the console would
+  // be drawing errors.
+  if (identity.mfaSetupRequired) {
+    return (
+      <Suspense fallback={null}>
+        <TwoFactorRequired email={identity.email} onDone={handleSignedIn} />
+      </Suspense>
+    )
+  }
+
   return <>{children}</>
 }
 
@@ -123,7 +144,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [opened, { toggle, close }] = useDisclosure()
   const [paletteOpen, palette] = useDisclosure(false)
   const [sshKeyOpen, sshKeyModal] = useDisclosure(false)
+  const [twoFactorOpen, twoFactorModal] = useDisclosure(false)
   const { data: me } = useQuery(meQuery())
+  const queryClient = useQueryClient()
   // A key is only asked of people a team lets SSH straight to a server; the
   // rest connect from the console and have no use for one. Someone who lost
   // direct SSH still sees it while a key is saved, so they can take it off.
@@ -272,6 +295,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                     My SSH key
                   </Menu.Item>
                 )}
+                {isLive() && (
+                  <Menu.Item leftSection={<IconShieldLock size={14} />} onClick={twoFactorModal.open}>
+                    {me?.mfaEnrolled ? 'Replace my authenticator' : 'Turn on two-step sign-in'}
+                  </Menu.Item>
+                )}
                 <Menu.Item
                   component={Link}
                   to="/about"
@@ -292,11 +320,35 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 >
                   Sign out
                 </Menu.Item>
+                {isLive() && (
+                  <Menu.Item
+                    leftSection={<IconLogout size={14} />}
+                    color="rose"
+                    onClick={async () => {
+                      await signOutEverywhere()
+                      window.location.reload()
+                    }}
+                  >
+                    Sign out everywhere
+                  </Menu.Item>
+                )}
               </Menu.Dropdown>
             </Menu>
             {sshKeyOpen && (
               <Suspense fallback={null}>
                 <MySshKeyModal opened onClose={sshKeyModal.close} />
+              </Suspense>
+            )}
+            {twoFactorOpen && (
+              <Suspense fallback={null}>
+                <TwoFactorModal
+                  opened
+                  enrolled={!!me?.mfaEnrolled}
+                  onClose={() => {
+                    twoFactorModal.close()
+                    void queryClient.invalidateQueries({ queryKey: meQuery().queryKey })
+                  }}
+                />
               </Suspense>
             )}
           </Group>

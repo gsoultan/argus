@@ -17,7 +17,8 @@ import { guard } from '~/lib/guard'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
   meQuery, teamsQuery, useAddAccount, useAddTeamMember, useCreateTeam, useDeleteTeam,
-  useRemoveTeamMember, useRenameTeam, useSetDisabled, useSetLoginName, useSetRole, usersQuery,
+  useRemoveTeamMember, useRenameTeam, useResetMFA, useSetDisabled, useSetLoginName, useSetRole,
+  useSignOutAccount, usersQuery,
 } from '~/lib/queries'
 import { canSee, roleLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
@@ -386,6 +387,25 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
       notifyError('Role not changed', err)
     }
   }
+  const resetMFA = useResetMFA()
+  const signOut = useSignOutAccount()
+  const reset2fa = async (u: User) => {
+    if (!window.confirm(`Remove ${u.displayName}'s authenticator and recovery codes? They are signed out everywhere and set up a new one at their next sign-in. Only do this for a person you have identified yourself.`)) return
+    try {
+      await resetMFA.mutateAsync(u.email)
+      notifyOk('Second step removed', `${u.email} signs in with their password next, then sets up a new authenticator.`)
+    } catch (err) {
+      notifyError('Not reset', err)
+    }
+  }
+  const signOutAll = async (u: User) => {
+    try {
+      await signOut.mutateAsync(u.email)
+      notifyOk('Signed out everywhere', `Every browser signed in as ${u.email} has to sign in again.`)
+    } catch (err) {
+      notifyError('Not signed out', err)
+    }
+  }
   const toggle = async (u: User) => {
     try {
       await setDisabled.mutateAsync({ email: u.email, disabled: !u.disabled })
@@ -512,15 +532,35 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                         Servers
                       </Button>
                       {admin && !self && (
-                        <Button
-                          size="compact-sm"
-                          variant="subtle"
-                          color={u.disabled ? 'azure' : 'rose'}
-                          loading={setDisabled.isPending && setDisabled.variables?.email === u.email}
-                          onClick={() => void toggle(u)}
-                        >
-                          {u.disabled ? 'Let back in' : 'Remove'}
-                        </Button>
+                        <>
+                          {!u.disabled && (
+                            <Menu position="bottom-end" withinPortal>
+                              <Menu.Target>
+                                <Button size="compact-sm" variant="subtle" color="slate"
+                                  aria-label={`Security of ${u.email}`}>
+                                  Security
+                                </Button>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <Menu.Item onClick={() => void signOutAll(u)}>
+                                  Sign out everywhere
+                                </Menu.Item>
+                                <Menu.Item disabled={!u.mfaEnrolled} onClick={() => void reset2fa(u)}>
+                                  {u.mfaEnrolled ? 'Reset lost authenticator' : 'No authenticator to reset'}
+                                </Menu.Item>
+                              </Menu.Dropdown>
+                            </Menu>
+                          )}
+                          <Button
+                            size="compact-sm"
+                            variant="subtle"
+                            color={u.disabled ? 'azure' : 'rose'}
+                            loading={setDisabled.isPending && setDisabled.variables?.email === u.email}
+                            onClick={() => void toggle(u)}
+                          >
+                            {u.disabled ? 'Let back in' : 'Remove'}
+                          </Button>
+                        </>
                       )}
                     </Table.Td>
                   </Table.Tr>

@@ -119,7 +119,9 @@ func TestMFAIsDemandedAndCompletesTheSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, _ := auth.TOTPCode(secret, time.Now())
+	// Confirmed with the previous step's code: each step signs in once, and
+	// the sign-in below uses the current one.
+	first, _ := auth.TOTPCode(secret, time.Now().Add(-auth.TOTPPeriod))
 	if _, err := h.store.ConfirmMFAEnrolment(t.Context(), email, first); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +233,7 @@ func TestBeginningEnrolmentDoesNotEnrol(t *testing.T) {
 	email, password := newAccount(t, h.store, "admin")
 	h.post(t, "/auth/password", loginRequest{Email: email, Password: password})
 
-	c, body := h.post(t, "/auth/mfa/enrol", nil)
+	c, body := h.post(t, "/auth/mfa/enrol", map[string]string{"password": password})
 	if c != http.StatusOK {
 		t.Fatalf("enrolment could not begin: %d %v", c, body)
 	}

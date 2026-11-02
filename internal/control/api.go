@@ -110,6 +110,10 @@ type API struct {
 	setup setupGate
 	// proxyNotice logs an ignored proxy once; see noticeUntrustedProxy.
 	proxyNotice sync.Once
+
+	// RequireMFA says which roles must enrol a second factor; see
+	// session_gate.go. Empty means MFAPrivileged.
+	RequireMFA MFAPolicy
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -135,7 +139,7 @@ func (a *API) Handler() http.Handler {
 	a.registerCommon(mux)
 	a.registerConsole(mux)
 	a.registerFleet(mux)
-	return a.securityHeaders(a.cors(mux))
+	return a.securityHeaders(a.cors(a.sessionGate(mux)))
 }
 
 // ConsoleHandler serves the surface a person reaches: sign-in, the console's
@@ -150,7 +154,7 @@ func (a *API) ConsoleHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerConsole(mux)
-	return a.securityHeaders(a.cors(mux))
+	return a.securityHeaders(a.cors(a.sessionGate(mux)))
 }
 
 // FleetHandler serves the surface gateways and agents reach.
@@ -186,9 +190,10 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	// and the only one left.
 	mux.HandleFunc("POST /auth/password", a.limitLogin(a.handlePasswordLogin))
 	mux.HandleFunc("POST /auth/mfa", a.limitLogin(a.handleMFAVerify))
-	mux.HandleFunc("POST /auth/mfa/enrol", a.handleMFABegin)
-	mux.HandleFunc("POST /auth/mfa/confirm", a.handleMFAConfirm)
-	mux.HandleFunc("POST /auth/password/change", a.handleChangePassword)
+	mux.HandleFunc("POST /auth/mfa/enrol", a.limitLogin(a.handleMFABegin))
+	mux.HandleFunc("POST /auth/mfa/confirm", a.limitLogin(a.handleMFAConfirm))
+	mux.HandleFunc("POST /auth/password/change", a.limitLogin(a.handleChangePassword))
+	mux.HandleFunc("POST /auth/sessions/revoke", a.handleRevokeSessions)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
 	// First run: the first account, once, with a token read from the host.
 	mux.HandleFunc("GET /auth/setup", a.handleSetupStatus)
@@ -239,6 +244,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
+	mux.HandleFunc("POST /api/v1/users/{email}/reset-mfa", a.postResetMFA)
+	mux.HandleFunc("POST /api/v1/users/{email}/sign-out", a.postSignOutAccount)
 	mux.HandleFunc("PUT /api/v1/users/{email}/login-name", a.putLoginName)
 	mux.HandleFunc("GET /api/v1/users/{email}/servers", a.getPersonServers)
 	mux.HandleFunc("GET /api/v1/me/server-account", a.getMyServerAccount)
