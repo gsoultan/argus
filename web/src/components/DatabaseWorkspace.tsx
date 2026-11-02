@@ -731,6 +731,15 @@ function KindGroup({ label, items, schemaName, schema, onPick, onRun }: {
   )
 }
 
+/** The hover text for an object: its size and estimated rows for a table. */
+function objectTitle(o: Obj, qualified: string): string {
+  if (o.kind === 'function' || o.kind === 'procedure') return o.detail ? `${o.name}(${o.detail})` : qualified
+  const parts = [qualified]
+  if (o.detail) parts.push(o.detail)
+  if (o.count && (o.kind === 'table' || o.kind === 'matview')) parts.push(`about ${o.count.toLocaleString()} rows`)
+  return parts.join(' · ')
+}
+
 function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
   o: Obj; schemaName: string
   schema: (kind: string, schemaName?: string, object?: string) => Promise<Obj[]>
@@ -749,10 +758,13 @@ function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
     <Box>
       <Group gap={4} wrap="nowrap" px={4} py={2} style={{ borderRadius: 6 }}>
         <UnstyledButton onClick={() => expandable && setOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}
-          onDoubleClick={() => onPick(qualified)} title={o.detail || qualified}>
+          onDoubleClick={() => onPick(qualified)} title={objectTitle(o, qualified)}>
           {expandable ? (open ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />) : <span style={{ width: 11 }} />}
           <Icon size={12} style={{ color: 'var(--mantine-color-dimmed)', flexShrink: 0 }} />
           <Text size={FS.meta} ff="monospace" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</Text>
+          {o.detail && o.kind !== 'function' && o.kind !== 'procedure' && (
+            <Text size={FS.micro} c="dimmed" ml="auto" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{o.detail}</Text>
+          )}
         </UnstyledButton>
         {expandable && (
           <Tooltip label="Select the first 100 rows" withArrow>

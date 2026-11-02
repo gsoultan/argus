@@ -75,6 +75,11 @@ tree folds into a drawer), and every statement is recorded on the server
 before it runs. Nothing extra is installed: the server's agent connects over
 Postgres's own local socket.
 
+- **Postgres 13 or later**, any way it is installed: the agent speaks only
+  catalogue SQL and `GRANT`s that have been in Postgres for years, and the
+  test suite runs each release against a real server and a real PgBouncer.
+  An older server still opens; the agent logs that it is older than anything
+  Argus is tested against.
 - **Access is a word, not a grant list.** An admin gives a team or a person
   *Read*, *Write*, *Owner* or *DBA* on a database, from the database's page or
   the server's. Argus turns the level into Postgres group roles
