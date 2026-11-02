@@ -123,3 +123,41 @@ max). An agent too old to know "completion" answers an error, which leaves
 keywords and built-in functions. `web/src/lib/redisComplete.ts` is the same
 for the Redis command line in `RedisWorkspace` (commands, subcommands, keys
 the browser listed); the open list takes Enter and ↑/↓ before run and history.
+
+## Extensions and logical replication (2026-11)
+
+Design: the project's `plans/postgres-extensions-replication/`. Two more
+left-bar entries, *Extensions* and *Replication*, in
+`web/src/components/DatabaseExtensions.tsx` / `DatabaseReplication.tsx`.
+
+- **Not plain recorded statements.** `CREATE SUBSCRIPTION`, `FOR ALL TABLES`
+  and most `CREATE EXTENSION`s need superuser, which the DBA level role is
+  not and stays not; and a subscription statement carries the publisher's
+  password, which must never reach the recording. So they are a new `admin`
+  op on the session (`tunnel.PGAdminOp`, kinds `extension.*`,
+  `publication.*`, `subscription.*`) that the agent hands to the pg-admin
+  helper (`postgres_admin_ops.go`): a fixed list, identifiers through
+  `quoteIdent`, the conninfo built from fields with libpq quoting.
+- **Built twice, pure.** `buildAdminSQL` has no database, so the agent
+  records the redacted statement *before* the helper runs the real one and
+  the helper rebuilds it from the same fields. The real statement exists
+  only in the helper process. `Preview: true` returns the redacted text
+  without running or recording, which is what the forms show above their
+  button; the console never composes this SQL itself.
+- **DBA decided twice.** The control plane refuses `admin` below dba (quick
+  answer, no logging of the request); the agent refuses unless the *signed
+  grant* says dba (the one that counts). Production therefore rides the
+  existing DBA approval; there is no new approval type.
+- **Recording and audit.** A mutation is an `admin` line (kind `admin`,
+  SQL redacted) then `done`/`error`; lists and previews are not recorded.
+  The control plane appends `db.admin` (warning) per `admin` line and counts
+  it in `CommandCount`. `PostgresReplay` shows the line with "as the
+  server's postgres account".
+- **The password.** Argus stores none of it. Postgres holds the connection
+  string in `pg_subscription.subconninfo` as always (superuser-visible);
+  the list goes through `redactConninfo` (both libpq forms) before leaving
+  the helper. `TestPostgresAdminOps` asserts the secret is in Postgres and
+  nowhere else: not the recording, not the answer, not the list.
+- Dropping a subscription whose publisher is gone needs
+  `SET (slot_name = NONE)` first or `DROP` fails trying to reach it;
+  `PublisherGone` does that and the form says the slot is then theirs.

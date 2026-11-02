@@ -73,7 +73,7 @@ const (
 type PGRequest struct {
 	// ID ties answers and rows to the request. The browser numbers them.
 	ID uint32 `json:"id"`
-	// Op is run, cancel or schema.
+	// Op is run, cancel, schema or admin.
 	Op string `json:"op"`
 	// SQL is one statement, for run.
 	SQL string `json:"sql,omitempty"`
@@ -86,6 +86,111 @@ type PGRequest struct {
 	Kind   string `json:"kind,omitempty"`
 	Schema string `json:"schema,omitempty"`
 	Object string `json:"object,omitempty"`
+	// Admin is the operation, for admin. See PGAdminOp.
+	Admin *PGAdminOp `json:"admin,omitempty"`
+}
+
+/*
+Administrative operations: extensions and logical replication.
+
+These do not run as the person's role. Installing most extensions, publishing
+all tables and creating a subscription need more than the DBA level role
+holds, and a subscription's connection string carries the publisher's
+password, which must never be written into the recording. So the agent hands
+each one to its pg-admin helper (the server's postgres account, a fixed list
+of operations, never free SQL), records the statement with the password
+already redacted, and refuses the whole thing unless the signed grant's level
+is dba.
+*/
+
+// Admin operation kinds.
+const (
+	AdminExtensionList   = "extension.list"
+	AdminExtensionCreate = "extension.create"
+	AdminExtensionUpdate = "extension.update"
+	AdminExtensionDrop   = "extension.drop"
+
+	AdminPublicationList   = "publication.list"
+	AdminPublicationCreate = "publication.create"
+	AdminPublicationTables = "publication.tables"
+	AdminPublicationDrop   = "publication.drop"
+
+	AdminSubscriptionList       = "subscription.list"
+	AdminSubscriptionCreate     = "subscription.create"
+	AdminSubscriptionConnection = "subscription.connection"
+	AdminSubscriptionEnable     = "subscription.enable"
+	AdminSubscriptionDisable    = "subscription.disable"
+	AdminSubscriptionRefresh    = "subscription.refresh"
+	AdminSubscriptionDrop       = "subscription.drop"
+)
+
+// PGAdminOp is one administrative operation. Only the fields its Kind uses
+// are read; the rest are ignored.
+type PGAdminOp struct {
+	Kind string `json:"kind"`
+	// Preview asks for the statement that would run, redacted, without
+	// running or recording it.
+	Preview bool `json:"preview,omitempty"`
+	// Name is the extension, publication or subscription.
+	Name string `json:"name,omitempty"`
+	// Schema and Version are for extension.create; Version also for
+	// extension.update (empty updates to the default version).
+	Schema  string `json:"schema,omitempty"`
+	Version string `json:"version,omitempty"`
+	// Cascade drops what depends on an extension, or installs what one
+	// depends on.
+	Cascade bool `json:"cascade,omitempty"`
+	// AllTables or Tables ("schema.table") say what a publication covers;
+	// Publish is the subset of insert, update, delete, truncate it sends.
+	AllTables bool     `json:"allTables,omitempty"`
+	Tables    []string `json:"tables,omitempty"`
+	Publish   []string `json:"publish,omitempty"`
+	// Subscription: the publisher and its publications.
+	Conn         *PGConnInfo `json:"conn,omitempty"`
+	Publications []string    `json:"publications,omitempty"`
+	CopyData     *bool       `json:"copyData,omitempty"`
+	CreateSlot   *bool       `json:"createSlot,omitempty"`
+	Enabled      *bool       `json:"enabled,omitempty"`
+	Connect      *bool       `json:"connect,omitempty"`
+	SlotName     string      `json:"slotName,omitempty"`
+	// PublisherGone drops a subscription without contacting the publisher
+	// to remove its slot: the slot is then the publisher's to clean up.
+	PublisherGone bool `json:"publisherGone,omitempty"`
+}
+
+// PGConnInfo is a publisher, as fields. The helper turns it into a libpq
+// connection string; the password is the only secret and is never stored or
+// echoed by Argus.
+type PGConnInfo struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port,omitempty"`
+	DBName   string `json:"dbname"`
+	User     string `json:"user"`
+	Password string `json:"password,omitempty"`
+	SSLMode  string `json:"sslmode,omitempty"`
+}
+
+// Mutates says whether the operation changes the database; a list does not,
+// and is neither recorded nor audited.
+func (o *PGAdminOp) Mutates() bool {
+	switch o.Kind {
+	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList:
+		return false
+	}
+	return true
+}
+
+// Redacted is a copy safe to log: the same operation without the password.
+func (o *PGAdminOp) Redacted() PGAdminOp {
+	c := *o
+	if c.Conn != nil {
+		cc := *c.Conn
+		if cc.Password != "" {
+			cc.Password = "[redacted]"
+		}
+		c.Conn = &cc
+	}
+	return c
 }
 
 // PGColumn is one column of a result.
@@ -113,7 +218,7 @@ type PGObject struct {
 // PGAnswer is the agent's reply to a request, or news about the session.
 type PGAnswer struct {
 	ID uint32 `json:"id"`
-	// Type is ready, cols, done, error or schema.
+	// Type is ready, cols, done, error, schema or admin.
 	Type string     `json:"type"`
 	Cols []PGColumn `json:"cols,omitempty"`
 	// Tag is Postgres's command tag: "SELECT 214", "UPDATE 1".
@@ -131,6 +236,8 @@ type PGAnswer struct {
 	Hint     string `json:"hint,omitempty"`
 	// Objects answers schema.
 	Objects []PGObject `json:"objects,omitempty"`
+	// Admin answers admin: the list, or the statement that ran (redacted).
+	Admin json.RawMessage `json:"admin,omitempty"`
 	// Ready carries what the session opened as.
 	Role     string `json:"role,omitempty"`
 	Level    string `json:"level,omitempty"`
@@ -150,9 +257,12 @@ type PGAnswer struct {
 type PGRecord struct {
 	Seq  int64  `json:"seq"`
 	Time string `json:"t"`
-	// Kind is open, stmt, done, error, cancel or close.
+	// Kind is open, stmt, admin, done, error, cancel or close. An admin line
+	// is an administrative operation run through the agent's helper as the
+	// server's postgres account, not as the person's role.
 	Kind string `json:"kind"`
-	// SQL is the statement, on stmt.
+	// SQL is the statement, on stmt and admin. On admin any password in it
+	// is already [redacted]; the real statement never reaches the recording.
 	SQL string `json:"sql,omitempty"`
 	// Request ties stmt, done and error together.
 	Request uint32 `json:"req,omitempty"`

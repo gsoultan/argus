@@ -399,6 +399,15 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
+				if req.Op == "admin" && level != tunnel.LevelDBA {
+					// The agent refuses this too, against the signed grant;
+					// this is the quick, honest answer. The request is not
+					// logged: it may carry a publisher's password.
+					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "42501",
+						Error: "extensions and replication are DBA work; this session is at " + level})
+					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+					continue
+				}
 				b, _ = json.Marshal(req)
 			} else {
 				var req tunnel.StoreRequest
@@ -459,15 +468,23 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 			line := append(bytes.Clone(p), '\n')
 			_, werr := rec.Write(line)
 			chainHead = r.Hash
-			if r.Kind == "stmt" {
+			if r.Kind == "stmt" || r.Kind == "admin" {
 				stmts++
 			}
 			recMu.Unlock()
 			if werr != nil {
 				a.log.Error("writing a database recording failed", "session", sessionID, "error", werr)
 			}
+			if r.Kind == "admin" {
+				// A privileged mutation through the server's postgres
+				// account: an audit row of its own, beyond the recording.
+				// The agent redacted any password before sending the line.
+				a.auditDB(ctx, "db.admin", "warning", email, db.Hostname,
+					"In database session "+sessionID+" on "+db.Name+", ran through the server's postgres account: "+
+						r.SQL)
+			}
 			// Watchers see each statement as it is sent.
-			if r.Kind == "stmt" || r.Kind == "done" || r.Kind == "error" {
+			if r.Kind == "stmt" || r.Kind == "admin" || r.Kind == "done" || r.Kind == "error" {
 				ls.hub.Broadcast(append([]byte{hubRecord}, p...))
 			}
 		}

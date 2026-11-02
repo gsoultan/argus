@@ -24,8 +24,48 @@ export interface Collected {
 }
 export type Collect = (sql: string, maxRows?: number) => Promise<Collected>
 
+/*
+Administrative operations (extensions, publications, subscriptions) are not
+statements run as the person's role: they go to the agent's pg-admin helper,
+which runs them as the server's postgres account from a fixed list, and only
+for a session whose signed grant is dba. The helper redacts any password
+before the statement is recorded, audited or echoed. See DatabaseExtensions
+and DatabaseReplication, and plans/postgres-extensions-replication/design.md.
+*/
+export interface ConnInfo {
+  host: string
+  port?: number
+  dbname: string
+  user: string
+  password?: string
+  sslmode?: string
+}
+export interface AdminOp {
+  kind: string
+  preview?: boolean
+  name?: string
+  schema?: string
+  version?: string
+  cascade?: boolean
+  allTables?: boolean
+  tables?: string[]
+  publish?: string[]
+  conn?: ConnInfo
+  publications?: string[]
+  copyData?: boolean
+  createSlot?: boolean
+  enabled?: boolean
+  connect?: boolean
+  slotName?: string
+  publisherGone?: boolean
+}
+export interface AdminFailure { error?: string; code?: string; detail?: string; hint?: string }
+export interface AdminResult<T = unknown> { data?: T; tag?: string; ms?: number; error?: AdminFailure }
+export type Admin = <T = unknown>(op: AdminOp) => Promise<AdminResult<T>>
+
 export interface AdminPanelProps {
   collect: Collect
+  admin: Admin
   level: DBLevel | ''
   /** The level roles of this database, from the session's ready answer. */
   levels: Partial<Record<DBLevel, string>>
@@ -55,6 +95,46 @@ function PanelHeader({ title, blurb, narrow, onBack, right }: {
       </Box>
       {right}
     </Group>
+  )
+}
+
+export function PanelFrame({ title, blurb, narrow, onBack, right, children }: {
+  title: string; blurb: string; narrow: boolean; onBack: () => void; right?: React.ReactNode; children: React.ReactNode
+}) {
+  return (
+    <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <PanelHeader title={title} blurb={blurb} narrow={narrow} onBack={onBack} right={right} />
+      {children}
+    </Box>
+  )
+}
+
+/** The one-line gate below DBA: visible, labelled, with the way to ask. */
+export function NeedsDBA({ level, what, onAskForAccess }: { level: DBLevel | ''; what: string; onAskForAccess?: () => void }) {
+  return (
+    <Box p="md">
+      <Group gap="xs"><IconLock size={16} /><Text fw={600} size={FS.body}>Needs DBA access</Text></Group>
+      <Text size={FS.meta} c="dimmed" mt={4}>
+        Your level here is {level ? level.toUpperCase() : 'not known yet'}. {what} run through the server’s own postgres account,
+        so this panel opens at DBA only; on a production database that is one approval away.
+      </Text>
+      {onAskForAccess && <Button mt="sm" size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>Ask for access</Button>}
+    </Box>
+  )
+}
+
+/** Postgres's refusal of an administrative operation, with its next step. */
+export function AdminRefused({ error }: { error: AdminFailure }) {
+  return (
+    <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
+      <Text size={FS.body} fw={600}>
+        Postgres refused this: {error.error}
+        {error.code && <Text span size={FS.micro} ff="monospace" ml={6}>({error.code})</Text>}
+      </Text>
+      {error.detail && <Text size={FS.meta} mt={4} style={{ whiteSpace: 'pre-wrap' }}>{error.detail}</Text>}
+      {error.hint && <Text size={FS.meta} mt={4}>{error.hint}</Text>}
+      <Text size={FS.meta} mt={4}>Nothing was changed.</Text>
+    </Box>
   )
 }
 
