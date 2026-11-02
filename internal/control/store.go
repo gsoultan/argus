@@ -688,27 +688,16 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO agents (hostname, version, last_seen_at, active_sessions, posture,
-		                    exec_tracing, exec_reason, updated_at)
-		VALUES ($1,$2,now(),$3,$4,$5,$6,now())
-		ON CONFLICT (hostname) DO UPDATE SET
-			version         = EXCLUDED.version,
-			last_seen_at    = now(),
-			active_sessions = EXCLUDED.active_sessions,
-			posture         = COALESCE(EXCLUDED.posture, agents.posture),
-			exec_tracing    = EXCLUDED.exec_tracing,
-			exec_reason     = EXCLUDED.exec_reason,
-			updated_at      = now()`,
-		hostname, version, activeSessions, postureJSON, execTracing, execReason); err != nil {
-		return err
-	}
-
 	rating, unmanaged := postureSummary(posture)
 
+	// The asset first, so the agent's row is written once, with whether it
+	// matched, rather than inserted and then updated again: each UPDATE is a
+	// new row version and its WAL, 33 times a second for a thousand agents.
+	//
 	// Match on the inventory hostname, the explicit agent_hostname mapping, or
 	// the short name. An agent rarely knows the fully qualified name the
-	// inventory uses.
+	// inventory uses. Each of the three has an index (migration 036), so this
+	// is three index probes and not a scan of the inventory per heartbeat.
 	tag, err := tx.Exec(ctx, `
 		UPDATE assets SET
 			agent_state           = 'healthy',
@@ -727,8 +716,27 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	}
 	matched := tag.RowsAffected() > 0
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE agents SET matched_asset = $2 WHERE hostname = $1`, hostname, matched); err != nil {
+	// Posture is a few KB of JSON that is the same on nearly every beat.
+	// Keeping the stored value when it is equal keeps its TOAST pointer, so
+	// the unchanged document is not written again.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO agents (hostname, version, last_seen_at, active_sessions, posture,
+		                    exec_tracing, exec_reason, updated_at, matched_asset)
+		VALUES ($1,$2,now(),$3,$4,$5,$6,now(),$7)
+		ON CONFLICT (hostname) DO UPDATE SET
+			version         = EXCLUDED.version,
+			last_seen_at    = now(),
+			active_sessions = EXCLUDED.active_sessions,
+			posture         = CASE
+			                    WHEN EXCLUDED.posture IS NULL
+			                      OR agents.posture = EXCLUDED.posture THEN agents.posture
+			                    ELSE EXCLUDED.posture
+			                  END,
+			exec_tracing    = EXCLUDED.exec_tracing,
+			exec_reason     = EXCLUDED.exec_reason,
+			updated_at      = now(),
+			matched_asset   = EXCLUDED.matched_asset`,
+		hostname, version, activeSessions, postureJSON, execTracing, execReason, matched); err != nil {
 		return err
 	}
 

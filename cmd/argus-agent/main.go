@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -128,9 +129,13 @@ func runDaemon(args []string) int {
 	controlKey := fs.String("control-key", "", "key for --control-cert")
 	useTunnel := fs.Bool("tunnel", true,
 		"hold an outbound connection to the control plane (enrolled agents only)")
+	keepShipped := fs.Duration("keep-shipped", agent.DefaultKeepShipped,
+		"how long to keep a recording on this host once the control plane has verified and "+
+			"stored it (compressed after an hour); 0 keeps it for ever. Never applies to one "+
+			"the control plane does not have")
 	_ = fs.Parse(args)
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(logOutput, nil))
 
 	// Before anything is written there: on Windows a new directory is
 	// readable by every local user until it is locked down.
@@ -383,6 +388,7 @@ func runDaemon(args []string) int {
 	var uploads *agent.Uploads
 	if rep.Enabled() {
 		uploads = agent.NewUploads(*stateDir, rep, log)
+		uploads.Keep = *keepShipped
 		go uploads.Run(ctx, time.Minute)
 	}
 	// Removing this server in the console asks, on a heartbeat, for the agent
@@ -426,13 +432,17 @@ func runDaemon(args []string) int {
 	// is what makes killing the agent detectable: a user with root can stop it,
 	// but they cannot make the silence look like health.
 	stop := make(chan struct{})
+	// One scan shared by the posture loop and the heartbeat. The loop scans
+	// in full; the heartbeat reuses that answer while nothing the scan read
+	// has changed, which it checks file by file on every beat.
+	posture := agent.NewPostureCache(agent.DefaultScanConfig(*shimPath), *scanEvery)
 	go loop(time.Minute, stop, func() {
 		for _, rec := range col.ActiveTunnelRecords() {
 			rep.Session(ctx, sessionReport(rec))
 		}
 	})
 	go loop(*scanEvery, stop, func() {
-		p, err := agent.Scan(agent.DefaultScanConfig(*shimPath))
+		p, err := posture.Rescan()
 		if err != nil {
 			log.Error("posture scan failed", "error", err)
 			return
@@ -470,9 +480,9 @@ func runDaemon(args []string) int {
 
 		// The heartbeat carries posture so the console can show coverage
 		// without a second call, and so silence removes both at once.
-		var posture any
-		if p, err := agent.Scan(agent.DefaultScanConfig(*shimPath)); err == nil {
-			posture = map[string]any{
+		var postureReport any
+		if p, err := posture.Scan(); err == nil {
+			postureReport = map[string]any{
 				"rating":         p.Rating(),
 				"unmanaged_keys": p.UnmanagedKeys,
 				"shim_installed": p.ShimInstalled,
@@ -485,7 +495,7 @@ func runDaemon(args []string) int {
 			"hostname":        hostname,
 			"version":         version,
 			"active_sessions": col.ActiveCount(),
-			"posture":         posture,
+			"posture":         postureReport,
 			"exec_tracing":    execCtx.Tracer != nil,
 			"exec_reason":     execCtx.Reason,
 			"console_only":    col.ConsoleOnly(),
@@ -1004,9 +1014,21 @@ func writeJSON(path string, v any, log *slog.Logger) {
 	_ = os.Rename(tmp, path)
 }
 
+// maxJSONL is where a local log such as sessions.jsonl starts a new file.
+// The previous one is kept as <path>.1, so the log takes at most twice this
+// on disk however long the agent runs; the control plane holds the record.
+const maxJSONL = 16 << 20
+
+// logOutput is where the daemon logs: stdout for journald and launchd, a
+// size-bounded file under the Windows service manager.
+var logOutput io.Writer = os.Stdout
+
 func appendJSONL(path string, v any, log *slog.Logger) {
 	if err := os.MkdirAll(dirOf(path), 0o700); err != nil {
 		return
+	}
+	if fi, err := os.Stat(path); err == nil && fi.Size() >= maxJSONL {
+		_ = os.Rename(path, path+".1")
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {

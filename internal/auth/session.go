@@ -149,6 +149,11 @@ type Signer struct {
 	// collected -- and any test or caller that built a Signer leaked one.
 	stop     chan struct{}
 	stopOnce sync.Once
+	// sweepOnce starts the sweeper at the first local redemption. A signer
+	// with a shared redeemer, which is every production control plane, never
+	// puts anything in the local set, and used to wake once a minute for
+	// ever to sweep an empty map.
+	sweepOnce sync.Once
 }
 
 // SetRedeemer switches to shared redemption.
@@ -262,7 +267,6 @@ func NewSigner(secret string) (*Signer, error) {
 		redeemed: map[string]time.Time{},
 		stop:     make(chan struct{}),
 	}
-	go s.sweep()
 	return s, nil
 }
 
@@ -478,6 +482,7 @@ func (s *Signer) burn(ctx context.Context, t Ticket) error {
 		return nil
 	}
 
+	s.sweepOnce.Do(func() { go s.sweep() })
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, seen := s.redeemed[t.ID]; seen {

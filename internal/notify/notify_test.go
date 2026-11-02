@@ -109,6 +109,9 @@ func TestDispatcherNeverBlocksTheCaller(t *testing.T) {
 		t.Fatal("SessionStarted blocked behind a stuck channel")
 	}
 	close(stuck.gate)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	d.Close(ctx)
 }
 
 func TestNoChannelsMeansNilAndNilIsSafe(t *testing.T) {

@@ -33,6 +33,7 @@ func dbFixture(t *testing.T) (*API, *Store, http.Handler, Database, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(signer.Close)
 	a.signer = signer
 	ctx := context.Background()
 	host := unique("db-host")

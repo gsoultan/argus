@@ -212,6 +212,7 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.Col(&m.CredentialRef).Default("''::text")
 	t.Col(&m.Domain).Default("''::text")
 	t.Index(&m.Hostname).Where("archived_at IS NULL").Named("assets_live_idx")
+	t.Index(storm.IndexExpr(&m.Hostname, "split_part(%s, '.'::text, 1)")).Named("assets_short_hostname_idx")
 	t.CheckNamed("assets_direct_ssh_check",
 		"direct_ssh IS NULL OR direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
 	t.Col(&m.DirectSshAccounts).Default("'{}'::jsonb")

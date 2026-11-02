@@ -119,9 +119,12 @@ func TestEnrollKeepsTheCAThatVerifiesTheServer(t *testing.T) {
 	}
 	client := srv.Client()
 	client.Transport.(*http.Transport).TLSClientConfig = cfg
-	if _, err := client.Get(srv.URL + "/healthz"); err != nil {
+	resp, err := client.Get(srv.URL + "/healthz")
+	if err != nil {
 		t.Fatalf("the kept CA does not verify the control plane: %v", err)
 	}
+	_ = resp.Body.Close()
+	client.CloseIdleConnections()
 }
 
 // A CA that does not verify the server would turn into a failed first

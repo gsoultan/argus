@@ -230,6 +230,23 @@ The agent trusts the first grant key the control plane sends and keeps it in
 if you change that secret on purpose, delete the file on each agent and
 restart it; until then those agents refuse sessions and say why in their log.
 
+### Disk use on each server
+
+Every recording is written on the server first and stays there untouched
+until the control plane has verified its hash chain and stored it. After
+that the server's copy is a second copy: an hour after it ships it is gzipped
+in place (`<id>.cast.gz`, typically a fifth of the size or less; `gzip -dc` gives back
+the exact bytes, which `argus-verify` checks against the same chain head), and
+after 90 days it is deleted. Change how long with `--keep-shipped` on the
+daemon's command line (`--keep-shipped=8760h` for a year), or keep them for
+ever with `--keep-shipped=0`. A recording the control plane does not have --
+still queued, or refused -- is never compressed or deleted.
+
+`sessions.jsonl` starts a new file at 16 MB and keeps the previous one as
+`sessions.jsonl.1`. The report spool is capped at 64 MB. On Windows the
+service's `agent.log` starts a new file at 10 MB while it runs, keeping
+`agent.log.1`.
+
 Start the agent before adding the `sshd_config` lines. Once they are in, every
 login goes through the agent, and a login is refused while the agent is not
 running.

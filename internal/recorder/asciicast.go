@@ -11,7 +11,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gsoultan/argus/internal/hashchain"
 )
@@ -96,20 +100,133 @@ func New(w io.Writer, h Header) (*Recorder, error) {
 
 func (r *Recorder) emit(line []byte) error { return r.chain.Emit(line) }
 
+// eventBufs holds the scratch a line is built in. A session's output goes
+// through here chunk by chunk, so the line is built once into a reused
+// buffer rather than through json.Marshal of a []any, which boxed the time,
+// copied the chunk to a string and allocated the result: thirteen
+// allocations for a single echoed keystroke.
+var eventBufs = sync.Pool{New: func() any { b := make([]byte, 0, 512); return &b }}
+
+// maxPooledEvent keeps one huge chunk from pinning its buffer in the pool.
+const maxPooledEvent = 256 << 10
+
+// event emits one asciicast event, [time, stream, data].
+//
+// The bytes are exactly those json.Marshal([]any{round3(t), stream,
+// string(data)}) produces -- the same escaping, the same float formatting --
+// which a test holds it to: the line is hashed into the chain, and every
+// recording written before this must keep verifying the same way.
+func (r *Recorder) event(elapsed float64, stream string, data []byte) error {
+	bp := eventBufs.Get().(*[]byte)
+	line := appendEvent((*bp)[:0], round3(elapsed), stream, data)
+	// One spare byte so the chain's newline does not reallocate.
+	if cap(line) == len(line) {
+		line = append(line, 0)[:len(line)]
+	}
+	err := r.emit(line)
+	if cap(line) <= maxPooledEvent {
+		*bp = line[:0]
+		eventBufs.Put(bp)
+	}
+	return err
+}
+
+// appendEvent appends [t,"stream","data"] as encoding/json would write it.
+func appendEvent(dst []byte, t float64, stream string, data []byte) []byte {
+	dst = append(dst, '[')
+	dst = appendFloat(dst, t)
+	dst = append(dst, ',')
+	dst = appendJSONString(dst, []byte(stream))
+	dst = append(dst, ',')
+	dst = appendJSONString(dst, data)
+	return append(dst, ']')
+}
+
+// appendFloat formats as encoding/json does for a float64.
+func appendFloat(dst []byte, f float64) []byte {
+	if math.IsInf(f, 0) || math.IsNaN(f) {
+		// json.Marshal refuses these; an elapsed time is never one.
+		return append(dst, '0')
+	}
+	abs := math.Abs(f)
+	format := byte('f')
+	if abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+		format = 'e'
+	}
+	dst = strconv.AppendFloat(dst, f, format, -1, 64)
+	if format == 'e' {
+		// clean up e-09 to e-9
+		if n := len(dst); n >= 4 && dst[n-4] == 'e' && dst[n-3] == '-' && dst[n-2] == '0' {
+			dst[n-2] = dst[n-1]
+			dst = dst[:n-1]
+		}
+	}
+	return dst
+}
+
+const hexDigits = "0123456789abcdef"
+
+// appendJSONString quotes s as encoding/json does with HTML escaping on:
+// <, > and & as \u003c and friends, each invalid UTF-8 byte replaced by
+// U+FFFD (written as the character itself, as this toolchain's encoder
+// does), and U+2028 and U+2029 escaped.
+func appendJSONString(dst []byte, s []byte) []byte {
+	dst = append(dst, '"')
+	start := 0
+	for i := 0; i < len(s); {
+		if b := s[i]; b < utf8.RuneSelf {
+			if b >= 0x20 && b != '"' && b != '\\' && b != '<' && b != '>' && b != '&' {
+				i++
+				continue
+			}
+			dst = append(dst, s[start:i]...)
+			switch b {
+			case '\\', '"':
+				dst = append(dst, '\\', b)
+			case '\b':
+				dst = append(dst, '\\', 'b')
+			case '\f':
+				dst = append(dst, '\\', 'f')
+			case '\n':
+				dst = append(dst, '\\', 'n')
+			case '\r':
+				dst = append(dst, '\\', 'r')
+			case '\t':
+				dst = append(dst, '\\', 't')
+			default:
+				dst = append(dst, '\\', 'u', '0', '0', hexDigits[b>>4], hexDigits[b&0xF])
+			}
+			i++
+			start = i
+			continue
+		}
+		c, size := utf8.DecodeRune(s[i:])
+		if c == utf8.RuneError && size == 1 {
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, "\uFFFD"...)
+			i += size
+			start = i
+			continue
+		}
+		if c == '\u2028' || c == '\u2029' {
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, '\\', 'u', '2', '0', '2', hexDigits[c&0xF])
+			i += size
+			start = i
+			continue
+		}
+		i += size
+	}
+	dst = append(dst, s[start:]...)
+	return append(dst, '"')
+}
+
 // Write records a chunk on the given stream, timestamped relative to New.
 func (r *Recorder) Write(s Stream, p []byte) error {
 	if len(p) == 0 {
 		return nil
 	}
-	elapsed := time.Since(r.started).Seconds()
-
-	// asciicast events are [time, stream, data]. Marshalling through []any
-	// keeps the float formatting consistent with what players expect.
-	line, err := json.Marshal([]any{round3(elapsed), string(s), string(p)})
-	if err != nil {
-		return fmt.Errorf("marshal event: %w", err)
-	}
-	return r.emit(line)
+	return r.event(time.Since(r.started).Seconds(), string(s), p)
 }
 
 // Exec records a kernel-observed execution.
@@ -143,22 +260,13 @@ func (r *Recorder) ExecAt(at time.Time, v any) error {
 			elapsed = d.Seconds()
 		}
 	}
-	line, err := json.Marshal([]any{round3(elapsed), string(Kernel), string(payload)})
-	if err != nil {
-		return fmt.Errorf("marshal exec frame: %w", err)
-	}
-	return r.emit(line)
+	return r.event(elapsed, string(Kernel), payload)
 }
 
 // Resize records a terminal size change. asciicast v2 carries these as an "r"
 // event whose data is "COLSxROWS"; players that predate it ignore the line.
 func (r *Recorder) Resize(cols, rows int) error {
-	elapsed := time.Since(r.started).Seconds()
-	line, err := json.Marshal([]any{round3(elapsed), "r", fmt.Sprintf("%dx%d", cols, rows)})
-	if err != nil {
-		return fmt.Errorf("marshal resize: %w", err)
-	}
-	return r.emit(line)
+	return r.event(time.Since(r.started).Seconds(), "r", []byte(fmt.Sprintf("%dx%d", cols, rows)))
 }
 
 // Close finalises the recording and returns the chain head, which the control

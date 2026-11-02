@@ -103,6 +103,9 @@ func Enroll(ctx context.Context, opts EnrollOptions) (Enrollment, error) {
 	}
 	transport.TLSClientConfig = tlsCfg
 	client := &http.Client{Timeout: 30 * time.Second, Transport: transport}
+	// Its own transport, so its own connections: closed on the way out
+	// rather than left idle with a goroutine each.
+	defer client.CloseIdleConnections()
 
 	body, _ := json.Marshal(map[string]string{"token": opts.Token, "hostname": opts.Hostname})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

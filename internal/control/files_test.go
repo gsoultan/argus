@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"go.uber.org/goleak"
 	"io"
 	"log/slog"
 	"net/http"
@@ -35,7 +37,16 @@ func TestMain(m *testing.M) {
 	if os.Getenv("ARGUS_TEST_FILE_OP") == "1" && len(os.Args) > 1 && os.Args[1] == "file-op" {
 		os.Exit(agent.RunFileOp(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	// Every test leaves no goroutine behind it; see leak_main_test.go in the
+	// other packages. Checked here because this package already has a main.
+	if code == 0 {
+		if err := goleak.Find(); err != nil {
+			fmt.Fprintln(os.Stderr, "goleak:", err)
+			code = 1
+		}
+	}
+	os.Exit(code)
 }
 
 func (e *tunnelEnv) runFilesAgent(t *testing.T, cred, host string) {
