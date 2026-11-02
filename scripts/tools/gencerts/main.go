@@ -5,9 +5,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"os"
-
-	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 func main() {
@@ -28,7 +27,7 @@ func main() {
 	if len(os.Args) > 2 {
 		hosts = append(hosts, os.Args[2:]...)
 	}
-	if err := tlsconfig.GenerateDevPKI(dir, hosts); err != nil {
+	if err := servertls.GenerateDevPKI(dir, hosts); err != nil {
 		fmt.Fprintf(os.Stderr, "gencerts: %v\n", err)
 		os.Exit(1)
 	}

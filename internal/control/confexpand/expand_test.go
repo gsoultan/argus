@@ -1,4 +1,4 @@
-package secrets
+package confexpand
 
 import (
 	"errors"
@@ -197,7 +197,7 @@ func TestShippedConfigsNeedOnlyTheirEnvFile(t *testing.T) {
 		for _, v := range vars {
 			t.Setenv(v, "set")
 		}
-		data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "config", file))
+		data, err := os.ReadFile(filepath.Join("..", "..", "..", "packaging", "config", file))
 		if err != nil {
 			t.Fatal(err)
 		}

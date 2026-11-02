@@ -17,7 +17,7 @@ import (
 	xterm "golang.org/x/term"
 
 	"github.com/gsoultan/argus/internal/agent"
-	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/agent/reporter"
 )
 
 /*

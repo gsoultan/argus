@@ -1,4 +1,4 @@
-package rdp
+package rdpdial
 
 import (
 	"crypto/sha256"
@@ -7,11 +7,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/rdp"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/gsoultan/argus/internal/credssp"
+	"github.com/gsoultan/argus/internal/agent/credssp"
 )
 
 // CertFingerprint renders an X.509 certificate the way host pins are stored.
@@ -56,25 +57,25 @@ func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
 		return nil, nil, fmt.Errorf("dial %s: %w", address, err)
 	}
 
-	if _, err := raw.Write(buildConnectionRequest(protocol)); err != nil {
+	if _, err := raw.Write(rdp.BuildConnectionRequest(protocol)); err != nil {
 		raw.Close()
 		return nil, nil, fmt.Errorf("send connection request: %w", err)
 	}
-	frame, err := ReadPDU(raw)
+	frame, err := rdp.ReadPDU(raw)
 	if err != nil {
 		raw.Close()
 		return nil, nil, fmt.Errorf("read connection confirm: %w", err)
 	}
-	selected, failure, err := ParseConnectionConfirm(frame)
+	selected, failure, err := rdp.ParseConnectionConfirm(frame)
 	if err != nil {
 		raw.Close()
 		return nil, nil, err
 	}
 	if failure != 0 {
 		raw.Close()
-		return nil, nil, fmt.Errorf("target refused: %s", FailureName(failure))
+		return nil, nil, fmt.Errorf("target refused: %s", rdp.FailureName(failure))
 	}
-	if selected == ProtocolRDP {
+	if selected == rdp.ProtocolRDP {
 		raw.Close()
 		return nil, nil, errors.New(
 			"target selected standard RDP security, which Argus will not broker")
@@ -116,12 +117,12 @@ func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
 	// Authentication happens after pinning, never before. Delegating a
 	// credential to a host whose certificate does not match its pin would hand
 	// the password to whoever is actually answering.
-	if selected != ProtocolHybrid && selected != ProtocolHybridEx {
+	if selected != rdp.ProtocolHybrid && selected != rdp.ProtocolHybridEx {
 		return conn, nil, nil
 	}
 	// The server chose network level authentication and there is nobody to
 	// perform it. Returning the connection would hand back something that
-	// negotiated NLA and then skipped it -- Connect's contract is that
+	// negotiated NLA and then skipped it -- rdp.Connect's contract is that
 	// everything establishing trust has already run, and here it has not.
 	//
 	// Found by pointing the integration test at a real Windows host with nil
@@ -137,7 +138,7 @@ func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
 		}
 		return nil, nil, fmt.Errorf(
 			"%s negotiated %s but no authenticator was supplied",
-			who, ProtocolName(selected))
+			who, rdp.ProtocolName(selected))
 	}
 
 	// The binding covers the public key of the certificate on this
@@ -170,34 +171,4 @@ func subjectPublicKey(spki []byte) ([]byte, error) {
 		return nil, errors.New("target certificate's public key does not parse")
 	}
 	return info.PublicKey.RightAlign(), nil
-}
-
-// buildConnectionRequest builds the client-side opening PDU Argus sends to a
-// target. No cookie: the target has no use for Argus's routing information, and
-// forwarding the user's would leak the internal naming scheme onto the host.
-func buildConnectionRequest(protocol uint32) []byte {
-	neg := make([]byte, negLength)
-	neg[0] = negTypeRequest
-	putU16(neg[2:4], negLength)
-	putU32(neg[4:8], protocol)
-
-	x := make([]byte, 7+len(neg))
-	x[0] = byte(len(x) - 1)
-	x[1] = tpduConnectionRequest
-	copy(x[7:], neg)
-
-	out := make([]byte, tpktHeader+len(x))
-	out[0] = tpktVersion
-	out[2] = byte(len(out) >> 8)
-	out[3] = byte(len(out))
-	copy(out[tpktHeader:], x)
-	return out
-}
-
-func putU16(b []byte, v uint16) { b[0] = byte(v); b[1] = byte(v >> 8) }
-func putU32(b []byte, v uint32) {
-	b[0] = byte(v)
-	b[1] = byte(v >> 8)
-	b[2] = byte(v >> 16)
-	b[3] = byte(v >> 24)
 }

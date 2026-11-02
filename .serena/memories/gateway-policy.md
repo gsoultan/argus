@@ -16,7 +16,7 @@ One row in `gateway_policy` (migration `006`), enforced single by
 `id BOOLEAN PRIMARY KEY CHECK (id)`. Eight booleans: four SSH forwarding
 channels, four recording guarantees. (Native clients was a ninth, `019`, dropped in `020`: console-only has no switch.) Field names are identical across
 `internal/control.GatewayPolicy`, `internal/gateway.Policy`,
-`internal/reporter.GatewayPolicy` and `web/src/types/domain.ts` — deliberately,
+`internal/agent/reporter.GatewayPolicy` and `web/src/types/domain.ts` — deliberately,
 so the four cannot drift into disagreeing about what a toggle is called.
 
 ## Which way is safe

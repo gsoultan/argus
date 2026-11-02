@@ -16,6 +16,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/confexpand"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,8 +30,6 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
-
-	"github.com/gsoultan/argus/internal/secrets"
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
@@ -590,7 +590,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			// they verify one when given and the reporter routes check for it
 			// themselves, exactly as before.
 			requireCert := l.name == "fleet" && cfg.TLS.ClientCAFile != ""
-			l.srv.TLSConfig, err = tlsconfig.Server(tlsconfig.ServerOptions{
+			l.srv.TLSConfig, err = servertls.Server(servertls.ServerOptions{
 				CertFile:          cfg.TLS.CertFile,
 				KeyFile:           cfg.TLS.KeyFile,
 				ClientCAFile:      cfg.TLS.ClientCAFile,
@@ -629,7 +629,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			return errors.New("tunnel.quic_listen needs `tls`: QUIC carries this " +
 				"process's certificate, and there is none configured")
 		}
-		qtls, err := tlsconfig.Server(tlsconfig.ServerOptions{
+		qtls, err := servertls.Server(servertls.ServerOptions{
 			CertFile: cfg.TLS.CertFile, KeyFile: cfg.TLS.KeyFile, Log: log,
 		})
 		if err != nil {
@@ -793,7 +793,7 @@ func loadConfig(path string) (config, error) {
 	}
 	// Resolve ${VAR} and ${file:/path} references before parsing, so the file
 	// on disk never has to contain a live credential.
-	data, err = secrets.Expand(data)
+	data, err = confexpand.Expand(data)
 	if err != nil {
 		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}

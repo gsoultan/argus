@@ -1,4 +1,8 @@
-// Package secrets resolves credentials referenced from configuration files.
+// Package confexpand resolves credentials referenced from the control plane's
+// configuration files.
+//
+// Only the control plane reads a YAML config; the agent takes flags and an
+// environment file, so this stays out of its binary.
 //
 // Config files get committed, copied into tickets, pasted into chat, and
 // included in bug reports. Anything genuinely secret therefore belongs
@@ -11,7 +15,7 @@
 // A reference that cannot be resolved is an error rather than an empty string.
 // Silently expanding a missing secret to "" is how a service ends up running
 // with an empty signing key and no indication anything is wrong.
-package secrets
+package confexpand
 
 import (
 	"bytes"

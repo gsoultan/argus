@@ -513,6 +513,12 @@ func (c *Client) Send(e InputEvent) error {
 // protocol can replay an older recording in more detail.
 func (c *Client) SetTap(fn func([]byte)) { c.tap = fn }
 
+// SetReadTimeout changes how long a single read from the target may take
+// once the session is live. A measurement that polls for frames wants a
+// short one, so an idle screen returns promptly rather than after the
+// session's own deadline.
+func (c *Client) SetReadTimeout(d time.Duration) { c.readTimeout = d }
+
 // Size reports the desktop dimensions.
 func (c *Client) Size() (width, height int) { return c.width, c.height }
 

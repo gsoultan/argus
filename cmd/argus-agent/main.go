@@ -34,8 +34,8 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent"
-	"github.com/gsoultan/argus/internal/execlog"
-	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/agent/execlog"
+	"github.com/gsoultan/argus/internal/agent/reporter"
 	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
