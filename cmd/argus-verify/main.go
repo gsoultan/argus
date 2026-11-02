@@ -218,16 +218,22 @@ func openBackup(f *os.File, secret, dataKey, out string, quiet bool) int {
 		return 1
 	}
 	var w io.Writer = os.Stdout
+	var of *os.File
 	if out != "" {
-		of, err := os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		of, err = os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
 			return 2
 		}
-		defer of.Close()
 		w = of
 	}
 	n, err := io.Copy(w, dr)
+	if of != nil {
+		// Closed before any remove: Windows refuses to delete an open file.
+		if cerr := of.Close(); err == nil {
+			err = cerr
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "argus-verify: %v (after %d bytes; the output is incomplete)\n", err, n)
 		if out != "" {
