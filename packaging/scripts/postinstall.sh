@@ -56,6 +56,14 @@ fi
 if [ -x /usr/bin/argus-agent ] && [ -f /var/lib/argus/enrollment.json ] &&
    command -v systemctl >/dev/null 2>&1 && systemctl cat argus-agent >/dev/null 2>&1; then
     systemctl enable argus-agent >/dev/null 2>&1 || true
+fi
+# An update the console asked for restarts the agent itself, once nothing is
+# open on the server, and checks the new version came up; a second restart
+# from here would only get in its way.
+if [ -n "${ARGUS_AGENT_UPDATING:-}" ]; then
+    :
+elif [ -x /usr/bin/argus-agent ] && [ -f /var/lib/argus/enrollment.json ] &&
+   command -v systemctl >/dev/null 2>&1 && systemctl cat argus-agent >/dev/null 2>&1; then
     if ! systemd-run --quiet --on-active=10s --unit="argus-agent-upgrade-$$" \
             systemctl restart argus-agent >/dev/null 2>&1; then
         systemctl restart --no-block argus-agent >/dev/null 2>&1 || true

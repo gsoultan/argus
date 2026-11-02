@@ -1385,6 +1385,46 @@ export async function databaseTicket(
 /** The WebSocket a database session runs over. */
 export const postgresEndpoint = `${BASE}/api/v1/postgres`
 
+/* ── Updating a server's agent ─────────────────────────────────────────── */
+
+/** What an agent says about updating itself, as it reported it. */
+export interface AgentUpdateStatus {
+  supported: boolean
+  reason?: string
+  id?: string
+  from?: string
+  target?: string
+  state?: 'downloading' | 'waiting' | 'restarting' | 'done' | 'rolled_back' | 'failed' | 'cancelled'
+  message?: string
+  sessions?: number
+  at?: string
+}
+
+export interface AgentUpdateView {
+  hostname: string
+  enrolled: boolean
+  agentVersion: string
+  agentLastSeenAt: string | null
+  activeSessions: number
+  /** This control plane's own release, '' when it was built from source. */
+  latest: string
+  /** Null from an agent too old to update itself from the console. */
+  status: AgentUpdateStatus | null
+  request: { id: string; version: string; now: boolean; requestedAt: string; requestedBy: string } | null
+}
+
+export async function agentUpdate(assetId: string): Promise<AgentUpdateView> {
+  return get(`/api/v1/assets/${encodeURIComponent(assetId)}/agent/update`)
+}
+
+export async function requestAgentUpdate(assetId: string, body: { version?: string; now?: boolean }): Promise<unknown> {
+  return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/agent/update`, body)
+}
+
+export async function cancelAgentUpdate(assetId: string): Promise<unknown> {
+  return send('DELETE', `/api/v1/assets/${encodeURIComponent(assetId)}/agent/update`)
+}
+
 /* ── Organizations ──────────────────────────────────────────────────────── */
 
 /** Every organization on this control plane. Platform owners only. */

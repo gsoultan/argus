@@ -70,6 +70,7 @@ type Agent struct {
 	FirstSeenAt     time.Time
 	ExecTracing     bool
 	ExecReason      string
+	UpdateStatus    *storm.JSON
 	// Applications is what runs on the host, as its agent last reported.
 	Applications *storm.JSON
 }
@@ -132,6 +133,12 @@ type AgentCredential struct {
 
 	UninstallRequestedAt *time.Time
 	UninstallRequestedBy *string
+
+	UpdateID          *string
+	UpdateVersion     *string
+	UpdateNow         bool
+	UpdateRequestedAt *time.Time
+	UpdateRequestedBy *string
 }
 
 func (m *AgentCredential) Schema(t *storm.Table) {
@@ -139,6 +146,7 @@ func (m *AgentCredential) Schema(t *storm.Table) {
 	t.Col(&m.Token).ConstraintName("agent_credentials_token_id_fkey")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("agent_credentials_secret_hash_key", &m.SecretHash)
+	t.Col(&m.UpdateNow).Default("false")
 	t.Index(storm.Lower(&m.Hostname)).Unique().Where("revoked_at IS NULL").Named("agent_credentials_live_host_idx")
 }
 

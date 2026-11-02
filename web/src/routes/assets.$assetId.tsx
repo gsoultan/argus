@@ -9,6 +9,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { WhoCanConnect } from '~/components/WhoCanConnect'
 import { DatabasesOnServer } from '~/components/DatabasesOnServer'
+import { AgentUpdateCard } from '~/components/AgentUpdate'
 import { ApplicationsOnServer } from '~/components/ApplicationsOnServer'
 import { ReachBadge, reachOf } from '~/components/myservers'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
@@ -186,6 +187,8 @@ function AssetDetail() {
               <DirectSshCard asset={asset} canEdit={canEdit} />
 
               <DatabasesOnServer asset={asset} canEdit={canEdit} />
+
+              {me?.role !== 'operator' && <AgentUpdateCard asset={asset} canEdit={canEdit} />}
 
               <SectionCard
                 title="Server details"

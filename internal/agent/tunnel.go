@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
@@ -56,6 +57,14 @@ type TunnelConfig struct {
 	Log      *slog.Logger
 	// MaxStreams bounds concurrent streams. Zero means 64.
 	MaxStreams int
+	// Gate, when set, may turn a session away before it starts: it returns
+	// why, or "" to let it through. Pings always pass.
+	Gate func(service string) string
+	// Open counts the streams open now, other than pings, so an update can
+	// wait for them to end. Nil counts nothing.
+	Open *atomic.Int64
+	// OnConnected is called each time the tunnel comes up.
+	OnConnected func()
 	// GrantPin holds the control plane's grant key across connections.
 	// Nil trusts whatever key each connection brings, which only a test
 	// should do.
@@ -186,6 +195,9 @@ func hold(ctx context.Context, sess tunnel.Session, cfg TunnelConfig, log *slog.
 		log.Error("tunnel: sessions through Argus are refused on this host",
 			"error", keyErr)
 	}
+	if cfg.OnConnected != nil {
+		cfg.OnConnected()
+	}
 	serveTunnel(ctx, sess, cfg, log, key, keyErr)
 	_ = sess.Close()
 	stopTrying()
@@ -226,12 +238,13 @@ func serveTunnel(ctx context.Context, sess tunnel.Session, cfg TunnelConfig, log
 		go func() {
 			defer func() { <-sem }()
 			handleStream(ctx, &Call{Stream: st, GrantKey: key, GrantKeyErr: keyErr},
-				cfg.Services, log)
+				cfg, log)
 		}()
 	}
 }
 
-func handleStream(ctx context.Context, call *Call, services map[string]TunnelService, log *slog.Logger) {
+func handleStream(ctx context.Context, call *Call, cfg TunnelConfig, log *slog.Logger) {
+	services := cfg.Services
 	st := call.Stream
 	_ = st.SetDeadline(time.Now().Add(tunnel.HeaderTimeout))
 	if err := tunnel.ReadJSON(st, &call.Header); err != nil {
@@ -244,6 +257,18 @@ func handleStream(ctx context.Context, call *Call, services map[string]TunnelSer
 			"service", call.Header.Service)
 		call.Refuse("unknown service")
 		return
+	}
+	if call.Header.Service != "ping" {
+		if cfg.Gate != nil {
+			if why := cfg.Gate(call.Header.Service); why != "" {
+				call.Refuse(why)
+				return
+			}
+		}
+		if cfg.Open != nil {
+			cfg.Open.Add(1)
+			defer cfg.Open.Add(-1)
+		}
 	}
 	// The header deadline is for the header. Opening a session can take far
 	// longer -- Windows builds an account's profile on its first logon, in
