@@ -225,6 +225,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 	g := tunnel.NewGrant(email, db.Hostname, role, client)
 	g.Service = agentPostgresService
 	g.DB = &tunnel.GrantDB{ID: db.ID, Name: db.Name, Host: db.Host, Port: db.Port, Level: level,
+		PoolHost: db.PoolerHost, PoolPort: db.PoolerPort,
 		StatementTimeoutMS: db.Policy.StatementTimeoutS * 1000, IdleTxTimeoutMS: db.Policy.IdleTxTimeoutS * 1000,
 		MaxRows: db.Policy.MaxRows, IdleTimeoutS: db.Policy.IdleTimeoutS, MaxSessionS: db.Policy.MaxSessionS}
 	grant, err := tunnel.SignGrant(a.Tunnels.GrantKey, g)

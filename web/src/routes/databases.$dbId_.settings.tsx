@@ -1,18 +1,18 @@
 import {
-  ActionIcon, Alert, Badge, Box, Button, Checkbox, Group, Modal, NumberInput, SegmentedControl, Select, Stack,
-  Switch, Table, Text, Tooltip,
+  ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, CopyButton, Group, Modal, NumberInput, SegmentedControl, Select,
+  Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconInfoCircle, IconPlus, IconTrash, IconUser, IconUsersGroup } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconInfoCircle, IconPlus, IconTrash, IconUser, IconUsersGroup } from '@tabler/icons-react'
 import { useState } from 'react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { isConfigured } from '~/lib/live'
 import {
-  databaseQuery, dbAssignmentsQuery, meQuery, teamsQuery, useDeleteDatabase, useRemoveDBAssignment,
+  databasePoolerSetupQuery, databaseQuery, dbAssignmentsQuery, meQuery, teamsQuery, useDeleteDatabase, useRemoveDBAssignment,
   useSetDBAssignment, useUpdateDatabase, usersQuery,
 } from '~/lib/queries'
 import { guard } from '~/lib/guard'
@@ -53,7 +53,7 @@ function DatabaseSettings() {
   const del = useDeleteDatabase()
   const navigate = useNavigate()
   const [adding, add] = useDisclosure(false)
-  const [tab, setTab] = useState<'who' | 'safety'>('who')
+  const [tab, setTab] = useState<'who' | 'safety' | 'connection'>('who')
 
   if (error) {
     return (
@@ -100,8 +100,8 @@ function DatabaseSettings() {
       />
       <PageBody>
         <Stack gap="md">
-          <SegmentedControl value={tab} onChange={(v) => setTab(v as 'who' | 'safety')}
-            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }]} w="fit-content" />
+          <SegmentedControl value={tab} onChange={(v) => setTab(v as 'who' | 'safety' | 'connection')}
+            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }, { label: 'Connection', value: 'connection' }]} w="fit-content" />
 
           {tab === 'who' && (
             <Stack gap="md">
@@ -158,6 +158,7 @@ function DatabaseSettings() {
           )}
 
           {tab === 'safety' && <Safety db={db} />}
+          {tab === 'connection' && <Connection db={db} />}
 
           <SectionCard title="Remove from Argus" description="Sessions and recordings are kept. Nothing is changed in Postgres; locked roles stay locked.">
             <Button color="rose" variant="light" onClick={() => void onDelete()} loading={del.isPending}>Remove {db.dbname}</Button>
@@ -168,6 +169,91 @@ function DatabaseSettings() {
           people={(users ?? []).map((u) => ({ value: u.email, label: `${u.displayName} · ${u.email}` }))} />
       </PageBody>
     </Box>
+  )
+}
+
+/**
+ * Where sessions go. Postgres itself is fixed when the database is added; a
+ * PgBouncer in front of it is optional, and the statements an admin runs once
+ * so it can authenticate Argus roles come from the control plane, so what is
+ * shown is exactly what the agent also makes sure of before each session.
+ */
+function Connection({ db }: { db: Database }) {
+  const update = useUpdateDatabase()
+  const [enabled, setEnabled] = useState(db.poolerPort > 0)
+  const [host, setHost] = useState(db.poolerHost || '127.0.0.1')
+  const [port, setPort] = useState<number | string>(db.poolerPort || 6432)
+  const { data: setup } = useQuery({ ...databasePoolerSetupQuery(db.id), enabled: enabled })
+  const wantPort = enabled ? Number(port) || 0 : 0
+  const wantHost = enabled ? host.trim() : ''
+  const dirty = wantPort !== db.poolerPort || (enabled && wantHost !== db.poolerHost)
+  const save = async () => {
+    try {
+      await update.mutateAsync({ id: db.id, poolerHost: wantHost, poolerPort: wantPort })
+      notifyOk('Saved', wantPort > 0
+        ? `New sessions on ${db.dbname} go through PgBouncer at ${wantHost}:${wantPort}. If it refuses them, Argus falls back to Postgres itself and says so.`
+        : `New sessions on ${db.dbname} go straight to Postgres.`)
+    } catch (err) {
+      notifyError('Not saved', err)
+    }
+  }
+  const copy = (text: string) => (
+    <CopyButton value={text}>{({ copied, copy }) => (
+      <Tooltip label={copied ? 'Copied' : 'Copy'} withArrow>
+        <ActionIcon variant="subtle" size="sm" onClick={copy} aria-label="Copy">{copied ? <IconCheck size={14} /> : <IconCopy size={14} />}</ActionIcon>
+      </Tooltip>
+    )}</CopyButton>
+  )
+  const block = (text: string) => (
+    <Group align="flex-start" wrap="nowrap" gap={4}>
+      <Code block fz="xs" style={{ whiteSpace: 'pre-wrap', flex: 1, minWidth: 0 }}>{text}</Code>
+      {copy(text)}
+    </Group>
+  )
+  return (
+    <Stack gap="md">
+      <SectionCard title="Postgres" description="The agent on the server opens it here. Provisioning of roles always goes this way, as the postgres account over the local socket.">
+        <Text size={FS.body} ff="monospace">{db.host}:{db.port}/{db.dbname}</Text>
+      </SectionCard>
+      <SectionCard title="PgBouncer" description="If applications on this server connect through PgBouncer, sessions from Argus can too. Transaction pooling is fine: every statement carries its own role and limits.">
+        <Stack gap="sm">
+          <Checkbox label="Sessions go through PgBouncer" checked={enabled} onChange={(e) => setEnabled(e.currentTarget.checked)} />
+          {enabled && (
+            <Group align="flex-end" gap="sm">
+              <TextInput label="Address" description="On the server: a loopback address or a socket directory." value={host}
+                onChange={(e) => setHost(e.currentTarget.value)} w={260} aria-label="PgBouncer address" />
+              <NumberInput label="Port" value={port} onChange={setPort} min={1} max={65535} w={120} aria-label="PgBouncer port" />
+            </Group>
+          )}
+          <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
+        </Stack>
+      </SectionCard>
+      {enabled && (
+        <SectionCard title="Set up PgBouncer once" description="PgBouncer authenticates each Argus role with an auth_query. Argus provides a lookup that answers only for roles it made, so PgBouncer learns nothing about anyone else's password. Nothing about your applications' users changes.">
+          {!setup ? <Text size={FS.meta} c="dimmed">Loading…</Text> : (
+            <Stack gap="sm">
+              <Box>
+                <Text size={FS.body} fw={600}>1. In Postgres, as the postgres account, in database {db.dbname}</Text>
+                <Text size={FS.micro} c="dimmed" mb={4}>The agent also runs these before every session through PgBouncer; running them yourself first lets step 2 work before anyone connects.</Text>
+                {block(setup.sql.map((q: string) => q.trimEnd() + ';').join('\n\n'))}
+              </Box>
+              <Box>
+                <Text size={FS.body} fw={600}>2. Let PgBouncer's auth_user use the lookup</Text>
+                <Text size={FS.micro} c="dimmed" mb={4}>Replace the placeholder with the role PgBouncer already uses as auth_user.</Text>
+                {block(setup.grant)}
+              </Box>
+              <Box>
+                <Text size={FS.body} fw={600}>3. In pgbouncer.ini</Text>
+                <Text size={FS.micro} c="dimmed" mb={4}>
+                  If PgBouncer already has an auth_query that reads pg_shadow, keep it: it finds Argus roles too. Otherwise point auth_query at the lookup. Clients must use scram-sha-256; a userlist.txt alone cannot know one-time passwords. Then reload PgBouncer.
+                </Text>
+                {block(setup.ini)}
+              </Box>
+            </Stack>
+          )}
+        </SectionCard>
+      )}
+    </Stack>
   )
 }
 
@@ -261,10 +347,10 @@ function Safety({ db }: { db: Database }) {
         </Stack>
       </SectionCard>
       <SectionCard title="Recording">
-        <Group justify="space-between"><Box><Text size={FS.body} fw={600}>Statements</Text><Text size={FS.micro} c="dimmed">Always recorded, before they run.</Text></Box>
+        <Group justify="space-between"><Box><Text size={FS.body} fw={600}>Statements</Text><Text size={FS.micro} c="dimmed">Always recorded, before they run, in a hash chain the verifier checks.</Text></Box>
           <Badge variant="light" color="teal" radius="sm">Always on</Badge></Group>
-        <Group justify="space-between" mt="sm"><Box><Text size={FS.body} fw={600}>Query results</Text><Text size={FS.micro} c="dimmed">Off keeps customer data out of recordings. Row counts and a hash of each result are kept.</Text></Box>
-          <Switch checked={false} disabled aria-label="Record results" /></Group>
+        <Group justify="space-between" mt="sm"><Box><Text size={FS.body} fw={600}>Query results</Text><Text size={FS.micro} c="dimmed">Never recorded, so customer data stays out of recordings. The row count and a SHA-256 of each result are kept, so a replay can prove what a statement returned without holding it.</Text></Box>
+          <Badge variant="light" color="slate" radius="sm">Rows and hash only</Badge></Group>
       </SectionCard>
       <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
     </Stack>

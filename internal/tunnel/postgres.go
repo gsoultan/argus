@@ -130,6 +130,11 @@ type PGAnswer struct {
 	Version  string `json:"version,omitempty"`
 	Session  string `json:"session,omitempty"`
 	ReadOnly bool   `json:"readOnly,omitempty"`
+	// Via says how the session reached Postgres: "pgbouncer" or "direct".
+	Via string `json:"via,omitempty"`
+	// Levels names the level roles of this database, read to dba, so the
+	// console's administration panels can speak of them without guessing.
+	Levels map[string]string `json:"levels,omitempty"`
 }
 
 // PGRecord is one line of a database session's recording. Each line carries
@@ -174,6 +179,11 @@ type GrantDB struct {
 	// Host is 127.0.0.1, ::1, localhost, or an absolute socket directory.
 	Host string `json:"host"`
 	Port int    `json:"port"`
+	// PoolHost and PoolPort are a PgBouncer in front of the database, on the
+	// same machine, that sessions should go through when set. Provisioning
+	// always goes to Postgres itself. See the agent's pooled statement path.
+	PoolHost string `json:"poolHost,omitempty"`
+	PoolPort int    `json:"poolPort,omitempty"`
 	// Level is read, write, owner or dba.
 	Level string `json:"level"`
 	// Policy is what the session must enforce.
@@ -264,6 +274,49 @@ func PersonalRole(login string) string {
 		return ""
 	}
 	return name
+}
+
+// PgBouncer in front of a database authenticates Argus roles with auth_query.
+// The lookup is a SECURITY DEFINER function that answers only for roles Argus
+// made, so PgBouncer's auth_user learns nothing about anyone else's password.
+// The agent creates it before every pooled session; the console shows the
+// same statements for the one-time setup, and these are the only copy.
+const (
+	// PoolerAuthRole is what PgBouncer's auth_user must be a member of.
+	PoolerAuthRole = "argus_pgbouncer"
+	// PoolerAuthQuery is the auth_query line for pgbouncer.ini.
+	PoolerAuthQuery = "SELECT usename, passwd FROM argus_auth.pgbouncer_lookup($1)"
+	// PoolerAuthMarker is the role comment Argus leaves on PoolerAuthRole.
+	PoolerAuthMarker = "argus-managed pgbouncer auth"
+)
+
+// PoolerAuthSetupSQL is the setup, as statements. Every one is safe to run
+// again. The role comment starts with "argus-managed", which is how the
+// agent tells its roles from everyone else's.
+func PoolerAuthSetupSQL() []string {
+	return []string{
+		`DO $argus$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '` + PoolerAuthRole + `') THEN
+    CREATE ROLE ` + PoolerAuthRole + ` NOLOGIN;
+    COMMENT ON ROLE ` + PoolerAuthRole + ` IS '` + PoolerAuthMarker + `';
+  END IF;
+END $argus$`,
+		`CREATE SCHEMA IF NOT EXISTS argus_auth`,
+		`REVOKE ALL ON SCHEMA argus_auth FROM PUBLIC`,
+		`CREATE OR REPLACE FUNCTION argus_auth.pgbouncer_lookup(p_user text)
+  RETURNS TABLE(usename name, passwd text)
+  LANGUAGE sql SECURITY DEFINER STABLE STRICT
+  SET search_path = pg_catalog
+AS $f$
+  SELECT s.usename, s.passwd FROM pg_shadow s
+  WHERE s.usename = p_user
+    AND pg_has_role(s.usename, 'argus_people', 'MEMBER')
+    AND coalesce(shobj_description(s.usesysid, 'pg_authid'), '') LIKE 'argus-managed%'
+$f$`,
+		`REVOKE ALL ON FUNCTION argus_auth.pgbouncer_lookup(text) FROM PUBLIC`,
+		`GRANT USAGE ON SCHEMA argus_auth TO ` + PoolerAuthRole,
+		`GRANT EXECUTE ON FUNCTION argus_auth.pgbouncer_lookup(text) TO ` + PoolerAuthRole,
+	}
 }
 
 // LocalPGHost reports whether host is somewhere on this machine. An agent

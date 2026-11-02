@@ -2,6 +2,8 @@ package control
 
 import (
 	"errors"
+	"fmt"
+	"github.com/gsoultan/argus/internal/tunnel"
 	"net/http"
 	"strings"
 )
@@ -120,15 +122,23 @@ func (a *API) patchDatabase(w http.ResponseWriter, r *http.Request, actor string
 		return
 	}
 	var in struct {
-		Label     *string   `json:"label"`
-		Host      *string   `json:"host"`
-		Port      *int      `json:"port"`
-		AdminUser *string   `json:"adminUser"`
-		Policy    *DBPolicy `json:"policy"`
+		Label      *string   `json:"label"`
+		Host       *string   `json:"host"`
+		Port       *int      `json:"port"`
+		AdminUser  *string   `json:"adminUser"`
+		Policy     *DBPolicy `json:"policy"`
+		PoolerHost *string   `json:"poolerHost"`
+		PoolerPort *int      `json:"poolerPort"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if in.PoolerHost != nil {
+		db.PoolerHost = *in.PoolerHost
+	}
+	if in.PoolerPort != nil {
+		db.PoolerPort = *in.PoolerPort
 	}
 	if in.Label != nil {
 		db.Label = *in.Label
@@ -153,6 +163,34 @@ func (a *API) patchDatabase(w http.ResponseWriter, r *http.Request, actor string
 	a.auditDB(r.Context(), "db.policy_changed", "notice", actor, db.Hostname,
 		"Changed settings of database "+db.Name+" on "+db.Hostname+".")
 	writeJSON(w, http.StatusOK, db)
+}
+
+// GET /api/v1/databases/{id}/pooler-setup
+//
+// What an admin runs once so PgBouncer can authenticate Argus roles: the
+// statements come from the tunnel package, which is also what the agent runs
+// before every pooled session, so the console never shows a different copy.
+func (a *API) getDBPoolerSetup(w http.ResponseWriter, r *http.Request, _ string) {
+	db, err := a.store.Database(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.dbErr(w, "database", err)
+		return
+	}
+	host := db.Host
+	if strings.HasPrefix(host, "/") {
+		host = "127.0.0.1"
+	}
+	ini := fmt.Sprintf("[databases]\n%s = host=%s port=%d dbname=%s\n\n[pgbouncer]\nauth_type = scram-sha-256\n"+
+		"auth_user = <your auth_user>\nauth_query = %s\n", db.Name, host, db.Port, db.Name, tunnel.PoolerAuthQuery)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authRole":   tunnel.PoolerAuthRole,
+		"authQuery":  tunnel.PoolerAuthQuery,
+		"sql":        tunnel.PoolerAuthSetupSQL(),
+		"grant":      "GRANT " + tunnel.PoolerAuthRole + " TO <your auth_user>;",
+		"ini":        ini,
+		"poolerHost": db.PoolerHost,
+		"poolerPort": db.PoolerPort,
+	})
 }
 
 // DELETE /api/v1/databases/{id}

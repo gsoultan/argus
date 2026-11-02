@@ -19,7 +19,7 @@ import type {
   TeamAssignment,
   ServerAccount,
   User,
-  Database, DBAccess, DBAssignment, DBLabel, DBLevel, DBPolicy,
+  Database, DBAccess, DBAssignment, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
 } from '~/types/domain'
 
 /**
@@ -1168,15 +1168,20 @@ export async function database(id: string): Promise<{ database: Database; access
 
 export async function createDatabase(input: {
   assetId: string; dbname: string; host?: string; port?: number; adminUser?: string; label?: DBLabel
+  poolerHost?: string; poolerPort?: number
 }): Promise<Database> {
   return post<Database>('/api/v1/databases', input)
 }
 
 export async function updateDatabase(
   id: string,
-  patch: { label?: DBLabel; host?: string; port?: number; adminUser?: string; policy?: DBPolicy },
+  patch: { label?: DBLabel; host?: string; port?: number; adminUser?: string; policy?: DBPolicy; poolerHost?: string; poolerPort?: number },
 ): Promise<Database> {
   return send<Database>('PATCH', `/api/v1/databases/${encodeURIComponent(id)}`, patch)
+}
+
+export async function databasePoolerSetup(id: string): Promise<DBPoolerSetup> {
+  return get(`/api/v1/databases/${encodeURIComponent(id)}/pooler-setup`)
 }
 
 export async function deleteDatabase(id: string): Promise<void> {

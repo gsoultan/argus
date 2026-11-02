@@ -20,17 +20,19 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID        [16]byte
-	AssetID   [16]byte
-	Engine    string
-	Host      string
-	Port      int32
-	Dbname    string
-	AdminUser string
-	Label     string
-	Policy    runtime.JSON
-	CreatedBy string
-	CreatedAt time.Time
+	ID         [16]byte
+	AssetID    [16]byte
+	Engine     string
+	Host       string
+	Port       int32
+	PoolerHost string
+	PoolerPort int32
+	Dbname     string
+	AdminUser  string
+	Label      string
+	Policy     runtime.JSON
+	CreatedBy  string
+	CreatedAt  time.Time
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -69,7 +71,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 11
+const nCols = 13
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -224,30 +226,44 @@ func (q *Query) cursor(col uint32, r Row) {
 			q.over = true
 			return
 		}
-		q.strs[q.ns] = r.Dbname
+		q.strs[q.ns] = r.PoolerHost
 		q.ns++
 	case 6:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.PoolerPort)
+		q.nn++
+	case 7:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Dbname
+		q.ns++
+	case 8:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.AdminUser
 		q.ns++
-	case 7:
+	case 9:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.Label
 		q.ns++
-	case 9:
+	case 11:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.CreatedBy
 		q.ns++
-	case 10:
+	case 12:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
@@ -414,17 +430,19 @@ type Pred struct {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID        = UUIDCol{0}
-	AssetID   = UUIDCol{1}
-	Engine    = TextCol{2}
-	Host      = TextCol{3}
-	Port      = Int32Col{4}
-	Dbname    = TextCol{5}
-	AdminUser = TextCol{6}
-	Label     = TextCol{7}
-	Policy    = JSONCol{8}
-	CreatedBy = TextCol{9}
-	CreatedAt = TimeCol{10}
+	ID         = UUIDCol{0}
+	AssetID    = UUIDCol{1}
+	Engine     = TextCol{2}
+	Host       = TextCol{3}
+	Port       = Int32Col{4}
+	PoolerHost = TextCol{5}
+	PoolerPort = Int32Col{6}
+	Dbname     = TextCol{7}
+	AdminUser  = TextCol{8}
+	Label      = TextCol{9}
+	Policy     = JSONCol{10}
+	CreatedBy  = TextCol{11}
+	CreatedAt  = TimeCol{12}
 )
 
 // UUIDCol addresses a uuid column.
@@ -723,12 +741,12 @@ func (q *Query) leaf(p Pred) {
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
 		case 6:
-			if int(q.nas) >= 3 {
+			if int(q.nai32) >= 3 {
 				q.over = true
 				return
 			}
-			q.anyStr[q.nas] = p.anyStr
-			q.nas++
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
 		case 7:
 			if int(q.nas) >= 3 {
 				q.over = true
@@ -744,6 +762,20 @@ func (q *Query) leaf(p Pred) {
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
 		case 9:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 10:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 11:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -802,12 +834,12 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 6:
-		if int(q.ns) >= 6 {
+		if int(q.nn) >= 6 {
 			q.over = true
 			return
 		}
-		q.strs[q.ns] = p.str
-		q.ns++
+		q.nums[q.nn] = p.num
+		q.nn++
 	case 7:
 		if int(q.ns) >= 6 {
 			q.over = true
@@ -816,12 +848,12 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 8:
-		if int(q.njs) >= 2 {
+		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
-		q.jsns[q.njs] = p.jsn
-		q.njs++
+		q.strs[q.ns] = p.str
+		q.ns++
 	case 9:
 		if int(q.ns) >= 6 {
 			q.over = true
@@ -830,6 +862,20 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 10:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 11:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 12:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
@@ -879,6 +925,25 @@ func (q Query) PortLt(v int32) Query                   { return q.Where(Port.Lt(
 func (q Query) PortLte(v int32) Query                  { return q.Where(Port.Lte(v)) }
 func (q Query) PortIn(v ...int32) Query                { return q.Where(Port.In(v...)) }
 func (q Query) PortNotIn(v ...int32) Query             { return q.Where(Port.NotIn(v...)) }
+func (q Query) PoolerHostEq(v string) Query            { return q.Where(PoolerHost.Eq(v)) }
+func (q Query) PoolerHostNotEq(v string) Query         { return q.Where(PoolerHost.NotEq(v)) }
+func (q Query) PoolerHostGt(v string) Query            { return q.Where(PoolerHost.Gt(v)) }
+func (q Query) PoolerHostGte(v string) Query           { return q.Where(PoolerHost.Gte(v)) }
+func (q Query) PoolerHostLt(v string) Query            { return q.Where(PoolerHost.Lt(v)) }
+func (q Query) PoolerHostLte(v string) Query           { return q.Where(PoolerHost.Lte(v)) }
+func (q Query) PoolerHostEqLower(v string) Query       { return q.Where(PoolerHost.EqLower(v)) }
+func (q Query) PoolerHostLike(v string) Query          { return q.Where(PoolerHost.Like(v)) }
+func (q Query) PoolerHostILike(v string) Query         { return q.Where(PoolerHost.ILike(v)) }
+func (q Query) PoolerHostIn(v ...string) Query         { return q.Where(PoolerHost.In(v...)) }
+func (q Query) PoolerHostNotIn(v ...string) Query      { return q.Where(PoolerHost.NotIn(v...)) }
+func (q Query) PoolerPortEq(v int32) Query             { return q.Where(PoolerPort.Eq(v)) }
+func (q Query) PoolerPortNotEq(v int32) Query          { return q.Where(PoolerPort.NotEq(v)) }
+func (q Query) PoolerPortGt(v int32) Query             { return q.Where(PoolerPort.Gt(v)) }
+func (q Query) PoolerPortGte(v int32) Query            { return q.Where(PoolerPort.Gte(v)) }
+func (q Query) PoolerPortLt(v int32) Query             { return q.Where(PoolerPort.Lt(v)) }
+func (q Query) PoolerPortLte(v int32) Query            { return q.Where(PoolerPort.Lte(v)) }
+func (q Query) PoolerPortIn(v ...int32) Query          { return q.Where(PoolerPort.In(v...)) }
+func (q Query) PoolerPortNotIn(v ...int32) Query       { return q.Where(PoolerPort.NotIn(v...)) }
 func (q Query) DbnameEq(v string) Query                { return q.Where(Dbname.Eq(v)) }
 func (q Query) DbnameNotEq(v string) Query             { return q.Where(Dbname.NotEq(v)) }
 func (q Query) DbnameGt(v string) Query                { return q.Where(Dbname.Gt(v)) }
@@ -934,7 +999,7 @@ func (q Query) CreatedAtGte(v time.Time) Query         { return q.Where(CreatedA
 func (q Query) CreatedAtLt(v time.Time) Query          { return q.Where(CreatedAt.Lt(v)) }
 func (q Query) CreatedAtLte(v time.Time) Query         { return q.Where(CreatedAt.Lte(v)) }
 
-const selectPrefix = `SELECT "id", "asset_id", "engine", "host", "port", "dbname", "admin_user", "label", "policy", "created_by", "created_at" FROM "databases"`
+const selectPrefix = `SELECT "id", "asset_id", "engine", "host", "port", "pooler_host", "pooler_port", "dbname", "admin_user", "label", "policy", "created_by", "created_at" FROM "databases"`
 const countPrefix = `SELECT count(*) FROM "databases"`
 const existsPrefix = `SELECT 1 FROM "databases"`
 const existsSuffix = ` LIMIT 1`
@@ -1001,6 +1066,18 @@ var orderTable = [nCols][4]string{
 		"\"port\" ASC NULLS FIRST",
 		"\"port\" DESC NULLS LAST",
 	},
+	{ // pooler_host
+		"\"pooler_host\"",
+		"\"pooler_host\" DESC",
+		"\"pooler_host\" ASC NULLS FIRST",
+		"\"pooler_host\" DESC NULLS LAST",
+	},
+	{ // pooler_port
+		"\"pooler_port\"",
+		"\"pooler_port\" DESC",
+		"\"pooler_port\" ASC NULLS FIRST",
+		"\"pooler_port\" DESC NULLS LAST",
+	},
 	{ // dbname
 		"\"dbname\"",
 		"\"dbname\" DESC",
@@ -1047,6 +1124,8 @@ var identTable = [nCols]string{
 	"\"engine\"",
 	"\"host\"",
 	"\"port\"",
+	"\"pooler_host\"",
+	"\"pooler_port\"",
 	"\"dbname\"",
 	"\"admin_user\"",
 	"\"label\"",
@@ -1085,7 +1164,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [11][28]runtime.Frag{
+var fragTable = [13][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1224,6 +1303,66 @@ var fragTable = [11][28]runtime.Frag{
 		{},
 		{A: "\"port\" = ANY($", B: ")"},
 		{A: "\"port\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // pooler_host
+		{}, // opNone
+		{A: "\"pooler_host\" = $", B: ""},
+		{A: "\"pooler_host\" <> $", B: ""},
+		{A: "\"pooler_host\" > $", B: ""},
+		{A: "\"pooler_host\" >= $", B: ""},
+		{A: "\"pooler_host\" < $", B: ""},
+		{A: "\"pooler_host\" <= $", B: ""},
+		{A: "lower(\"pooler_host\") = lower($", B: ")"},
+		{A: "\"pooler_host\" LIKE $", B: ""},
+		{A: "\"pooler_host\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"pooler_host\" = ANY($", B: ")"},
+		{A: "\"pooler_host\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // pooler_port
+		{}, // opNone
+		{A: "\"pooler_port\" = $", B: ""},
+		{A: "\"pooler_port\" <> $", B: ""},
+		{A: "\"pooler_port\" > $", B: ""},
+		{A: "\"pooler_port\" >= $", B: ""},
+		{A: "\"pooler_port\" < $", B: ""},
+		{A: "\"pooler_port\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"pooler_port\" = ANY($", B: ")"},
+		{A: "\"pooler_port\" <> ALL($", B: ")"},
 		{},
 		{},
 		{},
@@ -1577,12 +1716,14 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Engine = sl.Str(rv[2])
 	r.Host = sl.Str(rv[3])
 	r.Port = runtime.Int4(rv[4])
-	r.Dbname = sl.Str(rv[5])
-	r.AdminUser = sl.Str(rv[6])
-	r.Label = sl.Str(rv[7])
-	r.Policy = runtime.JSON(runtime.JSONB(rv[8], sl))
-	r.CreatedBy = sl.Str(rv[9])
-	r.CreatedAt = runtime.Timestamptz(rv[10])
+	r.PoolerHost = sl.Str(rv[5])
+	r.PoolerPort = runtime.Int4(rv[6])
+	r.Dbname = sl.Str(rv[7])
+	r.AdminUser = sl.Str(rv[8])
+	r.Label = sl.Str(rv[9])
+	r.Policy = runtime.JSON(runtime.JSONB(rv[10], sl))
+	r.CreatedBy = sl.Str(rv[11])
+	r.CreatedAt = runtime.Timestamptz(rv[12])
 	return nil
 }
 
@@ -1678,9 +1819,9 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 6:
-				b.anyStr[nas] = q.anyStr[nas]
-				v = append(v, &b.anyStr[nas])
-				nas++
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
 			case 7:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
@@ -1690,6 +1831,14 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 9:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 10:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 11:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1722,22 +1871,30 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.strs[ns])
 			ns++
 		case 6:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
 		case 7:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
 		case 8:
-			b.jsns[njs] = q.jsns[njs]
-			v = append(v, &b.jsns[njs])
-			njs++
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		case 9:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
 		case 10:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 11:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 12:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
@@ -1878,7 +2035,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "databases" ("id", "asset_id", "engine", "host", "port", "dbname", "admin_user", "label", "policy", "created_by", "created_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING "id", "asset_id", "engine", "host", "port", "dbname", "admin_user", "label", "policy", "created_by", "created_at"`
+const insertSQL = `INSERT INTO "databases" ("id", "asset_id", "engine", "host", "port", "pooler_host", "pooler_port", "dbname", "admin_user", "label", "policy", "created_by", "created_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING "id", "asset_id", "engine", "host", "port", "pooler_host", "pooler_port", "dbname", "admin_user", "label", "policy", "created_by", "created_at"`
 
 const updatePrefix = `UPDATE "databases" SET `
 const deletePrefix = `DELETE FROM "databases"`
@@ -1886,32 +2043,36 @@ const deletePrefix = `DELETE FROM "databases"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dAssetID   uint64 = 1 << 0
-	dEngine    uint64 = 1 << 1
-	dHost      uint64 = 1 << 2
-	dPort      uint64 = 1 << 3
-	dDbname    uint64 = 1 << 4
-	dAdminUser uint64 = 1 << 5
-	dLabel     uint64 = 1 << 6
-	dPolicy    uint64 = 1 << 7
-	dCreatedBy uint64 = 1 << 8
-	dCreatedAt uint64 = 1 << 9
+	dAssetID    uint64 = 1 << 0
+	dEngine     uint64 = 1 << 1
+	dHost       uint64 = 1 << 2
+	dPort       uint64 = 1 << 3
+	dPoolerHost uint64 = 1 << 4
+	dPoolerPort uint64 = 1 << 5
+	dDbname     uint64 = 1 << 6
+	dAdminUser  uint64 = 1 << 7
+	dLabel      uint64 = 1 << 8
+	dPolicy     uint64 = 1 << 9
+	dCreatedBy  uint64 = 1 << 10
+	dCreatedAt  uint64 = 1 << 11
 )
 
-const nUpdatable = 10
+const nUpdatable = 12
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"asset_id\" = $", B: ""},   // asset_id
-	{A: "\"engine\" = $", B: ""},     // engine
-	{A: "\"host\" = $", B: ""},       // host
-	{A: "\"port\" = $", B: ""},       // port
-	{A: "\"dbname\" = $", B: ""},     // dbname
-	{A: "\"admin_user\" = $", B: ""}, // admin_user
-	{A: "\"label\" = $", B: ""},      // label
-	{A: "\"policy\" = $", B: ""},     // policy
-	{A: "\"created_by\" = $", B: ""}, // created_by
-	{A: "\"created_at\" = $", B: ""}, // created_at
+	{A: "\"asset_id\" = $", B: ""},    // asset_id
+	{A: "\"engine\" = $", B: ""},      // engine
+	{A: "\"host\" = $", B: ""},        // host
+	{A: "\"port\" = $", B: ""},        // port
+	{A: "\"pooler_host\" = $", B: ""}, // pooler_host
+	{A: "\"pooler_port\" = $", B: ""}, // pooler_port
+	{A: "\"dbname\" = $", B: ""},      // dbname
+	{A: "\"admin_user\" = $", B: ""},  // admin_user
+	{A: "\"label\" = $", B: ""},       // label
+	{A: "\"policy\" = $", B: ""},      // policy
+	{A: "\"created_by\" = $", B: ""},  // created_by
+	{A: "\"created_at\" = $", B: ""},  // created_at
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1922,12 +2083,14 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                    // engine has no server-side form
 	{},                                    // host has no server-side form
 	{A: "\"port\" = \"port\" + 1", B: ""}, // port = its own value plus one
-	{},                                    // dbname has no server-side form
-	{},                                    // admin_user has no server-side form
-	{},                                    // label has no server-side form
-	{},                                    // policy has no server-side form
-	{},                                    // created_by has no server-side form
-	{A: "\"created_at\" = now()", B: ""},  // created_at = the database's clock
+	{},                                    // pooler_host has no server-side form
+	{A: "\"pooler_port\" = \"pooler_port\" + 1", B: ""}, // pooler_port = its own value plus one
+	{},                                   // dbname has no server-side form
+	{},                                   // admin_user has no server-side form
+	{},                                   // label has no server-side form
+	{},                                   // policy has no server-side form
+	{},                                   // created_by has no server-side form
+	{A: "\"created_at\" = now()", B: ""}, // created_at = the database's clock
 }
 
 // pkFrags addresses one row.
@@ -1939,20 +2102,22 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID        uint64 = 1 << 0
-	iAssetID   uint64 = 1 << 1
-	iEngine    uint64 = 1 << 2
-	iHost      uint64 = 1 << 3
-	iPort      uint64 = 1 << 4
-	iDbname    uint64 = 1 << 5
-	iAdminUser uint64 = 1 << 6
-	iLabel     uint64 = 1 << 7
-	iPolicy    uint64 = 1 << 8
-	iCreatedBy uint64 = 1 << 9
-	iCreatedAt uint64 = 1 << 10
+	iID         uint64 = 1 << 0
+	iAssetID    uint64 = 1 << 1
+	iEngine     uint64 = 1 << 2
+	iHost       uint64 = 1 << 3
+	iPort       uint64 = 1 << 4
+	iPoolerHost uint64 = 1 << 5
+	iPoolerPort uint64 = 1 << 6
+	iDbname     uint64 = 1 << 7
+	iAdminUser  uint64 = 1 << 8
+	iLabel      uint64 = 1 << 9
+	iPolicy     uint64 = 1 << 10
+	iCreatedBy  uint64 = 1 << 11
+	iCreatedAt  uint64 = 1 << 12
 )
 
-const nInsertable = 11
+const nInsertable = 13
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1961,6 +2126,8 @@ var insCols = [nInsertable]string{
 	"\"engine\"",
 	"\"host\"",
 	"\"port\"",
+	"\"pooler_host\"",
+	"\"pooler_port\"",
 	"\"dbname\"",
 	"\"admin_user\"",
 	"\"label\"",
@@ -1975,7 +2142,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"databases\""
-const insReturning = " RETURNING \"id\", \"asset_id\", \"engine\", \"host\", \"port\", \"dbname\", \"admin_user\", \"label\", \"policy\", \"created_by\", \"created_at\""
+const insReturning = " RETURNING \"id\", \"asset_id\", \"engine\", \"host\", \"port\", \"pooler_host\", \"pooler_port\", \"dbname\", \"admin_user\", \"label\", \"policy\", \"created_by\", \"created_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1994,7 +2161,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"asset_id\", \"engine\", \"host\", \"port\", \"dbname\", \"admin_user\", \"label\", \"policy\", \"created_by\", \"created_at\""
+const updReturning = " RETURNING \"id\", \"asset_id\", \"engine\", \"host\", \"port\", \"pooler_host\", \"pooler_port\", \"dbname\", \"admin_user\", \"label\", \"policy\", \"created_by\", \"created_at\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2074,6 +2241,28 @@ func (m *Mut) SetPort(v int32) {
 func (m *Mut) IncPort() {
 	m.expr |= dPort
 	m.dirty &^= dPort
+}
+
+func (m *Mut) SetPoolerHost(v string) {
+	m.row.PoolerHost = v
+	m.dirty |= dPoolerHost
+	m.expr &^= dPoolerHost
+}
+
+func (m *Mut) SetPoolerPort(v int32) {
+	m.row.PoolerPort = v
+	m.dirty |= dPoolerPort
+	m.expr &^= dPoolerPort
+}
+
+// IncPoolerPort adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncPoolerPort() {
+	m.expr |= dPoolerPort
+	m.dirty &^= dPoolerPort
 }
 
 func (m *Mut) SetDbname(v string) {
@@ -2193,6 +2382,32 @@ func (n *Ins) AddPortOnConflict(v int32) {
 	n.add |= iPort
 }
 
+func (n *Ins) SetPoolerHost(v string) {
+	n.row.PoolerHost = v
+	n.set |= iPoolerHost
+}
+
+func (n *Ins) SetPoolerPort(v int32) {
+	n.row.PoolerPort = v
+	n.set |= iPoolerPort
+	n.add &^= iPoolerPort
+}
+
+// AddPoolerPortOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"pooler_port" = "databases"."pooler_port" + EXCLUDED."pooler_port"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetPoolerPort.
+func (n *Ins) AddPoolerPortOnConflict(v int32) {
+	n.row.PoolerPort = v
+	n.set |= iPoolerPort
+	n.add |= iPoolerPort
+}
+
 func (n *Ins) SetDbname(v string) {
 	n.row.Dbname = v
 	n.set |= iDbname
@@ -2273,7 +2488,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 10)
+	set := make([]string, 0, 12)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2289,21 +2504,27 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "port")
 		}
 		if mask&(1<<5) != 0 {
-			set = append(set, "dbname")
+			set = append(set, "pooler_host")
 		}
 		if mask&(1<<6) != 0 {
-			set = append(set, "admin_user")
+			set = append(set, "pooler_port")
 		}
 		if mask&(1<<7) != 0 {
-			set = append(set, "label")
+			set = append(set, "dbname")
 		}
 		if mask&(1<<8) != 0 {
-			set = append(set, "policy")
+			set = append(set, "admin_user")
 		}
 		if mask&(1<<9) != 0 {
-			set = append(set, "created_by")
+			set = append(set, "label")
 		}
 		if mask&(1<<10) != 0 {
+			set = append(set, "policy")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "created_by")
+		}
+		if mask&(1<<12) != 0 {
 			set = append(set, "created_at")
 		}
 	case 1:
@@ -2313,19 +2534,25 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<3) != 0 {
 			set = append(set, "host")
 		}
-		if mask&(1<<6) != 0 {
-			set = append(set, "admin_user")
+		if mask&(1<<5) != 0 {
+			set = append(set, "pooler_host")
 		}
-		if mask&(1<<7) != 0 {
-			set = append(set, "label")
+		if mask&(1<<6) != 0 {
+			set = append(set, "pooler_port")
 		}
 		if mask&(1<<8) != 0 {
-			set = append(set, "policy")
+			set = append(set, "admin_user")
 		}
 		if mask&(1<<9) != 0 {
-			set = append(set, "created_by")
+			set = append(set, "label")
 		}
 		if mask&(1<<10) != 0 {
+			set = append(set, "policy")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "created_by")
+		}
+		if mask&(1<<12) != 0 {
 			set = append(set, "created_at")
 		}
 	}
@@ -2397,21 +2624,25 @@ func assignAdded(c string, add uint64) (string, bool) {
 	switch c {
 	case "port":
 		return "\"port\" = \"databases\".\"port\" + EXCLUDED.\"port\"", add&iPort != 0
+	case "pooler_port":
+		return "\"pooler_port\" = \"databases\".\"pooler_port\" + EXCLUDED.\"pooler_port\"", add&iPoolerPort != 0
 	}
 	return "", false
 }
 
 var assignFor = map[string]string{
-	"asset_id":   "\"asset_id\" = EXCLUDED.\"asset_id\"",
-	"engine":     "\"engine\" = EXCLUDED.\"engine\"",
-	"host":       "\"host\" = EXCLUDED.\"host\"",
-	"port":       "\"port\" = EXCLUDED.\"port\"",
-	"dbname":     "\"dbname\" = EXCLUDED.\"dbname\"",
-	"admin_user": "\"admin_user\" = EXCLUDED.\"admin_user\"",
-	"label":      "\"label\" = EXCLUDED.\"label\"",
-	"policy":     "\"policy\" = EXCLUDED.\"policy\"",
-	"created_by": "\"created_by\" = EXCLUDED.\"created_by\"",
-	"created_at": "\"created_at\" = EXCLUDED.\"created_at\"",
+	"asset_id":    "\"asset_id\" = EXCLUDED.\"asset_id\"",
+	"engine":      "\"engine\" = EXCLUDED.\"engine\"",
+	"host":        "\"host\" = EXCLUDED.\"host\"",
+	"port":        "\"port\" = EXCLUDED.\"port\"",
+	"pooler_host": "\"pooler_host\" = EXCLUDED.\"pooler_host\"",
+	"pooler_port": "\"pooler_port\" = EXCLUDED.\"pooler_port\"",
+	"dbname":      "\"dbname\" = EXCLUDED.\"dbname\"",
+	"admin_user":  "\"admin_user\" = EXCLUDED.\"admin_user\"",
+	"label":       "\"label\" = EXCLUDED.\"label\"",
+	"policy":      "\"policy\" = EXCLUDED.\"policy\"",
+	"created_by":  "\"created_by\" = EXCLUDED.\"created_by\"",
+	"created_at":  "\"created_at\" = EXCLUDED.\"created_at\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2473,16 +2704,20 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 		case 4:
 			args = append(args, n.row.Port)
 		case 5:
-			args = append(args, n.row.Dbname)
+			args = append(args, n.row.PoolerHost)
 		case 6:
-			args = append(args, n.row.AdminUser)
+			args = append(args, n.row.PoolerPort)
 		case 7:
-			args = append(args, n.row.Label)
+			args = append(args, n.row.Dbname)
 		case 8:
-			args = append(args, n.row.Policy)
+			args = append(args, n.row.AdminUser)
 		case 9:
-			args = append(args, n.row.CreatedBy)
+			args = append(args, n.row.Label)
 		case 10:
+			args = append(args, n.row.Policy)
+		case 11:
+			args = append(args, n.row.CreatedBy)
+		case 12:
 			args = append(args, n.row.CreatedAt)
 		}
 	}
@@ -2521,12 +2756,14 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 13)
 	args = append(args, r.ID)
 	args = append(args, r.AssetID)
 	args = append(args, r.Engine)
 	args = append(args, r.Host)
 	args = append(args, r.Port)
+	args = append(args, r.PoolerHost)
+	args = append(args, r.PoolerPort)
 	args = append(args, r.Dbname)
 	args = append(args, r.AdminUser)
 	args = append(args, r.Label)
@@ -2564,6 +2801,8 @@ var copyCols = []string{
 	"engine",
 	"host",
 	"port",
+	"pooler_host",
+	"pooler_port",
 	"dbname",
 	"admin_user",
 	"label",
@@ -2576,7 +2815,7 @@ var copyCols = []string{
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [11]any
+	buf  [13]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2599,12 +2838,14 @@ func (s *rowSource) Values() []any {
 	s.buf[2] = &r.Engine
 	s.buf[3] = &r.Host
 	s.buf[4] = &r.Port
-	s.buf[5] = &r.Dbname
-	s.buf[6] = &r.AdminUser
-	s.buf[7] = &r.Label
-	s.buf[8] = &r.Policy
-	s.buf[9] = &r.CreatedBy
-	s.buf[10] = &r.CreatedAt
+	s.buf[5] = &r.PoolerHost
+	s.buf[6] = &r.PoolerPort
+	s.buf[7] = &r.Dbname
+	s.buf[8] = &r.AdminUser
+	s.buf[9] = &r.Label
+	s.buf[10] = &r.Policy
+	s.buf[11] = &r.CreatedBy
+	s.buf[12] = &r.CreatedAt
 	return s.buf[:]
 }
 
@@ -2646,13 +2887,17 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 8
 	mask |= 1 << 9
 	mask |= 1 << 10
+	mask |= 1 << 11
+	mask |= 1 << 12
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 13)
 	args = append(args, r.ID)
 	args = append(args, r.AssetID)
 	args = append(args, r.Engine)
 	args = append(args, r.Host)
 	args = append(args, r.Port)
+	args = append(args, r.PoolerHost)
+	args = append(args, r.PoolerPort)
 	args = append(args, r.Dbname)
 	args = append(args, r.AdminUser)
 	args = append(args, r.Label)
@@ -2703,16 +2948,20 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 		case 4:
 			args = append(args, n.row.Port)
 		case 5:
-			args = append(args, n.row.Dbname)
+			args = append(args, n.row.PoolerHost)
 		case 6:
-			args = append(args, n.row.AdminUser)
+			args = append(args, n.row.PoolerPort)
 		case 7:
-			args = append(args, n.row.Label)
+			args = append(args, n.row.Dbname)
 		case 8:
-			args = append(args, n.row.Policy)
+			args = append(args, n.row.AdminUser)
 		case 9:
-			args = append(args, n.row.CreatedBy)
+			args = append(args, n.row.Label)
 		case 10:
+			args = append(args, n.row.Policy)
+		case 11:
+			args = append(args, n.row.CreatedBy)
+		case 12:
 			args = append(args, n.row.CreatedAt)
 		}
 	}
@@ -2778,16 +3027,20 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 		case 3:
 			args = append(args, m.row.Port)
 		case 4:
-			args = append(args, m.row.Dbname)
+			args = append(args, m.row.PoolerHost)
 		case 5:
-			args = append(args, m.row.AdminUser)
+			args = append(args, m.row.PoolerPort)
 		case 6:
-			args = append(args, m.row.Label)
+			args = append(args, m.row.Dbname)
 		case 7:
-			args = append(args, m.row.Policy)
+			args = append(args, m.row.AdminUser)
 		case 8:
-			args = append(args, m.row.CreatedBy)
+			args = append(args, m.row.Label)
 		case 9:
+			args = append(args, m.row.Policy)
+		case 10:
+			args = append(args, m.row.CreatedBy)
+		case 11:
 			args = append(args, m.row.CreatedAt)
 		}
 	}
@@ -2880,16 +3133,20 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 		case 3:
 			args = append(args, m.row.Port)
 		case 4:
-			args = append(args, m.row.Dbname)
+			args = append(args, m.row.PoolerHost)
 		case 5:
-			args = append(args, m.row.AdminUser)
+			args = append(args, m.row.PoolerPort)
 		case 6:
-			args = append(args, m.row.Label)
+			args = append(args, m.row.Dbname)
 		case 7:
-			args = append(args, m.row.Policy)
+			args = append(args, m.row.AdminUser)
 		case 8:
-			args = append(args, m.row.CreatedBy)
+			args = append(args, m.row.Label)
 		case 9:
+			args = append(args, m.row.Policy)
+		case 10:
+			args = append(args, m.row.CreatedBy)
+		case 11:
 			args = append(args, m.row.CreatedAt)
 		}
 	}
@@ -3048,16 +3305,20 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 		case 3:
 			args = append(args, m.row.Port)
 		case 4:
-			args = append(args, m.row.Dbname)
+			args = append(args, m.row.PoolerHost)
 		case 5:
-			args = append(args, m.row.AdminUser)
+			args = append(args, m.row.PoolerPort)
 		case 6:
-			args = append(args, m.row.Label)
+			args = append(args, m.row.Dbname)
 		case 7:
-			args = append(args, m.row.Policy)
+			args = append(args, m.row.AdminUser)
 		case 8:
-			args = append(args, m.row.CreatedBy)
+			args = append(args, m.row.Label)
 		case 9:
+			args = append(args, m.row.Policy)
+		case 10:
+			args = append(args, m.row.CreatedBy)
+		case 11:
 			args = append(args, m.row.CreatedAt)
 		}
 	}

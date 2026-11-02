@@ -6,10 +6,11 @@ import {
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
-  IconPlayerStop, IconTable, IconEye, IconFunction, IconHash,
+  IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup,
 } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
+import { ActivityPanel, RolesPanel, type Collect, type Collected } from '~/components/DatabaseAdmin'
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -56,7 +57,11 @@ interface PGAnswer {
   level?: DBLevel
   version?: string
   session?: string
+  via?: string
+  levels?: Partial<Record<DBLevel, string>>
 }
+
+type Panel = 'query' | 'activity' | 'roles'
 
 interface Result {
   id: number
@@ -68,10 +73,16 @@ interface Result {
   startedAt: number
 }
 
+/** The request id a row batch belongs to: its first four bytes. */
+function batchId(buf: ArrayBuffer): number {
+  const b = new Uint8Array(buf)
+  return ((b[0]! << 24) | (b[1]! << 16) | (b[2]! << 8) | b[3]!) >>> 0
+}
+
 /** Decodes one row batch: id, then cells as uvarint(len*2+cut+1) + bytes; 0 is NULL. */
 function decodeBatch(buf: ArrayBuffer, ncols: number, dec: TextDecoder): { id: number; rows: Cell[][] } {
   const b = new Uint8Array(buf)
-  const id = ((b[0]! << 24) | (b[1]! << 16) | (b[2]! << 8) | b[3]!) >>> 0
+  const id = batchId(buf)
   let p = 4
   const rows: Cell[][] = []
   while (p < b.length) {
@@ -123,6 +134,10 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // mount) wait here and go out together on 'ready'.
   const queue = useRef<string[]>([])
   const [maxRows, setMaxRows] = useState(1000)
+  // Statements the administration panels run: collected whole, by request
+  // id, without touching the editor's result.
+  const collectors = useRef(new Map<number, Collected>())
+  const [panel, setPanel] = useState<Panel>('query')
 
   const failPendingRef = useRef<() => void>(() => {})
   // One socket per mount; a dropped socket is a new session, by design.
@@ -148,10 +163,15 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       wsRef.current = ws
       ws.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) {
+          const bid = batchId(ev.data)
+          const c = collectors.current.get(bid)
+          if (c) {
+            c.rows.push(...decodeBatch(ev.data, c.cols.length, dec).rows)
+            return
+          }
           const r = resultRef.current
-          if (!r) return
-          const { id, rows } = decodeBatch(ev.data, r.cols.length, dec)
-          if (id !== r.id) return
+          if (!r || bid !== r.id) return
+          const { rows } = decodeBatch(ev.data, r.cols.length, dec)
           // Append in place and publish a new object once per batch, so React
           // re-renders per batch rather than per row.
           r.rows.push(...rows)
@@ -208,6 +228,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     queue.current = []
     for (const [id, cb] of pending.current) cb({ id, type: 'closed', error: 'the session ended' })
     pending.current.clear()
+    collectors.current.clear()
   }
   const send = useCallback((req: Record<string, unknown>) => {
     const frame = JSON.stringify({ type: 'req', req })
@@ -260,6 +281,29 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       setRunning(null)
     }
   }, [send, running, maxRows])
+
+  // collect runs one statement for a panel and resolves with everything it
+  // returned. Recorded like any other statement; it is one.
+  const collect: Collect = useCallback((text, max = 1000) => new Promise<Collected>((resolve) => {
+    const id = nextId.current++
+    const c: Collected = { cols: [], rows: [] }
+    collectors.current.set(id, c)
+    pending.current.set(id, (a) => {
+      if (a.type === 'cols') {
+        c.cols = a.cols ?? []
+        return
+      }
+      pending.current.delete(id)
+      collectors.current.delete(id)
+      if (a.type !== 'done') c.error = { error: a.error, code: a.code }
+      resolve(c)
+    })
+    if (!send({ id, op: 'run', sql: text, maxRows: max })) {
+      pending.current.delete(id)
+      collectors.current.delete(id)
+      resolve({ cols: [], rows: [], error: { error: 'the session ended' } })
+    }
+  }), [send])
 
   const cancel = useCallback(() => {
     if (running !== null) send({ id: running, op: 'cancel' })
@@ -325,10 +369,16 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       level={level}
       schema={schema}
       onPick={(q) => { insert(q); if (narrow) tree.close() }}
-      onRun={(q) => { setSql(q); run(q); if (narrow) tree.close() }}
+      onRun={(q) => { setSql(q); setPanel('query'); run(q); if (narrow) tree.close() }}
       history={history}
+      panel={panel}
+      onPanel={(p) => { setPanel(p); if (narrow) tree.close() }}
     />
   )
+  const adminProps = {
+    collect, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
+    onBack: () => setPanel('query'), onAskForAccess,
+  }
 
   return (
     <Box style={{ display: 'flex', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
@@ -351,7 +401,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           )}
           <IconDatabase size={16} color="var(--color-brand)" />
           <Text fw={650} size={FS.body}>{database.dbname}</Text>
-          {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace">{database.hostname}{ready?.version ? ` · Postgres ${ready.version.split(' ')[0]}` : ''}</Text>}
+          {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace">{database.hostname}{ready?.version ? ` · Postgres ${ready.version.split(' ')[0]}` : ''}{ready?.via === 'pgbouncer' ? ' · via PgBouncer' : ''}</Text>}
           <Badge variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[database.label]} radius="sm">
             {database.label}
           </Badge>
@@ -376,6 +426,9 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           </Box>
         )}
 
+        {panel === 'activity' && <ActivityPanel {...adminProps} />}
+        {panel === 'roles' && <RolesPanel {...adminProps} />}
+        {panel === 'query' && <>
         <Box style={{ borderBottom: '1px solid var(--color-line)' }}>
           <Textarea
             ref={editorRef}
@@ -420,6 +473,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         <Box style={{ flex: 1, minHeight: narrow ? 320 : 0, display: 'flex', flexDirection: 'column' }}>
           <Results result={result} narrow={narrow} />
         </Box>
+        </>}
       </Box>
     </Box>
   )
@@ -530,13 +584,15 @@ const td: React.CSSProperties = {
 
 /* ── Left bar ───────────────────────────────────────────────────────────── */
 
-function LeftBar({ database, level, schema, onPick, onRun, history }: {
+function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPanel }: {
   database: Database
   level: DBLevel | ''
   schema: (kind: string, schemaName?: string, object?: string) => Promise<Obj[]>
   onPick: (text: string) => void
   onRun: (sql: string) => void
   history: { sql: string; at: number; ok: boolean }[]
+  panel: Panel
+  onPanel: (p: Panel) => void
 }) {
   const [schemas, setSchemas] = useState<Obj[] | null>(null)
   useEffect(() => { void schema('schemas').then(setSchemas) }, [schema])
@@ -572,15 +628,19 @@ function LeftBar({ database, level, schema, onPick, onRun, history }: {
           ))}
           <Box mt="sm" px={4}>
             <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} py={4} style={{ letterSpacing: '.06em' }}>Administration</Text>
-            <Tooltip label={level === 'dba' ? 'Coming next' : 'Needs DBA access'} withArrow>
-              <Group gap={6} px={4} py={4} style={{ opacity: .6 }}>
-                <IconChevronRight size={12} /><Text size={FS.meta}>Roles &amp; access</Text>
+            <UnstyledButton onClick={() => onPanel(panel === 'activity' ? 'query' : 'activity')} px={4} py={4}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'activity' ? 'var(--color-raised)' : undefined }}
+              aria-pressed={panel === 'activity'}>
+              <IconActivity size={13} /><Text size={FS.meta}>Activity &amp; locks</Text>
+            </UnstyledButton>
+            <Tooltip label={level === 'dba' ? 'Who holds which level; give or take a level from an application role' : 'Needs DBA access'} withArrow>
+              <UnstyledButton onClick={() => onPanel(panel === 'roles' ? 'query' : 'roles')} px={4} py={4}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'roles' ? 'var(--color-raised)' : undefined, opacity: level === 'dba' ? 1 : .7 }}
+                aria-pressed={panel === 'roles'}>
+                <IconUsersGroup size={13} /><Text size={FS.meta}>Roles &amp; access</Text>
                 <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
-              </Group>
+              </UnstyledButton>
             </Tooltip>
-            <Group gap={6} px={4} py={4} style={{ opacity: .6 }}>
-              <IconChevronRight size={12} /><Text size={FS.meta}>Activity &amp; locks</Text>
-            </Group>
           </Box>
         </Box>
       )}

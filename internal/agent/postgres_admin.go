@@ -56,6 +56,9 @@ type PGAdminRequest struct {
 	// the password itself never leaves the agent.
 	Verifier   string    `json:"verifier,omitempty"`
 	ValidUntil time.Time `json:"validUntil,omitzero"`
+	// Pooled says sessions reach this database through PgBouncer, so the
+	// lookup PgBouncer authenticates Argus roles with must exist.
+	Pooled bool `json:"pooled,omitempty"`
 }
 
 // PGAdminResult is the answer.
@@ -146,6 +149,11 @@ func pgOpen(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdmi
 
 	// The level roles and their grants, every time: a table made since the
 	// last session is covered by the next one without anyone re-granting.
+	if req.Pooled {
+		if err := pgEnsurePoolerAuth(ctx, conn); err != nil {
+			return PGAdminResult{Error: err.Error(), Version: version}
+		}
+	}
 	if err := pgEnsureLevels(ctx, conn, req.Database, req.Level); err != nil {
 		return PGAdminResult{Error: err.Error(), Version: version}
 	}
@@ -220,6 +228,13 @@ func pgClose(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdm
 	return PGAdminResult{OK: true}
 }
 
+// pgEnsurePoolerAuth creates the lookup PgBouncer authenticates Argus roles
+// with; see tunnel.PoolerAuthSetupSQL. It lives in the connected database,
+// which is where PgBouncer runs auth_query unless auth_dbname says otherwise.
+func pgEnsurePoolerAuth(ctx context.Context, conn *pgconn.PgConn) error {
+	return execAll(ctx, conn, tunnel.PoolerAuthSetupSQL()...)
+}
+
 // pgEnsureLevels creates the level roles up to level and grants each what it
 // may do in every schema of the database it can see.
 func pgEnsureLevels(ctx context.Context, conn *pgconn.PgConn, database, level string) error {
@@ -251,8 +266,12 @@ func pgEnsureLevels(ctx context.Context, conn *pgconn.PgConn, database, level st
 		fmt.Fprintf(&b, "GRANT %s TO %s;\n", pgx(names[tunnel.LevelWrite]), pgx(o))
 	}
 	if d, ok := names[tunnel.LevelDBA]; ok {
-		fmt.Fprintf(&b, "GRANT %s TO %s;\nGRANT pg_signal_backend, pg_read_all_stats TO %s;\n",
-			pgx(names[tunnel.LevelOwner]), pgx(d), pgx(d))
+		// A DBA holds every level with ADMIN OPTION, so they can give an
+		// application's own role a level, or take it back, from the console.
+		// Nothing below DBA can change who holds what.
+		fmt.Fprintf(&b, "GRANT %s, %s, %s TO %s WITH ADMIN OPTION;\n"+
+			"GRANT pg_signal_backend, pg_read_all_stats TO %s;\n",
+			pgx(names[tunnel.LevelRead]), pgx(names[tunnel.LevelWrite]), pgx(names[tunnel.LevelOwner]), pgx(d), pgx(d))
 	}
 	b.WriteString("FOR s IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' " +
 		"AND nspname <> 'information_schema' LOOP\n")

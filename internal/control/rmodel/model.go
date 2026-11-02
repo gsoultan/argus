@@ -525,20 +525,24 @@ func (m *Session) Schema(t *storm.Table) {
 // through that server's agent (migration 026). Policy holds the safety limits
 // the console writes; empty means every default.
 type Database struct {
-	ID        [16]byte
-	Asset     Asset
-	Engine    string
-	Host      string
-	Port      int32
-	Dbname    string
-	AdminUser string
-	Label     string
-	Policy    storm.JSON
-	CreatedBy string
-	CreatedAt time.Time
+	ID         [16]byte
+	Asset      Asset
+	Engine     string
+	Host       string
+	Port       int32
+	PoolerHost string
+	PoolerPort int32
+	Dbname     string
+	AdminUser  string
+	Label      string
+	Policy     storm.JSON
+	CreatedBy  string
+	CreatedAt  time.Time
 }
 
 func (m *Database) Schema(t *storm.Table) {
+	t.Col(&m.PoolerHost).Default("''::text")
+	t.Col(&m.PoolerPort).Default("0")
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.Asset).ConstraintName("databases_asset_id_fkey")
 	t.Col(&m.Asset).OnDelete(storm.Cascade)
@@ -556,6 +560,7 @@ func (m *Database) Schema(t *storm.Table) {
 	t.CheckNamed("databases_label_check",
 		"label = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("databases_port_check", "(port >= 1) AND (port <= 65535)")
+	t.CheckNamed("databases_pooler_port_check", "(pooler_port >= 0) AND (pooler_port <= 65535)")
 	t.Index(&m.Asset).Named("databases_asset_idx")
 }
 
