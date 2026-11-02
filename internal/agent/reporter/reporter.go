@@ -125,6 +125,10 @@ type HeartbeatReply struct {
 	// the agent decodes them. Absent from a control plane older than them,
 	// or one that could not read them: the agent keeps what it has.
 	PersonalAccounts json.RawMessage `json:"personal_accounts"`
+	// Update is the console asking the agent to update itself, as the agent
+	// decodes it. Absent when nothing is asked, and from a control plane
+	// older than updates.
+	Update json.RawMessage `json:"update"`
 }
 
 // HeartbeatWithReply reports like Heartbeat and returns the control plane's

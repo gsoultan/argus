@@ -54,6 +54,16 @@ type decision struct {
 	pending bool
 	// silent: nothing arrived before the deadline.
 	silent bool
+	// restarting: the agent is about to restart for an update, and the
+	// login should wait for the one that replaces it.
+	restarting bool
+	// sessionID names the recording, when the login is recorded.
+	sessionID string
+}
+
+// record reports whether the decision is to record the login.
+func (d decision) record() bool {
+	return !d.refused && !d.skip && !d.consoleOnly && !d.pending && !d.restarting
 }
 
 // approvalWait bounds how long a held login waits for its decision: the
@@ -79,6 +89,8 @@ func awaitDecision(conn net.Conn, dec *json.Decoder, wait time.Duration) decisio
 		return decision{refused: true}
 	}
 	switch {
+	case r.Restarting:
+		return decision{restarting: true}
 	case r.Pending:
 		return decision{pending: true, reason: r.Reason}
 	case r.Refused:
@@ -96,5 +108,5 @@ func awaitDecision(conn net.Conn, dec *json.Decoder, wait time.Duration) decisio
 		}
 		return decision{skip: true, reason: reason}
 	}
-	return decision{}
+	return decision{sessionID: r.SessionID}
 }

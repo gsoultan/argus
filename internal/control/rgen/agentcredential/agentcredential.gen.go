@@ -34,6 +34,11 @@ type Row struct {
 	TunnelRttUs          runtime.Null[int32]
 	UninstallRequestedAt runtime.Null[time.Time]
 	UninstallRequestedBy runtime.Null[string]
+	UpdateID             runtime.Null[string]
+	UpdateVersion        runtime.Null[string]
+	UpdateNow            bool
+	UpdateRequestedAt    runtime.Null[time.Time]
+	UpdateRequestedBy    runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -72,7 +77,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 14
+const nCols = 19
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -82,11 +87,12 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs            [6]string
-	nums            [6]int64
-	raws            [4][16]byte
-	tims            [4]time.Time
-	ns, nn, nr, ntm uint8
+	strs                 [6]string
+	nums                 [6]int64
+	raws                 [4][16]byte
+	tims                 [4]time.Time
+	bools                [4]bool
+	ns, nn, nr, ntm, nbo uint8
 
 	anyRaw          [3][][16]byte
 	anyStr          [3][]string
@@ -284,6 +290,41 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.UninstallRequestedBy.V
 		q.ns++
+	case 14:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.UpdateID.V
+		q.ns++
+	case 15:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.UpdateVersion.V
+		q.ns++
+	case 16:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.UpdateNow
+		q.nbo++
+	case 17:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.UpdateRequestedAt.V
+		q.ntm++
+	case 18:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.UpdateRequestedBy.V
+		q.ns++
 	}
 }
 
@@ -435,9 +476,18 @@ type Pred struct {
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
 	anyI32 []int32
+}
+
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Typed column handles. The type of the handle is what makes
@@ -457,6 +507,11 @@ var (
 	TunnelRttUs          = NullInt32Col{11}
 	UninstallRequestedAt = NullTimeCol{12}
 	UninstallRequestedBy = NullTextCol{13}
+	UpdateID             = NullTextCol{14}
+	UpdateVersion        = NullTextCol{15}
+	UpdateNow            = BoolCol{16}
+	UpdateRequestedAt    = NullTimeCol{17}
+	UpdateRequestedBy    = NullTextCol{18}
 )
 
 // UUIDCol addresses a uuid column.
@@ -604,6 +659,21 @@ func (h NullInt32Col) In(v ...int32) Pred { return Pred{col: h.c, op: opIn, anyI
 func (h NullInt32Col) NotIn(v ...int32) Pred { return Pred{col: h.c, op: opNotIn, anyI32: v} }
 func (h NullInt32Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
 func (h NullInt32Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
+
+// BoolCol addresses a bool column.
+type BoolCol struct{ c uint8 }
+
+func (h BoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h BoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h BoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h BoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -809,6 +879,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 14:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 15:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 18:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -910,6 +1001,41 @@ func (q *Query) leaf(p Pred) {
 		q.tims[q.ntm] = p.tim
 		q.ntm++
 	case 13:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 14:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 15:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 16:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 17:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 18:
 		if int(q.ns) >= 6 {
 			q.over = true
 			return
@@ -1071,8 +1197,59 @@ func (q Query) UninstallRequestedByIsNull() Query { return q.Where(UninstallRequ
 func (q Query) UninstallRequestedByIsNotNull() Query {
 	return q.Where(UninstallRequestedBy.IsNotNull())
 }
+func (q Query) UpdateIDEq(v string) Query                { return q.Where(UpdateID.Eq(v)) }
+func (q Query) UpdateIDNotEq(v string) Query             { return q.Where(UpdateID.NotEq(v)) }
+func (q Query) UpdateIDGt(v string) Query                { return q.Where(UpdateID.Gt(v)) }
+func (q Query) UpdateIDGte(v string) Query               { return q.Where(UpdateID.Gte(v)) }
+func (q Query) UpdateIDLt(v string) Query                { return q.Where(UpdateID.Lt(v)) }
+func (q Query) UpdateIDLte(v string) Query               { return q.Where(UpdateID.Lte(v)) }
+func (q Query) UpdateIDEqLower(v string) Query           { return q.Where(UpdateID.EqLower(v)) }
+func (q Query) UpdateIDLike(v string) Query              { return q.Where(UpdateID.Like(v)) }
+func (q Query) UpdateIDILike(v string) Query             { return q.Where(UpdateID.ILike(v)) }
+func (q Query) UpdateIDIn(v ...string) Query             { return q.Where(UpdateID.In(v...)) }
+func (q Query) UpdateIDNotIn(v ...string) Query          { return q.Where(UpdateID.NotIn(v...)) }
+func (q Query) UpdateIDIsNull() Query                    { return q.Where(UpdateID.IsNull()) }
+func (q Query) UpdateIDIsNotNull() Query                 { return q.Where(UpdateID.IsNotNull()) }
+func (q Query) UpdateVersionEq(v string) Query           { return q.Where(UpdateVersion.Eq(v)) }
+func (q Query) UpdateVersionNotEq(v string) Query        { return q.Where(UpdateVersion.NotEq(v)) }
+func (q Query) UpdateVersionGt(v string) Query           { return q.Where(UpdateVersion.Gt(v)) }
+func (q Query) UpdateVersionGte(v string) Query          { return q.Where(UpdateVersion.Gte(v)) }
+func (q Query) UpdateVersionLt(v string) Query           { return q.Where(UpdateVersion.Lt(v)) }
+func (q Query) UpdateVersionLte(v string) Query          { return q.Where(UpdateVersion.Lte(v)) }
+func (q Query) UpdateVersionEqLower(v string) Query      { return q.Where(UpdateVersion.EqLower(v)) }
+func (q Query) UpdateVersionLike(v string) Query         { return q.Where(UpdateVersion.Like(v)) }
+func (q Query) UpdateVersionILike(v string) Query        { return q.Where(UpdateVersion.ILike(v)) }
+func (q Query) UpdateVersionIn(v ...string) Query        { return q.Where(UpdateVersion.In(v...)) }
+func (q Query) UpdateVersionNotIn(v ...string) Query     { return q.Where(UpdateVersion.NotIn(v...)) }
+func (q Query) UpdateVersionIsNull() Query               { return q.Where(UpdateVersion.IsNull()) }
+func (q Query) UpdateVersionIsNotNull() Query            { return q.Where(UpdateVersion.IsNotNull()) }
+func (q Query) UpdateNowEq(v bool) Query                 { return q.Where(UpdateNow.Eq(v)) }
+func (q Query) UpdateNowNotEq(v bool) Query              { return q.Where(UpdateNow.NotEq(v)) }
+func (q Query) UpdateRequestedAtEq(v time.Time) Query    { return q.Where(UpdateRequestedAt.Eq(v)) }
+func (q Query) UpdateRequestedAtNotEq(v time.Time) Query { return q.Where(UpdateRequestedAt.NotEq(v)) }
+func (q Query) UpdateRequestedAtGt(v time.Time) Query    { return q.Where(UpdateRequestedAt.Gt(v)) }
+func (q Query) UpdateRequestedAtGte(v time.Time) Query   { return q.Where(UpdateRequestedAt.Gte(v)) }
+func (q Query) UpdateRequestedAtLt(v time.Time) Query    { return q.Where(UpdateRequestedAt.Lt(v)) }
+func (q Query) UpdateRequestedAtLte(v time.Time) Query   { return q.Where(UpdateRequestedAt.Lte(v)) }
+func (q Query) UpdateRequestedAtIsNull() Query           { return q.Where(UpdateRequestedAt.IsNull()) }
+func (q Query) UpdateRequestedAtIsNotNull() Query        { return q.Where(UpdateRequestedAt.IsNotNull()) }
+func (q Query) UpdateRequestedByEq(v string) Query       { return q.Where(UpdateRequestedBy.Eq(v)) }
+func (q Query) UpdateRequestedByNotEq(v string) Query    { return q.Where(UpdateRequestedBy.NotEq(v)) }
+func (q Query) UpdateRequestedByGt(v string) Query       { return q.Where(UpdateRequestedBy.Gt(v)) }
+func (q Query) UpdateRequestedByGte(v string) Query      { return q.Where(UpdateRequestedBy.Gte(v)) }
+func (q Query) UpdateRequestedByLt(v string) Query       { return q.Where(UpdateRequestedBy.Lt(v)) }
+func (q Query) UpdateRequestedByLte(v string) Query      { return q.Where(UpdateRequestedBy.Lte(v)) }
+func (q Query) UpdateRequestedByEqLower(v string) Query  { return q.Where(UpdateRequestedBy.EqLower(v)) }
+func (q Query) UpdateRequestedByLike(v string) Query     { return q.Where(UpdateRequestedBy.Like(v)) }
+func (q Query) UpdateRequestedByILike(v string) Query    { return q.Where(UpdateRequestedBy.ILike(v)) }
+func (q Query) UpdateRequestedByIn(v ...string) Query    { return q.Where(UpdateRequestedBy.In(v...)) }
+func (q Query) UpdateRequestedByNotIn(v ...string) Query {
+	return q.Where(UpdateRequestedBy.NotIn(v...))
+}
+func (q Query) UpdateRequestedByIsNull() Query    { return q.Where(UpdateRequestedBy.IsNull()) }
+func (q Query) UpdateRequestedByIsNotNull() Query { return q.Where(UpdateRequestedBy.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by" FROM "agent_credentials"`
+const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_requested_at", "update_requested_by" FROM "agent_credentials"`
 const countPrefix = `SELECT count(*) FROM "agent_credentials"`
 const existsPrefix = `SELECT 1 FROM "agent_credentials"`
 const existsSuffix = ` LIMIT 1`
@@ -1193,6 +1370,36 @@ var orderTable = [nCols][4]string{
 		"\"uninstall_requested_by\" ASC NULLS FIRST",
 		"\"uninstall_requested_by\" DESC NULLS LAST",
 	},
+	{ // update_id
+		"\"update_id\"",
+		"\"update_id\" DESC",
+		"\"update_id\" ASC NULLS FIRST",
+		"\"update_id\" DESC NULLS LAST",
+	},
+	{ // update_version
+		"\"update_version\"",
+		"\"update_version\" DESC",
+		"\"update_version\" ASC NULLS FIRST",
+		"\"update_version\" DESC NULLS LAST",
+	},
+	{ // update_now
+		"\"update_now\"",
+		"\"update_now\" DESC",
+		"\"update_now\" ASC NULLS FIRST",
+		"\"update_now\" DESC NULLS LAST",
+	},
+	{ // update_requested_at
+		"\"update_requested_at\"",
+		"\"update_requested_at\" DESC",
+		"\"update_requested_at\" ASC NULLS FIRST",
+		"\"update_requested_at\" DESC NULLS LAST",
+	},
+	{ // update_requested_by
+		"\"update_requested_by\"",
+		"\"update_requested_by\" DESC",
+		"\"update_requested_by\" ASC NULLS FIRST",
+		"\"update_requested_by\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1212,6 +1419,11 @@ var identTable = [nCols]string{
 	"\"tunnel_rtt_us\"",
 	"\"uninstall_requested_at\"",
 	"\"uninstall_requested_by\"",
+	"\"update_id\"",
+	"\"update_version\"",
+	"\"update_now\"",
+	"\"update_requested_at\"",
+	"\"update_requested_by\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1244,7 +1456,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [14][28]runtime.Frag{
+var fragTable = [19][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1665,6 +1877,156 @@ var fragTable = [14][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // update_id
+		{}, // opNone
+		{A: "\"update_id\" = $", B: ""},
+		{A: "\"update_id\" <> $", B: ""},
+		{A: "\"update_id\" > $", B: ""},
+		{A: "\"update_id\" >= $", B: ""},
+		{A: "\"update_id\" < $", B: ""},
+		{A: "\"update_id\" <= $", B: ""},
+		{A: "lower(\"update_id\") = lower($", B: ")"},
+		{A: "\"update_id\" LIKE $", B: ""},
+		{A: "\"update_id\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"update_id\" = ANY($", B: ")"},
+		{A: "\"update_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"update_id\" IS NULL", B: ""},
+		{A: "\"update_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // update_version
+		{}, // opNone
+		{A: "\"update_version\" = $", B: ""},
+		{A: "\"update_version\" <> $", B: ""},
+		{A: "\"update_version\" > $", B: ""},
+		{A: "\"update_version\" >= $", B: ""},
+		{A: "\"update_version\" < $", B: ""},
+		{A: "\"update_version\" <= $", B: ""},
+		{A: "lower(\"update_version\") = lower($", B: ")"},
+		{A: "\"update_version\" LIKE $", B: ""},
+		{A: "\"update_version\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"update_version\" = ANY($", B: ")"},
+		{A: "\"update_version\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"update_version\" IS NULL", B: ""},
+		{A: "\"update_version\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // update_now
+		{}, // opNone
+		{A: "\"update_now\" = $", B: ""},
+		{A: "\"update_now\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // update_requested_at
+		{}, // opNone
+		{A: "\"update_requested_at\" = $", B: ""},
+		{A: "\"update_requested_at\" <> $", B: ""},
+		{A: "\"update_requested_at\" > $", B: ""},
+		{A: "\"update_requested_at\" >= $", B: ""},
+		{A: "\"update_requested_at\" < $", B: ""},
+		{A: "\"update_requested_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"update_requested_at\" IS NULL", B: ""},
+		{A: "\"update_requested_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // update_requested_by
+		{}, // opNone
+		{A: "\"update_requested_by\" = $", B: ""},
+		{A: "\"update_requested_by\" <> $", B: ""},
+		{A: "\"update_requested_by\" > $", B: ""},
+		{A: "\"update_requested_by\" >= $", B: ""},
+		{A: "\"update_requested_by\" < $", B: ""},
+		{A: "\"update_requested_by\" <= $", B: ""},
+		{A: "lower(\"update_requested_by\") = lower($", B: ")"},
+		{A: "\"update_requested_by\" LIKE $", B: ""},
+		{A: "\"update_requested_by\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"update_requested_by\" = ANY($", B: ")"},
+		{A: "\"update_requested_by\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"update_requested_by\" IS NULL", B: ""},
+		{A: "\"update_requested_by\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1835,6 +2197,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.TunnelRttUs = runtime.Nullable(rv[11], runtime.Int4)
 	r.UninstallRequestedAt = runtime.Nullable(rv[12], runtime.Timestamptz)
 	r.UninstallRequestedBy = runtime.NullText(rv[13], sl)
+	r.UpdateID = runtime.NullText(rv[14], sl)
+	r.UpdateVersion = runtime.NullText(rv[15], sl)
+	r.UpdateNow = runtime.Bool(rv[16])
+	r.UpdateRequestedAt = runtime.Nullable(rv[17], runtime.Timestamptz)
+	r.UpdateRequestedBy = runtime.NullText(rv[18], sl)
 	return nil
 }
 
@@ -1844,6 +2211,7 @@ type binder struct {
 	nums   [6]int64
 	raws   [4][16]byte
 	tims   [4]time.Time
+	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	anyI32 [3][]int32
@@ -1888,7 +2256,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nn, nr, ntm, nar, nas, nai32 uint8
+	var ns, nn, nr, ntm, nbo, nar, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1937,6 +2305,18 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyI32[nai32])
 				nai32++
 			case 13:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 14:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 15:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 18:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1997,6 +2377,26 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.tims[ntm])
 			ntm++
 		case 13:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 14:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 15:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 16:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 17:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 18:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
@@ -2137,7 +2537,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by"`
+const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_requested_at", "update_requested_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_requested_at", "update_requested_by"`
 
 const updatePrefix = `UPDATE "agent_credentials" SET `
 const deletePrefix = `DELETE FROM "agent_credentials"`
@@ -2158,9 +2558,14 @@ const (
 	dTunnelRttUs          uint64 = 1 << 10
 	dUninstallRequestedAt uint64 = 1 << 11
 	dUninstallRequestedBy uint64 = 1 << 12
+	dUpdateID             uint64 = 1 << 13
+	dUpdateVersion        uint64 = 1 << 14
+	dUpdateNow            uint64 = 1 << 15
+	dUpdateRequestedAt    uint64 = 1 << 16
+	dUpdateRequestedBy    uint64 = 1 << 17
 )
 
-const nUpdatable = 13
+const nUpdatable = 18
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2177,6 +2582,11 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"tunnel_rtt_us\" = $", B: ""},          // tunnel_rtt_us
 	{A: "\"uninstall_requested_at\" = $", B: ""}, // uninstall_requested_at
 	{A: "\"uninstall_requested_by\" = $", B: ""}, // uninstall_requested_by
+	{A: "\"update_id\" = $", B: ""},              // update_id
+	{A: "\"update_version\" = $", B: ""},         // update_version
+	{A: "\"update_now\" = $", B: ""},             // update_now
+	{A: "\"update_requested_at\" = $", B: ""},    // update_requested_at
+	{A: "\"update_requested_by\" = $", B: ""},    // update_requested_by
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2196,6 +2606,11 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"tunnel_rtt_us\" = \"tunnel_rtt_us\" + 1", B: ""}, // tunnel_rtt_us = its own value plus one
 	{A: "\"uninstall_requested_at\" = now()", B: ""},        // uninstall_requested_at = the database's clock
 	{}, // uninstall_requested_by has no server-side form
+	{}, // update_id has no server-side form
+	{}, // update_version has no server-side form
+	{}, // update_now has no server-side form
+	{A: "\"update_requested_at\" = now()", B: ""}, // update_requested_at = the database's clock
+	{}, // update_requested_by has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2221,9 +2636,14 @@ const (
 	iTunnelRttUs          uint64 = 1 << 11
 	iUninstallRequestedAt uint64 = 1 << 12
 	iUninstallRequestedBy uint64 = 1 << 13
+	iUpdateID             uint64 = 1 << 14
+	iUpdateVersion        uint64 = 1 << 15
+	iUpdateNow            uint64 = 1 << 16
+	iUpdateRequestedAt    uint64 = 1 << 17
+	iUpdateRequestedBy    uint64 = 1 << 18
 )
 
-const nInsertable = 14
+const nInsertable = 19
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2241,6 +2661,11 @@ var insCols = [nInsertable]string{
 	"\"tunnel_rtt_us\"",
 	"\"uninstall_requested_at\"",
 	"\"uninstall_requested_by\"",
+	"\"update_id\"",
+	"\"update_version\"",
+	"\"update_now\"",
+	"\"update_requested_at\"",
+	"\"update_requested_by\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2249,7 +2674,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"agent_credentials\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\", \"update_id\", \"update_version\", \"update_now\", \"update_requested_at\", \"update_requested_by\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2268,7 +2693,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\", \"update_id\", \"update_version\", \"update_now\", \"update_requested_at\", \"update_requested_by\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2531,6 +2956,79 @@ func (m *Mut) SetUninstallRequestedByNull() {
 	m.expr &^= dUninstallRequestedBy
 }
 
+func (m *Mut) SetUpdateID(v string) {
+	m.row.UpdateID = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dUpdateID
+	m.expr &^= dUpdateID
+}
+
+// SetUpdateIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetUpdateIDNull() {
+	m.row.UpdateID = runtime.Null[string]{}
+	m.dirty |= dUpdateID
+	m.expr &^= dUpdateID
+}
+
+func (m *Mut) SetUpdateVersion(v string) {
+	m.row.UpdateVersion = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dUpdateVersion
+	m.expr &^= dUpdateVersion
+}
+
+// SetUpdateVersionNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetUpdateVersionNull() {
+	m.row.UpdateVersion = runtime.Null[string]{}
+	m.dirty |= dUpdateVersion
+	m.expr &^= dUpdateVersion
+}
+
+func (m *Mut) SetUpdateNow(v bool) {
+	m.row.UpdateNow = v
+	m.dirty |= dUpdateNow
+	m.expr &^= dUpdateNow
+}
+
+func (m *Mut) SetUpdateRequestedAt(v time.Time) {
+	m.row.UpdateRequestedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dUpdateRequestedAt
+	m.expr &^= dUpdateRequestedAt
+}
+
+// SetUpdateRequestedAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetUpdateRequestedAtNow() {
+	m.expr |= dUpdateRequestedAt
+	m.dirty &^= dUpdateRequestedAt
+}
+
+// SetUpdateRequestedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetUpdateRequestedAtNull() {
+	m.row.UpdateRequestedAt = runtime.Null[time.Time]{}
+	m.dirty |= dUpdateRequestedAt
+	m.expr &^= dUpdateRequestedAt
+}
+
+func (m *Mut) SetUpdateRequestedBy(v string) {
+	m.row.UpdateRequestedBy = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dUpdateRequestedBy
+	m.expr &^= dUpdateRequestedBy
+}
+
+// SetUpdateRequestedByNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetUpdateRequestedByNull() {
+	m.row.UpdateRequestedBy = runtime.Null[string]{}
+	m.dirty |= dUpdateRequestedBy
+	m.expr &^= dUpdateRequestedBy
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2689,6 +3187,59 @@ func (n *Ins) SetUninstallRequestedByNull() {
 	n.set |= iUninstallRequestedBy
 }
 
+func (n *Ins) SetUpdateID(v string) {
+	n.row.UpdateID = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iUpdateID
+}
+
+// SetUpdateIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetUpdateIDNull() {
+	n.row.UpdateID = runtime.Null[string]{}
+	n.set |= iUpdateID
+}
+
+func (n *Ins) SetUpdateVersion(v string) {
+	n.row.UpdateVersion = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iUpdateVersion
+}
+
+// SetUpdateVersionNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetUpdateVersionNull() {
+	n.row.UpdateVersion = runtime.Null[string]{}
+	n.set |= iUpdateVersion
+}
+
+func (n *Ins) SetUpdateNow(v bool) {
+	n.row.UpdateNow = v
+	n.set |= iUpdateNow
+}
+
+func (n *Ins) SetUpdateRequestedAt(v time.Time) {
+	n.row.UpdateRequestedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iUpdateRequestedAt
+}
+
+// SetUpdateRequestedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetUpdateRequestedAtNull() {
+	n.row.UpdateRequestedAt = runtime.Null[time.Time]{}
+	n.set |= iUpdateRequestedAt
+}
+
+func (n *Ins) SetUpdateRequestedBy(v string) {
+	n.row.UpdateRequestedBy = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iUpdateRequestedBy
+}
+
+// SetUpdateRequestedByNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetUpdateRequestedByNull() {
+	n.row.UpdateRequestedBy = runtime.Null[string]{}
+	n.set |= iUpdateRequestedBy
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2736,7 +3287,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 13)
+	set := make([]string, 0, 18)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2778,6 +3329,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<13) != 0 {
 			set = append(set, "uninstall_requested_by")
 		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "update_id")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "update_version")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "update_now")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "update_requested_at")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "update_requested_by")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -2814,6 +3380,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<13) != 0 {
 			set = append(set, "uninstall_requested_by")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "update_id")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "update_version")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "update_now")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "update_requested_at")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "update_requested_by")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -2854,6 +3435,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<13) != 0 {
 			set = append(set, "uninstall_requested_by")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "update_id")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "update_version")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "update_now")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "update_requested_at")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "update_requested_by")
 		}
 	}
 	return set
@@ -2936,6 +3532,11 @@ var assignFor = map[string]string{
 	"tunnel_rtt_us":          "\"tunnel_rtt_us\" = EXCLUDED.\"tunnel_rtt_us\"",
 	"uninstall_requested_at": "\"uninstall_requested_at\" = EXCLUDED.\"uninstall_requested_at\"",
 	"uninstall_requested_by": "\"uninstall_requested_by\" = EXCLUDED.\"uninstall_requested_by\"",
+	"update_id":              "\"update_id\" = EXCLUDED.\"update_id\"",
+	"update_version":         "\"update_version\" = EXCLUDED.\"update_version\"",
+	"update_now":             "\"update_now\" = EXCLUDED.\"update_now\"",
+	"update_requested_at":    "\"update_requested_at\" = EXCLUDED.\"update_requested_at\"",
+	"update_requested_by":    "\"update_requested_by\" = EXCLUDED.\"update_requested_by\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3007,6 +3608,16 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.UninstallRequestedAt.Arg())
 		case 13:
 			args = append(args, n.row.UninstallRequestedBy.Arg())
+		case 14:
+			args = append(args, n.row.UpdateID.Arg())
+		case 15:
+			args = append(args, n.row.UpdateVersion.Arg())
+		case 16:
+			args = append(args, n.row.UpdateNow)
+		case 17:
+			args = append(args, n.row.UpdateRequestedAt.Arg())
+		case 18:
+			args = append(args, n.row.UpdateRequestedBy.Arg())
 		}
 	}
 	var out Row
@@ -3044,7 +3655,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -3059,6 +3670,11 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.TunnelRttUs.Arg())
 	args = append(args, r.UninstallRequestedAt.Arg())
 	args = append(args, r.UninstallRequestedBy.Arg())
+	args = append(args, r.UpdateID.Arg())
+	args = append(args, r.UpdateVersion.Arg())
+	args = append(args, r.UpdateNow)
+	args = append(args, r.UpdateRequestedAt.Arg())
+	args = append(args, r.UpdateRequestedBy.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3099,13 +3715,18 @@ var copyCols = []string{
 	"tunnel_rtt_us",
 	"uninstall_requested_at",
 	"uninstall_requested_by",
+	"update_id",
+	"update_version",
+	"update_now",
+	"update_requested_at",
+	"update_requested_by",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [14]any
+	buf  [19]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3137,6 +3758,11 @@ func (s *rowSource) Values() []any {
 	s.buf[11] = r.TunnelRttUs.Ptr()
 	s.buf[12] = r.UninstallRequestedAt.Ptr()
 	s.buf[13] = r.UninstallRequestedBy.Ptr()
+	s.buf[14] = r.UpdateID.Ptr()
+	s.buf[15] = r.UpdateVersion.Ptr()
+	s.buf[16] = &r.UpdateNow
+	s.buf[17] = r.UpdateRequestedAt.Ptr()
+	s.buf[18] = r.UpdateRequestedBy.Ptr()
 	return s.buf[:]
 }
 
@@ -3181,8 +3807,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 11
 	mask |= 1 << 12
 	mask |= 1 << 13
+	mask |= 1 << 14
+	mask |= 1 << 15
+	mask |= 1 << 16
+	mask |= 1 << 17
+	mask |= 1 << 18
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -3197,6 +3828,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.TunnelRttUs.Arg())
 	args = append(args, r.UninstallRequestedAt.Arg())
 	args = append(args, r.UninstallRequestedBy.Arg())
+	args = append(args, r.UpdateID.Arg())
+	args = append(args, r.UpdateVersion.Arg())
+	args = append(args, r.UpdateNow)
+	args = append(args, r.UpdateRequestedAt.Arg())
+	args = append(args, r.UpdateRequestedBy.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3258,6 +3894,16 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.UninstallRequestedAt.Arg())
 		case 13:
 			args = append(args, n.row.UninstallRequestedBy.Arg())
+		case 14:
+			args = append(args, n.row.UpdateID.Arg())
+		case 15:
+			args = append(args, n.row.UpdateVersion.Arg())
+		case 16:
+			args = append(args, n.row.UpdateNow)
+		case 17:
+			args = append(args, n.row.UpdateRequestedAt.Arg())
+		case 18:
+			args = append(args, n.row.UpdateRequestedBy.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3330,6 +3976,16 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.UninstallRequestedAt.Arg())
 		case 12:
 			args = append(args, m.row.UninstallRequestedBy.Arg())
+		case 13:
+			args = append(args, m.row.UpdateID.Arg())
+		case 14:
+			args = append(args, m.row.UpdateVersion.Arg())
+		case 15:
+			args = append(args, m.row.UpdateNow)
+		case 16:
+			args = append(args, m.row.UpdateRequestedAt.Arg())
+		case 17:
+			args = append(args, m.row.UpdateRequestedBy.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3438,6 +4094,16 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.UninstallRequestedAt.Arg())
 		case 12:
 			args = append(args, m.row.UninstallRequestedBy.Arg())
+		case 13:
+			args = append(args, m.row.UpdateID.Arg())
+		case 14:
+			args = append(args, m.row.UpdateVersion.Arg())
+		case 15:
+			args = append(args, m.row.UpdateNow)
+		case 16:
+			args = append(args, m.row.UpdateRequestedAt.Arg())
+		case 17:
+			args = append(args, m.row.UpdateRequestedBy.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3612,6 +4278,16 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.UninstallRequestedAt.Arg())
 		case 12:
 			args = append(args, m.row.UninstallRequestedBy.Arg())
+		case 13:
+			args = append(args, m.row.UpdateID.Arg())
+		case 14:
+			args = append(args, m.row.UpdateVersion.Arg())
+		case 15:
+			args = append(args, m.row.UpdateNow)
+		case 16:
+			args = append(args, m.row.UpdateRequestedAt.Arg())
+		case 17:
+			args = append(args, m.row.UpdateRequestedBy.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

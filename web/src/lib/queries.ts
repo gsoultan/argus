@@ -21,6 +21,9 @@ import {
   setDBAssignment as liveSetDBAssignment,
   removeDBAssignment as liveRemoveDBAssignment,
   requestDatabaseAccess as liveRequestDatabaseAccess,
+  agentUpdate as liveAgentUpdate,
+  requestAgentUpdate as liveRequestAgentUpdate,
+  cancelAgentUpdate as liveCancelAgentUpdate,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -554,5 +557,40 @@ export function useRequestDatabaseAccess() {
     mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof liveRequestDatabaseAccess>[1]) =>
       liveRequestDatabaseAccess(id, input),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['requests'] }),
+  })
+}
+
+/* ── Updating a server's agent ─────────────────────────────────────────── */
+
+const agentUpdateKey = (assetId: string) => ['agent-update', assetId] as const
+
+/** Polled fast while an update is under way, so the steps show as they happen. */
+export const agentUpdateQuery = (assetId: string) =>
+  queryOptions({
+    queryKey: agentUpdateKey(assetId),
+    queryFn: () => liveAgentUpdate(assetId),
+    enabled: isConfigured(),
+    refetchInterval: (q) => {
+      const v = q.state.data
+      if (!v) return false
+      const s = v.status?.state
+      const moving = v.request !== null || s === 'downloading' || s === 'waiting' || s === 'restarting'
+      return moving ? 2_000 : 30_000
+    },
+  })
+
+export function useRequestAgentUpdate(assetId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { version?: string; now?: boolean }) => liveRequestAgentUpdate(assetId, body),
+    onSettled: () => void qc.invalidateQueries({ queryKey: agentUpdateKey(assetId) }),
+  })
+}
+
+export function useCancelAgentUpdate(assetId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => liveCancelAgentUpdate(assetId),
+    onSettled: () => void qc.invalidateQueries({ queryKey: agentUpdateKey(assetId) }),
   })
 }

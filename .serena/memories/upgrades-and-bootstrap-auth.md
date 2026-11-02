@@ -80,3 +80,45 @@ which is how it survived -- the same bug shape as the gateway's `relay()`.
 
 Go does not skip `node_modules`, and `flatted` ships Go source. `check.sh` and
 CI list packages via `go list ./... | grep -v /node_modules/`.
+
+## Updating an agent from the console (2026-11)
+
+Server page, **Agent** card. The request lives on `agent_credentials.update_*`
+(migration 034) and rides every heartbeat reply until the agent reports an
+outcome for that `update_id`; then it is cleared and audited once
+(`recordAgentUpdate` clears with `WHERE update_id = $id`). The agent's own
+account (`update` on the heartbeat: supported/reason, state, sessions,
+message) is kept on `agents.update_status`. Code: `internal/agent/update.go`
+(Updater), `update_linux.go` (platform + the `update-apply` helper),
+`internal/control/agent_update.go`, `web/src/components/AgentUpdate.tsx`.
+
+What made the old upgrade drop things, and what replaced each:
+
+- **The restart took every session.** The update waits for `Busy()` = shim
+  connections + open non-ping tunnel streams to be 0, then holds new sessions
+  (collector replies `restarting`, tunnel gate refuses) and checks again.
+- **Logins in the restart window were refused.** The shim retries the socket
+  for 5s always (covers a hand `systemctl restart`), and for 75s when told
+  `restarting` or when `/run/argus/updating` is fresh. The unit keeps
+  `/run/argus` across restarts (`RuntimeDirectoryPreserve=restart`) so the
+  marker survives.
+- **SSH logins went on unrecorded after any agent restart**, silently. The
+  shim buffers (4 MB) and reconnects to the next agent, which records the rest
+  as a new session whose start says which one it continues. A login the new
+  agent will not take says so on the terminal and in the auth log.
+- **No way back.** The helper runs in its own transient unit (outside the
+  sandbox and the agent's cgroup) from a copy of the binary, installs with
+  `ARGUS_AGENT_UPDATING=1` (postinstall then skips its own restart), restarts,
+  and waits for `ready.json` (version, listening, tunnel). Not ready in 90s, or
+  3 automatic restarts by systemd, reinstalls the old package (or the copied
+  binary).
+
+Drill (real systemd container, packages from nfpm, release mirror over HTTP):
+an update waited out a console terminal and an SSH login, restarted in 1s,
+92 logins during it, 0 refused; "now" kept an SSH login connected with its
+recording continuing; a version that exits at once went back in ~8s.
+
+Traps found in the drill: the helper must date what it writes to
+`update.json` -- undated, the new agent took it for a lost helper and wrote
+"failed" over the helper's own result. And the new agent must watch the file
+(`Updater.Watch`), or "done" reaches the console only at the next heartbeat.

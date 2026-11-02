@@ -79,6 +79,9 @@ SystemCallArchitectures=native
 
 RuntimeDirectory=argus
 RuntimeDirectoryMode=0755
+# Kept across a restart: an update leaves a marker here that tells SSH logins
+# arriving mid-restart to wait for the new agent rather than be refused.
+RuntimeDirectoryPreserve=restart
 StateDirectory=argus
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/argus /run/argus
