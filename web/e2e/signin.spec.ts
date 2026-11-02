@@ -377,3 +377,29 @@ test.describe('counts land on exactly what they counted', () => {
     await expect(page.locator('tbody tr', { hasText: /^closed/ }).first()).toBeVisible()
   })
 })
+
+test('the password field is as wide as the email field, and its eye works from the keyboard', async ({ page }) => {
+  // The console imports Mantine's stylesheets one by one, and PasswordInput's
+  // was missing from the list. Without it the real <input> inside the field is
+  // not stretched to the field's border, so it stopped at the browser's default
+  // width -- about 160px of a 380px box -- with the eye floating on its own.
+  await page.goto('/')
+  const email = page.getByLabel(/^email$/i)
+  const password = page.getByLabel(/^password$/i)
+  const emailBox = await email.boundingBox()
+  const passwordBox = await password.boundingBox()
+  // The eye sits inside the field, so the input is the field less the button.
+  expect(passwordBox!.width).toBeGreaterThan(emailBox!.width * 0.85)
+
+  await password.fill(PASSWORD)
+  await expect(password).toHaveAttribute('type', 'password')
+  await password.press('Tab')
+  const eye = page.getByRole('button', { name: 'Show password' })
+  await expect(eye).toBeFocused()
+  await expect(eye).toHaveAttribute('aria-pressed', 'false')
+  await page.keyboard.press('Enter')
+  await expect(password).toHaveAttribute('type', 'text')
+  await expect(eye).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Space')
+  await expect(password).toHaveAttribute('type', 'password')
+})
