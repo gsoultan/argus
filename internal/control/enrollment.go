@@ -117,12 +117,14 @@ func (s *Store) CreateEnrollToken(ctx context.Context, createdBy, hostname strin
 	if ttl > MaxEnrollTokenTTL {
 		ttl = MaxEnrollTokenTTL
 	}
-	secret, err := newSecret(enrollTokenPrefix)
+	// Minted with the organization in front of the secret, so the control
+	// plane knows where to look it up; see secretTenant.
+	secret, err := newSecret(enrollTokenPrefix + secretPrefixFor(tenantIDOf(ctx)))
 	if err != nil {
 		return EnrollToken{}, err
 	}
 	out := EnrollToken{Token: secret, Hostname: strings.TrimSpace(hostname), CreatedBy: createdBy}
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO agent_enrollment_tokens (token_hash, hostname, created_by, expires_at)
 		VALUES ($1, $2, $3, now() + make_interval(secs => $4))
 		RETURNING id::text, expires_at`,
@@ -156,7 +158,7 @@ func (s *Store) Enroll(ctx context.Context, token, hostname string) (Enrollment,
 	if !strings.HasPrefix(token, enrollTokenPrefix) {
 		return Enrollment{}, ErrEnrollTokenInvalid
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return Enrollment{}, err
 	}
@@ -183,7 +185,7 @@ func (s *Store) Enroll(ctx context.Context, token, hostname string) (Enrollment,
 		return Enrollment{}, fmt.Errorf("consume enrollment token: %w", err)
 	}
 
-	out.Credential, err = newSecret(agentCredentialPrefix)
+	out.Credential, err = newSecret(agentCredentialPrefix + secretPrefixFor(tenantIDOf(ctx)))
 	if err != nil {
 		return Enrollment{}, err
 	}
@@ -234,7 +236,7 @@ func whyEnrollRefused(ctx context.Context, tx pgx.Tx, token, hostname string) er
 // AgentCredentials lists every enrolled agent, revoked ones included: which
 // credential vouched for a past session is part of reading it.
 func (s *Store) AgentCredentials(ctx context.Context) ([]AgentCredential, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT c.id::text, c.hostname, c.created_at, t.created_by,
 		       c.revoked_at, COALESCE(c.revoked_by, ''),
 		       c.tunnel_transport, c.tunnel_replica, c.tunnel_connected_at,
@@ -273,7 +275,7 @@ func (s *Store) AgentCredentials(ctx context.Context) ([]AgentCredential, error)
 // RevokeAgentCredential withdraws one agent's credential. Returns its hostname.
 func (s *Store) RevokeAgentCredential(ctx context.Context, id, by string) (string, error) {
 	var hostname string
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		UPDATE agent_credentials SET revoked_at = now(), revoked_by = $2
 		 WHERE id::text = $1 AND revoked_at IS NULL
 		RETURNING hostname`, id, by).Scan(&hostname)
@@ -288,7 +290,7 @@ func (s *Store) RevokeAgentCredential(ctx context.Context, id, by string) (strin
 
 // agentCredentialHost returns the hostname a live credential is bound to.
 func (s *Store) agentCredentialHost(ctx context.Context, hash string) (id, hostname string, err error) {
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		SELECT id::text, hostname FROM agent_credentials
 		 WHERE secret_hash = $1 AND revoked_at IS NULL`, hash).Scan(&id, &hostname)
 	return id, hostname, err
@@ -308,7 +310,11 @@ const agentCredCacheMax = 20_000
 
 type agentCredEntry struct {
 	id, hostname string
-	checked      time.Time
+	// tenant is the organization the credential was found in. A hit is only
+	// a hit for the same organization: the hash already pins it, since the
+	// prefix is part of what was hashed, and this is the second lock.
+	tenant  string
+	checked time.Time
 }
 
 // agentCredCache spares a database round trip on every agent report. A fleet
@@ -366,7 +372,7 @@ func (c *agentCredCache) forget(id string) {
 // Asking twice keeps the first request.
 func (s *Store) RequestAgentUninstall(ctx context.Context, hostname, by string) (bool, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		WITH asked AS (
 			UPDATE agent_credentials
 			   SET uninstall_requested_at = COALESCE(uninstall_requested_at, now()),
@@ -381,7 +387,7 @@ func (s *Store) RequestAgentUninstall(ctx context.Context, hostname, by string) 
 // asked to uninstall itself.
 func (s *Store) agentUninstallRequested(ctx context.Context, hostname string) (bool, error) {
 	var asked bool
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM agent_credentials
 		                WHERE lower(hostname) = lower($1) AND revoked_at IS NULL
 		                  AND uninstall_requested_at IS NOT NULL)`, hostname).Scan(&asked)

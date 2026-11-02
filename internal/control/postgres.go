@@ -90,7 +90,7 @@ func (a *API) handleDatabaseTicket(w http.ResponseWriter, r *http.Request) {
 	// The ticket binds the host and the role; the level travels in it as the
 	// principal's suffix so the redeemer cannot be handed a different one.
 	principal := role + "@" + level
-	ticket, err := a.signer.IssueTicket(sess.Email, db.Hostname, principal, a.ticketTTL())
+	ticket, err := a.signerFor(r).IssueTicket(sess.Email, db.Hostname, principal, a.ticketTTL())
 	if err != nil {
 		a.fail(w, "issue ticket", err)
 		return
@@ -173,7 +173,7 @@ func (a *API) handlePostgres(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "principal must be role@level")
 		return
 	}
-	t, err := a.signer.RedeemTicket(r.Context(), token, db.Hostname, principal)
+	t, err := a.signerFor(r).RedeemTicket(r.Context(), token, db.Hostname, principal)
 	if err != nil {
 		a.log.Warn("database session refused", "database", db.ID, "principal", principal, "error", err)
 		writeErr(w, http.StatusUnauthorized, "unauthorized: "+err.Error())
@@ -228,7 +228,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		PoolHost: db.PoolerHost, PoolPort: db.PoolerPort,
 		StatementTimeoutMS: db.Policy.StatementTimeoutS * 1000, IdleTxTimeoutMS: db.Policy.IdleTxTimeoutS * 1000,
 		MaxRows: db.Policy.MaxRows, IdleTimeoutS: db.Policy.IdleTimeoutS, MaxSessionS: db.Policy.MaxSessionS}
-	grant, err := tunnel.SignGrant(a.Tunnels.GrantKey, g)
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the session grant")
 		return
@@ -287,7 +287,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		defer stmu.Unlock()
 		return tunnel.WriteFrame(st, typ, p)
 	}
-	ls := &liveSession{id: sessionID, protocol: "postgres", hub: live.NewHub()}
+	ls := &liveSession{tenant: tenantIDOf(ctx), id: sessionID, protocol: "postgres", hub: live.NewHub()}
 	var endOnce sync.Once
 	var endedBy, endReason string
 	ls.terminate = func(by, reason string) bool {
@@ -332,7 +332,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		}
 		store := a.storeRecording
 		if store == nil && a.recordings != nil {
-			store = a.recordings.Upload
+			store = a.recordingsFor(ctx).Upload
 		}
 		if store != nil && head != "" {
 			if fi, err := rec.Stat(); err == nil {

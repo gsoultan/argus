@@ -81,7 +81,7 @@ func (s *Store) DirectSSHSettingFor(ctx context.Context, hostname string) (Direc
 		out      DirectSSHSetting
 		accounts []byte
 	)
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT COALESCE(a.direct_ssh, p.direct_ssh), COALESCE(a.direct_ssh_accounts, '{}'::jsonb)
 		  FROM gateway_policy p
 		  LEFT JOIN LATERAL (
@@ -119,7 +119,7 @@ func (s *Store) SetAssetDirectSSHAccount(ctx context.Context, id, account, mode 
 	if mode != "" && !validDirectSSH(mode) {
 		return nil, ErrInvalidDirectSSH
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return nil, err
 	}

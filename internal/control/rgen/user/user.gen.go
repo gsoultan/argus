@@ -37,6 +37,8 @@ type Row struct {
 	SessionsValidAfter runtime.Null[time.Time]
 	TotpPendingSecret  runtime.Null[string]
 	TotpLastStep       runtime.Null[int64]
+	HomeTenant         runtime.Null[string]
+	Shareable          bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -75,7 +77,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 17
+const nCols = 19
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -309,6 +311,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.nums[q.nn] = int64(r.TotpLastStep.V)
 		q.nn++
+	case 17:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.HomeTenant.V
+		q.ns++
+	case 18:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.Shareable
+		q.nbo++
 	}
 }
 
@@ -494,6 +510,8 @@ var (
 	SessionsValidAfter = NullTimeCol{14}
 	TotpPendingSecret  = NullTextCol{15}
 	TotpLastStep       = NullInt64Col{16}
+	HomeTenant         = NullTextCol{17}
+	Shareable          = BoolCol{18}
 )
 
 // UUIDCol addresses a uuid column.
@@ -875,6 +893,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyI64[q.nai64] = p.anyI64
 			q.nai64++
+		case 17:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1003,6 +1028,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.nums[q.nn] = p.num
 		q.nn++
+	case 17:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 18:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1175,8 +1214,23 @@ func (q Query) TotpLastStepIn(v ...int64) Query    { return q.Where(TotpLastStep
 func (q Query) TotpLastStepNotIn(v ...int64) Query { return q.Where(TotpLastStep.NotIn(v...)) }
 func (q Query) TotpLastStepIsNull() Query          { return q.Where(TotpLastStep.IsNull()) }
 func (q Query) TotpLastStepIsNotNull() Query       { return q.Where(TotpLastStep.IsNotNull()) }
+func (q Query) HomeTenantEq(v string) Query        { return q.Where(HomeTenant.Eq(v)) }
+func (q Query) HomeTenantNotEq(v string) Query     { return q.Where(HomeTenant.NotEq(v)) }
+func (q Query) HomeTenantGt(v string) Query        { return q.Where(HomeTenant.Gt(v)) }
+func (q Query) HomeTenantGte(v string) Query       { return q.Where(HomeTenant.Gte(v)) }
+func (q Query) HomeTenantLt(v string) Query        { return q.Where(HomeTenant.Lt(v)) }
+func (q Query) HomeTenantLte(v string) Query       { return q.Where(HomeTenant.Lte(v)) }
+func (q Query) HomeTenantEqLower(v string) Query   { return q.Where(HomeTenant.EqLower(v)) }
+func (q Query) HomeTenantLike(v string) Query      { return q.Where(HomeTenant.Like(v)) }
+func (q Query) HomeTenantILike(v string) Query     { return q.Where(HomeTenant.ILike(v)) }
+func (q Query) HomeTenantIn(v ...string) Query     { return q.Where(HomeTenant.In(v...)) }
+func (q Query) HomeTenantNotIn(v ...string) Query  { return q.Where(HomeTenant.NotIn(v...)) }
+func (q Query) HomeTenantIsNull() Query            { return q.Where(HomeTenant.IsNull()) }
+func (q Query) HomeTenantIsNotNull() Query         { return q.Where(HomeTenant.IsNotNull()) }
+func (q Query) ShareableEq(v bool) Query           { return q.Where(Shareable.Eq(v)) }
+func (q Query) ShareableNotEq(v bool) Query        { return q.Where(Shareable.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step" FROM "users"`
+const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable" FROM "users"`
 const countPrefix = `SELECT count(*) FROM "users"`
 const existsPrefix = `SELECT 1 FROM "users"`
 const existsSuffix = ` LIMIT 1`
@@ -1315,6 +1369,18 @@ var orderTable = [nCols][4]string{
 		"\"totp_last_step\" ASC NULLS FIRST",
 		"\"totp_last_step\" DESC NULLS LAST",
 	},
+	{ // home_tenant
+		"\"home_tenant\"",
+		"\"home_tenant\" DESC",
+		"\"home_tenant\" ASC NULLS FIRST",
+		"\"home_tenant\" DESC NULLS LAST",
+	},
+	{ // shareable
+		"\"shareable\"",
+		"\"shareable\" DESC",
+		"\"shareable\" ASC NULLS FIRST",
+		"\"shareable\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1337,6 +1403,8 @@ var identTable = [nCols]string{
 	"\"sessions_valid_after\"",
 	"\"totp_pending_secret\"",
 	"\"totp_last_step\"",
+	"\"home_tenant\"",
+	"\"shareable\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1369,7 +1437,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [17][28]runtime.Frag{
+var fragTable = [19][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1880,6 +1948,66 @@ var fragTable = [17][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // home_tenant
+		{}, // opNone
+		{A: "\"home_tenant\" = $", B: ""},
+		{A: "\"home_tenant\" <> $", B: ""},
+		{A: "\"home_tenant\" > $", B: ""},
+		{A: "\"home_tenant\" >= $", B: ""},
+		{A: "\"home_tenant\" < $", B: ""},
+		{A: "\"home_tenant\" <= $", B: ""},
+		{A: "lower(\"home_tenant\") = lower($", B: ")"},
+		{A: "\"home_tenant\" LIKE $", B: ""},
+		{A: "\"home_tenant\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"home_tenant\" = ANY($", B: ")"},
+		{A: "\"home_tenant\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"home_tenant\" IS NULL", B: ""},
+		{A: "\"home_tenant\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // shareable
+		{}, // opNone
+		{A: "\"shareable\" = $", B: ""},
+		{A: "\"shareable\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2053,6 +2181,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.SessionsValidAfter = runtime.Nullable(rv[14], runtime.Timestamptz)
 	r.TotpPendingSecret = runtime.NullText(rv[15], sl)
 	r.TotpLastStep = runtime.Nullable(rv[16], runtime.Int8)
+	r.HomeTenant = runtime.NullText(rv[17], sl)
+	r.Shareable = runtime.Bool(rv[18])
 	return nil
 }
 
@@ -2167,6 +2297,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyI64[nai64] = q.anyI64[nai64]
 				v = append(v, &b.anyI64[nai64])
 				nai64++
+			case 17:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2239,6 +2373,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.nums[nn] = q.nums[nn]
 			v = append(v, &b.nums[nn])
 			nn++
+		case 17:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 18:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -2376,7 +2518,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step"`
+const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable"`
 
 const updatePrefix = `UPDATE "users" SET `
 const deletePrefix = `DELETE FROM "users"`
@@ -2400,9 +2542,11 @@ const (
 	dSessionsValidAfter uint64 = 1 << 13
 	dTotpPendingSecret  uint64 = 1 << 14
 	dTotpLastStep       uint64 = 1 << 15
+	dHomeTenant         uint64 = 1 << 16
+	dShareable          uint64 = 1 << 17
 )
 
-const nUpdatable = 16
+const nUpdatable = 18
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2422,6 +2566,8 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"sessions_valid_after\" = $", B: ""}, // sessions_valid_after
 	{A: "\"totp_pending_secret\" = $", B: ""},  // totp_pending_secret
 	{A: "\"totp_last_step\" = $", B: ""},       // totp_last_step
+	{A: "\"home_tenant\" = $", B: ""},          // home_tenant
+	{A: "\"shareable\" = $", B: ""},            // shareable
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2444,6 +2590,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"sessions_valid_after\" = now()", B: ""}, // sessions_valid_after = the database's clock
 	{}, // totp_pending_secret has no server-side form
 	{A: "\"totp_last_step\" = \"totp_last_step\" + 1", B: ""}, // totp_last_step = its own value plus one
+	{}, // home_tenant has no server-side form
+	{}, // shareable has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2472,9 +2620,11 @@ const (
 	iSessionsValidAfter uint64 = 1 << 14
 	iTotpPendingSecret  uint64 = 1 << 15
 	iTotpLastStep       uint64 = 1 << 16
+	iHomeTenant         uint64 = 1 << 17
+	iShareable          uint64 = 1 << 18
 )
 
-const nInsertable = 17
+const nInsertable = 19
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2495,6 +2645,8 @@ var insCols = [nInsertable]string{
 	"\"sessions_valid_after\"",
 	"\"totp_pending_secret\"",
 	"\"totp_last_step\"",
+	"\"home_tenant\"",
+	"\"shareable\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2503,7 +2655,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"users\""
-const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\""
+const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2522,7 +2674,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\""
+const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2811,6 +2963,26 @@ func (m *Mut) SetTotpLastStepNull() {
 	m.expr &^= dTotpLastStep
 }
 
+func (m *Mut) SetHomeTenant(v string) {
+	m.row.HomeTenant = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dHomeTenant
+	m.expr &^= dHomeTenant
+}
+
+// SetHomeTenantNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetHomeTenantNull() {
+	m.row.HomeTenant = runtime.Null[string]{}
+	m.dirty |= dHomeTenant
+	m.expr &^= dHomeTenant
+}
+
+func (m *Mut) SetShareable(v bool) {
+	m.row.Shareable = v
+	m.dirty |= dShareable
+	m.expr &^= dShareable
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2991,6 +3163,23 @@ func (n *Ins) SetTotpLastStepNull() {
 	n.set |= iTotpLastStep
 }
 
+func (n *Ins) SetHomeTenant(v string) {
+	n.row.HomeTenant = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iHomeTenant
+}
+
+// SetHomeTenantNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetHomeTenantNull() {
+	n.row.HomeTenant = runtime.Null[string]{}
+	n.set |= iHomeTenant
+}
+
+func (n *Ins) SetShareable(v bool) {
+	n.row.Shareable = v
+	n.set |= iShareable
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3039,7 +3228,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 16)
+	set := make([]string, 0, 18)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -3090,6 +3279,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<16) != 0 {
 			set = append(set, "totp_last_step")
 		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "display_name")
@@ -3135,6 +3330,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<16) != 0 {
 			set = append(set, "totp_last_step")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -3185,6 +3386,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<16) != 0 {
 			set = append(set, "totp_last_step")
 		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
+		}
 	case 3:
 		if mask&(1<<1) != 0 {
 			set = append(set, "email")
@@ -3230,6 +3437,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<16) != 0 {
 			set = append(set, "totp_last_step")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
 		}
 	}
 	return set
@@ -3325,6 +3538,8 @@ var assignFor = map[string]string{
 	"sessions_valid_after": "\"sessions_valid_after\" = EXCLUDED.\"sessions_valid_after\"",
 	"totp_pending_secret":  "\"totp_pending_secret\" = EXCLUDED.\"totp_pending_secret\"",
 	"totp_last_step":       "\"totp_last_step\" = EXCLUDED.\"totp_last_step\"",
+	"home_tenant":          "\"home_tenant\" = EXCLUDED.\"home_tenant\"",
+	"shareable":            "\"shareable\" = EXCLUDED.\"shareable\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3402,6 +3617,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.TotpPendingSecret.Arg())
 		case 16:
 			args = append(args, n.row.TotpLastStep.Arg())
+		case 17:
+			args = append(args, n.row.HomeTenant.Arg())
+		case 18:
+			args = append(args, n.row.Shareable)
 		}
 	}
 	var out Row
@@ -3439,7 +3658,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 17)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3457,6 +3676,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.SessionsValidAfter.Arg())
 	args = append(args, r.TotpPendingSecret.Arg())
 	args = append(args, r.TotpLastStep.Arg())
+	args = append(args, r.HomeTenant.Arg())
+	args = append(args, r.Shareable)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3500,13 +3721,15 @@ var copyCols = []string{
 	"sessions_valid_after",
 	"totp_pending_secret",
 	"totp_last_step",
+	"home_tenant",
+	"shareable",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [17]any
+	buf  [19]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3541,6 +3764,8 @@ func (s *rowSource) Values() []any {
 	s.buf[14] = r.SessionsValidAfter.Ptr()
 	s.buf[15] = r.TotpPendingSecret.Ptr()
 	s.buf[16] = r.TotpLastStep.Ptr()
+	s.buf[17] = r.HomeTenant.Ptr()
+	s.buf[18] = &r.Shareable
 	return s.buf[:]
 }
 
@@ -3588,8 +3813,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 14
 	mask |= 1 << 15
 	mask |= 1 << 16
+	mask |= 1 << 17
+	mask |= 1 << 18
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 17)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3607,6 +3834,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.SessionsValidAfter.Arg())
 	args = append(args, r.TotpPendingSecret.Arg())
 	args = append(args, r.TotpLastStep.Arg())
+	args = append(args, r.HomeTenant.Arg())
+	args = append(args, r.Shareable)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3674,6 +3903,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.TotpPendingSecret.Arg())
 		case 16:
 			args = append(args, n.row.TotpLastStep.Arg())
+		case 17:
+			args = append(args, n.row.HomeTenant.Arg())
+		case 18:
+			args = append(args, n.row.Shareable)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3752,6 +3985,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.TotpPendingSecret.Arg())
 		case 15:
 			args = append(args, m.row.TotpLastStep.Arg())
+		case 16:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 17:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3866,6 +4103,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.TotpPendingSecret.Arg())
 		case 15:
 			args = append(args, m.row.TotpLastStep.Arg())
+		case 16:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 17:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4046,6 +4287,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.TotpPendingSecret.Arg())
 		case 15:
 			args = append(args, m.row.TotpLastStep.Arg())
+		case 16:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 17:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

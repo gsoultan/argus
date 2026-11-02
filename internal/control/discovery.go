@@ -84,7 +84,7 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 	if hostname == "" {
 		return errors.New("hostname is required")
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db(ctx).Exec(ctx, `
 		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,now())
 		ON CONFLICT (hostname) DO UPDATE SET
@@ -104,7 +104,7 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 //
 // state filters by review state; empty returns every unmatched host.
 func (s *Store) DiscoveredHosts(ctx context.Context, state string) ([]DiscoveredHost, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT hostname, COALESCE(fqdn,''), COALESCE(machine_id,''), os,
 		       addresses, ssh_ports, accounts, version,
 		       first_seen_at, last_seen_at,
@@ -185,7 +185,7 @@ func (s *Store) EnrolHost(
 		return "", ErrInvalidAsset{Reason: "pick at least one login account for the people who may connect"}
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +283,7 @@ func (s *Store) EnrolHost(
 // is indistinguishable from a host nobody ever looked at, and the next reviewer
 // has to redo the work.
 func (s *Store) IgnoreHost(ctx context.Context, hostname, actor, note string) error {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE agents SET enrollment_state = 'ignored', review_note = $3,
 		                  reviewed_by = $2, reviewed_at = now(), updated_at = now()
 		WHERE hostname = $1 AND enrollment_state = 'unreviewed'`,
@@ -300,7 +300,7 @@ func (s *Store) IgnoreHost(ctx context.Context, hostname, actor, note string) er
 // Coverage counts both kinds of gap.
 func (s *Store) Coverage(ctx context.Context) (Coverage, error) {
 	var c Coverage
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT
 		  (SELECT count(*) FROM assets),
 		  (SELECT count(*) FROM assets WHERE agent_state = 'healthy'),

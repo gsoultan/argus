@@ -408,5 +408,7 @@ func _assertUserShape(m m0.User) {
 		m.SessionsValidAfter,
 		m.TotpPendingSecret,
 		m.TotpLastStep,
+		m.HomeTenant,
+		m.Shareable,
 	}
 }

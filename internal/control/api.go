@@ -76,6 +76,9 @@ type API struct {
 	signer        *auth.Signer
 	consoleURL    string
 	secureCookies bool
+	// signers holds the per-organization signers derived from signer; see
+	// tenant_routes.go.
+	signers tenantSigners
 
 	// SessionTTL and TicketTTL default sensibly; see sessionTTL/ticketTTL.
 	SessionTTL time.Duration
@@ -139,7 +142,9 @@ func (a *API) Handler() http.Handler {
 	a.registerCommon(mux)
 	a.registerConsole(mux)
 	a.registerFleet(mux)
-	return a.securityHeaders(a.cors(a.sessionGate(mux)))
+	// scope first: the gate checks the cookie against the organization's
+	// own table, so it needs to know which one.
+	return a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))
 }
 
 // ConsoleHandler serves the surface a person reaches: sign-in, the console's
@@ -154,7 +159,9 @@ func (a *API) ConsoleHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerConsole(mux)
-	return a.securityHeaders(a.cors(a.sessionGate(mux)))
+	// scope first: the gate checks the cookie against the organization's
+	// own table, so it needs to know which one.
+	return a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))
 }
 
 // FleetHandler serves the surface gateways and agents reach.
@@ -168,7 +175,7 @@ func (a *API) FleetHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerFleet(mux)
-	return a.securityHeaders(a.cors(mux))
+	return a.securityHeaders(a.cors(a.scope(mux)))
 }
 
 // registerCommon adds what both surfaces need: liveness, and the process's own
@@ -195,6 +202,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/password/change", a.limitLogin(a.handleChangePassword))
 	mux.HandleFunc("POST /auth/sessions/revoke", a.handleRevokeSessions)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
+	mux.HandleFunc("POST /auth/switch", a.handleSwitchOrg)
 	// First run: the first account, once, with a token read from the host.
 	mux.HandleFunc("GET /auth/setup", a.handleSetupStatus)
 	mux.HandleFunc("POST /auth/setup", a.limitLogin(a.handleSetup))
@@ -241,6 +249,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh/accounts/{account}", a.putAssetDirectSSHAccount)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
+	mux.HandleFunc("POST /api/v1/users/shared", a.postSharedAccount)
+	mux.HandleFunc("PUT /api/v1/users/{email}/shareable", a.putAccountShareable)
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
@@ -290,6 +300,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/agents", a.getAgentCredentials)
 	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", a.postRevokeAgent)
 
+	// Organizations. Platform owners only; see tenant_routes.go.
+	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
+	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
+	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/disable", a.postTenantDisabled(true))
+	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/enable", a.postTenantDisabled(false))
 }
 
 // registerFleet adds the routes an agent reaches.
@@ -408,7 +423,7 @@ func (a *API) cors(next http.Handler) http.Handler {
 		for _, allowed := range a.AllowedOrigins {
 			if allowed == origin && origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, "+OrgHeader)
 				w.Header().Set("Access-Control-Allow-Methods",
 					"GET, POST, PATCH, PUT, DELETE, OPTIONS")
 				// Without this the browser silently hides the header and the
@@ -593,7 +608,10 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	// Only on the report that created the row: the gateway and the agent both
 	// report every session, and keep reporting it while it runs. Queued, not
 	// sent, so a slow mail server cannot hold up the reporter.
-	if created {
+	// Alert channels are the platform's configuration, so only the default
+	// organization's sessions are announced on them: another organization's
+	// activity must not be mailed to the platform's recipients.
+	if created && tenantIDOf(r.Context()) == DefaultTenantID {
 		a.Alerts.SessionStarted(notify.SessionStarted{
 			ID:        in.ID,
 			UserEmail: in.UserEmail,

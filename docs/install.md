@@ -532,7 +532,10 @@ sudo systemctl restart argus-control
 ```
 
 Upgrade the control plane first, then agents. Migrations run when
-the control plane starts. They mostly add, but 0.5.0 drops the columns behind
+the control plane starts. The organization registry is added to its own schema,
+`argus_platform`, and the install's existing tables become the default
+organization in place; nothing else changes until a second organization is
+created under **Settings > Organizations**. They mostly add, but 0.5.0 drops the columns behind
 two settings it removed (the native-clients switch and the per-server
 recording scope), so take a backup first
 (`systemctl start argus-backup.service`).

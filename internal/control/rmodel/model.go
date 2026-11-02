@@ -648,12 +648,19 @@ type User struct {
 	SessionsValidAfter *time.Time
 	TotpPendingSecret  *string
 	TotpLastStep       *int64
+	// HomeTenant is the organization holding this person's credentials when
+	// they were shared in from another one; nil when they are this
+	// organization's own. Shareable is whether another organization may add
+	// them, set here by the organization they belong to.
+	HomeTenant *string
+	Shareable  bool
 }
 
 func (m *User) Schema(t *storm.Table) {
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.Role).Default("'operator'::text")
 	t.Col(&m.MfaEnrolled).Default("false")
+	t.Col(&m.Shareable).Default("false")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("users_email_key", &m.Email)
 	t.Index(storm.Lower(&m.Email)).Unique().Named("users_email_lower_key")

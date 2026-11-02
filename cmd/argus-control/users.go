@@ -73,6 +73,8 @@ func runUsersAdd(configPath string, args []string) error {
 		return err
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	// CreateAccount overwrites an existing row's password and role. From here
 	// that was a silent way to reset somebody, leaving their sessions and
@@ -161,6 +163,8 @@ func runUsersList(configPath string) error {
 		return err
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	accounts, err := store.Accounts(ctx)
 	if err != nil {
@@ -223,6 +227,8 @@ func runUsersSetDisabled(configPath string, args []string, disabled bool) error 
 		return err
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	switch err := store.SetAccountDisabled(ctx, email, disabled); {
 	case err == nil:
@@ -300,6 +306,8 @@ func openForRecovery(configPath string, args []string, usage string) (
 		cancel()
 		return nil, "", nil, nil, err
 	}
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 	email := strings.ToLower(strings.TrimSpace(args[0]))
 	if _, err := store.Account(ctx, email); err != nil {
 		store.Close()

@@ -35,13 +35,26 @@ var migrationFS embed.FS
 const GenesisHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // Store is the control plane's persistence layer.
+//
+// One Store serves every organization. pool is the connection the install
+// has always had: the default organization's tables and the organization
+// registry. Every other organization gets a pool of its own, opened on first
+// use; see tenant.go.
 type Store struct {
 	pool *pgxpool.Pool
 
-	// Audit appends waiting for the next transaction; see AppendAudit.
-	auditMu      sync.Mutex
-	auditQueue   []*auditAppend
-	auditWriting bool
+	// def is the default organization's connection and audit queue.
+	def *tenantDB
+	// tenants holds every other organization's, by id.
+	tmu     sync.Mutex
+	tenants map[string]*tenantDB
+	// dead answers a query that named no organization; see tdb.
+	dead *tenantDB
+
+	// Strict refuses a query whose context names no organization, instead
+	// of running it against the default one. On in production, off for
+	// the tests written before organizations existed.
+	Strict bool
 }
 
 // Open connects and applies migrations.
@@ -53,7 +66,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	if err := pool.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	s := &Store{pool: pool}
+	s := newStore(pool)
 	if err := s.migrate(ctx); err != nil {
 		pool.Close()
 		return nil, err
@@ -61,28 +74,55 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	return s, nil
 }
 
-// Close releases the pool.
-func (s *Store) Close() { s.pool.Close() }
+func newStore(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool, def: &tenantDB{id: DefaultTenantID, pool: pool},
+		tenants: map[string]*tenantDB{}}
+}
 
-// migrate applies every embedded migration in filename order.
+// Close releases every pool.
+func (s *Store) Close() {
+	s.closeTenants()
+	s.pool.Close()
+}
+
+// migrationsTableDDL is the ledger of applied migrations, kept in each
+// organization's schema.
+const migrationsTableDDL = `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			name       TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`
+
+func ensureMigrationsTable(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, migrationsTableDDL); err != nil {
+		return fmt.Errorf("create migrations table: %w", err)
+	}
+	return nil
+}
+
+// migrate applies every embedded migration in filename order, to the default
+// organization and then to every other one.
 //
 // Each runs inside a transaction and is recorded, so a partially applied
 // migration can never leave the schema in a state the next start would compound.
 func (s *Store) migrate(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			name       TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`)
-	if err != nil {
-		return fmt.Errorf("create migrations table: %w", err)
+	if err := ensureMigrationsTable(ctx, s.pool); err != nil {
+		return err
 	}
-
 	names, err := migrationNames()
 	if err != nil {
 		return err
 	}
-	return s.applyMigrations(ctx, names)
+	if err := s.applyMigrations(ctx, names); err != nil {
+		return err
+	}
+	if err := s.migratePlatform(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateTenants(ctx); err != nil {
+		return err
+	}
+	return s.backfillMemberships(ctx)
 }
 
 // migrationNames lists every embedded migration in the order it must run.
@@ -113,9 +153,14 @@ func migrationNames() ([]string, error) {
 // Running the whole set against an empty database -- which is all CI did --
 // exercises the one case no customer is ever in.
 func (s *Store) applyMigrations(ctx context.Context, names []string) error {
+	return applyMigrationsOn(ctx, s.pool, names)
+}
+
+// applyMigrationsOn is applyMigrations against one organization's pool.
+func applyMigrationsOn(ctx context.Context, pool *pgxpool.Pool, names []string) error {
 	for _, name := range names {
 		var applied bool
-		err := s.pool.QueryRow(ctx,
+		err := pool.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name = $1)`, name).Scan(&applied)
 		if err != nil {
 			return err
@@ -128,7 +173,7 @@ func (s *Store) applyMigrations(ctx context.Context, names []string) error {
 		if err != nil {
 			return err
 		}
-		tx, err := s.pool.Begin(ctx)
+		tx, err := pool.Begin(ctx)
 		if err != nil {
 			return err
 		}
@@ -231,7 +276,7 @@ const SessionAbandonedAfter = 24 * time.Hour
 // Returns the sessions it closed so the caller can record each one. A privileged
 // session ending is an audit event whether a person or a sweeper decided it.
 func (s *Store) CloseAbandonedSessions(ctx context.Context, after time.Duration) ([]Session, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		UPDATE sessions
 		   SET state        = 'closed',
 		       ended_at     = last_reported_at,
@@ -310,7 +355,7 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 	// Resolve the asset by hostname so a reporter never needs to know its id.
 	var assetID *string
 	var id string
-	err = s.pool.QueryRow(ctx,
+	err = s.db(ctx).QueryRow(ctx,
 		`SELECT id::text FROM assets WHERE hostname = $1`, in.AssetHostname).Scan(&id)
 	if err == nil {
 		assetID = &id
@@ -340,7 +385,7 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 		in.EndedAt = &now
 	}
 
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO sessions (
 			id, user_email, asset_id, asset_hostname, principal, protocol,
 			origin, origin_reason, state, started_at, ended_at, client_ip,
@@ -431,7 +476,7 @@ func (s *Store) Sessions(ctx context.Context, f SessionFilter) ([]Session, error
 		WhereIf(f.UserEmail != "", session.UserEmail.Eq(f.UserEmail)).
 		Order(session.StartedAt.Desc()).
 		Limit(int64(limit)).
-		All(ctx, pgxdrv.Pool{P: s.pool}, nil)
+		All(ctx, pgxdrv.Pool{P: s.db(ctx)}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -511,7 +556,7 @@ func sessionFromRow(r *session.Row) Session {
 // Session fetches one by id.
 func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 	var v Session
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT id::text, user_email, asset_id::text, asset_hostname, principal,
 		       protocol, origin, origin_reason, state, started_at, ended_at,
 		       client_ip, fidelity, recording_bytes, command_count, exit_code,
@@ -596,7 +641,7 @@ type Asset struct {
 
 // Assets lists the inventory an administrator sees: every live asset.
 func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
-	rows, err := s.pool.Query(ctx, assetSelect+`
+	rows, err := s.db(ctx).Query(ctx, assetSelect+`
 		WHERE a.archived_at IS NULL ORDER BY a.hostname`)
 	if err != nil {
 		return nil, err
@@ -637,7 +682,7 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 		postureJSON = b
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -708,7 +753,7 @@ var ErrAgentUnmatched = errors.New("agent hostname does not match any asset")
 // This is the control that makes killing an agent detectable. Root on the host
 // can stop the process; it cannot stop the absence being noticed here.
 func (s *Store) MarkStaleAgents(ctx context.Context, after time.Duration) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE assets SET agent_state = 'stale'
 		WHERE agent_state = 'healthy'
 		  AND agent_last_seen_at < now() - $1::interval`,
@@ -769,34 +814,39 @@ type AuditEvent struct {
 // own event is committed, with its own seq and hash. Done one transaction
 // each, a burst of 500 sessions opening waited on 500 commits in a row, and
 // the median one was told it was ready 760 ms late (see capacity_test.go).
+//
+// One queue and one chain per organization: the batch is written on the
+// organization's own connection, so two organizations' events never share a
+// transaction, a head or a lock.
 func (s *Store) AppendAudit(ctx context.Context, e AuditEvent) (AuditEvent, error) {
+	d := s.tdb(ctx)
 	r := &auditAppend{in: e, done: make(chan struct{})}
-	s.auditMu.Lock()
-	s.auditQueue = append(s.auditQueue, r)
-	if s.auditWriting {
-		s.auditMu.Unlock()
+	d.auditMu.Lock()
+	d.auditQueue = append(d.auditQueue, r)
+	if d.auditWriting {
+		d.auditMu.Unlock()
 		<-r.done
 		return r.out, r.err
 	}
-	s.auditWriting = true
-	s.auditMu.Unlock()
+	d.auditWriting = true
+	d.auditMu.Unlock()
 
 	// One caller giving up must not fail the others whose events it is
 	// carrying, so the write has a deadline of its own instead.
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteWait)
 	defer cancel()
-	for s.writeAuditQueue(wctx) {
+	for d.writeAuditQueue(wctx) {
 		select {
 		case <-r.done:
 			// This caller's event is in. Whatever queued since is written
 			// in the background rather than holding this request up.
-			s.auditMu.Lock()
-			if len(s.auditQueue) == 0 {
-				s.auditWriting = false
-				s.auditMu.Unlock()
+			d.auditMu.Lock()
+			if len(d.auditQueue) == 0 {
+				d.auditWriting = false
+				d.auditMu.Unlock()
 			} else {
-				s.auditMu.Unlock()
-				go s.drainAudit()
+				d.auditMu.Unlock()
+				go d.drainAudit()
 			}
 			return r.out, r.err
 		default:
@@ -818,10 +868,10 @@ type auditAppend struct {
 }
 
 // drainAudit writes whatever is queued until nothing is.
-func (s *Store) drainAudit() {
+func (d *tenantDB) drainAudit() {
 	ctx, cancel := context.WithTimeout(context.Background(), auditWriteWait)
 	defer cancel()
-	for s.writeAuditQueue(ctx) {
+	for d.writeAuditQueue(ctx) {
 	}
 }
 
@@ -829,23 +879,23 @@ func (s *Store) drainAudit() {
 // When the queue is empty it gives up the writer's role, under the same lock
 // that an arriving append checks it with, so an event is never left queued
 // with nobody writing.
-func (s *Store) writeAuditQueue(ctx context.Context) bool {
-	s.auditMu.Lock()
-	n := min(len(s.auditQueue), maxAuditBatch)
+func (d *tenantDB) writeAuditQueue(ctx context.Context) bool {
+	d.auditMu.Lock()
+	n := min(len(d.auditQueue), maxAuditBatch)
 	if n == 0 {
-		s.auditWriting = false
-		s.auditMu.Unlock()
+		d.auditWriting = false
+		d.auditMu.Unlock()
 		return false
 	}
-	batch := s.auditQueue[:n:n]
-	s.auditQueue = s.auditQueue[n:]
-	s.auditMu.Unlock()
+	batch := d.auditQueue[:n:n]
+	d.auditQueue = d.auditQueue[n:]
+	d.auditMu.Unlock()
 
-	if err := s.appendAuditBatch(ctx, batch); err != nil && len(batch) > 1 {
+	if err := d.appendAuditBatch(ctx, batch); err != nil && len(batch) > 1 {
 		// One bad event must not cost the rest theirs: write them one at
 		// a time, so each caller gets its own outcome.
 		for _, r := range batch {
-			r.err = s.appendAuditBatch(ctx, []*auditAppend{r})
+			r.err = d.appendAuditBatch(ctx, []*auditAppend{r})
 		}
 	} else {
 		for _, r := range batch {
@@ -863,8 +913,8 @@ func (s *Store) writeAuditQueue(ctx context.Context) bool {
 }
 
 // appendAuditBatch chains batch onto the head in one transaction.
-func (s *Store) appendAuditBatch(ctx context.Context, batch []*auditAppend) error {
-	tx, err := s.pool.Begin(ctx)
+func (d *tenantDB) appendAuditBatch(ctx context.Context, batch []*auditAppend) error {
+	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -872,7 +922,7 @@ func (s *Store) appendAuditBatch(ctx context.Context, batch []*auditAppend) erro
 
 	// Advisory lock rather than a table lock: cheap, and scoped to audit
 	// appends so it never blocks a session write.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('argus_audit'))`); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('argus_audit:' || current_schema()))`); err != nil {
 		return err
 	}
 
@@ -945,7 +995,7 @@ func chainHash(prev string, e AuditEvent) string {
 // internally consistent and nothing whatever about what came before it.
 func (s *Store) CountAuditEvents(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&n)
+	err := s.db(ctx).QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&n)
 	return n, err
 }
 
@@ -965,7 +1015,7 @@ func (s *Store) AuditEvents(ctx context.Context, limit, before int) ([]AuditEven
 	if before <= 0 {
 		before = math.MaxInt32
 	}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT seq, id::text, at, action, severity, actor_email, target, detail, prev_hash, hash
 		FROM audit_events WHERE seq < $2 ORDER BY seq DESC LIMIT $1`, limit, before)
 	if err != nil {
@@ -1026,7 +1076,7 @@ type FleetStats struct {
 // answers is what they can reach now.
 func (s *Store) StatsFor(ctx context.Context, email string) (FleetStats, error) {
 	var st FleetStats
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		WITH mine AS (
 		  SELECT a.* FROM assets a
 		   WHERE a.archived_at IS NULL
@@ -1068,7 +1118,7 @@ func (s *Store) StatsFor(ctx context.Context, email string) (FleetStats, error) 
 // Stats computes the dashboard counters in one round trip.
 func (s *Store) Stats(ctx context.Context) (FleetStats, error) {
 	var st FleetStats
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT
 		  (SELECT count(*) FROM assets WHERE archived_at IS NULL),
 		  (SELECT count(*) FROM assets WHERE archived_at IS NULL AND health = 'unreachable'),
@@ -1106,7 +1156,7 @@ func (s *Store) Stats(ctx context.Context) (FleetStats, error) {
 func (s *Store) ExecTracingFor(ctx context.Context, host string) (bool, string, error) {
 	var tracing bool
 	var reason string
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT a.exec_tracing, a.exec_reason
 		  FROM agents a
 		 WHERE a.hostname = $1

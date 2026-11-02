@@ -49,18 +49,28 @@ type Account struct {
 	LoginName string
 	// HasSSHKey is whether they have given a public key for it.
 	HasSSHKey bool
+	// HomeTenant is the organization holding this person's password and
+	// second factor when they were shared in from another one, and "" when
+	// they belong here. Shareable is whether another organization may add
+	// them; only an organization they belong to sets it.
+	HomeTenant string
+	Shareable  bool
 }
+
+// Shared reports whether this row is a person shared in from elsewhere.
+func (a *Account) Shared() bool { return a.HomeTenant != "" }
 
 // Account looks a user up by email, case-insensitively.
 func (s *Store) Account(ctx context.Context, email string) (*Account, error) {
 	var a Account
-	var pw, secret *string
+	var pw, secret, home *string
 	var enrolledAt, disabledAt *time.Time
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT id::text, email, display_name, role, password_hash, totp_secret,
-		       mfa_enrolled_at, disabled_at
+		       mfa_enrolled_at, disabled_at, home_tenant, shareable
 		  FROM users WHERE lower(email) = lower($1)`, email).
-		Scan(&a.ID, &a.Email, &a.DisplayName, &a.Role, &pw, &secret, &enrolledAt, &disabledAt)
+		Scan(&a.ID, &a.Email, &a.DisplayName, &a.Role, &pw, &secret, &enrolledAt, &disabledAt,
+			&home, &a.Shareable)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoAccount
 	}
@@ -73,6 +83,9 @@ func (s *Store) Account(ctx context.Context, email string) (*Account, error) {
 	if secret != nil {
 		a.TOTPSecret = *secret
 	}
+	if home != nil {
+		a.HomeTenant = *home
+	}
 	a.MFAEnrolled = enrolledAt != nil
 	a.Disabled = disabledAt != nil
 	return &a, nil
@@ -84,8 +97,13 @@ func (s *Store) Account(ctx context.Context, email string) (*Account, error) {
 // address exists or not: without a dummy verification, a missing account
 // returns in microseconds while a real one takes the full argon2 cost, and that
 // difference alone enumerates the user list.
+//
+// A person shared in from another organization is verified against the
+// password held there; being disabled in either organization refuses them.
+// What comes back is the account as this organization sees it -- its role,
+// its display name -- carrying the credentials from home.
 func (s *Store) Authenticate(ctx context.Context, email, password string) (*Account, error) {
-	a, err := s.Account(ctx, email)
+	a, _, err := s.Credentials(ctx, email)
 	if err != nil || a.Disabled || a.PasswordHash == "" {
 		// Hash anyway, against a throwaway value, so the timing matches.
 		_ = auth.VerifyPassword(dummyHash, password)
@@ -109,15 +127,21 @@ func mustHash() string {
 	return h
 }
 
-// SetPassword sets or replaces an account's password, and signs the account
-// out everywhere: a password is changed because someone else might know it,
-// and their session is the first thing that should stop working.
+// SetPassword sets or replaces an account's password, where the password
+// lives: a shared person's goes to the organization they belong to. It signs
+// the account out everywhere: a password is changed because someone else
+// might know it, and their session is the first thing that should stop
+// working.
 func (s *Store) SetPassword(ctx context.Context, email, password string) error {
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx,
+	ctx, err = s.homeContext(ctx, email)
+	if err != nil {
+		return err
+	}
+	tag, err := s.db(ctx).Exec(ctx,
 		`UPDATE users SET password_hash = $2, sessions_valid_after = $3
 		  WHERE lower(email) = lower($1)`, email, hash, revocationMoment())
 	if err != nil {
@@ -151,7 +175,12 @@ func (s *Store) BeginMFAEnrolment(ctx context.Context, email string) (secret str
 	if err != nil {
 		return "", err
 	}
-	tag, err := s.pool.Exec(ctx, `
+	// The second factor lives with the password: at home.
+	ctx, err = s.homeContext(ctx, email)
+	if err != nil {
+		return "", err
+	}
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE users SET totp_pending_secret = $2
 		 WHERE lower(email) = lower($1)`, email, secret)
 	if err != nil {
@@ -170,12 +199,16 @@ func (s *Store) BeginMFAEnrolment(ctx context.Context, email string) (secret str
 func (s *Store) ConfirmMFAEnrolment(
 	ctx context.Context, email, code string,
 ) (recovery []string, err error) {
+	ctx, err = s.homeContext(ctx, email)
+	if err != nil {
+		return nil, err
+	}
 	a, err := s.Account(ctx, email)
 	if err != nil {
 		return nil, err
 	}
 	var pending *string
-	if err := s.pool.QueryRow(ctx,
+	if err := s.db(ctx).QueryRow(ctx,
 		`SELECT totp_pending_secret FROM users WHERE id = $1::uuid`, a.ID).Scan(&pending); err != nil {
 		return nil, err
 	}
@@ -195,7 +228,7 @@ func (s *Store) ConfirmMFAEnrolment(
 		return nil, errors.New("that code is not correct; check the clock on your phone")
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +298,7 @@ func normaliseRecoveryCode(code string) string {
 // The update is conditional on the code still being unused, so two concurrent
 // attempts cannot both succeed with the same code.
 func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID, code string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE recovery_codes SET used_at = now()
 		 WHERE user_id = $1::uuid AND code_hash = $2 AND used_at IS NULL`,
 		userID, hashRecoveryCode(code))
@@ -279,7 +312,7 @@ func (s *Store) ConsumeRecoveryCode(ctx context.Context, userID, code string) (b
 // they are nearly gone rather than when they have run out.
 func (s *Store) RemainingRecoveryCodes(ctx context.Context, userID string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx,
+	err := s.db(ctx).QueryRow(ctx,
 		`SELECT count(*) FROM recovery_codes WHERE user_id = $1::uuid AND used_at IS NULL`,
 		userID).Scan(&n)
 	return n, err
@@ -304,17 +337,34 @@ func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, pas
 	if displayName == "" {
 		displayName = strings.SplitN(email, "@", 2)[0]
 	}
+	tx, err := s.db(ctx).Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var id string
-	err = s.pool.QueryRow(ctx, `
+	// A person shared in from another organization is not overwritten into a
+	// local account: that would give one address two passwords.
+	err = tx.QueryRow(ctx, `
 		INSERT INTO users (email, display_name, role, password_hash)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (email) DO UPDATE
 		   SET display_name = EXCLUDED.display_name,
 		       role         = EXCLUDED.role,
 		       password_hash = EXCLUDED.password_hash
+		 WHERE users.home_tenant IS NULL
 		RETURNING id::text`, email, displayName, role, hash).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrSharedAccount
+	}
 	if err != nil {
 		return "", fmt.Errorf("create account: %w", err)
+	}
+	if err := recordMembership(ctx, tx, email, tenantIDOf(ctx), tenantIDOf(ctx)); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
 	}
 	// Someone added to a team before they had an account gets their server
 	// account name now.
@@ -333,7 +383,7 @@ func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, pas
 // an operator running one command and filing a bug.
 func (s *Store) AnyAccountExists(ctx context.Context) (bool, error) {
 	var exists bool
-	err := s.pool.QueryRow(ctx,
+	err := s.db(ctx).QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM users WHERE password_hash IS NOT NULL AND disabled_at IS NULL)`).
 		Scan(&exists)
 	return exists, err
@@ -364,7 +414,7 @@ func (s *Store) SetAccountDisabled(ctx context.Context, email string, disabled b
 
 // SetAccountDisabledBy is SetAccountDisabled, keeping who did it next to when.
 func (s *Store) SetAccountDisabledBy(ctx context.Context, email string, disabled bool, actor string) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -420,9 +470,9 @@ func (s *Store) SetAccountDisabledBy(ctx context.Context, email string, disabled
 // that an account exists and is revoked, not to be shown a list it is missing
 // from and conclude it was never there.
 func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT email, display_name, role, mfa_enrolled, disabled_at, COALESCE(disabled_by, ''),
-		       COALESCE(login_name, ''), ssh_public_key <> ''
+		       COALESCE(login_name, ''), ssh_public_key <> '', COALESCE(home_tenant, ''), shareable
 		  FROM users ORDER BY lower(email)`)
 	if err != nil {
 		return nil, err
@@ -434,21 +484,24 @@ func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
 		var a Account
 		var disabledAt *time.Time
 		if err := rows.Scan(&a.Email, &a.DisplayName, &a.Role, &a.MFAEnrolled, &disabledAt,
-			&a.DisabledBy, &a.LoginName, &a.HasSSHKey); err != nil {
+			&a.DisabledBy, &a.LoginName, &a.HasSSHKey, &a.HomeTenant, &a.Shareable); err != nil {
 			return nil, err
 		}
 		a.DisabledAt = disabledAt
 		a.Disabled = disabledAt != nil
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.fillSharedMFA(ctx, out)
 }
 
 // CountAdmins reports how many accounts can change policy, so the console can
 // warn before the last one is removed or demoted.
 func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx,
+	err := s.db(ctx).QueryRow(ctx,
 		`SELECT count(*) FROM users WHERE role IN ('owner','admin') AND disabled_at IS NULL`).Scan(&n)
 	return n, err
 }
@@ -461,7 +514,7 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 // locked so two demotions racing each other cannot both pass. Returns the role
 // the account had, for the audit entry.
 func (s *Store) SetAccountRole(ctx context.Context, email, role string) (string, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return "", err
 	}

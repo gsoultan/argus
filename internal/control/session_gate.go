@@ -83,7 +83,8 @@ func (a *API) resolveSession(r *http.Request) resolvedSession {
 	if err != nil {
 		return resolvedSession{}
 	}
-	sess, err := a.signer.VerifySession(c.Value)
+	// The key of the organization the cookie claims; scope resolved it.
+	sess, err := a.signerFor(r).VerifySession(c.Value)
 	if err != nil {
 		return resolvedSession{}
 	}
@@ -235,11 +236,11 @@ func (a *API) knownDevice(r *http.Request, email string) bool {
 	if err != nil {
 		return false
 	}
-	return a.signer.DeviceKnownFor(c.Value, email)
+	return a.signerFor(r).DeviceKnownFor(c.Value, email)
 }
 
-func (a *API) rememberDevice(w http.ResponseWriter, email string) {
-	tok, err := a.signer.IssueDeviceToken(email, deviceTTL)
+func (a *API) rememberDevice(w http.ResponseWriter, r *http.Request, email string) {
+	tok, err := a.signerFor(r).IssueDeviceToken(email, deviceTTL)
 	if err != nil {
 		a.log.Warn("cannot issue a device cookie", "error", err)
 		return

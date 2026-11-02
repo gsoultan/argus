@@ -52,15 +52,16 @@ func NewDir(root string) (*Dir, error) {
 func (d *Dir) Root() string { return d.root }
 
 // Upload copies the recording at path into the directory and returns its key.
-func (d *Dir) Upload(_ context.Context, path, sessionID, _ string, startedAt time.Time) (string, error) {
+func (d *Dir) Upload(ctx context.Context, path, sessionID, chainHead string, startedAt time.Time) (string, error) {
+	return d.UploadKey(ctx, path, ObjectKeyExt(startedAt, sessionID, extOf(path)), sessionID,
+		chainHead, startedAt)
+}
+
+// UploadKey is Upload at a key the caller chose; see Scoped.
+func (d *Dir) UploadKey(_ context.Context, path, key, _, _ string, _ time.Time) (string, error) {
 	if d == nil {
 		return "", ErrNotConfigured
 	}
-	ext := filepath.Ext(path)
-	if ext == "" {
-		ext = ".cast"
-	}
-	key := ObjectKeyExt(startedAt, sessionID, ext)
 	dst, err := d.path(key)
 	if err != nil {
 		return "", err

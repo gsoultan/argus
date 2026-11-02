@@ -430,6 +430,45 @@ shown once and stored only as digests.
 so the control plane refuses to start when it is set alongside any local
 account.
 
+### Several organizations on one control plane
+
+One `argus-control` can serve several organizations, each with its own servers,
+databases, people, teams, approvals, recordings, session rules and audit chain.
+Nothing one organization holds is readable, or even confirmable, from another.
+
+- Each organization's tables live in a Postgres schema of their own, reached
+  through a connection whose `search_path` is that schema alone. The queries in
+  the control plane do not know organizations exist; which connection a request
+  runs on is decided once, before any handler, from the credential it carried.
+- An install that exists today **is** the default organization: nothing moves on
+  upgrade, and until a second organization is created nobody is asked which one
+  they mean.
+- An owner of the default organization manages the others under **Settings >
+  Organizations**: create one with its first owner, or disable it. They cannot
+  see inside it; a platform owner who needs access is given an account there by
+  its owner, like anyone else.
+- People in another organization sign in with its short name, then their email
+  and password. Every signed value (cookie, ticket, second-factor challenge)
+  and every session grant is signed with a key derived for that organization,
+  so a value minted in one is a forgery in every other.
+- An agent enrols into one organization: its enrolment token and the credential
+  it buys carry the organization in front of the secret. A server name is
+  unique within an organization, not across them, and a recording is kept
+  under the organization's own prefix and refused to any other.
+- A disabled organization cannot sign in, its agents' reports are refused and
+  their tunnels close; its data and chain are kept and it can be enabled again.
+- A person belongs to one organization, which holds their password and second
+  step, and can be **shared** into others: an admin there adds them by email
+  with no new password, and they switch between organizations from the header.
+  Sharing is off until the person's own organization allows it, so an address
+  that was never allowed looks exactly like one nobody uses. Each organization
+  gives the shared person its own role and can remove them on its own; being
+  removed where they belong refuses them everywhere.
+
+The database role needs `CREATE` on the database to add a schema, which the
+owning role from the install steps has. See `plans/multi-tenant.md` in the
+project files for the design and the threats it was checked against.
+
 ## Verifying a recording: `argus-verify`
 
 `argus-verify` checks that a session recording has not been altered since it was
