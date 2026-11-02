@@ -78,6 +78,38 @@ describe('RedisWorkspace', () => {
   })
 })
 
+describe('RedisWorkspace command line autocomplete', () => {
+  beforeEach(() => { vi.stubGlobal('WebSocket', FakeSocket) })
+  afterEach(() => { vi.unstubAllGlobals(); FakeSocket.last = null })
+
+  it('completes a key the browser listed, and Enter takes the suggestion before it runs anything', async () => {
+    renderWithProviders(
+      <RedisWorkspace database={db} access={{ level: 'read' }} endpoint="/api/v1/postgres"
+        getTicket={async () => ({ ticket: 't', role: 'ana', level: 'read' })} />,
+    )
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'redis', level: 'read', user: 'argus-ana-read', ops: ['run', 'scan', 'value'] })
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'scan')).toBe(true))
+    const scan = ws.sent.find((r) => r.op === 'scan')!
+    ws.answer({ id: scan.id, type: 'result', keys: [{ name: 'session:42', type: 'hash' }], cursor: '0', total: 1 })
+    await screen.findByText('session:42')
+
+    const input = screen.getByLabelText('Redis command') as HTMLInputElement
+    input.focus()
+    fireEvent.change(input, { target: { value: 'HGETALL sess' } })
+    input.selectionStart = input.selectionEnd = input.value.length
+    await screen.findByRole('listbox')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input.value).toBe('HGETALL session:42')
+    expect(ws.sent.some((r) => r.op === 'run')).toBe(false)
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(ws.sent.find((r) => r.op === 'run')).toMatchObject({ command: 'HGETALL session:42' }))
+  })
+})
+
 describe('formatRedis', () => {
   it('prints replies the way redis-cli does', () => {
     expect(formatRedis({ t: 'i', i: 3 })).toBe('(integer) 3')

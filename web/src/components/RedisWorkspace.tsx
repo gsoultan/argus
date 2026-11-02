@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon, Badge, Box, Button, Drawer, Group, Loader, ScrollArea, Select, Stack, Table, Text, TextInput,
   UnstyledButton,
@@ -7,6 +7,8 @@ import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { IconBolt, IconMenu2, IconPlayerStop, IconRefresh, IconSearch } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
+import { useCompletion } from '~/components/Autocomplete'
+import { completeRedis } from '~/lib/redisComplete'
 import { ConfirmByName, FatalBanner, StoreHeader } from '~/components/StoreChrome'
 import { formatRedis, plain, useStoreSession, type RedisKey, type RedisValue, type StoreAnswer } from '~/components/useStoreSession'
 
@@ -123,7 +125,17 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
     setCmd('')
     void runCmd(c)
   }
+  // Autocomplete: commands, subcommands, and the key names the browser on
+  // the left has already listed. Nothing extra is fetched for it.
+  const cmdRef = useRef<HTMLInputElement | null>(null)
+  const keyNames = useMemo(() => keys.map((k) => k.name), [keys])
+  const completeHere = useCallback((t: string, c: number, explicit: boolean) =>
+    completeRedis(t, c, keyNames, explicit), [keyNames])
+  const completion = useCompletion({ ref: cmdRef, value: cmd, setValue: setCmd, complete: completeHere })
+
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // An open list takes Enter and the arrows; history needs it closed.
+    if (completion.onKeyDown(e)) return
     if (e.key === 'Enter') { e.preventDefault(); submit() }
     if (e.key === 'ArrowUp' && hist.length) {
       e.preventDefault()
@@ -211,8 +223,8 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
             ))}
           </Box>
           <Group gap={6} p={8} wrap="nowrap" style={{ borderTop: '1px solid #262a33' }}>
-            <TextInput value={cmd} onChange={(e) => setCmd(e.currentTarget.value)} onKeyDown={onKey} style={{ flex: 1 }}
-              placeholder="GET user:1   (Enter runs, ↑ for history)" aria-label="Redis command" spellCheck={false}
+            <TextInput ref={cmdRef} {...completion.editorProps} value={cmd} onChange={(e) => { completion.onTyped(); setCmd(e.currentTarget.value) }} onKeyDown={onKey} style={{ flex: 1 }}
+              placeholder="GET user:1   (Enter runs, ↑ for history, Ctrl+Space suggests)" aria-label="Redis command" spellCheck={false}
               autoCapitalize="off" autoCorrect="off" disabled={s.status !== 'ready'}
               styles={{ input: { fontFamily: 'var(--font-mono)', background: '#171a21', color: '#e7eaf0', borderColor: '#2b303b' } }} />
             {running !== null ? (
@@ -220,6 +232,7 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
             ) : (
               <Button size="xs" onClick={submit} disabled={s.status !== 'ready' || !cmd.trim()}>Run</Button>
             )}
+            {completion.popup}
           </Group>
         </Box>
       </Box>

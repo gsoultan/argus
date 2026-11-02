@@ -121,4 +121,5 @@ the tree, 20,000 rows max); columns come per table from `kind: "columns"`
 only once a statement names the table, cached for the session (500 tables
 max). An agent too old to know "completion" answers an error, which leaves
 keywords and built-in functions. `web/src/lib/redisComplete.ts` is the same
-for a Redis command line (commands, subcommands, keys the browser listed).
+for the Redis command line in `RedisWorkspace` (commands, subcommands, keys
+the browser listed); the open list takes Enter and ↑/↓ before run and history.
