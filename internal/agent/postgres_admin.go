@@ -329,9 +329,17 @@ func pgx(name string) string {
 	return `"` + name + `"`
 }
 
-// quoteLiteral quotes a string literal for Postgres with standard strings.
+// quoteLiteral quotes a string literal for Postgres.
+//
+// As an escape string (E'...') with both quotes and backslashes doubled, so
+// the result means the same thing whatever standard_conforming_strings is
+// set to. A plain '...' with only quotes doubled is safe only while that
+// setting is on; on a server with it off, a backslash in the owner's address
+// would escape the closing quote and the rest of the value would run as SQL
+// under the superuser this helper signs in as.
 func quoteLiteral(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return "E'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // scramVerifier computes Postgres's SCRAM-SHA-256 verifier for password, so

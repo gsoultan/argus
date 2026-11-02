@@ -25,7 +25,8 @@ when UDP is blocked). Nothing needs to reach the servers, and nothing on them
 listens beyond a local Unix socket.
 
 **[docs/install.md](docs/install.md) is the production install, step by step.**
-**Locked out of a server? [docs/lockout.md](docs/lockout.md) is the admin runbook.**
+**Locked out of a server? [docs/lockout.md](docs/lockout.md) is the admin runbook.
+Locked out of the console? [docs/admin-recovery.md](docs/admin-recovery.md).**
 This page is the overview and the reference behind it.
 
 ## Contents
@@ -648,6 +649,7 @@ internal/             tunnel, agent, control, recorder, hashchain, …
 web/                  React 19 · Mantine 9 · TanStack Router/Query/Form · Vite 8
 docs/install.md       the production install
 docs/lockout.md       what to do when nobody can SSH into a server
+docs/admin-recovery.md  what to do when no administrator can sign in to the console
 packaging/            systemd units, launchd job, packaged config
 scripts/              setup · dev · deps · check · build
 ```

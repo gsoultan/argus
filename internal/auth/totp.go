@@ -79,6 +79,34 @@ func hotp(key []byte, counter uint64, digits int) string {
 	return fmt.Sprintf("%0*d", digits, value%mod)
 }
 
+// VerifyTOTPStep is VerifyTOTP, also returning the time step that matched.
+//
+// The step is what makes a code single-use: a caller that remembers the last
+// step it accepted for an account, and refuses any step at or before it, stops
+// a code that was shoulder-surfed, phished or replayed from a log from being
+// spent a second time inside its 90-second window.
+func VerifyTOTPStep(secret, code string, now time.Time) (int64, bool) {
+	code = strings.TrimSpace(code)
+	if len(code) != TOTPDigits {
+		return 0, false
+	}
+	base := now.Unix() / int64(TOTPPeriod.Seconds())
+	var matched int64
+	ok := 0
+	for skew := -TOTPSkew; skew <= TOTPSkew; skew++ {
+		candidate, err := TOTPCode(secret, now.Add(time.Duration(skew)*TOTPPeriod))
+		if err != nil {
+			return 0, false
+		}
+		hit := subtle.ConstantTimeCompare([]byte(candidate), []byte(code))
+		if hit == 1 {
+			matched = base + int64(skew)
+		}
+		ok |= hit
+	}
+	return matched, ok == 1
+}
+
 // VerifyTOTP reports whether code is valid for secret around now.
 //
 // The comparison is constant time, and every candidate step is evaluated rather

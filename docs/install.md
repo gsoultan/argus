@@ -321,7 +321,11 @@ account out of the server. Pick the groups with
 off with `--break-glass=none` and rely on the machine's own console
 (hypervisor or physical) instead.
 
-If a server ever locks everyone out, follow [lockout.md](lockout.md).
+If a server ever locks everyone out, follow [lockout.md](lockout.md). If the
+last administrator loses their password or authenticator, follow
+[admin-recovery.md](admin-recovery.md): recovery runs on this host with
+`argus-control users reset-mfa|set-password|set-role|sign-out`, never in the
+console.
 
 Every login that is admitted -- every session opened from the console -- is
 recorded. There is no setting to record fewer.

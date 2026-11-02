@@ -31,14 +31,11 @@ func (a *API) SetAuth(signer *auth.Signer, consoleURL string, secureCookies bool
 // StaticTokensDisabled is decided at start-up, where the deployment can be
 // refused outright rather than quietly downgraded.
 func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
-	if a.signer != nil {
-		if c, err := r.Cookie(auth.SessionCookieName); err == nil {
-			// Verified with the key of the organization the cookie claims;
-			// scope already resolved that claim to a live organization.
-			if sess, err := a.signerFor(r).VerifySession(c.Value); err == nil {
-				return sess, true
-			}
-		}
+	// The cookie, verified with the key of the organization it claims (scope
+	// already resolved that claim) and checked against the account: see
+	// session_gate.go.
+	if rs := a.sessionOf(r); rs.ok {
+		return rs.sess, true
 	}
 	// Setup finishing in this process counts too. The check that refuses to
 	// start with tokens alongside an account runs at start-up, and the account
@@ -63,6 +60,11 @@ func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 
 func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if sess, ok := a.authenticate(r); ok {
+		// Revoked, not only cleared: a copy of this cookie taken before the
+		// sign-out must stop working with it.
+		if err := a.store.RevokeSession(r.Context(), sess.ID, sess.ExpiresAt); err != nil {
+			a.log.Error("could not revoke a signed-out session", "error", err)
+		}
 		if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 			Action:     "auth.logout",
 			Severity:   "info",
@@ -151,10 +153,14 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		"role":          sess.Role,
 		"expiresAt":     sess.ExpiresAt,
 		"mfaEnrolled":   mfa,
-		"shared":        shared,
-		"orgs":          orgs,
-		"multiOrg":      multi,
-		"org":           tenantSummary(r.Context(), t),
+		// The console shows nothing but enrolment while this is true; the
+		// API refuses everything else regardless.
+		"mfaSetupRequired":   !mfa && a.mfaRequiredFor(sess.Role),
+		"mfaRequiredForRole": a.mfaRequiredFor(sess.Role),
+		"shared":             shared,
+		"orgs":               orgs,
+		"multiOrg":           multi,
+		"org":                tenantSummary(r.Context(), t),
 		// platformOwner is who may manage organizations: an owner of the
 		// default one. Said here so the console can draw the menu entry;
 		// the routes check it again.

@@ -430,6 +430,18 @@ export function useSetLoginName() {
   })
 }
 
+export function useResetMFA() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (email: string) => api.resetMFA(email),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useSignOutAccount() {
+  return useMutation({ mutationFn: (email: string) => api.signOutAccount(email) })
+}
+
 export function useAddSharedAccount() {
   const qc = useQueryClient()
   return useMutation({

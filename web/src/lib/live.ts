@@ -173,6 +173,14 @@ export interface Identity {
   /** Whether the signed-in account has a second factor. */
   mfaEnrolled?: boolean
   /**
+   * True when the account's role must have a second factor and has none. The
+   * control plane refuses everything but enrolment until it does, so the
+   * console shows nothing else.
+   */
+  mfaSetupRequired?: boolean
+  /** Whether this account's role is required to have a second factor at all. */
+  mfaRequiredForRole?: boolean
+  /**
    * True when more than one organization shares this control plane, so the
    * sign-in form has to ask which one. Until then nobody is asked.
    */
@@ -257,9 +265,34 @@ export async function verifyMFA(
   return post<PasswordLoginResult>('/auth/mfa', { challenge, code, recovery })
 }
 
-/** Starts enrolment, returning the secret and the URI an app scans. */
-export async function beginMFAEnrolment(): Promise<{ secret: string; uri: string }> {
-  return post<{ secret: string; uri: string }>('/auth/mfa/enrol', {})
+/**
+ * Starts enrolment, returning the secret and the URI an app scans.
+ *
+ * The password is always required, and a code from the current authenticator
+ * (or a recovery code) when one is already set up: a session alone is not
+ * enough to change how an account signs in.
+ */
+export async function beginMFAEnrolment(
+  password: string,
+  code = '',
+  recovery = false,
+): Promise<{ secret: string; uri: string }> {
+  return post<{ secret: string; uri: string }>('/auth/mfa/enrol', { password, code, recovery })
+}
+
+/** Signs this account out of every browser and device, this one included. */
+export async function signOutEverywhere(): Promise<void> {
+  await post('/auth/sessions/revoke', {})
+}
+
+/** Removes someone else's second factor, for a lost phone. Admin or owner. */
+export async function resetAccountMFA(email: string): Promise<{ email: string }> {
+  return post(`/api/v1/users/${encodeURIComponent(email)}/reset-mfa`, {})
+}
+
+/** Signs someone else out everywhere. Admin or owner. */
+export async function signOutAccount(email: string): Promise<{ email: string }> {
+  return post(`/api/v1/users/${encodeURIComponent(email)}/sign-out`, {})
 }
 
 /** Confirms enrolment and returns the recovery codes, shown exactly once. */

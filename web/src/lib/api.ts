@@ -38,6 +38,7 @@ import {
   createSharedAccount,
   setAccountShareable,
   personServers as livePersonServers,
+  resetAccountMFA, signOutAccount,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
 import type {
@@ -226,9 +227,7 @@ export const api = {
           email: id.email ?? '',
           displayName: id.displayName || (id.email ?? '').split('@')[0] || 'signed in',
           role: (id.role ?? 'auditor') as User['role'],
-          // Identity lives in the provider, so the console reports what the
-          // session carries rather than inventing the rest.
-          mfaEnrolled: false,
+          mfaEnrolled: !!id.mfaEnrolled,
           lastSeenAt: new Date().toISOString(),
           ...(id.org ? { org: id.org } : {}),
           ...(id.orgs ? { orgs: id.orgs } : {}),
@@ -293,6 +292,24 @@ export const api = {
     const u = users.find((x) => x.email === email)
     if (!u) throw new Error(`no account for ${email}`)
     u.loginName = name
+  },
+
+  /** Removes someone's second step, for a lost phone. Live only. */
+  async resetMFA(email: string): Promise<void> {
+    if (isConfigured()) {
+      await resetAccountMFA(email)
+      return
+    }
+    await latency(200)
+    const u = users.find((x) => x.email === email)
+    if (!u) throw new Error(`no account for ${email}`)
+    u.mfaEnrolled = false
+  },
+
+  /** Signs someone out of every browser. Live only; the fixture has no sessions. */
+  async signOutAccount(email: string): Promise<void> {
+    if (isConfigured()) await signOutAccount(email)
+    else await latency(200)
   },
 
   async setDisabled(email: string, disabled: boolean): Promise<void> {

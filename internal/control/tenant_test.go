@@ -224,6 +224,9 @@ func newTenantHarness(t *testing.T) *tenantHarness {
 	t.Cleanup(signer.Close)
 	api.SetAuth(signer, "", false)
 	api.ReporterToken = testReporterToken
+	// These tests are about which organization a request lands in, not the
+	// second factor its owners would otherwise be held for first.
+	api.RequireMFA = MFAOff
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
 	return &tenantHarness{api: api, store: store, srv: srv}

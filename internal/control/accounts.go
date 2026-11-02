@@ -128,7 +128,10 @@ func mustHash() string {
 }
 
 // SetPassword sets or replaces an account's password, where the password
-// lives: a shared person's goes to the organization they belong to.
+// lives: a shared person's goes to the organization they belong to. It signs
+// the account out everywhere: a password is changed because someone else
+// might know it, and their session is the first thing that should stop
+// working.
 func (s *Store) SetPassword(ctx context.Context, email, password string) error {
 	hash, err := auth.HashPassword(password)
 	if err != nil {
@@ -139,7 +142,8 @@ func (s *Store) SetPassword(ctx context.Context, email, password string) error {
 		return err
 	}
 	tag, err := s.db(ctx).Exec(ctx,
-		`UPDATE users SET password_hash = $2 WHERE lower(email) = lower($1)`, email, hash)
+		`UPDATE users SET password_hash = $2, sessions_valid_after = $3
+		  WHERE lower(email) = lower($1)`, email, hash, revocationMoment())
 	if err != nil {
 		return fmt.Errorf("set password: %w", err)
 	}
@@ -159,9 +163,13 @@ func (s *Store) SetPassword(ctx context.Context, email, password string) error {
 
 // BeginMFAEnrolment stores a secret without trusting it yet.
 //
-// Unconfirmed until a code proves the app holds the same secret. Marking it
-// enrolled here would mean starting an enrolment and walking away left an
-// account whose second factor nobody can produce.
+// The new secret is kept apart from the one in use until a code proves the app
+// holds it. Writing it over the confirmed secret -- as this once did, clearing
+// mfa_enrolled_at with it -- meant that merely starting an enrolment switched
+// the account's second factor off, so anyone holding a session (a stolen
+// cookie, a borrowed laptop) could reduce the account to a password with one
+// request. The caller checks the person's password, and their current second
+// factor when one is enrolled, before calling this.
 func (s *Store) BeginMFAEnrolment(ctx context.Context, email string) (secret string, err error) {
 	secret, err = auth.NewTOTPSecret()
 	if err != nil {
@@ -173,7 +181,7 @@ func (s *Store) BeginMFAEnrolment(ctx context.Context, email string) (secret str
 		return "", err
 	}
 	tag, err := s.db(ctx).Exec(ctx, `
-		UPDATE users SET totp_secret = $2, mfa_enrolled_at = NULL
+		UPDATE users SET totp_pending_secret = $2
 		 WHERE lower(email) = lower($1)`, email, secret)
 	if err != nil {
 		return "", fmt.Errorf("begin MFA enrolment: %w", err)
@@ -185,7 +193,9 @@ func (s *Store) BeginMFAEnrolment(ctx context.Context, email string) (secret str
 }
 
 // ConfirmMFAEnrolment verifies a code against the pending secret and, if it
-// matches, marks the account enrolled and issues recovery codes.
+// matches, makes it the account's second factor, issues recovery codes, and
+// signs the account out everywhere -- whoever enrolled the old factor's
+// sessions should not outlive it.
 func (s *Store) ConfirmMFAEnrolment(
 	ctx context.Context, email, code string,
 ) (recovery []string, err error) {
@@ -197,10 +207,24 @@ func (s *Store) ConfirmMFAEnrolment(
 	if err != nil {
 		return nil, err
 	}
-	if a.TOTPSecret == "" {
+	var pending *string
+	if err := s.db(ctx).QueryRow(ctx,
+		`SELECT totp_pending_secret FROM users WHERE id = $1::uuid`, a.ID).Scan(&pending); err != nil {
+		return nil, err
+	}
+	secret := ""
+	switch {
+	case pending != nil && *pending != "":
+		secret = *pending
+	case !a.MFAEnrolled && a.TOTPSecret != "":
+		// An enrolment begun before pending secrets existed kept its secret
+		// in totp_secret, unconfirmed.
+		secret = a.TOTPSecret
+	default:
 		return nil, errors.New("no enrolment is in progress for this account")
 	}
-	if !auth.VerifyTOTP(a.TOTPSecret, code, time.Now()) {
+	step, ok := auth.VerifyTOTPStep(secret, code, time.Now())
+	if !ok {
 		return nil, errors.New("that code is not correct; check the clock on your phone")
 	}
 
@@ -210,9 +234,12 @@ func (s *Store) ConfirmMFAEnrolment(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE users SET mfa_enrolled_at = now(), mfa_enrolled = true WHERE id = $1::uuid`,
-		a.ID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET totp_secret = $2, totp_pending_secret = NULL,
+		                 mfa_enrolled_at = now(), mfa_enrolled = true,
+		                 totp_last_step = $3, sessions_valid_after = $4
+		 WHERE id = $1::uuid`,
+		a.ID, secret, step, revocationMoment()); err != nil {
 		return nil, fmt.Errorf("confirm MFA: %w", err)
 	}
 	// Re-issuing replaces any earlier set, so a re-enrolment does not leave
@@ -426,8 +453,12 @@ func (s *Store) SetAccountDisabledBy(ctx context.Context, email string, disabled
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE users SET disabled_at = CASE WHEN $2 THEN now() ELSE NULL END,
-		                 disabled_by = CASE WHEN $2 THEN NULLIF($3, '') ELSE NULL END
-		 WHERE lower(email) = lower($1)`, email, disabled, strings.ToLower(actor)); err != nil {
+		                 disabled_by = CASE WHEN $2 THEN NULLIF($3, '') ELSE NULL END,
+		                 -- Disabling ends every session now, not when the
+		                 -- cookies expire; enabling does not bring them back.
+		                 sessions_valid_after = CASE WHEN $2 THEN $4 ELSE sessions_valid_after END
+		 WHERE lower(email) = lower($1)`, email, disabled, strings.ToLower(actor),
+		revocationMoment()); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

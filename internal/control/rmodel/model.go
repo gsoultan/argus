@@ -423,6 +423,17 @@ func (m *RedeemedTicket) Schema(t *storm.Table) {
 	t.Index(&m.ExpiresAt).Named("redeemed_tickets_expiry_idx")
 }
 
+// RevokedSession is table revoked_sessions: one row per signed-out cookie,
+// kept until the cookie would have expired anyway.
+type RevokedSession struct {
+	Sid       string
+	ExpiresAt time.Time
+}
+
+func (m *RevokedSession) Schema(t *storm.Table) {
+	t.Index(&m.ExpiresAt).Named("revoked_sessions_expires_at")
+}
+
 // SchemaMigration is table schema_migrations.
 type SchemaMigration struct {
 	Name      string
@@ -633,6 +644,12 @@ type User struct {
 	LoginName    *string
 	SshPublicKey string
 	DisabledBy   *string
+	// SessionsValidAfter: a cookie issued before it is refused.
+	// TotpPendingSecret: an enrolment not yet confirmed. TotpLastStep: the
+	// last authenticator step accepted, so each code signs in once.
+	SessionsValidAfter *time.Time
+	TotpPendingSecret  *string
+	TotpLastStep       *int64
 	// HomeTenant is the organization holding this person's credentials when
 	// they were shared in from another one; nil when they are this
 	// organization's own. Shareable is whether another organization may add
@@ -673,6 +690,7 @@ func All() []any {
 		&HostKeyPin{},
 		&RecoveryCode{},
 		&RedeemedTicket{},
+		&RevokedSession{},
 		&SchemaMigration{},
 		&Session{},
 		&Team{},

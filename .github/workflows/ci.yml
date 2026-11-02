@@ -165,6 +165,7 @@ jobs:
           go build -o "$tmp/argus-control" ./cmd/argus-control
           go build -o "$tmp/argus-agent" ./cmd/argus-agent
           go build -o "$tmp/termdrill" ./scripts/tools/termdrill
+          go build -o "$tmp/totp" ./scripts/tools/totp
           go run ./scripts/tools/gencerts "$tmp"
           chmod 600 "$tmp/server.key"
 
@@ -190,6 +191,12 @@ jobs:
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
@@ -289,6 +296,7 @@ jobs:
           go build -o "$tmp/argus-control.exe" ./cmd/argus-control
           go build -o "$tmp/argus-agent.exe" ./cmd/argus-agent
           go build -o "$tmp/termdrill.exe" ./scripts/tools/termdrill
+          go build -o "$tmp/totp.exe" ./scripts/tools/totp
           go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
           go build -o "$tmp/replaydump.exe" ./scripts/tools/replaydump
           go run ./scripts/tools/gencerts "$tmp"
@@ -320,6 +328,12 @@ jobs:
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp.exe" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           "$agent" enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
@@ -894,7 +908,7 @@ jobs:
           # Every page goes to /setup until it is done.
           to=$(curl -s -o /dev/null -w '%{redirect_url}' --cacert "$tmp/ca.crt" https://localhost:8080/assets)
           [ "$to" = https://localhost:8080/setup ] || { echo "::error::first run did not send /assets to /setup (got '$to')"; exit 1; }
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep -q '<div id="root">'
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep '<div id="root">' >/dev/null
           tok=$(sudo cat /var/lib/argus-control/setup-token)
           jq -n --arg tok "$tok" '{token: $tok,
               database: {host: "localhost", port: 5433, name: "argus", user: "argus", password: "argus", sslMode: "disable"},
@@ -904,10 +918,10 @@ jobs:
             curl -fsS --cacert "$tmp/ca.crt" -H Content-Type:application/json -d @- \
               https://localhost:8080/auth/setup/install
           for i in $(seq 1 30); do
-            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' && break
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep '"ok"' >/dev/null && break
             sleep 1
           done
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' || {
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep '"ok"' >/dev/null || {
             sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
           # What setup wrote is the service's own, and nobody else's.
           [ "$(sudo stat -c '%a %U' /var/lib/argus-control/control.yaml)" = "600 argus" ]
@@ -916,13 +930,20 @@ jobs:
           ! sudo test -e /var/lib/argus-control/setup-token
 
           # The console ships in the package and is served same-origin.
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep -q '<div id="root">'
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q fleetUrl
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep '<div id="root">' >/dev/null
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep fleetUrl >/dev/null
 
           # Enroll this runner's agent with a token from the console API.
+          go build -o "$tmp/totp" ./scripts/tools/totp
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
