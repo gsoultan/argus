@@ -119,11 +119,31 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	// mfaEnrolled drives the console's prompt to set one up. Looked up rather
 	// than carried in the session, so enrolling takes effect immediately
 	// instead of at the next sign-in.
-	mfa := false
-	if acct, err := a.store.Account(r.Context(), sess.Email); err == nil {
-		mfa = acct.MFAEnrolled
+	// Credentials rather than Account: a person shared in from another
+	// organization enrols where their password is, and this says so.
+	mfa, shared := false, false
+	if acct, _, err := a.store.Credentials(r.Context(), sess.Email); err == nil {
+		mfa, shared = acct.MFAEnrolled, acct.Shared()
 	}
 	t := TenantOf(r.Context())
+	// multiOrg, after sign-in, is what offers sharing people between
+	// organizations: with one organization there is nobody to share with.
+	multi, _ := a.store.MultiTenant(r.Context())
+	// orgs is every organization this sign-in can switch to, this one
+	// included. Listed from the index and confirmed against each
+	// organization's own table; an organization the person is not in is not
+	// named, however many exist.
+	orgs := []map[string]any{}
+	if list, err := a.store.OrganizationsFor(r.Context(), sess.Email); err == nil {
+		for i := range list {
+			m := tenantSummary(r.Context(), &list[i].Tenant)
+			m["role"] = list[i].Role
+			m["home"] = list[i].Home
+			orgs = append(orgs, m)
+		}
+	} else {
+		a.log.Warn("organizations of signed-in account unavailable", "email", sess.Email, "error", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
 		"email":         sess.Email,
@@ -131,6 +151,9 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		"role":          sess.Role,
 		"expiresAt":     sess.ExpiresAt,
 		"mfaEnrolled":   mfa,
+		"shared":        shared,
+		"orgs":          orgs,
+		"multiOrg":      multi,
 		"org":           tenantSummary(r.Context(), t),
 		// platformOwner is who may manage organizations: an owner of the
 		// default one. Said here so the console can draw the menu entry;

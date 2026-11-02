@@ -434,6 +434,13 @@ Nothing one organization holds is readable, or even confirmable, from another.
   under the organization's own prefix and refused to any other.
 - A disabled organization cannot sign in, its agents' reports are refused and
   their tunnels close; its data and chain are kept and it can be enabled again.
+- A person belongs to one organization, which holds their password and second
+  step, and can be **shared** into others: an admin there adds them by email
+  with no new password, and they switch between organizations from the header.
+  Sharing is off until the person's own organization allows it, so an address
+  that was never allowed looks exactly like one nobody uses. Each organization
+  gives the shared person its own role and can remove them on its own; being
+  removed where they belong refuses them everywhere.
 
 The database role needs `CREATE` on the database to add a schema, which the
 owning role from the install steps has. See `plans/multi-tenant.md` in the

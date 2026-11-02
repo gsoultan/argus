@@ -193,6 +193,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/mfa/confirm", a.handleMFAConfirm)
 	mux.HandleFunc("POST /auth/password/change", a.handleChangePassword)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
+	mux.HandleFunc("POST /auth/switch", a.handleSwitchOrg)
 	// First run: the first account, once, with a token read from the host.
 	mux.HandleFunc("GET /auth/setup", a.handleSetupStatus)
 	mux.HandleFunc("POST /auth/setup", a.limitLogin(a.handleSetup))
@@ -238,6 +239,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
+	mux.HandleFunc("POST /api/v1/users/shared", a.postSharedAccount)
+	mux.HandleFunc("PUT /api/v1/users/{email}/shareable", a.putAccountShareable)
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)

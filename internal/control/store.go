@@ -119,7 +119,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.migratePlatform(ctx); err != nil {
 		return err
 	}
-	return s.migrateTenants(ctx)
+	if err := s.migrateTenants(ctx); err != nil {
+		return err
+	}
+	return s.backfillMemberships(ctx)
 }
 
 // migrationNames lists every embedded migration in the order it must run.

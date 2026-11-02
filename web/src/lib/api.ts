@@ -34,6 +34,8 @@ import {
   setAccountRole,
   setAccountDisabled,
   createAccount,
+  createSharedAccount,
+  setAccountShareable,
   personServers as livePersonServers,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
@@ -227,6 +229,9 @@ export const api = {
           mfaEnrolled: false,
           lastSeenAt: new Date().toISOString(),
           ...(id.org ? { org: id.org } : {}),
+          ...(id.orgs ? { orgs: id.orgs } : {}),
+          shared: id.shared === true,
+          multiOrg: id.multiOrg === true,
           platformOwner: id.platformOwner === true,
         }
       }
@@ -312,6 +317,26 @@ export const api = {
       id: crypto.randomUUID(), email: input.email.toLowerCase(), displayName: input.displayName || input.email.split('@')[0]!,
       role: input.role, mfaEnrolled: false, lastSeenAt: null,
     })
+  },
+
+  async addSharedAccount(input: { email: string; displayName: string; role: User['role']; homeOrg?: string }): Promise<void> {
+    if (isConfigured()) {
+      await createSharedAccount(input)
+      return
+    }
+    await latency(250)
+    throw new Error('no account that can be shared uses this address')
+  },
+
+  async setShareable(email: string, shareable: boolean): Promise<void> {
+    if (isConfigured()) {
+      await setAccountShareable(email, shareable)
+      return
+    }
+    await latency(150)
+    const u = users.find((x) => x.email === email)
+    if (!u) throw new Error(`no account for ${email}`)
+    u.shareable = shareable
   },
 
   async stats(): Promise<FleetStats> {

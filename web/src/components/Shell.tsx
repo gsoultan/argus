@@ -7,7 +7,8 @@ import { useDisclosure } from '@mantine/hooks'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconChevronDown, IconInfoCircle, IconKey, IconLogout, IconSearch,
+  IconAlertTriangle, IconBuilding, IconCheck, IconChevronDown, IconInfoCircle, IconKey, IconLogout,
+  IconSearch,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, directLoginsQuery, meQuery, myServerAccountQuery, statsQuery } from '~/lib/queries'
@@ -16,6 +17,7 @@ import { SignIn } from '~/components/SignIn'
 // of their own and cost the first visit 3.4 kB instead of 1.0. See weight.spec.ts.
 import { Setup } from '~/components/Setup'
 import { canSee, roleLabel, seesWholeFleet } from '~/lib/roles'
+import type { UserRole } from '~/types/domain'
 /**
  * Loaded on first open.
  *
@@ -36,7 +38,7 @@ import {
 } from '~/components/nav'
 import { LogoMark } from '~/components/Logo'
 import {
-  argusVersion, controlPlaneHost, isConfigured, isLive, logout, whoami, type Identity,
+  argusVersion, controlPlaneHost, isConfigured, isLive, logout, switchOrganization, whoami, type Identity,
 } from '~/lib/live'
 import { FS, SP } from '~/theme'
 
@@ -209,7 +211,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 is not the default one: an install with one organization has
                 nothing to tell apart, and a label it never needed would read
                 as a switcher. */}
-            {me?.org && !me.org.default && (
+            {me?.org && (me.orgs?.length ?? 0) > 1 ? (
+              <OrgSwitcher current={me.org} orgs={me.orgs!} />
+            ) : me?.org && !me.org.default && (
               <Tooltip label={`You are signed in to ${me.org.name}. Everything on screen is this organization's.`}>
                 <Badge variant="light" color="violet" size="sm" visibleFrom="sm">
                   {me.org.name}
@@ -531,3 +535,58 @@ function DataSourceBadge({ source }: { source: DataSource }) {
   )
 }
 
+
+/**
+ * The organization switcher, shown only to someone who is in more than one.
+ *
+ * Switching replaces the session cookie with the other organization's and
+ * reloads, so every query on screen starts over there: nothing from the
+ * organization being left survives the switch, which is the point of it.
+ */
+function OrgSwitcher({ current, orgs }: {
+  current: NonNullable<Identity['org']>
+  orgs: NonNullable<Identity['orgs']>
+}) {
+  const [switching, setSwitching] = useState<string | null>(null)
+  return (
+    <Menu position="bottom-end" withinPortal>
+      <Menu.Target>
+        <UnstyledButton aria-label={`Organization: ${current.name}. Switch organization`}>
+          <Badge
+            variant="light"
+            color="violet"
+            size="sm"
+            style={{ cursor: 'pointer' }}
+            leftSection={<IconBuilding size={11} />}
+            rightSection={<IconChevronDown size={11} />}
+          >
+            {current.name}
+          </Badge>
+        </UnstyledButton>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Switch organization</Menu.Label>
+        {orgs.map((o) => (
+          <Menu.Item
+            key={o.id}
+            disabled={o.id === current.id || switching !== null}
+            leftSection={o.id === current.id ? <IconCheck size={14} /> : <Box w={14} />}
+            rightSection={<Text size={FS.micro} c="dimmed">{roleLabel(o.role as UserRole)}</Text>}
+            onClick={async () => {
+              setSwitching(o.slug)
+              try {
+                await switchOrganization(o.slug)
+                window.location.replace('/')
+              } catch {
+                setSwitching(null)
+              }
+            }}
+          >
+            {o.name}
+            {o.home && <Text span size={FS.micro} c="dimmed"> · your password lives here</Text>}
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
+  )
+}

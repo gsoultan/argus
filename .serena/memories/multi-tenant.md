@@ -83,6 +83,20 @@ event of the new chain. `backup run`/`verify` check every chain.
 organization's own admin learns nothing about a platform above them. There is
 deliberately no route that reads across organizations.
 
+## People shared across organizations
+
+`shared_people.go` / `shared_people_routes.go`. A person's credentials live in
+one organization (home); other organizations get a `users` row with
+`home_tenant` set and no password. `Store.Credentials(ctx, email)` returns the
+local row merged with the home row's secrets plus the home context; every
+credential write (`SetPassword`, MFA enrolment, recovery codes) goes through
+`homeContext`. `users.shareable` (home-only) gates `AddSharedMember`; refusals
+are all `ErrNoShareable` → 404. Index: `argus_platform.memberships(email,
+tenant_id, home_tenant)`, maintained by `recordMembership` in every account
+insert and rebuilt by `backfillMemberships` at start. `POST /auth/switch`
+issues the target organization's cookie after `MemberOf` (same email, same
+home, enabled in both). `/auth/me` carries `orgs`, `shared`, `multiOrg`.
+
 ## What is still platform-wide
 
 Config file and Settings, first-run setup, backups, alert channels (session

@@ -248,6 +248,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS tenants_schema_key ON argus_platform.tenants (
 INSERT INTO argus_platform.tenants (id, slug, name, schema_name)
 VALUES ('default', 'default', 'Default organization', current_schema())
 ON CONFLICT (id) DO NOTHING;
+-- Which organizations each person is in, and which one holds their sign-in.
+-- An index over the organizations' own users tables, so that one sign-in can
+-- list its organizations without opening every schema. A person's identity
+-- is (email, home_tenant): two organizations that each made their own
+-- account for the same address are two identities, and stay so.
+CREATE TABLE IF NOT EXISTS argus_platform.memberships (
+	email       TEXT NOT NULL,
+	tenant_id   TEXT NOT NULL REFERENCES argus_platform.tenants(id) ON DELETE CASCADE,
+	home_tenant TEXT NOT NULL REFERENCES argus_platform.tenants(id) ON DELETE CASCADE,
+	PRIMARY KEY (email, tenant_id)
+);
+CREATE INDEX IF NOT EXISTS memberships_identity ON argus_platform.memberships (email, home_tenant);
 `
 
 func (s *Store) migratePlatform(ctx context.Context) error {

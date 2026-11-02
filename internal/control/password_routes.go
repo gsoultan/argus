@@ -114,7 +114,9 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	acct, err := a.store.Account(r.Context(), email)
+	// The second factor and the recovery codes live where the password does:
+	// at home, for a person shared in from another organization.
+	acct, hctx, err := a.store.Credentials(r.Context(), email)
 	if err != nil || acct.Disabled {
 		a.RecordAuthFailure(r)
 		writeErr(w, http.StatusUnauthorized, "invalid email or password")
@@ -124,14 +126,14 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	verified := false
 	switch {
 	case in.Recovery:
-		ok, err := a.store.ConsumeRecoveryCode(r.Context(), acct.ID, in.Code)
+		ok, err := a.store.ConsumeRecoveryCode(hctx, acct.ID, in.Code)
 		if err != nil {
 			a.fail(w, "consume recovery code", err)
 			return
 		}
 		verified = ok
 		if ok {
-			left, _ := a.store.RemainingRecoveryCodes(r.Context(), acct.ID)
+			left, _ := a.store.RemainingRecoveryCodes(hctx, acct.ID)
 			// A recovery code means the usual second factor was unavailable,
 			// which is either a lost device or somebody else's sign-in.
 			a.auditAuth(r, "auth.recovery_code_used", "warning", acct.Email,

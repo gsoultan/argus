@@ -287,6 +287,9 @@ func (s *Store) createFirstAccountHashed(ctx context.Context, email, displayName
 		RETURNING id::text`, email, displayName, role, hash).Scan(&id); err != nil {
 		return "", fmt.Errorf("create first account: %w", err)
 	}
+	if err := recordMembership(ctx, tx, email, tenantIDOf(ctx), tenantIDOf(ctx)); err != nil {
+		return "", err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}

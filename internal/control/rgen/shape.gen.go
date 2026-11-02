@@ -389,5 +389,7 @@ func _assertUserShape(m m0.User) {
 		m.LoginName,
 		m.SshPublicKey,
 		m.DisabledBy,
+		m.HomeTenant,
+		m.Shareable,
 	}
 }

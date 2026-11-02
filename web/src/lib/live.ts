@@ -171,11 +171,26 @@ export interface Identity {
   /** The organization this sign-in, or this session, is in. */
   org?: Organization
   /**
+   * Every organization this sign-in can switch to, this one included: the
+   * ones where the same identity has an enabled account. One entry means
+   * there is nothing to switch to.
+   */
+  orgs?: OrganizationMembership[]
+  /** True when the signed-in person's password lives in another organization. */
+  shared?: boolean
+  /**
    * True for an owner of the default organization: the one account that may
    * list, create and disable organizations. The control plane checks it
    * again on every such request; this only draws the menu entry.
    */
   platformOwner?: boolean
+}
+
+/** An organization the signed-in person is a member of. */
+export interface OrganizationMembership extends Organization {
+  role: string
+  /** The organization that holds their password and second factor. */
+  home: boolean
 }
 
 /** One organization sharing the control plane. */
@@ -1035,6 +1050,33 @@ export async function createAccount(input: {
   password: string
 }): Promise<{ email: string; role: string }> {
   return post('/api/v1/users', input)
+}
+
+/**
+ * Adds a person who already signs in to another organization. No password:
+ * they keep the one they have, and their home organization must have marked
+ * them shareable. homeOrg is needed only when more than one has.
+ */
+export async function createSharedAccount(input: {
+  email: string
+  displayName: string
+  role: string
+  homeOrg?: string
+}): Promise<{ email: string; role: string; displayName: string; shared: true }> {
+  return post('/api/v1/users/shared', input)
+}
+
+/** Lets, or stops letting, other organizations add one of our people. */
+export async function setAccountShareable(email: string, shareable: boolean): Promise<{ email: string; shareable: boolean }> {
+  return send('PUT', `/api/v1/users/${encodeURIComponent(email)}/shareable`, { shareable })
+}
+
+/**
+ * Moves this session to another organization the same person is a member of.
+ * The cookie is replaced; the caller reloads so every query starts over there.
+ */
+export async function switchOrganization(slug: string): Promise<void> {
+  await post('/auth/switch', { org: slug })
 }
 
 /** Changes someone's role. Not your own; only an owner makes an owner. */
