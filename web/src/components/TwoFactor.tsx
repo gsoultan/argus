@@ -75,7 +75,8 @@ export function TwoFactorSetup({ enrolled, onDone }: {
         <Text size="sm" mb="md">
           {enrolled
             ? 'Replacing your authenticator. Your current one keeps working until the new one is confirmed.'
-            : 'Each sign-in will ask for a six-digit code from an authenticator app on your phone, as well as your password.'}
+            : 'Each sign-in will ask for a six-digit code from an authenticator app on your phone, as well as your password. ' +
+              'First confirm it is you; the next step shows a QR code to scan.'}
         </Text>
         {error && <ErrorNote>{error}</ErrorNote>}
         <Stack gap="sm">
@@ -84,6 +85,8 @@ export function TwoFactorSetup({ enrolled, onDone }: {
             size="sm"
             label="Your password"
             autoComplete="current-password"
+            description={enrolled ? undefined
+              : 'The one you just signed in with. Asked again so nobody at an unlocked browser can add their own phone.'}
             value={password}
             onChange={(e) => setPassword(e.currentTarget.value)}
           />
