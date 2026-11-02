@@ -20,6 +20,18 @@ export interface User {
   role: UserRole
   mfaEnrolled: boolean
   lastSeenAt: ISOTime | null
+  /** The organization the session is in; absent on the fixture. */
+  org?: { id: string; slug: string; name: string; default: boolean }
+  /** Whether this account may manage organizations; see Identity.platformOwner. */
+  platformOwner?: boolean
+  /** Organizations the signed-in person can switch to; see Identity.orgs. */
+  orgs?: Array<{ id: string; slug: string; name: string; default: boolean; role: string; home: boolean }>
+  /** True when more than one organization shares this control plane. */
+  multiOrg?: boolean
+  /** They sign in through another organization; their password is not held here. */
+  shared?: boolean
+  /** One of ours whom another organization may add without a new password. */
+  shareable?: boolean
   /**
    * Revoked rather than deleted. The audit log refers to people by address, so
    * an account is disabled and kept — and a disabled one must not be offered as
@@ -235,6 +247,58 @@ export interface ServerLoginAccounts {
   keys: boolean
   /** Whether sshd tells the agent how each login signed in. */
   exposeAuthInfo: boolean
+}
+
+/** An address something on a server listens on. */
+export interface ServerAppListen {
+  address: string
+  port: number
+  /** A loopback address: nothing off the server can connect. */
+  localOnly: boolean
+  process?: string
+  unit?: string
+  kind?: string
+}
+
+/** One known application the agent found on a server. */
+export interface ServerApp {
+  /** Catalogue key: postgres, redis, rabbitmq, nginx, docker... */
+  kind: string
+  name: string
+  version: string
+  running: boolean
+  listen: ServerAppListen[]
+  process: string
+  unit: string
+  package: string
+  /** Set when it runs in a container. */
+  container: string
+  image: string
+  /** How it was found: package, unit, process, container. */
+  evidence: string[]
+}
+
+/** One container on a server. */
+export interface ServerAppContainer {
+  name: string
+  image: string
+  state: string
+  runtime: string
+  ports: ServerAppListen[]
+  kind: string
+}
+
+/** What runs on a server, from its agent's last report. */
+export interface ServerApplications {
+  /** False when the agent has not sent it: too old, or not checked in. */
+  reported: boolean
+  checkedAt: ISOTime | null
+  applications: ServerApp[]
+  listeners: ServerAppListen[]
+  containers: ServerAppContainer[]
+  services: string[]
+  /** What the agent could read: sockets, systemd, dpkg/rpm/apk, docker/podman. */
+  sources: string[]
 }
 
 /**
@@ -650,19 +714,27 @@ export interface DBPolicy {
   maxRows?: number
   idleTimeoutS?: number
   maxSessionS?: number
+  /** Redis: the largest db KEYS runs on. */
+  keysLimit?: number
 }
+
+/** What a database entry is: a Postgres database, a Redis server or a RabbitMQ vhost. */
+export type DBEngine = 'postgres' | 'redis' | 'rabbitmq'
 
 /** One database on one server. */
 export interface Database {
   id: UUID
   assetId: UUID
   hostname: string
-  engine: 'postgres'
+  engine: DBEngine
   host: string
   port: number
   /** A PgBouncer sessions go through; a port of 0 is none. */
   poolerHost: string
   poolerPort: number
+  /** Redis: the server's redis.conf, where the agent reads the admin password. A path, never the password. */
+  configPath?: string
+  /** The database (Postgres), the logical db it opens in (Redis) or the vhost (RabbitMQ). */
   dbname: string
   adminUser: string
   label: DBLabel

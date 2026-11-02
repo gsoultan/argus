@@ -16,6 +16,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/confexpand"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,8 +30,6 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
-
-	"github.com/gsoultan/argus/internal/secrets"
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
@@ -91,8 +91,12 @@ type config struct {
 	// are already appropriate — a person never reaches them, a script does.
 	RateLimit  *rateLimitConfig `yaml:"rate_limit,omitempty"`
 	SessionTTL time.Duration    `yaml:"session_ttl,omitempty"`
-	TicketTTL  time.Duration    `yaml:"ticket_ttl,omitempty"`
-	LogLevel   string           `yaml:"log_level,omitempty"`
+	// RequireMFA is which accounts must set up a second factor before they
+	// may do anything else in the console: "privileged" (owners, admins and
+	// approvers; the default), "all", or "off".
+	RequireMFA string        `yaml:"require_mfa,omitempty"`
+	TicketTTL  time.Duration `yaml:"ticket_ttl,omitempty"`
+	LogLevel   string        `yaml:"log_level,omitempty"`
 	// Alerts tells administrators, by email, Telegram or a push notification
 	// through Firebase Cloud Messaging, every time somebody opens a session.
 	// Omit for none.
@@ -171,6 +175,13 @@ type rateLimitConfig struct {
 	LoginPerMinute   int      `yaml:"login_per_minute,omitempty"`
 	FailuresPerHour  int      `yaml:"failures_per_hour,omitempty"`
 	TicketsPerMinute int      `yaml:"tickets_per_minute,omitempty"`
+	// AccountFailuresPerHour bounds wrong passwords for one account from
+	// every address together. Browsers that signed in to it before are
+	// exempt, so it cannot be used to lock the account holder out. 10.
+	AccountFailuresPerHour int `yaml:"account_failures_per_hour,omitempty"`
+	// AccountCodeFailuresPerHour bounds wrong second-factor codes for one
+	// account. 5.
+	AccountCodeFailuresPerHour int `yaml:"account_code_failures_per_hour,omitempty"`
 }
 
 type tlsConfig struct {
@@ -304,11 +315,23 @@ func runCommand(configPath string) error {
 			return runUsersSetDisabled(configPath, flag.Args()[2:], true)
 		case "enable":
 			return runUsersSetDisabled(configPath, flag.Args()[2:], false)
+		// Getting an administrator back in when the console cannot: see
+		// docs/admin-recovery.md.
+		case "reset-mfa":
+			return runUsersResetMFA(configPath, flag.Args()[2:])
+		case "set-password":
+			return runUsersSetPassword(configPath, flag.Args()[2:])
+		case "set-role":
+			return runUsersSetRole(configPath, flag.Args()[2:])
+		case "sign-out":
+			return runUsersSignOut(configPath, flag.Args()[2:])
 		default:
-			return fmt.Errorf("unknown users command %q: add, list, disable, enable", flag.Arg(1))
+			return fmt.Errorf("unknown users command %q: add, list, disable, enable, "+
+				"reset-mfa, set-password, set-role, sign-out", flag.Arg(1))
 		}
 	}
-	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, users add|list|disable|enable",
+	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, "+
+		"users add|list|disable|enable|reset-mfa|set-password|set-role|sign-out",
 		strings.Join(flag.Args(), " "))
 }
 
@@ -342,6 +365,13 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer store.Close()
+	// Every query from here on must say which organization it is for. A
+	// request that reached the store without one is refused rather than
+	// answered from the default organization's tables.
+	store.Strict = true
+	// What this process does on its own behalf -- the start-up checks below --
+	// is the platform's, which is the default organization.
+	pctx := control.PlatformContext(ctx)
 	log.Info("database ready, migrations applied")
 
 	if cfg.Storage != nil {
@@ -386,6 +416,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			LoginPerMinute:   cfg.RateLimit.LoginPerMinute,
 			FailuresPerHour:  cfg.RateLimit.FailuresPerHour,
 			TicketsPerMinute: cfg.RateLimit.TicketsPerMinute,
+
+			AccountFailuresPerHour:     cfg.RateLimit.AccountFailuresPerHour,
+			AccountCodeFailuresPerHour: cfg.RateLimit.AccountCodeFailuresPerHour,
 		}
 	}
 	throttles, err := control.NewThrottles(rl)
@@ -472,6 +505,15 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	api.SetAuth(signer, cfg.ConsoleURL, secureCookies)
 	api.SessionTTL = cfg.SessionTTL
 	api.TicketTTL = cfg.TicketTTL
+	if !control.ValidMFAPolicy(cfg.RequireMFA) {
+		return fmt.Errorf("require_mfa is %q; use privileged, all or off", cfg.RequireMFA)
+	}
+	api.RequireMFA = control.MFAPolicy(cfg.RequireMFA)
+	if api.RequireMFA == control.MFAOff {
+		log.Warn("require_mfa is off",
+			"detail", "owners and admins can sign in with a password alone; one phished "+
+				"password is then every host this control plane brokers")
+	}
 	api.UserTokens = cfg.UserTokens
 
 	// Static tokens are a bootstrap convenience and nothing more. The moment a
@@ -482,7 +524,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// Refused, not ignored. A deployment that thinks its dev token still works
 	// will use it, and finding out at the wrong moment is the whole problem.
 	if len(cfg.UserTokens) > 0 {
-		accounts, err := store.AnyAccountExists(ctx)
+		accounts, err := store.AnyAccountExists(pctx)
 		if err != nil {
 			return fmt.Errorf("cannot tell whether local accounts exist: %w", err)
 		}
@@ -507,60 +549,69 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 
 	// Sweep for agents that stopped reporting. This is what turns "someone
 	// killed the agent" from an invisible event into a visible one.
+	//
+	// Once per organization: each has its own agents, sessions, tickets and
+	// grants, and a sweep that ran once would only ever see the default's.
+	sweep := func(ctx context.Context, t *control.Tenant) {
+		log := log.With("org", t.Slug)
+		n, err := store.MarkStaleAgents(ctx, cfg.AgentStaleAfter)
+		if err != nil {
+			log.Error("stale agent sweep failed", "error", err)
+			return
+		}
+		// A session whose agent never came back. Closed at its
+		// last report rather than at now(), and marked inferred, so
+		// the record says what was observed and what was deduced.
+		if closed, cerr := store.CloseAbandonedSessions(ctx, control.SessionAbandonedAfter); cerr != nil {
+			log.Error("abandoned session sweep failed", "error", cerr)
+		} else {
+			for _, sess := range closed {
+				log.Warn("closed a session nothing reported for a day",
+					"session", sess.ID, "user", sess.UserEmail,
+					"target", sess.Principal+"@"+sess.AssetHostname,
+					"last_reported", sess.LastReportedAt)
+				// One event per session, not one per sweep. An auditor
+				// asking what became of a particular session has to
+				// find the answer under that session.
+				if _, aerr := store.AppendAudit(ctx, control.AuditEvent{
+					Action:     "session.closed_unreported",
+					Severity:   "warn",
+					ActorEmail: "system",
+					Target:     sess.ID,
+					Detail: "Nothing reported " + sess.UserEmail + "'s session as " +
+						sess.Principal + "@" + sess.AssetHostname + " for " +
+						control.SessionAbandonedAfter.String() + ". Closed at its last " +
+						"report, " + sess.LastReportedAt.Format(time.RFC3339) +
+						"; the actual end was not observed.",
+				}); aerr != nil {
+					log.Error("could not record an inferred session close",
+						"session", sess.ID, "error", aerr)
+				}
+			}
+		}
+		if _, serr := store.SweepTickets(ctx); serr != nil {
+			log.Error("ticket sweep failed", "error", serr)
+		}
+		if expired, eerr := store.ExpireGrants(ctx); eerr != nil {
+			log.Error("grant expiry sweep failed", "error", eerr)
+		} else if expired > 0 {
+			log.Info("access grants expired", "count", expired)
+		}
+		if n > 0 {
+			log.Warn("agents went silent",
+				"count", n,
+				"threshold", cfg.AgentStaleAfter.String(),
+				"detail", "a host whose agent stopped reporting can no longer record a bypass")
+		}
+	}
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
-				n, err := store.MarkStaleAgents(ctx, cfg.AgentStaleAfter)
-				if err != nil {
-					log.Error("stale agent sweep failed", "error", err)
-					continue
-				}
-				// A session whose agent never came back. Closed at its
-				// last report rather than at now(), and marked inferred, so
-				// the record says what was observed and what was deduced.
-				if closed, cerr := store.CloseAbandonedSessions(ctx, control.SessionAbandonedAfter); cerr != nil {
-					log.Error("abandoned session sweep failed", "error", cerr)
-				} else {
-					for _, sess := range closed {
-						log.Warn("closed a session nothing reported for a day",
-							"session", sess.ID, "user", sess.UserEmail,
-							"target", sess.Principal+"@"+sess.AssetHostname,
-							"last_reported", sess.LastReportedAt)
-						// One event per session, not one per sweep. An auditor
-						// asking what became of a particular session has to
-						// find the answer under that session.
-						if _, aerr := store.AppendAudit(ctx, control.AuditEvent{
-							Action:     "session.closed_unreported",
-							Severity:   "warn",
-							ActorEmail: "system",
-							Target:     sess.ID,
-							Detail: "Nothing reported " + sess.UserEmail + "'s session as " +
-								sess.Principal + "@" + sess.AssetHostname + " for " +
-								control.SessionAbandonedAfter.String() + ". Closed at its last " +
-								"report, " + sess.LastReportedAt.Format(time.RFC3339) +
-								"; the actual end was not observed.",
-						}); aerr != nil {
-							log.Error("could not record an inferred session close",
-								"session", sess.ID, "error", aerr)
-						}
-					}
-				}
-				if _, serr := store.SweepTickets(ctx); serr != nil {
-					log.Error("ticket sweep failed", "error", serr)
-				}
-				if expired, eerr := store.ExpireGrants(ctx); eerr != nil {
-					log.Error("grant expiry sweep failed", "error", eerr)
-				} else if expired > 0 {
-					log.Info("access grants expired", "count", expired)
-				}
-				if n > 0 {
-					log.Warn("agents went silent",
-						"count", n,
-						"threshold", cfg.AgentStaleAfter.String(),
-						"detail", "a host whose agent stopped reporting can no longer record a bypass")
+				if err := store.ForEachTenant(ctx, sweep); err != nil {
+					log.Error("sweep: cannot list organizations", "error", err)
 				}
 			case <-ctx.Done():
 				return
@@ -575,7 +626,17 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	var listeners []listener
 	newServer := func(addr string, h http.Handler) *http.Server {
-		return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+		return &http.Server{Addr: addr, Handler: h,
+			// A client gets ten seconds to send its headers, and 64 KiB of
+			// them, so a slow or bloated request cannot hold a connection.
+			ReadHeaderTimeout: 10 * time.Second,
+			MaxHeaderBytes:    64 << 10,
+			// An idle keep-alive connection is closed after two minutes,
+			// so idle sockets cannot be piled up until descriptors run
+			// out. No Read/WriteTimeout: terminals, desktops and agent
+			// tunnels are long-lived on purpose and set their own.
+			IdleTimeout: 2 * time.Minute,
+		}
 	}
 	if cfg.ConsoleListen == "" {
 		listeners = append(listeners, listener{"control", newServer(cfg.Listen, api.Handler())})
@@ -596,7 +657,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			// they verify one when given and the reporter routes check for it
 			// themselves, exactly as before.
 			requireCert := l.name == "fleet" && cfg.TLS.ClientCAFile != ""
-			l.srv.TLSConfig, err = tlsconfig.Server(tlsconfig.ServerOptions{
+			l.srv.TLSConfig, err = servertls.Server(servertls.ServerOptions{
 				CertFile:          cfg.TLS.CertFile,
 				KeyFile:           cfg.TLS.KeyFile,
 				ClientCAFile:      cfg.TLS.ClientCAFile,
@@ -635,7 +696,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			return errors.New("tunnel.quic_listen needs `tls`: QUIC carries this " +
 				"process's certificate, and there is none configured")
 		}
-		qtls, err := tlsconfig.Server(tlsconfig.ServerOptions{
+		qtls, err := servertls.Server(servertls.ServerOptions{
 			CertFile: cfg.TLS.CertFile, KeyFile: cfg.TLS.KeyFile, Log: log,
 		})
 		if err != nil {
@@ -799,7 +860,7 @@ func loadConfig(path string) (config, error) {
 	}
 	// Resolve ${VAR} and ${file:/path} references before parsing, so the file
 	// on disk never has to contain a live credential.
-	data, err = secrets.Expand(data)
+	data, err = confexpand.Expand(data)
 	if err != nil {
 		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}
@@ -869,7 +930,7 @@ func setupTokenPath(configured, configPath string) string {
 // control plane still starts, and `users add` still works.
 func offerSetup(ctx context.Context, store *control.Store, api *control.API,
 	path, consoleURL string, log *slog.Logger) {
-	complete, err := store.SetupComplete(ctx)
+	complete, err := store.SetupComplete(control.PlatformContext(ctx))
 	if err != nil {
 		log.Warn("could not tell whether setup is complete; the setup page is off", "error", err)
 		return
@@ -951,7 +1012,9 @@ func runAuditVerify(configPath string) error {
 	}
 	defer store.Close()
 
-	v, err := store.VerifyAuditChain(ctx)
+	// The platform's chain. Each organization has a chain of its own, and
+	// verifying them all is the backup drill's job; see backup.go.
+	v, err := store.VerifyAuditChain(control.PlatformContext(ctx))
 	if err != nil {
 		return fmt.Errorf("verify: %w", err)
 	}

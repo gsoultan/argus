@@ -20,20 +20,25 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID            [16]byte
-	Email         string
-	DisplayName   string
-	Role          string
-	MfaEnrolled   bool
-	LastSeenAt    runtime.Null[time.Time]
-	CreatedAt     time.Time
-	PasswordHash  runtime.Null[string]
-	TotpSecret    runtime.Null[string]
-	MfaEnrolledAt runtime.Null[time.Time]
-	DisabledAt    runtime.Null[time.Time]
-	LoginName     runtime.Null[string]
-	SshPublicKey  string
-	DisabledBy    runtime.Null[string]
+	ID                 [16]byte
+	Email              string
+	DisplayName        string
+	Role               string
+	MfaEnrolled        bool
+	LastSeenAt         runtime.Null[time.Time]
+	CreatedAt          time.Time
+	PasswordHash       runtime.Null[string]
+	TotpSecret         runtime.Null[string]
+	MfaEnrolledAt      runtime.Null[time.Time]
+	DisabledAt         runtime.Null[time.Time]
+	LoginName          runtime.Null[string]
+	SshPublicKey       string
+	DisabledBy         runtime.Null[string]
+	SessionsValidAfter runtime.Null[time.Time]
+	TotpPendingSecret  runtime.Null[string]
+	TotpLastStep       runtime.Null[int64]
+	HomeTenant         runtime.Null[string]
+	Shareable          bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -72,7 +77,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 14
+const nCols = 19
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -82,15 +87,17 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs             [6]string
-	raws             [4][16]byte
-	tims             [4]time.Time
-	bools            [4]bool
-	ns, nr, ntm, nbo uint8
+	strs                 [6]string
+	nums                 [6]int64
+	raws                 [4][16]byte
+	tims                 [4]time.Time
+	bools                [4]bool
+	ns, nn, nr, ntm, nbo uint8
 
-	anyRaw   [3][][16]byte
-	anyStr   [3][]string
-	nar, nas uint8
+	anyRaw          [3][][16]byte
+	anyStr          [3][]string
+	anyI64          [3][]int64
+	nar, nas, nai64 uint8
 
 	// Order terms live in their own buffer and are appended to the stream
 	// after the predicate tree. Sharing one buffer would let a Where after
@@ -283,6 +290,41 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.DisabledBy.V
 		q.ns++
+	case 14:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.SessionsValidAfter.V
+		q.ntm++
+	case 15:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.TotpPendingSecret.V
+		q.ns++
+	case 16:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.TotpLastStep.V)
+		q.nn++
+	case 17:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.HomeTenant.V
+		q.ns++
+	case 18:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.Shareable
+		q.nbo++
 	}
 }
 
@@ -430,12 +472,14 @@ func (q Query) stream(buf *[21]runtime.Tok) []runtime.Tok {
 type Pred struct {
 	col    uint8
 	op     runtime.Op
+	num    int64
 	str    string
 	raw    [16]byte
 	tim    time.Time
 	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
+	anyI64 []int64
 }
 
 // b2i lets a bool ride in the numeric slot of a Pred.
@@ -449,20 +493,25 @@ func b2i(b bool) int64 {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID            = UUIDCol{0}
-	Email         = TextCol{1}
-	DisplayName   = TextCol{2}
-	Role          = TextCol{3}
-	MfaEnrolled   = BoolCol{4}
-	LastSeenAt    = NullTimeCol{5}
-	CreatedAt     = TimeCol{6}
-	PasswordHash  = NullTextCol{7}
-	TotpSecret    = NullTextCol{8}
-	MfaEnrolledAt = NullTimeCol{9}
-	DisabledAt    = NullTimeCol{10}
-	LoginName     = NullTextCol{11}
-	SshPublicKey  = TextCol{12}
-	DisabledBy    = NullTextCol{13}
+	ID                 = UUIDCol{0}
+	Email              = TextCol{1}
+	DisplayName        = TextCol{2}
+	Role               = TextCol{3}
+	MfaEnrolled        = BoolCol{4}
+	LastSeenAt         = NullTimeCol{5}
+	CreatedAt          = TimeCol{6}
+	PasswordHash       = NullTextCol{7}
+	TotpSecret         = NullTextCol{8}
+	MfaEnrolledAt      = NullTimeCol{9}
+	DisabledAt         = NullTimeCol{10}
+	LoginName          = NullTextCol{11}
+	SshPublicKey       = TextCol{12}
+	DisabledBy         = NullTextCol{13}
+	SessionsValidAfter = NullTimeCol{14}
+	TotpPendingSecret  = NullTextCol{15}
+	TotpLastStep       = NullInt64Col{16}
+	HomeTenant         = NullTextCol{17}
+	Shareable          = BoolCol{18}
 )
 
 // UUIDCol addresses a uuid column.
@@ -598,6 +647,33 @@ func (h NullTextCol) In(v ...string) Pred   { return Pred{col: h.c, op: opIn, an
 func (h NullTextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
 func (h NullTextCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTextCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullInt64Col addresses a int8 column.
+type NullInt64Col struct{ c uint8 }
+
+func (h NullInt64Col) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullInt64Col) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullInt64Col) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullInt64Col) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullInt64Col) Eq(v int64) Pred    { return Pred{col: h.c, op: opEq, num: int64(v)} }
+func (h NullInt64Col) NotEq(v int64) Pred { return Pred{col: h.c, op: opNotEq, num: int64(v)} }
+func (h NullInt64Col) Gt(v int64) Pred    { return Pred{col: h.c, op: opGt, num: int64(v)} }
+func (h NullInt64Col) Gte(v int64) Pred   { return Pred{col: h.c, op: opGte, num: int64(v)} }
+func (h NullInt64Col) Lt(v int64) Pred    { return Pred{col: h.c, op: opLt, num: int64(v)} }
+func (h NullInt64Col) Lte(v int64) Pred   { return Pred{col: h.c, op: opLte, num: int64(v)} }
+func (h NullInt64Col) In(v ...int64) Pred { return Pred{col: h.c, op: opIn, anyI64: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h NullInt64Col) NotIn(v ...int64) Pred { return Pred{col: h.c, op: opNotIn, anyI64: v} }
+func (h NullInt64Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
+func (h NullInt64Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -803,6 +879,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 15:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 16:
+			if int(q.nai64) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI64[q.nai64] = p.anyI64
+			q.nai64++
+		case 17:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -910,145 +1007,230 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 14:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 15:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 16:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 17:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 18:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) IDEq(v [16]byte) Query                { return q.Where(ID.Eq(v)) }
-func (q Query) IDNotEq(v [16]byte) Query             { return q.Where(ID.NotEq(v)) }
-func (q Query) IDIn(v ...[16]byte) Query             { return q.Where(ID.In(v...)) }
-func (q Query) IDNotIn(v ...[16]byte) Query          { return q.Where(ID.NotIn(v...)) }
-func (q Query) EmailEq(v string) Query               { return q.Where(Email.Eq(v)) }
-func (q Query) EmailNotEq(v string) Query            { return q.Where(Email.NotEq(v)) }
-func (q Query) EmailGt(v string) Query               { return q.Where(Email.Gt(v)) }
-func (q Query) EmailGte(v string) Query              { return q.Where(Email.Gte(v)) }
-func (q Query) EmailLt(v string) Query               { return q.Where(Email.Lt(v)) }
-func (q Query) EmailLte(v string) Query              { return q.Where(Email.Lte(v)) }
-func (q Query) EmailEqLower(v string) Query          { return q.Where(Email.EqLower(v)) }
-func (q Query) EmailLike(v string) Query             { return q.Where(Email.Like(v)) }
-func (q Query) EmailILike(v string) Query            { return q.Where(Email.ILike(v)) }
-func (q Query) EmailIn(v ...string) Query            { return q.Where(Email.In(v...)) }
-func (q Query) EmailNotIn(v ...string) Query         { return q.Where(Email.NotIn(v...)) }
-func (q Query) DisplayNameEq(v string) Query         { return q.Where(DisplayName.Eq(v)) }
-func (q Query) DisplayNameNotEq(v string) Query      { return q.Where(DisplayName.NotEq(v)) }
-func (q Query) DisplayNameGt(v string) Query         { return q.Where(DisplayName.Gt(v)) }
-func (q Query) DisplayNameGte(v string) Query        { return q.Where(DisplayName.Gte(v)) }
-func (q Query) DisplayNameLt(v string) Query         { return q.Where(DisplayName.Lt(v)) }
-func (q Query) DisplayNameLte(v string) Query        { return q.Where(DisplayName.Lte(v)) }
-func (q Query) DisplayNameEqLower(v string) Query    { return q.Where(DisplayName.EqLower(v)) }
-func (q Query) DisplayNameLike(v string) Query       { return q.Where(DisplayName.Like(v)) }
-func (q Query) DisplayNameILike(v string) Query      { return q.Where(DisplayName.ILike(v)) }
-func (q Query) DisplayNameIn(v ...string) Query      { return q.Where(DisplayName.In(v...)) }
-func (q Query) DisplayNameNotIn(v ...string) Query   { return q.Where(DisplayName.NotIn(v...)) }
-func (q Query) RoleEq(v string) Query                { return q.Where(Role.Eq(v)) }
-func (q Query) RoleNotEq(v string) Query             { return q.Where(Role.NotEq(v)) }
-func (q Query) RoleGt(v string) Query                { return q.Where(Role.Gt(v)) }
-func (q Query) RoleGte(v string) Query               { return q.Where(Role.Gte(v)) }
-func (q Query) RoleLt(v string) Query                { return q.Where(Role.Lt(v)) }
-func (q Query) RoleLte(v string) Query               { return q.Where(Role.Lte(v)) }
-func (q Query) RoleEqLower(v string) Query           { return q.Where(Role.EqLower(v)) }
-func (q Query) RoleLike(v string) Query              { return q.Where(Role.Like(v)) }
-func (q Query) RoleILike(v string) Query             { return q.Where(Role.ILike(v)) }
-func (q Query) RoleIn(v ...string) Query             { return q.Where(Role.In(v...)) }
-func (q Query) RoleNotIn(v ...string) Query          { return q.Where(Role.NotIn(v...)) }
-func (q Query) MfaEnrolledEq(v bool) Query           { return q.Where(MfaEnrolled.Eq(v)) }
-func (q Query) MfaEnrolledNotEq(v bool) Query        { return q.Where(MfaEnrolled.NotEq(v)) }
-func (q Query) LastSeenAtEq(v time.Time) Query       { return q.Where(LastSeenAt.Eq(v)) }
-func (q Query) LastSeenAtNotEq(v time.Time) Query    { return q.Where(LastSeenAt.NotEq(v)) }
-func (q Query) LastSeenAtGt(v time.Time) Query       { return q.Where(LastSeenAt.Gt(v)) }
-func (q Query) LastSeenAtGte(v time.Time) Query      { return q.Where(LastSeenAt.Gte(v)) }
-func (q Query) LastSeenAtLt(v time.Time) Query       { return q.Where(LastSeenAt.Lt(v)) }
-func (q Query) LastSeenAtLte(v time.Time) Query      { return q.Where(LastSeenAt.Lte(v)) }
-func (q Query) LastSeenAtIsNull() Query              { return q.Where(LastSeenAt.IsNull()) }
-func (q Query) LastSeenAtIsNotNull() Query           { return q.Where(LastSeenAt.IsNotNull()) }
-func (q Query) CreatedAtEq(v time.Time) Query        { return q.Where(CreatedAt.Eq(v)) }
-func (q Query) CreatedAtNotEq(v time.Time) Query     { return q.Where(CreatedAt.NotEq(v)) }
-func (q Query) CreatedAtGt(v time.Time) Query        { return q.Where(CreatedAt.Gt(v)) }
-func (q Query) CreatedAtGte(v time.Time) Query       { return q.Where(CreatedAt.Gte(v)) }
-func (q Query) CreatedAtLt(v time.Time) Query        { return q.Where(CreatedAt.Lt(v)) }
-func (q Query) CreatedAtLte(v time.Time) Query       { return q.Where(CreatedAt.Lte(v)) }
-func (q Query) PasswordHashEq(v string) Query        { return q.Where(PasswordHash.Eq(v)) }
-func (q Query) PasswordHashNotEq(v string) Query     { return q.Where(PasswordHash.NotEq(v)) }
-func (q Query) PasswordHashGt(v string) Query        { return q.Where(PasswordHash.Gt(v)) }
-func (q Query) PasswordHashGte(v string) Query       { return q.Where(PasswordHash.Gte(v)) }
-func (q Query) PasswordHashLt(v string) Query        { return q.Where(PasswordHash.Lt(v)) }
-func (q Query) PasswordHashLte(v string) Query       { return q.Where(PasswordHash.Lte(v)) }
-func (q Query) PasswordHashEqLower(v string) Query   { return q.Where(PasswordHash.EqLower(v)) }
-func (q Query) PasswordHashLike(v string) Query      { return q.Where(PasswordHash.Like(v)) }
-func (q Query) PasswordHashILike(v string) Query     { return q.Where(PasswordHash.ILike(v)) }
-func (q Query) PasswordHashIn(v ...string) Query     { return q.Where(PasswordHash.In(v...)) }
-func (q Query) PasswordHashNotIn(v ...string) Query  { return q.Where(PasswordHash.NotIn(v...)) }
-func (q Query) PasswordHashIsNull() Query            { return q.Where(PasswordHash.IsNull()) }
-func (q Query) PasswordHashIsNotNull() Query         { return q.Where(PasswordHash.IsNotNull()) }
-func (q Query) TotpSecretEq(v string) Query          { return q.Where(TotpSecret.Eq(v)) }
-func (q Query) TotpSecretNotEq(v string) Query       { return q.Where(TotpSecret.NotEq(v)) }
-func (q Query) TotpSecretGt(v string) Query          { return q.Where(TotpSecret.Gt(v)) }
-func (q Query) TotpSecretGte(v string) Query         { return q.Where(TotpSecret.Gte(v)) }
-func (q Query) TotpSecretLt(v string) Query          { return q.Where(TotpSecret.Lt(v)) }
-func (q Query) TotpSecretLte(v string) Query         { return q.Where(TotpSecret.Lte(v)) }
-func (q Query) TotpSecretEqLower(v string) Query     { return q.Where(TotpSecret.EqLower(v)) }
-func (q Query) TotpSecretLike(v string) Query        { return q.Where(TotpSecret.Like(v)) }
-func (q Query) TotpSecretILike(v string) Query       { return q.Where(TotpSecret.ILike(v)) }
-func (q Query) TotpSecretIn(v ...string) Query       { return q.Where(TotpSecret.In(v...)) }
-func (q Query) TotpSecretNotIn(v ...string) Query    { return q.Where(TotpSecret.NotIn(v...)) }
-func (q Query) TotpSecretIsNull() Query              { return q.Where(TotpSecret.IsNull()) }
-func (q Query) TotpSecretIsNotNull() Query           { return q.Where(TotpSecret.IsNotNull()) }
-func (q Query) MfaEnrolledAtEq(v time.Time) Query    { return q.Where(MfaEnrolledAt.Eq(v)) }
-func (q Query) MfaEnrolledAtNotEq(v time.Time) Query { return q.Where(MfaEnrolledAt.NotEq(v)) }
-func (q Query) MfaEnrolledAtGt(v time.Time) Query    { return q.Where(MfaEnrolledAt.Gt(v)) }
-func (q Query) MfaEnrolledAtGte(v time.Time) Query   { return q.Where(MfaEnrolledAt.Gte(v)) }
-func (q Query) MfaEnrolledAtLt(v time.Time) Query    { return q.Where(MfaEnrolledAt.Lt(v)) }
-func (q Query) MfaEnrolledAtLte(v time.Time) Query   { return q.Where(MfaEnrolledAt.Lte(v)) }
-func (q Query) MfaEnrolledAtIsNull() Query           { return q.Where(MfaEnrolledAt.IsNull()) }
-func (q Query) MfaEnrolledAtIsNotNull() Query        { return q.Where(MfaEnrolledAt.IsNotNull()) }
-func (q Query) DisabledAtEq(v time.Time) Query       { return q.Where(DisabledAt.Eq(v)) }
-func (q Query) DisabledAtNotEq(v time.Time) Query    { return q.Where(DisabledAt.NotEq(v)) }
-func (q Query) DisabledAtGt(v time.Time) Query       { return q.Where(DisabledAt.Gt(v)) }
-func (q Query) DisabledAtGte(v time.Time) Query      { return q.Where(DisabledAt.Gte(v)) }
-func (q Query) DisabledAtLt(v time.Time) Query       { return q.Where(DisabledAt.Lt(v)) }
-func (q Query) DisabledAtLte(v time.Time) Query      { return q.Where(DisabledAt.Lte(v)) }
-func (q Query) DisabledAtIsNull() Query              { return q.Where(DisabledAt.IsNull()) }
-func (q Query) DisabledAtIsNotNull() Query           { return q.Where(DisabledAt.IsNotNull()) }
-func (q Query) LoginNameEq(v string) Query           { return q.Where(LoginName.Eq(v)) }
-func (q Query) LoginNameNotEq(v string) Query        { return q.Where(LoginName.NotEq(v)) }
-func (q Query) LoginNameGt(v string) Query           { return q.Where(LoginName.Gt(v)) }
-func (q Query) LoginNameGte(v string) Query          { return q.Where(LoginName.Gte(v)) }
-func (q Query) LoginNameLt(v string) Query           { return q.Where(LoginName.Lt(v)) }
-func (q Query) LoginNameLte(v string) Query          { return q.Where(LoginName.Lte(v)) }
-func (q Query) LoginNameEqLower(v string) Query      { return q.Where(LoginName.EqLower(v)) }
-func (q Query) LoginNameLike(v string) Query         { return q.Where(LoginName.Like(v)) }
-func (q Query) LoginNameILike(v string) Query        { return q.Where(LoginName.ILike(v)) }
-func (q Query) LoginNameIn(v ...string) Query        { return q.Where(LoginName.In(v...)) }
-func (q Query) LoginNameNotIn(v ...string) Query     { return q.Where(LoginName.NotIn(v...)) }
-func (q Query) LoginNameIsNull() Query               { return q.Where(LoginName.IsNull()) }
-func (q Query) LoginNameIsNotNull() Query            { return q.Where(LoginName.IsNotNull()) }
-func (q Query) SshPublicKeyEq(v string) Query        { return q.Where(SshPublicKey.Eq(v)) }
-func (q Query) SshPublicKeyNotEq(v string) Query     { return q.Where(SshPublicKey.NotEq(v)) }
-func (q Query) SshPublicKeyGt(v string) Query        { return q.Where(SshPublicKey.Gt(v)) }
-func (q Query) SshPublicKeyGte(v string) Query       { return q.Where(SshPublicKey.Gte(v)) }
-func (q Query) SshPublicKeyLt(v string) Query        { return q.Where(SshPublicKey.Lt(v)) }
-func (q Query) SshPublicKeyLte(v string) Query       { return q.Where(SshPublicKey.Lte(v)) }
-func (q Query) SshPublicKeyEqLower(v string) Query   { return q.Where(SshPublicKey.EqLower(v)) }
-func (q Query) SshPublicKeyLike(v string) Query      { return q.Where(SshPublicKey.Like(v)) }
-func (q Query) SshPublicKeyILike(v string) Query     { return q.Where(SshPublicKey.ILike(v)) }
-func (q Query) SshPublicKeyIn(v ...string) Query     { return q.Where(SshPublicKey.In(v...)) }
-func (q Query) SshPublicKeyNotIn(v ...string) Query  { return q.Where(SshPublicKey.NotIn(v...)) }
-func (q Query) DisabledByEq(v string) Query          { return q.Where(DisabledBy.Eq(v)) }
-func (q Query) DisabledByNotEq(v string) Query       { return q.Where(DisabledBy.NotEq(v)) }
-func (q Query) DisabledByGt(v string) Query          { return q.Where(DisabledBy.Gt(v)) }
-func (q Query) DisabledByGte(v string) Query         { return q.Where(DisabledBy.Gte(v)) }
-func (q Query) DisabledByLt(v string) Query          { return q.Where(DisabledBy.Lt(v)) }
-func (q Query) DisabledByLte(v string) Query         { return q.Where(DisabledBy.Lte(v)) }
-func (q Query) DisabledByEqLower(v string) Query     { return q.Where(DisabledBy.EqLower(v)) }
-func (q Query) DisabledByLike(v string) Query        { return q.Where(DisabledBy.Like(v)) }
-func (q Query) DisabledByILike(v string) Query       { return q.Where(DisabledBy.ILike(v)) }
-func (q Query) DisabledByIn(v ...string) Query       { return q.Where(DisabledBy.In(v...)) }
-func (q Query) DisabledByNotIn(v ...string) Query    { return q.Where(DisabledBy.NotIn(v...)) }
-func (q Query) DisabledByIsNull() Query              { return q.Where(DisabledBy.IsNull()) }
-func (q Query) DisabledByIsNotNull() Query           { return q.Where(DisabledBy.IsNotNull()) }
+func (q Query) IDEq(v [16]byte) Query                  { return q.Where(ID.Eq(v)) }
+func (q Query) IDNotEq(v [16]byte) Query               { return q.Where(ID.NotEq(v)) }
+func (q Query) IDIn(v ...[16]byte) Query               { return q.Where(ID.In(v...)) }
+func (q Query) IDNotIn(v ...[16]byte) Query            { return q.Where(ID.NotIn(v...)) }
+func (q Query) EmailEq(v string) Query                 { return q.Where(Email.Eq(v)) }
+func (q Query) EmailNotEq(v string) Query              { return q.Where(Email.NotEq(v)) }
+func (q Query) EmailGt(v string) Query                 { return q.Where(Email.Gt(v)) }
+func (q Query) EmailGte(v string) Query                { return q.Where(Email.Gte(v)) }
+func (q Query) EmailLt(v string) Query                 { return q.Where(Email.Lt(v)) }
+func (q Query) EmailLte(v string) Query                { return q.Where(Email.Lte(v)) }
+func (q Query) EmailEqLower(v string) Query            { return q.Where(Email.EqLower(v)) }
+func (q Query) EmailLike(v string) Query               { return q.Where(Email.Like(v)) }
+func (q Query) EmailILike(v string) Query              { return q.Where(Email.ILike(v)) }
+func (q Query) EmailIn(v ...string) Query              { return q.Where(Email.In(v...)) }
+func (q Query) EmailNotIn(v ...string) Query           { return q.Where(Email.NotIn(v...)) }
+func (q Query) DisplayNameEq(v string) Query           { return q.Where(DisplayName.Eq(v)) }
+func (q Query) DisplayNameNotEq(v string) Query        { return q.Where(DisplayName.NotEq(v)) }
+func (q Query) DisplayNameGt(v string) Query           { return q.Where(DisplayName.Gt(v)) }
+func (q Query) DisplayNameGte(v string) Query          { return q.Where(DisplayName.Gte(v)) }
+func (q Query) DisplayNameLt(v string) Query           { return q.Where(DisplayName.Lt(v)) }
+func (q Query) DisplayNameLte(v string) Query          { return q.Where(DisplayName.Lte(v)) }
+func (q Query) DisplayNameEqLower(v string) Query      { return q.Where(DisplayName.EqLower(v)) }
+func (q Query) DisplayNameLike(v string) Query         { return q.Where(DisplayName.Like(v)) }
+func (q Query) DisplayNameILike(v string) Query        { return q.Where(DisplayName.ILike(v)) }
+func (q Query) DisplayNameIn(v ...string) Query        { return q.Where(DisplayName.In(v...)) }
+func (q Query) DisplayNameNotIn(v ...string) Query     { return q.Where(DisplayName.NotIn(v...)) }
+func (q Query) RoleEq(v string) Query                  { return q.Where(Role.Eq(v)) }
+func (q Query) RoleNotEq(v string) Query               { return q.Where(Role.NotEq(v)) }
+func (q Query) RoleGt(v string) Query                  { return q.Where(Role.Gt(v)) }
+func (q Query) RoleGte(v string) Query                 { return q.Where(Role.Gte(v)) }
+func (q Query) RoleLt(v string) Query                  { return q.Where(Role.Lt(v)) }
+func (q Query) RoleLte(v string) Query                 { return q.Where(Role.Lte(v)) }
+func (q Query) RoleEqLower(v string) Query             { return q.Where(Role.EqLower(v)) }
+func (q Query) RoleLike(v string) Query                { return q.Where(Role.Like(v)) }
+func (q Query) RoleILike(v string) Query               { return q.Where(Role.ILike(v)) }
+func (q Query) RoleIn(v ...string) Query               { return q.Where(Role.In(v...)) }
+func (q Query) RoleNotIn(v ...string) Query            { return q.Where(Role.NotIn(v...)) }
+func (q Query) MfaEnrolledEq(v bool) Query             { return q.Where(MfaEnrolled.Eq(v)) }
+func (q Query) MfaEnrolledNotEq(v bool) Query          { return q.Where(MfaEnrolled.NotEq(v)) }
+func (q Query) LastSeenAtEq(v time.Time) Query         { return q.Where(LastSeenAt.Eq(v)) }
+func (q Query) LastSeenAtNotEq(v time.Time) Query      { return q.Where(LastSeenAt.NotEq(v)) }
+func (q Query) LastSeenAtGt(v time.Time) Query         { return q.Where(LastSeenAt.Gt(v)) }
+func (q Query) LastSeenAtGte(v time.Time) Query        { return q.Where(LastSeenAt.Gte(v)) }
+func (q Query) LastSeenAtLt(v time.Time) Query         { return q.Where(LastSeenAt.Lt(v)) }
+func (q Query) LastSeenAtLte(v time.Time) Query        { return q.Where(LastSeenAt.Lte(v)) }
+func (q Query) LastSeenAtIsNull() Query                { return q.Where(LastSeenAt.IsNull()) }
+func (q Query) LastSeenAtIsNotNull() Query             { return q.Where(LastSeenAt.IsNotNull()) }
+func (q Query) CreatedAtEq(v time.Time) Query          { return q.Where(CreatedAt.Eq(v)) }
+func (q Query) CreatedAtNotEq(v time.Time) Query       { return q.Where(CreatedAt.NotEq(v)) }
+func (q Query) CreatedAtGt(v time.Time) Query          { return q.Where(CreatedAt.Gt(v)) }
+func (q Query) CreatedAtGte(v time.Time) Query         { return q.Where(CreatedAt.Gte(v)) }
+func (q Query) CreatedAtLt(v time.Time) Query          { return q.Where(CreatedAt.Lt(v)) }
+func (q Query) CreatedAtLte(v time.Time) Query         { return q.Where(CreatedAt.Lte(v)) }
+func (q Query) PasswordHashEq(v string) Query          { return q.Where(PasswordHash.Eq(v)) }
+func (q Query) PasswordHashNotEq(v string) Query       { return q.Where(PasswordHash.NotEq(v)) }
+func (q Query) PasswordHashGt(v string) Query          { return q.Where(PasswordHash.Gt(v)) }
+func (q Query) PasswordHashGte(v string) Query         { return q.Where(PasswordHash.Gte(v)) }
+func (q Query) PasswordHashLt(v string) Query          { return q.Where(PasswordHash.Lt(v)) }
+func (q Query) PasswordHashLte(v string) Query         { return q.Where(PasswordHash.Lte(v)) }
+func (q Query) PasswordHashEqLower(v string) Query     { return q.Where(PasswordHash.EqLower(v)) }
+func (q Query) PasswordHashLike(v string) Query        { return q.Where(PasswordHash.Like(v)) }
+func (q Query) PasswordHashILike(v string) Query       { return q.Where(PasswordHash.ILike(v)) }
+func (q Query) PasswordHashIn(v ...string) Query       { return q.Where(PasswordHash.In(v...)) }
+func (q Query) PasswordHashNotIn(v ...string) Query    { return q.Where(PasswordHash.NotIn(v...)) }
+func (q Query) PasswordHashIsNull() Query              { return q.Where(PasswordHash.IsNull()) }
+func (q Query) PasswordHashIsNotNull() Query           { return q.Where(PasswordHash.IsNotNull()) }
+func (q Query) TotpSecretEq(v string) Query            { return q.Where(TotpSecret.Eq(v)) }
+func (q Query) TotpSecretNotEq(v string) Query         { return q.Where(TotpSecret.NotEq(v)) }
+func (q Query) TotpSecretGt(v string) Query            { return q.Where(TotpSecret.Gt(v)) }
+func (q Query) TotpSecretGte(v string) Query           { return q.Where(TotpSecret.Gte(v)) }
+func (q Query) TotpSecretLt(v string) Query            { return q.Where(TotpSecret.Lt(v)) }
+func (q Query) TotpSecretLte(v string) Query           { return q.Where(TotpSecret.Lte(v)) }
+func (q Query) TotpSecretEqLower(v string) Query       { return q.Where(TotpSecret.EqLower(v)) }
+func (q Query) TotpSecretLike(v string) Query          { return q.Where(TotpSecret.Like(v)) }
+func (q Query) TotpSecretILike(v string) Query         { return q.Where(TotpSecret.ILike(v)) }
+func (q Query) TotpSecretIn(v ...string) Query         { return q.Where(TotpSecret.In(v...)) }
+func (q Query) TotpSecretNotIn(v ...string) Query      { return q.Where(TotpSecret.NotIn(v...)) }
+func (q Query) TotpSecretIsNull() Query                { return q.Where(TotpSecret.IsNull()) }
+func (q Query) TotpSecretIsNotNull() Query             { return q.Where(TotpSecret.IsNotNull()) }
+func (q Query) MfaEnrolledAtEq(v time.Time) Query      { return q.Where(MfaEnrolledAt.Eq(v)) }
+func (q Query) MfaEnrolledAtNotEq(v time.Time) Query   { return q.Where(MfaEnrolledAt.NotEq(v)) }
+func (q Query) MfaEnrolledAtGt(v time.Time) Query      { return q.Where(MfaEnrolledAt.Gt(v)) }
+func (q Query) MfaEnrolledAtGte(v time.Time) Query     { return q.Where(MfaEnrolledAt.Gte(v)) }
+func (q Query) MfaEnrolledAtLt(v time.Time) Query      { return q.Where(MfaEnrolledAt.Lt(v)) }
+func (q Query) MfaEnrolledAtLte(v time.Time) Query     { return q.Where(MfaEnrolledAt.Lte(v)) }
+func (q Query) MfaEnrolledAtIsNull() Query             { return q.Where(MfaEnrolledAt.IsNull()) }
+func (q Query) MfaEnrolledAtIsNotNull() Query          { return q.Where(MfaEnrolledAt.IsNotNull()) }
+func (q Query) DisabledAtEq(v time.Time) Query         { return q.Where(DisabledAt.Eq(v)) }
+func (q Query) DisabledAtNotEq(v time.Time) Query      { return q.Where(DisabledAt.NotEq(v)) }
+func (q Query) DisabledAtGt(v time.Time) Query         { return q.Where(DisabledAt.Gt(v)) }
+func (q Query) DisabledAtGte(v time.Time) Query        { return q.Where(DisabledAt.Gte(v)) }
+func (q Query) DisabledAtLt(v time.Time) Query         { return q.Where(DisabledAt.Lt(v)) }
+func (q Query) DisabledAtLte(v time.Time) Query        { return q.Where(DisabledAt.Lte(v)) }
+func (q Query) DisabledAtIsNull() Query                { return q.Where(DisabledAt.IsNull()) }
+func (q Query) DisabledAtIsNotNull() Query             { return q.Where(DisabledAt.IsNotNull()) }
+func (q Query) LoginNameEq(v string) Query             { return q.Where(LoginName.Eq(v)) }
+func (q Query) LoginNameNotEq(v string) Query          { return q.Where(LoginName.NotEq(v)) }
+func (q Query) LoginNameGt(v string) Query             { return q.Where(LoginName.Gt(v)) }
+func (q Query) LoginNameGte(v string) Query            { return q.Where(LoginName.Gte(v)) }
+func (q Query) LoginNameLt(v string) Query             { return q.Where(LoginName.Lt(v)) }
+func (q Query) LoginNameLte(v string) Query            { return q.Where(LoginName.Lte(v)) }
+func (q Query) LoginNameEqLower(v string) Query        { return q.Where(LoginName.EqLower(v)) }
+func (q Query) LoginNameLike(v string) Query           { return q.Where(LoginName.Like(v)) }
+func (q Query) LoginNameILike(v string) Query          { return q.Where(LoginName.ILike(v)) }
+func (q Query) LoginNameIn(v ...string) Query          { return q.Where(LoginName.In(v...)) }
+func (q Query) LoginNameNotIn(v ...string) Query       { return q.Where(LoginName.NotIn(v...)) }
+func (q Query) LoginNameIsNull() Query                 { return q.Where(LoginName.IsNull()) }
+func (q Query) LoginNameIsNotNull() Query              { return q.Where(LoginName.IsNotNull()) }
+func (q Query) SshPublicKeyEq(v string) Query          { return q.Where(SshPublicKey.Eq(v)) }
+func (q Query) SshPublicKeyNotEq(v string) Query       { return q.Where(SshPublicKey.NotEq(v)) }
+func (q Query) SshPublicKeyGt(v string) Query          { return q.Where(SshPublicKey.Gt(v)) }
+func (q Query) SshPublicKeyGte(v string) Query         { return q.Where(SshPublicKey.Gte(v)) }
+func (q Query) SshPublicKeyLt(v string) Query          { return q.Where(SshPublicKey.Lt(v)) }
+func (q Query) SshPublicKeyLte(v string) Query         { return q.Where(SshPublicKey.Lte(v)) }
+func (q Query) SshPublicKeyEqLower(v string) Query     { return q.Where(SshPublicKey.EqLower(v)) }
+func (q Query) SshPublicKeyLike(v string) Query        { return q.Where(SshPublicKey.Like(v)) }
+func (q Query) SshPublicKeyILike(v string) Query       { return q.Where(SshPublicKey.ILike(v)) }
+func (q Query) SshPublicKeyIn(v ...string) Query       { return q.Where(SshPublicKey.In(v...)) }
+func (q Query) SshPublicKeyNotIn(v ...string) Query    { return q.Where(SshPublicKey.NotIn(v...)) }
+func (q Query) DisabledByEq(v string) Query            { return q.Where(DisabledBy.Eq(v)) }
+func (q Query) DisabledByNotEq(v string) Query         { return q.Where(DisabledBy.NotEq(v)) }
+func (q Query) DisabledByGt(v string) Query            { return q.Where(DisabledBy.Gt(v)) }
+func (q Query) DisabledByGte(v string) Query           { return q.Where(DisabledBy.Gte(v)) }
+func (q Query) DisabledByLt(v string) Query            { return q.Where(DisabledBy.Lt(v)) }
+func (q Query) DisabledByLte(v string) Query           { return q.Where(DisabledBy.Lte(v)) }
+func (q Query) DisabledByEqLower(v string) Query       { return q.Where(DisabledBy.EqLower(v)) }
+func (q Query) DisabledByLike(v string) Query          { return q.Where(DisabledBy.Like(v)) }
+func (q Query) DisabledByILike(v string) Query         { return q.Where(DisabledBy.ILike(v)) }
+func (q Query) DisabledByIn(v ...string) Query         { return q.Where(DisabledBy.In(v...)) }
+func (q Query) DisabledByNotIn(v ...string) Query      { return q.Where(DisabledBy.NotIn(v...)) }
+func (q Query) DisabledByIsNull() Query                { return q.Where(DisabledBy.IsNull()) }
+func (q Query) DisabledByIsNotNull() Query             { return q.Where(DisabledBy.IsNotNull()) }
+func (q Query) SessionsValidAfterEq(v time.Time) Query { return q.Where(SessionsValidAfter.Eq(v)) }
+func (q Query) SessionsValidAfterNotEq(v time.Time) Query {
+	return q.Where(SessionsValidAfter.NotEq(v))
+}
+func (q Query) SessionsValidAfterGt(v time.Time) Query  { return q.Where(SessionsValidAfter.Gt(v)) }
+func (q Query) SessionsValidAfterGte(v time.Time) Query { return q.Where(SessionsValidAfter.Gte(v)) }
+func (q Query) SessionsValidAfterLt(v time.Time) Query  { return q.Where(SessionsValidAfter.Lt(v)) }
+func (q Query) SessionsValidAfterLte(v time.Time) Query { return q.Where(SessionsValidAfter.Lte(v)) }
+func (q Query) SessionsValidAfterIsNull() Query         { return q.Where(SessionsValidAfter.IsNull()) }
+func (q Query) SessionsValidAfterIsNotNull() Query      { return q.Where(SessionsValidAfter.IsNotNull()) }
+func (q Query) TotpPendingSecretEq(v string) Query      { return q.Where(TotpPendingSecret.Eq(v)) }
+func (q Query) TotpPendingSecretNotEq(v string) Query   { return q.Where(TotpPendingSecret.NotEq(v)) }
+func (q Query) TotpPendingSecretGt(v string) Query      { return q.Where(TotpPendingSecret.Gt(v)) }
+func (q Query) TotpPendingSecretGte(v string) Query     { return q.Where(TotpPendingSecret.Gte(v)) }
+func (q Query) TotpPendingSecretLt(v string) Query      { return q.Where(TotpPendingSecret.Lt(v)) }
+func (q Query) TotpPendingSecretLte(v string) Query     { return q.Where(TotpPendingSecret.Lte(v)) }
+func (q Query) TotpPendingSecretEqLower(v string) Query { return q.Where(TotpPendingSecret.EqLower(v)) }
+func (q Query) TotpPendingSecretLike(v string) Query    { return q.Where(TotpPendingSecret.Like(v)) }
+func (q Query) TotpPendingSecretILike(v string) Query   { return q.Where(TotpPendingSecret.ILike(v)) }
+func (q Query) TotpPendingSecretIn(v ...string) Query   { return q.Where(TotpPendingSecret.In(v...)) }
+func (q Query) TotpPendingSecretNotIn(v ...string) Query {
+	return q.Where(TotpPendingSecret.NotIn(v...))
+}
+func (q Query) TotpPendingSecretIsNull() Query     { return q.Where(TotpPendingSecret.IsNull()) }
+func (q Query) TotpPendingSecretIsNotNull() Query  { return q.Where(TotpPendingSecret.IsNotNull()) }
+func (q Query) TotpLastStepEq(v int64) Query       { return q.Where(TotpLastStep.Eq(v)) }
+func (q Query) TotpLastStepNotEq(v int64) Query    { return q.Where(TotpLastStep.NotEq(v)) }
+func (q Query) TotpLastStepGt(v int64) Query       { return q.Where(TotpLastStep.Gt(v)) }
+func (q Query) TotpLastStepGte(v int64) Query      { return q.Where(TotpLastStep.Gte(v)) }
+func (q Query) TotpLastStepLt(v int64) Query       { return q.Where(TotpLastStep.Lt(v)) }
+func (q Query) TotpLastStepLte(v int64) Query      { return q.Where(TotpLastStep.Lte(v)) }
+func (q Query) TotpLastStepIn(v ...int64) Query    { return q.Where(TotpLastStep.In(v...)) }
+func (q Query) TotpLastStepNotIn(v ...int64) Query { return q.Where(TotpLastStep.NotIn(v...)) }
+func (q Query) TotpLastStepIsNull() Query          { return q.Where(TotpLastStep.IsNull()) }
+func (q Query) TotpLastStepIsNotNull() Query       { return q.Where(TotpLastStep.IsNotNull()) }
+func (q Query) HomeTenantEq(v string) Query        { return q.Where(HomeTenant.Eq(v)) }
+func (q Query) HomeTenantNotEq(v string) Query     { return q.Where(HomeTenant.NotEq(v)) }
+func (q Query) HomeTenantGt(v string) Query        { return q.Where(HomeTenant.Gt(v)) }
+func (q Query) HomeTenantGte(v string) Query       { return q.Where(HomeTenant.Gte(v)) }
+func (q Query) HomeTenantLt(v string) Query        { return q.Where(HomeTenant.Lt(v)) }
+func (q Query) HomeTenantLte(v string) Query       { return q.Where(HomeTenant.Lte(v)) }
+func (q Query) HomeTenantEqLower(v string) Query   { return q.Where(HomeTenant.EqLower(v)) }
+func (q Query) HomeTenantLike(v string) Query      { return q.Where(HomeTenant.Like(v)) }
+func (q Query) HomeTenantILike(v string) Query     { return q.Where(HomeTenant.ILike(v)) }
+func (q Query) HomeTenantIn(v ...string) Query     { return q.Where(HomeTenant.In(v...)) }
+func (q Query) HomeTenantNotIn(v ...string) Query  { return q.Where(HomeTenant.NotIn(v...)) }
+func (q Query) HomeTenantIsNull() Query            { return q.Where(HomeTenant.IsNull()) }
+func (q Query) HomeTenantIsNotNull() Query         { return q.Where(HomeTenant.IsNotNull()) }
+func (q Query) ShareableEq(v bool) Query           { return q.Where(Shareable.Eq(v)) }
+func (q Query) ShareableNotEq(v bool) Query        { return q.Where(Shareable.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by" FROM "users"`
+const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable" FROM "users"`
 const countPrefix = `SELECT count(*) FROM "users"`
 const existsPrefix = `SELECT 1 FROM "users"`
 const existsSuffix = ` LIMIT 1`
@@ -1169,6 +1351,36 @@ var orderTable = [nCols][4]string{
 		"\"disabled_by\" ASC NULLS FIRST",
 		"\"disabled_by\" DESC NULLS LAST",
 	},
+	{ // sessions_valid_after
+		"\"sessions_valid_after\"",
+		"\"sessions_valid_after\" DESC",
+		"\"sessions_valid_after\" ASC NULLS FIRST",
+		"\"sessions_valid_after\" DESC NULLS LAST",
+	},
+	{ // totp_pending_secret
+		"\"totp_pending_secret\"",
+		"\"totp_pending_secret\" DESC",
+		"\"totp_pending_secret\" ASC NULLS FIRST",
+		"\"totp_pending_secret\" DESC NULLS LAST",
+	},
+	{ // totp_last_step
+		"\"totp_last_step\"",
+		"\"totp_last_step\" DESC",
+		"\"totp_last_step\" ASC NULLS FIRST",
+		"\"totp_last_step\" DESC NULLS LAST",
+	},
+	{ // home_tenant
+		"\"home_tenant\"",
+		"\"home_tenant\" DESC",
+		"\"home_tenant\" ASC NULLS FIRST",
+		"\"home_tenant\" DESC NULLS LAST",
+	},
+	{ // shareable
+		"\"shareable\"",
+		"\"shareable\" DESC",
+		"\"shareable\" ASC NULLS FIRST",
+		"\"shareable\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1188,6 +1400,11 @@ var identTable = [nCols]string{
 	"\"login_name\"",
 	"\"ssh_public_key\"",
 	"\"disabled_by\"",
+	"\"sessions_valid_after\"",
+	"\"totp_pending_secret\"",
+	"\"totp_last_step\"",
+	"\"home_tenant\"",
+	"\"shareable\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1220,7 +1437,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [14][28]runtime.Frag{
+var fragTable = [19][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1641,6 +1858,156 @@ var fragTable = [14][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // sessions_valid_after
+		{}, // opNone
+		{A: "\"sessions_valid_after\" = $", B: ""},
+		{A: "\"sessions_valid_after\" <> $", B: ""},
+		{A: "\"sessions_valid_after\" > $", B: ""},
+		{A: "\"sessions_valid_after\" >= $", B: ""},
+		{A: "\"sessions_valid_after\" < $", B: ""},
+		{A: "\"sessions_valid_after\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"sessions_valid_after\" IS NULL", B: ""},
+		{A: "\"sessions_valid_after\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // totp_pending_secret
+		{}, // opNone
+		{A: "\"totp_pending_secret\" = $", B: ""},
+		{A: "\"totp_pending_secret\" <> $", B: ""},
+		{A: "\"totp_pending_secret\" > $", B: ""},
+		{A: "\"totp_pending_secret\" >= $", B: ""},
+		{A: "\"totp_pending_secret\" < $", B: ""},
+		{A: "\"totp_pending_secret\" <= $", B: ""},
+		{A: "lower(\"totp_pending_secret\") = lower($", B: ")"},
+		{A: "\"totp_pending_secret\" LIKE $", B: ""},
+		{A: "\"totp_pending_secret\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"totp_pending_secret\" = ANY($", B: ")"},
+		{A: "\"totp_pending_secret\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"totp_pending_secret\" IS NULL", B: ""},
+		{A: "\"totp_pending_secret\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // totp_last_step
+		{}, // opNone
+		{A: "\"totp_last_step\" = $", B: ""},
+		{A: "\"totp_last_step\" <> $", B: ""},
+		{A: "\"totp_last_step\" > $", B: ""},
+		{A: "\"totp_last_step\" >= $", B: ""},
+		{A: "\"totp_last_step\" < $", B: ""},
+		{A: "\"totp_last_step\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"totp_last_step\" = ANY($", B: ")"},
+		{A: "\"totp_last_step\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"totp_last_step\" IS NULL", B: ""},
+		{A: "\"totp_last_step\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // home_tenant
+		{}, // opNone
+		{A: "\"home_tenant\" = $", B: ""},
+		{A: "\"home_tenant\" <> $", B: ""},
+		{A: "\"home_tenant\" > $", B: ""},
+		{A: "\"home_tenant\" >= $", B: ""},
+		{A: "\"home_tenant\" < $", B: ""},
+		{A: "\"home_tenant\" <= $", B: ""},
+		{A: "lower(\"home_tenant\") = lower($", B: ")"},
+		{A: "\"home_tenant\" LIKE $", B: ""},
+		{A: "\"home_tenant\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"home_tenant\" = ANY($", B: ")"},
+		{A: "\"home_tenant\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"home_tenant\" IS NULL", B: ""},
+		{A: "\"home_tenant\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // shareable
+		{}, // opNone
+		{A: "\"shareable\" = $", B: ""},
+		{A: "\"shareable\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1811,17 +2178,24 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.LoginName = runtime.NullText(rv[11], sl)
 	r.SshPublicKey = sl.Str(rv[12])
 	r.DisabledBy = runtime.NullText(rv[13], sl)
+	r.SessionsValidAfter = runtime.Nullable(rv[14], runtime.Timestamptz)
+	r.TotpPendingSecret = runtime.NullText(rv[15], sl)
+	r.TotpLastStep = runtime.Nullable(rv[16], runtime.Int8)
+	r.HomeTenant = runtime.NullText(rv[17], sl)
+	r.Shareable = runtime.Bool(rv[18])
 	return nil
 }
 
 type binder struct {
 	vals   []any
 	strs   [6]string
+	nums   [6]int64
 	raws   [4][16]byte
 	tims   [4]time.Time
 	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
+	anyI64 [3][]int64
 	limit  int64
 	offset int64
 }
@@ -1852,6 +2226,9 @@ func putBinder(b *binder) {
 	for i := range b.anyStr {
 		b.anyStr[i] = nil
 	}
+	for i := range b.anyI64 {
+		b.anyI64[i] = nil
+	}
 	binders.Put(b)
 }
 
@@ -1860,7 +2237,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nr, ntm, nbo, nar, nas uint8
+	var ns, nn, nr, ntm, nbo, nar, nas, nai64 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1909,6 +2286,18 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 13:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 15:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 16:
+				b.anyI64[nai64] = q.anyI64[nai64]
+				v = append(v, &b.anyI64[nai64])
+				nai64++
+			case 17:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1972,6 +2361,26 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 14:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 15:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 16:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 17:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 18:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -2109,7 +2518,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by"`
+const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable"`
 
 const updatePrefix = `UPDATE "users" SET `
 const deletePrefix = `DELETE FROM "users"`
@@ -2117,38 +2526,48 @@ const deletePrefix = `DELETE FROM "users"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dEmail         uint64 = 1 << 0
-	dDisplayName   uint64 = 1 << 1
-	dRole          uint64 = 1 << 2
-	dMfaEnrolled   uint64 = 1 << 3
-	dLastSeenAt    uint64 = 1 << 4
-	dCreatedAt     uint64 = 1 << 5
-	dPasswordHash  uint64 = 1 << 6
-	dTotpSecret    uint64 = 1 << 7
-	dMfaEnrolledAt uint64 = 1 << 8
-	dDisabledAt    uint64 = 1 << 9
-	dLoginName     uint64 = 1 << 10
-	dSshPublicKey  uint64 = 1 << 11
-	dDisabledBy    uint64 = 1 << 12
+	dEmail              uint64 = 1 << 0
+	dDisplayName        uint64 = 1 << 1
+	dRole               uint64 = 1 << 2
+	dMfaEnrolled        uint64 = 1 << 3
+	dLastSeenAt         uint64 = 1 << 4
+	dCreatedAt          uint64 = 1 << 5
+	dPasswordHash       uint64 = 1 << 6
+	dTotpSecret         uint64 = 1 << 7
+	dMfaEnrolledAt      uint64 = 1 << 8
+	dDisabledAt         uint64 = 1 << 9
+	dLoginName          uint64 = 1 << 10
+	dSshPublicKey       uint64 = 1 << 11
+	dDisabledBy         uint64 = 1 << 12
+	dSessionsValidAfter uint64 = 1 << 13
+	dTotpPendingSecret  uint64 = 1 << 14
+	dTotpLastStep       uint64 = 1 << 15
+	dHomeTenant         uint64 = 1 << 16
+	dShareable          uint64 = 1 << 17
 )
 
-const nUpdatable = 13
+const nUpdatable = 18
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"email\" = $", B: ""},           // email
-	{A: "\"display_name\" = $", B: ""},    // display_name
-	{A: "\"role\" = $", B: ""},            // role
-	{A: "\"mfa_enrolled\" = $", B: ""},    // mfa_enrolled
-	{A: "\"last_seen_at\" = $", B: ""},    // last_seen_at
-	{A: "\"created_at\" = $", B: ""},      // created_at
-	{A: "\"password_hash\" = $", B: ""},   // password_hash
-	{A: "\"totp_secret\" = $", B: ""},     // totp_secret
-	{A: "\"mfa_enrolled_at\" = $", B: ""}, // mfa_enrolled_at
-	{A: "\"disabled_at\" = $", B: ""},     // disabled_at
-	{A: "\"login_name\" = $", B: ""},      // login_name
-	{A: "\"ssh_public_key\" = $", B: ""},  // ssh_public_key
-	{A: "\"disabled_by\" = $", B: ""},     // disabled_by
+	{A: "\"email\" = $", B: ""},                // email
+	{A: "\"display_name\" = $", B: ""},         // display_name
+	{A: "\"role\" = $", B: ""},                 // role
+	{A: "\"mfa_enrolled\" = $", B: ""},         // mfa_enrolled
+	{A: "\"last_seen_at\" = $", B: ""},         // last_seen_at
+	{A: "\"created_at\" = $", B: ""},           // created_at
+	{A: "\"password_hash\" = $", B: ""},        // password_hash
+	{A: "\"totp_secret\" = $", B: ""},          // totp_secret
+	{A: "\"mfa_enrolled_at\" = $", B: ""},      // mfa_enrolled_at
+	{A: "\"disabled_at\" = $", B: ""},          // disabled_at
+	{A: "\"login_name\" = $", B: ""},           // login_name
+	{A: "\"ssh_public_key\" = $", B: ""},       // ssh_public_key
+	{A: "\"disabled_by\" = $", B: ""},          // disabled_by
+	{A: "\"sessions_valid_after\" = $", B: ""}, // sessions_valid_after
+	{A: "\"totp_pending_secret\" = $", B: ""},  // totp_pending_secret
+	{A: "\"totp_last_step\" = $", B: ""},       // totp_last_step
+	{A: "\"home_tenant\" = $", B: ""},          // home_tenant
+	{A: "\"shareable\" = $", B: ""},            // shareable
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2168,6 +2587,11 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                        // login_name has no server-side form
 	{},                                        // ssh_public_key has no server-side form
 	{},                                        // disabled_by has no server-side form
+	{A: "\"sessions_valid_after\" = now()", B: ""}, // sessions_valid_after = the database's clock
+	{}, // totp_pending_secret has no server-side form
+	{A: "\"totp_last_step\" = \"totp_last_step\" + 1", B: ""}, // totp_last_step = its own value plus one
+	{}, // home_tenant has no server-side form
+	{}, // shareable has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2179,23 +2603,28 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID            uint64 = 1 << 0
-	iEmail         uint64 = 1 << 1
-	iDisplayName   uint64 = 1 << 2
-	iRole          uint64 = 1 << 3
-	iMfaEnrolled   uint64 = 1 << 4
-	iLastSeenAt    uint64 = 1 << 5
-	iCreatedAt     uint64 = 1 << 6
-	iPasswordHash  uint64 = 1 << 7
-	iTotpSecret    uint64 = 1 << 8
-	iMfaEnrolledAt uint64 = 1 << 9
-	iDisabledAt    uint64 = 1 << 10
-	iLoginName     uint64 = 1 << 11
-	iSshPublicKey  uint64 = 1 << 12
-	iDisabledBy    uint64 = 1 << 13
+	iID                 uint64 = 1 << 0
+	iEmail              uint64 = 1 << 1
+	iDisplayName        uint64 = 1 << 2
+	iRole               uint64 = 1 << 3
+	iMfaEnrolled        uint64 = 1 << 4
+	iLastSeenAt         uint64 = 1 << 5
+	iCreatedAt          uint64 = 1 << 6
+	iPasswordHash       uint64 = 1 << 7
+	iTotpSecret         uint64 = 1 << 8
+	iMfaEnrolledAt      uint64 = 1 << 9
+	iDisabledAt         uint64 = 1 << 10
+	iLoginName          uint64 = 1 << 11
+	iSshPublicKey       uint64 = 1 << 12
+	iDisabledBy         uint64 = 1 << 13
+	iSessionsValidAfter uint64 = 1 << 14
+	iTotpPendingSecret  uint64 = 1 << 15
+	iTotpLastStep       uint64 = 1 << 16
+	iHomeTenant         uint64 = 1 << 17
+	iShareable          uint64 = 1 << 18
 )
 
-const nInsertable = 14
+const nInsertable = 19
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2213,6 +2642,11 @@ var insCols = [nInsertable]string{
 	"\"login_name\"",
 	"\"ssh_public_key\"",
 	"\"disabled_by\"",
+	"\"sessions_valid_after\"",
+	"\"totp_pending_secret\"",
+	"\"totp_last_step\"",
+	"\"home_tenant\"",
+	"\"shareable\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2221,7 +2655,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"users\""
-const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\""
+const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2240,7 +2674,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\""
+const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2466,6 +2900,89 @@ func (m *Mut) SetDisabledByNull() {
 	m.expr &^= dDisabledBy
 }
 
+func (m *Mut) SetSessionsValidAfter(v time.Time) {
+	m.row.SessionsValidAfter = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dSessionsValidAfter
+	m.expr &^= dSessionsValidAfter
+}
+
+// SetSessionsValidAfterNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetSessionsValidAfterNow() {
+	m.expr |= dSessionsValidAfter
+	m.dirty &^= dSessionsValidAfter
+}
+
+// SetSessionsValidAfterNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetSessionsValidAfterNull() {
+	m.row.SessionsValidAfter = runtime.Null[time.Time]{}
+	m.dirty |= dSessionsValidAfter
+	m.expr &^= dSessionsValidAfter
+}
+
+func (m *Mut) SetTotpPendingSecret(v string) {
+	m.row.TotpPendingSecret = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dTotpPendingSecret
+	m.expr &^= dTotpPendingSecret
+}
+
+// SetTotpPendingSecretNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTotpPendingSecretNull() {
+	m.row.TotpPendingSecret = runtime.Null[string]{}
+	m.dirty |= dTotpPendingSecret
+	m.expr &^= dTotpPendingSecret
+}
+
+func (m *Mut) SetTotpLastStep(v int64) {
+	m.row.TotpLastStep = runtime.Null[int64]{V: v, Valid: true}
+	m.dirty |= dTotpLastStep
+	m.expr &^= dTotpLastStep
+}
+
+// IncTotpLastStep adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncTotpLastStep() {
+	m.expr |= dTotpLastStep
+	m.dirty &^= dTotpLastStep
+}
+
+// SetTotpLastStepNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTotpLastStepNull() {
+	m.row.TotpLastStep = runtime.Null[int64]{}
+	m.dirty |= dTotpLastStep
+	m.expr &^= dTotpLastStep
+}
+
+func (m *Mut) SetHomeTenant(v string) {
+	m.row.HomeTenant = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dHomeTenant
+	m.expr &^= dHomeTenant
+}
+
+// SetHomeTenantNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetHomeTenantNull() {
+	m.row.HomeTenant = runtime.Null[string]{}
+	m.dirty |= dHomeTenant
+	m.expr &^= dHomeTenant
+}
+
+func (m *Mut) SetShareable(v bool) {
+	m.row.Shareable = v
+	m.dirty |= dShareable
+	m.expr &^= dShareable
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2610,6 +3127,59 @@ func (n *Ins) SetDisabledByNull() {
 	n.set |= iDisabledBy
 }
 
+func (n *Ins) SetSessionsValidAfter(v time.Time) {
+	n.row.SessionsValidAfter = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iSessionsValidAfter
+}
+
+// SetSessionsValidAfterNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetSessionsValidAfterNull() {
+	n.row.SessionsValidAfter = runtime.Null[time.Time]{}
+	n.set |= iSessionsValidAfter
+}
+
+func (n *Ins) SetTotpPendingSecret(v string) {
+	n.row.TotpPendingSecret = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iTotpPendingSecret
+}
+
+// SetTotpPendingSecretNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTotpPendingSecretNull() {
+	n.row.TotpPendingSecret = runtime.Null[string]{}
+	n.set |= iTotpPendingSecret
+}
+
+func (n *Ins) SetTotpLastStep(v int64) {
+	n.row.TotpLastStep = runtime.Null[int64]{V: v, Valid: true}
+	n.set |= iTotpLastStep
+}
+
+// SetTotpLastStepNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTotpLastStepNull() {
+	n.row.TotpLastStep = runtime.Null[int64]{}
+	n.set |= iTotpLastStep
+}
+
+func (n *Ins) SetHomeTenant(v string) {
+	n.row.HomeTenant = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iHomeTenant
+}
+
+// SetHomeTenantNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetHomeTenantNull() {
+	n.row.HomeTenant = runtime.Null[string]{}
+	n.set |= iHomeTenant
+}
+
+func (n *Ins) SetShareable(v bool) {
+	n.row.Shareable = v
+	n.set |= iShareable
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2658,7 +3228,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 13)
+	set := make([]string, 0, 18)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2700,6 +3270,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
 		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "sessions_valid_after")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "totp_pending_secret")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "totp_last_step")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "display_name")
@@ -2736,6 +3321,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "sessions_valid_after")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "totp_pending_secret")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "totp_last_step")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -2777,6 +3377,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
 		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "sessions_valid_after")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "totp_pending_secret")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "totp_last_step")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
+		}
 	case 3:
 		if mask&(1<<1) != 0 {
 			set = append(set, "email")
@@ -2813,6 +3428,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "sessions_valid_after")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "totp_pending_secret")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "totp_last_step")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "shareable")
 		}
 	}
 	return set
@@ -2892,19 +3522,24 @@ func joinAssign(set []string) string {
 }
 
 var assignFor = map[string]string{
-	"email":           "\"email\" = EXCLUDED.\"email\"",
-	"display_name":    "\"display_name\" = EXCLUDED.\"display_name\"",
-	"role":            "\"role\" = EXCLUDED.\"role\"",
-	"mfa_enrolled":    "\"mfa_enrolled\" = EXCLUDED.\"mfa_enrolled\"",
-	"last_seen_at":    "\"last_seen_at\" = EXCLUDED.\"last_seen_at\"",
-	"created_at":      "\"created_at\" = EXCLUDED.\"created_at\"",
-	"password_hash":   "\"password_hash\" = EXCLUDED.\"password_hash\"",
-	"totp_secret":     "\"totp_secret\" = EXCLUDED.\"totp_secret\"",
-	"mfa_enrolled_at": "\"mfa_enrolled_at\" = EXCLUDED.\"mfa_enrolled_at\"",
-	"disabled_at":     "\"disabled_at\" = EXCLUDED.\"disabled_at\"",
-	"login_name":      "\"login_name\" = EXCLUDED.\"login_name\"",
-	"ssh_public_key":  "\"ssh_public_key\" = EXCLUDED.\"ssh_public_key\"",
-	"disabled_by":     "\"disabled_by\" = EXCLUDED.\"disabled_by\"",
+	"email":                "\"email\" = EXCLUDED.\"email\"",
+	"display_name":         "\"display_name\" = EXCLUDED.\"display_name\"",
+	"role":                 "\"role\" = EXCLUDED.\"role\"",
+	"mfa_enrolled":         "\"mfa_enrolled\" = EXCLUDED.\"mfa_enrolled\"",
+	"last_seen_at":         "\"last_seen_at\" = EXCLUDED.\"last_seen_at\"",
+	"created_at":           "\"created_at\" = EXCLUDED.\"created_at\"",
+	"password_hash":        "\"password_hash\" = EXCLUDED.\"password_hash\"",
+	"totp_secret":          "\"totp_secret\" = EXCLUDED.\"totp_secret\"",
+	"mfa_enrolled_at":      "\"mfa_enrolled_at\" = EXCLUDED.\"mfa_enrolled_at\"",
+	"disabled_at":          "\"disabled_at\" = EXCLUDED.\"disabled_at\"",
+	"login_name":           "\"login_name\" = EXCLUDED.\"login_name\"",
+	"ssh_public_key":       "\"ssh_public_key\" = EXCLUDED.\"ssh_public_key\"",
+	"disabled_by":          "\"disabled_by\" = EXCLUDED.\"disabled_by\"",
+	"sessions_valid_after": "\"sessions_valid_after\" = EXCLUDED.\"sessions_valid_after\"",
+	"totp_pending_secret":  "\"totp_pending_secret\" = EXCLUDED.\"totp_pending_secret\"",
+	"totp_last_step":       "\"totp_last_step\" = EXCLUDED.\"totp_last_step\"",
+	"home_tenant":          "\"home_tenant\" = EXCLUDED.\"home_tenant\"",
+	"shareable":            "\"shareable\" = EXCLUDED.\"shareable\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2976,6 +3611,16 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.SshPublicKey)
 		case 13:
 			args = append(args, n.row.DisabledBy.Arg())
+		case 14:
+			args = append(args, n.row.SessionsValidAfter.Arg())
+		case 15:
+			args = append(args, n.row.TotpPendingSecret.Arg())
+		case 16:
+			args = append(args, n.row.TotpLastStep.Arg())
+		case 17:
+			args = append(args, n.row.HomeTenant.Arg())
+		case 18:
+			args = append(args, n.row.Shareable)
 		}
 	}
 	var out Row
@@ -3013,7 +3658,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3028,6 +3673,11 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.LoginName.Arg())
 	args = append(args, r.SshPublicKey)
 	args = append(args, r.DisabledBy.Arg())
+	args = append(args, r.SessionsValidAfter.Arg())
+	args = append(args, r.TotpPendingSecret.Arg())
+	args = append(args, r.TotpLastStep.Arg())
+	args = append(args, r.HomeTenant.Arg())
+	args = append(args, r.Shareable)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3068,13 +3718,18 @@ var copyCols = []string{
 	"login_name",
 	"ssh_public_key",
 	"disabled_by",
+	"sessions_valid_after",
+	"totp_pending_secret",
+	"totp_last_step",
+	"home_tenant",
+	"shareable",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [14]any
+	buf  [19]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3106,6 +3761,11 @@ func (s *rowSource) Values() []any {
 	s.buf[11] = r.LoginName.Ptr()
 	s.buf[12] = &r.SshPublicKey
 	s.buf[13] = r.DisabledBy.Ptr()
+	s.buf[14] = r.SessionsValidAfter.Ptr()
+	s.buf[15] = r.TotpPendingSecret.Ptr()
+	s.buf[16] = r.TotpLastStep.Ptr()
+	s.buf[17] = r.HomeTenant.Ptr()
+	s.buf[18] = &r.Shareable
 	return s.buf[:]
 }
 
@@ -3150,8 +3810,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 11
 	mask |= 1 << 12
 	mask |= 1 << 13
+	mask |= 1 << 14
+	mask |= 1 << 15
+	mask |= 1 << 16
+	mask |= 1 << 17
+	mask |= 1 << 18
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3166,6 +3831,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.LoginName.Arg())
 	args = append(args, r.SshPublicKey)
 	args = append(args, r.DisabledBy.Arg())
+	args = append(args, r.SessionsValidAfter.Arg())
+	args = append(args, r.TotpPendingSecret.Arg())
+	args = append(args, r.TotpLastStep.Arg())
+	args = append(args, r.HomeTenant.Arg())
+	args = append(args, r.Shareable)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3227,6 +3897,16 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.SshPublicKey)
 		case 13:
 			args = append(args, n.row.DisabledBy.Arg())
+		case 14:
+			args = append(args, n.row.SessionsValidAfter.Arg())
+		case 15:
+			args = append(args, n.row.TotpPendingSecret.Arg())
+		case 16:
+			args = append(args, n.row.TotpLastStep.Arg())
+		case 17:
+			args = append(args, n.row.HomeTenant.Arg())
+		case 18:
+			args = append(args, n.row.Shareable)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3299,6 +3979,16 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.SshPublicKey)
 		case 12:
 			args = append(args, m.row.DisabledBy.Arg())
+		case 13:
+			args = append(args, m.row.SessionsValidAfter.Arg())
+		case 14:
+			args = append(args, m.row.TotpPendingSecret.Arg())
+		case 15:
+			args = append(args, m.row.TotpLastStep.Arg())
+		case 16:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 17:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3407,6 +4097,16 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.SshPublicKey)
 		case 12:
 			args = append(args, m.row.DisabledBy.Arg())
+		case 13:
+			args = append(args, m.row.SessionsValidAfter.Arg())
+		case 14:
+			args = append(args, m.row.TotpPendingSecret.Arg())
+		case 15:
+			args = append(args, m.row.TotpLastStep.Arg())
+		case 16:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 17:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3581,6 +4281,16 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.SshPublicKey)
 		case 12:
 			args = append(args, m.row.DisabledBy.Arg())
+		case 13:
+			args = append(args, m.row.SessionsValidAfter.Arg())
+		case 14:
+			args = append(args, m.row.TotpPendingSecret.Arg())
+		case 15:
+			args = append(args, m.row.TotpLastStep.Arg())
+		case 16:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 17:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

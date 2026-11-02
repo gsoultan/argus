@@ -214,9 +214,9 @@ func TestARemoteDesktopOpensThroughTheAgentAndCanBeWatchedAndEnded(t *testing.T)
 	deadline := time.Now().Add(5 * time.Second)
 	for id == "" && time.Now().Before(deadline) {
 		e.api.live.mu.Lock()
-		for k, s := range e.api.live.m {
+		for _, s := range e.api.live.m {
 			if s.protocol == "rdp" {
-				id = k
+				id = s.id
 			}
 		}
 		e.api.live.mu.Unlock()

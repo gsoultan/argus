@@ -19,7 +19,7 @@ type RecordingRef struct {
 // A backup is checked against this: an artefact the database names and the
 // backup lacks is evidence the backup cannot restore.
 func (s *Store) RecordingIndex(ctx context.Context) ([]RecordingRef, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT id::text, recording_key, COALESCE(chain_head, '')
 		  FROM sessions WHERE recording_key IS NOT NULL AND recording_key <> ''`)
 	if err != nil {
@@ -42,7 +42,7 @@ func (s *Store) RecordingIndex(ctx context.Context) ([]RecordingRef, error) {
 // backup recorded; finding it later in a longer chain is fine.
 func (s *Store) AuditHashSeq(ctx context.Context, hash string) (int64, error) {
 	var seq int64
-	err := s.pool.QueryRow(ctx, `SELECT seq FROM audit_events WHERE hash = $1`, hash).Scan(&seq)
+	err := s.db(ctx).QueryRow(ctx, `SELECT seq FROM audit_events WHERE hash = $1`, hash).Scan(&seq)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}

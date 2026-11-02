@@ -1,15 +1,16 @@
-package rdp
+package rdpdial
 
 import (
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/rdp"
 	"net"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gsoultan/argus/internal/credssp"
+	"github.com/gsoultan/argus/internal/agent/credssp"
 )
 
 // What a browser session costs on the wire, measured against a real server.
@@ -44,7 +45,7 @@ func TestTargetBandwidth(t *testing.T) {
 	}
 
 	conn, protocol, logon := dialForMeasurement(t, addr, domain, user, password)
-	client, err := Connect(conn, ClientConfig{
+	client, err := rdp.Connect(conn, rdp.ClientConfig{
 		Width: 1280, Height: 800, Depth: depth,
 		SelectedProtocol: protocol, Logon: logon,
 	})
@@ -91,10 +92,10 @@ func (m *measurement) add(o measurement) {
 	m.elapsed += o.elapsed
 }
 
-func (m *measurement) collect(t *testing.T, c *Client, d time.Duration) {
+func (m *measurement) collect(t *testing.T, c *rdp.Client, d time.Duration) {
 	t.Helper()
 	start := time.Now()
-	c.readTimeout = 250 * time.Millisecond
+	c.SetReadTimeout(250 * time.Millisecond)
 	for time.Since(start) < d {
 		bitmaps, err := c.NextBitmaps()
 		var ne net.Error
@@ -106,14 +107,14 @@ func (m *measurement) collect(t *testing.T, c *Client, d time.Duration) {
 		}
 		for _, b := range bitmaps {
 			m.rects++
-			m.encoded += len(EncodeBitmap(b))
+			m.encoded += len(rdp.EncodeBitmap(b))
 			began := time.Now()
 			r, derr := b.Decode()
 			m.decodeTime += time.Since(began)
 			if derr != nil {
 				t.Fatalf("decoding a %dx%d rectangle: %v", b.Width, b.Height, derr)
 			}
-			m.decoded += FrameHeaderSize + len(r.Pixels)
+			m.decoded += rdp.FrameHeaderSize + len(r.Pixels)
 		}
 	}
 	m.elapsed += time.Since(start)
@@ -135,37 +136,37 @@ func (m measurement) summary() string {
 	}, " ")
 }
 
-func dialForMeasurement(t *testing.T, addr, domain, user, password string) (net.Conn, uint32, LogonInfo) {
+func dialForMeasurement(t *testing.T, addr, domain, user, password string) (net.Conn, uint32, rdp.LogonInfo) {
 	t.Helper()
 	auth := &credssp.Authenticator{Credentials: credssp.Credentials{
 		Domain: domain, User: user, Password: password, Workstation: "ARGUS",
 	}}
-	conn, _, err := DialTargetWithAuth(addr, "", ProtocolHybrid, nil, 10*time.Second, auth)
+	conn, _, err := DialTargetWithAuth(addr, "", rdp.ProtocolHybrid, nil, 10*time.Second, auth)
 	if err == nil {
-		return conn, ProtocolHybrid, LogonInfo{Domain: domain, User: user, Password: password}
+		return conn, rdp.ProtocolHybrid, rdp.LogonInfo{Domain: domain, User: user, Password: password}
 	}
 	t.Logf("credssp failed (%v); retrying over tls", err)
-	conn, _, err = DialTargetWithAuth(addr, "", ProtocolSSL, nil, 10*time.Second, nil)
+	conn, _, err = DialTargetWithAuth(addr, "", rdp.ProtocolSSL, nil, 10*time.Second, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	return conn, ProtocolSSL, LogonInfo{Domain: domain, User: user, Password: password}
+	return conn, rdp.ProtocolSSL, rdp.LogonInfo{Domain: domain, User: user, Password: password}
 }
 
 // typeText sends lowercase text as key presses, a few per frame's worth of
 // time, which is roughly how fast a person types a command they know.
-func typeText(c *Client, text string) {
+func typeText(c *rdp.Client, text string) {
 	for _, r := range text {
 		code := keyCodeFor(r)
 		if code == "" {
 			continue
 		}
-		sc, ext, ok := ScancodeFor(code)
+		sc, ext, ok := rdp.ScancodeFor(code)
 		if !ok {
 			continue
 		}
-		_ = c.Send(InputEvent{Kind: "key", Scancode: sc, Extended: ext, Down: true})
-		_ = c.Send(InputEvent{Kind: "key", Scancode: sc, Extended: ext, Down: false})
+		_ = c.Send(rdp.InputEvent{Kind: "key", Scancode: sc, Extended: ext, Down: true})
+		_ = c.Send(rdp.InputEvent{Kind: "key", Scancode: sc, Extended: ext, Down: false})
 		time.Sleep(40 * time.Millisecond)
 	}
 }

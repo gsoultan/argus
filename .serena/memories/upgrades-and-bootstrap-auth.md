@@ -84,7 +84,7 @@ CI list packages via `go list ./... | grep -v /node_modules/`.
 ## Updating an agent from the console (2026-11)
 
 Server page, **Agent** card. The request lives on `agent_credentials.update_*`
-(migration 032) and rides every heartbeat reply until the agent reports an
+(migration 034) and rides every heartbeat reply until the agent reports an
 outcome for that `update_id`; then it is cleared and audited once
 (`recordAgentUpdate` clears with `WHERE update_id = $id`). The agent's own
 account (`update` on the heartbeat: supported/reason, state, sessions,

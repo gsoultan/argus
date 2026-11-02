@@ -1,9 +1,10 @@
-package rdp
+package rdpdial
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/rdp"
 	"net"
 	"os"
 	"sort"
@@ -86,27 +87,27 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 	t.Helper()
 	m := graphicsMeasure{CodecBytes: map[string]int{}, CodecCommands: map[string]int{}}
 	counting := false
-	cfg := ClientConfig{Width: 1920, Height: 1080, Depth: 16}
+	cfg := rdp.ClientConfig{Width: 1920, Height: 1080, Depth: 16}
 	if graphics {
-		cfg.Graphics = func(p GraphicsPDU) {
+		cfg.Graphics = func(p rdp.GraphicsPDU) {
 			if !counting {
 				return
 			}
 			m.Commands++
 			name := "other"
 			switch p.Cmd {
-			case GfxWireToSurface1, GfxWireToSurface2:
-				name = CodecName(p.Codec)
-			case GfxSolidFill:
+			case rdp.GfxWireToSurface1, rdp.GfxWireToSurface2:
+				name = rdp.CodecName(p.Codec)
+			case rdp.GfxSolidFill:
 				name = "solidfill"
-			case GfxSurfaceToSurface:
+			case rdp.GfxSurfaceToSurface:
 				name = "surface-to-surface"
-			case GfxCacheToSurface, GfxSurfaceToCache:
+			case rdp.GfxCacheToSurface, rdp.GfxSurfaceToCache:
 				name = "cache"
-			case GfxEndFrame:
+			case rdp.GfxEndFrame:
 				m.Frames++
 				return
-			case GfxStartFrame:
+			case rdp.GfxStartFrame:
 				return
 			}
 			m.CodecBytes[name] += len(p.Body)
@@ -116,7 +117,7 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 
 	conn, protocol, logon := dialForMeasurement(t, addr, "", user, password)
 	cfg.SelectedProtocol, cfg.Logon = protocol, logon
-	client, err := Connect(conn, cfg)
+	client, err := rdp.Connect(conn, cfg)
 	if err != nil {
 		conn.Close()
 		t.Fatalf("connect: %v", err)
@@ -130,7 +131,7 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 	})
 
 	read := func(d time.Duration) {
-		client.readTimeout = 100 * time.Millisecond
+		client.SetReadTimeout(100 * time.Millisecond)
 		end := time.Now().Add(d)
 		for time.Now().Before(end) {
 			bitmaps, err := client.NextBitmaps()
@@ -168,10 +169,10 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 }
 
 // runFromRunBox opens the Run box and types a command into it.
-func runFromRunBox(c *Client, command string) {
+func runFromRunBox(c *rdp.Client, command string) {
 	key := func(code string, down bool) {
-		sc, ext, _ := ScancodeFor(code)
-		_ = c.Send(InputEvent{Kind: "key", Scancode: sc, Extended: ext, Down: down})
+		sc, ext, _ := rdp.ScancodeFor(code)
+		_ = c.Send(rdp.InputEvent{Kind: "key", Scancode: sc, Extended: ext, Down: down})
 	}
 	press := func(code string) { key(code, true); key(code, false) }
 	key("MetaLeft", true)

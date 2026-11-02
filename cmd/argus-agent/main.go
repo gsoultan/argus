@@ -19,6 +19,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -38,8 +39,8 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent"
-	"github.com/gsoultan/argus/internal/execlog"
-	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/agent/execlog"
+	"github.com/gsoultan/argus/internal/agent/reporter"
 	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -251,6 +252,18 @@ func runDaemon(args []string) int {
 			RecordDir: *dir,
 			Log:       log,
 		})
+		// Redis and RabbitMQ on this server, as the person's own user for the
+		// session, every command recorded before it runs.
+		services[agent.RedisService] = agent.Redis(agent.StoreConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
+		})
+		services[agent.RabbitMQService] = agent.RabbitMQ(agent.RabbitConfig{StoreConfig: agent.StoreConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
+		}})
 		// Remote Desktop, to this host's own listener, on Windows: the agent is
 		// the RDP client and records the session before it is shown.
 		if runtime.GOOS == "windows" {
@@ -579,12 +592,38 @@ func runDaemon(args []string) int {
 	// "Argus covers all privileged access" is only checkable if hosts say what
 	// they are — the machine nobody remembered to add is the one that matters.
 	//
-	// An hour is deliberate: an OS or an sshd port changes on a reboot, and
-	// folding this into the heartbeat would rewrite six columns a minute to
-	// report that nothing had changed.
-	go loop(time.Hour, stop, func() {
+	// Checked every ten minutes, because what runs on a host (a database
+	// someone just installed) changes more often than its OS, but sent only
+	// when something changed or an hour has passed, so an idle host does not
+	// rewrite its row every ten minutes to say nothing happened.
+	var (
+		lastFacts []byte
+		lastSent  time.Time
+	)
+	go loop(10*time.Minute, stop, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
+		apps := agent.DiscoverApps(ctx)
 		writeJSON(*stateDir+"/facts.json", f, log)
+		writeJSON(*stateDir+"/applications.json", apps, log)
+
+		report := map[string]any{
+			"hostname":     f.Hostname,
+			"fqdn":         f.FQDN,
+			"machine_id":   f.MachineID,
+			"os":           f.OS,
+			"addresses":    f.Addresses,
+			"ssh_ports":    f.SSHPorts,
+			"accounts":     f.Accounts,
+			"applications": apps,
+		}
+		// Compared without the scan time, which differs every run.
+		probe := apps
+		probe.CheckedAt = time.Time{}
+		fingerprint, _ := json.Marshal([]any{f, probe})
+		if bytes.Equal(fingerprint, lastFacts) && time.Since(lastSent) < time.Hour {
+			return
+		}
+		lastFacts, lastSent = fingerprint, time.Now()
 
 		if len(f.SSHPorts) > 1 {
 			// A port the inventory does not know about is a documented,
@@ -593,15 +632,7 @@ func runDaemon(args []string) int {
 				"ports", f.SSHPorts,
 				"detail", "confirm every port is covered by the inventory")
 		}
-		rep.Facts(ctx, map[string]any{
-			"hostname":   f.Hostname,
-			"fqdn":       f.FQDN,
-			"machine_id": f.MachineID,
-			"os":         f.OS,
-			"addresses":  f.Addresses,
-			"ssh_ports":  f.SSHPorts,
-			"accounts":   f.Accounts,
-		})
+		rep.Facts(ctx, report)
 	})
 
 	stopReq := stopRequests()

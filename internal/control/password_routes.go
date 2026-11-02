@@ -50,6 +50,19 @@ func (a *API) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Many addresses guessing at one account. A browser that has signed in
+	// to it before is let through to the password check, so tripping this
+	// from outside does not lock the account holder out.
+	known := a.knownDevice(r, in.Email)
+	if exhausted, retry := a.accountPasswordsExhausted(in.Email); exhausted && !known {
+		a.auditAuth(r, "auth.password_throttled", "warning", in.Email,
+			"A password sign-in from an unrecognised browser was refused without checking, "+
+				"because this account has had too many wrong passwords recently.")
+		a.refuse(w, r, a.clientAddr(r), retry, "too many failed sign-ins for this account; "+
+			"try again later, or from a browser that has signed in before")
+		return
+	}
+
 	acct, err := a.store.Authenticate(r.Context(), in.Email, in.Password)
 	if err != nil {
 		// Deliberately the same message whatever went wrong. Telling someone
@@ -58,6 +71,9 @@ func (a *API) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		a.log.Warn("password sign-in refused", "email", in.Email,
 			"client", a.clientAddr(r))
 		a.RecordAuthFailure(r)
+		if !known {
+			a.recordAccountFailure(r, in.Email, false)
+		}
 		a.auditAuth(r, "auth.password_failed", "warning", in.Email,
 			"A password sign-in was refused.")
 		writeErr(w, http.StatusUnauthorized, "invalid email or password")
@@ -67,7 +83,7 @@ func (a *API) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	// The password was right. If a second factor is enrolled it is owed now,
 	// and the account is not signed in until it is presented.
 	if acct.MFAEnrolled {
-		challenge, err := a.signer.IssueMFAChallenge(acct.Email, mfaChallengeTTL)
+		challenge, err := a.signerFor(r).IssueMFAChallenge(acct.Email, mfaChallengeTTL)
 		if err != nil {
 			a.fail(w, "issue challenge", err)
 			return
@@ -104,7 +120,7 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email, err := a.signer.RedeemMFAChallenge(in.Challenge)
+	email, err := a.signerFor(r).RedeemMFAChallenge(in.Challenge)
 	if err != nil {
 		a.RecordAuthFailure(r)
 		// Expired is worth saying, because the remedy differs: start again
@@ -114,38 +130,57 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	acct, err := a.store.Account(r.Context(), email)
+	// The second factor and the recovery codes live where the password does:
+	// at home, for a person shared in from another organization.
+	acct, hctx, err := a.store.Credentials(r.Context(), email)
 	if err != nil || acct.Disabled {
 		a.RecordAuthFailure(r)
 		writeErr(w, http.StatusUnauthorized, "invalid email or password")
+		return
+	}
+	// Six digits is a million guesses, and the challenge can be reused for
+	// five minutes from any address. Counted per account, without exemption:
+	// only someone who has the password gets here.
+	if exhausted, retry := a.accountCodesExhausted(acct.Email); exhausted {
+		a.refuse(w, r, a.clientAddr(r), retry,
+			"too many wrong codes for this account; wait, then sign in again")
 		return
 	}
 
 	verified := false
 	switch {
 	case in.Recovery:
-		ok, err := a.store.ConsumeRecoveryCode(r.Context(), acct.ID, in.Code)
+		ok, err := a.store.ConsumeRecoveryCode(hctx, acct.ID, in.Code)
 		if err != nil {
 			a.fail(w, "consume recovery code", err)
 			return
 		}
 		verified = ok
 		if ok {
-			left, _ := a.store.RemainingRecoveryCodes(r.Context(), acct.ID)
+			left, _ := a.store.RemainingRecoveryCodes(hctx, acct.ID)
 			// A recovery code means the usual second factor was unavailable,
 			// which is either a lost device or somebody else's sign-in.
-			a.auditAuth(r, "auth.recovery_code_used", "warning", acct.Email,
-				"Signed in with a single-use recovery code. "+
-					itoa(left)+" remain. If this was not the account holder, "+
-					"treat the account as compromised.")
+			detail := "Signed in with a single-use recovery code. " +
+				itoa(left) + " remain. If this was not the account holder, " +
+				"treat the account as compromised."
+			a.auditAuth(r, "auth.recovery_code_used", "warning", acct.Email, detail)
+			a.Alerts.SecurityEvent("Argus: "+acct.Email+" signed in with a recovery code", detail)
 		}
 	default:
-		verified = auth.VerifyTOTP(acct.TOTPSecret, in.Code, time.Now())
+		// Spent as it is checked: the same code cannot sign in twice, even
+		// inside the minute and a half it would otherwise stay valid.
+		ok, err := a.store.ConsumeTOTP(hctx, acct, in.Code, time.Now())
+		if err != nil {
+			a.fail(w, "check code", err)
+			return
+		}
+		verified = ok
 	}
 
 	if !verified {
 		a.log.Warn("second factor refused", "email", acct.Email, "client", a.clientAddr(r))
 		a.RecordAuthFailure(r)
+		a.recordAccountFailure(r, acct.Email, true)
 		a.auditAuth(r, "auth.mfa_failed", "warning", acct.Email,
 			"A second factor was refused after a correct password.")
 		writeErr(w, http.StatusUnauthorized, "that code is not correct")
@@ -159,19 +194,21 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 
 // completeSignIn issues the session cookie and records the event.
 func (a *API) completeSignIn(w http.ResponseWriter, r *http.Request, sess auth.Session, how string) {
-	token, err := a.signer.IssueSession(sess, a.sessionTTL())
+	token, err := a.signerFor(r).IssueSession(sess, a.sessionTTL())
 	if err != nil {
 		a.fail(w, "issue session", err)
 		return
 	}
 	auth.SetCookie(w, auth.SessionCookieName, token, a.sessionTTL(), a.secureCookies)
 
-	_, _ = a.store.pool.Exec(r.Context(),
+	_, _ = a.store.db(r.Context()).Exec(r.Context(),
 		`UPDATE users SET last_seen_at = now() WHERE lower(email) = lower($1)`, sess.Email)
 
 	a.auditAuth(r, "auth.login", "info", sess.Email,
 		"Signed in via "+how+" as role "+sess.Role+".")
 	a.RecordAuthSuccess(r)
+	a.clearAccountFailures(sess.Email)
+	a.rememberDevice(w, r, sess.Email)
 	a.log.Info("user signed in", "email", sess.Email, "role", sess.Role, "method", how)
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -185,17 +222,74 @@ func (a *API) completeSignIn(w http.ResponseWriter, r *http.Request, sess auth.S
 /* ── Enrolment ───────────────────────────────────────────────────────────── */
 
 // handleMFABegin starts enrolment for the signed-in account.
+//
+// Proof of the account is required, not only a session: the password, and the
+// current second factor when there is one. Otherwise a stolen cookie or an
+// unlocked laptop could replace the account's authenticator with the
+// attacker's and keep the account after the session ends. The second factor
+// in use stays in force until the new one is confirmed.
 func (a *API) handleMFABegin(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.authenticate(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	var in struct {
+		Password string `json:"password"`
+		Code     string `json:"code"`
+		Recovery bool   `json:"recovery"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if exhausted, retry := a.accountCodesExhausted(sess.Email); exhausted {
+		a.refuse(w, r, a.clientAddr(r), retry, "too many wrong attempts for this account; wait and try again")
+		return
+	}
+	acct, err := a.store.Authenticate(r.Context(), sess.Email, in.Password)
+	if err != nil {
+		a.RecordAuthFailure(r)
+		a.recordAccountFailure(r, sess.Email, true)
+		a.auditAuth(r, "auth.mfa_enrol_refused", "warning", sess.Email,
+			"Setting up a second factor was refused: the password was not correct.")
+		writeErr(w, http.StatusUnauthorized, "your password is not correct")
+		return
+	}
+	if acct.MFAEnrolled {
+		// The codes live where the password does: at home, for a person
+		// shared in from another organization.
+		hctx, err := a.store.homeContext(r.Context(), sess.Email)
+		if err != nil {
+			a.fail(w, "check code", err)
+			return
+		}
+		var proved bool
+		if in.Recovery {
+			proved, err = a.store.ConsumeRecoveryCode(hctx, acct.ID, in.Code)
+		} else {
+			proved, err = a.store.ConsumeTOTP(hctx, acct, in.Code, time.Now())
+		}
+		if err != nil {
+			a.fail(w, "check code", err)
+			return
+		}
+		if !proved {
+			a.RecordAuthFailure(r)
+			a.recordAccountFailure(r, sess.Email, true)
+			a.auditAuth(r, "auth.mfa_enrol_refused", "warning", sess.Email,
+				"Replacing the second factor was refused: the current code was not correct.")
+			writeErr(w, http.StatusUnauthorized,
+				"enter a code from your current authenticator, or a recovery code")
+			return
+		}
+	}
 	secret, err := a.store.BeginMFAEnrolment(r.Context(), sess.Email)
 	if err != nil {
 		a.fail(w, "begin enrolment", err)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"secret": secret,
 		"uri":    auth.TOTPEnrolmentURI("Argus", sess.Email, secret),
@@ -217,13 +311,23 @@ func (a *API) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "malformed request")
 		return
 	}
+	if exhausted, retry := a.accountCodesExhausted(sess.Email); exhausted {
+		a.refuse(w, r, a.clientAddr(r), retry, "too many wrong codes for this account; wait and try again")
+		return
+	}
 	recovery, err := a.store.ConfirmMFAEnrolment(r.Context(), sess.Email, in.Code)
 	if err != nil {
+		a.recordAccountFailure(r, sess.Email, true)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	a.auditAuth(r, "auth.mfa_enrolled", "notice", sess.Email,
-		"Enrolled a second factor and was issued "+itoa(len(recovery))+" recovery codes.")
+		"Enrolled a second factor and was issued "+itoa(len(recovery))+" recovery codes. "+
+			"Every other session for this account was signed out.")
+	// Confirming signed the account out everywhere, this browser included;
+	// it proved both factors just now, so it gets a fresh session.
+	a.reissue(w, r, sess)
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": recovery})
 }
 
@@ -245,8 +349,13 @@ func (a *API) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// The current password is required even though the session is already
 	// authenticated: a borrowed, unlocked laptop must not be enough to lock the
 	// owner out of their own account.
+	if exhausted, retry := a.accountPasswordsExhausted(sess.Email); exhausted {
+		a.refuse(w, r, a.clientAddr(r), retry, "too many wrong passwords for this account; wait and try again")
+		return
+	}
 	if _, err := a.store.Authenticate(r.Context(), sess.Email, in.Current); err != nil {
 		a.RecordAuthFailure(r)
+		a.recordAccountFailure(r, sess.Email, false)
 		writeErr(w, http.StatusUnauthorized, "your current password is not correct")
 		return
 	}
@@ -258,8 +367,42 @@ func (a *API) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	a.auditAuth(r, "auth.password_changed", "notice", sess.Email, "Changed their own password.")
+	a.auditAuth(r, "auth.password_changed", "notice", sess.Email,
+		"Changed their own password. Every other session for this account was signed out.")
+	a.reissue(w, r, sess)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
+}
+
+// handleRevokeSessions signs the caller out everywhere, this browser included.
+//
+// For "I signed in on a machine I no longer trust" and "my cookie may have
+// been copied": every session issued before now stops working.
+func (a *API) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := a.store.RevokeAllSessions(r.Context(), sess.Email); err != nil {
+		a.fail(w, "revoke sessions", err)
+		return
+	}
+	a.auditAuth(r, "auth.sessions_revoked", "notice", sess.Email,
+		"Signed out of every browser and device.")
+	auth.ClearCookie(w, auth.SessionCookieName, a.secureCookies)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "signed out everywhere"})
+}
+
+// reissue gives the caller a fresh cookie after their own action revoked every
+// session issued before it. Same identity, new id and issue time.
+func (a *API) reissue(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	sess.ID = ""
+	token, err := a.signerFor(r).IssueSession(sess, a.sessionTTL())
+	if err != nil {
+		a.log.Error("could not reissue a session", "error", err)
+		return
+	}
+	auth.SetCookie(w, auth.SessionCookieName, token, a.sessionTTL(), a.secureCookies)
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */

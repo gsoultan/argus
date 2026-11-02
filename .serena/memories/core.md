@@ -12,6 +12,15 @@ product decision, not an oversight, and the console says so out loud.
 
 Read this file first, then only the memory a task actually needs.
 
+**Layering (2026-11).** argus-agent links no control-plane code. The agent tree
+is `cmd/argus-agent` + `internal/agent/...` (which now holds `execlog`,
+`reporter`, `credssp` and `rdpdial`, the RDP dial + CredSSP); the shared set is
+`tunnel`, `rdp`, `rdp/pixels`, `recorder`, `hashchain`, `tlsconfig` (client
+half only) and `secrets` (private-file check only). The listener's TLS, the
+managed CA and dev certs are `internal/control/servertls`; `${VAR}` config
+expansion is `internal/control/confexpand`. `cmd/argus-agent/layering_test.go`
+enforces all of it and CI runs it by name.
+
 | Memory | Read it when |
 | :--- | :--- |
 | [web-console-architecture](web-console-architecture.md) | Touching anything under `web/` |
@@ -28,6 +37,8 @@ Read this file first, then only the memory a task actually needs.
 | [upgrades-and-bootstrap-auth](upgrades-and-bootstrap-auth.md) | Migrations, account identity, static tokens, multi-gateway |
 | [shutdown-and-evidence](shutdown-and-evidence.md) | Any long-running loop, restarts, drains, reporting goroutines |
 | [postgres-access](postgres-access.md) | Databases: levels to Postgres roles, the pg-admin helper, the statement recording, the query workspace |
+| [app-discovery](app-discovery.md) | What the agent finds running on a server, and what it must never read |
+| [multi-tenant](multi-tenant.md) | Organizations sharing one control plane: schema per organization, `scope`, per-organization keys, what is still platform-wide |
 
 ## Standing rules for this repo
 
@@ -44,8 +55,10 @@ Read this file first, then only the memory a task actually needs.
   indistinguishable from one showing a real fleet.
 
   **It shows the host, and there is deliberately no configurable deployment
-  name.** Checked before deciding: the control plane has no identity to report —
-  no tenant, no region, no gateway registry, `gateway_policy` is a single row
+  name.** (Since organizations arrived the header also names the organization a
+  session is in, when it is not the default one; that is a fact from the cookie,
+  not a label from config.) Checked before deciding: the control plane has no
+  identity to report — no region, no gateway registry, `gateway_policy` is a single row
   and the only heartbeats are agents reporting their own hostname. Multi-gateway
   is many gateways to one control plane, and the console talks to the control
   plane. Same-origin is the supported shape because the session cookie depends
@@ -101,7 +114,7 @@ Read this file first, then only the memory a task actually needs.
 - **Heuristic evidence is labelled as heuristic.** Commands scraped from a PTY
   stream are never presented next to kernel-observed execve events as equals.
 - **A kernel tier that stops reporting must say so.** Four faults in
-  `internal/execlog`, all fixed 2026-09-11, all the same shape: evidence
+  `internal/agent/execlog`, all fixed 2026-09-11, all the same shape: evidence
   disappearing while the record looked clean. `SESSION_LEN` sized for the old
   bare-hex ids made `Track` refuse every canonical UUID, so the tier was simply
   off; `handle_fork` inserted thread tids that `handle_exit` never deleted,
@@ -112,7 +125,7 @@ Read this file first, then only the memory a task actually needs.
   already written in `995e25d3` -- eBPF fidelity asserts *every execve is in
   the file*, so anything that can lose one has to end the claim.
 - **After a run of fixes to one package, get a second reader before the next
-  one.** `internal/execlog` took eight patches on 2026-09-11. Three of the bugs
+  one.** `internal/agent/execlog` took eight patches on 2026-09-11. Three of the bugs
   were introduced by the same person fixing the others. A `/code-review` of the
   package afterwards found the most serious remaining defect -- executions
   arriving after `Detach` were counted where the fidelity decision never looked,
@@ -120,7 +133,7 @@ Read this file first, then only the memory a task actually needs.
   of those three self-inflicted ones. Familiarity with a file stops being an
   advantage somewhere around the fourth consecutive change to it.
 - **Kernel tests skip themselves, so a green run proves nothing.** Every test in
-  `internal/execlog` skips on a kernel that cannot load the probe. Check the
+  `internal/agent/execlog` skips on a kernel that cannot load the probe. Check the
   skip count, not the exit code. The working recipe is in
   [[local-ebpf-cannot-be-tested]]; a full pass is ~30 tests and 0 skips.
 - **The native RDP listener authenticates nobody.** `rdp.Request` is parsed from

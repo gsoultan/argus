@@ -57,6 +57,10 @@ export const assetQuery = (id: string) =>
 export const loginAccountsQuery = (id: string) =>
   queryOptions({ queryKey: ['asset', id, 'login-accounts'] as const, queryFn: () => api.loginAccounts(id) })
 
+/** What runs on a server, from its agent's last report. */
+export const applicationsQuery = (id: string) =>
+  queryOptions({ queryKey: ['asset', id, 'applications'] as const, queryFn: () => api.applications(id) })
+
 export const sessionsQuery = (state?: Session['state']) =>
   queryOptions({
     queryKey: qk.sessions(state),
@@ -425,6 +429,34 @@ export function useSetLoginName() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (v: { email: string; name: string }) => api.setLoginName(v.email, v.name),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useResetMFA() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (email: string) => api.resetMFA(email),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useSignOutAccount() {
+  return useMutation({ mutationFn: (email: string) => api.signOutAccount(email) })
+}
+
+export function useAddSharedAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.addSharedAccount,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useSetShareable() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { email: string; shareable: boolean }) => api.setShareable(v.email, v.shareable),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
   })
 }

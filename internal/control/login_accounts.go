@@ -51,7 +51,7 @@ func (s *Store) LoginAccountsFor(ctx context.Context, id string) (ServerLoginAcc
 		accounts, auth []byte
 		seen           *time.Time
 	)
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT ag.posture -> 'login_accounts', ag.posture -> 'sshd_auth', ag.last_seen_at
 		  FROM assets a
 		  LEFT JOIN LATERAL (

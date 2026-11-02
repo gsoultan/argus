@@ -65,7 +65,7 @@ func (a *API) handleDesktop(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no ticket supplied")
 		return
 	}
-	t, err := a.signer.RedeemTicket(r.Context(), token, target, principal)
+	t, err := a.signerFor(r).RedeemTicket(r.Context(), token, target, principal)
 	if err != nil {
 		a.log.Warn("desktop refused", "target", target, "principal", principal, "error", err)
 		writeErr(w, http.StatusUnauthorized, "unauthorized: "+err.Error())
@@ -120,7 +120,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 
 	g := tunnel.NewGrant(email, host, principal, client)
 	g.Service = agentDesktopService
-	grant, err := tunnel.SignGrant(a.Tunnels.GrantKey, g)
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the session grant")
 		return
@@ -170,7 +170,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	ended := make(chan struct{})
 	var endOnce sync.Once
 	var endedBy, endReason string
-	ls := &liveSession{id: answer.Session, protocol: "rdp", hub: live.NewHub()}
+	ls := &liveSession{tenant: tenantIDOf(ctx), id: answer.Session, protocol: "rdp", hub: live.NewHub()}
 	ls.refresh = func() { _ = writeStream(tunnel.FrameRefresh, nil) }
 	ls.terminate = func(by, reason string) bool {
 		select {

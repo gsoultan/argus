@@ -194,6 +194,23 @@ type GrantDB struct {
 	MaxRows            int `json:"maxRows,omitempty"`
 	IdleTimeoutS       int `json:"idleTimeoutS,omitempty"`
 	MaxSessionS        int `json:"maxSessionS,omitempty"`
+	// Engine is postgres, redis or rabbitmq; empty is postgres, which is all
+	// a grant could name before the others. A grant is spent only by the
+	// service of its engine.
+	Engine string `json:"engine,omitempty"`
+	// ConfigPath is the server's redis.conf, read by the agent for the
+	// admin password; it never leaves the server.
+	ConfigPath string `json:"configPath,omitempty"`
+	// KeysLimit is the largest Redis db KEYS may run on. 0 = the default.
+	KeysLimit int `json:"keysLimit,omitempty"`
+}
+
+// EngineOf is the grant's engine, with the old empty value read as postgres.
+func (d GrantDB) EngineOf() string {
+	if d.Engine == "" {
+		return EnginePostgres
+	}
+	return d.Engine
 }
 
 // Postgres access levels, least to most.

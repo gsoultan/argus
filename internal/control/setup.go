@@ -230,7 +230,7 @@ func (a *API) handleSetup(w http.ResponseWriter, r *http.Request) {
 // disabled would hand the deployment to whoever reached /setup next.
 func (s *Store) SetupComplete(ctx context.Context) (bool, error) {
 	var exists bool
-	err := s.pool.QueryRow(ctx,
+	err := s.db(ctx).QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM users WHERE password_hash IS NOT NULL)`).Scan(&exists)
 	return exists, err
 }
@@ -258,7 +258,7 @@ func (s *Store) createFirstAccountHashed(ctx context.Context, email, displayName
 		displayName = strings.SplitN(email, "@", 2)[0]
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -286,6 +286,9 @@ func (s *Store) createFirstAccountHashed(ctx context.Context, email, displayName
 		       password_hash = EXCLUDED.password_hash
 		RETURNING id::text`, email, displayName, role, hash).Scan(&id); err != nil {
 		return "", fmt.Errorf("create first account: %w", err)
+	}
+	if err := recordMembership(ctx, tx, email, tenantIDOf(ctx), tenantIDOf(ctx)); err != nil {
+		return "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err

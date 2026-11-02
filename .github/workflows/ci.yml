@@ -66,6 +66,15 @@ jobs:
         # leaves internal/control alone would hand that check an empty database.
         run: go test -race -count=1 -timeout 5m $(go list ./... | grep -v '/node_modules/')
 
+      - name: Check the agent links no control-plane code
+        # The agent goes on every managed host; everything it links is attack
+        # surface there. cmd/argus-agent/layering_test.go bounds its import
+        # graph to internal/agent/... and a short shared set, and refuses a
+        # control package that reaches for the agent. The Test step above runs
+        # it too; this names the failure instead of burying it in a wall of
+        # package results.
+        run: go test -count=1 -run 'TestAgentLinksNoControlPlaneCode|TestSharedPackagesStayNeutral|TestControlPlaneShipsNoAgentCode' -v ./cmd/argus-agent/
+
       - name: Confirm the database tests actually ran
         env:
           ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
@@ -123,7 +132,8 @@ jobs:
         run: >
           go test -count=1
           ./internal/secrets/... ./internal/hashchain/... ./internal/recorder/...
-          ./internal/tunnel/... ./cmd/argus-verify/...
+          ./internal/tunnel/... ./internal/tlsconfig/... ./internal/rdp/...
+          ./cmd/argus-verify/...
       - name: Test the agent
         run: go test -count=1 ./internal/agent/... ./cmd/argus-agent/...
       - name: Build and start each binary
@@ -165,6 +175,7 @@ jobs:
           go build -o "$tmp/argus-control" ./cmd/argus-control
           go build -o "$tmp/argus-agent" ./cmd/argus-agent
           go build -o "$tmp/termdrill" ./scripts/tools/termdrill
+          go build -o "$tmp/totp" ./scripts/tools/totp
           go run ./scripts/tools/gencerts "$tmp"
           chmod 600 "$tmp/server.key"
 
@@ -190,6 +201,12 @@ jobs:
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
@@ -289,6 +306,7 @@ jobs:
           go build -o "$tmp/argus-control.exe" ./cmd/argus-control
           go build -o "$tmp/argus-agent.exe" ./cmd/argus-agent
           go build -o "$tmp/termdrill.exe" ./scripts/tools/termdrill
+          go build -o "$tmp/totp.exe" ./scripts/tools/totp
           go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
           go build -o "$tmp/replaydump.exe" ./scripts/tools/replaydump
           go run ./scripts/tools/gencerts "$tmp"
@@ -320,6 +338,12 @@ jobs:
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp.exe" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           "$agent" enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
@@ -518,7 +542,7 @@ jobs:
           powershell -NoProfile -Command "Get-WindowsFeature Server-Media-Foundation | Format-Table -AutoSize" || true
           ARGUS_TEST_RDP_TARGET=127.0.0.1:3389 ARGUS_TEST_RDP_USER=argusdrill \
             ARGUS_TEST_RDP_PASSWORD="$DRILL_PASSWORD" ARGUS_TEST_RDP_REPORT="$tmp/graphics.json" \
-            go test ./internal/rdp/ -run TestTargetGraphics -count=1 -v
+            go test ./internal/agent/rdpdial/ -run TestTargetGraphics -count=1 -v
           cp "$tmp/graphics.json" measure/
           jq -r '"### Bitmaps and the graphics pipeline, straight from Windows at 1920x1080",
             "", "| | Mbit/s | frames/s | what arrived |", "|---|---|---|---|",
@@ -608,10 +632,10 @@ jobs:
         # given toolchain, so comparing hashes catches it.
         run: |
           set -euo pipefail
-          cp internal/execlog/bpf/exec.bpf.o /tmp/committed.o
+          cp internal/agent/execlog/bpf/exec.bpf.o /tmp/committed.o
           ./scripts/build-bpf.sh --runtime docker
-          if ! cmp -s /tmp/committed.o internal/execlog/bpf/exec.bpf.o; then
-            echo "::error::internal/execlog/bpf/exec.bpf.o is stale. Run scripts/build-bpf.sh and commit the result."
+          if ! cmp -s /tmp/committed.o internal/agent/execlog/bpf/exec.bpf.o; then
+            echo "::error::internal/agent/execlog/bpf/exec.bpf.o is stale. Run scripts/build-bpf.sh and commit the result."
             exit 1
           fi
           echo "probe object is current"
@@ -625,7 +649,7 @@ jobs:
         # takes on a real host.
         run: |
           set -euo pipefail
-          go test -c -o /tmp/execlog.test ./internal/execlog/
+          go test -c -o /tmp/execlog.test ./internal/agent/execlog/
           sudo /tmp/execlog.test -test.v -test.timeout 5m 2>&1 | tee /tmp/kernel.log
 
       - name: Confirm the kernel tests were not skipped
@@ -894,7 +918,7 @@ jobs:
           # Every page goes to /setup until it is done.
           to=$(curl -s -o /dev/null -w '%{redirect_url}' --cacert "$tmp/ca.crt" https://localhost:8080/assets)
           [ "$to" = https://localhost:8080/setup ] || { echo "::error::first run did not send /assets to /setup (got '$to')"; exit 1; }
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep -q '<div id="root">'
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep '<div id="root">' >/dev/null
           tok=$(sudo cat /var/lib/argus-control/setup-token)
           jq -n --arg tok "$tok" '{token: $tok,
               database: {host: "localhost", port: 5433, name: "argus", user: "argus", password: "argus", sslMode: "disable"},
@@ -904,10 +928,10 @@ jobs:
             curl -fsS --cacert "$tmp/ca.crt" -H Content-Type:application/json -d @- \
               https://localhost:8080/auth/setup/install
           for i in $(seq 1 30); do
-            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' && break
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep '"ok"' >/dev/null && break
             sleep 1
           done
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' || {
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep '"ok"' >/dev/null || {
             sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
           # What setup wrote is the service's own, and nobody else's.
           [ "$(sudo stat -c '%a %U' /var/lib/argus-control/control.yaml)" = "600 argus" ]
@@ -916,13 +940,20 @@ jobs:
           ! sudo test -e /var/lib/argus-control/setup-token
 
           # The console ships in the package and is served same-origin.
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep -q '<div id="root">'
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q fleetUrl
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep '<div id="root">' >/dev/null
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep fleetUrl >/dev/null
 
           # Enroll this runner's agent with a token from the console API.
+          go build -o "$tmp/totp" ./scripts/tools/totp
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"

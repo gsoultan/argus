@@ -25,7 +25,8 @@ when UDP is blocked). Nothing needs to reach the servers, and nothing on them
 listens beyond a local Unix socket.
 
 **[docs/install.md](docs/install.md) is the production install, step by step.**
-**Locked out of a server? [docs/lockout.md](docs/lockout.md) is the admin runbook.**
+**Locked out of a server? [docs/lockout.md](docs/lockout.md) is the admin runbook.
+Locked out of the console? [docs/admin-recovery.md](docs/admin-recovery.md).**
 This page is the overview and the reference behind it.
 
 ## Contents
@@ -429,6 +430,45 @@ shown once and stored only as digests.
 so the control plane refuses to start when it is set alongside any local
 account.
 
+### Several organizations on one control plane
+
+One `argus-control` can serve several organizations, each with its own servers,
+databases, people, teams, approvals, recordings, session rules and audit chain.
+Nothing one organization holds is readable, or even confirmable, from another.
+
+- Each organization's tables live in a Postgres schema of their own, reached
+  through a connection whose `search_path` is that schema alone. The queries in
+  the control plane do not know organizations exist; which connection a request
+  runs on is decided once, before any handler, from the credential it carried.
+- An install that exists today **is** the default organization: nothing moves on
+  upgrade, and until a second organization is created nobody is asked which one
+  they mean.
+- An owner of the default organization manages the others under **Settings >
+  Organizations**: create one with its first owner, or disable it. They cannot
+  see inside it; a platform owner who needs access is given an account there by
+  its owner, like anyone else.
+- People in another organization sign in with its short name, then their email
+  and password. Every signed value (cookie, ticket, second-factor challenge)
+  and every session grant is signed with a key derived for that organization,
+  so a value minted in one is a forgery in every other.
+- An agent enrols into one organization: its enrolment token and the credential
+  it buys carry the organization in front of the secret. A server name is
+  unique within an organization, not across them, and a recording is kept
+  under the organization's own prefix and refused to any other.
+- A disabled organization cannot sign in, its agents' reports are refused and
+  their tunnels close; its data and chain are kept and it can be enabled again.
+- A person belongs to one organization, which holds their password and second
+  step, and can be **shared** into others: an admin there adds them by email
+  with no new password, and they switch between organizations from the header.
+  Sharing is off until the person's own organization allows it, so an address
+  that was never allowed looks exactly like one nobody uses. Each organization
+  gives the shared person its own role and can remove them on its own; being
+  removed where they belong refuses them everywhere.
+
+The database role needs `CREATE` on the database to add a schema, which the
+owning role from the install steps has. See `plans/multi-tenant.md` in the
+project files for the design and the threats it was checked against.
+
 ## Verifying a recording: `argus-verify`
 
 `argus-verify` checks that a session recording has not been altered since it was
@@ -599,16 +639,26 @@ route with zero console errors, the audit chain verifying in WASM, and that
 replaying a large terminal or desktop recording leaves the main-thread heap
 flat.
 
+The agent binary links no control-plane code. `cmd/argus-agent/layering_test.go`
+bounds its import graph to `internal/agent/...` plus a short shared set, and
+CI fails when a change crosses the line in either direction.
+
 ### Layout
 
 ```
 cmd/argus-control     control plane and console server
 cmd/argus-agent       the agent on each server
 cmd/argus-verify      standalone recording verifier
-internal/             tunnel, agent, control, recorder, hashchain, …
+internal/agent/       the agent and everything only it runs (exec tracing,
+                      the RDP dial and CredSSP, the reporter client)
+internal/control/     the control plane: API, console, PKI, config
+internal/             what both ends share: tunnel, rdp, recorder, hashchain,
+                      tlsconfig (client half), secrets; plus auth, storage,
+                      live, notify for the control plane
 web/                  React 19 · Mantine 9 · TanStack Router/Query/Form · Vite 8
 docs/install.md       the production install
 docs/lockout.md       what to do when nobody can SSH into a server
+docs/admin-recovery.md  what to do when no administrator can sign in to the console
 packaging/            systemd units, launchd job, packaged config
 scripts/              setup · dev · deps · check · build
 ```

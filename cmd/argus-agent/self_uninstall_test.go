@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/gsoultan/argus/internal/agent"
-	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/agent/reporter"
 )
 
 // The agent of a removed server revokes itself and deletes its credential,

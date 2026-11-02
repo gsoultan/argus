@@ -61,7 +61,11 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 	// CreateAccount would overwrite an existing account's password and role,
 	// which from here would be a way to take one over. A row with no password
 	// is not an account yet, and giving it one is what this is for.
-	if existing, err := a.store.Account(r.Context(), email); err == nil && existing.PasswordHash != "" {
+	if existing, err := a.store.Account(r.Context(), email); err == nil && existing.Shared() {
+		// Nor is a person shared in from elsewhere given a second password here.
+		writeErr(w, http.StatusConflict, email+" is already here as a shared person")
+		return
+	} else if err == nil && existing.PasswordHash != "" {
 		writeErr(w, http.StatusConflict, email+" already has an account")
 		return
 	} else if err != nil && !errors.Is(err, ErrNoAccount) {
@@ -70,6 +74,10 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := a.store.CreateAccount(r.Context(), email,
 		strings.TrimSpace(in.DisplayName), in.Role, in.Password); err != nil {
+		if errors.Is(err, ErrSharedAccount) {
+			writeErr(w, http.StatusConflict, email+" is already here as a shared person")
+			return
+		}
 		a.fail(w, "create account", err)
 		return
 	}
@@ -101,6 +109,11 @@ func (a *API) postAccountDisabled(disabled bool) http.HandlerFunc {
 		email := normaliseEmail(r.PathValue("email"))
 		if disabled && strings.EqualFold(email, sess.Email) {
 			writeErr(w, http.StatusBadRequest, "you cannot disable your own account; ask another administrator")
+			return
+		}
+		// An admin may not change an owner's role, so may not take an owner
+		// out either: disabling every owner was a way round that rule.
+		if !a.mayManage(w, r, sess.Role, email, verb+" an owner") {
 			return
 		}
 		switch err := a.store.SetAccountDisabledBy(r.Context(), email, disabled, sess.Email); {
@@ -201,4 +214,105 @@ func (a *API) putAccountRole(w http.ResponseWriter, r *http.Request) {
 		a.log.Error("audit append failed", "error", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"email": email, "role": in.Role})
+}
+
+// mayManage refuses an admin acting on an owner. Writes the response itself
+// and returns false when it refuses.
+func (a *API) mayManage(w http.ResponseWriter, r *http.Request, actorRole, email, what string) bool {
+	if actorRole == "owner" {
+		return true
+	}
+	target, err := a.store.Account(r.Context(), email)
+	switch {
+	case errors.Is(err, ErrNoAccount):
+		return true // the caller reports the missing account its own way
+	case err != nil:
+		a.fail(w, "look up account", err)
+		return false
+	case target.Role == "owner":
+		writeErr(w, http.StatusForbidden, "only an owner can "+what)
+		return false
+	}
+	return true
+}
+
+// postResetMFA removes someone's second factor, for a person who has lost
+// their authenticator and their recovery codes.
+//
+// Admin or owner, never on yourself (a stolen session must not be able to
+// strip its own account's second factor), and only an owner may reset an
+// owner's. The account is signed out everywhere and must enrol again before
+// it can do anything else, when its role requires a second factor.
+func (a *API) postResetMFA(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if sess.Role != "admin" && sess.Role != "owner" {
+		writeErr(w, http.StatusForbidden, "resetting a second factor requires the admin or owner role")
+		return
+	}
+	email := normaliseEmail(r.PathValue("email"))
+	if strings.EqualFold(email, sess.Email) {
+		writeErr(w, http.StatusBadRequest,
+			"you cannot reset your own second factor; set up a new one from your account, "+
+				"or ask another administrator")
+		return
+	}
+	if !a.mayManage(w, r, sess.Role, email, "reset an owner's second factor") {
+		return
+	}
+	switch err := a.store.ResetMFA(r.Context(), email); {
+	case errors.Is(err, ErrNoAccount):
+		writeErr(w, http.StatusNotFound, "no account for "+email)
+		return
+	case err != nil:
+		a.fail(w, "reset second factor", err)
+		return
+	}
+	detail := fmt.Sprintf("Second factor and recovery codes of %s removed from the console by %s. "+
+		"The account was signed out everywhere and must enrol again.", email, sess.Email)
+	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action: "auth.mfa_reset", Severity: "warning", ActorEmail: sess.Email,
+		Target: email, Detail: detail,
+	}); err != nil {
+		a.log.Error("audit append failed", "error", err)
+	}
+	a.Alerts.SecurityEvent("Argus: second factor of "+email+" was reset", detail)
+	writeJSON(w, http.StatusOK, map[string]string{"email": email})
+}
+
+// postSignOutAccount ends every session someone has, for a cookie that may
+// have been stolen. Admin or owner; only an owner may sign out an owner.
+func (a *API) postSignOutAccount(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if sess.Role != "admin" && sess.Role != "owner" {
+		writeErr(w, http.StatusForbidden, "signing someone out requires the admin or owner role")
+		return
+	}
+	email := normaliseEmail(r.PathValue("email"))
+	if !a.mayManage(w, r, sess.Role, email, "sign out an owner") {
+		return
+	}
+	switch err := a.store.RevokeAllSessions(r.Context(), email); {
+	case errors.Is(err, ErrNoAccount):
+		writeErr(w, http.StatusNotFound, "no account for "+email)
+		return
+	case err != nil:
+		a.fail(w, "revoke sessions", err)
+		return
+	}
+	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action: "auth.sessions_revoked", Severity: "notice", ActorEmail: sess.Email,
+		Target: email,
+		Detail: fmt.Sprintf("Every session of %s was signed out from the console.", email),
+	}); err != nil {
+		a.log.Error("audit append failed", "error", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"email": email})
 }

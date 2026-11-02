@@ -26,7 +26,12 @@ this finished a shape that was designed for rather than adding a new one.
 - `internal/control/password_routes.go` -- `/auth/password`, `/auth/mfa`,
   `/auth/mfa/enrol`, `/auth/mfa/confirm`, `/auth/password/change`.
 - `web/src/components/SignIn.tsx` -- the form.
-- `cmd/argus-control/users.go` -- `argus-control users add`.
+- `cmd/argus-control/users.go` -- `argus-control users add|list|disable|enable`
+  and the recovery commands `reset-mfa|set-password|set-role|sign-out`.
+- `internal/control/session_gate.go` -- the cookie after the signature: account
+  state, revocation, CSRF origin check, MFA-required hold.
+- `web/src/components/TwoFactor.tsx` -- enrolment, with a QR code drawn
+  locally (`qrcode-generator`), and the full-screen hold.
 
 ## Properties that must not regress
 
@@ -34,10 +39,34 @@ this finished a shape that was designed for rather than adding a new one.
   against a dummy hash when the account is missing or has no password. Without
   it a missing account returns in microseconds and a real one pays the full
   argon2 cost, and that difference alone enumerates the user list.
-- **Beginning an enrolment does not enrol.** The secret is stored with
-  `mfa_enrolled_at` null and is not accepted at sign-in until a code confirms
-  it. Otherwise starting an enrolment and walking away leaves an account whose
-  second factor nobody can produce.
+- **Beginning an enrolment does not enrol, and does not un-enrol.** The new
+  secret goes to `totp_pending_secret`; `totp_secret` and `mfa_enrolled_at`
+  are untouched until a code from the new one confirms it. The first version
+  wrote over `totp_secret` and cleared `mfa_enrolled_at`, so a stolen session
+  could switch the second factor off with one request. `/auth/mfa/enrol` now
+  also demands the password, and the current code when one is enrolled.
+- **A cookie is checked against the account on every request**
+  (`session_gate.go`, `Store.SessionState`): disabled, revoked by id
+  (`revoked_sessions`), or issued before `users.sessions_valid_after`, and the
+  role is the account's now. Sign-out, password change, disable, MFA confirm
+  and reset all revoke. Before this a cookie worked for its whole eight hours
+  with the role it was minted with, whatever happened to the account.
+- **An authenticator code is spent when accepted** (`users.totp_last_step`),
+  so one code signs in once, not for ninety seconds.
+- **Owners, admins and approvers must have a second factor** (`require_mfa`,
+  default `privileged`). Without one the gate refuses everything but
+  `/auth/me`, enrolment, password change and sign-out, and the console shows
+  only `TwoFactorRequired`.
+- **Per-account throttles** on top of the per-client ones (`throttle.go`): 10
+  wrong passwords an hour from anywhere, 5 wrong codes. The password one
+  exempts a browser carrying an `argus_device` cookie for that account, so a
+  botnet cannot lock the account holder out; the code one has no exemption,
+  because whoever is guessing already has the password. First trip is audited
+  at `critical` and sent to the alert channels.
+- **Recovery is on the host only**: `argus-control users reset-mfa |
+  set-password | set-role | sign-out`, see `docs/admin-recovery.md`. The
+  console lets an admin reset someone else's second factor, never their own,
+  and never an owner's.
 - **A challenge is not a session.** The token between "password accepted" and
   "code accepted" has its own type and a `purpose` field, and
   `TestAChallengeIsNotASession` asserts it cannot reach the API.

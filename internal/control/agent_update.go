@@ -16,7 +16,7 @@ import (
 Updating an agent from the console.
 
 The console asks; the agent answers on its heartbeat. A request sits on the
-agent's credential (update_* on agent_credentials, migration 032) and rides
+agent's credential (update_* on agent_credentials, migration 034) and rides
 every heartbeat reply until the agent reports an outcome for it, at which
 point it is cleared and audited. What the agent says about updating -- can
 it, and how far it has got -- is kept on its row in agents, so the server

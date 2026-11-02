@@ -39,8 +39,21 @@ const BUDGET_KB = {
    * command palette searching databases, and the query hooks, which every
    * route shares. The workspace itself is its own 9 kB chunk, paid only
    * when a database is opened.
+   *
+   * 271.9 kB with two-step sign-in: the account menu's two items and the
+   * "sign out everywhere" call, and the hold screen a privileged account meets
+   * before it has enrolled. The screen itself is lazy (27 kB raw, with the QR
+   * encoder, paid once per account), but it shares Alert, Paper, Center and
+   * the password and text inputs with the sign-in form, and the chunks those
+   * now sit in were split to be shared. Eager measured 3 kB heavier again.
+   *
+   * 269.5 kB with organizations: the Organization field on the sign-in form,
+   * which renders above the router, the switcher in the header, and the
+   * sign-in client's organization calls. Measured against main at 267.9 kB
+   * in the same build; two more chunk files account for about a third of it.
+   * With both, 273.5 kB.
    */
-  overview: 269,
+  overview: 276,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -48,8 +61,11 @@ const BUDGET_KB = {
    * 370.6 kB with the redesign, which the new shell accounts for, as above.
    * 374.3 kB with database sessions: the shared Databases weight above plus
    * the branch that replays statements, itself lazy.
+   * 378.4 kB with two-step sign-in, for the shared weight above.
+   * 376.0 kB with organizations: the same shared 1.6 kB as the overview, above.
+   * With both, 380.1 kB.
    */
-  sessionDetail: 376,
+  sessionDetail: 383,
 }
 
 /**

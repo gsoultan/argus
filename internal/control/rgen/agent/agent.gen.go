@@ -41,6 +41,7 @@ type Row struct {
 	ExecTracing     bool
 	ExecReason      string
 	UpdateStatus    runtime.Null[runtime.JSON]
+	Applications    runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -79,7 +80,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 21
+const nCols = 22
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -493,6 +494,7 @@ var (
 	ExecTracing     = BoolCol{18}
 	ExecReason      = TextCol{19}
 	UpdateStatus    = NullJSONCol{20}
+	Applications    = NullJSONCol{21}
 )
 
 // TextCol addresses a text column.
@@ -958,6 +960,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 21:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1087,6 +1096,13 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 20:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 21:
 		if int(q.njs) >= 2 {
 			q.over = true
 			return
@@ -1264,10 +1280,20 @@ func (q Query) UpdateStatusHasAnyKey(v ...string) Query { return q.Where(UpdateS
 func (q Query) UpdateStatusHasAllKeys(v ...string) Query {
 	return q.Where(UpdateStatus.HasAllKeys(v...))
 }
-func (q Query) UpdateStatusIsNull() Query    { return q.Where(UpdateStatus.IsNull()) }
-func (q Query) UpdateStatusIsNotNull() Query { return q.Where(UpdateStatus.IsNotNull()) }
+func (q Query) UpdateStatusIsNull() Query                 { return q.Where(UpdateStatus.IsNull()) }
+func (q Query) UpdateStatusIsNotNull() Query              { return q.Where(UpdateStatus.IsNotNull()) }
+func (q Query) ApplicationsContains(v runtime.JSON) Query { return q.Where(Applications.Contains(v)) }
+func (q Query) ApplicationsContainedBy(v runtime.JSON) Query {
+	return q.Where(Applications.ContainedBy(v))
+}
+func (q Query) ApplicationsHasAnyKey(v ...string) Query { return q.Where(Applications.HasAnyKey(v...)) }
+func (q Query) ApplicationsHasAllKeys(v ...string) Query {
+	return q.Where(Applications.HasAllKeys(v...))
+}
+func (q Query) ApplicationsIsNull() Query    { return q.Where(Applications.IsNull()) }
+func (q Query) ApplicationsIsNotNull() Query { return q.Where(Applications.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1430,6 +1456,12 @@ var orderTable = [nCols][4]string{
 		"\"update_status\" ASC NULLS FIRST",
 		"\"update_status\" DESC NULLS LAST",
 	},
+	{ // applications
+		"\"applications\"",
+		"\"applications\" DESC",
+		"\"applications\" ASC NULLS FIRST",
+		"\"applications\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1456,6 +1488,7 @@ var identTable = [nCols]string{
 	"\"exec_tracing\"",
 	"\"exec_reason\"",
 	"\"update_status\"",
+	"\"applications\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1488,7 +1521,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [21][28]runtime.Frag{
+var fragTable = [22][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2119,6 +2152,36 @@ var fragTable = [21][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // applications
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"applications\" @> $", B: ""},
+		{A: "\"applications\" <@ $", B: ""},
+		{A: "\"applications\" ?| $", B: ""},
+		{A: "\"applications\" ?& $", B: ""},
+		{A: "\"applications\" IS NULL", B: ""},
+		{A: "\"applications\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2305,6 +2368,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ExecTracing = runtime.Bool(rv[18])
 	r.ExecReason = sl.Str(rv[19])
 	r.UpdateStatus = runtime.NullJSON(rv[20], sl)
+	r.Applications = runtime.NullJSON(rv[21], sl)
 	return decErr
 }
 
@@ -2431,6 +2495,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 21:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2504,6 +2572,10 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.strs[ns])
 			ns++
 		case 20:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 21:
 			b.jsns[njs] = q.jsns[njs]
 			v = append(v, &b.jsns[njs])
 			njs++

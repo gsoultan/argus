@@ -71,6 +71,8 @@ type Agent struct {
 	ExecTracing     bool
 	ExecReason      string
 	UpdateStatus    *storm.JSON
+	// Applications is what runs on the host, as its agent last reported.
+	Applications *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -429,6 +431,17 @@ func (m *RedeemedTicket) Schema(t *storm.Table) {
 	t.Index(&m.ExpiresAt).Named("redeemed_tickets_expiry_idx")
 }
 
+// RevokedSession is table revoked_sessions: one row per signed-out cookie,
+// kept until the cookie would have expired anyway.
+type RevokedSession struct {
+	Sid       string
+	ExpiresAt time.Time
+}
+
+func (m *RevokedSession) Schema(t *storm.Table) {
+	t.Index(&m.ExpiresAt).Named("revoked_sessions_expires_at")
+}
+
 // SchemaMigration is table schema_migrations.
 type SchemaMigration struct {
 	Name      string
@@ -558,6 +571,7 @@ type Database struct {
 	Port       int32
 	PoolerHost string
 	PoolerPort int32
+	ConfigPath string
 	Dbname     string
 	AdminUser  string
 	Label      string
@@ -569,6 +583,7 @@ type Database struct {
 func (m *Database) Schema(t *storm.Table) {
 	t.Col(&m.PoolerHost).Default("''::text")
 	t.Col(&m.PoolerPort).Default("0")
+	t.Col(&m.ConfigPath).Default("''::text")
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.Asset).ConstraintName("databases_asset_id_fkey")
 	t.Col(&m.Asset).OnDelete(storm.Cascade)
@@ -582,12 +597,14 @@ func (m *Database) Schema(t *storm.Table) {
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("databases_asset_id_port_dbname_key", &m.Asset, &m.Port, &m.Dbname)
 	t.CheckNamed("databases_dbname_check", "(length(dbname) >= 1) AND (length(dbname) <= 63)")
-	t.CheckNamed("databases_engine_check", "engine = 'postgres'::text")
+	t.CheckNamed("databases_engine_check",
+		"engine = ANY (ARRAY['postgres'::text, 'redis'::text, 'rabbitmq'::text])")
 	t.CheckNamed("databases_label_check",
 		"label = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("databases_port_check", "(port >= 1) AND (port <= 65535)")
 	t.CheckNamed("databases_pooler_port_check", "(pooler_port >= 0) AND (pooler_port <= 65535)")
 	t.Index(&m.Asset).Named("databases_asset_idx")
+	t.Index(&m.Asset, &m.Port).Unique().Where("engine = 'redis'::text").Named("databases_redis_server_key")
 }
 
 // DatabaseAssignment is table database_assignments: who may open a database
@@ -639,12 +656,25 @@ type User struct {
 	LoginName    *string
 	SshPublicKey string
 	DisabledBy   *string
+	// SessionsValidAfter: a cookie issued before it is refused.
+	// TotpPendingSecret: an enrolment not yet confirmed. TotpLastStep: the
+	// last authenticator step accepted, so each code signs in once.
+	SessionsValidAfter *time.Time
+	TotpPendingSecret  *string
+	TotpLastStep       *int64
+	// HomeTenant is the organization holding this person's credentials when
+	// they were shared in from another one; nil when they are this
+	// organization's own. Shareable is whether another organization may add
+	// them, set here by the organization they belong to.
+	HomeTenant *string
+	Shareable  bool
 }
 
 func (m *User) Schema(t *storm.Table) {
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.Role).Default("'operator'::text")
 	t.Col(&m.MfaEnrolled).Default("false")
+	t.Col(&m.Shareable).Default("false")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("users_email_key", &m.Email)
 	t.Index(storm.Lower(&m.Email)).Unique().Named("users_email_lower_key")
@@ -672,6 +702,7 @@ func All() []any {
 		&HostKeyPin{},
 		&RecoveryCode{},
 		&RedeemedTicket{},
+		&RevokedSession{},
 		&SchemaMigration{},
 		&Session{},
 		&Team{},

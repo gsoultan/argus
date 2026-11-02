@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
   ActionIcon, Avatar, Badge, Box, Button, Card, Group, Menu, Modal, MultiSelect, SegmentedControl, Select,
-  SimpleGrid, Stack, Table, Tabs, Text, TextInput, Tooltip, UnstyledButton,
+  SimpleGrid, Stack, Switch, Table, Tabs, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
@@ -12,12 +12,13 @@ import {
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, relTime } from '~/components/primitives'
-import { generatePassword } from '~/components/Setup'
+import { generatePassword } from '~/lib/password'
 import { guard } from '~/lib/guard'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
-  meQuery, teamsQuery, useAddAccount, useAddTeamMember, useCreateTeam, useDeleteTeam,
-  useRemoveTeamMember, useRenameTeam, useSetDisabled, useSetLoginName, useSetRole, usersQuery,
+  meQuery, teamsQuery, useAddAccount, useAddSharedAccount, useAddTeamMember, useCreateTeam, useDeleteTeam,
+  useRemoveTeamMember, useRenameTeam, useResetMFA, useSetDisabled, useSetLoginName, useSetRole,
+  useSetShareable, useSignOutAccount, usersQuery,
 } from '~/lib/queries'
 import { canSee, roleLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
@@ -359,6 +360,20 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
   const { data: teams } = useQuery(teamsQuery())
   const setRole = useSetRole()
   const setDisabled = useSetDisabled()
+  const setShareable = useSetShareable()
+  const toggleShareable = async (u: User) => {
+    try {
+      await setShareable.mutateAsync({ email: u.email, shareable: !u.shareable })
+      notifyOk(
+        u.shareable ? 'Sharing stopped' : 'Sharing allowed',
+        u.shareable
+          ? `Other organizations can no longer add ${u.displayName}. Any that already have them keep them.`
+          : `Another organization's owner can now add ${u.displayName} by email. They keep their password and second step.`,
+      )
+    } catch (err) {
+      notifyError('Not changed', err)
+    }
+  }
   const [search, setSearch] = useState('')
   const [show, setShow] = useState<'active' | 'removed'>('active')
   const [renaming, setRenaming] = useState<User | null>(null)
@@ -384,6 +399,25 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
       notifyOk('Role changed', `${u.displayName} is ${roleLabel(role)} now.`)
     } catch (err) {
       notifyError('Role not changed', err)
+    }
+  }
+  const resetMFA = useResetMFA()
+  const signOut = useSignOutAccount()
+  const reset2fa = async (u: User) => {
+    if (!window.confirm(`Remove ${u.displayName}'s authenticator and recovery codes? They are signed out everywhere and set up a new one at their next sign-in. Only do this for a person you have identified yourself.`)) return
+    try {
+      await resetMFA.mutateAsync(u.email)
+      notifyOk('Second step removed', `${u.email} signs in with their password next, then sets up a new authenticator.`)
+    } catch (err) {
+      notifyError('Not reset', err)
+    }
+  }
+  const signOutAll = async (u: User) => {
+    try {
+      await signOut.mutateAsync(u.email)
+      notifyOk('Signed out everywhere', `Every browser signed in as ${u.email} has to sign in again.`)
+    } catch (err) {
+      notifyError('Not signed out', err)
     }
   }
   const toggle = async (u: User) => {
@@ -470,6 +504,16 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                         {(teamsOf.get(u.email) ?? []).map((t) => (
                           <Badge key={t} variant="outline" color="slate">{t}</Badge>
                         ))}
+                        {u.shared && (
+                          <Tooltip label="They sign in with the password and second step of another organization. Their role here is this organization's.">
+                            <Badge color="violet" variant="light">shared</Badge>
+                          </Tooltip>
+                        )}
+                        {u.shareable && !u.shared && (
+                          <Tooltip label="Other organizations may add this person without giving them a new password.">
+                            <Badge color="violet" variant="outline">shareable</Badge>
+                          </Tooltip>
+                        )}
                         {u.disabled && <Badge color="rose" variant="light">cannot sign in</Badge>}
                         {!u.disabled && !u.mfaEnrolled && (
                           <Tooltip label="They sign in with a password only. They are asked to add a second step next time.">
@@ -511,16 +555,53 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                       <Button size="compact-sm" variant="subtle" onClick={() => setViewing(u)}>
                         Servers
                       </Button>
-                      {admin && !self && (
-                        <Button
-                          size="compact-sm"
-                          variant="subtle"
-                          color={u.disabled ? 'azure' : 'rose'}
-                          loading={setDisabled.isPending && setDisabled.variables?.email === u.email}
-                          onClick={() => void toggle(u)}
+                      {admin && me?.multiOrg && !u.shared && !u.disabled && (
+                        <Tooltip
+                          label={u.shareable
+                            ? 'Stop other organizations adding this person. Those that already have them keep them.'
+                            : 'Let other organizations add this person with the password they already have.'}
                         >
-                          {u.disabled ? 'Let back in' : 'Remove'}
-                        </Button>
+                          <Button
+                            size="compact-sm"
+                            variant="subtle"
+                            color="violet"
+                            loading={setShareable.isPending && setShareable.variables?.email === u.email}
+                            onClick={() => void toggleShareable(u)}
+                          >
+                            {u.shareable ? 'Stop sharing' : 'Allow sharing'}
+                          </Button>
+                        </Tooltip>
+                      )}
+                      {admin && !self && (
+                        <>
+                          {!u.disabled && (
+                            <Menu position="bottom-end" withinPortal>
+                              <Menu.Target>
+                                <Button size="compact-sm" variant="subtle" color="slate"
+                                  aria-label={`Security of ${u.email}`}>
+                                  Security
+                                </Button>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <Menu.Item onClick={() => void signOutAll(u)}>
+                                  Sign out everywhere
+                                </Menu.Item>
+                                <Menu.Item disabled={!u.mfaEnrolled} onClick={() => void reset2fa(u)}>
+                                  {u.mfaEnrolled ? 'Reset lost authenticator' : 'No authenticator to reset'}
+                                </Menu.Item>
+                              </Menu.Dropdown>
+                            </Menu>
+                          )}
+                          <Button
+                            size="compact-sm"
+                            variant="subtle"
+                            color={u.disabled ? 'azure' : 'rose'}
+                            loading={setDisabled.isPending && setDisabled.variables?.email === u.email}
+                            onClick={() => void toggle(u)}
+                          >
+                            {u.disabled ? 'Let back in' : 'Remove'}
+                          </Button>
+                        </>
                       )}
                     </Table.Td>
                   </Table.Tr>
@@ -585,35 +666,58 @@ function RenameLoginModal({ user, onClose }: { user: User; onClose: () => void }
 
 function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const add = useAddAccount()
+  const addShared = useAddSharedAccount()
   const { data: me } = useQuery(meQuery())
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [role, setRole] = useState<UserRole>('operator')
   const [password, setPassword] = useState(() => generatePassword())
+  // A person who already signs in to another organization on this control
+  // plane keeps their password and second step; only their home has to have
+  // allowed it. Offered only where there is another organization to share from.
+  const [shared, setShared] = useState(false)
+  const [homeOrg, setHomeOrg] = useState('')
+  const canShare = me?.multiOrg === true
   const close = () => {
     setEmail('')
     setName('')
     setRole('operator')
     setPassword(generatePassword())
+    setShared(false)
+    setHomeOrg('')
     onClose()
   }
   const submit = async () => {
     try {
-      await add.mutateAsync({ email, displayName: name, role, password })
-      notifyOk(
-        'Person added',
-        `${email} can sign in now. Send them the first password over a channel you trust; they set up a second step when they first sign in.`,
-      )
+      if (shared) {
+        await addShared.mutateAsync({ email, displayName: name, role, ...(homeOrg.trim() ? { homeOrg: homeOrg.trim() } : {}) })
+        notifyOk('Person added', `${email} can switch to this organization from the one they sign in to. Nothing to send them.`)
+      } else {
+        await add.mutateAsync({ email, displayName: name, role, password })
+        notifyOk(
+          'Person added',
+          `${email} can sign in now. Send them the first password over a channel you trust; they set up a second step when they first sign in.`,
+        )
+      }
       close()
     } catch (err) {
       notifyError('Not added', err)
     }
   }
+  const pending = add.isPending || addShared.isPending
   return (
     <Modal opened={opened} onClose={close} title="Add person">
       <Stack gap="md">
         <TextInput label="Email" type="email" data-autofocus value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
         <TextInput label="Name" description="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} />
+        {canShare && (
+          <Switch
+            label="They already sign in to another organization here"
+            description="They keep their password and second step. Their own organization must have allowed sharing them; if it has not, this says no such account exists."
+            checked={shared}
+            onChange={(e) => setShared(e.currentTarget.checked)}
+          />
+        )}
         <Select
           label="Role"
           allowDeselect={false}
@@ -624,22 +728,32 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
           value={role}
           onChange={(v) => setRole((v ?? 'operator') as UserRole)}
         />
-        <Group align="flex-end" gap="xs" wrap="nowrap">
+        {shared ? (
           <TextInput
-            label="First password"
-            description="They can change it after signing in"
-            style={{ flex: 1 }}
-            value={password}
-            onChange={(e) => setPassword(e.currentTarget.value)}
+            label="Organization they sign in with"
+            description="Leave blank unless they have accounts in more than one organization."
+            value={homeOrg}
+            onChange={(e) => setHomeOrg(e.currentTarget.value.toLowerCase())}
             styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
           />
-          <Button variant="default" onClick={() => setPassword(generatePassword())}>New</Button>
-        </Group>
+        ) : (
+          <Group align="flex-end" gap="xs" wrap="nowrap">
+            <TextInput
+              label="First password"
+              description="They can change it after signing in"
+              style={{ flex: 1 }}
+              value={password}
+              onChange={(e) => setPassword(e.currentTarget.value)}
+              styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+            />
+            <Button variant="default" onClick={() => setPassword(generatePassword())}>New</Button>
+          </Group>
+        )}
         <Group justify="flex-end">
           <Button variant="default" onClick={close}>Cancel</Button>
           <Button
-            loading={add.isPending}
-            disabled={!email.includes('@') || [...password].length < 12}
+            loading={pending}
+            disabled={!email.includes('@') || (!shared && [...password].length < 12)}
             onClick={() => void submit()}
           >
             Add person
