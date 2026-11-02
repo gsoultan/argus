@@ -118,7 +118,7 @@ func TestPostureCacheMatchesAScan(t *testing.T) {
 	cached, _ := c.Scan()
 	fresh, _ := Scan(cfg)
 	cached.CheckedAt, fresh.CheckedAt = time.Time{}, time.Time{}
-	if a, b := mustJSON(t, cached), mustJSON(t, fresh); a != b {
+	if a, b := postureJSON(t, cached), postureJSON(t, fresh); a != b {
 		t.Fatalf("cached posture differs from a scan:\n%s\n%s", a, b)
 	}
 }
@@ -139,7 +139,7 @@ func BenchmarkPostureCacheHit(b *testing.B) {
 	}
 }
 
-func mustJSON(t *testing.T, v any) string {
+func postureJSON(t *testing.T, v any) string {
 	t.Helper()
 	b, err := json.Marshal(v)
 	if err != nil {
