@@ -9,6 +9,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { WhoCanConnect } from '~/components/WhoCanConnect'
 import { DatabasesOnServer } from '~/components/DatabasesOnServer'
+import { ApplicationsOnServer } from '~/components/ApplicationsOnServer'
 import { ReachBadge, reachOf } from '~/components/myservers'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -307,6 +308,10 @@ function AssetDetail() {
                 />
               )}
             </SectionCard>
+          </Grid.Col>
+
+          <Grid.Col span={12}>
+            <ApplicationsOnServer asset={asset} canEdit={canEdit} />
           </Grid.Col>
         </Grid>
       </PageBody>

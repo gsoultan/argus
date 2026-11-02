@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,6 +21,9 @@ type HostFacts struct {
 	Addresses []string `json:"addresses,omitempty"`
 	SSHPorts  []int    `json:"ssh_ports,omitempty"`
 	Accounts  []string `json:"accounts,omitempty"`
+	// Applications is what runs on the host. Nil from an agent older than
+	// application discovery, which leaves what the row holds.
+	Applications *AppInventory `json:"applications,omitempty"`
 }
 
 // DiscoveredHost is an agent reporting from somewhere the inventory has no
@@ -84,9 +88,17 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 	if hostname == "" {
 		return errors.New("hostname is required")
 	}
+	var apps []byte // nil is SQL NULL: keep what the row holds
+	if inv := f.Applications.bounded(); inv != nil {
+		b, err := json.Marshal(inv)
+		if err != nil {
+			return err
+		}
+		apps = b
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,now())
 		ON CONFLICT (hostname) DO UPDATE SET
 			fqdn       = COALESCE(NULLIF(EXCLUDED.fqdn,''), agents.fqdn),
 			machine_id = COALESCE(NULLIF(EXCLUDED.machine_id,''), agents.machine_id),
@@ -94,9 +106,10 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 			addresses  = EXCLUDED.addresses,
 			ssh_ports  = EXCLUDED.ssh_ports,
 			accounts   = EXCLUDED.accounts,
+			applications = COALESCE(EXCLUDED.applications, agents.applications),
 			updated_at = now()`,
 		hostname, f.FQDN, f.MachineID, f.OS,
-		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts))
+		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps)
 	return err
 }
 

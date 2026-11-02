@@ -10,6 +10,7 @@ import type {
   DirectLogin,
   DirectSsh,
   ServerLoginAccounts,
+  ServerApplications,
   Coverage,
   DiscoveredHost,
   FleetStats,
@@ -729,6 +730,11 @@ export async function loginAccounts(id: string): Promise<ServerLoginAccounts> {
   return get<ServerLoginAccounts>(`/api/v1/assets/${encodeURIComponent(id)}/login-accounts`)
 }
 
+/** What runs on a server, from its agent's last report. */
+export async function applications(id: string): Promise<ServerApplications> {
+  return get<ServerApplications>(`/api/v1/assets/${encodeURIComponent(id)}/applications`)
+}
+
 /** Sets what one login account on a server does; null follows the server. */
 export async function setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
   return send<Asset>(
@@ -1029,6 +1035,7 @@ export const live = {
   stats: () => get<FleetStats>('/api/v1/stats'),
   assets: () => get<Asset[]>('/api/v1/assets'),
   loginAccounts,
+  applications,
 
   /**
    * The accounts that exist, for deciding who to assign a host to.

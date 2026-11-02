@@ -72,12 +72,18 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
   )
 }
 
-function AddDatabase({ asset, opened, onClose }: { asset: Asset; opened: boolean; onClose: () => void }) {
+/**
+ * The add-a-database form. `initialPort` and `initialPoolerPort` come from
+ * what the agent found running, when it is opened from there.
+ */
+export function AddDatabase({ asset, opened, onClose, initialPort = 5432, initialPoolerPort }: {
+  asset: Asset; opened: boolean; onClose: () => void; initialPort?: number; initialPoolerPort?: number
+}) {
   const create = useCreateDatabase()
   const [dbname, setDbname] = useState('')
-  const [port, setPort] = useState<number | string>(5432)
+  const [port, setPort] = useState<number | string>(initialPort)
   const [label, setLabel] = useState<DBLabel>('production')
-  const [poolerPort, setPoolerPort] = useState<number | string>('')
+  const [poolerPort, setPoolerPort] = useState<number | string>(initialPoolerPort ?? '')
   const valid = /^[A-Za-z_][A-Za-z0-9_$-]{0,62}$/.test(dbname)
   const submit = async () => {
     try {
