@@ -120,6 +120,9 @@ func runJob(t *testing.T, svc TunnelService, pub ed25519.PublicKey, key ed25519.
 		case tunnel.FrameBackupResult:
 			_ = json.Unmarshal(p, &h.result)
 			wg.Wait()
+			// The service frees the database's job slot after it sends the
+			// result; wait for it so the next job is not refused as busy.
+			<-done
 			return h
 		}
 	}
