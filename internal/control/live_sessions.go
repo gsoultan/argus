@@ -36,6 +36,8 @@ told the session is not running here, the same limit the tunnel itself has.
 
 // liveSession is one session being relayed.
 type liveSession struct {
+	// tenant is the organization the session is in; see liveRegistry.
+	tenant   string
 	id       string
 	protocol string // "ssh" or "rdp"
 	hub      *live.Hub
@@ -70,28 +72,31 @@ type liveRegistry struct {
 	m  map[string]*liveSession
 }
 
+// Keyed by (organization, session id). Session ids are minted here and do
+// not collide, but a watcher in one organization asking for an id must find
+// nothing unless the session is in theirs, whatever the id is.
 func (l *liveRegistry) add(s *liveSession) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.m == nil {
 		l.m = map[string]*liveSession{}
 	}
-	l.m[s.id] = s
+	l.m[tunnelKey(s.tenant, s.id)] = s
 }
 
 func (l *liveRegistry) remove(s *liveSession) {
 	l.mu.Lock()
-	if l.m[s.id] == s {
-		delete(l.m, s.id)
+	if l.m[tunnelKey(s.tenant, s.id)] == s {
+		delete(l.m, tunnelKey(s.tenant, s.id))
 	}
 	l.mu.Unlock()
 	s.hub.Close()
 }
 
-func (l *liveRegistry) get(id string) (*liveSession, bool) {
+func (l *liveRegistry) get(ctx context.Context, id string) (*liveSession, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	s, ok := l.m[id]
+	s, ok := l.m[tunnelKey(tenantIDOf(ctx), id)]
 	return s, ok
 }
 
@@ -127,13 +132,13 @@ func (a *API) handleWatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no ticket supplied")
 		return
 	}
-	t, err := a.signer.RedeemSessionScoped(r.Context(), token, auth.ScopeShadow, id)
+	t, err := a.signerFor(r).RedeemSessionScoped(r.Context(), token, auth.ScopeShadow, id)
 	if err != nil {
 		a.log.Warn("watch refused", "session", id, "error", err)
 		writeErr(w, http.StatusUnauthorized, "unauthorized: "+err.Error())
 		return
 	}
-	sess, ok := a.live.get(id)
+	sess, ok := a.live.get(r.Context(), id)
 	if !ok {
 		writeErr(w, http.StatusNotFound, notRelayedHere)
 		return
@@ -231,7 +236,7 @@ func (a *API) runWatch(ctx context.Context, conn *websocket.Conn, sess *liveSess
 			return
 		}
 	}
-	if cur, ok := a.live.get(sess.id); ok && cur == sess {
+	if cur, ok := a.live.get(WithTenant(context.Background(), &Tenant{ID: sess.tenant}), sess.id); ok && cur == sess {
 		// Still running: this viewer fell too far behind and was let go, so
 		// the person working was never held up by it.
 		_ = writeJSON(terminalMessage{Type: "error",
@@ -255,7 +260,7 @@ func (a *API) handleTerminate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no ticket supplied")
 		return
 	}
-	t, err := a.signer.RedeemSessionScoped(r.Context(), token, auth.ScopeTerminate, id)
+	t, err := a.signerFor(r).RedeemSessionScoped(r.Context(), token, auth.ScopeTerminate, id)
 	if err != nil {
 		a.log.Warn("terminate refused", "session", id, "error", err)
 		writeErr(w, http.StatusUnauthorized, "unauthorized: "+err.Error())
@@ -270,7 +275,7 @@ func (a *API) handleTerminate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "a reason is required")
 		return
 	}
-	sess, ok := a.live.get(id)
+	sess, ok := a.live.get(r.Context(), id)
 	if !ok {
 		writeErr(w, http.StatusNotFound, notRelayedHere)
 		return

@@ -229,7 +229,7 @@ func listensOf(in []AppAddress) []ServerAppListen {
 // ApplicationsFor reads what the agent on asset id reported running.
 func (s *Store) ApplicationsFor(ctx context.Context, id string) (ServerApplications, error) {
 	var raw []byte
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT ag.applications
 		  FROM assets a
 		  LEFT JOIN LATERAL (

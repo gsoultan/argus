@@ -29,6 +29,7 @@ Read this file first, then only the memory a task actually needs.
 | [shutdown-and-evidence](shutdown-and-evidence.md) | Any long-running loop, restarts, drains, reporting goroutines |
 | [postgres-access](postgres-access.md) | Databases: levels to Postgres roles, the pg-admin helper, the statement recording, the query workspace |
 | [app-discovery](app-discovery.md) | What the agent finds running on a server, and what it must never read |
+| [multi-tenant](multi-tenant.md) | Organizations sharing one control plane: schema per organization, `scope`, per-organization keys, what is still platform-wide |
 
 ## Standing rules for this repo
 
@@ -45,8 +46,10 @@ Read this file first, then only the memory a task actually needs.
   indistinguishable from one showing a real fleet.
 
   **It shows the host, and there is deliberately no configurable deployment
-  name.** Checked before deciding: the control plane has no identity to report —
-  no tenant, no region, no gateway registry, `gateway_policy` is a single row
+  name.** (Since organizations arrived the header also names the organization a
+  session is in, when it is not the default one; that is a fact from the cookie,
+  not a label from config.) Checked before deciding: the control plane has no
+  identity to report — no region, no gateway registry, `gateway_policy` is a single row
   and the only heartbeats are agents reporting their own hostname. Multi-gateway
   is many gateways to one control plane, and the console talks to the control
   plane. Same-origin is the supported shape because the session cookie depends

@@ -116,6 +116,15 @@ func ObjectKeyExt(startedAt time.Time, sessionID, ext string) string {
 // with read access, including after the control plane is gone.
 func (c *Client) Upload(ctx context.Context, path, sessionID, chainHead string,
 	startedAt time.Time) (string, error) {
+	// The object keeps the extension the artefact has on disk, so the two
+	// cannot disagree about what format it is.
+	return c.UploadKey(ctx, path, ObjectKeyExt(startedAt, sessionID, extOf(path)), sessionID,
+		chainHead, startedAt)
+}
+
+// UploadKey is Upload at a key the caller chose; see Scoped.
+func (c *Client) UploadKey(ctx context.Context, path, key, sessionID, chainHead string,
+	startedAt time.Time) (string, error) {
 
 	if c == nil {
 		return "", ErrNotConfigured
@@ -125,12 +134,6 @@ func (c *Client) Upload(ctx context.Context, path, sessionID, chainHead string,
 	if err != nil {
 		return "", fmt.Errorf("open recording: %w", err)
 	}
-	// The object keeps the extension the artefact has on disk, so the two
-	// cannot disagree about what format it is.
-	ext := filepath.Ext(path)
-	if ext == "" {
-		ext = ".cast"
-	}
 	defer f.Close()
 
 	info, err := f.Stat()
@@ -138,7 +141,6 @@ func (c *Client) Upload(ctx context.Context, path, sessionID, chainHead string,
 		return "", err
 	}
 
-	key := ObjectKeyExt(startedAt, sessionID, ext)
 	_, err = c.mc.PutObject(ctx, c.bucket, key, f, info.Size(), minio.PutObjectOptions{
 		ContentType: "application/x-asciicast",
 		UserMetadata: map[string]string{
@@ -151,6 +153,14 @@ func (c *Client) Upload(ctx context.Context, path, sessionID, chainHead string,
 		return "", fmt.Errorf("upload %s: %w", key, err)
 	}
 	return key, nil
+}
+
+// extOf is the extension a recording has on disk, .cast when it has none.
+func extOf(path string) string {
+	if ext := filepath.Ext(path); ext != "" {
+		return ext
+	}
+	return ".cast"
 }
 
 // Get opens a recording for reading.

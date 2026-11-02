@@ -69,7 +69,7 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 		return
 	}
 
-	obj, err := a.recordings.Get(r.Context(), *sess.RecordingKey)
+	obj, err := a.recordingsFor(r.Context()).Get(r.Context(), *sess.RecordingKey)
 	if err != nil {
 		a.fail(w, "fetch recording", err)
 		return
@@ -168,6 +168,12 @@ func (a *API) presignRecording(w http.ResponseWriter, r *http.Request, actor str
 		writeErr(w, http.StatusNotFound, "recording is not in object storage")
 		return
 	}
+	// The key came from a session row an agent reported. A link is only
+	// issued for an object this organization owns.
+	if !storage.ForTenant(a.storage, tenantIDOf(r.Context())).Owns(*sess.RecordingKey) {
+		writeErr(w, http.StatusNotFound, "recording is not in object storage")
+		return
+	}
 
 	u, err := a.storage.PresignedURL(r.Context(), *sess.RecordingKey, 5*time.Minute)
 	if err != nil {
@@ -204,7 +210,7 @@ func (a *API) presignRecording(w http.ResponseWriter, r *http.Request, actor str
 // a report with an empty state would blank a finished session's state on its
 // way past.
 func (s *Store) StoreRecordingKey(ctx context.Context, id, chainHead, key string) error {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE sessions
 		   SET recording_key = $2,
 		       chain_head    = COALESCE(NULLIF($3,''), chain_head)

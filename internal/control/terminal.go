@@ -60,7 +60,7 @@ func (a *API) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	// Verify and burn in one step, bound to this target and principal: a
 	// ticket for one host cannot open another.
-	t, err := a.signer.RedeemTicket(r.Context(), token, target, principal)
+	t, err := a.signerFor(r).RedeemTicket(r.Context(), token, target, principal)
 	if err != nil {
 		a.log.Warn("terminal refused", "target", target, "principal", principal, "error", err)
 		writeErr(w, http.StatusUnauthorized, "unauthorized: "+err.Error())
@@ -124,7 +124,7 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 		_ = conn.Close(websocket.StatusNormalClosure, "refused")
 	}
 
-	grant, err := tunnel.SignGrant(a.Tunnels.GrantKey, tunnel.NewGrant(email, host, principal, client))
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), tunnel.NewGrant(email, host, principal, client))
 	if err != nil {
 		fail("could not sign the session grant")
 		return
@@ -170,7 +170,7 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 	}
 	var ended, endedBy, endReason = make(chan struct{}), "", ""
 	var endOnce sync.Once
-	ls := &liveSession{id: answer.Session, protocol: "ssh", hub: live.NewHub(),
+	ls := &liveSession{tenant: tenantIDOf(ctx), id: answer.Session, protocol: "ssh", hub: live.NewHub(),
 		width: 80, height: 24}
 	ls.terminate = func(by, reason string) bool {
 		select {
@@ -294,7 +294,7 @@ const agentTerminalService = "terminal"
 // OpenWith opens a stream on host's agent with a full header.
 func (h *TunnelHub) OpenWith(ctx context.Context, host string, hd tunnel.Header) (tunnel.Stream, tunnel.Answer, error) {
 	h.mu.Lock()
-	t := h.byHost[strings.ToLower(host)]
+	t := h.byHost[tunnelKey(tenantIDOf(ctx), host)]
 	h.mu.Unlock()
 	if t == nil {
 		return nil, tunnel.Answer{}, ErrNoTunnel
@@ -303,9 +303,38 @@ func (h *TunnelHub) OpenWith(ctx context.Context, host string, hd tunnel.Header)
 }
 
 // grantKeyPublic is what agents are sent; empty when sessions are off.
-func (h *TunnelHub) grantKeyPublic() string {
-	if h.GrantKey == nil {
+func (h *TunnelHub) grantKeyPublic(ctx context.Context) string {
+	k := h.grantKeyFor(ctx)
+	if k == nil {
 		return ""
 	}
-	return tunnel.EncodeGrantKey(h.GrantKey.Public().(ed25519.PublicKey))
+	return tunnel.EncodeGrantKey(k.Public().(ed25519.PublicKey))
+}
+
+// grantKeyFor is the key that signs session grants for ctx's organization.
+//
+// Derived from GrantKey's seed and the organization id, so a grant signed for
+// one organization's servers does not verify on another's: each agent pins
+// the key of the organization it enrolled into. The default organization
+// keeps GrantKey itself, so agents enrolled before there were several go on
+// verifying against the key they pinned.
+func (h *TunnelHub) grantKeyFor(ctx context.Context) ed25519.PrivateKey {
+	if h.GrantKey == nil {
+		return nil
+	}
+	id := tenantIDOf(ctx)
+	if id == DefaultTenantID {
+		return h.GrantKey
+	}
+	h.gmu.Lock()
+	defer h.gmu.Unlock()
+	if k, ok := h.grantKeys[id]; ok {
+		return k
+	}
+	if h.grantKeys == nil {
+		h.grantKeys = map[string]ed25519.PrivateKey{}
+	}
+	k := tunnel.DeriveGrantKey(h.GrantKey, id)
+	h.grantKeys[id] = k
+	return k
 }

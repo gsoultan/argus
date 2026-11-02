@@ -26,7 +26,7 @@ func holdAuditLock(t *testing.T, s *Store) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('argus_audit'))`); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('argus_audit:' || current_schema()))`); err != nil {
 		t.Fatal(err)
 	}
 	return func() { _ = tx.Rollback(ctx) }
@@ -37,9 +37,9 @@ func waitQueued(t *testing.T, s *Store, n int) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		s.auditMu.Lock()
-		q := len(s.auditQueue)
-		s.auditMu.Unlock()
+		s.def.auditMu.Lock()
+		q := len(s.def.auditQueue)
+		s.def.auditMu.Unlock()
 		if q >= n {
 			return
 		}
@@ -192,9 +192,9 @@ func waitWriting(t *testing.T, s *Store) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		s.auditMu.Lock()
-		w, q := s.auditWriting, len(s.auditQueue)
-		s.auditMu.Unlock()
+		s.def.auditMu.Lock()
+		w, q := s.def.auditWriting, len(s.def.auditQueue)
+		s.def.auditMu.Unlock()
 		if w && q == 0 {
 			// Give it a moment to reach the lock it will wait on.
 			time.Sleep(50 * time.Millisecond)

@@ -5,7 +5,7 @@ RabbitMQ, nginx, Docker... the catalogue in `internal/agent/apps.go`), every
 listening TCP socket with its process and systemd unit, running services, and
 containers. It rides `/api/v1/report/facts` as `applications`, is stored in
 `agents.applications` (JSONB, migration 031) and is served by
-`GET /api/v1/assets/{id}/applications` (fleet roles only). The server page's
+`GET /api/v1/assets/{id}/applications` (fleet roles only), read through `Store.db(ctx)` like every query, so it is per organization. The server page's
 "What runs here" card shows it; a host Postgres has "Add as database", which
 opens the add form with its port and any PgBouncer's port filled in.
 

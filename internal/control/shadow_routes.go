@@ -47,7 +47,7 @@ func (a *API) handleShadowTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ticket, err := a.signer.IssueSessionScopedTicket(
+	ticket, err := a.signerFor(r).IssueSessionScopedTicket(
 		sess.Email, auth.ScopeShadow, id, a.ticketTTL())
 	if err != nil {
 		a.fail(w, "issue shadow ticket", err)
@@ -135,7 +135,7 @@ func (a *API) handleTerminateTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ticket, err := a.signer.IssueSessionScopedTicket(
+	ticket, err := a.signerFor(r).IssueSessionScopedTicket(
 		sess.Email, auth.ScopeTerminate, id, a.ticketTTL())
 	if err != nil {
 		a.fail(w, "issue terminate ticket", err)

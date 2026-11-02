@@ -145,7 +145,7 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 
 	store := a.storeRecording
 	if store == nil {
-		store = a.recordings.Upload
+		store = a.recordingsFor(r.Context()).Upload
 	}
 	key, err := store(r.Context(), tmp.Name(), id, head, sess.StartedAt)
 	if err != nil {
