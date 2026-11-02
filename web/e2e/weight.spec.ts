@@ -44,8 +44,12 @@ const BUDGET_KB = {
    * which renders above the router, the switcher in the header, and the
    * sign-in client's organization calls. Measured against main at 267.9 kB
    * in the same build; two more chunk files account for about a third of it.
+   *
+   * 271.6 kB with the two-column sign-in page. It renders before the router,
+   * so its layout, three icons and the brand panel's CSS are eager; lazy would
+   * put a round trip in front of the first screen anyone sees.
    */
-  overview: 271,
+  overview: 273,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
