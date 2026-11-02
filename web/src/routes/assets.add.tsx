@@ -43,9 +43,9 @@ export const Route = createFileRoute('/assets/add')({
 /**
  * The agent should match the control plane it reports to. A packaged control
  * plane says which release it is; a development one does not, and gets the
- * first release.
+ * newest published release, which the install resolves when it runs.
  */
-const VERSION = controlPlaneVersion() ?? '0.1.0'
+const VERSION = controlPlaneVersion() ?? 'latest'
 
 type Kind = 'linux' | 'windows'
 type Step = 1 | 2 | 3
@@ -323,7 +323,9 @@ function windowsCommand(t: EnrollToken | null): string {
   const url = fleetURL() || 'https://argus.example.com'
   const pin = t?.pin ? ` --pin ${t.pin}` : ''
   return [
-    `$v='${VERSION}'; $d='C:\\Program Files\\Argus'; $t=Join-Path $env:TEMP 'argus'`,
+    VERSION === 'latest'
+      ? `$v=(Invoke-RestMethod 'https://api.github.com/repos/gsoultan/argus/releases/latest').tag_name.TrimStart('v'); $d='C:\\Program Files\\Argus'; $t=Join-Path $env:TEMP 'argus'`
+      : `$v='${VERSION}'; $d='C:\\Program Files\\Argus'; $t=Join-Path $env:TEMP 'argus'`,
     `New-Item -ItemType Directory -Force $d, $t | Out-Null`,
     `Invoke-WebRequest "https://github.com/gsoultan/argus/releases/download/v$v/argus_$($v)_windows_amd64.zip" -OutFile "$t\\argus.zip"`,
     `Expand-Archive "$t\\argus.zip" $t -Force; Copy-Item "$t\\argus-agent.exe" $d -Force`,

@@ -79,6 +79,13 @@ type SessionStart struct {
 	// the control plane's signed grant. Never set by a shim: a shim runs as
 	// the user being recorded, and could claim to be anyone.
 	Actor string `json:"-"`
+	// UserAuth is the shim's copy of the file SSH_USER_AUTH names: how sshd
+	// says the login signed in. Set only by a shim, and not believed as it
+	// stands; see loginAuth.
+	UserAuth string `json:"user_auth,omitempty"`
+	// Auth is how the login signed in, as the agent worked it out from
+	// UserAuth. Never read from the wire.
+	Auth *LoginAuth `json:"-"`
 }
 
 // Frame is one chunk of session data.

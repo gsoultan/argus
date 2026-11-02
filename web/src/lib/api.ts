@@ -15,6 +15,7 @@ import {
   removeAssetAssignment,
   setAssetAssignment,
   setAssetDirectSsh,
+  setAssetDirectSshAccount,
   updateAsset as updateOnControlPlane,
   whoami,
   saveGatewayPolicy,
@@ -41,6 +42,7 @@ import {
 import type { AuditPage } from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
+  ServerLoginAccount, ServerLoginAccounts,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, User,
 } from '~/types/domain'
@@ -394,6 +396,31 @@ export const api = {
     return source.find((a) => a.id === id)
   },
 
+  /** Who can log in to a server directly, from its agent's last check-in. */
+  async loginAccounts(id: string): Promise<ServerLoginAccounts> {
+    return live.orFallback(() => live.loginAccounts(id), async () => {
+      await latency(90)
+      const a = db.assets.find((x) => x.id === id)
+      if (!a || a.agentState === 'absent') {
+        return { reported: false, checkedAt: null, accounts: [], passwords: false, keys: false, exposeAuthInfo: false }
+      }
+      const sample: Record<string, Omit<ServerLoginAccount, 'user'>> = {
+        deploy: { password: 'locked', keys: 2, canLogin: true },
+        ops: { password: 'set', keys: 1, canLogin: true },
+        root: { password: 'set', keys: 0, canLogin: false },
+      }
+      const accounts: ServerLoginAccount[] = [
+        ...a.principals.map((user) => ({ user, ...(sample[user] ?? { password: 'set' as const, keys: 0, canLogin: true }) })),
+        { user: 'sys-admin', password: 'set', keys: 0, canLogin: true },
+        { user: 'staging', password: 'locked', keys: 1, canLogin: true },
+      ]
+      return {
+        reported: true, checkedAt: a.agentLastSeenAt ?? null, accounts,
+        passwords: true, keys: true, exposeAuthInfo: true,
+      }
+    })
+  },
+
   /* ── The inventory, as an administrator edits it ───────────────────────── */
 
   async createAsset(input: AssetInput): Promise<Asset> {
@@ -726,6 +753,18 @@ export const api = {
     const a = db.assets.find((x) => x.id === id)
     if (!a) throw new Error('asset not found')
     a.directSsh = mode
+    return a
+  },
+
+  async setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
+    if (isConfigured()) return setAssetDirectSshAccount(id, account, mode)
+    await latency(300)
+    const a = db.assets.find((x) => x.id === id)
+    if (!a) throw new Error('asset not found')
+    const accounts = { ...(a.directSshAccounts ?? {}) }
+    if (mode) accounts[account] = mode
+    else delete accounts[account]
+    a.directSshAccounts = accounts
     return a
   },
 

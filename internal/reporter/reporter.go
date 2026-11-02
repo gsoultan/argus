@@ -115,6 +115,12 @@ type HeartbeatReply struct {
 	// console: "refuse", "approve" or "allow". Nil from a control plane older
 	// than the setting, which leaves ConsoleOnly to decide.
 	DirectSSH *string `json:"direct_ssh"`
+	// DirectSSHDefault is the mode for every account DirectSSHAccounts does
+	// not name. Nil from a control plane older than per-account modes, where
+	// DirectSSH applies to everyone. DirectSSH is then the strictest mode any
+	// account gets, for an agent that reads neither.
+	DirectSSHDefault  *string           `json:"direct_ssh_default"`
+	DirectSSHAccounts map[string]string `json:"direct_ssh_accounts"`
 	// PersonalAccounts is the personal accounts this host should hold, as
 	// the agent decodes them. Absent from a control plane older than them,
 	// or one that could not read them: the agent keeps what it has.

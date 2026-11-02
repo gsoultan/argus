@@ -23,8 +23,9 @@ the console.
 	allow    let through and recorded, and reported as allowed by the setting
 
 Whatever is chosen, a login that is admitted is recorded. The deployment holds
-one choice in gateway_policy and a server may hold its own; the agent learns
-the effective one on its heartbeat.
+one choice in gateway_policy, a server may hold its own, and a server may name
+login accounts that do something else (direct_ssh_accounts.go); the agent
+learns all of it on its heartbeat.
 
 What this cannot do is say who the person was. A direct login carries the local
 account and the address it came from, nothing else, so its sessions are
@@ -115,6 +116,15 @@ type DirectLogin struct {
 	DecidedAt      *time.Time `json:"decidedAt"`
 	DecidedByEmail *string    `json:"decidedByEmail"`
 	DecisionNote   *string    `json:"decisionNote"`
+	// AuthMethod is how it signed in ("publickey", "password", ...), and the
+	// Key fields name the key for a key login; empty when sshd did not say.
+	// KeyFound is whether the agent found that key in the account's
+	// authorized_keys.
+	AuthMethod     string `json:"authMethod"`
+	KeyFingerprint string `json:"keyFingerprint"`
+	KeyType        string `json:"keyType"`
+	KeyComment     string `json:"keyComment"`
+	KeyFound       bool   `json:"keyFound"`
 }
 
 var (
@@ -132,13 +142,15 @@ var (
 
 const directLoginSelect = `
 	SELECT id::text, hostname, principal, client_addr, command, state,
-	       created_at, expires_at, decided_at, decided_by_email, decision_note
+	       created_at, expires_at, decided_at, decided_by_email, decision_note,
+	       auth_method, key_fingerprint, key_type, key_comment, key_found
 	  FROM direct_login_requests`
 
 func scanDirectLogin(row pgx.Row) (DirectLogin, error) {
 	var d DirectLogin
 	err := row.Scan(&d.ID, &d.Hostname, &d.Principal, &d.ClientAddr, &d.Command,
-		&d.State, &d.CreatedAt, &d.ExpiresAt, &d.DecidedAt, &d.DecidedByEmail, &d.DecisionNote)
+		&d.State, &d.CreatedAt, &d.ExpiresAt, &d.DecidedAt, &d.DecidedByEmail, &d.DecisionNote,
+		&d.AuthMethod, &d.KeyFingerprint, &d.KeyType, &d.KeyComment, &d.KeyFound)
 	return d, err
 }
 
@@ -188,15 +200,18 @@ func (s *Store) SetAssetDirectSSH(ctx context.Context, id, mode string) (before 
 // as many waiting as it may.
 func (s *Store) CreateDirectLogin(ctx context.Context, d DirectLogin) (DirectLogin, error) {
 	out, err := scanDirectLogin(s.db(ctx).QueryRow(ctx, `
-		INSERT INTO direct_login_requests (hostname, principal, client_addr, command, expires_at)
-		SELECT $1, $2, $3, $4, now() + $5::interval
+		INSERT INTO direct_login_requests (hostname, principal, client_addr, command, expires_at,
+		       auth_method, key_fingerprint, key_type, key_comment, key_found)
+		SELECT $1, $2, $3, $4, now() + $5::interval, $7, $8, $9, $10, $11
 		 WHERE (SELECT count(*) FROM direct_login_requests
 		         WHERE lower(hostname) = lower($1) AND state = 'pending'
 		           AND expires_at > now()) < $6
 		RETURNING id::text, hostname, principal, client_addr, command, state,
-		          created_at, expires_at, decided_at, decided_by_email, decision_note`,
+		          created_at, expires_at, decided_at, decided_by_email, decision_note,
+		          auth_method, key_fingerprint, key_type, key_comment, key_found`,
 		d.Hostname, d.Principal, d.ClientAddr, d.Command,
-		fmt.Sprintf("%d seconds", int(DirectLoginWait.Seconds())), maxPendingDirectLogins))
+		fmt.Sprintf("%d seconds", int(DirectLoginWait.Seconds())), maxPendingDirectLogins,
+		d.AuthMethod, d.KeyFingerprint, d.KeyType, d.KeyComment, d.KeyFound))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DirectLogin{}, ErrTooManyDirectLogins
 	}
@@ -229,7 +244,8 @@ func (s *Store) DecideDirectLogin(
 		   SET state = $2, decided_at = now(), decided_by_email = $3, decision_note = $4
 		 WHERE id::text = $1 AND state = 'pending' AND expires_at > now()
 		RETURNING id::text, hostname, principal, client_addr, command, state,
-		          created_at, expires_at, decided_at, decided_by_email, decision_note`,
+		          created_at, expires_at, decided_at, decided_by_email, decision_note,
+		          auth_method, key_fingerprint, key_type, key_comment, key_found`,
 		id, state, actor, notePtr))
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return d, err
@@ -252,7 +268,8 @@ func (s *Store) ExpireDirectLogins(ctx context.Context) ([]DirectLogin, error) {
 		UPDATE direct_login_requests SET state = 'expired', decided_at = now()
 		 WHERE state = 'pending' AND expires_at <= now()
 		RETURNING id::text, hostname, principal, client_addr, command, state,
-		          created_at, expires_at, decided_at, decided_by_email, decision_note`)
+		          created_at, expires_at, decided_at, decided_by_email, decision_note,
+		          auth_method, key_fingerprint, key_type, key_comment, key_found`)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +314,20 @@ func describeDirectLogin(d DirectLogin) string {
 	if from == "" {
 		from = "an unknown address"
 	}
-	return fmt.Sprintf("%s on %s from %s, to run %s", d.Principal, d.Hostname, from, what)
+	out := fmt.Sprintf("%s on %s from %s, to run %s", d.Principal, d.Hostname, from, what)
+	switch {
+	case d.KeyFingerprint != "":
+		out += ", signed in with " + d.KeyType + " key " + d.KeyFingerprint
+		if d.KeyComment != "" {
+			out += " (" + d.KeyComment + ")"
+		}
+		if !d.KeyFound {
+			out += " not in the account's authorized_keys"
+		}
+	case d.AuthMethod != "":
+		out += ", signed in with " + d.AuthMethod
+	}
+	return out
 }
 
 // expireAndAudit closes timed-out requests and writes each to the audit log.
@@ -331,6 +361,8 @@ func (a *API) postDirectLogin(w http.ResponseWriter, r *http.Request) {
 		Principal  string `json:"principal"`
 		ClientAddr string `json:"client_addr"`
 		Command    string `json:"command"`
+		// Auth is how it signed in. Absent from an agent older than that.
+		Auth *LoginAuth `json:"auth"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/direct-login"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -349,7 +381,7 @@ func (a *API) postDirectLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode, err := a.store.EffectiveDirectSSH(r.Context(), in.Hostname)
+	mode, err := a.store.EffectiveDirectSSHFor(r.Context(), in.Hostname, in.Principal)
 	if err != nil {
 		// Fail closed: a setting that cannot be read cannot let anyone in.
 		a.log.Error("direct login: cannot read the setting; refusing", "error", err)
@@ -371,10 +403,16 @@ func (a *API) postDirectLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := a.store.CreateDirectLogin(r.Context(), DirectLogin{
+	held := DirectLogin{
 		Hostname: in.Hostname, Principal: in.Principal,
 		ClientAddr: in.ClientAddr, Command: in.Command,
-	})
+	}
+	auth := in.Auth.bounded()
+	if auth != nil {
+		held.AuthMethod, held.KeyFingerprint, held.KeyType = auth.Method, auth.KeyFingerprint, auth.KeyType
+		held.KeyComment, held.KeyFound = auth.KeyComment, auth.KeyFound
+	}
+	d, err := a.store.CreateDirectLogin(r.Context(), held)
 	if errors.Is(err, ErrTooManyDirectLogins) {
 		writeJSON(w, http.StatusOK, map[string]any{"state": "denied", "reason": err.Error()})
 		return
@@ -625,12 +663,12 @@ func (a *API) directSessionAdmitted(
 			"because a team of theirs may SSH directly to it, and was recorded as session %s. "+
 			"Nobody approved it.", p.Owner, s.Principal, s.AssetHostname, s.ID)
 	case "allowed":
-		mode, err := a.store.EffectiveDirectSSH(ctx, s.AssetHostname)
+		mode, err := a.store.EffectiveDirectSSHFor(ctx, s.AssetHostname, s.Principal)
 		if err != nil || mode != DirectSSHAllow {
 			return false, ""
 		}
-		return true, fmt.Sprintf("Direct login by %s on %s was let in because the server is set to "+
-			"allow and record direct SSH logins, and was recorded as session %s. Nobody approved it.",
+		return true, fmt.Sprintf("Direct login by %s on %s was let in because the account is set to "+
+			"allow and record direct SSH logins there, and was recorded as session %s. Nobody approved it.",
 			s.Principal, s.AssetHostname, s.ID)
 	}
 	return false, ""

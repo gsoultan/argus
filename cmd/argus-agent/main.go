@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -245,8 +246,19 @@ func runDaemon(args []string) int {
 	// what an agent older than the setting wrote, and is read when the newer
 	// file is absent.
 	directSSHFile := *stateDir + "/direct-ssh"
+	// direct-ssh.json holds the mode and the named accounts together, written
+	// in one rename so a restart never pairs one heartbeat's mode with
+	// another's accounts. direct-ssh, the mode alone, is still written for an
+	// agent downgraded to before per-account modes.
+	directSSHStateFile := *stateDir + "/direct-ssh.json"
 	consoleOnlyFile := *stateDir + "/console-only"
-	if b, err := os.ReadFile(directSSHFile); err == nil {
+	var saved directSSHState
+	if b, err := os.ReadFile(directSSHStateFile); err == nil && json.Unmarshal(b, &saved) == nil && saved.Mode != "" {
+		col.SetDirectSSH(saved.Mode)
+		col.SetDirectSSHAccounts(saved.Accounts)
+		log.Info("direct ssh logins: applying the last setting heard",
+			"mode", col.DirectSSH(), "accounts", len(saved.Accounts))
+	} else if b, err := os.ReadFile(directSSHFile); err == nil {
 		col.SetDirectSSH(strings.TrimSpace(string(b)))
 		log.Info("direct ssh logins: applying the last setting heard", "mode", col.DirectSSH())
 	} else if b, err := os.ReadFile(consoleOnlyFile); err == nil && strings.TrimSpace(string(b)) == "1" {
@@ -291,6 +303,7 @@ func runDaemon(args []string) int {
 			// Set when the login used a personal account its owner may
 			// reach directly, which is what let it in.
 			"owner": m.Actor,
+			"auth":  m.Auth,
 			"at":    time.Now().UTC(),
 		})
 	}
@@ -304,6 +317,7 @@ func runDaemon(args []string) int {
 			"origin":      m.Origin,
 			"scope":       "console_only",
 			"refused":     true,
+			"auth":        m.Auth,
 			"at":          time.Now().UTC(),
 		})
 	}
@@ -399,6 +413,8 @@ func runDaemon(args []string) int {
 				"unmanaged_keys": p.UnmanagedKeys,
 				"shim_installed": p.ShimInstalled,
 				"drift":          p.Drift,
+				"login_accounts": p.LoginAccounts,
+				"sshd_auth":      p.SSHDAuth,
 			}
 		}
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
@@ -438,10 +454,28 @@ func runDaemon(args []string) int {
 			// Absent from an older control plane, or one that could not read
 			// its policy: keep what was last heard.
 			if reply.DirectSSH != nil {
-				if *reply.DirectSSH != col.DirectSSH() {
-					log.Warn("direct ssh logins changed by the console", "mode", *reply.DirectSSH)
+				// A control plane with per-account modes says what every
+				// other account gets in direct_ssh_default; direct_ssh is
+				// then the strictest mode, for agents that cannot tell
+				// accounts apart. An older one sends direct_ssh alone.
+				mode, accounts := *reply.DirectSSH, map[string]string{}
+				if reply.DirectSSHDefault != nil {
+					mode, accounts = *reply.DirectSSHDefault, reply.DirectSSHAccounts
 				}
-				col.SetDirectSSH(*reply.DirectSSH)
+				if mode != col.DirectSSH() {
+					log.Warn("direct ssh logins changed by the console", "mode", mode)
+				}
+				if !maps.Equal(accounts, col.DirectSSHAccounts()) {
+					log.Warn("direct ssh logins for named accounts changed by the console",
+						"accounts", len(accounts))
+				}
+				col.SetDirectSSHAccounts(accounts)
+				col.SetDirectSSH(mode)
+				if err := saveDirectSSHState(directSSHStateFile, directSSHState{
+					Mode: col.DirectSSH(), Accounts: col.DirectSSHAccounts(),
+				}); err != nil {
+					log.Error("direct ssh: cannot persist the setting", "error", err)
+				}
 				if err := os.WriteFile(directSSHFile, []byte(col.DirectSSH()+"\n"), 0o600); err != nil {
 					log.Error("direct ssh: cannot persist the setting", "error", err)
 				}
@@ -459,7 +493,9 @@ func runDaemon(args []string) int {
 				if err := os.WriteFile(consoleOnlyFile, []byte(v+"\n"), 0o600); err != nil {
 					log.Error("console-only: cannot persist the setting", "error", err)
 				}
-				// Read first on a restart, so it must not hold an older answer.
+				// Read first on a restart, so they must not hold an older answer.
+				col.SetDirectSSHAccounts(nil)
+				_ = saveDirectSSHState(directSSHStateFile, directSSHState{Mode: col.DirectSSH()})
 				_ = os.WriteFile(directSSHFile, []byte(col.DirectSSH()+"\n"), 0o600)
 			}
 		}
@@ -568,6 +604,9 @@ func sessionReport(rec agent.SessionRecord) map[string]any {
 		out["terminatedBy"] = rec.TerminatedBy
 		out["terminationReason"] = rec.TerminationReason
 	}
+	if rec.Auth != nil {
+		out["auth"] = rec.Auth
+	}
 	if rec.DirectApproval != "" {
 		out["directApproval"] = rec.DirectApproval
 		out["directLoginId"] = rec.DirectLoginID
@@ -594,6 +633,7 @@ func askDirectApproval(ctx context.Context, rep *reporter.Client, m agent.Sessio
 		"principal":   m.Principal,
 		"client_addr": m.ClientAddr,
 		"command":     m.Command,
+		"auth":        m.Auth,
 	}, &a); err != nil {
 		log.Warn("direct login: cannot ask the control plane; refusing", "error", err)
 		return agent.Approval{Reason: "Argus could not be reached to approve this login"}
@@ -711,6 +751,17 @@ func runScan(args []string) int {
 	fmt.Printf("cert auth  %s\n", yesNo(p.TrustedCAConfigured, "configured", "not configured"))
 	fmt.Printf("passwords  %s\n", yesNo(!p.PasswordAuthEnabled, "disabled", "ENABLED"))
 
+	var canLogin []agent.LoginAccount
+	for _, a := range p.LoginAccounts {
+		if a.CanLogin {
+			canLogin = append(canLogin, a)
+		}
+	}
+	fmt.Printf("\n%d account(s) can log in over SSH:\n", len(canLogin))
+	for _, a := range canLogin {
+		fmt.Printf("  %-16s password %-8s keys %d\n", a.User, a.Password, a.Keys)
+	}
+
 	if len(p.UnmanagedKeys) > 0 {
 		fmt.Printf("\n%d key(s) Argus did not issue — each can reach this host directly:\n",
 			len(p.UnmanagedKeys))
@@ -760,6 +811,10 @@ func runInstall(args []string) int {
 # not use sshd at all; they reach the agent over its tunnel.
 
 ForceCommand %s shim
+
+# Tells the recorder how each direct login signed in -- a password, or which
+# key -- so the console can show it on the approval and in Activity.
+ExposeAuthInfo yes
 
 # If the agent is ever stopped, root and members of sudo, wheel or admin can
 # still log in (unrecorded, with a warning and a line in the auth log) so they
@@ -919,4 +974,25 @@ func runEnroll(args []string) int {
 	}
 	fmt.Println("start it with: " + startHint)
 	return 0
+}
+
+// directSSHState is what the agent keeps of the direct SSH setting across a
+// restart: the mode for every account, and the accounts the console names.
+type directSSHState struct {
+	Mode     string            `json:"mode"`
+	Accounts map[string]string `json:"accounts,omitempty"`
+}
+
+// saveDirectSSHState writes the setting by rename, so a crash mid-write
+// leaves the previous one rather than half of this one.
+func saveDirectSSHState(path string, st directSSHState) error {
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

@@ -9,6 +9,7 @@ import type {
   AuditEvent,
   DirectLogin,
   DirectSsh,
+  ServerLoginAccounts,
   Coverage,
   DiscoveredHost,
   FleetStats,
@@ -63,8 +64,15 @@ export function fleetURL(): string {
  * so the agent it offers to install matches it.
  */
 export function controlPlaneVersion(): string | undefined {
-  const v = runtimeConfig()?.version?.replace(/^v/, '')
-  return v && /^\d+\.\d+\.\d+/.test(v) ? v : undefined
+  // A build between tags is stamped by git describe, like
+  // "v0.9.0-3-gabc1234-dirty". No release carries that name, so it is read as
+  // the release it was built from.
+  const v = runtimeConfig()
+    ?.version?.trim()
+    .replace(/^v/, '')
+    .replace(/-dirty$/, '')
+    .replace(/-\d+-g[0-9a-f]+$/, '')
+  return v && /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(v) ? v : undefined
 }
 
 /**
@@ -776,6 +784,20 @@ export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Pro
   return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh`, { mode: mode ?? '' })
 }
 
+/** Who can log in to a server directly, from its agent's last check-in. */
+export async function loginAccounts(id: string): Promise<ServerLoginAccounts> {
+  return get<ServerLoginAccounts>(`/api/v1/assets/${encodeURIComponent(id)}/login-accounts`)
+}
+
+/** Sets what one login account on a server does; null follows the server. */
+export async function setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
+  return send<Asset>(
+    'PUT',
+    `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh/accounts/${encodeURIComponent(account)}`,
+    { mode: mode ?? '' },
+  )
+}
+
 /** What an approval grants: the accounts allowed, and who may use them. */
 export interface EnrolGrant {
   principals: string[]
@@ -1093,6 +1115,7 @@ export const live = {
 
   stats: () => get<FleetStats>('/api/v1/stats'),
   assets: () => get<Asset[]>('/api/v1/assets'),
+  loginAccounts,
 
   /**
    * The accounts that exist, for deciding who to assign a host to.

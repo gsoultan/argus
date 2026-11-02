@@ -16,7 +16,9 @@ const (
 
 	// systemPasswd is the account database. Empty would mean "ask the
 	// directory service", which only macOS needs.
-	systemPasswd  = "/etc/passwd"
+	systemPasswd = "/etc/passwd"
+	// systemShadow says which accounts have a password; "" where there is none.
+	systemShadow  = "/etc/shadow"
 	osReleasePath = "/etc/os-release"
 	machineIDPath = "/etc/machine-id"
 

@@ -31,6 +31,9 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		// reach directly. Believed only if the control plane agrees.
 		Owner string    `json:"owner"`
 		At    time.Time `json:"at"`
+		// Auth is how the login signed in. Absent from an agent older than
+		// that.
+		Auth *LoginAuth `json:"auth"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/login"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -55,6 +58,8 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 	if from == "" {
 		from = "an unknown address"
 	}
+	// How it signed in: a password, or which key. Empty from an older agent.
+	how := in.Auth.bounded().describe()
 	if in.Refused {
 		// Not a bypass that happened: one that was tried and stopped. Still
 		// in the chain, because someone holding a working key to sshd on a
@@ -63,7 +68,7 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 			"the Argus console. The deployment is console-only, so the agent refused the "+
 			"login before anything ran. Whoever holds that key or password can still "+
 			"reach sshd directly; remove it if it is not meant to exist.",
-			in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what)
+			in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what) + how
 		if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 			Action:   "session.direct_refused",
 			Severity: "warning",
@@ -88,7 +93,7 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 				Detail: fmt.Sprintf("%s logged in to %s as their personal account %s from %s at %s to "+
 					"run %s without the Argus console. A team of theirs may SSH directly to this "+
 					"server, so nobody approved it; the session is being recorded in their name.",
-					p.Owner, in.Hostname, in.Principal, from, in.At.UTC().Format(time.RFC3339), what),
+					p.Owner, in.Hostname, in.Principal, from, in.At.UTC().Format(time.RFC3339), what) + how,
 			}); err != nil {
 				a.fail(w, "report login", err)
 				return
@@ -98,7 +103,7 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if in.Allowed {
-		if mode, err := a.store.EffectiveDirectSSH(r.Context(), in.Hostname); err == nil &&
+		if mode, err := a.store.EffectiveDirectSSHFor(r.Context(), in.Hostname, in.Principal); err == nil &&
 			mode == DirectSSHAllow {
 			if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 				Action:   "session.direct_allowed",
@@ -108,7 +113,7 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 					"Argus console. The server is set to allow and record direct SSH logins, "+
 					"so nobody approved it; the session is being recorded and is attributed "+
 					"to the server account, not to a person.",
-					in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what),
+					in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what) + how,
 			}); err != nil {
 				a.fail(w, "report login", err)
 				return
@@ -127,7 +132,7 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		"unrecorded: there is no replay, and no approval, time window or principal "+
 		"check was applied. The server is not set to allow direct logins, so the "+
 		"agent was not following its setting; check the agent on this host.",
-		in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what)
+		in.Principal, in.Hostname, from, in.At.UTC().Format(time.RFC3339), what) + how
 
 	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action:   "session.direct_unrecorded",

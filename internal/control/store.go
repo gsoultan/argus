@@ -626,6 +626,9 @@ type Asset struct {
 	// its last heartbeat, it is applying; nil is unconfirmed.
 	DirectSSH      *string `json:"directSsh"`
 	AgentDirectSSH *string `json:"agentDirectSsh"`
+	// DirectSSHAccounts is the login accounts this server names, each with
+	// its own direct SSH mode; an account not named follows DirectSSH.
+	DirectSSHAccounts map[string]string `json:"directSshAccounts"`
 	// AgentPersonalAccounts is what the agent last said about the personal
 	// accounts it keeps: ready, locked, taken by an account Argus did not
 	// make, or failed. Nil from an agent older than them; left out for
