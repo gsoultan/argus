@@ -696,7 +696,7 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	//
 	// Match on the inventory hostname, the explicit agent_hostname mapping, or
 	// the short name. An agent rarely knows the fully qualified name the
-	// inventory uses. Each of the three has an index (migration 035), so this
+	// inventory uses. Each of the three has an index (migration 036), so this
 	// is three index probes and not a scan of the inventory per heartbeat.
 	tag, err := tx.Exec(ctx, `
 		UPDATE assets SET
