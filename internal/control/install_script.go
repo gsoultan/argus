@@ -29,7 +29,7 @@ because the output runs as root.
 */
 
 var (
-	reEnrollToken = regexp.MustCompile(`^` + enrollTokenPrefix + `[A-Za-z0-9_-]{16,128}$`)
+	reEnrollToken = regexp.MustCompile(`^` + enrollTokenPrefix + `(?:[a-z0-9]{12}\.)?[A-Za-z0-9_-]{16,128}$`)
 	reAgentVer    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)
 	reShellSafe   = regexp.MustCompile(`^[A-Za-z0-9:/._\-\[\]]+$`)
 )

@@ -20,6 +20,18 @@ export interface User {
   role: UserRole
   mfaEnrolled: boolean
   lastSeenAt: ISOTime | null
+  /** The organization the session is in; absent on the fixture. */
+  org?: { id: string; slug: string; name: string; default: boolean }
+  /** Whether this account may manage organizations; see Identity.platformOwner. */
+  platformOwner?: boolean
+  /** Organizations the signed-in person can switch to; see Identity.orgs. */
+  orgs?: Array<{ id: string; slug: string; name: string; default: boolean; role: string; home: boolean }>
+  /** True when more than one organization shares this control plane. */
+  multiOrg?: boolean
+  /** They sign in through another organization; their password is not held here. */
+  shared?: boolean
+  /** One of ours whom another organization may add without a new password. */
+  shareable?: boolean
   /**
    * Revoked rather than deleted. The audit log refers to people by address, so
    * an account is disabled and kept — and a disabled one must not be offered as

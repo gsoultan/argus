@@ -13,7 +13,7 @@ import {
 } from '~/lib/live'
 import { FS } from '~/theme'
 import { ErrorNote } from '~/components/SignIn'
-import { generatePassword } from '~/components/Setup'
+import { generatePassword } from '~/lib/password'
 
 const MIN_PASSWORD = 12
 

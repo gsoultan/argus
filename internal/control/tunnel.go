@@ -58,13 +58,25 @@ type TunnelHub struct {
 	byCred map[string]*liveTunnel
 	byHost map[string]*liveTunnel
 	closed bool
+
+	// grantKeys caches the per-organization keys derived from GrantKey.
+	gmu       sync.Mutex
+	grantKeys map[string]ed25519.PrivateKey
 }
 
 type liveTunnel struct {
+	// tenant is the organization the agent enrolled into. Every lookup is by
+	// (tenant, host) or (tenant, credential): a host name is unique within an
+	// organization, and a console in one organization must never reach a
+	// tunnel in another even when the two hold a host by the same name.
+	tenant       string
 	credID, host string
 	sess         tunnel.Session
 	since        time.Time
 }
+
+// tunnelKey is how the hub's maps are keyed: the organization first.
+func tunnelKey(tenant, name string) string { return tenant + "\x00" + strings.ToLower(name) }
 
 // NewTunnelHub returns a hub writing tunnel state through store.
 func NewTunnelHub(store *Store, log *slog.Logger, replica string) *TunnelHub {
@@ -76,11 +88,11 @@ func NewTunnelHub(store *Store, log *slog.Logger, replica string) *TunnelHub {
 }
 
 // admit makes sess the tunnel for a credential, replacing any older one.
-func (h *TunnelHub) admit(credID, host string, sess tunnel.Session) {
+func (h *TunnelHub) admit(ctx context.Context, credID, host string, sess tunnel.Session) {
 	// Microseconds: this is compared against the stored value, which
 	// TIMESTAMPTZ keeps at that precision.
-	t := &liveTunnel{credID: credID, host: strings.ToLower(host), sess: sess,
-		since: time.Now().UTC().Truncate(time.Microsecond)}
+	t := &liveTunnel{tenant: tenantIDOf(ctx), credID: credID, host: strings.ToLower(host),
+		sess: sess, since: time.Now().UTC().Truncate(time.Microsecond)}
 
 	h.mu.Lock()
 	closed := h.closed
@@ -92,24 +104,24 @@ func (h *TunnelHub) admit(credID, host string, sess tunnel.Session) {
 	// The database is told before the tunnel can be found here. Published
 	// first, the tunnel could be used, and the old one's disconnection
 	// clear the row, while the console still said the host was offline.
-	if err := h.store.tunnelConnected(context.Background(), credID,
+	if err := h.store.tunnelConnected(t.ctx(), credID,
 		string(sess.Transport()), h.Replica, t.since); err != nil {
 		h.log.Error("tunnel: recording the connection failed", "host", host, "error", err)
 	}
 
 	h.mu.Lock()
-	old := h.byCred[credID]
+	old := h.byCred[tunnelKey(t.tenant, credID)]
 	if h.closed || (old != nil && old.since.After(t.since)) {
 		// Closing, or a newer connection from the same agent was admitted
 		// while this one was being recorded. The row is cleared only if it
 		// is still this connection's.
 		h.mu.Unlock()
 		_ = sess.Close()
-		_ = h.store.tunnelDisconnected(context.Background(), credID, t.since)
+		_ = h.store.tunnelDisconnected(t.ctx(), credID, t.since)
 		return
 	}
-	h.byCred[credID] = t
-	h.byHost[t.host] = t
+	h.byCred[tunnelKey(t.tenant, credID)] = t
+	h.byHost[tunnelKey(t.tenant, t.host)] = t
 	h.mu.Unlock()
 
 	if old != nil {
@@ -150,8 +162,14 @@ func (h *TunnelHub) watch(t *liveTunnel) {
 	}
 }
 
+// ctx is a context scoped to the tunnel's organization, for the store calls
+// the hub makes on its own behalf.
+func (t *liveTunnel) ctx() context.Context {
+	return WithTenant(context.Background(), &Tenant{ID: t.tenant})
+}
+
 func (h *TunnelHub) ping(t *liveTunnel) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.ctx(), 10*time.Second)
 	defer cancel()
 	rtt, err := tunnel.Ping(ctx, t.sess)
 	if err != nil {
@@ -176,14 +194,14 @@ func (h *TunnelHub) ping(t *liveTunnel) {
 
 func (h *TunnelHub) drop(t *liveTunnel, why string) {
 	h.mu.Lock()
-	if h.byCred[t.credID] == t {
-		delete(h.byCred, t.credID)
+	if h.byCred[tunnelKey(t.tenant, t.credID)] == t {
+		delete(h.byCred, tunnelKey(t.tenant, t.credID))
 	}
-	if h.byHost[t.host] == t {
-		delete(h.byHost, t.host)
+	if h.byHost[tunnelKey(t.tenant, t.host)] == t {
+		delete(h.byHost, tunnelKey(t.tenant, t.host))
 	}
 	h.mu.Unlock()
-	if err := h.store.tunnelDisconnected(context.Background(), t.credID, t.since); err != nil {
+	if err := h.store.tunnelDisconnected(t.ctx(), t.credID, t.since); err != nil {
 		h.log.Error("tunnel: recording the disconnection failed", "host", t.host, "error", err)
 	}
 	h.log.Info("tunnel: agent disconnected", "host", t.host, "why", why,
@@ -192,11 +210,27 @@ func (h *TunnelHub) drop(t *liveTunnel, why string) {
 
 // Revoked closes the tunnel of a credential this replica just revoked,
 // without waiting for the next ping.
-func (h *TunnelHub) Revoked(credID string) {
+func (h *TunnelHub) Revoked(ctx context.Context, credID string) {
 	h.mu.Lock()
-	t := h.byCred[credID]
+	t := h.byCred[tunnelKey(tenantIDOf(ctx), credID)]
 	h.mu.Unlock()
 	if t != nil {
+		_ = t.sess.Close()
+	}
+}
+
+// closeTenant ends every tunnel an organization holds on this replica, when
+// the organization is disabled.
+func (h *TunnelHub) closeTenant(tenant string) {
+	h.mu.Lock()
+	var all []*liveTunnel
+	for _, t := range h.byCred {
+		if t.tenant == tenant {
+			all = append(all, t)
+		}
+	}
+	h.mu.Unlock()
+	for _, t := range all {
 		_ = t.sess.Close()
 	}
 }
@@ -207,7 +241,7 @@ var ErrNoTunnel = errors.New("the agent on this host is not connected")
 // Open opens a stream to a service on host's agent.
 func (h *TunnelHub) Open(ctx context.Context, host, service string) (tunnel.Stream, error) {
 	h.mu.Lock()
-	t := h.byHost[strings.ToLower(host)]
+	t := h.byHost[tunnelKey(tenantIDOf(ctx), host)]
 	h.mu.Unlock()
 	if t == nil {
 		return nil, ErrNoTunnel
@@ -283,7 +317,7 @@ func (a *API) handleTunnelUpgrade(w http.ResponseWriter, r *http.Request) {
 	if a.Tunnels.QUICPort > 0 {
 		resp += tunnel.QUICHeader + ": " + strconv.Itoa(a.Tunnels.QUICPort) + "\r\n"
 	}
-	if k := a.Tunnels.grantKeyPublic(); k != "" {
+	if k := a.Tunnels.grantKeyPublic(r.Context()); k != "" {
 		resp += tunnel.GrantKeyHeader + ": " + k + "\r\n"
 	}
 	if _, err := buf.WriteString(resp + "\r\n"); err != nil || buf.Flush() != nil {
@@ -295,7 +329,7 @@ func (a *API) handleTunnelUpgrade(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 		return
 	}
-	a.Tunnels.admit(id, host, sess)
+	a.Tunnels.admit(r.Context(), id, host, sess)
 }
 
 // ServeQUIC accepts agent tunnels on ln until ctx ends.
@@ -333,7 +367,15 @@ func (a *API) admitQUIC(ctx context.Context, sess tunnel.Session) {
 		// Let the answer reach the agent before the connection goes.
 		time.AfterFunc(time.Second, func() { _ = sess.Close() })
 	}
-	id, host, ok := a.credentialFor(hctx, hello.Credential)
+	// No HTTP request, so no scope middleware: the organization is read off
+	// the credential's prefix here and checked against the registry the
+	// same way.
+	tctx, ok := a.scopeSecret(hctx, hello.Credential)
+	if !ok {
+		refuse("a tunnel needs this host's own enrolled credential")
+		return
+	}
+	id, host, ok := a.credentialFor(tctx, hello.Credential)
 	if !ok {
 		refuse("a tunnel needs this host's own enrolled credential")
 		return
@@ -343,19 +385,19 @@ func (a *API) admitQUIC(ctx context.Context, sess tunnel.Session) {
 		return
 	}
 	if err := tunnel.WriteJSON(st, tunnel.Answer{OK: true,
-		GrantKey: a.Tunnels.grantKeyPublic()}); err != nil {
+		GrantKey: a.Tunnels.grantKeyPublic(tctx)}); err != nil {
 		_ = sess.Close()
 		return
 	}
 	_ = st.Close()
-	a.Tunnels.admit(id, host, sess)
+	a.Tunnels.admit(tctx, id, host, sess)
 }
 
 /* ── Store ───────────────────────────────────────────────────────────────── */
 
 func (s *Store) tunnelConnected(ctx context.Context, credID, transport, replica string,
 	since time.Time) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db(ctx).Exec(ctx, `
 		UPDATE agent_credentials SET
 			tunnel_transport = $2, tunnel_replica = $3,
 			tunnel_connected_at = $4, tunnel_seen_at = now(), tunnel_rtt_us = NULL
@@ -372,7 +414,7 @@ func (s *Store) tunnelConnected(ctx context.Context, credID, transport, replica 
 func (s *Store) tunnelSeen(ctx context.Context, credID string, since time.Time,
 	rtt time.Duration) (bool, error) {
 	var one int
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		UPDATE agent_credentials SET tunnel_seen_at = now(), tunnel_rtt_us = $3
 		 WHERE id::text = $1 AND tunnel_connected_at = $2 AND revoked_at IS NULL
 		RETURNING 1`, credID, since, min(rtt.Microseconds(), 1<<31-1)).Scan(&one)
@@ -385,7 +427,7 @@ func (s *Store) tunnelSeen(ctx context.Context, credID string, since time.Time,
 // tunnelDisconnected clears the state, unless a newer connection has
 // already replaced it.
 func (s *Store) tunnelDisconnected(ctx context.Context, credID string, since time.Time) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db(ctx).Exec(ctx, `
 		UPDATE agent_credentials SET
 			tunnel_transport = NULL, tunnel_replica = NULL,
 			tunnel_connected_at = NULL, tunnel_seen_at = NULL, tunnel_rtt_us = NULL

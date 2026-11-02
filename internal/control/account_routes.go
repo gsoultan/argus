@@ -61,7 +61,11 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 	// CreateAccount would overwrite an existing account's password and role,
 	// which from here would be a way to take one over. A row with no password
 	// is not an account yet, and giving it one is what this is for.
-	if existing, err := a.store.Account(r.Context(), email); err == nil && existing.PasswordHash != "" {
+	if existing, err := a.store.Account(r.Context(), email); err == nil && existing.Shared() {
+		// Nor is a person shared in from elsewhere given a second password here.
+		writeErr(w, http.StatusConflict, email+" is already here as a shared person")
+		return
+	} else if err == nil && existing.PasswordHash != "" {
 		writeErr(w, http.StatusConflict, email+" already has an account")
 		return
 	} else if err != nil && !errors.Is(err, ErrNoAccount) {
@@ -70,6 +74,10 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := a.store.CreateAccount(r.Context(), email,
 		strings.TrimSpace(in.DisplayName), in.Role, in.Password); err != nil {
+		if errors.Is(err, ErrSharedAccount) {
+			writeErr(w, http.StatusConflict, email+" is already here as a shared person")
+			return
+		}
 		a.fail(w, "create account", err)
 		return
 	}

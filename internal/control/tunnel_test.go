@@ -91,7 +91,7 @@ func (e *tunnelEnv) waitTunnel(t *testing.T, host string, want tunnel.Transport)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		e.api.Tunnels.mu.Lock()
-		lt := e.api.Tunnels.byHost[strings.ToLower(host)]
+		lt := e.api.Tunnels.byHost[tunnelKey(DefaultTenantID, host)]
 		e.api.Tunnels.mu.Unlock()
 		if lt != nil && (want == "" || lt.sess.Transport() == want) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -197,7 +197,7 @@ func TestAPingNoticesARevocationMadeElsewhere(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.api.Tunnels.mu.Lock()
-	lt := e.api.Tunnels.byHost[strings.ToLower(host)]
+	lt := e.api.Tunnels.byHost[tunnelKey(DefaultTenantID, host)]
 	e.api.Tunnels.mu.Unlock()
 	e.api.Tunnels.ping(lt)
 	select {
@@ -233,7 +233,7 @@ func TestATunnelWorksOverHTTPS(t *testing.T) {
 	e.waitTunnel(t, host, tunnel.TransportUpgrade)
 
 	e.api.Tunnels.mu.Lock()
-	lt := e.api.Tunnels.byHost[strings.ToLower(host)]
+	lt := e.api.Tunnels.byHost[tunnelKey(DefaultTenantID, host)]
 	e.api.Tunnels.mu.Unlock()
 	e.api.Tunnels.ping(lt)
 

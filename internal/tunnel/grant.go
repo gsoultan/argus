@@ -192,3 +192,20 @@ func DecodeGrantKey(s string) (ed25519.PublicKey, error) {
 	}
 	return ed25519.PublicKey(b), nil
 }
+
+// DeriveGrantKey is the grant key for one organization, derived from the
+// control plane's key and the organization's id.
+//
+// An agent pins the public half of the key it was first shown, which is the
+// key of the organization it enrolled into. A grant signed with another
+// organization's key is a forgery to it, so a stream that somehow reached the
+// wrong organization's agent would open nothing.
+func DeriveGrantKey(root ed25519.PrivateKey, tenantID string) ed25519.PrivateKey {
+	seed, err := hkdf.Key(sha256.New, root.Seed(), []byte(tenantID), "argus tunnel grant tenant v1",
+		ed25519.SeedSize)
+	if err != nil {
+		// hkdf.Key fails only on a length it cannot produce; SeedSize is fixed.
+		panic(err)
+	}
+	return ed25519.NewKeyFromSeed(seed)
+}

@@ -33,7 +33,9 @@ func (a *API) SetAuth(signer *auth.Signer, consoleURL string, secureCookies bool
 func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 	if a.signer != nil {
 		if c, err := r.Cookie(auth.SessionCookieName); err == nil {
-			if sess, err := a.signer.VerifySession(c.Value); err == nil {
+			// Verified with the key of the organization the cookie claims;
+			// scope already resolved that claim to a live organization.
+			if sess, err := a.signerFor(r).VerifySession(c.Value); err == nil {
 				return sess, true
 			}
 		}
@@ -41,7 +43,8 @@ func (a *API) authenticate(r *http.Request) (auth.Session, bool) {
 	// Setup finishing in this process counts too. The check that refuses to
 	// start with tokens alongside an account runs at start-up, and the account
 	// the setup page just made did not exist then.
-	if a.StaticTokensDisabled || a.setup.done.Load() {
+	// Static tokens are the platform's: the default organization only.
+	if a.StaticTokensDisabled || a.setup.done.Load() || tenantIDOf(r.Context()) != DefaultTenantID {
 		return auth.Session{}, false
 	}
 	email, ok := a.UserTokens[bearer(r)]
@@ -97,20 +100,49 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 				setup = st.Available
 			}
 		}
+		// multiOrg tells the sign-in form to ask which organization. Until
+		// a second one exists nobody is asked.
+		multi := false
+		if a.store != nil {
+			multi, _ = a.store.MultiTenant(r.Context())
+		}
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
 			"authenticated":   false,
 			"passwordEnabled": a.signer != nil,
 			"accountsExist":   accounts,
 			"setupAvailable":  setup,
+			"multiOrg":        multi,
+			"org":             tenantSummary(r.Context(), TenantOf(r.Context())),
 		})
 		return
 	}
 	// mfaEnrolled drives the console's prompt to set one up. Looked up rather
 	// than carried in the session, so enrolling takes effect immediately
 	// instead of at the next sign-in.
-	mfa := false
-	if acct, err := a.store.Account(r.Context(), sess.Email); err == nil {
-		mfa = acct.MFAEnrolled
+	// Credentials rather than Account: a person shared in from another
+	// organization enrols where their password is, and this says so.
+	mfa, shared := false, false
+	if acct, _, err := a.store.Credentials(r.Context(), sess.Email); err == nil {
+		mfa, shared = acct.MFAEnrolled, acct.Shared()
+	}
+	t := TenantOf(r.Context())
+	// multiOrg, after sign-in, is what offers sharing people between
+	// organizations: with one organization there is nobody to share with.
+	multi, _ := a.store.MultiTenant(r.Context())
+	// orgs is every organization this sign-in can switch to, this one
+	// included. Listed from the index and confirmed against each
+	// organization's own table; an organization the person is not in is not
+	// named, however many exist.
+	orgs := []map[string]any{}
+	if list, err := a.store.OrganizationsFor(r.Context(), sess.Email); err == nil {
+		for i := range list {
+			m := tenantSummary(r.Context(), &list[i].Tenant)
+			m["role"] = list[i].Role
+			m["home"] = list[i].Home
+			orgs = append(orgs, m)
+		}
+	} else {
+		a.log.Warn("organizations of signed-in account unavailable", "email", sess.Email, "error", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
@@ -119,6 +151,14 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		"role":          sess.Role,
 		"expiresAt":     sess.ExpiresAt,
 		"mfaEnrolled":   mfa,
+		"shared":        shared,
+		"orgs":          orgs,
+		"multiOrg":      multi,
+		"org":           tenantSummary(r.Context(), t),
+		// platformOwner is who may manage organizations: an owner of the
+		// default one. Said here so the console can draw the menu entry;
+		// the routes check it again.
+		"platformOwner": t.IsDefault() && sess.Role == "owner",
 	})
 }
 
@@ -193,7 +233,7 @@ func (a *API) handleTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ticket, err := a.signer.IssueTicket(sess.Email, in.Target, in.Principal, a.ticketTTL())
+	ticket, err := a.signerFor(r).IssueTicket(sess.Email, in.Target, in.Principal, a.ticketTTL())
 	if err != nil {
 		a.fail(w, "issue ticket", err)
 		return

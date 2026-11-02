@@ -36,6 +36,8 @@ func dropAccount(t *testing.T, s *Store, email string) {
 			`DELETE FROM users WHERE lower(email) = lower($1)`, email); err != nil {
 			t.Errorf("cleaning up account %s: %v", email, err)
 		}
+		_, _ = s.pool.Exec(context.Background(),
+			`DELETE FROM argus_platform.memberships WHERE email = lower($1)`, email)
 	})
 }
 

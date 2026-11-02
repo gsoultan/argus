@@ -519,6 +519,10 @@ type consoleUser struct {
 	// gave a key to reach it directly with.
 	LoginName string `json:"loginName"`
 	HasSSHKey bool   `json:"hasSshKey"`
+	// Shared is a person who signs in through another organization; Shareable
+	// one of ours whom another organization may add.
+	Shared    bool `json:"shared"`
+	Shareable bool `json:"shareable"`
 	// LastSeenAt is null: the column exists but nothing writes it yet, and a
 	// console that invented a plausible time would be worse than one that says
 	// it does not know.
@@ -560,6 +564,8 @@ func (a *API) getUsers(w http.ResponseWriter, r *http.Request) {
 			DisabledBy:  acct.DisabledBy,
 			LoginName:   acct.LoginName,
 			HasSSHKey:   acct.HasSSHKey,
+			Shared:      acct.Shared(),
+			Shareable:   acct.Shareable,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
