@@ -226,6 +226,8 @@ export const api = {
           // session carries rather than inventing the rest.
           mfaEnrolled: false,
           lastSeenAt: new Date().toISOString(),
+          ...(id.org ? { org: id.org } : {}),
+          platformOwner: id.platformOwner === true,
         }
       }
     }

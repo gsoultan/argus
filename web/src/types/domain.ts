@@ -20,6 +20,10 @@ export interface User {
   role: UserRole
   mfaEnrolled: boolean
   lastSeenAt: ISOTime | null
+  /** The organization the session is in; absent on the fixture. */
+  org?: { id: string; slug: string; name: string; default: boolean }
+  /** Whether this account may manage organizations; see Identity.platformOwner. */
+  platformOwner?: boolean
   /**
    * Revoked rather than deleted. The audit log refers to people by address, so
    * an account is disabled and kept — and a disabled one must not be offered as

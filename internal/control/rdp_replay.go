@@ -56,7 +56,7 @@ func (a *API) getRDPReplay(w http.ResponseWriter, r *http.Request, actor string)
 		return
 	}
 
-	obj, err := a.recordings.Get(r.Context(), *sess.RecordingKey)
+	obj, err := a.recordingsFor(r.Context()).Get(r.Context(), *sess.RecordingKey)
 	if err != nil {
 		a.fail(w, "fetch recording", err)
 		return

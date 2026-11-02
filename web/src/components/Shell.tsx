@@ -205,6 +205,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           <Group gap="xs" wrap="nowrap">
             {source !== 'live' && source !== 'connecting' && <DataSourceBadge source={source} />}
 
+            {/* Which organization this console is signed in to. Only when it
+                is not the default one: an install with one organization has
+                nothing to tell apart, and a label it never needed would read
+                as a switcher. */}
+            {me?.org && !me.org.default && (
+              <Tooltip label={`You are signed in to ${me.org.name}. Everything on screen is this organization's.`}>
+                <Badge variant="light" color="violet" size="sm" visibleFrom="sm">
+                  {me.org.name}
+                </Badge>
+              </Tooltip>
+            )}
+
             {whole && stats && stats.sessionsActive > 0 && (
               <Tooltip label={`${stats.sessionsActive} sessions in progress right now`}>
                 <Badge

@@ -27,7 +27,7 @@ func (s *Store) Redeem(ctx context.Context, t auth.Ticket) (alreadyUsed bool, er
 func (s *Store) RedeemTicket(ctx context.Context, id, email, target, principal string,
 	expiresAt time.Time) (alreadyUsed bool, err error) {
 
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		INSERT INTO redeemed_tickets (id, email, target, principal, expires_at)
 		VALUES ($1,$2,$3,$4,$5)
 		ON CONFLICT (id) DO NOTHING`,
@@ -45,7 +45,7 @@ func (s *Store) RedeemTicket(ctx context.Context, id, email, target, principal s
 // so keeping the row buys nothing. Without this the table grows forever on a
 // key derived from request volume.
 func (s *Store) SweepTickets(ctx context.Context) (int64, error) {
-	tag, err := s.pool.Exec(ctx,
+	tag, err := s.db(ctx).Exec(ctx,
 		`DELETE FROM redeemed_tickets WHERE expires_at < now() - interval '1 hour'`)
 	if err != nil {
 		return 0, err

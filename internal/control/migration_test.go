@@ -103,7 +103,7 @@ func openAt(t *testing.T, dsn string, n int) *Store {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	s := &Store{pool: pool}
+	s := newStore(pool)
 	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
 		t.Fatal(err)

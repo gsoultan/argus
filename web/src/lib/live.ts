@@ -163,6 +163,43 @@ export interface Identity {
   installing?: boolean
   /** Whether the signed-in account has a second factor. */
   mfaEnrolled?: boolean
+  /**
+   * True when more than one organization shares this control plane, so the
+   * sign-in form has to ask which one. Until then nobody is asked.
+   */
+  multiOrg?: boolean
+  /** The organization this sign-in, or this session, is in. */
+  org?: Organization
+  /**
+   * True for an owner of the default organization: the one account that may
+   * list, create and disable organizations. The control plane checks it
+   * again on every such request; this only draws the menu entry.
+   */
+  platformOwner?: boolean
+}
+
+/** One organization sharing the control plane. */
+export interface Organization {
+  id: string
+  slug: string
+  name: string
+  default: boolean
+  createdAt?: string
+  createdBy?: string
+  disabledAt?: string | null
+  disabledBy?: string | null
+  counts?: { servers: number; people: number }
+}
+
+/**
+ * The organization a sign-in is for, sent as a header on the sign-in
+ * requests. Everything after sign-in carries it inside the cookie instead,
+ * and the control plane ignores the header once a cookie is present.
+ */
+let signInOrg = ''
+export function setSignInOrg(slug: string): void { signInOrg = slug.trim().toLowerCase() }
+function orgHeader(): Record<string, string> {
+  return signInOrg ? { 'X-Argus-Org': signInOrg } : {}
 }
 
 /** What a password sign-in returns: a session, or a demand for a second factor. */
@@ -345,6 +382,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: {
       'Content-Type': 'application/json',
       ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+      ...orgHeader(),
     },
     body: JSON.stringify(body),
   })
@@ -1238,3 +1276,27 @@ export async function databaseTicket(
 
 /** The WebSocket a database session runs over. */
 export const postgresEndpoint = `${BASE}/api/v1/postgres`
+
+/* ── Organizations ──────────────────────────────────────────────────────── */
+
+/** Every organization on this control plane. Platform owners only. */
+export async function organizations(): Promise<Organization[]> {
+  return get<Organization[]>('/api/v1/platform/organizations')
+}
+
+/** Creates an organization with its first owner. */
+export async function createOrganization(input: {
+  slug: string
+  name: string
+  ownerEmail: string
+  ownerName: string
+  ownerPassword: string
+}): Promise<Organization> {
+  return post<Organization>('/api/v1/platform/organizations', input)
+}
+
+/** Switches an organization off, or back on. */
+export async function setOrganizationDisabled(id: string, disabled: boolean): Promise<Organization> {
+  return post<Organization>(
+    `/api/v1/platform/organizations/${encodeURIComponent(id)}/${disabled ? 'disable' : 'enable'}`, {})
+}

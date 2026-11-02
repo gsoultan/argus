@@ -67,7 +67,7 @@ func (a *API) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	// The password was right. If a second factor is enrolled it is owed now,
 	// and the account is not signed in until it is presented.
 	if acct.MFAEnrolled {
-		challenge, err := a.signer.IssueMFAChallenge(acct.Email, mfaChallengeTTL)
+		challenge, err := a.signerFor(r).IssueMFAChallenge(acct.Email, mfaChallengeTTL)
 		if err != nil {
 			a.fail(w, "issue challenge", err)
 			return
@@ -104,7 +104,7 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email, err := a.signer.RedeemMFAChallenge(in.Challenge)
+	email, err := a.signerFor(r).RedeemMFAChallenge(in.Challenge)
 	if err != nil {
 		a.RecordAuthFailure(r)
 		// Expired is worth saying, because the remedy differs: start again
@@ -159,14 +159,14 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 
 // completeSignIn issues the session cookie and records the event.
 func (a *API) completeSignIn(w http.ResponseWriter, r *http.Request, sess auth.Session, how string) {
-	token, err := a.signer.IssueSession(sess, a.sessionTTL())
+	token, err := a.signerFor(r).IssueSession(sess, a.sessionTTL())
 	if err != nil {
 		a.fail(w, "issue session", err)
 		return
 	}
 	auth.SetCookie(w, auth.SessionCookieName, token, a.sessionTTL(), a.secureCookies)
 
-	_, _ = a.store.pool.Exec(r.Context(),
+	_, _ = a.store.db(r.Context()).Exec(r.Context(),
 		`UPDATE users SET last_seen_at = now() WHERE lower(email) = lower($1)`, sess.Email)
 
 	a.auditAuth(r, "auth.login", "info", sess.Email,

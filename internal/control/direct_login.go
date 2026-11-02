@@ -147,7 +147,7 @@ func scanDirectLogin(row pgx.Row) (DirectLogin, error) {
 // matches, on the inventory hostname, agent_hostname or the short name.
 func (s *Store) EffectiveDirectSSH(ctx context.Context, hostname string) (string, error) {
 	var mode string
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT COALESCE(a.direct_ssh, p.direct_ssh)
 		  FROM gateway_policy p
 		  LEFT JOIN LATERAL (
@@ -173,7 +173,7 @@ func (s *Store) SetAssetDirectSSH(ctx context.Context, id, mode string) (before 
 	if mode != "" {
 		next = &mode
 	}
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		UPDATE assets n SET direct_ssh = $2, updated_at = now()
 		  FROM assets o
 		 WHERE n.id = o.id AND n.id::text = $1 AND n.archived_at IS NULL
@@ -187,7 +187,7 @@ func (s *Store) SetAssetDirectSSH(ctx context.Context, id, mode string) (before 
 // CreateDirectLogin holds a login for approval, unless the host already has
 // as many waiting as it may.
 func (s *Store) CreateDirectLogin(ctx context.Context, d DirectLogin) (DirectLogin, error) {
-	out, err := scanDirectLogin(s.pool.QueryRow(ctx, `
+	out, err := scanDirectLogin(s.db(ctx).QueryRow(ctx, `
 		INSERT INTO direct_login_requests (hostname, principal, client_addr, command, expires_at)
 		SELECT $1, $2, $3, $4, now() + $5::interval
 		 WHERE (SELECT count(*) FROM direct_login_requests
@@ -205,7 +205,7 @@ func (s *Store) CreateDirectLogin(ctx context.Context, d DirectLogin) (DirectLog
 
 // DirectLoginByID reads one request.
 func (s *Store) DirectLoginByID(ctx context.Context, id string) (DirectLogin, error) {
-	d, err := scanDirectLogin(s.pool.QueryRow(ctx, directLoginSelect+` WHERE id::text = $1`, id))
+	d, err := scanDirectLogin(s.db(ctx).QueryRow(ctx, directLoginSelect+` WHERE id::text = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return d, ErrDirectLoginNotFound
 	}
@@ -224,7 +224,7 @@ func (s *Store) DecideDirectLogin(
 	if note = strings.TrimSpace(note); note != "" {
 		notePtr = &note
 	}
-	d, err := scanDirectLogin(s.pool.QueryRow(ctx, `
+	d, err := scanDirectLogin(s.db(ctx).QueryRow(ctx, `
 		UPDATE direct_login_requests
 		   SET state = $2, decided_at = now(), decided_by_email = $3, decision_note = $4
 		 WHERE id::text = $1 AND state = 'pending' AND expires_at > now()
@@ -248,7 +248,7 @@ func (s *Store) DecideDirectLogin(
 // ExpireDirectLogins closes every waiting login whose time has run out and
 // returns them, so each can be written to the audit log exactly once.
 func (s *Store) ExpireDirectLogins(ctx context.Context) ([]DirectLogin, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		UPDATE direct_login_requests SET state = 'expired', decided_at = now()
 		 WHERE state = 'pending' AND expires_at <= now()
 		RETURNING id::text, hostname, principal, client_addr, command, state,
@@ -270,7 +270,7 @@ func (s *Store) ExpireDirectLogins(ctx context.Context) ([]DirectLogin, error) {
 
 // DirectLogins lists the most recent requests, newest first.
 func (s *Store) DirectLogins(ctx context.Context, limit int) ([]DirectLogin, error) {
-	rows, err := s.pool.Query(ctx, directLoginSelect+` ORDER BY created_at DESC LIMIT $1`, limit)
+	rows, err := s.db(ctx).Query(ctx, directLoginSelect+` ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}

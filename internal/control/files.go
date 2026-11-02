@@ -69,7 +69,7 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no ticket supplied")
 		return
 	}
-	t, err := a.signer.RedeemTicket(r.Context(), token, target, principal)
+	t, err := a.signerFor(r).RedeemTicket(r.Context(), token, target, principal)
 	if err != nil {
 		a.log.Warn("file transfer refused", "target", target, "principal", principal, "error", err)
 		writeErr(w, http.StatusUnauthorized, "unauthorized: "+err.Error())
@@ -111,7 +111,7 @@ func (a *API) relayFiles(ctx context.Context, conn *websocket.Conn,
 
 	g := tunnel.NewGrant(email, host, principal, client)
 	g.Service = agentFilesService
-	grant, err := tunnel.SignGrant(a.Tunnels.GrantKey, g)
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the transfer grant")
 		return

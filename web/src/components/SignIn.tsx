@@ -5,7 +5,7 @@ import {
 } from '@mantine/core'
 import { IconAlertTriangle, IconKey } from '@tabler/icons-react'
 import {
-  passwordLogin, verifyMFA, type Identity,
+  passwordLogin, setSignInOrg, verifyMFA, type Identity,
 } from '~/lib/live'
 import { FS } from '~/theme'
 import { Logo } from '~/components/Logo'
@@ -27,6 +27,7 @@ export function SignIn({ identity, onSignedIn }: {
   onSignedIn: () => void
 }) {
   const [email, setEmail] = useState('')
+  const [org, setOrg] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [challenge, setChallenge] = useState<string>()
@@ -39,6 +40,9 @@ export function SignIn({ identity, onSignedIn }: {
     setBusy(true)
     setError(undefined)
     try {
+      // Which organization's accounts the password is checked against. Only
+      // asked once a second organization exists; blank is the default one.
+      setSignInOrg(org)
       const res = await passwordLogin(email, password)
       if (res.mfaRequired && res.challenge) {
         // The password is right, but it is not a sign-in on its own. Held only
@@ -156,8 +160,19 @@ export function SignIn({ identity, onSignedIn }: {
               <form onSubmit={submitPassword}>
                 {error && <ErrorNote>{error}</ErrorNote>}
                 <Stack gap="sm">
+                  {identity.multiOrg && (
+                    <TextInput
+                      autoFocus
+                      size="sm"
+                      label="Organization"
+                      description="The short name your organization signs in with. Leave blank for the default."
+                      autoComplete="organization"
+                      value={org}
+                      onChange={(e) => setOrg(e.currentTarget.value)}
+                    />
+                  )}
                   <TextInput
-                    autoFocus
+                    autoFocus={!identity.multiOrg}
                     size="sm"
                     label="Email"
                     type="email"

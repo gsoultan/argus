@@ -68,16 +68,20 @@ func (a *API) agentReporter(next func(http.ResponseWriter, *http.Request)) http.
 func (a *API) lookupAgentCredential(ctx context.Context, tok string) (string, bool) {
 	hash := hashSecret(tok)
 	now := time.Now()
-	if e, ok := a.agentCreds.get(hash, now); ok {
+	tenant := tenantIDOf(ctx)
+	if e, ok := a.agentCreds.get(hash, now); ok && e.tenant == tenant {
 		return e.hostname, true
 	}
+	// Looked up in the organization's own tables, which the credential's
+	// prefix chose and scope resolved; a credential can only ever be found
+	// where it was minted.
 	id, host, err := a.store.agentCredentialHost(ctx, hash)
 	if err != nil {
 		// Unknown, revoked, or the database is unreachable. All three refuse:
 		// a reporter that cannot be identified does not get to write evidence.
 		return "", false
 	}
-	a.agentCreds.put(hash, agentCredEntry{id: id, hostname: host, checked: now})
+	a.agentCreds.put(hash, agentCredEntry{id: id, hostname: host, tenant: tenant, checked: now})
 	return host, true
 }
 
@@ -201,7 +205,7 @@ func (a *API) postRevokeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	a.agentCreds.forget(id)
 	if a.Tunnels != nil {
-		a.Tunnels.Revoked(id)
+		a.Tunnels.Revoked(r.Context(), id)
 	}
 
 	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
@@ -245,6 +249,16 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The token arrives in the body, where scope could not see it, so the
+	// organization it names is resolved here: the token is only ever looked
+	// up where it was minted.
+	ctx, ok := a.scopeSecret(r.Context(), in.Token)
+	if !ok {
+		a.RecordAuthFailure(r)
+		writeErr(w, http.StatusUnauthorized, ErrEnrollTokenInvalid.Error())
+		return
+	}
+	r = r.WithContext(ctx)
 	enr, err := a.store.Enroll(r.Context(), in.Token, in.Hostname)
 	switch {
 	case errors.Is(err, ErrHostAlreadyEnrolled):
@@ -342,7 +356,7 @@ func (a *API) postDeregister(w http.ResponseWriter, r *http.Request) {
 	}
 	a.agentCreds.forget(id)
 	if a.Tunnels != nil {
-		a.Tunnels.Revoked(id)
+		a.Tunnels.Revoked(r.Context(), id)
 	}
 
 	ranBy := "the host did not say who ran it"
