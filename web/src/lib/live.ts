@@ -1061,6 +1061,8 @@ export interface ControlSettings {
     enabled: boolean; certificate?: CertSummary; managed: boolean; canIssue: boolean
     caCert?: string; mutualTls: boolean; certPem?: string; keyPem?: string; reissue?: boolean
   }
+  /** Who is told when someone signs in to the console. Absent from an older control plane. */
+  signInAlerts?: { admins: boolean; person: boolean; when: 'new_device' | 'every' }
 }
 
 export async function controlSettings(): Promise<ControlSettings> {

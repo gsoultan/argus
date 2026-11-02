@@ -164,7 +164,10 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 				itoa(left) + " remain. If this was not the account holder, " +
 				"treat the account as compromised."
 			a.auditAuth(r, "auth.recovery_code_used", "warning", acct.Email, detail)
-			a.Alerts.SecurityEvent("Argus: "+acct.Email+" signed in with a recovery code", detail)
+			if !a.signInAlertsTellAdmins() {
+				// Otherwise the sign-in alert says so, at more length.
+				a.Alerts.SecurityEvent("Argus: "+acct.Email+" signed in with a recovery code", detail)
+			}
 		}
 	default:
 		// Spent as it is checked: the same code cannot sign in twice, even

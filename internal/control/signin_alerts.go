@@ -119,6 +119,12 @@ func (a *API) announceSignIn(r *http.Request, sess auth.Session, how string) {
 	}
 }
 
+// signInAlertsTellAdmins reports whether administrators hear about sign-ins
+// here, so a recovery-code sign-in is not also sent as a security alert.
+func (a *API) signInAlertsTellAdmins() bool {
+	return a.SignInAlerts != nil && a.SignInPolicy.Admins
+}
+
 // signInReportURL is the "this wasn't me" link, or empty when there is no
 // console address to put in it or nothing to sign it with.
 func (a *API) signInReportURL(r *http.Request, e notify.SignIn) string {
@@ -296,8 +302,8 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 		}
 		a.reportPage(w, http.StatusOK, reportView{
 			Title: "Wasn't you?",
-			Body: "Report this sign-in to " + rep.Account + ". Argus records it and tells your administrators " +
-				"at once. Then change your password.",
+			Body: "Report this sign-in to " + rep.Account + ". Argus signs out every session on the account, " +
+				"this one included, and tells your administrators at once. Then change your password.",
 			Facts:  reportFacts(rep),
 			Ticket: tok, Confirm: true,
 		})
@@ -315,9 +321,22 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every session on the account ends, the reported one included. Safe to
+	// hand whoever holds the link: it can only sign people out.
+	signedOut := true
+	if err := a.store.RevokeAllSessions(ctx, rep.Account); err != nil {
+		signedOut = false
+		a.log.Error("could not sign out a reported account", "email", rep.Account, "error", err)
+	}
 	detail := "The account holder reported that a sign-in at " +
 		rep.At.UTC().Format(time.RFC3339) + " from " + orUnknown(rep.ClientIP) + " (" + orUnknown(rep.Device) +
-		") was not them, using the link in their sign-in email. Treat the account as compromised until checked."
+		") was not them, using the link in their sign-in email. "
+	if signedOut {
+		detail += "Every session on the account was signed out. "
+	} else {
+		detail += "Signing the account out failed; its sessions may still be open. "
+	}
+	detail += "Treat the account as compromised until checked."
 	if _, err := a.store.AppendAudit(ctx, AuditEvent{
 		Action: "auth.sign_in_reported", Severity: "warning", ActorEmail: rep.Account,
 		Target: "console", Detail: detail,
@@ -325,7 +344,7 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 		a.log.Error("audit append failed", "error", err)
 	}
 	a.log.Warn("a sign-in was reported as not the account holder",
-		"email", rep.Account, "client", rep.ClientIP, "reporter", a.clientAddr(r))
+		"email", rep.Account, "client", rep.ClientIP, "reporter", a.clientAddr(r), "signed_out", signedOut)
 
 	if n := a.SignInAlerts; n != nil {
 		admins, err := a.store.AdministratorEmails(ctx)
@@ -338,6 +357,7 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 				Device: rep.Device, Method: rep.Method, At: rep.At,
 			},
 			ReportedAt: time.Now().UTC(),
+			SignedOut:  signedOut,
 		}, withoutFold(admins, rep.Account), tenantIDOf(ctx) == DefaultTenantID)
 	}
 
@@ -345,7 +365,11 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 	if a.SignInAlerts != nil {
 		body += " and told your administrators"
 	}
-	body += ". Change your password now, and if you think your phone is lost, ask an administrator to reset your authenticator."
+	body += ". "
+	if signedOut {
+		body += "Every session on your account is signed out, including the one you reported. "
+	}
+	body += "Sign in again and change your password now, and if you think your phone is lost, ask an administrator to reset your authenticator."
 	a.reportPage(w, http.StatusOK, reportView{Title: "Reported", Body: body, Done: true})
 }
 

@@ -439,3 +439,21 @@ func TestDevicesAreRememberedPerAccount(t *testing.T) {
 		}
 	}
 }
+
+// Reporting a sign-in ends every session on the account, the reporter's own
+// and the one reported, so whoever signed in is out at once.
+func TestAReportSignsTheAccountOutEverywhere(t *testing.T) {
+	h := newLoginHarness(t)
+	email, password := newAccount(t, h.store, "operator")
+	signIn(t, h, email, password, chromeMac)
+	if h.me(t)["authenticated"] != true {
+		t.Fatal("not signed in to begin with")
+	}
+	if c, body := postReport(t, h, reportLink(t, h, email)); c != http.StatusOK ||
+		!strings.Contains(body, "Every session on your account is signed out") {
+		t.Fatalf("report = %d:\n%s", c, body)
+	}
+	if h.me(t)["authenticated"] == true {
+		t.Fatal("the reported account's session survived the report")
+	}
+}

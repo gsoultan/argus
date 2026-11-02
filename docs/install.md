@@ -143,7 +143,7 @@ left; each fits on one screen:
 | Database | where PostgreSQL is, with a connection test |
 | Certificate | what is served, upload a replacement, download the CA |
 | Object storage | the S3-compatible bucket recordings are copied to |
-| Session alerts | email, Telegram and Firebase push |
+| Alerts | sign-in alerts (who is told when someone signs in), and the email, Telegram and Firebase push channels session alerts go to |
 | People | add accounts, disable and enable them |
 Secrets are write-only: the page says whether one is set, never what it is.
 Changes in several sections are kept until you save, and **Save and apply** writes the file and restarts the control plane on it within

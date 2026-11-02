@@ -217,7 +217,8 @@ func SignInPersonMessage(e SignIn, consoleURL, reportURL string) Rendered {
 		greet = "Hi " + n + ", your account"
 	}
 	lead := greet + " " + e.Email + " was just used to sign in to Argus."
-	notMe := "Wasn't you? Tell Argus with the button below. It tells your administrators at once. " +
+	notMe := "Wasn't you? Use the button below. Argus signs out every session on your account, " +
+		"including this one, and tells your administrators at once. " +
 		"Then change your password and, if you think your phone is lost, ask an administrator to reset your authenticator."
 	if reportURL == "" {
 		notMe = "Wasn't you? Tell your Argus administrator now, and change your password."
@@ -229,7 +230,7 @@ func SignInPersonMessage(e SignIn, consoleURL, reportURL string) Rendered {
 	t.WriteString("\nWas this you? Then you don't need to do anything.\n\n")
 	t.WriteString(notMe + "\n")
 	if reportURL != "" {
-		fmt.Fprintf(&t, "\nThis wasn't me: %s\n(The link works once, for 24 hours. It can't sign anyone in.)\n", reportURL)
+		fmt.Fprintf(&t, "\nThis wasn't me: %s\n(The link works once, for 24 hours. It can only sign you out; it can't sign anyone in.)\n", reportURL)
 	}
 	t.WriteString("\nArgus sends this to the person who signed in. Your administrator decides whether these are sent.\n")
 
@@ -240,7 +241,7 @@ func SignInPersonMessage(e SignIn, consoleURL, reportURL string) Rendered {
 			Title: subject, Lead: lead, Facts: e.facts(false),
 			After: "Was this you? Then you don't need to do anything.", Warn: notMe,
 			Button: "This wasn't me", Link: reportURL, Danger: true,
-			Note:   noteIf(reportURL != "", "The link works once and for 24 hours. It can't sign anyone in."),
+			Note:   noteIf(reportURL != "", "The link works once and for 24 hours. It can only sign you out; it can't sign anyone in."),
 			Footer: "Argus sends this to the person who signed in. Your administrator decides whether these are sent.",
 			Host:   hostOf(consoleURL),
 		}),
