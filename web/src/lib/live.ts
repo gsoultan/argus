@@ -803,10 +803,19 @@ export async function removeAssetTeamAssignment(id: string, teamId: string): Pro
  * fetches installs the agent, links it and hooks sshd, in that order.
  */
 export function installOneLiner(t: EnrollToken, version: string): string {
-  const base = fleetURL()
+  const base = enrolBase(t)
   const q = new URLSearchParams({ token: t.token, version, url: base })
   const pin = t.curlPin ? `-k --pinnedpubkey '${t.curlPin}' ` : ''
   return `curl -fsSL ${pin}'${base}/api/v1/install/agent.sh?${q.toString()}' | sudo sh`
+}
+
+/**
+ * Where an install command made with t points. The control plane's answer
+ * wins over the setting this page loaded with, which is stale after a save in
+ * Settings until the tab is reloaded.
+ */
+export function enrolBase(t: EnrollToken | null): string {
+  return (t?.fleetUrl || fleetURL()).replace(/\/$/, '')
 }
 
 /** Approves or denies a direct SSH login held for approval. */
@@ -881,6 +890,8 @@ export interface EnrollToken {
   addressProblem?: string
   /** The address that was checked. */
   address?: string
+  /** "Address servers use" as the control plane has it now, when set. */
+  fleetUrl?: string
 }
 
 /** Makes an enrollment token. Admin or owner; audited by the control plane. */

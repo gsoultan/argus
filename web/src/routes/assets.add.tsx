@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
-import { controlPlaneVersion, fleetURL, installOneLiner, isConfigured, type EnrollToken } from '~/lib/live'
+import { controlPlaneVersion, enrolBase, fleetURL, installOneLiner, isConfigured, type EnrollToken } from '~/lib/live'
 import { notifyError, notifyOk, run } from '~/lib/notify'
 import {
   discoveredQuery, meQuery, teamsQuery, useCreateEnrollToken, useEnrolHost, useIgnoreHost, usersQuery,
@@ -329,7 +329,7 @@ function Command({ text }: { text: string }) {
  * control plane's key happens in the agent, from --pin.
  */
 function windowsCommand(t: EnrollToken | null): string {
-  const url = fleetURL() || 'https://argus.example.com'
+  const url = enrolBase(t) || 'https://argus.example.com'
   const pin = t?.pin ? ` --pin ${t.pin}` : ''
   return [
     VERSION === 'latest'

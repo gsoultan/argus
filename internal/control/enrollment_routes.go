@@ -148,6 +148,12 @@ func (a *API) postEnrollToken(w http.ResponseWriter, r *http.Request) {
 		"id": tok.ID, "token": tok.Token, "hostname": tok.Hostname,
 		"expiresAt": tok.ExpiresAt,
 	}
+	if a.FleetURL != "" {
+		// The address the command uses, as this process has it now. The
+		// console read the same setting when its page loaded, which is stale
+		// after a save in Settings until the tab is reloaded.
+		out["fleetUrl"] = a.FleetURL
+	}
 	pin, address, problem := a.enrolPin(r)
 	if pin != "" {
 		out["pin"] = pin
