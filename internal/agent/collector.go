@@ -42,6 +42,9 @@ type Collector struct {
 	// handle() blocked on a read, and without a way to close it a shutdown
 	// waits for a shell nobody is going to exit.
 	conns map[net.Conn]struct{}
+	// holding sends new logins away to wait for the agent that is about to
+	// replace this one; see Hold.
+	holding bool
 	// hangups ends each session the agent opened itself through the tunnel,
 	// for the same reason: those have no shim connection to close.
 	hangups map[string]func()
@@ -457,6 +460,22 @@ func waitGroup(wg *sync.WaitGroup, d time.Duration) bool {
 	}
 }
 
+// Hold makes new SSH logins wait for an agent restart (true), or go ahead
+// again (false). A held login is told the agent is restarting, and the shim
+// waits for the next agent rather than being refused.
+func (c *Collector) Hold(on bool) {
+	c.mu.Lock()
+	c.holding = on
+	c.mu.Unlock()
+}
+
+// ShimCount is the SSH logins connected now, recorded or being decided.
+func (c *Collector) ShimCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.conns)
+}
+
 // ActiveCount reports sessions currently being recorded.
 func (c *Collector) ActiveCount() int {
 	c.mu.Lock()
@@ -495,6 +514,14 @@ func (c *Collector) handle(conn net.Conn) {
 		case SessionStart:
 			if sess != nil {
 				c.log.Warn("duplicate start on one connection")
+				return
+			}
+			c.mu.Lock()
+			holding := c.holding
+			c.mu.Unlock()
+			if holding {
+				_ = json.NewEncoder(conn).Encode(Decision{Type: "decision", Restarting: true,
+					Error: "the host agent is restarting for an update"})
 				return
 			}
 			// Everything on this socket came in through sshd, and nothing

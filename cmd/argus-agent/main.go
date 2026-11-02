@@ -26,11 +26,15 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent"
@@ -65,6 +69,13 @@ func main() {
 		// Run by the postgres service as the postgres account: one request
 		// on stdin, one answer on stdout, over the local socket.
 		os.Exit(agent.PGAdminMain(context.Background(), os.Stdin, os.Stdout))
+	case "update-apply":
+		// Run by the daemon in a unit of its own to install an update the
+		// console asked for, restart the agent, and go back if it fails.
+		fs := flag.NewFlagSet("update-apply", flag.ExitOnError)
+		plan := fs.String("plan", "", "the update plan the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunUpdateApply(*plan, os.Stdout))
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
 	case "probe":
@@ -193,7 +204,31 @@ func runDaemon(args []string) int {
 	// control plane admits a tunnel on a per-host credential and never on the
 	// shared reporter token.
 	col := agent.NewCollector(*dir, log)
+
+	// Updating from the console. It waits for everything open on the server
+	// to end, and while it restarts, new sessions wait rather than fail:
+	// see internal/agent/update.go.
+	exe, _ := os.Executable()
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	updater := agent.NewUpdater(*stateDir, version, exe, log)
+	updater.Marker = agent.UpdateMarkerPath(*socket)
+	var (
+		openStreams atomic.Int64
+		holding     atomic.Bool
+		listening   atomic.Bool
+		tunnelUp    atomic.Bool
+	)
+	updater.Busy = func() int { return col.ShimCount() + int(openStreams.Load()) }
+	updater.Hold = func(on bool) {
+		holding.Store(on)
+		col.Hold(on)
+	}
+	ready := func() { agent.WriteReady(*stateDir, version, listening.Load(), tunnelUp.Load()) }
+
 	if *useTunnel && strings.HasPrefix(*controlToken, "argus-agent-") {
+		updater.NeedTunnel = true
 		hostname, _ := os.Hostname()
 		services := agent.DefaultTunnelServices()
 		// Browser sessions open here, as the account, recorded by this
@@ -237,6 +272,17 @@ func runDaemon(args []string) int {
 			Services: services,
 			Log:      log,
 			GrantPin: agent.NewGrantPin(*stateDir),
+			Gate: func(string) string {
+				if holding.Load() {
+					return "this server's agent is restarting for an update; try again in a few seconds"
+				}
+				return ""
+			},
+			Open: &openStreams,
+			OnConnected: func() {
+				tunnelUp.Store(true)
+				ready()
+			},
 		})
 	}
 
@@ -395,7 +441,12 @@ func runDaemon(args []string) int {
 		}
 	})
 
-	go loop(*beatEvery, stop, func() {
+	// One heartbeat at a time: an update reports a change at once, between
+	// the regular ones, and two in flight would apply replies out of order.
+	var beating sync.Mutex
+	heartbeat := func() {
+		beating.Lock()
+		defer beating.Unlock()
 		hostname, _ := os.Hostname()
 		beat := map[string]any{
 			"at":              time.Now().UTC(),
@@ -429,7 +480,23 @@ func runDaemon(args []string) int {
 			// nil until the first list has been applied, so the console
 			// can tell "none" from "not yet".
 			"personal_accounts": personalStates,
+			"update":            updater.Status(),
 		})
+		// An update is acted on only when the reply arrived: silence from
+		// the control plane neither starts one nor takes one back.
+		if ok {
+			var req *agent.UpdateRequest
+			if len(reply.Update) > 0 && string(reply.Update) != "null" {
+				req = &agent.UpdateRequest{}
+				if err := json.Unmarshal(reply.Update, req); err != nil {
+					log.Error("update: cannot read the request", "error", err)
+					req = nil
+				}
+			}
+			if req != nil || updater.Status().State != "" {
+				updater.Handle(ctx, req)
+			}
+		}
 		// Only a delivered reply changes anything. An unreachable control
 		// plane leaves the last setting in place, not a default chosen by an
 		// outage.
@@ -499,7 +566,14 @@ func runDaemon(args []string) int {
 				_ = os.WriteFile(directSSHFile, []byte(col.DirectSSH()+"\n"), 0o600)
 			}
 		}
-	})
+	}
+	updater.Changed = func() {
+		if rep.Enabled() {
+			heartbeat()
+		}
+	}
+	go loop(*beatEvery, stop, heartbeat)
+	go updater.Watch(ctx)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what
@@ -535,6 +609,19 @@ func runDaemon(args []string) int {
 	log.Info("argus-agent starting", "version", version, "socket", *socket)
 	listenErr := make(chan error, 1)
 	go func() { listenErr <- col.Listen(*socket) }()
+	// Say when logins are being taken, for an update helper waiting to see
+	// this version come up.
+	go func() {
+		for i := 0; i < 200 && ctx.Err() == nil; i++ {
+			if c, err := net.DialTimeout("unix", *socket, time.Second); err == nil {
+				_ = c.Close()
+				listening.Store(true)
+				ready()
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
 
 	select {
 	case err := <-listenErr:
@@ -553,12 +640,23 @@ func runDaemon(args []string) int {
 		log.Info("shutting down, sealing in-flight recordings")
 		close(stop)
 		cancel()
-		_ = col.Close()
+		if updater.Restarting() {
+			// An update: the sessions it ends are the ones the operator chose
+			// to end, and SSH logins resume recording on the next agent, so
+			// a drain would only keep the logins waiting meanwhile.
+			_ = col.CloseWithin(updateDrain)
+		} else {
+			_ = col.Close()
+		}
 		<-listenErr
 		log.Info("shutdown complete")
 		return 0
 	}
 }
+
+// updateDrain is how long an agent restarting for an update waits for
+// sessions before it disconnects them and seals their recordings.
+const updateDrain = 2 * time.Second
 
 // sessionReport is what the control plane is told about a session.
 func sessionReport(rec agent.SessionRecord) map[string]any {

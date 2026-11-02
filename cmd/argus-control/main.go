@@ -58,8 +58,13 @@ type config struct {
 	ReporterToken  string            `yaml:"reporter_token,omitempty"`
 	// AgentStaleAfter is how long an agent may be silent before the fleet is
 	// told. Short on purpose: silence is how a killed agent looks.
-	AgentStaleAfter time.Duration   `yaml:"agent_stale_after,omitempty"`
-	Storage         *storage.Config `yaml:"storage,omitempty"`
+	AgentStaleAfter time.Duration `yaml:"agent_stale_after,omitempty"`
+	// AgentReleasesURL is where agents download a new version from when the
+	// console updates them: <url>/v<version>/<package>, with checksums.txt
+	// beside it. Empty is the project's GitHub releases; set it to a mirror
+	// for servers that cannot reach GitHub.
+	AgentReleasesURL string          `yaml:"agent_releases_url,omitempty"`
+	Storage          *storage.Config `yaml:"storage,omitempty"`
 	// RecordingsDir is where recordings agents ship are kept when there is
 	// no object storage. Empty means /var/lib/argus-control/recordings when
 	// that directory exists, and beside the config file otherwise.
@@ -423,6 +428,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		}
 	}
 	api.Alerts = alerts
+	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
 			Dir: cfg.Console.Dir, Version: version,
