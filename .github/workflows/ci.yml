@@ -165,6 +165,7 @@ jobs:
           go build -o "$tmp/argus-control" ./cmd/argus-control
           go build -o "$tmp/argus-agent" ./cmd/argus-agent
           go build -o "$tmp/termdrill" ./scripts/tools/termdrill
+          go build -o "$tmp/totp" ./scripts/tools/totp
           go run ./scripts/tools/gencerts "$tmp"
           chmod 600 "$tmp/server.key"
 
@@ -190,6 +191,12 @@ jobs:
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
@@ -289,6 +296,7 @@ jobs:
           go build -o "$tmp/argus-control.exe" ./cmd/argus-control
           go build -o "$tmp/argus-agent.exe" ./cmd/argus-agent
           go build -o "$tmp/termdrill.exe" ./scripts/tools/termdrill
+          go build -o "$tmp/totp.exe" ./scripts/tools/totp
           go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
           go build -o "$tmp/replaydump.exe" ./scripts/tools/replaydump
           go run ./scripts/tools/gencerts "$tmp"
@@ -320,6 +328,12 @@ jobs:
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp.exe" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           "$agent" enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
@@ -920,9 +934,16 @@ jobs:
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q fleetUrl
 
           # Enroll this runner's agent with a token from the console API.
+          go build -o "$tmp/totp" ./scripts/tools/totp
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
             -d '{"email":"admin@ci.example","password":"ci-admin-password-0123456789"}' >/dev/null
+          # An admin must have a second factor before the console lets it do
+          # anything else, so enrol one the way a person would.
+          secret=$($c -X POST https://localhost:8080/auth/mfa/enrol \
+            -d '{"password":"ci-admin-password-0123456789"}' | jq -r .secret)
+          $c -X POST https://localhost:8080/auth/mfa/confirm \
+            -d "{\"code\":\"$("$tmp/totp" "$secret")\"}" >/dev/null
           $c -X POST https://localhost:8080/api/v1/agents/enroll-tokens -d '{}' > "$tmp/tok.json"
           tok=$(jq -r .token "$tmp/tok.json"); pin=$(jq -r .pin "$tmp/tok.json")
           sudo argus-agent enroll --control-url https://localhost:8080 --pin "$pin" --token "$tok"
