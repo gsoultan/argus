@@ -40,6 +40,7 @@ type Row struct {
 	FirstSeenAt     time.Time
 	ExecTracing     bool
 	ExecReason      string
+	Applications    runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -78,7 +79,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 20
+const nCols = 21
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -491,6 +492,7 @@ var (
 	FirstSeenAt     = TimeCol{17}
 	ExecTracing     = BoolCol{18}
 	ExecReason      = TextCol{19}
+	Applications    = NullJSONCol{20}
 )
 
 // TextCol addresses a text column.
@@ -949,6 +951,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 20:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1077,171 +1086,188 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 20:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) HostnameEq(v string) Query               { return q.Where(Hostname.Eq(v)) }
-func (q Query) HostnameNotEq(v string) Query            { return q.Where(Hostname.NotEq(v)) }
-func (q Query) HostnameGt(v string) Query               { return q.Where(Hostname.Gt(v)) }
-func (q Query) HostnameGte(v string) Query              { return q.Where(Hostname.Gte(v)) }
-func (q Query) HostnameLt(v string) Query               { return q.Where(Hostname.Lt(v)) }
-func (q Query) HostnameLte(v string) Query              { return q.Where(Hostname.Lte(v)) }
-func (q Query) HostnameEqLower(v string) Query          { return q.Where(Hostname.EqLower(v)) }
-func (q Query) HostnameLike(v string) Query             { return q.Where(Hostname.Like(v)) }
-func (q Query) HostnameILike(v string) Query            { return q.Where(Hostname.ILike(v)) }
-func (q Query) HostnameIn(v ...string) Query            { return q.Where(Hostname.In(v...)) }
-func (q Query) HostnameNotIn(v ...string) Query         { return q.Where(Hostname.NotIn(v...)) }
-func (q Query) VersionEq(v string) Query                { return q.Where(Version.Eq(v)) }
-func (q Query) VersionNotEq(v string) Query             { return q.Where(Version.NotEq(v)) }
-func (q Query) VersionGt(v string) Query                { return q.Where(Version.Gt(v)) }
-func (q Query) VersionGte(v string) Query               { return q.Where(Version.Gte(v)) }
-func (q Query) VersionLt(v string) Query                { return q.Where(Version.Lt(v)) }
-func (q Query) VersionLte(v string) Query               { return q.Where(Version.Lte(v)) }
-func (q Query) VersionEqLower(v string) Query           { return q.Where(Version.EqLower(v)) }
-func (q Query) VersionLike(v string) Query              { return q.Where(Version.Like(v)) }
-func (q Query) VersionILike(v string) Query             { return q.Where(Version.ILike(v)) }
-func (q Query) VersionIn(v ...string) Query             { return q.Where(Version.In(v...)) }
-func (q Query) VersionNotIn(v ...string) Query          { return q.Where(Version.NotIn(v...)) }
-func (q Query) LastSeenAtEq(v time.Time) Query          { return q.Where(LastSeenAt.Eq(v)) }
-func (q Query) LastSeenAtNotEq(v time.Time) Query       { return q.Where(LastSeenAt.NotEq(v)) }
-func (q Query) LastSeenAtGt(v time.Time) Query          { return q.Where(LastSeenAt.Gt(v)) }
-func (q Query) LastSeenAtGte(v time.Time) Query         { return q.Where(LastSeenAt.Gte(v)) }
-func (q Query) LastSeenAtLt(v time.Time) Query          { return q.Where(LastSeenAt.Lt(v)) }
-func (q Query) LastSeenAtLte(v time.Time) Query         { return q.Where(LastSeenAt.Lte(v)) }
-func (q Query) ActiveSessionsEq(v int32) Query          { return q.Where(ActiveSessions.Eq(v)) }
-func (q Query) ActiveSessionsNotEq(v int32) Query       { return q.Where(ActiveSessions.NotEq(v)) }
-func (q Query) ActiveSessionsGt(v int32) Query          { return q.Where(ActiveSessions.Gt(v)) }
-func (q Query) ActiveSessionsGte(v int32) Query         { return q.Where(ActiveSessions.Gte(v)) }
-func (q Query) ActiveSessionsLt(v int32) Query          { return q.Where(ActiveSessions.Lt(v)) }
-func (q Query) ActiveSessionsLte(v int32) Query         { return q.Where(ActiveSessions.Lte(v)) }
-func (q Query) ActiveSessionsIn(v ...int32) Query       { return q.Where(ActiveSessions.In(v...)) }
-func (q Query) ActiveSessionsNotIn(v ...int32) Query    { return q.Where(ActiveSessions.NotIn(v...)) }
-func (q Query) PostureContains(v runtime.JSON) Query    { return q.Where(Posture.Contains(v)) }
-func (q Query) PostureContainedBy(v runtime.JSON) Query { return q.Where(Posture.ContainedBy(v)) }
-func (q Query) PostureHasAnyKey(v ...string) Query      { return q.Where(Posture.HasAnyKey(v...)) }
-func (q Query) PostureHasAllKeys(v ...string) Query     { return q.Where(Posture.HasAllKeys(v...)) }
-func (q Query) PostureIsNull() Query                    { return q.Where(Posture.IsNull()) }
-func (q Query) PostureIsNotNull() Query                 { return q.Where(Posture.IsNotNull()) }
-func (q Query) UpdatedAtEq(v time.Time) Query           { return q.Where(UpdatedAt.Eq(v)) }
-func (q Query) UpdatedAtNotEq(v time.Time) Query        { return q.Where(UpdatedAt.NotEq(v)) }
-func (q Query) UpdatedAtGt(v time.Time) Query           { return q.Where(UpdatedAt.Gt(v)) }
-func (q Query) UpdatedAtGte(v time.Time) Query          { return q.Where(UpdatedAt.Gte(v)) }
-func (q Query) UpdatedAtLt(v time.Time) Query           { return q.Where(UpdatedAt.Lt(v)) }
-func (q Query) UpdatedAtLte(v time.Time) Query          { return q.Where(UpdatedAt.Lte(v)) }
-func (q Query) MatchedAssetEq(v bool) Query             { return q.Where(MatchedAsset.Eq(v)) }
-func (q Query) MatchedAssetNotEq(v bool) Query          { return q.Where(MatchedAsset.NotEq(v)) }
-func (q Query) FqdnEq(v string) Query                   { return q.Where(Fqdn.Eq(v)) }
-func (q Query) FqdnNotEq(v string) Query                { return q.Where(Fqdn.NotEq(v)) }
-func (q Query) FqdnGt(v string) Query                   { return q.Where(Fqdn.Gt(v)) }
-func (q Query) FqdnGte(v string) Query                  { return q.Where(Fqdn.Gte(v)) }
-func (q Query) FqdnLt(v string) Query                   { return q.Where(Fqdn.Lt(v)) }
-func (q Query) FqdnLte(v string) Query                  { return q.Where(Fqdn.Lte(v)) }
-func (q Query) FqdnEqLower(v string) Query              { return q.Where(Fqdn.EqLower(v)) }
-func (q Query) FqdnLike(v string) Query                 { return q.Where(Fqdn.Like(v)) }
-func (q Query) FqdnILike(v string) Query                { return q.Where(Fqdn.ILike(v)) }
-func (q Query) FqdnIn(v ...string) Query                { return q.Where(Fqdn.In(v...)) }
-func (q Query) FqdnNotIn(v ...string) Query             { return q.Where(Fqdn.NotIn(v...)) }
-func (q Query) FqdnIsNull() Query                       { return q.Where(Fqdn.IsNull()) }
-func (q Query) FqdnIsNotNull() Query                    { return q.Where(Fqdn.IsNotNull()) }
-func (q Query) MachineIDEq(v string) Query              { return q.Where(MachineID.Eq(v)) }
-func (q Query) MachineIDNotEq(v string) Query           { return q.Where(MachineID.NotEq(v)) }
-func (q Query) MachineIDGt(v string) Query              { return q.Where(MachineID.Gt(v)) }
-func (q Query) MachineIDGte(v string) Query             { return q.Where(MachineID.Gte(v)) }
-func (q Query) MachineIDLt(v string) Query              { return q.Where(MachineID.Lt(v)) }
-func (q Query) MachineIDLte(v string) Query             { return q.Where(MachineID.Lte(v)) }
-func (q Query) MachineIDEqLower(v string) Query         { return q.Where(MachineID.EqLower(v)) }
-func (q Query) MachineIDLike(v string) Query            { return q.Where(MachineID.Like(v)) }
-func (q Query) MachineIDILike(v string) Query           { return q.Where(MachineID.ILike(v)) }
-func (q Query) MachineIDIn(v ...string) Query           { return q.Where(MachineID.In(v...)) }
-func (q Query) MachineIDNotIn(v ...string) Query        { return q.Where(MachineID.NotIn(v...)) }
-func (q Query) MachineIDIsNull() Query                  { return q.Where(MachineID.IsNull()) }
-func (q Query) MachineIDIsNotNull() Query               { return q.Where(MachineID.IsNotNull()) }
-func (q Query) OsEq(v string) Query                     { return q.Where(Os.Eq(v)) }
-func (q Query) OsNotEq(v string) Query                  { return q.Where(Os.NotEq(v)) }
-func (q Query) OsGt(v string) Query                     { return q.Where(Os.Gt(v)) }
-func (q Query) OsGte(v string) Query                    { return q.Where(Os.Gte(v)) }
-func (q Query) OsLt(v string) Query                     { return q.Where(Os.Lt(v)) }
-func (q Query) OsLte(v string) Query                    { return q.Where(Os.Lte(v)) }
-func (q Query) OsEqLower(v string) Query                { return q.Where(Os.EqLower(v)) }
-func (q Query) OsLike(v string) Query                   { return q.Where(Os.Like(v)) }
-func (q Query) OsILike(v string) Query                  { return q.Where(Os.ILike(v)) }
-func (q Query) OsIn(v ...string) Query                  { return q.Where(Os.In(v...)) }
-func (q Query) OsNotIn(v ...string) Query               { return q.Where(Os.NotIn(v...)) }
-func (q Query) AddressesContains(v ...string) Query     { return q.Where(Addresses.Contains(v...)) }
-func (q Query) AddressesContainedBy(v ...string) Query  { return q.Where(Addresses.ContainedBy(v...)) }
-func (q Query) AddressesOverlaps(v ...string) Query     { return q.Where(Addresses.Overlaps(v...)) }
-func (q Query) AccountsContains(v ...string) Query      { return q.Where(Accounts.Contains(v...)) }
-func (q Query) AccountsContainedBy(v ...string) Query   { return q.Where(Accounts.ContainedBy(v...)) }
-func (q Query) AccountsOverlaps(v ...string) Query      { return q.Where(Accounts.Overlaps(v...)) }
-func (q Query) SshPortsContains(v ...int32) Query       { return q.Where(SshPorts.Contains(v...)) }
-func (q Query) SshPortsContainedBy(v ...int32) Query    { return q.Where(SshPorts.ContainedBy(v...)) }
-func (q Query) SshPortsOverlaps(v ...int32) Query       { return q.Where(SshPorts.Overlaps(v...)) }
-func (q Query) EnrollmentStateEq(v string) Query        { return q.Where(EnrollmentState.Eq(v)) }
-func (q Query) EnrollmentStateNotEq(v string) Query     { return q.Where(EnrollmentState.NotEq(v)) }
-func (q Query) EnrollmentStateGt(v string) Query        { return q.Where(EnrollmentState.Gt(v)) }
-func (q Query) EnrollmentStateGte(v string) Query       { return q.Where(EnrollmentState.Gte(v)) }
-func (q Query) EnrollmentStateLt(v string) Query        { return q.Where(EnrollmentState.Lt(v)) }
-func (q Query) EnrollmentStateLte(v string) Query       { return q.Where(EnrollmentState.Lte(v)) }
-func (q Query) EnrollmentStateEqLower(v string) Query   { return q.Where(EnrollmentState.EqLower(v)) }
-func (q Query) EnrollmentStateLike(v string) Query      { return q.Where(EnrollmentState.Like(v)) }
-func (q Query) EnrollmentStateILike(v string) Query     { return q.Where(EnrollmentState.ILike(v)) }
-func (q Query) EnrollmentStateIn(v ...string) Query     { return q.Where(EnrollmentState.In(v...)) }
-func (q Query) EnrollmentStateNotIn(v ...string) Query  { return q.Where(EnrollmentState.NotIn(v...)) }
-func (q Query) ReviewNoteEq(v string) Query             { return q.Where(ReviewNote.Eq(v)) }
-func (q Query) ReviewNoteNotEq(v string) Query          { return q.Where(ReviewNote.NotEq(v)) }
-func (q Query) ReviewNoteGt(v string) Query             { return q.Where(ReviewNote.Gt(v)) }
-func (q Query) ReviewNoteGte(v string) Query            { return q.Where(ReviewNote.Gte(v)) }
-func (q Query) ReviewNoteLt(v string) Query             { return q.Where(ReviewNote.Lt(v)) }
-func (q Query) ReviewNoteLte(v string) Query            { return q.Where(ReviewNote.Lte(v)) }
-func (q Query) ReviewNoteEqLower(v string) Query        { return q.Where(ReviewNote.EqLower(v)) }
-func (q Query) ReviewNoteLike(v string) Query           { return q.Where(ReviewNote.Like(v)) }
-func (q Query) ReviewNoteILike(v string) Query          { return q.Where(ReviewNote.ILike(v)) }
-func (q Query) ReviewNoteIn(v ...string) Query          { return q.Where(ReviewNote.In(v...)) }
-func (q Query) ReviewNoteNotIn(v ...string) Query       { return q.Where(ReviewNote.NotIn(v...)) }
-func (q Query) ReviewedByEq(v string) Query             { return q.Where(ReviewedBy.Eq(v)) }
-func (q Query) ReviewedByNotEq(v string) Query          { return q.Where(ReviewedBy.NotEq(v)) }
-func (q Query) ReviewedByGt(v string) Query             { return q.Where(ReviewedBy.Gt(v)) }
-func (q Query) ReviewedByGte(v string) Query            { return q.Where(ReviewedBy.Gte(v)) }
-func (q Query) ReviewedByLt(v string) Query             { return q.Where(ReviewedBy.Lt(v)) }
-func (q Query) ReviewedByLte(v string) Query            { return q.Where(ReviewedBy.Lte(v)) }
-func (q Query) ReviewedByEqLower(v string) Query        { return q.Where(ReviewedBy.EqLower(v)) }
-func (q Query) ReviewedByLike(v string) Query           { return q.Where(ReviewedBy.Like(v)) }
-func (q Query) ReviewedByILike(v string) Query          { return q.Where(ReviewedBy.ILike(v)) }
-func (q Query) ReviewedByIn(v ...string) Query          { return q.Where(ReviewedBy.In(v...)) }
-func (q Query) ReviewedByNotIn(v ...string) Query       { return q.Where(ReviewedBy.NotIn(v...)) }
-func (q Query) ReviewedByIsNull() Query                 { return q.Where(ReviewedBy.IsNull()) }
-func (q Query) ReviewedByIsNotNull() Query              { return q.Where(ReviewedBy.IsNotNull()) }
-func (q Query) ReviewedAtEq(v time.Time) Query          { return q.Where(ReviewedAt.Eq(v)) }
-func (q Query) ReviewedAtNotEq(v time.Time) Query       { return q.Where(ReviewedAt.NotEq(v)) }
-func (q Query) ReviewedAtGt(v time.Time) Query          { return q.Where(ReviewedAt.Gt(v)) }
-func (q Query) ReviewedAtGte(v time.Time) Query         { return q.Where(ReviewedAt.Gte(v)) }
-func (q Query) ReviewedAtLt(v time.Time) Query          { return q.Where(ReviewedAt.Lt(v)) }
-func (q Query) ReviewedAtLte(v time.Time) Query         { return q.Where(ReviewedAt.Lte(v)) }
-func (q Query) ReviewedAtIsNull() Query                 { return q.Where(ReviewedAt.IsNull()) }
-func (q Query) ReviewedAtIsNotNull() Query              { return q.Where(ReviewedAt.IsNotNull()) }
-func (q Query) FirstSeenAtEq(v time.Time) Query         { return q.Where(FirstSeenAt.Eq(v)) }
-func (q Query) FirstSeenAtNotEq(v time.Time) Query      { return q.Where(FirstSeenAt.NotEq(v)) }
-func (q Query) FirstSeenAtGt(v time.Time) Query         { return q.Where(FirstSeenAt.Gt(v)) }
-func (q Query) FirstSeenAtGte(v time.Time) Query        { return q.Where(FirstSeenAt.Gte(v)) }
-func (q Query) FirstSeenAtLt(v time.Time) Query         { return q.Where(FirstSeenAt.Lt(v)) }
-func (q Query) FirstSeenAtLte(v time.Time) Query        { return q.Where(FirstSeenAt.Lte(v)) }
-func (q Query) ExecTracingEq(v bool) Query              { return q.Where(ExecTracing.Eq(v)) }
-func (q Query) ExecTracingNotEq(v bool) Query           { return q.Where(ExecTracing.NotEq(v)) }
-func (q Query) ExecReasonEq(v string) Query             { return q.Where(ExecReason.Eq(v)) }
-func (q Query) ExecReasonNotEq(v string) Query          { return q.Where(ExecReason.NotEq(v)) }
-func (q Query) ExecReasonGt(v string) Query             { return q.Where(ExecReason.Gt(v)) }
-func (q Query) ExecReasonGte(v string) Query            { return q.Where(ExecReason.Gte(v)) }
-func (q Query) ExecReasonLt(v string) Query             { return q.Where(ExecReason.Lt(v)) }
-func (q Query) ExecReasonLte(v string) Query            { return q.Where(ExecReason.Lte(v)) }
-func (q Query) ExecReasonEqLower(v string) Query        { return q.Where(ExecReason.EqLower(v)) }
-func (q Query) ExecReasonLike(v string) Query           { return q.Where(ExecReason.Like(v)) }
-func (q Query) ExecReasonILike(v string) Query          { return q.Where(ExecReason.ILike(v)) }
-func (q Query) ExecReasonIn(v ...string) Query          { return q.Where(ExecReason.In(v...)) }
-func (q Query) ExecReasonNotIn(v ...string) Query       { return q.Where(ExecReason.NotIn(v...)) }
+func (q Query) HostnameEq(v string) Query                 { return q.Where(Hostname.Eq(v)) }
+func (q Query) HostnameNotEq(v string) Query              { return q.Where(Hostname.NotEq(v)) }
+func (q Query) HostnameGt(v string) Query                 { return q.Where(Hostname.Gt(v)) }
+func (q Query) HostnameGte(v string) Query                { return q.Where(Hostname.Gte(v)) }
+func (q Query) HostnameLt(v string) Query                 { return q.Where(Hostname.Lt(v)) }
+func (q Query) HostnameLte(v string) Query                { return q.Where(Hostname.Lte(v)) }
+func (q Query) HostnameEqLower(v string) Query            { return q.Where(Hostname.EqLower(v)) }
+func (q Query) HostnameLike(v string) Query               { return q.Where(Hostname.Like(v)) }
+func (q Query) HostnameILike(v string) Query              { return q.Where(Hostname.ILike(v)) }
+func (q Query) HostnameIn(v ...string) Query              { return q.Where(Hostname.In(v...)) }
+func (q Query) HostnameNotIn(v ...string) Query           { return q.Where(Hostname.NotIn(v...)) }
+func (q Query) VersionEq(v string) Query                  { return q.Where(Version.Eq(v)) }
+func (q Query) VersionNotEq(v string) Query               { return q.Where(Version.NotEq(v)) }
+func (q Query) VersionGt(v string) Query                  { return q.Where(Version.Gt(v)) }
+func (q Query) VersionGte(v string) Query                 { return q.Where(Version.Gte(v)) }
+func (q Query) VersionLt(v string) Query                  { return q.Where(Version.Lt(v)) }
+func (q Query) VersionLte(v string) Query                 { return q.Where(Version.Lte(v)) }
+func (q Query) VersionEqLower(v string) Query             { return q.Where(Version.EqLower(v)) }
+func (q Query) VersionLike(v string) Query                { return q.Where(Version.Like(v)) }
+func (q Query) VersionILike(v string) Query               { return q.Where(Version.ILike(v)) }
+func (q Query) VersionIn(v ...string) Query               { return q.Where(Version.In(v...)) }
+func (q Query) VersionNotIn(v ...string) Query            { return q.Where(Version.NotIn(v...)) }
+func (q Query) LastSeenAtEq(v time.Time) Query            { return q.Where(LastSeenAt.Eq(v)) }
+func (q Query) LastSeenAtNotEq(v time.Time) Query         { return q.Where(LastSeenAt.NotEq(v)) }
+func (q Query) LastSeenAtGt(v time.Time) Query            { return q.Where(LastSeenAt.Gt(v)) }
+func (q Query) LastSeenAtGte(v time.Time) Query           { return q.Where(LastSeenAt.Gte(v)) }
+func (q Query) LastSeenAtLt(v time.Time) Query            { return q.Where(LastSeenAt.Lt(v)) }
+func (q Query) LastSeenAtLte(v time.Time) Query           { return q.Where(LastSeenAt.Lte(v)) }
+func (q Query) ActiveSessionsEq(v int32) Query            { return q.Where(ActiveSessions.Eq(v)) }
+func (q Query) ActiveSessionsNotEq(v int32) Query         { return q.Where(ActiveSessions.NotEq(v)) }
+func (q Query) ActiveSessionsGt(v int32) Query            { return q.Where(ActiveSessions.Gt(v)) }
+func (q Query) ActiveSessionsGte(v int32) Query           { return q.Where(ActiveSessions.Gte(v)) }
+func (q Query) ActiveSessionsLt(v int32) Query            { return q.Where(ActiveSessions.Lt(v)) }
+func (q Query) ActiveSessionsLte(v int32) Query           { return q.Where(ActiveSessions.Lte(v)) }
+func (q Query) ActiveSessionsIn(v ...int32) Query         { return q.Where(ActiveSessions.In(v...)) }
+func (q Query) ActiveSessionsNotIn(v ...int32) Query      { return q.Where(ActiveSessions.NotIn(v...)) }
+func (q Query) PostureContains(v runtime.JSON) Query      { return q.Where(Posture.Contains(v)) }
+func (q Query) PostureContainedBy(v runtime.JSON) Query   { return q.Where(Posture.ContainedBy(v)) }
+func (q Query) PostureHasAnyKey(v ...string) Query        { return q.Where(Posture.HasAnyKey(v...)) }
+func (q Query) PostureHasAllKeys(v ...string) Query       { return q.Where(Posture.HasAllKeys(v...)) }
+func (q Query) PostureIsNull() Query                      { return q.Where(Posture.IsNull()) }
+func (q Query) PostureIsNotNull() Query                   { return q.Where(Posture.IsNotNull()) }
+func (q Query) UpdatedAtEq(v time.Time) Query             { return q.Where(UpdatedAt.Eq(v)) }
+func (q Query) UpdatedAtNotEq(v time.Time) Query          { return q.Where(UpdatedAt.NotEq(v)) }
+func (q Query) UpdatedAtGt(v time.Time) Query             { return q.Where(UpdatedAt.Gt(v)) }
+func (q Query) UpdatedAtGte(v time.Time) Query            { return q.Where(UpdatedAt.Gte(v)) }
+func (q Query) UpdatedAtLt(v time.Time) Query             { return q.Where(UpdatedAt.Lt(v)) }
+func (q Query) UpdatedAtLte(v time.Time) Query            { return q.Where(UpdatedAt.Lte(v)) }
+func (q Query) MatchedAssetEq(v bool) Query               { return q.Where(MatchedAsset.Eq(v)) }
+func (q Query) MatchedAssetNotEq(v bool) Query            { return q.Where(MatchedAsset.NotEq(v)) }
+func (q Query) FqdnEq(v string) Query                     { return q.Where(Fqdn.Eq(v)) }
+func (q Query) FqdnNotEq(v string) Query                  { return q.Where(Fqdn.NotEq(v)) }
+func (q Query) FqdnGt(v string) Query                     { return q.Where(Fqdn.Gt(v)) }
+func (q Query) FqdnGte(v string) Query                    { return q.Where(Fqdn.Gte(v)) }
+func (q Query) FqdnLt(v string) Query                     { return q.Where(Fqdn.Lt(v)) }
+func (q Query) FqdnLte(v string) Query                    { return q.Where(Fqdn.Lte(v)) }
+func (q Query) FqdnEqLower(v string) Query                { return q.Where(Fqdn.EqLower(v)) }
+func (q Query) FqdnLike(v string) Query                   { return q.Where(Fqdn.Like(v)) }
+func (q Query) FqdnILike(v string) Query                  { return q.Where(Fqdn.ILike(v)) }
+func (q Query) FqdnIn(v ...string) Query                  { return q.Where(Fqdn.In(v...)) }
+func (q Query) FqdnNotIn(v ...string) Query               { return q.Where(Fqdn.NotIn(v...)) }
+func (q Query) FqdnIsNull() Query                         { return q.Where(Fqdn.IsNull()) }
+func (q Query) FqdnIsNotNull() Query                      { return q.Where(Fqdn.IsNotNull()) }
+func (q Query) MachineIDEq(v string) Query                { return q.Where(MachineID.Eq(v)) }
+func (q Query) MachineIDNotEq(v string) Query             { return q.Where(MachineID.NotEq(v)) }
+func (q Query) MachineIDGt(v string) Query                { return q.Where(MachineID.Gt(v)) }
+func (q Query) MachineIDGte(v string) Query               { return q.Where(MachineID.Gte(v)) }
+func (q Query) MachineIDLt(v string) Query                { return q.Where(MachineID.Lt(v)) }
+func (q Query) MachineIDLte(v string) Query               { return q.Where(MachineID.Lte(v)) }
+func (q Query) MachineIDEqLower(v string) Query           { return q.Where(MachineID.EqLower(v)) }
+func (q Query) MachineIDLike(v string) Query              { return q.Where(MachineID.Like(v)) }
+func (q Query) MachineIDILike(v string) Query             { return q.Where(MachineID.ILike(v)) }
+func (q Query) MachineIDIn(v ...string) Query             { return q.Where(MachineID.In(v...)) }
+func (q Query) MachineIDNotIn(v ...string) Query          { return q.Where(MachineID.NotIn(v...)) }
+func (q Query) MachineIDIsNull() Query                    { return q.Where(MachineID.IsNull()) }
+func (q Query) MachineIDIsNotNull() Query                 { return q.Where(MachineID.IsNotNull()) }
+func (q Query) OsEq(v string) Query                       { return q.Where(Os.Eq(v)) }
+func (q Query) OsNotEq(v string) Query                    { return q.Where(Os.NotEq(v)) }
+func (q Query) OsGt(v string) Query                       { return q.Where(Os.Gt(v)) }
+func (q Query) OsGte(v string) Query                      { return q.Where(Os.Gte(v)) }
+func (q Query) OsLt(v string) Query                       { return q.Where(Os.Lt(v)) }
+func (q Query) OsLte(v string) Query                      { return q.Where(Os.Lte(v)) }
+func (q Query) OsEqLower(v string) Query                  { return q.Where(Os.EqLower(v)) }
+func (q Query) OsLike(v string) Query                     { return q.Where(Os.Like(v)) }
+func (q Query) OsILike(v string) Query                    { return q.Where(Os.ILike(v)) }
+func (q Query) OsIn(v ...string) Query                    { return q.Where(Os.In(v...)) }
+func (q Query) OsNotIn(v ...string) Query                 { return q.Where(Os.NotIn(v...)) }
+func (q Query) AddressesContains(v ...string) Query       { return q.Where(Addresses.Contains(v...)) }
+func (q Query) AddressesContainedBy(v ...string) Query    { return q.Where(Addresses.ContainedBy(v...)) }
+func (q Query) AddressesOverlaps(v ...string) Query       { return q.Where(Addresses.Overlaps(v...)) }
+func (q Query) AccountsContains(v ...string) Query        { return q.Where(Accounts.Contains(v...)) }
+func (q Query) AccountsContainedBy(v ...string) Query     { return q.Where(Accounts.ContainedBy(v...)) }
+func (q Query) AccountsOverlaps(v ...string) Query        { return q.Where(Accounts.Overlaps(v...)) }
+func (q Query) SshPortsContains(v ...int32) Query         { return q.Where(SshPorts.Contains(v...)) }
+func (q Query) SshPortsContainedBy(v ...int32) Query      { return q.Where(SshPorts.ContainedBy(v...)) }
+func (q Query) SshPortsOverlaps(v ...int32) Query         { return q.Where(SshPorts.Overlaps(v...)) }
+func (q Query) EnrollmentStateEq(v string) Query          { return q.Where(EnrollmentState.Eq(v)) }
+func (q Query) EnrollmentStateNotEq(v string) Query       { return q.Where(EnrollmentState.NotEq(v)) }
+func (q Query) EnrollmentStateGt(v string) Query          { return q.Where(EnrollmentState.Gt(v)) }
+func (q Query) EnrollmentStateGte(v string) Query         { return q.Where(EnrollmentState.Gte(v)) }
+func (q Query) EnrollmentStateLt(v string) Query          { return q.Where(EnrollmentState.Lt(v)) }
+func (q Query) EnrollmentStateLte(v string) Query         { return q.Where(EnrollmentState.Lte(v)) }
+func (q Query) EnrollmentStateEqLower(v string) Query     { return q.Where(EnrollmentState.EqLower(v)) }
+func (q Query) EnrollmentStateLike(v string) Query        { return q.Where(EnrollmentState.Like(v)) }
+func (q Query) EnrollmentStateILike(v string) Query       { return q.Where(EnrollmentState.ILike(v)) }
+func (q Query) EnrollmentStateIn(v ...string) Query       { return q.Where(EnrollmentState.In(v...)) }
+func (q Query) EnrollmentStateNotIn(v ...string) Query    { return q.Where(EnrollmentState.NotIn(v...)) }
+func (q Query) ReviewNoteEq(v string) Query               { return q.Where(ReviewNote.Eq(v)) }
+func (q Query) ReviewNoteNotEq(v string) Query            { return q.Where(ReviewNote.NotEq(v)) }
+func (q Query) ReviewNoteGt(v string) Query               { return q.Where(ReviewNote.Gt(v)) }
+func (q Query) ReviewNoteGte(v string) Query              { return q.Where(ReviewNote.Gte(v)) }
+func (q Query) ReviewNoteLt(v string) Query               { return q.Where(ReviewNote.Lt(v)) }
+func (q Query) ReviewNoteLte(v string) Query              { return q.Where(ReviewNote.Lte(v)) }
+func (q Query) ReviewNoteEqLower(v string) Query          { return q.Where(ReviewNote.EqLower(v)) }
+func (q Query) ReviewNoteLike(v string) Query             { return q.Where(ReviewNote.Like(v)) }
+func (q Query) ReviewNoteILike(v string) Query            { return q.Where(ReviewNote.ILike(v)) }
+func (q Query) ReviewNoteIn(v ...string) Query            { return q.Where(ReviewNote.In(v...)) }
+func (q Query) ReviewNoteNotIn(v ...string) Query         { return q.Where(ReviewNote.NotIn(v...)) }
+func (q Query) ReviewedByEq(v string) Query               { return q.Where(ReviewedBy.Eq(v)) }
+func (q Query) ReviewedByNotEq(v string) Query            { return q.Where(ReviewedBy.NotEq(v)) }
+func (q Query) ReviewedByGt(v string) Query               { return q.Where(ReviewedBy.Gt(v)) }
+func (q Query) ReviewedByGte(v string) Query              { return q.Where(ReviewedBy.Gte(v)) }
+func (q Query) ReviewedByLt(v string) Query               { return q.Where(ReviewedBy.Lt(v)) }
+func (q Query) ReviewedByLte(v string) Query              { return q.Where(ReviewedBy.Lte(v)) }
+func (q Query) ReviewedByEqLower(v string) Query          { return q.Where(ReviewedBy.EqLower(v)) }
+func (q Query) ReviewedByLike(v string) Query             { return q.Where(ReviewedBy.Like(v)) }
+func (q Query) ReviewedByILike(v string) Query            { return q.Where(ReviewedBy.ILike(v)) }
+func (q Query) ReviewedByIn(v ...string) Query            { return q.Where(ReviewedBy.In(v...)) }
+func (q Query) ReviewedByNotIn(v ...string) Query         { return q.Where(ReviewedBy.NotIn(v...)) }
+func (q Query) ReviewedByIsNull() Query                   { return q.Where(ReviewedBy.IsNull()) }
+func (q Query) ReviewedByIsNotNull() Query                { return q.Where(ReviewedBy.IsNotNull()) }
+func (q Query) ReviewedAtEq(v time.Time) Query            { return q.Where(ReviewedAt.Eq(v)) }
+func (q Query) ReviewedAtNotEq(v time.Time) Query         { return q.Where(ReviewedAt.NotEq(v)) }
+func (q Query) ReviewedAtGt(v time.Time) Query            { return q.Where(ReviewedAt.Gt(v)) }
+func (q Query) ReviewedAtGte(v time.Time) Query           { return q.Where(ReviewedAt.Gte(v)) }
+func (q Query) ReviewedAtLt(v time.Time) Query            { return q.Where(ReviewedAt.Lt(v)) }
+func (q Query) ReviewedAtLte(v time.Time) Query           { return q.Where(ReviewedAt.Lte(v)) }
+func (q Query) ReviewedAtIsNull() Query                   { return q.Where(ReviewedAt.IsNull()) }
+func (q Query) ReviewedAtIsNotNull() Query                { return q.Where(ReviewedAt.IsNotNull()) }
+func (q Query) FirstSeenAtEq(v time.Time) Query           { return q.Where(FirstSeenAt.Eq(v)) }
+func (q Query) FirstSeenAtNotEq(v time.Time) Query        { return q.Where(FirstSeenAt.NotEq(v)) }
+func (q Query) FirstSeenAtGt(v time.Time) Query           { return q.Where(FirstSeenAt.Gt(v)) }
+func (q Query) FirstSeenAtGte(v time.Time) Query          { return q.Where(FirstSeenAt.Gte(v)) }
+func (q Query) FirstSeenAtLt(v time.Time) Query           { return q.Where(FirstSeenAt.Lt(v)) }
+func (q Query) FirstSeenAtLte(v time.Time) Query          { return q.Where(FirstSeenAt.Lte(v)) }
+func (q Query) ExecTracingEq(v bool) Query                { return q.Where(ExecTracing.Eq(v)) }
+func (q Query) ExecTracingNotEq(v bool) Query             { return q.Where(ExecTracing.NotEq(v)) }
+func (q Query) ExecReasonEq(v string) Query               { return q.Where(ExecReason.Eq(v)) }
+func (q Query) ExecReasonNotEq(v string) Query            { return q.Where(ExecReason.NotEq(v)) }
+func (q Query) ExecReasonGt(v string) Query               { return q.Where(ExecReason.Gt(v)) }
+func (q Query) ExecReasonGte(v string) Query              { return q.Where(ExecReason.Gte(v)) }
+func (q Query) ExecReasonLt(v string) Query               { return q.Where(ExecReason.Lt(v)) }
+func (q Query) ExecReasonLte(v string) Query              { return q.Where(ExecReason.Lte(v)) }
+func (q Query) ExecReasonEqLower(v string) Query          { return q.Where(ExecReason.EqLower(v)) }
+func (q Query) ExecReasonLike(v string) Query             { return q.Where(ExecReason.Like(v)) }
+func (q Query) ExecReasonILike(v string) Query            { return q.Where(ExecReason.ILike(v)) }
+func (q Query) ExecReasonIn(v ...string) Query            { return q.Where(ExecReason.In(v...)) }
+func (q Query) ExecReasonNotIn(v ...string) Query         { return q.Where(ExecReason.NotIn(v...)) }
+func (q Query) ApplicationsContains(v runtime.JSON) Query { return q.Where(Applications.Contains(v)) }
+func (q Query) ApplicationsContainedBy(v runtime.JSON) Query {
+	return q.Where(Applications.ContainedBy(v))
+}
+func (q Query) ApplicationsHasAnyKey(v ...string) Query { return q.Where(Applications.HasAnyKey(v...)) }
+func (q Query) ApplicationsHasAllKeys(v ...string) Query {
+	return q.Where(Applications.HasAllKeys(v...))
+}
+func (q Query) ApplicationsIsNull() Query    { return q.Where(Applications.IsNull()) }
+func (q Query) ApplicationsIsNotNull() Query { return q.Where(Applications.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "applications" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1398,6 +1424,12 @@ var orderTable = [nCols][4]string{
 		"\"exec_reason\" ASC NULLS FIRST",
 		"\"exec_reason\" DESC NULLS LAST",
 	},
+	{ // applications
+		"\"applications\"",
+		"\"applications\" DESC",
+		"\"applications\" ASC NULLS FIRST",
+		"\"applications\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1423,6 +1455,7 @@ var identTable = [nCols]string{
 	"\"first_seen_at\"",
 	"\"exec_tracing\"",
 	"\"exec_reason\"",
+	"\"applications\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1455,7 +1488,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [20][28]runtime.Frag{
+var fragTable = [21][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2056,6 +2089,36 @@ var fragTable = [20][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // applications
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"applications\" @> $", B: ""},
+		{A: "\"applications\" <@ $", B: ""},
+		{A: "\"applications\" ?| $", B: ""},
+		{A: "\"applications\" ?& $", B: ""},
+		{A: "\"applications\" IS NULL", B: ""},
+		{A: "\"applications\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2241,6 +2304,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.FirstSeenAt = runtime.Timestamptz(rv[17])
 	r.ExecTracing = runtime.Bool(rv[18])
 	r.ExecReason = sl.Str(rv[19])
+	r.Applications = runtime.NullJSON(rv[20], sl)
 	return decErr
 }
 
@@ -2363,6 +2427,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 20:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2435,6 +2503,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 20:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v

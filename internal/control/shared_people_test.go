@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gsoultan/argus/internal/auth"
 )
 
 // People shared across organizations: one sign-in, a row per organization.
@@ -73,7 +76,11 @@ func TestSharedPersonSignsInWithHomeCredentialsOnlyWhereAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Account(hctx, alice); got.TOTPSecret != secret {
+	code, _ := auth.TOTPCode(secret, time.Now())
+	if _, err := s.ConfirmMFAEnrolment(octx, alice, code); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Account(hctx, alice); got.TOTPSecret != secret || !got.MFAEnrolled {
 		t.Errorf("enrolment started from the other organization did not land at home")
 	}
 	if got, _ := s.Account(octx, alice); got.TOTPSecret != "" {

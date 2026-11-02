@@ -52,6 +52,7 @@ var secretStateFiles = []string{
 	"heartbeat.json",
 	"posture.json",
 	"facts.json",
+	"applications.json",
 }
 
 func runUninstall(args []string) int {

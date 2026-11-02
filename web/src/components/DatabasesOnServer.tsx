@@ -75,16 +75,22 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
   )
 }
 
-function AddDatabase({ asset, opened, onClose }: { asset: Asset; opened: boolean; onClose: () => void }) {
+/**
+ * The add-a-database form. `initialPort` and `initialPoolerPort` come from
+ * what the agent found running, when it is opened from there.
+ */
+export function AddDatabase({ asset, opened, onClose, initialPort, initialPoolerPort }: {
+  asset: Asset; opened: boolean; onClose: () => void; initialPort?: number; initialPoolerPort?: number
+}) {
   const create = useCreateDatabase()
   const [engine, setEngine] = useState<DBEngine>('postgres')
   const info = ENGINES[engine]
   const [dbname, setDbname] = useState('')
   const [host, setHost] = useState('')
-  const [port, setPort] = useState<number | string>('')
+  const [port, setPort] = useState<number | string>(initialPort ?? '')
   const [configPath, setConfigPath] = useState('')
   const [label, setLabel] = useState<DBLabel>('production')
-  const [poolerPort, setPoolerPort] = useState<number | string>('')
+  const [poolerPort, setPoolerPort] = useState<number | string>(initialPoolerPort ?? '')
   const name = dbname.trim() || info.defaults.dbname
   const valid = engine === 'postgres' ? /^[A-Za-z_][A-Za-z0-9_$-]{0,62}$/.test(name)
     : engine === 'redis' ? /^\d{1,4}$/.test(name)
