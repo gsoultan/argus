@@ -17,6 +17,7 @@ func newSigner(t *testing.T) *Signer {
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
+	t.Cleanup(s.Close)
 	return s
 }
 
@@ -79,6 +80,7 @@ func TestTamperedSessionIsRejected(t *testing.T) {
 
 	t.Run("signed by a different secret", func(t *testing.T) {
 		other, _ := NewSigner("a-completely-different-secret-of-length")
+		defer other.Close()
 		otherToken, _ := other.IssueSession(Session{Email: "attacker", Role: "owner"}, time.Hour)
 		if _, err := s.VerifySession(otherToken); err == nil {
 			t.Error("a session signed by another key was accepted")

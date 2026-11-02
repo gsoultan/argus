@@ -28,6 +28,7 @@ func throttledAPI(t *testing.T, cfg ThrottleConfig) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(signer.Close)
 	api.SetAuth(signer, "", false)
 
 	th, err := NewThrottles(cfg)

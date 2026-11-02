@@ -36,7 +36,14 @@ func Verify(r io.Reader, expectedHead string) (Verification, error) {
 	// a `find /` or a base64 blob. The default 64 KB token limit is too small.
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 
-	head := Genesis
+	// The head is carried as hex bytes and the hash reused: the control
+	// plane runs this over every recording an agent ships, line by line.
+	var (
+		cur    [2 * sha256.Size]byte
+		digest [sha256.Size]byte
+		sum    = sha256.New()
+	)
+	copy(cur[:], Genesis)
 	lines := 0
 
 	for sc.Scan() {
@@ -44,12 +51,13 @@ func Verify(r io.Reader, expectedHead string) (Verification, error) {
 		if len(line) == 0 {
 			continue
 		}
-		sum := sha256.New()
-		sum.Write([]byte(head))
+		sum.Reset()
+		sum.Write(cur[:])
 		sum.Write(line)
-		head = hex.EncodeToString(sum.Sum(nil))
+		hex.Encode(cur[:], sum.Sum(digest[:0]))
 		lines++
 	}
+	head := string(cur[:])
 	if err := sc.Err(); err != nil {
 		return Verification{Head: head, Lines: lines}, fmt.Errorf("read recording: %w", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"sync"
 )
@@ -29,9 +30,15 @@ const Genesis = "000000000000000000000000000000000000000000000000000000000000000
 // Safe for concurrent use: a proxied session writes from more than one
 // goroutine, and the lock is what orders the chain.
 type Chain struct {
-	mu     sync.Mutex
-	w      io.Writer
-	head   string
+	mu sync.Mutex
+	w  io.Writer
+	// head is the current link as lowercase hex, which is also exactly what
+	// the next link hashes. Kept as bytes, with the hash and the digest
+	// reused, so a link costs no allocation: the recorder emits one for
+	// every chunk a terminal prints.
+	head   [2 * sha256.Size]byte
+	sum    hash.Hash
+	digest [sha256.Size]byte
 	lines  int
 	bytes  int64
 	closed bool
@@ -40,7 +47,9 @@ type Chain struct {
 
 // New returns a Chain positioned at Genesis.
 func New(w io.Writer) *Chain {
-	return &Chain{w: w, head: Genesis}
+	c := &Chain{w: w, sum: sha256.New()}
+	copy(c.head[:], Genesis)
+	return c
 }
 
 // SetTap registers a function called with every line as it is committed.
@@ -70,10 +79,10 @@ func (c *Chain) emitLocked(line []byte) error {
 		return fmt.Errorf("chain is closed")
 	}
 
-	sum := sha256.New()
-	sum.Write([]byte(c.head))
-	sum.Write(line)
-	c.head = hex.EncodeToString(sum.Sum(nil))
+	c.sum.Reset()
+	c.sum.Write(c.head[:])
+	c.sum.Write(line)
+	hex.Encode(c.head[:], c.sum.Sum(c.digest[:0]))
 
 	if _, err := c.w.Write(append(line, '\n')); err != nil {
 		// Write failures are fatal by design: the caller is expected to
@@ -100,7 +109,7 @@ func (c *Chain) emitLocked(line []byte) error {
 func (c *Chain) Head() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.head
+	return string(c.head[:])
 }
 
 // Stats reports progress.
@@ -116,13 +125,13 @@ func (c *Chain) Close() (head string, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return c.head, nil
+		return string(c.head[:]), nil
 	}
 	c.closed = true
 	if closer, ok := c.w.(io.Closer); ok {
 		err = closer.Close()
 	}
-	return c.head, err
+	return string(c.head[:]), err
 }
 
 // Closed reports whether Close has run.

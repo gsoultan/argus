@@ -107,13 +107,17 @@ func Scan(cfg ScanConfig) (Posture, error) {
 		p.Drift = append(p.Drift, fmt.Sprintf("cannot read %s: %v", cfg.SSHDConfig, err))
 	}
 
-	keys, err := scanAuthorizedKeys(cfg)
+	// Each authorized_keys file is parsed once and both readings -- the keys
+	// Argus did not issue, and how many each account holds -- come from it.
+	// They were two passes, and parsing a key is most of what a scan costs.
+	memo := keyFiles{}
+	keys, err := scanAuthorizedKeysWith(cfg, memo)
 	if err != nil {
 		return p, err
 	}
 	p.UnmanagedKeys = keys
 	p.SSHDAuth = readSSHDAuth(cfg.SSHDConfig)
-	p.LoginAccounts = scanLoginAccounts(cfg, p.SSHDAuth)
+	p.LoginAccounts = scanLoginAccountsWith(cfg, p.SSHDAuth, memo)
 	if p.ShimInstalled && !p.SSHDAuth.ExposeAuthInfo {
 		p.Drift = append(p.Drift, "ExposeAuthInfo is off — a direct login is recorded, "+
 			"but not whether it used a password or which key")
@@ -168,8 +172,34 @@ func scanSSHDConfig(p *Posture, cfg ScanConfig) error {
 	return sc.Err()
 }
 
+// keyFiles holds each authorized_keys file one scan has parsed, every key in
+// it whether Argus issued it or not, so a second reading of the same file in
+// the same scan costs a map lookup.
+type keyFiles map[string]keyFile
+
+type keyFile struct {
+	keys []UnmanagedKey
+	err  error
+}
+
+func (m keyFiles) parse(path string) ([]UnmanagedKey, error) {
+	if m == nil {
+		return parseAuthorizedKeysFile(path, "", nil)
+	}
+	if f, ok := m[path]; ok {
+		return f.keys, f.err
+	}
+	keys, err := parseAuthorizedKeysFile(path, "", nil)
+	m[path] = keyFile{keys, err}
+	return keys, err
+}
+
 // scanAuthorizedKeys walks every real account's authorized_keys.
 func scanAuthorizedKeys(cfg ScanConfig) ([]UnmanagedKey, error) {
+	return scanAuthorizedKeysWith(cfg, nil)
+}
+
+func scanAuthorizedKeysWith(cfg ScanConfig, memo keyFiles) ([]UnmanagedKey, error) {
 	accounts, err := readAccounts(cfg.PasswdFile)
 	if err != nil {
 		return nil, err
@@ -179,11 +209,17 @@ func scanAuthorizedKeys(cfg ScanConfig) ([]UnmanagedKey, error) {
 	for _, acct := range accounts {
 		for _, name := range []string{"authorized_keys", "authorized_keys2"} {
 			path := filepath.Join(acct.home, ".ssh", name)
-			keys, err := parseAuthorizedKeysFile(path, acct.name, cfg.ManagedFingerprints)
+			keys, err := memo.parse(path)
 			if err != nil {
 				continue // absent or unreadable is normal for most accounts
 			}
-			found = append(found, keys...)
+			for _, k := range keys {
+				if cfg.ManagedFingerprints[k.Fingerprint] {
+					continue
+				}
+				k.User = acct.name
+				found = append(found, k)
+			}
 		}
 	}
 	// Windows' OpenSSH reads administrators' keys from one shared file, not

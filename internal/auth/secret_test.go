@@ -1,9 +1,13 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"go.uber.org/goleak"
 )
 
 // A secret that ships in an example config is public knowledge. Length alone
@@ -79,3 +83,24 @@ func TestNewSignerAcceptsARealSecret(t *testing.T) {
 		t.Fatal("nil signer with no error")
 	}
 }
+
+// A signer whose redemptions go to a shared store never keeps a local set,
+// so it has nothing to sweep and starts no goroutine to sweep it. Every
+// production control plane is one of these.
+func TestASignerWithASharedRedeemerRunsNoSweeper(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	s, err := NewSigner("Xk9mQ2vRt7YwEbN4hJcL8pAsDfGhJkLzXcVbNmQwErTy1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetRedeemer(alwaysFresh{})
+	tok, _ := s.IssueTicket("op@northwind.id", "web-01", "deploy", time.Minute)
+	if _, err := s.RedeemTicket(context.Background(), tok, "web-01", "deploy"); err != nil {
+		t.Fatal(err)
+	}
+	// Not closed on purpose: there must be nothing to stop.
+}
+
+type alwaysFresh struct{}
+
+func (alwaysFresh) Redeem(context.Context, Ticket) (bool, error) { return false, nil }

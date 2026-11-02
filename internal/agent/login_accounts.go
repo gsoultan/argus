@@ -164,6 +164,10 @@ func passwordState(hash string) string {
 // scanLoginAccounts lists the accounts with a login shell, with what each
 // could sign in with.
 func scanLoginAccounts(cfg ScanConfig, auth SSHDAuth) []LoginAccount {
+	return scanLoginAccountsWith(cfg, auth, nil)
+}
+
+func scanLoginAccountsWith(cfg ScanConfig, auth SSHDAuth, memo keyFiles) []LoginAccount {
 	accounts, err := readAccounts(cfg.PasswdFile)
 	if err != nil {
 		return nil
@@ -178,7 +182,9 @@ func scanLoginAccounts(cfg ScanConfig, auth SSHDAuth) []LoginAccount {
 			}
 		}
 		for _, name := range []string{"authorized_keys", "authorized_keys2"} {
-			la.Keys += countKeys(filepath.Join(acct.home, ".ssh", name))
+			if keys, err := memo.parse(filepath.Join(acct.home, ".ssh", name)); err == nil {
+				la.Keys += len(keys)
+			}
 		}
 		la.CanLogin = canLogin(la, auth)
 		out = append(out, la)
@@ -197,13 +203,4 @@ func canLogin(la LoginAccount, auth SSHDAuth) bool {
 	byPassword := auth.Passwords && (la.Password == PasswordSet || la.Password == PasswordUnknown) &&
 		!(la.User == "root" && auth.PermitRootLogin != "yes")
 	return byKey || byPassword
-}
-
-// countKeys counts the keys in one authorized_keys file.
-func countKeys(path string) int {
-	keys, err := parseAuthorizedKeysFile(path, "", map[string]bool{})
-	if err != nil {
-		return 0
-	}
-	return len(keys)
 }

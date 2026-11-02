@@ -14,6 +14,7 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"flag"
 	"fmt"
 	"os"
@@ -61,9 +62,22 @@ func main() {
 	}
 	defer f.Close()
 
+	// An agent gzips its own copy of a recording once the control plane has
+	// stored it. The chain covers the recording's bytes, not the file's, so a
+	// compressed copy is read through and checked exactly as it was written.
+	br := bufio.NewReader(f)
+	if magic, _ := br.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		zr, err := gzip.NewReader(br)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+			os.Exit(2)
+		}
+		defer zr.Close()
+		br = bufio.NewReader(zr)
+	}
+
 	// A database session's recording (.argussql) is JSON lines with its own
 	// chain; the first bytes say which kind this is.
-	br := bufio.NewReader(f)
 	peek, _ := br.Peek(16)
 	var v recorder.Verification
 	var broken int64

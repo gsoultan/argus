@@ -56,8 +56,11 @@ func runAsService() (int, bool) {
 	// A service has no console: what the daemon logs goes to a file beside
 	// its state, which only SYSTEM and Administrators can read.
 	if err := agent.ProtectStateDir(agent.DefaultStateDir); err == nil {
-		if f, err := openLog(filepath.Join(agent.DefaultStateDir, "agent.log")); err == nil {
-			os.Stdout, os.Stderr = f, f
+		if f, err := openRotating(filepath.Join(agent.DefaultStateDir, "agent.log"), 10<<20); err == nil {
+			// The logger writes through the rotation; a panic, which
+			// writes to stderr directly, lands in the file open at start.
+			logOutput = f
+			os.Stdout, os.Stderr = f.File(), f.File()
 		}
 	}
 	h := &service{args: os.Args[2:]}
@@ -65,14 +68,6 @@ func runAsService() (int, bool) {
 		return 1, true
 	}
 	return h.code, true
-}
-
-// openLog appends to path, starting it afresh past 10 MB.
-func openLog(path string) (*os.File, error) {
-	if fi, err := os.Stat(path); err == nil && fi.Size() > 10<<20 {
-		_ = os.Rename(path, path+".1")
-	}
-	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
 type service struct {
