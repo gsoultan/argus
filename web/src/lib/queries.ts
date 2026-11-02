@@ -50,6 +50,10 @@ export const assetsQuery = (q: AssetQuery = {}) =>
 export const assetQuery = (id: string) =>
   queryOptions({ queryKey: qk.asset(id), queryFn: () => api.asset(id) })
 
+/** Who can log in to a server directly; whoever sees the whole fleet. */
+export const loginAccountsQuery = (id: string) =>
+  queryOptions({ queryKey: ['asset', id, 'login-accounts'] as const, queryFn: () => api.loginAccounts(id) })
+
 export const sessionsQuery = (state?: Session['state']) =>
   queryOptions({
     queryKey: qk.sessions(state),
@@ -224,6 +228,18 @@ export function useSetAssetDirectSsh() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (v: { id: string; mode: DirectSsh | null }) => api.setAssetDirectSsh(v.id, v.mode),
+    onSuccess: (asset) => {
+      qc.setQueryData(qk.asset(asset.id), asset)
+      void qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
+export function useSetAssetDirectSshAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; account: string; mode: DirectSsh | null }) =>
+      api.setAssetDirectSshAccount(v.id, v.account, v.mode),
     onSuccess: (asset) => {
       qc.setQueryData(qk.asset(asset.id), asset)
       void qc.invalidateQueries({ queryKey: ['assets'] })
@@ -406,6 +422,22 @@ export function useSetLoginName() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (v: { email: string; name: string }) => api.setLoginName(v.email, v.name),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useAddSharedAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.addSharedAccount,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
+export function useSetShareable() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { email: string; shareable: boolean }) => api.setShareable(v.email, v.shareable),
     onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
   })
 }

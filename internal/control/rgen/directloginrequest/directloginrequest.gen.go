@@ -31,6 +31,11 @@ type Row struct {
 	DecidedAt      runtime.Null[time.Time]
 	DecidedByEmail runtime.Null[string]
 	DecisionNote   runtime.Null[string]
+	AuthMethod     string
+	KeyFingerprint string
+	KeyType        string
+	KeyComment     string
+	KeyFound       bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -69,7 +74,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 11
+const nCols = 16
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -79,10 +84,11 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs        [6]string
-	raws        [4][16]byte
-	tims        [4]time.Time
-	ns, nr, ntm uint8
+	strs             [6]string
+	raws             [4][16]byte
+	tims             [4]time.Time
+	bools            [4]bool
+	ns, nr, ntm, nbo uint8
 
 	anyRaw   [3][][16]byte
 	anyStr   [3][]string
@@ -258,6 +264,41 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.DecisionNote.V
 		q.ns++
+	case 11:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.AuthMethod
+		q.ns++
+	case 12:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.KeyFingerprint
+		q.ns++
+	case 13:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.KeyType
+		q.ns++
+	case 14:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.KeyComment
+		q.ns++
+	case 15:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.KeyFound
+		q.nbo++
 	}
 }
 
@@ -408,8 +449,17 @@ type Pred struct {
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
+}
+
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Typed column handles. The type of the handle is what makes
@@ -426,6 +476,11 @@ var (
 	DecidedAt      = NullTimeCol{8}
 	DecidedByEmail = NullTextCol{9}
 	DecisionNote   = NullTextCol{10}
+	AuthMethod     = TextCol{11}
+	KeyFingerprint = TextCol{12}
+	KeyType        = TextCol{13}
+	KeyComment     = TextCol{14}
+	KeyFound       = BoolCol{15}
 )
 
 // UUIDCol addresses a uuid column.
@@ -546,6 +601,21 @@ func (h NullTextCol) In(v ...string) Pred   { return Pred{col: h.c, op: opIn, an
 func (h NullTextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
 func (h NullTextCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTextCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// BoolCol addresses a bool column.
+type BoolCol struct{ c uint8 }
+
+func (h BoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h BoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h BoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h BoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -744,6 +814,34 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 11:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 12:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 13:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 14:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -830,6 +928,41 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 11:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 12:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 13:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 14:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 15:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -940,8 +1073,54 @@ func (q Query) DecisionNoteIn(v ...string) Query      { return q.Where(DecisionN
 func (q Query) DecisionNoteNotIn(v ...string) Query   { return q.Where(DecisionNote.NotIn(v...)) }
 func (q Query) DecisionNoteIsNull() Query             { return q.Where(DecisionNote.IsNull()) }
 func (q Query) DecisionNoteIsNotNull() Query          { return q.Where(DecisionNote.IsNotNull()) }
+func (q Query) AuthMethodEq(v string) Query           { return q.Where(AuthMethod.Eq(v)) }
+func (q Query) AuthMethodNotEq(v string) Query        { return q.Where(AuthMethod.NotEq(v)) }
+func (q Query) AuthMethodGt(v string) Query           { return q.Where(AuthMethod.Gt(v)) }
+func (q Query) AuthMethodGte(v string) Query          { return q.Where(AuthMethod.Gte(v)) }
+func (q Query) AuthMethodLt(v string) Query           { return q.Where(AuthMethod.Lt(v)) }
+func (q Query) AuthMethodLte(v string) Query          { return q.Where(AuthMethod.Lte(v)) }
+func (q Query) AuthMethodEqLower(v string) Query      { return q.Where(AuthMethod.EqLower(v)) }
+func (q Query) AuthMethodLike(v string) Query         { return q.Where(AuthMethod.Like(v)) }
+func (q Query) AuthMethodILike(v string) Query        { return q.Where(AuthMethod.ILike(v)) }
+func (q Query) AuthMethodIn(v ...string) Query        { return q.Where(AuthMethod.In(v...)) }
+func (q Query) AuthMethodNotIn(v ...string) Query     { return q.Where(AuthMethod.NotIn(v...)) }
+func (q Query) KeyFingerprintEq(v string) Query       { return q.Where(KeyFingerprint.Eq(v)) }
+func (q Query) KeyFingerprintNotEq(v string) Query    { return q.Where(KeyFingerprint.NotEq(v)) }
+func (q Query) KeyFingerprintGt(v string) Query       { return q.Where(KeyFingerprint.Gt(v)) }
+func (q Query) KeyFingerprintGte(v string) Query      { return q.Where(KeyFingerprint.Gte(v)) }
+func (q Query) KeyFingerprintLt(v string) Query       { return q.Where(KeyFingerprint.Lt(v)) }
+func (q Query) KeyFingerprintLte(v string) Query      { return q.Where(KeyFingerprint.Lte(v)) }
+func (q Query) KeyFingerprintEqLower(v string) Query  { return q.Where(KeyFingerprint.EqLower(v)) }
+func (q Query) KeyFingerprintLike(v string) Query     { return q.Where(KeyFingerprint.Like(v)) }
+func (q Query) KeyFingerprintILike(v string) Query    { return q.Where(KeyFingerprint.ILike(v)) }
+func (q Query) KeyFingerprintIn(v ...string) Query    { return q.Where(KeyFingerprint.In(v...)) }
+func (q Query) KeyFingerprintNotIn(v ...string) Query { return q.Where(KeyFingerprint.NotIn(v...)) }
+func (q Query) KeyTypeEq(v string) Query              { return q.Where(KeyType.Eq(v)) }
+func (q Query) KeyTypeNotEq(v string) Query           { return q.Where(KeyType.NotEq(v)) }
+func (q Query) KeyTypeGt(v string) Query              { return q.Where(KeyType.Gt(v)) }
+func (q Query) KeyTypeGte(v string) Query             { return q.Where(KeyType.Gte(v)) }
+func (q Query) KeyTypeLt(v string) Query              { return q.Where(KeyType.Lt(v)) }
+func (q Query) KeyTypeLte(v string) Query             { return q.Where(KeyType.Lte(v)) }
+func (q Query) KeyTypeEqLower(v string) Query         { return q.Where(KeyType.EqLower(v)) }
+func (q Query) KeyTypeLike(v string) Query            { return q.Where(KeyType.Like(v)) }
+func (q Query) KeyTypeILike(v string) Query           { return q.Where(KeyType.ILike(v)) }
+func (q Query) KeyTypeIn(v ...string) Query           { return q.Where(KeyType.In(v...)) }
+func (q Query) KeyTypeNotIn(v ...string) Query        { return q.Where(KeyType.NotIn(v...)) }
+func (q Query) KeyCommentEq(v string) Query           { return q.Where(KeyComment.Eq(v)) }
+func (q Query) KeyCommentNotEq(v string) Query        { return q.Where(KeyComment.NotEq(v)) }
+func (q Query) KeyCommentGt(v string) Query           { return q.Where(KeyComment.Gt(v)) }
+func (q Query) KeyCommentGte(v string) Query          { return q.Where(KeyComment.Gte(v)) }
+func (q Query) KeyCommentLt(v string) Query           { return q.Where(KeyComment.Lt(v)) }
+func (q Query) KeyCommentLte(v string) Query          { return q.Where(KeyComment.Lte(v)) }
+func (q Query) KeyCommentEqLower(v string) Query      { return q.Where(KeyComment.EqLower(v)) }
+func (q Query) KeyCommentLike(v string) Query         { return q.Where(KeyComment.Like(v)) }
+func (q Query) KeyCommentILike(v string) Query        { return q.Where(KeyComment.ILike(v)) }
+func (q Query) KeyCommentIn(v ...string) Query        { return q.Where(KeyComment.In(v...)) }
+func (q Query) KeyCommentNotIn(v ...string) Query     { return q.Where(KeyComment.NotIn(v...)) }
+func (q Query) KeyFoundEq(v bool) Query               { return q.Where(KeyFound.Eq(v)) }
+func (q Query) KeyFoundNotEq(v bool) Query            { return q.Where(KeyFound.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "hostname", "principal", "client_addr", "command", "state", "created_at", "expires_at", "decided_at", "decided_by_email", "decision_note" FROM "direct_login_requests"`
+const selectPrefix = `SELECT "id", "hostname", "principal", "client_addr", "command", "state", "created_at", "expires_at", "decided_at", "decided_by_email", "decision_note", "auth_method", "key_fingerprint", "key_type", "key_comment", "key_found" FROM "direct_login_requests"`
 const countPrefix = `SELECT count(*) FROM "direct_login_requests"`
 const existsPrefix = `SELECT 1 FROM "direct_login_requests"`
 const existsSuffix = ` LIMIT 1`
@@ -1044,6 +1223,36 @@ var orderTable = [nCols][4]string{
 		"\"decision_note\" ASC NULLS FIRST",
 		"\"decision_note\" DESC NULLS LAST",
 	},
+	{ // auth_method
+		"\"auth_method\"",
+		"\"auth_method\" DESC",
+		"\"auth_method\" ASC NULLS FIRST",
+		"\"auth_method\" DESC NULLS LAST",
+	},
+	{ // key_fingerprint
+		"\"key_fingerprint\"",
+		"\"key_fingerprint\" DESC",
+		"\"key_fingerprint\" ASC NULLS FIRST",
+		"\"key_fingerprint\" DESC NULLS LAST",
+	},
+	{ // key_type
+		"\"key_type\"",
+		"\"key_type\" DESC",
+		"\"key_type\" ASC NULLS FIRST",
+		"\"key_type\" DESC NULLS LAST",
+	},
+	{ // key_comment
+		"\"key_comment\"",
+		"\"key_comment\" DESC",
+		"\"key_comment\" ASC NULLS FIRST",
+		"\"key_comment\" DESC NULLS LAST",
+	},
+	{ // key_found
+		"\"key_found\"",
+		"\"key_found\" DESC",
+		"\"key_found\" ASC NULLS FIRST",
+		"\"key_found\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1060,6 +1269,11 @@ var identTable = [nCols]string{
 	"\"decided_at\"",
 	"\"decided_by_email\"",
 	"\"decision_note\"",
+	"\"auth_method\"",
+	"\"key_fingerprint\"",
+	"\"key_type\"",
+	"\"key_comment\"",
+	"\"key_found\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1092,7 +1306,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [11][28]runtime.Frag{
+var fragTable = [16][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1423,6 +1637,156 @@ var fragTable = [11][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // auth_method
+		{}, // opNone
+		{A: "\"auth_method\" = $", B: ""},
+		{A: "\"auth_method\" <> $", B: ""},
+		{A: "\"auth_method\" > $", B: ""},
+		{A: "\"auth_method\" >= $", B: ""},
+		{A: "\"auth_method\" < $", B: ""},
+		{A: "\"auth_method\" <= $", B: ""},
+		{A: "lower(\"auth_method\") = lower($", B: ")"},
+		{A: "\"auth_method\" LIKE $", B: ""},
+		{A: "\"auth_method\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"auth_method\" = ANY($", B: ")"},
+		{A: "\"auth_method\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // key_fingerprint
+		{}, // opNone
+		{A: "\"key_fingerprint\" = $", B: ""},
+		{A: "\"key_fingerprint\" <> $", B: ""},
+		{A: "\"key_fingerprint\" > $", B: ""},
+		{A: "\"key_fingerprint\" >= $", B: ""},
+		{A: "\"key_fingerprint\" < $", B: ""},
+		{A: "\"key_fingerprint\" <= $", B: ""},
+		{A: "lower(\"key_fingerprint\") = lower($", B: ")"},
+		{A: "\"key_fingerprint\" LIKE $", B: ""},
+		{A: "\"key_fingerprint\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"key_fingerprint\" = ANY($", B: ")"},
+		{A: "\"key_fingerprint\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // key_type
+		{}, // opNone
+		{A: "\"key_type\" = $", B: ""},
+		{A: "\"key_type\" <> $", B: ""},
+		{A: "\"key_type\" > $", B: ""},
+		{A: "\"key_type\" >= $", B: ""},
+		{A: "\"key_type\" < $", B: ""},
+		{A: "\"key_type\" <= $", B: ""},
+		{A: "lower(\"key_type\") = lower($", B: ")"},
+		{A: "\"key_type\" LIKE $", B: ""},
+		{A: "\"key_type\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"key_type\" = ANY($", B: ")"},
+		{A: "\"key_type\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // key_comment
+		{}, // opNone
+		{A: "\"key_comment\" = $", B: ""},
+		{A: "\"key_comment\" <> $", B: ""},
+		{A: "\"key_comment\" > $", B: ""},
+		{A: "\"key_comment\" >= $", B: ""},
+		{A: "\"key_comment\" < $", B: ""},
+		{A: "\"key_comment\" <= $", B: ""},
+		{A: "lower(\"key_comment\") = lower($", B: ")"},
+		{A: "\"key_comment\" LIKE $", B: ""},
+		{A: "\"key_comment\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"key_comment\" = ANY($", B: ")"},
+		{A: "\"key_comment\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // key_found
+		{}, // opNone
+		{A: "\"key_found\" = $", B: ""},
+		{A: "\"key_found\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1590,6 +1954,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.DecidedAt = runtime.Nullable(rv[8], runtime.Timestamptz)
 	r.DecidedByEmail = runtime.NullText(rv[9], sl)
 	r.DecisionNote = runtime.NullText(rv[10], sl)
+	r.AuthMethod = sl.Str(rv[11])
+	r.KeyFingerprint = sl.Str(rv[12])
+	r.KeyType = sl.Str(rv[13])
+	r.KeyComment = sl.Str(rv[14])
+	r.KeyFound = runtime.Bool(rv[15])
 	return nil
 }
 
@@ -1598,6 +1967,7 @@ type binder struct {
 	strs   [6]string
 	raws   [4][16]byte
 	tims   [4]time.Time
+	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	limit  int64
@@ -1638,7 +2008,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nr, ntm, nar, nas uint8
+	var ns, nr, ntm, nbo, nar, nas uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1683,6 +2053,22 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 10:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 11:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 12:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 13:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 14:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1734,6 +2120,26 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 11:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 12:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 13:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 14:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 15:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -1871,7 +2277,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "direct_login_requests" ("id", "hostname", "principal", "client_addr", "command", "state", "created_at", "expires_at", "decided_at", "decided_by_email", "decision_note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING "id", "hostname", "principal", "client_addr", "command", "state", "created_at", "expires_at", "decided_at", "decided_by_email", "decision_note"`
+const insertSQL = `INSERT INTO "direct_login_requests" ("id", "hostname", "principal", "client_addr", "command", "state", "created_at", "expires_at", "decided_at", "decided_by_email", "decision_note", "auth_method", "key_fingerprint", "key_type", "key_comment", "key_found") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "hostname", "principal", "client_addr", "command", "state", "created_at", "expires_at", "decided_at", "decided_by_email", "decision_note", "auth_method", "key_fingerprint", "key_type", "key_comment", "key_found"`
 
 const updatePrefix = `UPDATE "direct_login_requests" SET `
 const deletePrefix = `DELETE FROM "direct_login_requests"`
@@ -1889,9 +2295,14 @@ const (
 	dDecidedAt      uint64 = 1 << 7
 	dDecidedByEmail uint64 = 1 << 8
 	dDecisionNote   uint64 = 1 << 9
+	dAuthMethod     uint64 = 1 << 10
+	dKeyFingerprint uint64 = 1 << 11
+	dKeyType        uint64 = 1 << 12
+	dKeyComment     uint64 = 1 << 13
+	dKeyFound       uint64 = 1 << 14
 )
 
-const nUpdatable = 10
+const nUpdatable = 15
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1905,6 +2316,11 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"decided_at\" = $", B: ""},       // decided_at
 	{A: "\"decided_by_email\" = $", B: ""}, // decided_by_email
 	{A: "\"decision_note\" = $", B: ""},    // decision_note
+	{A: "\"auth_method\" = $", B: ""},      // auth_method
+	{A: "\"key_fingerprint\" = $", B: ""},  // key_fingerprint
+	{A: "\"key_type\" = $", B: ""},         // key_type
+	{A: "\"key_comment\" = $", B: ""},      // key_comment
+	{A: "\"key_found\" = $", B: ""},        // key_found
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1921,6 +2337,11 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"decided_at\" = now()", B: ""}, // decided_at = the database's clock
 	{},                                   // decided_by_email has no server-side form
 	{},                                   // decision_note has no server-side form
+	{},                                   // auth_method has no server-side form
+	{},                                   // key_fingerprint has no server-side form
+	{},                                   // key_type has no server-side form
+	{},                                   // key_comment has no server-side form
+	{},                                   // key_found has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1943,9 +2364,14 @@ const (
 	iDecidedAt      uint64 = 1 << 8
 	iDecidedByEmail uint64 = 1 << 9
 	iDecisionNote   uint64 = 1 << 10
+	iAuthMethod     uint64 = 1 << 11
+	iKeyFingerprint uint64 = 1 << 12
+	iKeyType        uint64 = 1 << 13
+	iKeyComment     uint64 = 1 << 14
+	iKeyFound       uint64 = 1 << 15
 )
 
-const nInsertable = 11
+const nInsertable = 16
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1960,6 +2386,11 @@ var insCols = [nInsertable]string{
 	"\"decided_at\"",
 	"\"decided_by_email\"",
 	"\"decision_note\"",
+	"\"auth_method\"",
+	"\"key_fingerprint\"",
+	"\"key_type\"",
+	"\"key_comment\"",
+	"\"key_found\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1968,7 +2399,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"direct_login_requests\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"principal\", \"client_addr\", \"command\", \"state\", \"created_at\", \"expires_at\", \"decided_at\", \"decided_by_email\", \"decision_note\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"principal\", \"client_addr\", \"command\", \"state\", \"created_at\", \"expires_at\", \"decided_at\", \"decided_by_email\", \"decision_note\", \"auth_method\", \"key_fingerprint\", \"key_type\", \"key_comment\", \"key_found\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1987,7 +2418,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"principal\", \"client_addr\", \"command\", \"state\", \"created_at\", \"expires_at\", \"decided_at\", \"decided_by_email\", \"decision_note\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"principal\", \"client_addr\", \"command\", \"state\", \"created_at\", \"expires_at\", \"decided_at\", \"decided_by_email\", \"decision_note\", \"auth_method\", \"key_fingerprint\", \"key_type\", \"key_comment\", \"key_found\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2152,6 +2583,36 @@ func (m *Mut) SetDecisionNoteNull() {
 	m.expr &^= dDecisionNote
 }
 
+func (m *Mut) SetAuthMethod(v string) {
+	m.row.AuthMethod = v
+	m.dirty |= dAuthMethod
+	m.expr &^= dAuthMethod
+}
+
+func (m *Mut) SetKeyFingerprint(v string) {
+	m.row.KeyFingerprint = v
+	m.dirty |= dKeyFingerprint
+	m.expr &^= dKeyFingerprint
+}
+
+func (m *Mut) SetKeyType(v string) {
+	m.row.KeyType = v
+	m.dirty |= dKeyType
+	m.expr &^= dKeyType
+}
+
+func (m *Mut) SetKeyComment(v string) {
+	m.row.KeyComment = v
+	m.dirty |= dKeyComment
+	m.expr &^= dKeyComment
+}
+
+func (m *Mut) SetKeyFound(v bool) {
+	m.row.KeyFound = v
+	m.dirty |= dKeyFound
+	m.expr &^= dKeyFound
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2253,6 +2714,31 @@ func (n *Ins) SetDecisionNoteNull() {
 	n.set |= iDecisionNote
 }
 
+func (n *Ins) SetAuthMethod(v string) {
+	n.row.AuthMethod = v
+	n.set |= iAuthMethod
+}
+
+func (n *Ins) SetKeyFingerprint(v string) {
+	n.row.KeyFingerprint = v
+	n.set |= iKeyFingerprint
+}
+
+func (n *Ins) SetKeyType(v string) {
+	n.row.KeyType = v
+	n.set |= iKeyType
+}
+
+func (n *Ins) SetKeyComment(v string) {
+	n.row.KeyComment = v
+	n.set |= iKeyComment
+}
+
+func (n *Ins) SetKeyFound(v bool) {
+	n.row.KeyFound = v
+	n.set |= iKeyFound
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2298,7 +2784,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 10)
+	set := make([]string, 0, 15)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2330,6 +2816,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<10) != 0 {
 			set = append(set, "decision_note")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "auth_method")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "key_fingerprint")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "key_type")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "key_comment")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "key_found")
 		}
 	}
 	return set
@@ -2389,6 +2890,11 @@ var assignFor = map[string]string{
 	"decided_at":       "\"decided_at\" = EXCLUDED.\"decided_at\"",
 	"decided_by_email": "\"decided_by_email\" = EXCLUDED.\"decided_by_email\"",
 	"decision_note":    "\"decision_note\" = EXCLUDED.\"decision_note\"",
+	"auth_method":      "\"auth_method\" = EXCLUDED.\"auth_method\"",
+	"key_fingerprint":  "\"key_fingerprint\" = EXCLUDED.\"key_fingerprint\"",
+	"key_type":         "\"key_type\" = EXCLUDED.\"key_type\"",
+	"key_comment":      "\"key_comment\" = EXCLUDED.\"key_comment\"",
+	"key_found":        "\"key_found\" = EXCLUDED.\"key_found\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2454,6 +2960,16 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.DecidedByEmail.Arg())
 		case 10:
 			args = append(args, n.row.DecisionNote.Arg())
+		case 11:
+			args = append(args, n.row.AuthMethod)
+		case 12:
+			args = append(args, n.row.KeyFingerprint)
+		case 13:
+			args = append(args, n.row.KeyType)
+		case 14:
+			args = append(args, n.row.KeyComment)
+		case 15:
+			args = append(args, n.row.KeyFound)
 		}
 	}
 	var out Row
@@ -2491,7 +3007,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.Principal)
@@ -2503,6 +3019,11 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.DecidedAt.Arg())
 	args = append(args, r.DecidedByEmail.Arg())
 	args = append(args, r.DecisionNote.Arg())
+	args = append(args, r.AuthMethod)
+	args = append(args, r.KeyFingerprint)
+	args = append(args, r.KeyType)
+	args = append(args, r.KeyComment)
+	args = append(args, r.KeyFound)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2540,13 +3061,18 @@ var copyCols = []string{
 	"decided_at",
 	"decided_by_email",
 	"decision_note",
+	"auth_method",
+	"key_fingerprint",
+	"key_type",
+	"key_comment",
+	"key_found",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [11]any
+	buf  [16]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2575,6 +3101,11 @@ func (s *rowSource) Values() []any {
 	s.buf[8] = r.DecidedAt.Ptr()
 	s.buf[9] = r.DecidedByEmail.Ptr()
 	s.buf[10] = r.DecisionNote.Ptr()
+	s.buf[11] = &r.AuthMethod
+	s.buf[12] = &r.KeyFingerprint
+	s.buf[13] = &r.KeyType
+	s.buf[14] = &r.KeyComment
+	s.buf[15] = &r.KeyFound
 	return s.buf[:]
 }
 
@@ -2616,8 +3147,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 8
 	mask |= 1 << 9
 	mask |= 1 << 10
+	mask |= 1 << 11
+	mask |= 1 << 12
+	mask |= 1 << 13
+	mask |= 1 << 14
+	mask |= 1 << 15
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.Principal)
@@ -2629,6 +3165,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.DecidedAt.Arg())
 	args = append(args, r.DecidedByEmail.Arg())
 	args = append(args, r.DecisionNote.Arg())
+	args = append(args, r.AuthMethod)
+	args = append(args, r.KeyFingerprint)
+	args = append(args, r.KeyType)
+	args = append(args, r.KeyComment)
+	args = append(args, r.KeyFound)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2684,6 +3225,16 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.DecidedByEmail.Arg())
 		case 10:
 			args = append(args, n.row.DecisionNote.Arg())
+		case 11:
+			args = append(args, n.row.AuthMethod)
+		case 12:
+			args = append(args, n.row.KeyFingerprint)
+		case 13:
+			args = append(args, n.row.KeyType)
+		case 14:
+			args = append(args, n.row.KeyComment)
+		case 15:
+			args = append(args, n.row.KeyFound)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2750,6 +3301,16 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.DecidedByEmail.Arg())
 		case 9:
 			args = append(args, m.row.DecisionNote.Arg())
+		case 10:
+			args = append(args, m.row.AuthMethod)
+		case 11:
+			args = append(args, m.row.KeyFingerprint)
+		case 12:
+			args = append(args, m.row.KeyType)
+		case 13:
+			args = append(args, m.row.KeyComment)
+		case 14:
+			args = append(args, m.row.KeyFound)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2852,6 +3413,16 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.DecidedByEmail.Arg())
 		case 9:
 			args = append(args, m.row.DecisionNote.Arg())
+		case 10:
+			args = append(args, m.row.AuthMethod)
+		case 11:
+			args = append(args, m.row.KeyFingerprint)
+		case 12:
+			args = append(args, m.row.KeyType)
+		case 13:
+			args = append(args, m.row.KeyComment)
+		case 14:
+			args = append(args, m.row.KeyFound)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3020,6 +3591,16 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.DecidedByEmail.Arg())
 		case 9:
 			args = append(args, m.row.DecisionNote.Arg())
+		case 10:
+			args = append(args, m.row.AuthMethod)
+		case 11:
+			args = append(args, m.row.KeyFingerprint)
+		case 12:
+			args = append(args, m.row.KeyType)
+		case 13:
+			args = append(args, m.row.KeyComment)
+		case 14:
+			args = append(args, m.row.KeyFound)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

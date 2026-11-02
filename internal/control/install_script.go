@@ -29,7 +29,7 @@ because the output runs as root.
 */
 
 var (
-	reEnrollToken = regexp.MustCompile(`^` + enrollTokenPrefix + `[A-Za-z0-9_-]{16,128}$`)
+	reEnrollToken = regexp.MustCompile(`^` + enrollTokenPrefix + `(?:[a-z0-9]{12}\.)?[A-Za-z0-9_-]{16,128}$`)
 	reAgentVer    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)
 	reShellSafe   = regexp.MustCompile(`^[A-Za-z0-9:/._\-\[\]]+$`)
 )
@@ -50,8 +50,8 @@ func (a *API) getInstallScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "token is missing or is not an enrollment token")
 		return
 	}
-	if !reAgentVer.MatchString(version) {
-		writeErr(w, http.StatusBadRequest, "version must look like 1.2.3")
+	if version != "latest" && !reAgentVer.MatchString(version) {
+		writeErr(w, http.StatusBadRequest, "version must look like 1.2.3, or be latest")
 		return
 	}
 	u, err := CheckURL(q.Get("url"), "the control plane address", true)
@@ -94,12 +94,32 @@ TOKEN='@TOKEN@'
 VERSION='@VERSION@'
 CONTROL='@CONTROL@'
 PIN='@PIN@'
-BASE="https://github.com/gsoultan/argus/releases/download/v${VERSION}"
+RELEASES="https://github.com/gsoultan/argus/releases"
 
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nArgus install stopped: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run it with sudo"
+command -v curl >/dev/null 2>&1 || die "curl is not installed"
+
+# A control plane built from source does not know which release it matches,
+# and asks for the newest one. GitHub redirects /releases/latest to its tag.
+if [ "$VERSION" = latest ]; then
+  TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${RELEASES}/latest") ||
+    die "could not reach ${RELEASES} to find the newest release"
+  VERSION=${TAG##*/v}
+  case "$VERSION" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) die "could not tell the newest release from ${TAG}" ;;
+  esac
+fi
+BASE="${RELEASES}/download/v${VERSION}"
+
+# fetch names the file it could not download, which curl -f alone does not.
+fetch() {
+  curl -fsSLO "${BASE}/$1" ||
+    die "could not download ${BASE}/$1. Check that release v${VERSION} exists and this server can reach github.com."
+}
 
 # Release packages are named argus-agent_<version>_linux_<arch>.<format>,
 # goreleaser's default, with Go's names for the processor in every format.
@@ -116,15 +136,15 @@ cd "$TMP"
 say "Installing the Argus agent ${VERSION}"
 if command -v apt-get >/dev/null 2>&1; then
   F="argus-agent_${VERSION}_linux_${ARCH}.deb"
-  curl -fsSLO "${BASE}/${F}"
+  fetch "${F}"
   DEBIAN_FRONTEND=noninteractive apt-get install -y "./${F}" >/dev/null
 elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
   F="argus-agent_${VERSION}_linux_${ARCH}.rpm"
-  curl -fsSLO "${BASE}/${F}"
+  fetch "${F}"
   if command -v dnf >/dev/null 2>&1; then dnf install -y "./${F}" >/dev/null; else yum install -y "./${F}" >/dev/null; fi
 elif command -v apk >/dev/null 2>&1; then
   F="argus-agent_${VERSION}_linux_${ARCH}.apk"
-  curl -fsSLO "${BASE}/${F}"
+  fetch "${F}"
   apk add --allow-untrusted "./${F}" >/dev/null
 else
   die "no apt, dnf, yum or apk here; install the package by hand from ${BASE}"

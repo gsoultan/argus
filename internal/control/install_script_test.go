@@ -37,7 +37,8 @@ func TestTheInstallScriptCarriesTheTokenAndAddress(t *testing.T) {
 		"TOKEN='" + goodToken + "'",
 		"CONTROL='https://argus.example.com:8443'",
 		"PIN='sha256:" + strings.Repeat("ab", 32) + "'",
-		"releases/download/v${VERSION}",
+		`RELEASES="https://github.com/gsoultan/argus/releases"`,
+		"${RELEASES}/download/v${VERSION}",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("script does not contain %q", want)
@@ -112,7 +113,8 @@ func runInstallScript(t *testing.T, body, machine, sshdConfig string) (log, conf
 	}
 	stub("id", "echo 0")
 	stub("uname", "echo "+machine)
-	stub("curl", "")
+	// Asked where /releases/latest leads, curl answers with the newest tag.
+	stub("curl", `case "$*" in *url_effective*) echo https://github.com/gsoultan/argus/releases/tag/v2.0.0 ;; esac`)
 	stub("apt-get", "")
 	stub("systemctl", "")
 	stub("sshd", "")
@@ -184,5 +186,21 @@ func TestTheInstallScriptHooksEveryLoginAfterAMatchBlock(t *testing.T) {
 	}
 	if !strings.Contains(conf, "ForceCommand /usr/bin/argus-agent shim") {
 		t.Errorf("ForceCommand not added:\n%s", conf)
+	}
+}
+
+// A control plane built from source has no release of its own and asks for
+// the newest one. It used to ask for 0.1.0, which has no packages, so the
+// install stopped at a 404.
+func TestTheInstallScriptFindsTheNewestRelease(t *testing.T) {
+	_, _, h, _ := enrollAPI(t)
+	code, body := installScript(t, h, goodToken, "latest", "https://argus.example.com")
+	if code != http.StatusOK {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	log, _ := runInstallScript(t, body, "x86_64", "PasswordAuthentication no\n")
+	want := "curl -fsSLO https://github.com/gsoultan/argus/releases/download/v2.0.0/argus-agent_2.0.0_linux_amd64.deb"
+	if !strings.Contains(log, want) {
+		t.Errorf("the script did not fetch the newest release\nwant %q\ngot:\n%s", want, log)
 	}
 }

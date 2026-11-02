@@ -35,7 +35,7 @@ const assetSelect = `
 	       a.health, a.last_checked_at, a.principals,
 	       a.agent_state, a.agent_last_seen_at, a.bypass_posture,
 	       a.unmanaged_key_count, a.agent_console_only,
-	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts,
+	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts, a.direct_ssh_accounts,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
@@ -49,7 +49,7 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.HostKeyState, &a.HostKeyFingerprint, &a.HostKeyPinnedAt,
 		&a.Health, &a.LastCheckedAt, &a.Principals,
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
-		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts,
+		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts, &a.DirectSSHAccounts,
 		&a.TunnelConnected)
 	return a, err
 }
@@ -273,7 +273,7 @@ func (s *Store) CreateAsset(ctx context.Context, in AssetInput) (Asset, error) {
 	}
 
 	var id string
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO assets (hostname, address, port, protocol, os, tags, group_name,
 			principals, credential_mode, credential_ref, domain,
 			rotation_interval_days, source, health, host_key_state)
@@ -303,7 +303,7 @@ func (s *Store) UpdateAsset(ctx context.Context, id string, in AssetInput) (Asse
 		return Asset{}, err
 	}
 
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE assets SET
 			hostname = $2, address = $3, port = $4, protocol = $5, os = $6,
 			tags = $7, group_name = $8, principals = $9, credential_mode = $10,
@@ -333,7 +333,7 @@ func (s *Store) UpdateAsset(ctx context.Context, id string, in AssetInput) (Asse
 // sessions and audit entries keep pointing at a row that still exists, because
 // the history of a host is the part of it that matters after it is gone.
 func (s *Store) ArchiveAsset(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
+	tag, err := s.db(ctx).Exec(ctx,
 		`UPDATE assets SET archived_at = now(), updated_at = now()
 		 WHERE id = $1::uuid AND archived_at IS NULL`, id)
 	if err != nil {
@@ -347,7 +347,7 @@ func (s *Store) ArchiveAsset(ctx context.Context, id string) error {
 
 // AssetByID reads one live asset.
 func (s *Store) AssetByID(ctx context.Context, id string) (Asset, error) {
-	rows, err := s.pool.Query(ctx, assetSelect+`
+	rows, err := s.db(ctx).Query(ctx, assetSelect+`
 		WHERE a.id = $1::uuid AND a.archived_at IS NULL`, id)
 	if err != nil {
 		return Asset{}, err
@@ -411,7 +411,7 @@ const heldAssignmentsSQL = `
 
 // Assignments lists who may reach one asset.
 func (s *Store) Assignments(ctx context.Context, assetID string) ([]Assignment, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT g.asset_id::text, a.hostname, g.user_email, g.principals,
 		       g.personal_accounts, g.sudo, g.direct_ssh, g.granted_by, g.granted_at
 		FROM asset_assignments g JOIN assets a ON a.id = g.asset_id
@@ -487,7 +487,7 @@ func (s *Store) SetPersonAccess(
 		return err
 	}
 
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db(ctx).Exec(ctx, `
 		INSERT INTO asset_assignments
 		       (asset_id, user_email, principals, personal_accounts, sudo, direct_ssh, granted_by)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
@@ -510,7 +510,7 @@ func (s *Store) SetPersonAccess(
 
 // RemoveAssignment ends a person's access to an asset.
 func (s *Store) RemoveAssignment(ctx context.Context, assetID, email string) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.db(ctx).Exec(ctx,
 		`DELETE FROM asset_assignments WHERE asset_id = $1::uuid AND user_email = $2`,
 		assetID, strings.ToLower(strings.TrimSpace(email)))
 	return err
@@ -524,7 +524,7 @@ func (s *Store) RemoveAssignment(ctx context.Context, assetID, email string) err
 // takes it away here too, without having to revisit every assignment: the
 // intersection is computed, not stored.
 func (s *Store) AssetsForUser(ctx context.Context, email string) ([]Asset, error) {
-	rows, err := s.pool.Query(ctx, assetSelect+`
+	rows, err := s.db(ctx).Query(ctx, assetSelect+`
 		WHERE a.archived_at IS NULL
 		  AND a.id IN (SELECT asset_id FROM (`+heldAssignmentsSQL+`) g)
 		ORDER BY a.hostname`, email)
@@ -565,7 +565,7 @@ func (s *Store) AssetsForUser(ctx context.Context, email string) ([]Asset, error
 }
 
 func (s *Store) grantedPrincipals(ctx context.Context, email string) (map[string][]string, error) {
-	rows, err := s.pool.Query(ctx,
+	rows, err := s.db(ctx).Query(ctx,
 		`SELECT asset_id::text, principals FROM (`+heldAssignmentsSQL+`) g`, email)
 	if err != nil {
 		return nil, err
@@ -615,7 +615,7 @@ func intersect(a, b []string) []string {
 // gateway resolves a target typed at an ssh(1) command line.
 func (s *Store) AssignmentAllows(ctx context.Context, email, target, principal string) (bool, error) {
 	var ok bool
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM assets a
 			JOIN (`+heldAssignmentsSQL+`) g ON g.asset_id = a.id
@@ -640,7 +640,7 @@ func (s *Store) AssignmentAllows(ctx context.Context, email, target, principal s
 // administrator, the other is a host Argus does not broker at all.
 func (s *Store) AssetIsManaged(ctx context.Context, target string) (bool, error) {
 	var ok bool
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM assets a
 			WHERE a.archived_at IS NULL

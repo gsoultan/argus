@@ -91,6 +91,8 @@ func runBackup(configPath string, args []string) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	// 1. The chain head, before the dump, so the dump is guaranteed to hold it.
 	v, err := store.VerifyAuditChain(ctx)
@@ -100,6 +102,11 @@ func runBackup(configPath string, args []string) error {
 	if !v.OK {
 		return fmt.Errorf("the audit chain is broken at sequence %d (%s); backing up a "+
 			"broken chain would only preserve the break. Treat this as an incident", v.BrokenAt, v.Detail)
+	}
+	// Every other organization's chain too: the dump holds all of them, and a
+	// break in any one is the same incident.
+	if err := verifyTenantChains(ctx, store, nil); err != nil {
+		return err
 	}
 
 	dir := filepath.Join(*out, time.Now().UTC().Format("20060102T150405Z"))
@@ -335,6 +342,8 @@ func runBackupVerify(configPath string, args []string) error {
 		return fmt.Errorf("open restored database: %w", err)
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	var problems []string
 	v, err := store.VerifyAuditChain(ctx)
@@ -345,6 +354,9 @@ func runBackupVerify(configPath string, args []string) error {
 		problems = append(problems, fmt.Sprintf("audit chain broken at sequence %d: %s", v.BrokenAt, v.Detail))
 	default:
 		fmt.Printf("  chain    intact, %d events\n", v.Checked)
+	}
+	if err := verifyTenantChains(ctx, store, &problems); err != nil {
+		return err
 	}
 	if m.ChainHead != control.GenesisHash {
 		if seq, err := store.AuditHashSeq(ctx, m.ChainHead); err != nil {
@@ -461,4 +473,34 @@ func humanBytes(n int64) string {
 		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", n)
+}
+
+// verifyTenantChains checks every organization's chain but the default's,
+// which the caller has already checked. With problems nil a break is an
+// error; otherwise it is appended, the way the restore drill collects them.
+func verifyTenantChains(ctx context.Context, store *control.Store, problems *[]string) error {
+	var failed error
+	err := store.ForEachTenant(ctx, func(ctx context.Context, t *control.Tenant) {
+		if t.IsDefault() || failed != nil {
+			return
+		}
+		v, err := store.VerifyAuditChain(ctx)
+		switch {
+		case err != nil:
+			failed = fmt.Errorf("verify %s's audit chain: %w", t.Slug, err)
+		case !v.OK && problems == nil:
+			failed = fmt.Errorf("%s's audit chain is broken at sequence %d (%s); backing up a "+
+				"broken chain would only preserve the break. Treat this as an incident",
+				t.Slug, v.BrokenAt, v.Detail)
+		case !v.OK:
+			*problems = append(*problems, fmt.Sprintf("%s: audit chain broken at sequence %d: %s",
+				t.Slug, v.BrokenAt, v.Detail))
+		default:
+			fmt.Printf("  chain    %s intact, %d events\n", t.Slug, v.Checked)
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("list organizations: %w", err)
+	}
+	return failed
 }

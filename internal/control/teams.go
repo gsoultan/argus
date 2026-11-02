@@ -70,7 +70,7 @@ func normaliseTeamName(name string) (string, error) {
 // and a team count is not something a caller should be able to turn into a
 // query count.
 func (s *Store) Teams(ctx context.Context) ([]Team, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT id::text, name, created_by, created_at FROM teams ORDER BY lower(name)`)
 	if err != nil {
 		return nil, err
@@ -92,7 +92,7 @@ func (s *Store) Teams(ctx context.Context) ([]Team, error) {
 		return nil, err
 	}
 
-	rows, err = s.pool.Query(ctx, `
+	rows, err = s.db(ctx).Query(ctx, `
 		SELECT team_id::text, user_email FROM team_members ORDER BY user_email`)
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (s *Store) CreateTeam(ctx context.Context, name string, members []string, a
 	if err != nil {
 		return "", err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -179,7 +179,7 @@ func (s *Store) RenameTeam(ctx context.Context, id, name string) error {
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE teams SET name = $2 WHERE id = $1::uuid`, id, name)
+	tag, err := s.db(ctx).Exec(ctx, `UPDATE teams SET name = $2 WHERE id = $1::uuid`, id, name)
 	if err != nil && isUniqueViolation(err) {
 		return ErrInvalidAsset{Reason: fmt.Sprintf("there is already a team called %q", name)}
 	}
@@ -196,7 +196,7 @@ func (s *Store) RenameTeam(ctx context.Context, id, name string) error {
 // loses that access in the same statement: the cascade takes its members and
 // its assignments with it.
 func (s *Store) DeleteTeam(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM teams WHERE id = $1::uuid`, id)
+	tag, err := s.db(ctx).Exec(ctx, `DELETE FROM teams WHERE id = $1::uuid`, id)
 	if err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func (s *Store) AddTeamMember(ctx context.Context, teamID, email, actor string) 
 	if len(emails) == 0 {
 		return ErrInvalidAsset{Reason: "adding someone to a team needs their email"}
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db(ctx).Exec(ctx, `
 		INSERT INTO team_members (team_id, user_email, added_by)
 		SELECT id, $2, $3 FROM teams WHERE id = $1::uuid
 		ON CONFLICT DO NOTHING`, teamID, emails[0], strings.ToLower(actor))
@@ -233,7 +233,7 @@ func (s *Store) AddTeamMember(ctx context.Context, teamID, email, actor string) 
 // RemoveTeamMember takes a person out of a team, and with it every server
 // they reached only through it.
 func (s *Store) RemoveTeamMember(ctx context.Context, teamID, email string) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.db(ctx).Exec(ctx,
 		`DELETE FROM team_members WHERE team_id = $1::uuid AND user_email = lower($2)`,
 		teamID, strings.TrimSpace(email))
 	if err != nil {
@@ -244,7 +244,7 @@ func (s *Store) RemoveTeamMember(ctx context.Context, teamID, email string) erro
 
 func (s *Store) teamExists(ctx context.Context, id string) error {
 	var ok bool
-	if err := s.pool.QueryRow(ctx,
+	if err := s.db(ctx).QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM teams WHERE id = $1::uuid)`, id).Scan(&ok); err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func (s *Store) TeamAssignments(ctx context.Context, assetID string) ([]TeamAssi
 }
 
 func (s *Store) teamAssignments(ctx context.Context, where string, args ...any) ([]TeamAssignment, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT ta.asset_id::text, a.hostname, ta.team_id::text, t.name, ta.principals,
 		       ta.personal_accounts, ta.sudo, ta.direct_ssh, ta.granted_by, ta.granted_at
 		  FROM asset_team_assignments ta
@@ -327,7 +327,7 @@ func (s *Store) SetTeamAccess(
 	if err := s.teamExists(ctx, teamID); err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db(ctx).Exec(ctx, `
 		INSERT INTO asset_team_assignments
 		       (asset_id, team_id, principals, personal_accounts, sudo, direct_ssh, granted_by)
 		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
@@ -350,7 +350,7 @@ func (s *Store) SetTeamAccess(
 
 // RemoveTeamAssignment ends a team's access to an asset.
 func (s *Store) RemoveTeamAssignment(ctx context.Context, assetID, teamID string) error {
-	_, err := s.pool.Exec(ctx,
+	_, err := s.db(ctx).Exec(ctx,
 		`DELETE FROM asset_team_assignments WHERE asset_id = $1::uuid AND team_id = $2::uuid`,
 		assetID, teamID)
 	return err

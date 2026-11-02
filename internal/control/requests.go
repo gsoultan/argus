@@ -58,7 +58,7 @@ func (s *Store) CreateRequest(ctx context.Context, r AccessRequest) (AccessReque
 		return r, fmt.Errorf("duration must be between 1 and %d minutes", MaxDurationMinutes)
 	}
 
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		INSERT INTO access_requests
 			(requester_email, asset_hostnames, principal, justification,
 			 duration_minutes, state, break_glass)
@@ -75,7 +75,7 @@ func (s *Store) CreateRequest(ctx context.Context, r AccessRequest) (AccessReque
 
 // DecideRequest approves or denies, enforcing separation of duty.
 func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy string) (AccessRequest, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return AccessRequest{}, err
 	}
@@ -138,7 +138,7 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT id::text, requester_email, asset_hostnames, principal, justification,
 		       duration_minutes, state, created_at, decided_at, decided_by_email,
 		       decision_note, expires_at, break_glass
@@ -172,7 +172,7 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 // immediately instead of at the next refresh.
 func (s *Store) ActiveGrant(ctx context.Context, email, host, principal string) (bool, *time.Time, error) {
 	var expires time.Time
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT expires_at FROM access_requests
 		WHERE requester_email = $1
 		  AND principal       = $2
@@ -196,7 +196,7 @@ func (s *Store) ActiveGrant(ctx context.Context, email, host, principal string) 
 // enforcement and load-bearing for the console: a queue showing week-old
 // "approved" grants trains people to ignore it.
 func (s *Store) ExpireGrants(ctx context.Context) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE access_requests SET state = 'expired'
 		WHERE state = 'approved' AND expires_at IS NOT NULL AND expires_at < now()`)
 	if err != nil {

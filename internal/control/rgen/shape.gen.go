@@ -133,6 +133,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.DirectSsh,
 		m.AgentDirectSsh,
 		m.AgentPersonalAccounts,
+		m.DirectSshAccounts,
 	}
 }
 
@@ -240,6 +241,11 @@ func _assertDirectLoginRequestShape(m m0.DirectLoginRequest) {
 		m.DecidedAt,
 		m.DecidedByEmail,
 		m.DecisionNote,
+		m.AuthMethod,
+		m.KeyFingerprint,
+		m.KeyType,
+		m.KeyComment,
+		m.KeyFound,
 	}
 }
 
@@ -390,5 +396,7 @@ func _assertUserShape(m m0.User) {
 		m.LoginName,
 		m.SshPublicKey,
 		m.DisabledBy,
+		m.HomeTenant,
+		m.Shareable,
 	}
 }

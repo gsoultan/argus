@@ -133,7 +133,7 @@ func loginNameCandidates(email string) []string {
 // Called after anything that can create that need, rather than on the
 // heartbeat, which must not write.
 func (s *Store) ensurePersonalLoginNames(ctx context.Context) error {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT DISTINCT u.email
 		  FROM users u
 		  JOIN (`+effectivePersonalSQL+`) e ON e.user_email = lower(u.email)
@@ -157,7 +157,7 @@ func (s *Store) ensurePersonalLoginNames(ctx context.Context) error {
 // they have none. A name once chosen is kept.
 func (s *Store) ensureLoginName(ctx context.Context, email string) (string, error) {
 	var current *string
-	err := s.pool.QueryRow(ctx,
+	err := s.db(ctx).QueryRow(ctx,
 		`SELECT login_name FROM users WHERE lower(email) = lower($1)`, email).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNoAccount
@@ -169,7 +169,7 @@ func (s *Store) ensureLoginName(ctx context.Context, email string) (string, erro
 		return *current, nil
 	}
 	for _, name := range loginNameCandidates(email) {
-		tag, err := s.pool.Exec(ctx, `
+		tag, err := s.db(ctx).Exec(ctx, `
 			UPDATE users SET login_name = $2
 			 WHERE lower(email) = lower($1) AND login_name IS NULL`, email, name)
 		if err != nil && isUniqueViolation(err) {
@@ -200,7 +200,7 @@ func (s *Store) SetLoginName(ctx context.Context, email, name string) (before st
 			"%q is an account servers already have; pick a name of the person's own", name)}
 	}
 	var old *string
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		UPDATE users n SET login_name = $2
 		  FROM users o
 		 WHERE n.id = o.id AND lower(n.email) = lower($1)
@@ -273,14 +273,14 @@ func (s *Store) SetSSHKey(ctx context.Context, email, text string) (string, erro
 	}
 	if key != "" {
 		var direct bool
-		if err := s.pool.QueryRow(ctx, hasDirectSSHSQL, email).Scan(&direct); err != nil {
+		if err := s.db(ctx).QueryRow(ctx, hasDirectSSHSQL, email).Scan(&direct); err != nil {
 			return "", err
 		}
 		if !direct {
 			return "", ErrNoDirectSSH
 		}
 	}
-	tag, err := s.pool.Exec(ctx,
+	tag, err := s.db(ctx).Exec(ctx,
 		`UPDATE users SET ssh_public_key = $2 WHERE lower(email) = lower($1)`, email, key)
 	if err != nil {
 		return "", err
@@ -316,7 +316,7 @@ type ServerAccount struct {
 func (s *Store) ServerAccountOf(ctx context.Context, email string) (ServerAccount, error) {
 	var out ServerAccount
 	var name *string
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT login_name, ssh_public_key FROM users WHERE lower(email) = lower($1)`,
 		email).Scan(&name, &out.SSHKey)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -329,7 +329,7 @@ func (s *Store) ServerAccountOf(ctx context.Context, email string) (ServerAccoun
 		out.LoginName = *name
 	}
 	out.SSHFingerprint = keyFingerprint(out.SSHKey)
-	if err := s.pool.QueryRow(ctx, hasDirectSSHSQL, email).Scan(&out.DirectSSH); err != nil {
+	if err := s.db(ctx).QueryRow(ctx, hasDirectSSHSQL, email).Scan(&out.DirectSSH); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -377,7 +377,7 @@ var effectivePersonalSQL = `
 // What each person gets is effectivePersonalSQL: their own setting if they
 // have one here, otherwise the most open of their teams.
 func (s *Store) PersonalAccountsFor(ctx context.Context, hostname string) ([]PersonalAccount, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		WITH a AS (`+heartbeatAssetSQL+`)
 		SELECT u.login_name, lower(u.email), e.sudo, e.direct, u.ssh_public_key
 		  FROM a
@@ -434,7 +434,7 @@ func (s *Store) RecordPersonalAccountStates(ctx context.Context, hostname string
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = s.db(ctx).Exec(ctx, `
 		UPDATE assets SET agent_personal_accounts = $2::jsonb
 		 WHERE id = (`+heartbeatAssetSQL+`)`, hostname, string(b))
 	return err
@@ -451,7 +451,7 @@ var personalPrincipalsSQL = `
 	   AND u.disabled_at IS NULL`
 
 func (s *Store) personalPrincipals(ctx context.Context, email string) (map[string]string, error) {
-	rows, err := s.pool.Query(ctx,
+	rows, err := s.db(ctx).Query(ctx,
 		`SELECT asset_id::text, login_name FROM (`+personalPrincipalsSQL+`) p`, email)
 	if err != nil {
 		return nil, err
@@ -526,7 +526,7 @@ var directRanks = map[string]int{DirectSSHOff: 0, DirectSSHApprove: 1, DirectSSH
 // setting replaces their teams', and otherwise the most open team wins.
 func (s *Store) PersonServers(ctx context.Context, email string) ([]PersonServer, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT a.id::text, a.hostname, '' AS team, g.principals, g.personal_accounts, g.sudo, g.direct_ssh
 		  FROM asset_assignments g JOIN assets a ON a.id = g.asset_id
 		 WHERE g.user_email = $1 AND a.archived_at IS NULL

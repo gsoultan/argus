@@ -76,6 +76,9 @@ type API struct {
 	signer        *auth.Signer
 	consoleURL    string
 	secureCookies bool
+	// signers holds the per-organization signers derived from signer; see
+	// tenant_routes.go.
+	signers tenantSigners
 
 	// SessionTTL and TicketTTL default sensibly; see sessionTTL/ticketTTL.
 	SessionTTL time.Duration
@@ -135,7 +138,7 @@ func (a *API) Handler() http.Handler {
 	a.registerCommon(mux)
 	a.registerConsole(mux)
 	a.registerFleet(mux)
-	return a.securityHeaders(a.cors(mux))
+	return a.securityHeaders(a.cors(a.scope(mux)))
 }
 
 // ConsoleHandler serves the surface a person reaches: sign-in, the console's
@@ -150,7 +153,7 @@ func (a *API) ConsoleHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerConsole(mux)
-	return a.securityHeaders(a.cors(mux))
+	return a.securityHeaders(a.cors(a.scope(mux)))
 }
 
 // FleetHandler serves the surface gateways and agents reach.
@@ -164,7 +167,7 @@ func (a *API) FleetHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerFleet(mux)
-	return a.securityHeaders(a.cors(mux))
+	return a.securityHeaders(a.cors(a.scope(mux)))
 }
 
 // registerCommon adds what both surfaces need: liveness, and the process's own
@@ -190,6 +193,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/mfa/confirm", a.handleMFAConfirm)
 	mux.HandleFunc("POST /auth/password/change", a.handleChangePassword)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
+	mux.HandleFunc("POST /auth/switch", a.handleSwitchOrg)
 	// First run: the first account, once, with a token read from the host.
 	mux.HandleFunc("GET /auth/setup", a.handleSetupStatus)
 	mux.HandleFunc("POST /auth/setup", a.limitLogin(a.handleSetup))
@@ -233,8 +237,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh/accounts/{account}", a.putAssetDirectSSHAccount)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
+	mux.HandleFunc("POST /api/v1/users/shared", a.postSharedAccount)
+	mux.HandleFunc("PUT /api/v1/users/{email}/shareable", a.putAccountShareable)
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
@@ -246,6 +253,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
+	mux.HandleFunc("GET /api/v1/assets/{id}/login-accounts", a.getLoginAccounts)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
 	mux.HandleFunc("GET /api/v1/assets/{id}/team-assignments", a.getTeamAssignments)
@@ -281,6 +289,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/agents", a.getAgentCredentials)
 	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", a.postRevokeAgent)
 
+	// Organizations. Platform owners only; see tenant_routes.go.
+	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
+	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
+	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/disable", a.postTenantDisabled(true))
+	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/enable", a.postTenantDisabled(false))
 }
 
 // registerFleet adds the routes an agent reaches.
@@ -399,7 +412,7 @@ func (a *API) cors(next http.Handler) http.Handler {
 		for _, allowed := range a.AllowedOrigins {
 			if allowed == origin && origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, "+OrgHeader)
 				w.Header().Set("Access-Control-Allow-Methods",
 					"GET, POST, PATCH, PUT, DELETE, OPTIONS")
 				// Without this the browser silently hides the header and the
@@ -539,6 +552,8 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 		// what the control plane holds before either is believed.
 		DirectLoginID  string `json:"directLoginId"`
 		DirectApproval string `json:"directApproval"`
+		// Auth is how a direct login signed in: a password, or which key.
+		Auth *LoginAuth `json:"auth"`
 	}
 	if err := decodeReport(r, &report, a.log, "report/session"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -582,7 +597,10 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	// Only on the report that created the row: the gateway and the agent both
 	// report every session, and keep reporting it while it runs. Queued, not
 	// sent, so a slow mail server cannot hold up the reporter.
-	if created {
+	// Alert channels are the platform's configuration, so only the default
+	// organization's sessions are announced on them: another organization's
+	// activity must not be mailed to the platform's recipients.
+	if created && tenantIDOf(r.Context()) == DefaultTenantID {
 		a.Alerts.SessionStarted(notify.SessionStarted{
 			ID:        in.ID,
 			UserEmail: in.UserEmail,
@@ -640,6 +658,7 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 			report.DirectApproval); ok {
 			e.Action, e.Severity, e.Detail = "session.direct_recorded", "notice", detail
 		}
+		e.Detail += report.Auth.bounded().describe()
 		if _, err := a.store.AppendAudit(r.Context(), e); err != nil {
 			a.log.Error("audit append failed", "error", err)
 		}
@@ -695,10 +714,23 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// A setting that cannot be read is left out, so the agent keeps what it
 	// last heard rather than a value chosen by an outage; console_only stays
 	// on regardless.
+	//
+	// Accounts the server names ride it too. direct_ssh is the strictest mode
+	// any account gets, which is what an agent too old to read the accounts
+	// applies to everyone: a named account is never more open there than it
+	// was asked to be. An agent that reads them takes direct_ssh_default for
+	// every account it is not given.
 	reply := map[string]any{"status": "ok", "console_only": true}
-	if mode, merr := a.store.EffectiveDirectSSH(r.Context(), in.Hostname); merr == nil {
-		reply["direct_ssh"] = mode
-		reply["console_only"] = mode != DirectSSHAllow
+	if d, merr := a.store.DirectSSHSettingFor(r.Context(), in.Hostname); merr == nil {
+		strictest := d.Strictest()
+		reply["direct_ssh"] = strictest
+		reply["console_only"] = strictest != DirectSSHAllow
+		reply["direct_ssh_default"] = d.Mode
+		accounts := d.Accounts
+		if accounts == nil {
+			accounts = map[string]string{}
+		}
+		reply["direct_ssh_accounts"] = accounts
 	} else {
 		a.log.Error("heartbeat: cannot read the direct ssh setting", "error", merr)
 	}

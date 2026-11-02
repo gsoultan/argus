@@ -12,7 +12,8 @@ ALTER TABLE assets ADD COLUMN IF NOT EXISTS recording_scope TEXT NOT NULL DEFAUL
 
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_recording_scope_check') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_recording_scope_check'
+                   AND conrelid = 'assets'::regclass) THEN
         ALTER TABLE assets ADD CONSTRAINT assets_recording_scope_check
             CHECK (recording_scope IN ('every_login', 'argus_only'));
     END IF;

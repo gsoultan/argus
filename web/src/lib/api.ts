@@ -15,6 +15,7 @@ import {
   removeAssetAssignment,
   setAssetAssignment,
   setAssetDirectSsh,
+  setAssetDirectSshAccount,
   updateAsset as updateOnControlPlane,
   whoami,
   saveGatewayPolicy,
@@ -34,11 +35,14 @@ import {
   setAccountRole,
   setAccountDisabled,
   createAccount,
+  createSharedAccount,
+  setAccountShareable,
   personServers as livePersonServers,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
+  ServerLoginAccount, ServerLoginAccounts,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, User,
 } from '~/types/domain'
@@ -226,6 +230,11 @@ export const api = {
           // session carries rather than inventing the rest.
           mfaEnrolled: false,
           lastSeenAt: new Date().toISOString(),
+          ...(id.org ? { org: id.org } : {}),
+          ...(id.orgs ? { orgs: id.orgs } : {}),
+          shared: id.shared === true,
+          multiOrg: id.multiOrg === true,
+          platformOwner: id.platformOwner === true,
         }
       }
     }
@@ -312,6 +321,26 @@ export const api = {
     })
   },
 
+  async addSharedAccount(input: { email: string; displayName: string; role: User['role']; homeOrg?: string }): Promise<void> {
+    if (isConfigured()) {
+      await createSharedAccount(input)
+      return
+    }
+    await latency(250)
+    throw new Error('no account that can be shared uses this address')
+  },
+
+  async setShareable(email: string, shareable: boolean): Promise<void> {
+    if (isConfigured()) {
+      await setAccountShareable(email, shareable)
+      return
+    }
+    await latency(150)
+    const u = users.find((x) => x.email === email)
+    if (!u) throw new Error(`no account for ${email}`)
+    u.shareable = shareable
+  },
+
   async stats(): Promise<FleetStats> {
     return live.orFallback(live.stats, async () => {
       await latency(90)
@@ -365,6 +394,31 @@ export const api = {
       return db.assets
     })
     return source.find((a) => a.id === id)
+  },
+
+  /** Who can log in to a server directly, from its agent's last check-in. */
+  async loginAccounts(id: string): Promise<ServerLoginAccounts> {
+    return live.orFallback(() => live.loginAccounts(id), async () => {
+      await latency(90)
+      const a = db.assets.find((x) => x.id === id)
+      if (!a || a.agentState === 'absent') {
+        return { reported: false, checkedAt: null, accounts: [], passwords: false, keys: false, exposeAuthInfo: false }
+      }
+      const sample: Record<string, Omit<ServerLoginAccount, 'user'>> = {
+        deploy: { password: 'locked', keys: 2, canLogin: true },
+        ops: { password: 'set', keys: 1, canLogin: true },
+        root: { password: 'set', keys: 0, canLogin: false },
+      }
+      const accounts: ServerLoginAccount[] = [
+        ...a.principals.map((user) => ({ user, ...(sample[user] ?? { password: 'set' as const, keys: 0, canLogin: true }) })),
+        { user: 'sys-admin', password: 'set', keys: 0, canLogin: true },
+        { user: 'staging', password: 'locked', keys: 1, canLogin: true },
+      ]
+      return {
+        reported: true, checkedAt: a.agentLastSeenAt ?? null, accounts,
+        passwords: true, keys: true, exposeAuthInfo: true,
+      }
+    })
   },
 
   /* ── The inventory, as an administrator edits it ───────────────────────── */
@@ -699,6 +753,18 @@ export const api = {
     const a = db.assets.find((x) => x.id === id)
     if (!a) throw new Error('asset not found')
     a.directSsh = mode
+    return a
+  },
+
+  async setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
+    if (isConfigured()) return setAssetDirectSshAccount(id, account, mode)
+    await latency(300)
+    const a = db.assets.find((x) => x.id === id)
+    if (!a) throw new Error('asset not found')
+    const accounts = { ...(a.directSshAccounts ?? {}) }
+    if (mode) accounts[account] = mode
+    else delete accounts[account]
+    a.directSshAccounts = accounts
     return a
   },
 

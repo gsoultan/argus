@@ -272,7 +272,7 @@ func (s *Store) CreateDatabase(ctx context.Context, d Database, actor string) (D
 	}
 	policy, _ := json.Marshal(d.Policy)
 	var id string
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		INSERT INTO databases (asset_id, engine, host, port, dbname, admin_user, label, policy, created_by,
 			pooler_host, pooler_port, config_path)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -307,7 +307,7 @@ func (s *Store) UpdateDatabase(ctx context.Context, d Database) (Database, error
 		return d, err
 	}
 	policy, _ := json.Marshal(d.Policy)
-	tag, err := s.pool.Exec(ctx, `UPDATE databases SET host = $2, port = $3, admin_user = $4,
+	tag, err := s.db(ctx).Exec(ctx, `UPDATE databases SET host = $2, port = $3, admin_user = $4,
 		label = $5, policy = $6, pooler_host = $7, pooler_port = $8, config_path = $9 WHERE id = $1::uuid`,
 		d.ID, d.Host, d.Port, d.AdminUser, d.Label, policy, d.PoolerHost, d.PoolerPort, d.ConfigPath)
 	if err != nil {
@@ -325,7 +325,7 @@ func (s *Store) UpdateDatabase(ctx context.Context, d Database) (Database, error
 // DeleteDatabase removes a database and its assignments. Sessions and audit
 // entries keep naming it by id.
 func (s *Store) DeleteDatabase(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM databases WHERE id = $1::uuid`, id)
+	tag, err := s.db(ctx).Exec(ctx, `DELETE FROM databases WHERE id = $1::uuid`, id)
 	if err != nil {
 		return err
 	}
@@ -337,7 +337,7 @@ func (s *Store) DeleteDatabase(ctx context.Context, id string) error {
 
 // Database reads one.
 func (s *Store) Database(ctx context.Context, id string) (Database, error) {
-	d, err := scanDatabase(s.pool.QueryRow(ctx, `SELECT `+databaseCols+`
+	d, err := scanDatabase(s.db(ctx).QueryRow(ctx, `SELECT `+databaseCols+`
 		FROM databases d JOIN assets a ON a.id = d.asset_id WHERE d.id = $2::uuid`,
 		tunnelFreshFor.String(), id))
 	if errors.Is(err, pgx.ErrNoRows) || (err != nil && strings.Contains(err.Error(), "invalid input syntax for type uuid")) {
@@ -354,7 +354,7 @@ func (s *Store) Databases(ctx context.Context, assetID string) ([]Database, erro
 		q += ` WHERE d.asset_id = $2::uuid`
 		args = append(args, assetID)
 	}
-	rows, err := s.pool.Query(ctx, q+` ORDER BY a.hostname, d.dbname`, args...)
+	rows, err := s.db(ctx).Query(ctx, q+` ORDER BY a.hostname, d.dbname`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +403,7 @@ func (s *Store) DatabasesFor(ctx context.Context, email, role string) ([]Databas
 // DatabaseAccess is what email may do on database dbID now.
 func (s *Store) DatabaseAccess(ctx context.Context, email, dbID string) (DBAccess, error) {
 	email = strings.ToLower(email)
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT g.level, g.needs_approval FROM database_assignments g
 		WHERE g.database_id = $1::uuid
 		  AND (g.user_email = $2
@@ -436,7 +436,7 @@ func (s *Store) DatabaseAccess(ctx context.Context, email, dbID string) (DBAcces
 	if acc.Approvable != "" && tunnel.LevelRank(acc.Approvable) > tunnel.LevelRank(acc.Level) {
 		var level string
 		var expires time.Time
-		err := s.pool.QueryRow(ctx, `
+		err := s.db(ctx).QueryRow(ctx, `
 			SELECT database_level, expires_at FROM access_requests
 			WHERE requester_email = $1 AND database_id = $2::uuid AND state = 'approved'
 			  AND expires_at > now()
@@ -456,7 +456,7 @@ func (s *Store) DatabaseAccess(ctx context.Context, email, dbID string) (DBAcces
 
 // DBAssignments lists who may open a database.
 func (s *Store) DBAssignments(ctx context.Context, dbID string) ([]DBAssignment, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT g.id::text, g.database_id::text, g.team_id::text, coalesce(t.name, ''), g.user_email,
 		       g.level, g.needs_approval, g.granted_by, g.granted_at
 		FROM database_assignments g LEFT JOIN teams t ON t.id = g.team_id
@@ -486,7 +486,7 @@ func (s *Store) SetDBAssignment(ctx context.Context, g DBAssignment, actor strin
 	}
 	switch {
 	case g.TeamID != nil && g.UserEmail == nil:
-		_, err := s.pool.Exec(ctx, `
+		_, err := s.db(ctx).Exec(ctx, `
 			INSERT INTO database_assignments (database_id, team_id, level, needs_approval, granted_by)
 			VALUES ($1::uuid, $2::uuid, $3, $4, $5)
 			ON CONFLICT (database_id, team_id) WHERE team_id IS NOT NULL
@@ -499,7 +499,7 @@ func (s *Store) SetDBAssignment(ctx context.Context, g DBAssignment, actor strin
 		if email == "" {
 			return ErrInvalidDatabase{"a person's assignment needs their email"}
 		}
-		_, err := s.pool.Exec(ctx, `
+		_, err := s.db(ctx).Exec(ctx, `
 			INSERT INTO database_assignments (database_id, user_email, level, needs_approval, granted_by)
 			VALUES ($1::uuid, $2, $3, $4, $5)
 			ON CONFLICT (database_id, user_email) WHERE user_email IS NOT NULL
@@ -523,7 +523,7 @@ func dbAssignErr(err error) error {
 
 // RemoveDBAssignment takes an assignment away.
 func (s *Store) RemoveDBAssignment(ctx context.Context, dbID, assignmentID string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM database_assignments WHERE id = $1::uuid AND database_id = $2::uuid`,
+	tag, err := s.db(ctx).Exec(ctx, `DELETE FROM database_assignments WHERE id = $1::uuid AND database_id = $2::uuid`,
 		assignmentID, dbID)
 	if err != nil {
 		return err
@@ -560,7 +560,7 @@ func (s *Store) CreateDatabaseRequest(ctx context.Context, email, dbID, level, j
 	}
 	r := AccessRequest{RequesterEmail: email, AssetHostnames: []string{d.Hostname},
 		Principal: "db:" + level, Justification: justification, DurationMinutes: minutes}
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO access_requests
 			(requester_email, asset_hostnames, principal, justification,
 			 duration_minutes, state, break_glass, database_id, database_level)
