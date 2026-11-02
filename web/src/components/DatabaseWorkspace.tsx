@@ -11,6 +11,8 @@ import {
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { ActivityPanel, RolesPanel, type Collect, type Collected } from '~/components/DatabaseAdmin'
+import { useCompletion } from '~/components/Autocomplete'
+import { catalogFrom, completeSQL, type SQLCatalog, type SQLColumn } from '~/lib/sqlComplete'
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -25,6 +27,9 @@ Built to stay light on a laptop and usable on a phone:
 - The tree is loaded lazily per node, as the person's role, so it shows only
   what they may see and the first paint needs one small query.
 - Narrow screens fold the tree into a drawer and stack editor over results.
+- The editor's autocomplete reads names the same way as the tree, as the
+  person's role: one "completion" answer for schemas, tables and functions,
+  then a table's columns once a statement names it, kept for the session.
 */
 
 export interface WorkspaceProps {
@@ -38,7 +43,7 @@ export interface WorkspaceProps {
 
 type Col = { name: string; type: string }
 type Cell = string | null
-type Obj = { name: string; kind: string; detail?: string; count?: number }
+type Obj = { name: string; kind: string; detail?: string; count?: number; schema?: string }
 
 interface PGAnswer {
   id: number
@@ -310,6 +315,39 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }, [running, send])
 
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Autocomplete. The catalogue is asked for once per session; an agent too
+  // old to answer it leaves keywords and built-in functions, which need none.
+  const [catalog, setCatalog] = useState<SQLCatalog | null>(null)
+  useEffect(() => { void schema('completion').then((o) => setCatalog(catalogFrom(o))) }, [schema])
+  // Columns by `schema.table`, loaded when a statement names the table.
+  // Bounded: the keys come from the catalogue, but a long session can name
+  // a great many tables.
+  const columns = useRef(new Map<string, SQLColumn[] | 'loading'>())
+  const [columnsVersion, setColumnsVersion] = useState(0)
+  const columnsOf = useCallback((sch: string, name: string) => {
+    const c = columns.current.get(`${sch}.${name}`)
+    return c === 'loading' ? undefined : c
+  }, [])
+  const loadColumns = useCallback((sch: string, name: string) => {
+    const key = `${sch}.${name}`
+    if (columns.current.has(key)) return
+    if (columns.current.size >= 500) columns.current.delete(columns.current.keys().next().value!)
+    columns.current.set(key, 'loading')
+    void schema('columns', sch, name).then((objs) => {
+      columns.current.set(key, objs.filter((o) => !o.detail?.includes('hidden'))
+        .map((o) => ({ name: o.name, type: (o.detail ?? '').split(' · ')[0]!.replace(/ not null$/, '') })))
+      setColumnsVersion((v) => v + 1)
+    })
+  }, [schema])
+  const completeHere = useCallback((text: string, cursor: number, explicit: boolean) => {
+    const c = completeSQL(text, cursor, catalog, columnsOf, explicit)
+    for (const n of c?.needs ?? []) loadColumns(n.schema, n.name)
+    return c
+  }, [catalog, columnsOf, loadColumns])
+  const completion = useCompletion({
+    ref: editorRef, value: sql, setValue: setSql, complete: completeHere, refresh: columnsVersion,
+  })
   const runSelectionOrAll = useCallback(() => {
     const el = editorRef.current
     if (el && el.selectionStart !== el.selectionEnd) {
@@ -320,6 +358,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }, [run, sql])
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (completion.onKeyDown(e)) return
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault()
       runSelectionOrAll()
@@ -433,9 +472,10 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           <Textarea
             ref={editorRef}
             value={sql}
-            onChange={(e) => setSql(e.currentTarget.value)}
+            {...completion.editorProps}
+            onChange={(e) => { completion.onTyped(); setSql(e.currentTarget.value) }}
             onKeyDown={onKey}
-            placeholder="SELECT … (⌘/Ctrl+Enter runs; select part of it to run only that)"
+            placeholder="SELECT … (⌘/Ctrl+Enter runs; select part of it to run only that; Ctrl+Space suggests)"
             autosize
             minRows={narrow ? 4 : 7}
             maxRows={16}
@@ -445,6 +485,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             aria-label="SQL"
             styles={{ input: { fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: '21px', border: 0, borderRadius: 0 } }}
           />
+          {completion.popup}
         </Box>
         <Group gap="xs" px="md" py={SP.cozy} wrap="wrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
           <Button size="xs" leftSection={<IconPlayerPlay size={14} />} onClick={runSelectionOrAll}

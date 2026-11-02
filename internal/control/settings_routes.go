@@ -58,6 +58,20 @@ type Settings struct {
 	Telegram TelegramSettings `json:"telegram"`
 	FCM      FCMSettings      `json:"fcm"`
 	TLS      TLSSettings      `json:"tls"`
+
+	// SignInAlerts is nil from a console older than sign-in alerts, which
+	// keeps what is configured rather than switching them off.
+	SignInAlerts *SignInAlertSettings `json:"signInAlerts,omitempty"`
+}
+
+// SignInAlertSettings is who is told when someone signs in to the console.
+// They go out through the email and Telegram channels above, and only those
+// that are set up.
+type SignInAlertSettings struct {
+	Admins bool `json:"admins"`
+	Person bool `json:"person"`
+	// When is "new_device" or "every".
+	When string `json:"when"`
 }
 
 // DatabaseSettings is the database in parts, with the password write-only.

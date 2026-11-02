@@ -841,6 +841,37 @@ const (
 	FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
 	WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
 	ORDER BY a.attnum LIMIT 2000`
+	// pgCompletionSQL is the editor's autocomplete: names only, across every
+	// schema the role may use, with the same privilege filters as the tree,
+	// so it suggests nothing the tree would hide. Columns stay per table
+	// (pgColumnsSQL), fetched when a statement names the table, so a
+	// database with thousands of wide tables costs one small answer here.
+	pgCompletionSQL = `SELECT x.nspname, x.name, x.kind, x.detail FROM (
+	  SELECT 0 AS o, s.nspname, s.nspname AS name, 'path' AS kind, s.ord::text AS detail
+	  FROM unnest(current_schemas(false)) WITH ORDINALITY AS s(nspname, ord)
+	  UNION ALL
+	  SELECT 1, n.nspname, n.nspname, 'schema', ''
+	  FROM pg_namespace n
+	  WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+	    AND has_schema_privilege(n.oid, 'USAGE')
+	  UNION ALL
+	  SELECT 2, n.nspname, c.relname,
+	    CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'table' WHEN 'v' THEN 'view'
+	      WHEN 'm' THEN 'matview' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'table' END, ''
+	  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+	  WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+	    AND has_schema_privilege(n.oid, 'USAGE')
+	    AND c.relkind IN ('r','p','v','m','S','f') AND NOT c.relispartition
+	    AND (has_table_privilege(c.oid, 'SELECT') OR has_any_column_privilege(c.oid, 'SELECT')
+	         OR (c.relkind = 'S' AND has_sequence_privilege(c.oid, 'USAGE')))
+	  UNION ALL
+	  SELECT 3, n.nspname, p.proname, CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END,
+	    pg_get_function_identity_arguments(p.oid)
+	  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+	  WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+	    AND has_schema_privilege(n.oid, 'USAGE')
+	    AND p.prokind IN ('f','p') AND has_function_privilege(p.oid, 'EXECUTE')
+	) x ORDER BY x.o, x.nspname, x.name LIMIT 20000`
 )
 
 // schema answers the object tree. Not recorded: it reads the catalogue as the
@@ -858,6 +889,8 @@ func (s *pgSession) schema(ctx context.Context, req tunnel.PGRequest) error {
 		sql, args = pgObjectsSQL, [][]byte{[]byte(req.Schema)}
 	case "columns":
 		sql, args = pgColumnsSQL, [][]byte{[]byte(req.Schema), []byte(req.Object)}
+	case "completion":
+		sql = pgCompletionSQL
 	default:
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "unknown schema request " + req.Kind})
 	}
@@ -881,6 +914,8 @@ func (s *pgSession) schema(ctx context.Context, req tunnel.PGRequest) error {
 		case "schemas":
 			o.Kind, o.Detail = "schema", string(r[1])
 			o.Count, _ = strconv.ParseInt(string(r[2]), 10, 64)
+		case "completion":
+			o.Schema, o.Name, o.Kind, o.Detail = string(r[0]), string(r[1]), string(r[2]), string(r[3])
 		default:
 			o.Kind, o.Detail = string(r[1]), string(r[2])
 			if req.Kind != "columns" {

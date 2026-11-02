@@ -85,3 +85,26 @@ renders the password form when both hold. With no accounts it shows the
 `users add` command instead of a form that could only refuse. `accountsExist`
 keys on `password_hash IS NOT NULL AND disabled_at IS NULL` -- a row without a
 hash must not make the console claim a password will work.
+
+## Sign-in alerts
+
+`internal/control/signin_alerts.go`, `internal/notify/signin.go`, operator
+doc `docs/sign-in-alerts.md`. `completeSignIn` calls `announceSignIn`, so only
+a sign-in that succeeded can send anything. Channels are email and Telegram
+only, and only those configured (`SignInAlerts` is nil with neither).
+Administrators: their own addresses for every organization; the configured
+`to` list and Telegram chats only for the default one, because those are the
+platform's. The person: email only.
+
+- New device = `sign_in_devices` has no row for SHA-256(IP or IPv6 /64 +
+  browser family + OS) in 90 days. Browser version is left out so an update
+  is not a new device.
+- `signInAlertLimiter`: one routine alert per account per 10 minutes, five of
+  any kind per hour, map bounded at 10,000 keys.
+- The "this wasn't me" link is an `auth.SignInReport`, single-use through the
+  ticket redemption record. Its JSON fields share no name with Session,
+  Ticket or the challenge, so it verifies as none of them
+  (`TestAReportLinkAuthenticatesNothing`). GET only shows the page; mail
+  scanners open every link. POST revokes every session and audits.
+- A recovery-code sign-in skips `Alerts.SecurityEvent` when sign-in alerts
+  already tell administrators, so they are not told twice.

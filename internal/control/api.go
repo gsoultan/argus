@@ -86,6 +86,12 @@ type API struct {
 
 	// Alerts tells administrators when a session starts. Nil sends nothing.
 	Alerts *notify.Dispatcher
+	// SignInAlerts tells administrators and the person when someone signs
+	// in to the console, through the channels that are set up; nil when none
+	// is. SignInPolicy is who is told, and when. See signin_alerts.go.
+	SignInAlerts  *notify.SignInNotifier
+	SignInPolicy  SignInAlertPolicy
+	signInLimiter signInAlertLimiter
 
 	// Enroll is what an agent is handed to trust this control plane when it
 	// enrolls. Zero means it relies on the system trust store.
@@ -215,6 +221,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/setup", a.handleSetupStatus)
 	mux.HandleFunc("POST /auth/setup", a.limitLogin(a.handleSetup))
 	mux.HandleFunc("POST /api/v1/terminal/ticket", a.limitTickets(a.handleTicket))
+	// The "this wasn't me" link in a sign-in email; see signin_alerts.go.
+	mux.HandleFunc("GET /auth/sign-in-report", a.handleSignInReport)
+	mux.HandleFunc("POST /auth/sign-in-report", a.limitLogin(a.handleSignInReport))
 	// The browser terminal through an agent's tunnel; see terminal.go.
 	mux.HandleFunc("GET /api/v1/terminal", a.handleTerminal)
 	mux.HandleFunc("GET /api/v1/files", a.handleFiles)

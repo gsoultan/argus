@@ -312,6 +312,7 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
       // tile. The Overview's "Pending approvals" tile lands here and the two
       // numbers have to be checkable against each other.
       className="argus-request"
+      padding="lg"
       style={r.breakGlass && pending ? { borderColor: 'var(--color-denied)' } : undefined}
     >
       <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm" gap="md">

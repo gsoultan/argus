@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import {
-  Alert, Box, Button, Center, Paper, PasswordInput, Stack, Text,
-  TextInput,
+  Alert, Box, Button, PasswordInput, Stack, Text, TextInput, Title,
 } from '@mantine/core'
 import { IconAlertTriangle, IconKey } from '@tabler/icons-react'
 import {
@@ -9,6 +8,7 @@ import {
 } from '~/lib/live'
 import { FS } from '~/theme'
 import { Logo } from '~/components/Logo'
+import { AuthLayout } from '~/components/AuthLayout'
 
 /**
  * The sign-in screen.
@@ -76,9 +76,13 @@ export function SignIn({ identity, onSignedIn }: {
   }
 
   return (
-    <Center h="100vh">
-      <Paper p="xl" withBorder maw={410} w="100%" radius="lg">
-        <Brand />
+    <AuthLayout>
+        <Title order={2} fz={26} fw={700} mb={6}>
+          {challenge ? 'One more step' : 'Sign in'}
+        </Title>
+        <Text size="sm" c="dimmed" mb="lg">
+          {challenge ? 'Your password was right.' : 'Use your Argus account.'}
+        </Text>
 
         {identity.unreachable ? (
           <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />}>
@@ -213,8 +217,7 @@ export function SignIn({ identity, onSignedIn }: {
             )}
           </>
         )}
-      </Paper>
-    </Center>
+    </AuthLayout>
   )
 }
 

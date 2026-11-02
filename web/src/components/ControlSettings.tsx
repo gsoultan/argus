@@ -1,13 +1,13 @@
 import { useState, type ComponentType } from 'react'
 import {
-  Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput,
+  Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput, Radio,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconBell, IconCertificate, IconCloudUpload, IconDatabase,
-  IconDownload, IconKey, IconNetwork, type IconProps,
+  IconDownload, IconKey, IconLogin, IconNetwork, type IconProps,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -42,7 +42,7 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'database', label: 'Database', icon: IconDatabase, keys: ['database'] },
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
   { id: 'storage', label: 'Object storage', icon: IconCloudUpload, keys: ['storage'] },
-  { id: 'alerts', label: 'Session alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm'] },
+  { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts'] },
 ]
 
 export type ControlSettingsState = ReturnType<typeof useControlSettings>
@@ -418,97 +418,169 @@ function Alerts({ s, edit }: CardProps) {
   const [channel, setChannel] = useState('email')
   const label = (name: string, on: boolean) => (on ? `${name} · on` : name)
   return (
-    <SectionCard title="Session alerts" icon={IconBell} iconColor="amber"
-      description="Tell administrators every time somebody opens a session, including logins that went around Argus.">
-      <SegmentedControl size="xs" mb="sm" value={channel} onChange={setChannel}
-        data={[
-          { value: 'email', label: label('Email', e.enabled) },
-          { value: 'telegram', label: label('Telegram', t.enabled) },
-          { value: 'push', label: label('Push notification', f.enabled) },
-        ]} />
-      {channel === 'email' && (
-        <Stack gap="xs">
-          <Switch size="xs" label="Send email" checked={e.enabled}
-            onChange={(ev) => edit({ email: { ...e, enabled: ev.currentTarget.checked } })} />
-          {e.enabled && (
-            <Grid gap="xs">
-              <Grid.Col span={{ base: 12, sm: 8 }}>
-                <TextInput size="xs" label="SMTP server" value={e.host}
-                  onChange={(ev) => edit({ email: { ...e, host: ev.currentTarget.value } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 4 }}>
-                <NumberInput size="xs" label="Port" description="465 is TLS; others STARTTLS" min={1} max={65535}
-                  value={e.port || 587} onChange={(v) => edit({ email: { ...e, port: Number(v) || 0 } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 6 }}>
-                <TextInput size="xs" label="Username" value={e.username} autoComplete="off"
-                  onChange={(ev) => edit({ email: { ...e, username: ev.currentTarget.value } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 6 }}>
-                <SecretInput label="Password" set={e.passwordSet} value={e.password}
-                  onChange={(v) => edit({ email: { ...e, password: v } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 6 }}>
-                <TextInput size="xs" label="From" value={e.from}
-                  onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 6 }}>
-                <TagsInput size="xs" label="To" value={e.to} onChange={(v) => edit({ email: { ...e, to: v } })} />
-              </Grid.Col>
-            </Grid>
-          )}
+    <Stack gap="sm">
+      <SignInAlerts s={s} edit={edit} onSetUp={setChannel} />
+      <SectionCard title="Alert channels" icon={IconBell} iconColor="amber"
+        description="Where alerts go. Every session opened is announced here, including logins that went around Argus; sign-ins too, as set above. Push notifications carry session alerts only.">
+        <SegmentedControl size="xs" mb="sm" value={channel} onChange={setChannel}
+          data={[
+            { value: 'email', label: label('Email', e.enabled) },
+            { value: 'telegram', label: label('Telegram', t.enabled) },
+            { value: 'push', label: label('Push notification', f.enabled) },
+          ]} />
+        {channel === 'email' && (
+          <Stack gap="xs">
+            <Switch size="xs" label="Send email" checked={e.enabled}
+              onChange={(ev) => edit({ email: { ...e, enabled: ev.currentTarget.checked } })} />
+            {e.enabled && (
+              <Grid gap="xs">
+                <Grid.Col span={{ base: 12, sm: 8 }}>
+                  <TextInput size="xs" label="SMTP server" value={e.host}
+                    onChange={(ev) => edit({ email: { ...e, host: ev.currentTarget.value } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 4 }}>
+                  <NumberInput size="xs" label="Port" description="465 is TLS; others STARTTLS" min={1} max={65535}
+                    value={e.port || 587} onChange={(v) => edit({ email: { ...e, port: Number(v) || 0 } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 6 }}>
+                  <TextInput size="xs" label="Username" value={e.username} autoComplete="off"
+                    onChange={(ev) => edit({ email: { ...e, username: ev.currentTarget.value } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 6 }}>
+                  <SecretInput label="Password" set={e.passwordSet} value={e.password}
+                    onChange={(v) => edit({ email: { ...e, password: v } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 6 }}>
+                  <TextInput size="xs" label="From" value={e.from}
+                    onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 6 }}>
+                  <TagsInput size="xs" label="To" value={e.to} onChange={(v) => edit({ email: { ...e, to: v } })} />
+                </Grid.Col>
+              </Grid>
+            )}
+          </Stack>
+        )}
+        {channel === 'telegram' && (
+          <Stack gap="xs">
+            <Switch size="xs" label="Send to Telegram" checked={t.enabled}
+              onChange={(ev) => edit({ telegram: { ...t, enabled: ev.currentTarget.checked } })} />
+            {t.enabled && (
+              <Grid gap="xs">
+                <Grid.Col span={{ base: 12, sm: 6 }}>
+                  <SecretInput label="Bot token" description="From @BotFather" set={t.botTokenSet} value={t.botToken}
+                    onChange={(v) => edit({ telegram: { ...t, botToken: v } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 6 }}>
+                  <TagsInput size="xs" label="Chat ids" description="Add the bot to a group first"
+                    value={t.chatIds} onChange={(v) => edit({ telegram: { ...t, chatIds: v } })} />
+                </Grid.Col>
+              </Grid>
+            )}
+          </Stack>
+        )}
+        {channel === 'push' && (
+          <Stack gap="xs">
+            <Switch size="xs" label="Send through Firebase Cloud Messaging" checked={f.enabled}
+              onChange={(ev) => edit({ fcm: { ...f, enabled: ev.currentTarget.checked } })} />
+            {f.enabled && (
+              <Grid gap="xs">
+                <Grid.Col span={12}>
+                  <Textarea size="xs" label="Service account key (JSON)"
+                    description={f.credentialsSet && f.credentials === undefined
+                      ? 'A key is configured. Paste a new one to replace it.'
+                      : 'Firebase console, Project settings, Service accounts.'}
+                    autosize minRows={2} maxRows={4} value={f.credentials ?? ''}
+                    styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 11 } }}
+                    onChange={(ev) => edit({ fcm: { ...f, credentials: ev.currentTarget.value || undefined } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 4 }}>
+                  <TextInput size="xs" label="Topic" value={f.topic}
+                    onChange={(ev) => edit({ fcm: { ...f, topic: ev.currentTarget.value } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 4 }}>
+                  <TextInput size="xs" label="Project id" description="Optional" value={f.projectId}
+                    onChange={(ev) => edit({ fcm: { ...f, projectId: ev.currentTarget.value } })} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, sm: 4 }}>
+                  <TagsInput size="xs" label="Device tokens" description="Optional"
+                    value={f.tokens} onChange={(v) => edit({ fcm: { ...f, tokens: v } })} />
+                </Grid.Col>
+              </Grid>
+            )}
+          </Stack>
+        )}
+      </SectionCard>
+    </Stack>
+  )
+}
+
+/**
+ * Who is told when someone signs in to the console. Only through the email
+ * and Telegram channels below, and only those that are set up: the switches
+ * say so rather than looking on while nothing can be sent.
+ */
+function SignInAlerts({ s, edit, onSetUp }: CardProps & { onSetUp: (channel: string) => void }) {
+  const p = s.signInAlerts ?? { admins: true, person: true, when: 'new_device' as const }
+  const set = (patch: Partial<typeof p>) => edit({ signInAlerts: { ...p, ...patch } })
+  const email = s.email.enabled
+  const telegram = s.telegram.enabled
+  const none = !email && !telegram
+  const extra = s.email.to.length
+  return (
+    <SectionCard title="Sign-in alerts" icon={IconLogin} iconColor="amber"
+      description="Tell people when someone signs in to the Argus console. Nothing is sent through a channel that isn't set up.">
+      <Stack gap="md">
+        {none && (
+          <Alert color="amber" icon={<IconAlertTriangle size={16} />} p="xs">
+            <Text size={FS.body}>Set up email or Telegram below to turn on sign-in alerts. Until then nobody is told.</Text>
+          </Alert>
+        )}
+        <Stack gap={6}>
+          <Switch size="xs" label="Tell administrators" disabled={none} checked={p.admins && !none}
+            description="Every administrator of the organization, at their own address. For the default organization, also the addresses and chats set up below."
+            onChange={(ev) => set({ admins: ev.currentTarget.checked })} />
+          <ChannelRow name="Email" on={email} onSetUp={() => onSetUp('email')}
+            detail={email
+              ? `To each administrator${extra ? ` and ${extra} more address${extra === 1 ? '' : 'es'}` : ''}`
+              : "Administrators won't get email until a mail server is added."} />
+          <ChannelRow name="Telegram" on={telegram} onSetUp={() => onSetUp('telegram')}
+            detail={telegram
+              ? `${s.telegram.chatIds.length} chat${s.telegram.chatIds.length === 1 ? '' : 's'}, default organization only`
+              : "Administrators won't get Telegram messages until a bot is added."} />
         </Stack>
-      )}
-      {channel === 'telegram' && (
-        <Stack gap="xs">
-          <Switch size="xs" label="Send to Telegram" checked={t.enabled}
-            onChange={(ev) => edit({ telegram: { ...t, enabled: ev.currentTarget.checked } })} />
-          {t.enabled && (
-            <Grid gap="xs">
-              <Grid.Col span={{ base: 12, sm: 6 }}>
-                <SecretInput label="Bot token" description="From @BotFather" set={t.botTokenSet} value={t.botToken}
-                  onChange={(v) => edit({ telegram: { ...t, botToken: v } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 6 }}>
-                <TagsInput size="xs" label="Chat ids" description="Add the bot to a group first"
-                  value={t.chatIds} onChange={(v) => edit({ telegram: { ...t, chatIds: v } })} />
-              </Grid.Col>
-            </Grid>
-          )}
-        </Stack>
-      )}
-      {channel === 'push' && (
-        <Stack gap="xs">
-          <Switch size="xs" label="Send through Firebase Cloud Messaging" checked={f.enabled}
-            onChange={(ev) => edit({ fcm: { ...f, enabled: ev.currentTarget.checked } })} />
-          {f.enabled && (
-            <Grid gap="xs">
-              <Grid.Col span={12}>
-                <Textarea size="xs" label="Service account key (JSON)"
-                  description={f.credentialsSet && f.credentials === undefined
-                    ? 'A key is configured. Paste a new one to replace it.'
-                    : 'Firebase console, Project settings, Service accounts.'}
-                  autosize minRows={2} maxRows={4} value={f.credentials ?? ''}
-                  styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 11 } }}
-                  onChange={(ev) => edit({ fcm: { ...f, credentials: ev.currentTarget.value || undefined } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 4 }}>
-                <TextInput size="xs" label="Topic" value={f.topic}
-                  onChange={(ev) => edit({ fcm: { ...f, topic: ev.currentTarget.value } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 4 }}>
-                <TextInput size="xs" label="Project id" description="Optional" value={f.projectId}
-                  onChange={(ev) => edit({ fcm: { ...f, projectId: ev.currentTarget.value } })} />
-              </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 4 }}>
-                <TagsInput size="xs" label="Device tokens" description="Optional"
-                  value={f.tokens} onChange={(v) => edit({ fcm: { ...f, tokens: v } })} />
-              </Grid.Col>
-            </Grid>
-          )}
-        </Stack>
-      )}
+        <Switch size="xs" label="Tell the person who signed in" disabled={!email} checked={p.person && email}
+          description={email
+            ? 'By email, to the address on their account, with a "this wasn\'t me" link that signs them out everywhere and tells administrators.'
+            : 'By email only. Set up email below to turn this on.'}
+          onChange={(ev) => set({ person: ev.currentTarget.checked })} />
+        <Radio.Group size="xs" label="When" value={p.when}
+          onChange={(v) => set({ when: v === 'every' ? 'every' : 'new_device' })}>
+          <Stack gap={6} mt={4}>
+            <Radio value="new_device" disabled={none} label="Only a new device or address (recommended)"
+              description="A browser or IP address not seen on that account in the last 90 days. Recovery-code sign-ins are always sent." />
+            <Radio value="every" disabled={none} label="Every sign-in"
+              description="At most one alert per person every 10 minutes." />
+          </Stack>
+        </Radio.Group>
+      </Stack>
     </SectionCard>
+  )
+}
+
+function ChannelRow({ name, on, detail, onSetUp }: {
+  name: string
+  on: boolean
+  detail: string
+  onSetUp: () => void
+}) {
+  return (
+    <Group gap="xs" wrap="nowrap" pl="xl">
+      <Badge size="sm" variant="light" color={on ? 'teal' : 'slate'}>{on ? 'Set up' : 'Not set up'}</Badge>
+      <Text size={FS.meta} fw={600}>{name}</Text>
+      <Text size={FS.meta} c="dimmed" style={{ flex: 1 }}>{detail}</Text>
+      {!on && <Button size="compact-xs" variant="subtle" onClick={onSetUp}>Set up {name}</Button>}
+    </Group>
   )
 }
 

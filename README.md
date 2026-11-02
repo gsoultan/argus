@@ -264,7 +264,7 @@ administrators. Pick a section on the left; each fits on one screen:
 | Database | where PostgreSQL is, with a connection test |
 | Certificate | what is served, upload a replacement, download the CA |
 | Object storage | the S3-compatible bucket recordings are copied to |
-| Session alerts | email, Telegram and Firebase push |
+| Alerts | sign-in alerts (who is told when someone signs in), and the email, Telegram and Firebase push channels session alerts go to |
 | People | add, disable and enable accounts |
 
 Edits in several sections wait for one **Save and apply**. Secrets are

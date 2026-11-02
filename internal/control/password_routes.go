@@ -164,7 +164,10 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 				itoa(left) + " remain. If this was not the account holder, " +
 				"treat the account as compromised."
 			a.auditAuth(r, "auth.recovery_code_used", "warning", acct.Email, detail)
-			a.Alerts.SecurityEvent("Argus: "+acct.Email+" signed in with a recovery code", detail)
+			if !a.signInAlertsTellAdmins() {
+				// Otherwise the sign-in alert says so, at more length.
+				a.Alerts.SecurityEvent("Argus: "+acct.Email+" signed in with a recovery code", detail)
+			}
 		}
 	default:
 		// Spent as it is checked: the same code cannot sign in twice, even
@@ -187,9 +190,13 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	how := "password+mfa"
+	if in.Recovery {
+		how = "password+recovery"
+	}
 	a.completeSignIn(w, r, auth.Session{
 		Email: acct.Email, Name: acct.DisplayName, Role: acct.Role,
-	}, "password+mfa")
+	}, how)
 }
 
 // completeSignIn issues the session cookie and records the event.
@@ -200,6 +207,7 @@ func (a *API) completeSignIn(w http.ResponseWriter, r *http.Request, sess auth.S
 		return
 	}
 	auth.SetCookie(w, auth.SessionCookieName, token, a.sessionTTL(), a.secureCookies)
+	a.announceSignIn(r, sess, how)
 
 	_, _ = a.store.db(r.Context()).Exec(r.Context(),
 		`UPDATE users SET last_seen_at = now() WHERE lower(email) = lower($1)`, sess.Email)

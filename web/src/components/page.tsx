@@ -53,7 +53,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <Box className="argus-pagehead" px={{ base: 'md', sm: 'xl' }} py="md">
+    <Box className="argus-pagehead" px={{ base: 'md', sm: 'xl' }} pt="xl" pb="xs">
       {crumbs && crumbs.length > 0 && (
         <Group gap={SP.tight} mb={SP.snug} wrap="nowrap" aria-label="Breadcrumb">
           {crumbs.map((c, i) => (
@@ -84,7 +84,7 @@ export function PageHeader({
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
         <Box style={{ minWidth: 0 }}>
           <Group gap="xs" wrap="nowrap">
-            <Text component="h1" fw={600} size={FS.title} lh={1.25} style={{ margin: 0 }}>
+            <Text component="h1" fw={700} size={FS.title} lh={1.25} style={{ margin: 0, letterSpacing: '-0.01em' }}>
               {title}
             </Text>
             {status}
@@ -108,7 +108,7 @@ export function PageHeader({
 /** The body of every page. One padding value, defined once. */
 export function PageBody({ children }: { children: ReactNode }) {
   return (
-    <Box px={{ base: 'md', sm: 'xl' }} py="lg">
+    <Box px={{ base: 'md', sm: 'xl' }} pt="md" pb="xl">
       <Stack gap="lg">{children}</Stack>
     </Box>
   )

@@ -113,8 +113,8 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
   const disabled = reach === 'blocked' || noAccount
 
   return (
-    <Card padding="md" className="argus-server" data-reach={reach} h="100%">
-      <Stack gap="sm" h="100%">
+    <Card padding="lg" className="argus-server" data-reach={reach} h="100%">
+      <Stack gap="md" h="100%">
         <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
           <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
             <ThemeIcon variant="light" color="azure" size={36} radius="md">
@@ -227,7 +227,7 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
 
 export function ServerCardSkeleton() {
   return (
-    <Card padding="md" h={170}>
+    <Card padding="lg" h={190}>
       <Group gap="sm" wrap="nowrap">
         <Skeleton height={36} width={36} radius="md" />
         <Stack gap={SP.snug} style={{ flex: 1 }}>
@@ -255,8 +255,8 @@ export function GrantCard({
 }: { hostname: string; principal: string; expiresAt: string | null }) {
   const name = shortName(hostname)
   return (
-    <Card padding="md" className="argus-server" data-reach="granted" h="100%">
-      <Stack gap="sm" h="100%">
+    <Card padding="lg" className="argus-server" data-reach="granted" h="100%">
+      <Stack gap="md" h="100%">
         <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
           <ThemeIcon variant="light" color="amber" size={36} radius="md">
             <IconClock size={20} stroke={1.6} />
@@ -486,7 +486,7 @@ export function ServerCards() {
  */
 function CardGrid({ children, busy }: { children: ReactNode; busy?: boolean }) {
   return (
-    <Grid gap="sm" aria-busy={busy || undefined} aria-label={busy ? 'Loading servers' : undefined}>
+    <Grid gap="md" aria-busy={busy || undefined} aria-label={busy ? 'Loading servers' : undefined}>
       {Children.map(children, (c) => (
         <Grid.Col span={{ base: 12, sm: 6, lg: 4 }}>{c}</Grid.Col>
       ))}

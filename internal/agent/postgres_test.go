@@ -280,6 +280,42 @@ func TestPostgresReadSession(t *testing.T) {
 		t.Fatalf("columns: %+v", a)
 	}
 
+	// The editor's autocomplete: names across schemas, with the search_path,
+	// and nothing from the system catalogues. A table made after the session
+	// opened carries no grant to the level, and a schema without USAGE hides
+	// everything in it: neither may be suggested, or the editor would leak
+	// names the tree refuses to show.
+	superExec(t, dsn,
+		"DROP SCHEMA IF EXISTS argus_t_hidden CASCADE",
+		"DROP TABLE IF EXISTS argus_t_payroll",
+		"CREATE SCHEMA argus_t_hidden",
+		"CREATE TABLE argus_t_hidden.salaries (id int)",
+		"CREATE TABLE argus_t_payroll (id int)")
+	t.Cleanup(func() {
+		superExec(t, dsn, "DROP SCHEMA IF EXISTS argus_t_hidden CASCADE", "DROP TABLE IF EXISTS argus_t_payroll")
+	})
+	h.send(tunnel.PGRequest{ID: 71, Op: "schema", Kind: "completion"})
+	if a := h.answer(); a.Type != "schema" {
+		t.Fatalf("completion: %+v", a)
+	} else {
+		var table, path bool
+		for _, o := range a.Objects {
+			switch {
+			case o.Kind == "table" && o.Name == "argus_t_orders" && o.Schema == "public":
+				table = true
+			case o.Kind == "path" && o.Name == "public":
+				path = true
+			case strings.HasPrefix(o.Schema, "pg_") || o.Schema == "information_schema":
+				t.Fatalf("completion offers a catalogue object: %+v", o)
+			case o.Schema == "argus_t_hidden" || o.Name == "argus_t_payroll":
+				t.Fatalf("completion offers what the role may not use: %+v", o)
+			}
+		}
+		if !table || !path {
+			t.Fatalf("completion without the orders table or the search_path: %+v", a.Objects)
+		}
+	}
+
 	// The role: created by Argus, a member of read only, login for now.
 	got := superQuery(t, dsn, `SELECT rolcanlogin, rolsuper, shobj_description(oid, 'pg_authid'),
 		(SELECT string_agg(b.rolname, ',' ORDER BY b.rolname) FROM pg_auth_members m

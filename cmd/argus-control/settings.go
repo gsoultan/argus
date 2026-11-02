@@ -105,6 +105,11 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 				ProjectID: f.ProjectID, Topic: f.Topic, Tokens: nonNil(f.Tokens)}
 		}
 	}
+	pol := signInConfigOf(c.Alerts).policy()
+	s.SignInAlerts = &control.SignInAlertSettings{Admins: pol.Admins, Person: pol.Person, When: "new_device"}
+	if pol.Every {
+		s.SignInAlerts.When = "every"
+	}
 	s.Email.To, s.Telegram.ChatIDs, s.FCM.Tokens = nonNil(s.Email.To), nonNil(s.Telegram.ChatIDs), nonNil(s.FCM.Tokens)
 
 	pki := b.loc.pki()
@@ -338,7 +343,11 @@ func applyAlerts(c *config, in control.Settings, st *secretStage) error {
 			next.FCM.CredentialsFile = prev.FCM.CredentialsFile
 		}
 	}
-	if next.Email == nil && next.Telegram == nil && next.FCM == nil {
+	next.SignIn = prev.SignIn
+	if in.SignInAlerts != nil {
+		next.SignIn = signInFromSettings(*in.SignInAlerts)
+	}
+	if next.Email == nil && next.Telegram == nil && next.FCM == nil && next.SignIn == nil {
 		c.Alerts = nil
 	} else {
 		c.Alerts = next
@@ -678,4 +687,26 @@ func reloadAfter(ch chan<- struct{}) func() {
 			}
 		}()
 	}
+}
+
+// signInFromSettings writes only what differs from the defaults, so a config
+// file that never mentioned sign-in alerts keeps not mentioning them.
+func signInFromSettings(in control.SignInAlertSettings) *signInAlertsConfig {
+	def := control.DefaultSignInAlertPolicy
+	out := &signInAlertsConfig{}
+	if in.Admins != def.Admins {
+		v := in.Admins
+		out.Admins = &v
+	}
+	if in.Person != def.Person {
+		v := in.Person
+		out.Person = &v
+	}
+	if in.When == "every" {
+		out.When = "every"
+	}
+	if out.Admins == nil && out.Person == nil && out.When == "" {
+		return nil
+	}
+	return out
 }
