@@ -1,4 +1,4 @@
-package tlsconfig
+package servertls
 
 import (
 	"crypto/ecdsa"
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/secrets"
+	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 /*
@@ -226,7 +227,7 @@ func Summarize(path string) (CertSummary, error) {
 	}
 	return CertSummary{
 		Subject: c.Subject.CommonName, Issuer: c.Issuer.CommonName,
-		Names: names, NotAfter: c.NotAfter, Pin: Pin(c),
+		Names: names, NotAfter: c.NotAfter, Pin: tlsconfig.Pin(c),
 	}, nil
 }
 

@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/agent/rdpdial"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gsoultan/argus/internal/credssp"
+	"github.com/gsoultan/argus/internal/agent/credssp"
 	"github.com/gsoultan/argus/internal/rdp"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -253,13 +254,13 @@ func connectDesktop(cfg DesktopConfig, principal string, open tunnel.DesktopOpen
 		protocol = rdp.ProtocolSSL
 		logon = rdp.LogonInfo{User: principal}
 	}
-	conn, result, err := rdp.DialTargetWithAuth(addr, "", protocol, nil, 15*time.Second, auth)
+	conn, result, err := rdpdial.DialTargetWithAuth(addr, "", protocol, nil, 15*time.Second, auth)
 	if err != nil && auth != nil && !isAuthFailure(err) {
 		// A listener that will not do CredSSP still takes TLS, with the
 		// password in the client info packet.
 		log.Warn("tunnel: CredSSP to the local desktop failed, retrying over TLS", "error", err)
 		protocol = rdp.ProtocolSSL
-		conn, result, err = rdp.DialTargetWithAuth(addr, "", protocol, nil, 15*time.Second, nil)
+		conn, result, err = rdpdial.DialTargetWithAuth(addr, "", protocol, nil, 15*time.Second, nil)
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "network level authentication") && open.Password == "" {

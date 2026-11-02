@@ -237,3 +237,25 @@ func FailureName(c uint32) string {
 		return fmt.Sprintf("unknown failure 0x%08x", c)
 	}
 }
+
+// BuildConnectionRequest builds the client-side opening PDU Argus sends to a
+// target. No cookie: the target has no use for Argus's routing information, and
+// forwarding the user's would leak the internal naming scheme onto the host.
+func BuildConnectionRequest(protocol uint32) []byte {
+	neg := make([]byte, negLength)
+	neg[0] = negTypeRequest
+	binary.LittleEndian.PutUint16(neg[2:4], negLength)
+	binary.LittleEndian.PutUint32(neg[4:8], protocol)
+
+	x := make([]byte, 7+len(neg))
+	x[0] = byte(len(x) - 1)
+	x[1] = tpduConnectionRequest
+	copy(x[7:], neg)
+
+	out := make([]byte, tpktHeader+len(x))
+	out[0] = tpktVersion
+	out[2] = byte(len(out) >> 8)
+	out[3] = byte(len(out))
+	copy(out[tpktHeader:], x)
+	return out
+}

@@ -639,13 +639,22 @@ route with zero console errors, the audit chain verifying in WASM, and that
 replaying a large terminal or desktop recording leaves the main-thread heap
 flat.
 
+The agent binary links no control-plane code. `cmd/argus-agent/layering_test.go`
+bounds its import graph to `internal/agent/...` plus a short shared set, and
+CI fails when a change crosses the line in either direction.
+
 ### Layout
 
 ```
 cmd/argus-control     control plane and console server
 cmd/argus-agent       the agent on each server
 cmd/argus-verify      standalone recording verifier
-internal/             tunnel, agent, control, recorder, hashchain, …
+internal/agent/       the agent and everything only it runs (exec tracing,
+                      the RDP dial and CredSSP, the reporter client)
+internal/control/     the control plane: API, console, PKI, config
+internal/             what both ends share: tunnel, rdp, recorder, hashchain,
+                      tlsconfig (client half), secrets; plus auth, storage,
+                      live, notify for the control plane
 web/                  React 19 · Mantine 9 · TanStack Router/Query/Form · Vite 8
 docs/install.md       the production install
 docs/lockout.md       what to do when nobody can SSH into a server

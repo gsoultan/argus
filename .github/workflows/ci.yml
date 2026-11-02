@@ -66,6 +66,15 @@ jobs:
         # leaves internal/control alone would hand that check an empty database.
         run: go test -race -count=1 -timeout 5m $(go list ./... | grep -v '/node_modules/')
 
+      - name: Check the agent links no control-plane code
+        # The agent goes on every managed host; everything it links is attack
+        # surface there. cmd/argus-agent/layering_test.go bounds its import
+        # graph to internal/agent/... and a short shared set, and refuses a
+        # control package that reaches for the agent. The Test step above runs
+        # it too; this names the failure instead of burying it in a wall of
+        # package results.
+        run: go test -count=1 -run 'TestAgentLinksNoControlPlaneCode|TestSharedPackagesStayNeutral|TestControlPlaneShipsNoAgentCode' -v ./cmd/argus-agent/
+
       - name: Confirm the database tests actually ran
         env:
           ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
@@ -123,7 +132,8 @@ jobs:
         run: >
           go test -count=1
           ./internal/secrets/... ./internal/hashchain/... ./internal/recorder/...
-          ./internal/tunnel/... ./cmd/argus-verify/...
+          ./internal/tunnel/... ./internal/tlsconfig/... ./internal/rdp/...
+          ./cmd/argus-verify/...
       - name: Test the agent
         run: go test -count=1 ./internal/agent/... ./cmd/argus-agent/...
       - name: Build and start each binary
@@ -532,7 +542,7 @@ jobs:
           powershell -NoProfile -Command "Get-WindowsFeature Server-Media-Foundation | Format-Table -AutoSize" || true
           ARGUS_TEST_RDP_TARGET=127.0.0.1:3389 ARGUS_TEST_RDP_USER=argusdrill \
             ARGUS_TEST_RDP_PASSWORD="$DRILL_PASSWORD" ARGUS_TEST_RDP_REPORT="$tmp/graphics.json" \
-            go test ./internal/rdp/ -run TestTargetGraphics -count=1 -v
+            go test ./internal/agent/rdpdial/ -run TestTargetGraphics -count=1 -v
           cp "$tmp/graphics.json" measure/
           jq -r '"### Bitmaps and the graphics pipeline, straight from Windows at 1920x1080",
             "", "| | Mbit/s | frames/s | what arrived |", "|---|---|---|---|",
@@ -622,10 +632,10 @@ jobs:
         # given toolchain, so comparing hashes catches it.
         run: |
           set -euo pipefail
-          cp internal/execlog/bpf/exec.bpf.o /tmp/committed.o
+          cp internal/agent/execlog/bpf/exec.bpf.o /tmp/committed.o
           ./scripts/build-bpf.sh --runtime docker
-          if ! cmp -s /tmp/committed.o internal/execlog/bpf/exec.bpf.o; then
-            echo "::error::internal/execlog/bpf/exec.bpf.o is stale. Run scripts/build-bpf.sh and commit the result."
+          if ! cmp -s /tmp/committed.o internal/agent/execlog/bpf/exec.bpf.o; then
+            echo "::error::internal/agent/execlog/bpf/exec.bpf.o is stale. Run scripts/build-bpf.sh and commit the result."
             exit 1
           fi
           echo "probe object is current"
@@ -639,7 +649,7 @@ jobs:
         # takes on a real host.
         run: |
           set -euo pipefail
-          go test -c -o /tmp/execlog.test ./internal/execlog/
+          go test -c -o /tmp/execlog.test ./internal/agent/execlog/
           sudo /tmp/execlog.test -test.v -test.timeout 5m 2>&1 | tee /tmp/kernel.log
 
       - name: Confirm the kernel tests were not skipped

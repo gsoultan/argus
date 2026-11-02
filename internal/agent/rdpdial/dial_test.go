@@ -1,4 +1,4 @@
-package rdp
+package rdpdial
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"github.com/gsoultan/argus/internal/rdp"
 	"io"
 	"math/big"
 	"net"
@@ -53,10 +54,10 @@ func fakeTarget(t *testing.T, protocol uint32) (addr string, fingerprint string)
 			go func() {
 				defer raw.Close()
 				_ = raw.SetDeadline(time.Now().Add(10 * time.Second))
-				if _, err := ReadPDU(raw); err != nil {
+				if _, err := rdp.ReadPDU(raw); err != nil {
 					return
 				}
-				if _, err := raw.Write(BuildConnectionConfirm(protocol)); err != nil {
+				if _, err := raw.Write(rdp.BuildConnectionConfirm(protocol)); err != nil {
 					return
 				}
 				srv := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{cert}})
@@ -91,10 +92,10 @@ func (p *stubPinner) VerifyFingerprint(host, presented, keyType string) error {
 }
 
 func TestDialTargetPinsTheCertificate(t *testing.T) {
-	addr, fingerprint := fakeTarget(t, ProtocolSSL)
+	addr, fingerprint := fakeTarget(t, rdp.ProtocolSSL)
 
 	pins := &stubPinner{expect: fingerprint}
-	conn, err := DialTarget(addr, "win-01", ProtocolSSL, pins, 5*time.Second)
+	conn, err := DialTarget(addr, "win-01", rdp.ProtocolSSL, pins, 5*time.Second)
 	if err != nil {
 		t.Fatalf("DialTarget: %v", err)
 	}
@@ -111,10 +112,10 @@ func TestDialTargetPinsTheCertificate(t *testing.T) {
 // A changed certificate is the RDP equivalent of a changed host key: it is the
 // signature of an interception, and the connection must not proceed.
 func TestDialTargetRefusesAnUnpinnedCertificate(t *testing.T) {
-	addr, _ := fakeTarget(t, ProtocolSSL)
+	addr, _ := fakeTarget(t, rdp.ProtocolSSL)
 
 	pins := &stubPinner{err: errors.New("host key mismatch")}
-	conn, err := DialTarget(addr, "win-01", ProtocolSSL, pins, 5*time.Second)
+	conn, err := DialTarget(addr, "win-01", rdp.ProtocolSSL, pins, 5*time.Second)
 	if err == nil {
 		conn.Close()
 		t.Fatal("DialTarget proceeded despite a refused pin")
@@ -128,9 +129,9 @@ func TestDialTargetRefusesAnUnpinnedCertificate(t *testing.T) {
 // the client asked for something stronger — otherwise the far half of the
 // session is unauthenticated while the near half looks fine.
 func TestDialTargetRefusesAWeakTarget(t *testing.T) {
-	addr, _ := fakeTarget(t, ProtocolRDP)
+	addr, _ := fakeTarget(t, rdp.ProtocolRDP)
 
-	conn, err := DialTarget(addr, "win-01", ProtocolSSL, &stubPinner{}, 5*time.Second)
+	conn, err := DialTarget(addr, "win-01", rdp.ProtocolSSL, &stubPinner{}, 5*time.Second)
 	if err == nil {
 		conn.Close()
 		t.Fatal("DialTarget accepted a target that selected standard RDP security")
@@ -143,16 +144,16 @@ func TestDialTargetRefusesAWeakTarget(t *testing.T) {
 // `auth == nil` short-circuited before the check on what was actually
 // negotiated, so this returned a TLS connection that had negotiated NLA and
 // then skipped it -- reported as success, with a nil CredSSP result the caller
-// had no reason to inspect. Connect's contract is that everything establishing
+// had no reason to inspect. rdp.Connect's contract is that everything establishing
 // trust has already run; here nothing had.
 //
 // Found by pointing the opt-in integration test at a real Windows host and
 // getting a usable connection back.
 func TestDialTargetRefusesNLAWithNoAuthenticator(t *testing.T) {
-	addr, _ := fakeTarget(t, ProtocolHybrid)
+	addr, _ := fakeTarget(t, rdp.ProtocolHybrid)
 
 	conn, result, err := DialTargetWithAuth(
-		addr, "win-01", ProtocolHybrid, &stubPinner{}, 5*time.Second, nil)
+		addr, "win-01", rdp.ProtocolHybrid, &stubPinner{}, 5*time.Second, nil)
 	if err == nil {
 		conn.Close()
 		t.Fatalf("accepted a target that selected NLA with no authenticator "+
@@ -170,10 +171,10 @@ func TestDialTargetRefusesNLAWithNoAuthenticator(t *testing.T) {
 // The short-circuit is still right when the target did not choose NLA: a
 // TLS-only session has nothing for an authenticator to do.
 func TestDialTargetAllowsNoAuthenticatorWithoutNLA(t *testing.T) {
-	addr, _ := fakeTarget(t, ProtocolSSL)
+	addr, _ := fakeTarget(t, rdp.ProtocolSSL)
 
 	conn, _, err := DialTargetWithAuth(
-		addr, "win-01", ProtocolSSL, &stubPinner{}, 5*time.Second, nil)
+		addr, "win-01", rdp.ProtocolSSL, &stubPinner{}, 5*time.Second, nil)
 	if err != nil {
 		t.Fatalf("a TLS-only target needs no authenticator: %v", err)
 	}

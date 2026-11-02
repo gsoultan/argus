@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gsoultan/argus/internal/execlog"
+	"github.com/gsoultan/argus/internal/agent/execlog"
 	"github.com/gsoultan/argus/internal/recorder"
 )
 

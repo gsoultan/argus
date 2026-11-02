@@ -1,4 +1,4 @@
-package tlsconfig
+package servertls
 
 import (
 	"crypto/ecdsa"

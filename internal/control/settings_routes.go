@@ -3,10 +3,9 @@ package control
 import (
 	"context"
 	"errors"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"net/http"
 	"strings"
-
-	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 /*
@@ -122,7 +121,7 @@ type FCMSettings struct {
 type TLSSettings struct {
 	Enabled bool `json:"enabled"`
 	// Certificate is the one being served. Read-only.
-	Certificate *tlsconfig.CertSummary `json:"certificate,omitempty"`
+	Certificate *servertls.CertSummary `json:"certificate,omitempty"`
 	// Managed means the control plane issued it and renews it itself.
 	Managed bool `json:"managed"`
 	// CanIssue means it holds a CA key, so it can make gateway certificates.

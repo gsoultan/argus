@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/agent/reporter"
 )
 
 type fakeSender struct {

@@ -1,12 +1,13 @@
-package rdp
+package rdpdial
 
 import (
+	"github.com/gsoultan/argus/internal/rdp"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gsoultan/argus/internal/credssp"
+	"github.com/gsoultan/argus/internal/agent/credssp"
 )
 
 // Everything else in this package is tested against pipes and hand-built
@@ -32,12 +33,12 @@ func rdpTarget(t *testing.T) string {
 // was actually negotiated, so a caller that asked for CredSSP and passed no
 // authenticator got a TLS connection that had negotiated NLA and then skipped
 // it -- reported as success. Not reachable from the gateway, which asks for
-// ProtocolSSL whenever it has no credential; found by pointing this at a real
+// rdp.ProtocolSSL whenever it has no credential; found by pointing this at a real
 // Windows host.
 func TestTargetRefusesNLAWithNoAuthenticator(t *testing.T) {
 	addr := rdpTarget(t)
 
-	conn, result, err := DialTargetWithAuth(addr, "", ProtocolHybrid, nil, 10*time.Second, nil)
+	conn, result, err := DialTargetWithAuth(addr, "", rdp.ProtocolHybrid, nil, 10*time.Second, nil)
 	if conn != nil {
 		conn.Close()
 	}
@@ -58,7 +59,7 @@ func TestTargetRefusesNLAWithNoAuthenticator(t *testing.T) {
 func TestTargetRequiringNLARefusesTLSOnlyClearly(t *testing.T) {
 	addr := rdpTarget(t)
 
-	conn, _, err := DialTargetWithAuth(addr, "", ProtocolSSL, nil, 10*time.Second, nil)
+	conn, _, err := DialTargetWithAuth(addr, "", rdp.ProtocolSSL, nil, 10*time.Second, nil)
 	if conn != nil {
 		conn.Close()
 	}
@@ -78,7 +79,7 @@ func TestTargetRequiringNLARefusesTLSOnlyClearly(t *testing.T) {
 func TestTargetNeverYieldsLegacyRDPSecurity(t *testing.T) {
 	addr := rdpTarget(t)
 
-	conn, _, err := DialTargetWithAuth(addr, "", ProtocolRDP, nil, 10*time.Second, nil)
+	conn, _, err := DialTargetWithAuth(addr, "", rdp.ProtocolRDP, nil, 10*time.Second, nil)
 	if conn != nil {
 		conn.Close()
 	}
@@ -121,7 +122,7 @@ func TestTargetCompletesCredSSP(t *testing.T) {
 	addr := rdpTarget(t)
 	auth := rdpCredentials(t)
 
-	conn, result, err := DialTargetWithAuth(addr, "", ProtocolHybrid, nil, 15*time.Second, auth)
+	conn, result, err := DialTargetWithAuth(addr, "", rdp.ProtocolHybrid, nil, 15*time.Second, auth)
 	if err != nil {
 		t.Fatalf("credssp against a real server: %v", err)
 	}
@@ -151,15 +152,15 @@ func TestTargetCompletesTheClientSequence(t *testing.T) {
 	addr := rdpTarget(t)
 	auth := rdpCredentials(t)
 
-	conn, _, err := DialTargetWithAuth(addr, "", ProtocolHybrid, nil, 20*time.Second, auth)
+	conn, _, err := DialTargetWithAuth(addr, "", rdp.ProtocolHybrid, nil, 20*time.Second, auth)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
 
-	client, err := Connect(conn, ClientConfig{
+	client, err := rdp.Connect(conn, rdp.ClientConfig{
 		Width: 1024, Height: 768, Depth: 16,
-		SelectedProtocol: ProtocolHybrid,
+		SelectedProtocol: rdp.ProtocolHybrid,
 		ReadTimeout:      20 * time.Second,
 	})
 	if err != nil {

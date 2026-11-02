@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"math"
 	"net/http"
@@ -17,7 +18,6 @@ import (
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
-	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -394,7 +394,7 @@ func (a *API) reporter(next func(http.ResponseWriter, *http.Request)) http.Handl
 			return
 		}
 		if a.RequirePeerCert {
-			peer := tlsconfig.PeerIdentity(r.TLS)
+			peer := servertls.PeerIdentity(r.TLS)
 			if peer == "" {
 				a.log.Warn("reporter call without a client certificate",
 					"remote", r.RemoteAddr, "path", r.URL.Path)
