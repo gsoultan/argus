@@ -206,7 +206,16 @@ export const theme = createTheme({
     // explicitly, so the main action is never the same size as a filter.
     Button: { defaultProps: { size: 'sm' } },
     TextInput: { defaultProps: { size: 'sm' } },
-    PasswordInput: { defaultProps: { size: 'sm' } },
+    // The eye is a real button: reachable with Tab and announced as a toggle
+    // (Mantine sets aria-pressed), so revealing a password is not mouse-only.
+    // Mantine's default takes it out of the tab order.
+    PasswordInput: {
+      defaultProps: {
+        size: 'sm',
+        visibilityToggleFocusable: true,
+        visibilityToggleButtonProps: { 'aria-label': 'Show password' },
+      },
+    },
     Textarea: { defaultProps: { size: 'sm' } },
     Select: { defaultProps: { size: 'sm' } },
     MultiSelect: { defaultProps: { size: 'sm' } },
