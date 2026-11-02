@@ -215,6 +215,18 @@ func runDaemon(args []string) int {
 			RecordDir: *dir,
 			Log:       log,
 		})
+		// Redis and RabbitMQ on this server, as the person's own user for the
+		// session, every command recorded before it runs.
+		services[agent.RedisService] = agent.Redis(agent.StoreConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
+		})
+		services[agent.RabbitMQService] = agent.RabbitMQ(agent.RabbitConfig{StoreConfig: agent.StoreConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
+		}})
 		// Remote Desktop, to this host's own listener, on Windows: the agent is
 		// the RDP client and records the session before it is shown.
 		if runtime.GOOS == "windows" {

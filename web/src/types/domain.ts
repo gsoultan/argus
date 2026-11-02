@@ -610,19 +610,27 @@ export interface DBPolicy {
   maxRows?: number
   idleTimeoutS?: number
   maxSessionS?: number
+  /** Redis: the largest db KEYS runs on. */
+  keysLimit?: number
 }
+
+/** What a database entry is: a Postgres database, a Redis server or a RabbitMQ vhost. */
+export type DBEngine = 'postgres' | 'redis' | 'rabbitmq'
 
 /** One database on one server. */
 export interface Database {
   id: UUID
   assetId: UUID
   hostname: string
-  engine: 'postgres'
+  engine: DBEngine
   host: string
   port: number
   /** A PgBouncer sessions go through; a port of 0 is none. */
   poolerHost: string
   poolerPort: number
+  /** Redis: the server's redis.conf, where the agent reads the admin password. A path, never the password. */
+  configPath?: string
+  /** The database (Postgres), the logical db it opens in (Redis) or the vhost (RabbitMQ). */
   dbname: string
   adminUser: string
   label: DBLabel

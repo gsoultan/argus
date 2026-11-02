@@ -198,6 +198,7 @@ func _assertDatabaseShape(m m0.Database) {
 		m.Port,
 		m.PoolerHost,
 		m.PoolerPort,
+		m.ConfigPath,
 		m.Dbname,
 		m.AdminUser,
 		m.Label,
