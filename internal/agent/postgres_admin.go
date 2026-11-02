@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -27,6 +28,9 @@ own "postgres" account over the local socket (peer authentication), in a
 short helper process -- `argus-agent pg-admin` -- that reads one request on
 stdin and writes one result. They are a fixed list, never free SQL.
 
+	admin  one administrative operation -- an extension, a publication or a
+	       subscription -- from the fixed list in postgres_admin_ops.go, for
+	       a session whose grant is dba
 	open   make sure the level roles exist and hold their grants in the
 	       database; make sure the person's role exists, is Argus's, is no
 	       more than an ordinary role, and is a member of exactly the level
@@ -40,7 +44,7 @@ A role Argus did not create is never touched: it is reported as taken.
 
 // PGAdminRequest is one provisioning operation.
 type PGAdminRequest struct {
-	Op string `json:"op"` // open, close
+	Op string `json:"op"` // open, close, admin
 	// Database to connect to and grant in.
 	Database string `json:"database"`
 	// Socket is the directory of the server's Unix socket; Port its port.
@@ -59,6 +63,9 @@ type PGAdminRequest struct {
 	// Pooled says sessions reach this database through PgBouncer, so the
 	// lookup PgBouncer authenticates Argus roles with must exist.
 	Pooled bool `json:"pooled,omitempty"`
+	// Admin is the operation, for admin. Owner names who asked, for the
+	// comment on what it creates.
+	Admin *tunnel.PGAdminOp `json:"admin,omitempty"`
 }
 
 // PGAdminResult is the answer.
@@ -68,6 +75,14 @@ type PGAdminResult struct {
 	// Taken says the role exists and is not Argus's.
 	Taken   bool   `json:"taken,omitempty"`
 	Version string `json:"version,omitempty"`
+	// For admin: the statement that ran or would run, with any password
+	// redacted; Postgres's SQLSTATE, detail and hint on a failure; the list
+	// or PGAdminDone on success.
+	SQL    string          `json:"sql,omitempty"`
+	Code   string          `json:"code,omitempty"`
+	Detail string          `json:"detail,omitempty"`
+	Hint   string          `json:"hint,omitempty"`
+	Data   json.RawMessage `json:"data,omitempty"`
 }
 
 // pgAdminRunner performs provisioning; the production one runs the helper as
@@ -134,6 +149,8 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return pgOpen(ctx, conn, req)
 	case "close":
 		return pgClose(ctx, conn, req)
+	case "admin":
+		return pgAdminOp(ctx, conn, req)
 	}
 	return PGAdminResult{Error: "unknown operation " + req.Op}
 }

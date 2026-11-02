@@ -12,12 +12,17 @@ not what the person says happened.
 
 Parsed once per recording and rendered as a plain list: a session is at most
 a few thousand lines, so there is nothing to window.
+
+An `admin` line is an administrative operation (an extension, a publication,
+a subscription) the agent ran through its helper as the server's postgres
+account rather than as the person's role; it is shown with that said, and any
+password in it was redacted before it was recorded.
 */
 
 interface Line {
   seq: number
   t: string
-  kind: 'open' | 'stmt' | 'done' | 'error' | 'cancel' | 'close'
+  kind: 'open' | 'stmt' | 'admin' | 'done' | 'error' | 'cancel' | 'close'
   sql?: string
   req?: number
   tag?: string
@@ -42,6 +47,8 @@ interface Statement {
   error?: string
   truncated?: boolean
   cancelled?: boolean
+  /** Ran through the helper as the server's postgres account. */
+  admin?: boolean
 }
 
 export function parseRecording(text: string): { open?: Line; close?: Line; statements: Statement[] } {
@@ -64,8 +71,9 @@ export function parseRecording(text: string): { open?: Line; close?: Line; state
       case 'close':
         close = l
         break
-      case 'stmt': {
-        const s: Statement = { seq: l.seq, t: l.t, sql: l.sql ?? '' }
+      case 'stmt':
+      case 'admin': {
+        const s: Statement = { seq: l.seq, t: l.t, sql: l.sql ?? '', admin: l.kind === 'admin' || undefined }
         statements.push(s)
         if (l.req) byReq.set(l.req, s)
         break
@@ -136,6 +144,7 @@ export function PostgresReplay({ text, verified, error }: { text?: string; verif
                     {s.sql.length > 4000 ? s.sql.slice(0, 4000) + ' …' : s.sql}
                   </Text>
                   <Group gap={6} mt={4} wrap="wrap">
+                    {s.admin && <Badge size="xs" variant="outline" color="amber">as the server’s postgres account</Badge>}
                     {s.error ? (
                       <Badge size="xs" variant="light" color="rose">
                         {s.code === '42501' ? 'refused by access' : `error ${s.code ?? ''}`}

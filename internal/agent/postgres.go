@@ -552,6 +552,16 @@ func (s *pgSession) serve(ctx context.Context, st tunnel.Stream) {
 					reason = err.Error()
 					return
 				}
+			case "admin":
+				if !limiter.allow(time.Now()) {
+					_ = s.send(tunnel.PGAnswer{ID: req.ID, Type: "error",
+						Error: "too many statements in a minute; wait a moment"})
+					continue
+				}
+				if err := s.adminOp(ctx, req); err != nil {
+					reason = err.Error()
+					return
+				}
 			default:
 				_ = s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "unknown operation " + req.Op})
 			}
@@ -925,6 +935,66 @@ func (s *pgSession) schema(ctx context.Context, req tunnel.PGRequest) error {
 		out = append(out, o)
 	}
 	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "schema", Objects: out})
+}
+
+// adminOp runs an administrative operation through the helper, as the
+// server's postgres account. Only for a grant at dba: the level the control
+// plane signed, not what the console asked for. A mutation is recorded, with
+// any password already redacted, before the helper runs it, like a statement;
+// a list is not. An error return ends the session, as for run.
+func (s *pgSession) adminOp(ctx context.Context, req tunnel.PGRequest) error {
+	op := req.Admin
+	if op == nil || op.Kind == "" {
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "there is no operation to run"})
+	}
+	if s.db.Level != tunnel.LevelDBA {
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "42501",
+			Error: "extensions and replication are DBA work; this session is at " + s.db.Level})
+	}
+	built, err := buildAdminSQL(op, s.g.Email)
+	if err != nil {
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
+	}
+	recorded := op.Mutates() && !op.Preview
+	if recorded {
+		// Recorded before the helper runs it. No record, no statement.
+		if err := s.record(tunnel.PGRecord{Kind: "admin", Request: req.ID, SQL: built.text()}); err != nil {
+			return fmt.Errorf("the recording failed: %w", err)
+		}
+	}
+	start := time.Now()
+	actx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	res := s.admin(actx, PGAdminRequest{Op: "admin", Database: s.db.Name, Socket: socketDir(s.db),
+		Port: s.db.Port, AdminUser: s.cfg.AdminUser, Role: s.g.Principal, Owner: s.g.Email, Admin: op})
+	elapsed := time.Since(start).Milliseconds()
+	if !res.OK {
+		if res.Error == "" {
+			res.Error = "the operation could not be run"
+		}
+		if recorded {
+			if rerr := s.record(tunnel.PGRecord{Kind: "error", Request: req.ID, Code: res.Code,
+				Error: res.Error, MS: elapsed}); rerr != nil {
+				return rerr
+			}
+		}
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: res.Error, Code: res.Code,
+			Detail: res.Detail, Hint: res.Hint, MS: elapsed})
+	}
+	if op.Preview {
+		b, _ := json.Marshal(PGAdminDone{SQL: res.SQL})
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "admin", Admin: b})
+	}
+	tag := ""
+	if recorded {
+		var done PGAdminDone
+		_ = json.Unmarshal(res.Data, &done)
+		tag = done.Tag
+		if rerr := s.record(tunnel.PGRecord{Kind: "done", Request: req.ID, Tag: tag, MS: elapsed}); rerr != nil {
+			return rerr
+		}
+	}
+	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "admin", Admin: res.Data, Tag: tag, MS: elapsed})
 }
 
 // close ends the session: the connection, the recording, and -- when this

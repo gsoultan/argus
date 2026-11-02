@@ -6,13 +6,18 @@ import {
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
-  IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup,
+  IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
+  IconArrowsExchange,
 } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
-import { ActivityPanel, RolesPanel, type Collect, type Collected } from '~/components/DatabaseAdmin'
 import { useCompletion } from '~/components/Autocomplete'
 import { catalogFrom, completeSQL, type SQLCatalog, type SQLColumn } from '~/lib/sqlComplete'
+import {
+  ActivityPanel, RolesPanel, type Admin, type AdminOp, type AdminResult, type Collect, type Collected,
+} from '~/components/DatabaseAdmin'
+import { ExtensionsPanel } from '~/components/DatabaseExtensions'
+import { ReplicationPanel } from '~/components/DatabaseReplication'
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -47,7 +52,7 @@ type Obj = { name: string; kind: string; detail?: string; count?: number; schema
 
 interface PGAnswer {
   id: number
-  type: 'ready' | 'cols' | 'done' | 'error' | 'schema' | 'closed'
+  type: 'ready' | 'cols' | 'done' | 'error' | 'schema' | 'closed' | 'admin'
   cols?: Col[]
   tag?: string
   rows?: number
@@ -56,8 +61,10 @@ interface PGAnswer {
   error?: string
   code?: string
   position?: number
+  detail?: string
   hint?: string
   objects?: Obj[]
+  admin?: unknown
   role?: string
   level?: DBLevel
   version?: string
@@ -66,7 +73,7 @@ interface PGAnswer {
   levels?: Partial<Record<DBLevel, string>>
 }
 
-type Panel = 'query' | 'activity' | 'roles'
+type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication'
 
 interface Result {
   id: number
@@ -310,6 +317,22 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     }
   }), [send])
 
+  // admin sends one administrative operation to the agent's helper. The
+  // agent records a mutation (redacted) before running it and refuses the
+  // whole thing below dba, whatever this console asked.
+  const admin = useCallback(<T,>(op: AdminOp) => new Promise<AdminResult<T>>((resolve) => {
+    const id = nextId.current++
+    pending.current.set(id, (a) => {
+      pending.current.delete(id)
+      if (a.type === 'admin') resolve({ data: a.admin as T, tag: a.tag, ms: a.ms })
+      else resolve({ error: { error: a.error, code: a.code, detail: a.detail, hint: a.hint } })
+    })
+    if (!send({ id, op: 'admin', admin: op })) {
+      pending.current.delete(id)
+      resolve({ error: { error: 'the session ended' } })
+    }
+  }), [send]) as Admin
+
   const cancel = useCallback(() => {
     if (running !== null) send({ id: running, op: 'cancel' })
   }, [running, send])
@@ -415,7 +438,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     />
   )
   const adminProps = {
-    collect, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
+    collect, admin, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
     onBack: () => setPanel('query'), onAskForAccess,
   }
 
@@ -467,6 +490,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
 
         {panel === 'activity' && <ActivityPanel {...adminProps} />}
         {panel === 'roles' && <RolesPanel {...adminProps} />}
+        {panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
+        {panel === 'replication' && <ReplicationPanel {...adminProps} />}
         {panel === 'query' && <>
         <Box style={{ borderBottom: '1px solid var(--color-line)' }}>
           <Textarea
@@ -679,6 +704,22 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
                 style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'roles' ? 'var(--color-raised)' : undefined, opacity: level === 'dba' ? 1 : .7 }}
                 aria-pressed={panel === 'roles'}>
                 <IconUsersGroup size={13} /><Text size={FS.meta}>Roles &amp; access</Text>
+                <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
+              </UnstyledButton>
+            </Tooltip>
+            <Tooltip label={level === 'dba' ? 'Installed and available extensions; install, update, remove' : 'Needs DBA access'} withArrow>
+              <UnstyledButton onClick={() => onPanel(panel === 'extensions' ? 'query' : 'extensions')} px={4} py={4}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'extensions' ? 'var(--color-raised)' : undefined, opacity: level === 'dba' ? 1 : .7 }}
+                aria-pressed={panel === 'extensions'}>
+                <IconPuzzle size={13} /><Text size={FS.meta}>Extensions</Text>
+                <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
+              </UnstyledButton>
+            </Tooltip>
+            <Tooltip label={level === 'dba' ? 'Publications and subscriptions: logical replication in and out of this database' : 'Needs DBA access'} withArrow>
+              <UnstyledButton onClick={() => onPanel(panel === 'replication' ? 'query' : 'replication')} px={4} py={4}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'replication' ? 'var(--color-raised)' : undefined, opacity: level === 'dba' ? 1 : .7 }}
+                aria-pressed={panel === 'replication'}>
+                <IconArrowsExchange size={13} /><Text size={FS.meta}>Replication</Text>
                 <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
               </UnstyledButton>
             </Tooltip>
