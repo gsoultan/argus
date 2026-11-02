@@ -38,7 +38,10 @@ type Database struct {
 	Port     int    `json:"port"`
 	// PoolerHost and PoolerPort are a PgBouncer sessions go through; a port
 	// of 0 is none. Provisioning never goes through it.
-	PoolerHost string    `json:"poolerHost"`
+	PoolerHost string `json:"poolerHost"`
+	// ConfigPath is the server's redis.conf, for a Redis: where the agent
+	// reads the admin password. A path on the server, never the password.
+	ConfigPath string    `json:"configPath"`
 	PoolerPort int       `json:"poolerPort"`
 	Name       string    `json:"dbname"`
 	AdminUser  string    `json:"adminUser"`
@@ -63,6 +66,8 @@ type DBPolicy struct {
 	IdleTimeoutS int `json:"idleTimeoutS,omitempty"`
 	// MaxSessionS is the longest a session may last. 0 = 8 h.
 	MaxSessionS int `json:"maxSessionS,omitempty"`
+	// KeysLimit is the largest Redis db KEYS runs on. 0 = 10,000.
+	KeysLimit int `json:"keysLimit,omitempty"`
 }
 
 // DBAssignment is who may open a database, at what level.
@@ -100,6 +105,22 @@ func (d *Database) validate() error {
 	d.Name = strings.TrimSpace(d.Name)
 	d.Host = strings.TrimSpace(d.Host)
 	d.AdminUser = strings.TrimSpace(d.AdminUser)
+	d.ConfigPath = strings.TrimSpace(d.ConfigPath)
+	if d.Engine == "" {
+		d.Engine = tunnel.EnginePostgres
+	}
+	switch d.Engine {
+	case tunnel.EngineRedis:
+		return d.validateRedis()
+	case tunnel.EngineRabbitMQ:
+		return d.validateRabbit()
+	case tunnel.EnginePostgres:
+	default:
+		return ErrInvalidDatabase{"the engine must be postgres, redis or rabbitmq"}
+	}
+	if d.ConfigPath != "" {
+		return ErrInvalidDatabase{"a config file is only for Redis"}
+	}
 	switch {
 	case d.Name == "" || len(d.Name) > 63 || strings.ContainsAny(d.Name, "\x00\"'\\"):
 		return ErrInvalidDatabase{"the database name must be 1 to 63 characters with no quotes"}
@@ -136,6 +157,11 @@ func (d *Database) validate() error {
 	if !tunnel.ValidPersonalRole(d.AdminUser) && d.AdminUser != "postgres" {
 		return ErrInvalidDatabase{"the admin account must be a plain Postgres role name"}
 	}
+	return d.validateCommon()
+}
+
+// validateCommon checks what every engine has: the label and the limits.
+func (d *Database) validateCommon() error {
 	switch d.Label {
 	case "":
 		d.Label = "production"
@@ -143,14 +169,8 @@ func (d *Database) validate() error {
 	default:
 		return ErrInvalidDatabase{"the label must be production, staging or development"}
 	}
-	if d.Engine == "" {
-		d.Engine = "postgres"
-	}
-	if d.Engine != "postgres" {
-		return ErrInvalidDatabase{"only Postgres is supported for now"}
-	}
 	p := &d.Policy
-	for _, v := range []*int{&p.StatementTimeoutS, &p.IdleTxTimeoutS, &p.MaxRows, &p.IdleTimeoutS, &p.MaxSessionS} {
+	for _, v := range []*int{&p.StatementTimeoutS, &p.IdleTxTimeoutS, &p.MaxRows, &p.IdleTimeoutS, &p.MaxSessionS, &p.KeysLimit} {
 		if *v < 0 {
 			return ErrInvalidDatabase{"a limit cannot be negative"}
 		}
@@ -161,10 +181,75 @@ func (d *Database) validate() error {
 	if p.MaxSessionS > 24*3600 {
 		return ErrInvalidDatabase{"a session cannot last longer than a day"}
 	}
+	if d.Engine != tunnel.EnginePostgres {
+		// Nothing of Postgres's means anything here; keep it empty so a
+		// Redis never shows a PgBouncer.
+		d.PoolerHost, d.PoolerPort, d.AdminUser = "", 0, ""
+		if p.MaxRows > tunnel.MaxStoreItems {
+			p.MaxRows = tunnel.MaxStoreItems
+		}
+	}
 	return nil
 }
 
-const databaseCols = `d.id::text, d.asset_id::text, a.hostname, d.engine, d.host, d.port, d.pooler_host, d.pooler_port, d.dbname,
+// validateRedis: one Redis server on this asset, reached on loopback or its
+// unix socket; dbname is the logical db it opens in.
+func (d *Database) validateRedis() error {
+	if d.Name == "" {
+		d.Name = "0"
+	}
+	if !tunnel.ValidRedisDB(d.Name) {
+		return ErrInvalidDatabase{"for Redis, the database is the logical db number it opens in, such as 0"}
+	}
+	if d.Host == "" {
+		d.Host = "127.0.0.1"
+	}
+	if !tunnel.LocalPGHost(d.Host) {
+		return ErrInvalidDatabase{"Redis must be on the server itself: a loopback address or its unix socket, not " + d.Host}
+	}
+	if d.Port == 0 {
+		d.Port = 6379
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
+	}
+	if d.ConfigPath == "" {
+		d.ConfigPath = "/etc/redis/redis.conf"
+	}
+	if !tunnel.ValidRedisConfPath(d.ConfigPath) {
+		return ErrInvalidDatabase{"the config file must be an absolute path to a .conf file on the server"}
+	}
+	return d.validateCommon()
+}
+
+// validateRabbit: one vhost of a RabbitMQ on this asset, through its
+// management API on loopback.
+func (d *Database) validateRabbit() error {
+	if d.Name == "" {
+		d.Name = "/"
+	}
+	if !tunnel.ValidVhost(d.Name) || len(d.Name) > 63 || strings.ContainsAny(d.Name, "\x00\"'\\") {
+		return ErrInvalidDatabase{"the vhost must be 1 to 63 characters with no quotes"}
+	}
+	if d.Host == "" {
+		d.Host = "127.0.0.1"
+	}
+	if !tunnel.LocalLoopback(d.Host) {
+		return ErrInvalidDatabase{"the RabbitMQ management API must be on the server itself: 127.0.0.1, ::1 or localhost, not " + d.Host}
+	}
+	if d.Port == 0 {
+		d.Port = 15672
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
+	}
+	if d.ConfigPath != "" {
+		return ErrInvalidDatabase{"a config file is only for Redis"}
+	}
+	return d.validateCommon()
+}
+
+const databaseCols = `d.id::text, d.asset_id::text, a.hostname, d.engine, d.host, d.port, d.pooler_host, d.pooler_port, d.config_path, d.dbname,
 	d.admin_user, d.label, d.policy, d.created_by, d.created_at,
 	EXISTS (SELECT 1 FROM agent_credentials c WHERE lower(c.hostname) = lower(a.hostname)
 	        AND c.revoked_at IS NULL AND c.tunnel_seen_at > now() - $1::interval)`
@@ -172,7 +257,7 @@ const databaseCols = `d.id::text, d.asset_id::text, a.hostname, d.engine, d.host
 func scanDatabase(row pgx.Row) (Database, error) {
 	var d Database
 	var policy []byte
-	if err := row.Scan(&d.ID, &d.AssetID, &d.Hostname, &d.Engine, &d.Host, &d.Port, &d.PoolerHost, &d.PoolerPort, &d.Name,
+	if err := row.Scan(&d.ID, &d.AssetID, &d.Hostname, &d.Engine, &d.Host, &d.Port, &d.PoolerHost, &d.PoolerPort, &d.ConfigPath, &d.Name,
 		&d.AdminUser, &d.Label, &policy, &d.CreatedBy, &d.CreatedAt, &d.TunnelConnected); err != nil {
 		return d, err
 	}
@@ -189,14 +274,25 @@ func (s *Store) CreateDatabase(ctx context.Context, d Database, actor string) (D
 	var id string
 	err := s.db(ctx).QueryRow(ctx, `
 		INSERT INTO databases (asset_id, engine, host, port, dbname, admin_user, label, policy, created_by,
-			pooler_host, pooler_port)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			pooler_host, pooler_port, config_path)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (asset_id, port, dbname) DO UPDATE SET host = EXCLUDED.host,
-			pooler_host = EXCLUDED.pooler_host, pooler_port = EXCLUDED.pooler_port
+			pooler_host = EXCLUDED.pooler_host, pooler_port = EXCLUDED.pooler_port,
+			config_path = EXCLUDED.config_path
+		WHERE databases.engine = EXCLUDED.engine
 		RETURNING id::text`,
 		d.AssetID, d.Engine, d.Host, d.Port, d.Name, d.AdminUser, d.Label, policy, actor,
-		d.PoolerHost, d.PoolerPort).Scan(&id)
+		d.PoolerHost, d.PoolerPort, d.ConfigPath).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The conflict was with an entry of another engine on that port.
+		return d, ErrInvalidDatabase{fmt.Sprintf("port %d on this server already has an entry named %s "+
+			"of another engine", d.Port, d.Name)}
+	}
 	if err != nil {
+		if strings.Contains(err.Error(), "databases_redis_server_key") {
+			return d, ErrInvalidDatabase{fmt.Sprintf("this server already has its Redis on port %d; "+
+				"one entry covers every logical db, as Redis's own users do", d.Port)}
+		}
 		if strings.Contains(err.Error(), "foreign key") || strings.Contains(err.Error(), "invalid input syntax for type uuid") {
 			return d, ErrInvalidDatabase{"no such server"}
 		}
@@ -212,9 +308,12 @@ func (s *Store) UpdateDatabase(ctx context.Context, d Database) (Database, error
 	}
 	policy, _ := json.Marshal(d.Policy)
 	tag, err := s.db(ctx).Exec(ctx, `UPDATE databases SET host = $2, port = $3, admin_user = $4,
-		label = $5, policy = $6, pooler_host = $7, pooler_port = $8 WHERE id = $1::uuid`,
-		d.ID, d.Host, d.Port, d.AdminUser, d.Label, policy, d.PoolerHost, d.PoolerPort)
+		label = $5, policy = $6, pooler_host = $7, pooler_port = $8, config_path = $9 WHERE id = $1::uuid`,
+		d.ID, d.Host, d.Port, d.AdminUser, d.Label, policy, d.PoolerHost, d.PoolerPort, d.ConfigPath)
 	if err != nil {
+		if strings.Contains(err.Error(), "databases_redis_server_key") {
+			return d, ErrInvalidDatabase{fmt.Sprintf("this server already has its Redis on port %d", d.Port)}
+		}
 		return d, fmt.Errorf("update database: %w", err)
 	}
 	if tag.RowsAffected() == 0 {

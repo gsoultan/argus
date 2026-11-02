@@ -144,6 +144,11 @@ func TestABrowserSessionAsRootIsDecidedAndAudited(t *testing.T) {
 	a.SetAuth(signer, "https://console.example", true)
 
 	email := unique("operator") + "@corp.example"
+	// A cookie is checked against its account, so the account must exist.
+	if _, err := s.CreateAccount(ctx, email, email, "operator", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	dropAccount(t, s, email)
 	asset := assignedAsset(t, s, email, "root")
 	setExecTracing(t, s, asset.Hostname, true)
 	cookie, err := signer.IssueSession(auth.Session{Email: email, Name: email, Role: "operator"}, time.Hour)

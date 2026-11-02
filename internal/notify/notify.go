@@ -100,7 +100,7 @@ type Dispatcher struct {
 	log        *slog.Logger
 	timeout    time.Duration
 
-	queue chan SessionStarted
+	queue chan alert
 	done  chan struct{}
 	once  sync.Once
 }
@@ -124,11 +124,18 @@ func NewDispatcher(senders []Sender, consoleURL string, log *slog.Logger) *Dispa
 		consoleURL: consoleURL,
 		log:        log,
 		timeout:    15 * time.Second,
-		queue:      make(chan SessionStarted, queueSize),
+		queue:      make(chan alert, queueSize),
 		done:       make(chan struct{}),
 	}
 	go d.run()
 	return d
+}
+
+// alert is one queued message, already rendered.
+type alert struct {
+	subject, body string
+	// what names it in logs: a session id, or "security".
+	what string
 }
 
 // SessionStarted queues an alert. It never blocks.
@@ -136,12 +143,27 @@ func (d *Dispatcher) SessionStarted(e SessionStarted) {
 	if d == nil {
 		return
 	}
+	subject, body := Message(e, d.consoleURL)
 	select {
-	case d.queue <- e:
+	case d.queue <- alert{subject: subject, body: body, what: "session " + e.ID}:
 	default:
 		d.log.Warn("alert queue full; dropping a session alert",
 			"session", e.ID, "host", e.Host, "user", e.UserEmail,
 			"detail", "the alert channels are not keeping up; the session itself is recorded")
+	}
+}
+
+// SecurityEvent queues an alert about the console itself: an account being
+// guessed at, a second factor reset, admin access recovered from the host.
+// It never blocks.
+func (d *Dispatcher) SecurityEvent(subject, body string) {
+	if d == nil {
+		return
+	}
+	select {
+	case d.queue <- alert{subject: subject, body: body, what: "security"}:
+	default:
+		d.log.Warn("alert queue full; dropping a security alert", "subject", subject)
 	}
 }
 
@@ -162,17 +184,15 @@ func (d *Dispatcher) Close(ctx context.Context) {
 func (d *Dispatcher) run() {
 	defer close(d.done)
 	for e := range d.queue {
-		subject, body := Message(e, d.consoleURL)
 		for _, s := range d.senders {
 			ctx, cancel := context.WithTimeout(context.Background(), d.timeout)
-			err := s.Send(ctx, subject, body)
+			err := s.Send(ctx, e.subject, e.body)
 			cancel()
 			if err != nil {
-				d.log.Error("session alert not delivered",
-					"channel", s.Name(), "session", e.ID, "host", e.Host, "error", err)
+				d.log.Error("alert not delivered", "channel", s.Name(), "about", e.what, "error", err)
 				continue
 			}
-			d.log.Info("session alert sent", "channel", s.Name(), "session", e.ID, "host", e.Host)
+			d.log.Info("alert sent", "channel", s.Name(), "about", e.what)
 		}
 	}
 }

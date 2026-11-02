@@ -159,3 +159,20 @@ func TestTOTPEnrolmentURI(t *testing.T) {
 		t.Errorf("URI does not carry the account: %s", uri)
 	}
 }
+
+func TestVerifyTOTPStepNamesTheStepThatMatched(t *testing.T) {
+	secret, _ := NewTOTPSecret()
+	now := time.Unix(1_800_000_000, 0)
+	base := now.Unix() / 30
+	for _, skew := range []int64{-1, 0, 1} {
+		code, _ := TOTPCode(secret, now.Add(time.Duration(skew)*TOTPPeriod))
+		step, ok := VerifyTOTPStep(secret, code, now)
+		if !ok || step != base+skew {
+			t.Errorf("skew %d: step %d ok %v, want %d", skew, step, ok, base+skew)
+		}
+	}
+	far, _ := TOTPCode(secret, now.Add(3*TOTPPeriod))
+	if _, ok := VerifyTOTPStep(secret, far, now); ok {
+		t.Error("a code three steps ahead was accepted")
+	}
+}

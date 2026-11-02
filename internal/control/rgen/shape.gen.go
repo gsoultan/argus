@@ -56,6 +56,8 @@ func _assertAgentShape(m m0.Agent) {
 		m.FirstSeenAt,
 		m.ExecTracing,
 		m.ExecReason,
+		m.UpdateStatus,
+		m.Applications,
 	}
 }
 
@@ -78,6 +80,11 @@ func _assertAgentCredentialShape(m m0.AgentCredential) {
 		m.TunnelRttUs,
 		m.UninstallRequestedAt,
 		m.UninstallRequestedBy,
+		m.UpdateID,
+		m.UpdateVersion,
+		m.UpdateNow,
+		m.UpdateRequestedAt,
+		m.UpdateRequestedBy,
 	}
 }
 
@@ -199,6 +206,7 @@ func _assertDatabaseShape(m m0.Database) {
 		m.Port,
 		m.PoolerHost,
 		m.PoolerPort,
+		m.ConfigPath,
 		m.Dbname,
 		m.AdminUser,
 		m.Label,
@@ -306,6 +314,16 @@ func _assertRedeemedTicketShape(m m0.RedeemedTicket) {
 	}
 }
 
+// _assertRevokedSessionShape fails to compile if m0.RevokedSession gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertRevokedSessionShape(m m0.RevokedSession) {
+	type shape m0.RevokedSession
+	_ = shape{
+		m.Sid,
+		m.ExpiresAt,
+	}
+}
+
 // _assertSchemaMigrationShape fails to compile if m0.SchemaMigration gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertSchemaMigrationShape(m m0.SchemaMigration) {
@@ -395,6 +413,9 @@ func _assertUserShape(m m0.User) {
 		m.LoginName,
 		m.SshPublicKey,
 		m.DisabledBy,
+		m.SessionsValidAfter,
+		m.TotpPendingSecret,
+		m.TotpLastStep,
 		m.HomeTenant,
 		m.Shareable,
 	}

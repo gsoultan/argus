@@ -107,8 +107,10 @@ func TestASessionCookieStillAuthenticates(t *testing.T) {
 	a.SetAuth(signer, "https://console.example", true)
 	a.StaticTokensDisabled = true
 
+	// A cookie is checked against its account, so the account must exist.
+	email, _ := newAccount(t, s, "admin")
 	tok, err := signer.IssueSession(auth.Session{
-		Email: "real@corp.example", Name: "Real Person", Role: "admin"}, time.Hour)
+		Email: email, Name: "Real Person", Role: "admin"}, time.Hour)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -119,7 +121,7 @@ func TestASessionCookieStillAuthenticates(t *testing.T) {
 	if !ok {
 		t.Fatal("a valid session cookie was refused")
 	}
-	if sess.Email != "real@corp.example" || sess.Role != "admin" {
+	if sess.Email != email || sess.Role != "admin" {
 		t.Errorf("session = %+v", sess)
 	}
 }

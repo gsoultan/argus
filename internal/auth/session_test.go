@@ -348,3 +348,53 @@ func TestSessionScopeCannotBeIssuedAsSessionScoped(t *testing.T) {
 		t.Error("IssueSessionScopedTicket accepted an empty session id")
 	}
 }
+
+// Every signed type shares the key. A terminal ticket names an email and an
+// expiry, which used to be enough to pass as a session cookie.
+func TestATicketIsNotASession(t *testing.T) {
+	s, err := NewSigner("a-development-secret-of-sufficient-length")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	ticket, _ := s.IssueTicket("op@northwind.id", "web-01", "deploy", time.Minute)
+	if _, err := s.VerifySession(ticket); err == nil {
+		t.Error("a terminal ticket was accepted as a session")
+	}
+	device, _ := s.IssueDeviceToken("op@northwind.id", time.Hour)
+	if _, err := s.VerifySession(device); err == nil {
+		t.Error("a device token was accepted as a session")
+	}
+	challenge, _ := s.IssueMFAChallenge("op@northwind.id", time.Minute)
+	if _, err := s.VerifySession(challenge); err == nil {
+		t.Error("a second-factor challenge was accepted as a session")
+	}
+}
+
+func TestSessionsCarryDistinctIDs(t *testing.T) {
+	s, _ := NewSigner("a-development-secret-of-sufficient-length")
+	t.Cleanup(s.Close)
+	a, _ := s.IssueSession(Session{Email: "a@x.y"}, time.Hour)
+	b, _ := s.IssueSession(Session{Email: "a@x.y"}, time.Hour)
+	sa, _ := s.VerifySession(a)
+	sb, _ := s.VerifySession(b)
+	if sa.ID == "" || sa.ID == sb.ID {
+		t.Errorf("session ids %q and %q; each sign-in needs its own to be revoked alone", sa.ID, sb.ID)
+	}
+}
+
+func TestDeviceTokenIsBoundToItsAccount(t *testing.T) {
+	s, _ := NewSigner("a-development-secret-of-sufficient-length")
+	t.Cleanup(s.Close)
+	tok, _ := s.IssueDeviceToken("Admin@Northwind.id", time.Hour)
+	if !s.DeviceKnownFor(tok, "admin@northwind.id") {
+		t.Error("a device token did not match its own account")
+	}
+	if s.DeviceKnownFor(tok, "other@northwind.id") {
+		t.Error("a device token for one account exempted another")
+	}
+	old, _ := s.IssueDeviceToken("admin@northwind.id", -time.Minute)
+	if s.DeviceKnownFor(old, "admin@northwind.id") {
+		t.Error("an expired device token was honoured")
+	}
+}

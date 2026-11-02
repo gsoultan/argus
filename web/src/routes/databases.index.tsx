@@ -9,6 +9,7 @@ import { relTime } from '~/components/primitives'
 import { databasesQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import { canSee } from '~/lib/roles'
+import { engineOf } from '~/lib/engines'
 import { FS } from '~/theme'
 import type { DBAccess, DBLabel, DBLevel, Database } from '~/types/domain'
 
@@ -69,7 +70,7 @@ function Databases() {
   if (!isConfigured()) {
     return (
       <Box>
-        <PageHeader title="Databases" description="Open a database in the browser. Every statement is recorded." />
+        <PageHeader title="Databases" description="Open a database, a Redis or a RabbitMQ in the browser. Everything is recorded." />
         <PageBody>
           <Alert icon={<IconInfoCircle size={16} />} color="amber" variant="light">
             No control plane is configured, so there are no databases to show. This page has no sample data on
@@ -84,7 +85,7 @@ function Databases() {
     <Box>
       <PageHeader
         title="Databases"
-        description="Open a database you've been given. Argus signs you in for this session only and records every statement."
+        description="Open a Postgres database, a Redis or a RabbitMQ you've been given. Argus signs you in for this session only and records every statement and command."
         actions={
           admin ? (
             <ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>
@@ -148,12 +149,12 @@ function Databases() {
                 <Group gap="xs" wrap="nowrap">
                   <IconDatabase size={16} color="var(--color-brand)" />
                   <Box>
-                    <Text fw={600} size={FS.body}>{d.dbname}</Text>
+                    <Text fw={600} size={FS.body}>{d.engine === 'redis' ? `db ${d.dbname}` : d.dbname}</Text>
                     <Text size={FS.micro} c="dimmed" ff="monospace">{d.hostname}</Text>
                   </Box>
                 </Group>
                 </Table.Td>
-                <Table.Td><Text size={FS.meta} c="dimmed">Postgres</Text></Table.Td>
+                <Table.Td><Text size={FS.meta} c="dimmed">{engineOf(d.engine).label}</Text></Table.Td>
                 <Table.Td><Badge variant="light" color={LABEL_COLOR[d.label]} radius="sm">{d.label}</Badge></Table.Td>
                 <Table.Td><Group gap={6} wrap="nowrap">
                   <LevelBadge level={acc?.level} />

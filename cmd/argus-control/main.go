@@ -16,6 +16,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/confexpand"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,8 +30,6 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
-
-	"github.com/gsoultan/argus/internal/secrets"
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
@@ -58,8 +58,13 @@ type config struct {
 	ReporterToken  string            `yaml:"reporter_token,omitempty"`
 	// AgentStaleAfter is how long an agent may be silent before the fleet is
 	// told. Short on purpose: silence is how a killed agent looks.
-	AgentStaleAfter time.Duration   `yaml:"agent_stale_after,omitempty"`
-	Storage         *storage.Config `yaml:"storage,omitempty"`
+	AgentStaleAfter time.Duration `yaml:"agent_stale_after,omitempty"`
+	// AgentReleasesURL is where agents download a new version from when the
+	// console updates them: <url>/v<version>/<package>, with checksums.txt
+	// beside it. Empty is the project's GitHub releases; set it to a mirror
+	// for servers that cannot reach GitHub.
+	AgentReleasesURL string          `yaml:"agent_releases_url,omitempty"`
+	Storage          *storage.Config `yaml:"storage,omitempty"`
 	// RecordingsDir is where recordings agents ship are kept when there is
 	// no object storage. Empty means /var/lib/argus-control/recordings when
 	// that directory exists, and beside the config file otherwise.
@@ -86,8 +91,12 @@ type config struct {
 	// are already appropriate — a person never reaches them, a script does.
 	RateLimit  *rateLimitConfig `yaml:"rate_limit,omitempty"`
 	SessionTTL time.Duration    `yaml:"session_ttl,omitempty"`
-	TicketTTL  time.Duration    `yaml:"ticket_ttl,omitempty"`
-	LogLevel   string           `yaml:"log_level,omitempty"`
+	// RequireMFA is which accounts must set up a second factor before they
+	// may do anything else in the console: "privileged" (owners, admins and
+	// approvers; the default), "all", or "off".
+	RequireMFA string        `yaml:"require_mfa,omitempty"`
+	TicketTTL  time.Duration `yaml:"ticket_ttl,omitempty"`
+	LogLevel   string        `yaml:"log_level,omitempty"`
 	// Alerts tells administrators, by email, Telegram or a push notification
 	// through Firebase Cloud Messaging, every time somebody opens a session.
 	// Omit for none.
@@ -166,6 +175,13 @@ type rateLimitConfig struct {
 	LoginPerMinute   int      `yaml:"login_per_minute,omitempty"`
 	FailuresPerHour  int      `yaml:"failures_per_hour,omitempty"`
 	TicketsPerMinute int      `yaml:"tickets_per_minute,omitempty"`
+	// AccountFailuresPerHour bounds wrong passwords for one account from
+	// every address together. Browsers that signed in to it before are
+	// exempt, so it cannot be used to lock the account holder out. 10.
+	AccountFailuresPerHour int `yaml:"account_failures_per_hour,omitempty"`
+	// AccountCodeFailuresPerHour bounds wrong second-factor codes for one
+	// account. 5.
+	AccountCodeFailuresPerHour int `yaml:"account_code_failures_per_hour,omitempty"`
 }
 
 type tlsConfig struct {
@@ -299,11 +315,23 @@ func runCommand(configPath string) error {
 			return runUsersSetDisabled(configPath, flag.Args()[2:], true)
 		case "enable":
 			return runUsersSetDisabled(configPath, flag.Args()[2:], false)
+		// Getting an administrator back in when the console cannot: see
+		// docs/admin-recovery.md.
+		case "reset-mfa":
+			return runUsersResetMFA(configPath, flag.Args()[2:])
+		case "set-password":
+			return runUsersSetPassword(configPath, flag.Args()[2:])
+		case "set-role":
+			return runUsersSetRole(configPath, flag.Args()[2:])
+		case "sign-out":
+			return runUsersSignOut(configPath, flag.Args()[2:])
 		default:
-			return fmt.Errorf("unknown users command %q: add, list, disable, enable", flag.Arg(1))
+			return fmt.Errorf("unknown users command %q: add, list, disable, enable, "+
+				"reset-mfa, set-password, set-role, sign-out", flag.Arg(1))
 		}
 	}
-	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, users add|list|disable|enable",
+	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, "+
+		"users add|list|disable|enable|reset-mfa|set-password|set-role|sign-out",
 		strings.Join(flag.Args(), " "))
 }
 
@@ -388,6 +416,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			LoginPerMinute:   cfg.RateLimit.LoginPerMinute,
 			FailuresPerHour:  cfg.RateLimit.FailuresPerHour,
 			TicketsPerMinute: cfg.RateLimit.TicketsPerMinute,
+
+			AccountFailuresPerHour:     cfg.RateLimit.AccountFailuresPerHour,
+			AccountCodeFailuresPerHour: cfg.RateLimit.AccountCodeFailuresPerHour,
 		}
 	}
 	throttles, err := control.NewThrottles(rl)
@@ -430,6 +461,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		}
 	}
 	api.Alerts = alerts
+	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
 			Dir: cfg.Console.Dir, Version: version,
@@ -473,6 +505,15 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	api.SetAuth(signer, cfg.ConsoleURL, secureCookies)
 	api.SessionTTL = cfg.SessionTTL
 	api.TicketTTL = cfg.TicketTTL
+	if !control.ValidMFAPolicy(cfg.RequireMFA) {
+		return fmt.Errorf("require_mfa is %q; use privileged, all or off", cfg.RequireMFA)
+	}
+	api.RequireMFA = control.MFAPolicy(cfg.RequireMFA)
+	if api.RequireMFA == control.MFAOff {
+		log.Warn("require_mfa is off",
+			"detail", "owners and admins can sign in with a password alone; one phished "+
+				"password is then every host this control plane brokers")
+	}
 	api.UserTokens = cfg.UserTokens
 
 	// Static tokens are a bootstrap convenience and nothing more. The moment a
@@ -585,7 +626,17 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	var listeners []listener
 	newServer := func(addr string, h http.Handler) *http.Server {
-		return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+		return &http.Server{Addr: addr, Handler: h,
+			// A client gets ten seconds to send its headers, and 64 KiB of
+			// them, so a slow or bloated request cannot hold a connection.
+			ReadHeaderTimeout: 10 * time.Second,
+			MaxHeaderBytes:    64 << 10,
+			// An idle keep-alive connection is closed after two minutes,
+			// so idle sockets cannot be piled up until descriptors run
+			// out. No Read/WriteTimeout: terminals, desktops and agent
+			// tunnels are long-lived on purpose and set their own.
+			IdleTimeout: 2 * time.Minute,
+		}
 	}
 	if cfg.ConsoleListen == "" {
 		listeners = append(listeners, listener{"control", newServer(cfg.Listen, api.Handler())})
@@ -606,7 +657,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			// they verify one when given and the reporter routes check for it
 			// themselves, exactly as before.
 			requireCert := l.name == "fleet" && cfg.TLS.ClientCAFile != ""
-			l.srv.TLSConfig, err = tlsconfig.Server(tlsconfig.ServerOptions{
+			l.srv.TLSConfig, err = servertls.Server(servertls.ServerOptions{
 				CertFile:          cfg.TLS.CertFile,
 				KeyFile:           cfg.TLS.KeyFile,
 				ClientCAFile:      cfg.TLS.ClientCAFile,
@@ -645,7 +696,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			return errors.New("tunnel.quic_listen needs `tls`: QUIC carries this " +
 				"process's certificate, and there is none configured")
 		}
-		qtls, err := tlsconfig.Server(tlsconfig.ServerOptions{
+		qtls, err := servertls.Server(servertls.ServerOptions{
 			CertFile: cfg.TLS.CertFile, KeyFile: cfg.TLS.KeyFile, Log: log,
 		})
 		if err != nil {
@@ -809,7 +860,7 @@ func loadConfig(path string) (config, error) {
 	}
 	// Resolve ${VAR} and ${file:/path} references before parsing, so the file
 	// on disk never has to contain a live credential.
-	data, err = secrets.Expand(data)
+	data, err = confexpand.Expand(data)
 	if err != nil {
 		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}

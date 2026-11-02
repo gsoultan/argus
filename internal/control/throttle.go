@@ -3,6 +3,7 @@ package control
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gsoultan/argus/internal/ratelimit"
@@ -24,6 +25,17 @@ type Throttles struct {
 	// worth bounding: a stolen session should not be able to mint tickets at
 	// machine speed.
 	tickets *ratelimit.Limiter
+	// accountPasswords counts refused passwords per account, from every
+	// address together, so a guesser spreading attempts over a botnet still
+	// runs out. Browsers that have signed in to that account before are
+	// exempt (see knownDevice), so an attacker tripping it cannot lock the
+	// account holder out.
+	accountPasswords *ratelimit.Limiter
+	// accountCodes counts refused second-factor and recovery codes per
+	// account. Only someone who already has the password reaches that step,
+	// so it is a hard stop with no exemption: six digits from many addresses
+	// is otherwise a matter of time.
+	accountCodes *ratelimit.Limiter
 
 	resolver *ratelimit.ClientResolver
 	stop     chan struct{}
@@ -40,6 +52,12 @@ type ThrottleConfig struct {
 	LoginPerMinute   int
 	FailuresPerHour  int
 	TicketsPerMinute int
+	// AccountFailuresPerHour bounds refused passwords per account across
+	// every address. Default 10.
+	AccountFailuresPerHour int
+	// AccountCodeFailuresPerHour bounds refused second-factor codes per
+	// account. Default 5.
+	AccountCodeFailuresPerHour int
 }
 
 // NewThrottles builds the limiters.
@@ -58,6 +76,12 @@ func NewThrottles(cfg ThrottleConfig) (*Throttles, error) {
 	}
 	if cfg.TicketsPerMinute <= 0 {
 		cfg.TicketsPerMinute = 30
+	}
+	if cfg.AccountFailuresPerHour <= 0 {
+		cfg.AccountFailuresPerHour = 10
+	}
+	if cfg.AccountCodeFailuresPerHour <= 0 {
+		cfg.AccountCodeFailuresPerHour = 5
 	}
 
 	t := &Throttles{
@@ -79,9 +103,20 @@ func NewThrottles(cfg ThrottleConfig) (*Throttles, error) {
 			Rate: cfg.TicketsPerMinute, Window: time.Minute,
 			Burst: cfg.TicketsPerMinute,
 		}, ratelimit.DefaultMaxKeys),
+		// Keyed by the address someone typed, so bounded like the others:
+		// the LRU drops the quietest key, never an account under attack.
+		accountPasswords: ratelimit.New(ratelimit.Limit{
+			Rate: cfg.AccountFailuresPerHour, Window: time.Hour,
+			Burst: cfg.AccountFailuresPerHour,
+		}, ratelimit.DefaultMaxKeys),
+		accountCodes: ratelimit.New(ratelimit.Limit{
+			Rate: cfg.AccountCodeFailuresPerHour, Window: time.Hour,
+			Burst: cfg.AccountCodeFailuresPerHour,
+		}, ratelimit.DefaultMaxKeys),
 	}
 
-	for _, l := range []*ratelimit.Limiter{t.login, t.failures, t.tickets} {
+	for _, l := range []*ratelimit.Limiter{t.login, t.failures, t.tickets,
+		t.accountPasswords, t.accountCodes} {
 		l.StartSweeper(5*time.Minute, t.stop)
 	}
 	return t, nil
@@ -207,4 +242,67 @@ func (a *API) refuse(w http.ResponseWriter, r *http.Request, key string,
 	// Deliberately says nothing about whether the credential was valid — a
 	// throttle response should not become an oracle.
 	writeErr(w, http.StatusTooManyRequests, reason)
+}
+
+/* ── Per account ─────────────────────────────────────────────────────────── */
+
+// The per-client limits above stop one address. These stop one account being
+// guessed at from many: a credential-stuffing list or a botnet spreads its
+// attempts so that no single address ever trips a per-client limit.
+
+func accountKey(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+// accountPasswordsExhausted reports whether passwords for email are being
+// refused without checking, and for how long.
+func (a *API) accountPasswordsExhausted(email string) (bool, time.Duration) {
+	if a.throttles == nil {
+		return false, 0
+	}
+	return a.throttles.accountPasswords.Exhausted(accountKey(email))
+}
+
+// accountCodesExhausted is the same for second-factor codes.
+func (a *API) accountCodesExhausted(email string) (bool, time.Duration) {
+	if a.throttles == nil {
+		return false, 0
+	}
+	return a.throttles.accountCodes.Exhausted(accountKey(email))
+}
+
+// recordAccountFailure charges a refused password or code to the account,
+// and raises the alarm the first time the account's budget runs out.
+func (a *API) recordAccountFailure(r *http.Request, email string, code bool) {
+	if a.throttles == nil || email == "" {
+		return
+	}
+	l, what := a.throttles.accountPasswords, "passwords"
+	if code {
+		l, what = a.throttles.accountCodes, "second-factor codes"
+	}
+	key := accountKey(email)
+	before, _ := l.Exhausted(key)
+	l.Allow(key)
+	after, _ := l.Exhausted(key)
+	if before || !after {
+		return
+	}
+	detail := "Too many wrong " + what + " for this account from " + a.clientAddr(r) +
+		" and elsewhere; further attempts are refused for up to an hour."
+	if code {
+		detail += " Whoever is trying already has this account's password: change it."
+	} else {
+		detail += " Browsers that have signed in to this account before are not affected."
+	}
+	a.log.Warn("account throttled after repeated failures", "email", key, "what", what)
+	a.auditAuth(r, "auth.account_throttled", "critical", key, detail)
+	a.Alerts.SecurityEvent("Argus: sign-in attempts against "+key+" are being refused", detail)
+}
+
+// clearAccountFailures forgets an account's failures after a full sign-in.
+func (a *API) clearAccountFailures(email string) {
+	if a.throttles == nil {
+		return
+	}
+	a.throttles.accountPasswords.Reset(accountKey(email))
+	a.throttles.accountCodes.Reset(accountKey(email))
 }

@@ -8,6 +8,10 @@ import (
 // SessionCookieName is the console's session.
 const SessionCookieName = "argus_session"
 
+// DeviceCookieName marks a browser that has signed in before; see
+// Signer.IssueDeviceToken.
+const DeviceCookieName = "argus_device"
+
 // SetCookie writes a hardened cookie.
 func SetCookie(w http.ResponseWriter, name, value string, ttl time.Duration, secure bool) {
 	http.SetCookie(w, &http.Cookie{

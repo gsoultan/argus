@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control"
-	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 // errStopped is a signal arriving while setup was waiting.
@@ -75,7 +75,7 @@ func runInstall(ctx context.Context, loc configLocation, listen string, log *slo
 	}
 
 	inst := &installer{loc: loc, consoleDir: consoleDir, log: log, done: make(chan struct{})}
-	tlsCfg, err := tlsconfig.Server(tlsconfig.ServerOptions{
+	tlsCfg, err := servertls.Server(servertls.ServerOptions{
 		CertFile: pki.ServerCert(), KeyFile: pki.ServerKey(), Log: log,
 	})
 	if err != nil {

@@ -17,6 +17,7 @@ import {
 } from '~/lib/queries'
 import { guard } from '~/lib/guard'
 import { FS } from '~/theme'
+import { engineOf } from '~/lib/engines'
 import type { DBLabel, DBLevel, DBPolicy, Database } from '~/types/domain'
 
 /**
@@ -36,12 +37,15 @@ export const Route = createFileRoute('/databases/$dbId_/settings')({
     ]),
 })
 
-const LEVELS: { value: DBLevel; label: string; blurb: string }[] = [
-  { value: 'read', label: 'Read', blurb: 'Look at data and run reports. The default.' },
-  { value: 'write', label: 'Write', blurb: 'Change rows. On production, needs approval each time unless you turn that off.' },
-  { value: 'owner', label: 'Owner', blurb: 'Change tables, columns and indexes too.' },
-  { value: 'dba', label: 'DBA', blurb: 'Manage roles and grants, end other people’s queries. Never a Postgres superuser.' },
+const LEVEL_NAMES: { value: DBLevel; label: string }[] = [
+  { value: 'read', label: 'Read' }, { value: 'write', label: 'Write' }, { value: 'owner', label: 'Owner' }, { value: 'dba', label: 'DBA' },
 ]
+
+/** The levels, with what each one means on this engine. */
+function levelsFor(db: Database): { value: DBLevel; label: string; blurb: string }[] {
+  const info = engineOf(db.engine)
+  return LEVEL_NAMES.map((l) => ({ ...l, blurb: info.levels[l.value] }))
+}
 
 function DatabaseSettings() {
   const { dbId } = Route.useParams()
@@ -63,21 +67,26 @@ function DatabaseSettings() {
   }
   if (!data) return null
   const db = data.database
+  const info = engineOf(db.engine)
+  const LEVELS = levelsFor(db)
+  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.dbname
   const names = new Map((users ?? []).map((u) => [u.email, u.displayName]))
 
   const onRemove = async (id: string, label: string) => {
     try {
       await remove.mutateAsync({ id: dbId, assignmentId: id })
-      notifyOk('Removed', `${label} can no longer open ${db.dbname}. Their Postgres role is locked at their next session end.`)
+      notifyOk('Removed', db.engine === 'postgres'
+        ? `${label} can no longer open ${db.dbname}. Their Postgres role is locked at their next session end.`
+        : `${label} can no longer open ${title}. A session already open keeps its user until it ends.`)
     } catch (err) {
       notifyError('Not removed', err)
     }
   }
   const onDelete = async () => {
-    if (!window.confirm(`Remove ${db.dbname} from Argus? Sessions and recordings are kept; nobody can open it from here any more.`)) return
+    if (!window.confirm(`Remove ${title} from Argus? Sessions and recordings are kept; nobody can open it from here any more.`)) return
     try {
       await del.mutateAsync(dbId)
-      notifyOk('Removed', `${db.dbname} is no longer in Argus.`)
+      notifyOk('Removed', `${title} is no longer in Argus.`)
       void navigate({ to: '/databases' })
     } catch (err) {
       notifyError('Not removed', err)
@@ -87,10 +96,12 @@ function DatabaseSettings() {
   return (
     <Box>
       <PageHeader
-        title={db.dbname}
+        title={title}
         crumbs={[{ label: 'Databases', to: '/databases' }]}
         status={<Badge variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[db.label]} radius="sm">{db.label}</Badge>}
-        description={`On ${db.hostname}. Who can open this database and what they can do; Argus keeps a Postgres role for each person to match.`}
+        description={db.engine === 'postgres'
+          ? `On ${db.hostname}. Who can open this database and what they can do; Argus keeps a Postgres role for each person to match.`
+          : `${info.label} on ${db.hostname}. Who can open it and what they can do; each person gets their own ${info.label} user for the length of their session.`}
         actions={
           <Group gap="xs">
             <ButtonLink to="/databases/$dbId" params={{ dbId }} variant="default" size="sm">Open</ButtonLink>
@@ -158,13 +169,15 @@ function DatabaseSettings() {
           )}
 
           {tab === 'safety' && <Safety db={db} />}
-          {tab === 'connection' && <Connection db={db} />}
+          {tab === 'connection' && (db.engine === 'postgres' ? <Connection db={db} /> : <StoreConnection db={db} />)}
 
-          <SectionCard title="Remove from Argus" description="Sessions and recordings are kept. Nothing is changed in Postgres; locked roles stay locked.">
-            <Button color="rose" variant="light" onClick={() => void onDelete()} loading={del.isPending}>Remove {db.dbname}</Button>
+          <SectionCard title="Remove from Argus" description={db.engine === 'postgres'
+            ? 'Sessions and recordings are kept. Nothing is changed in Postgres; locked roles stay locked.'
+            : `Sessions and recordings are kept. Nothing is changed in ${info.label}.`}>
+            <Button color="rose" variant="light" onClick={() => void onDelete()} loading={del.isPending}>Remove {title}</Button>
           </SectionCard>
         </Stack>
-        <GiveAccess dbId={dbId} db={db} opened={adding} onClose={add.close}
+        <GiveAccess dbId={dbId} db={db} levels={LEVELS} opened={adding} onClose={add.close}
           teams={(teams ?? []).map((t) => ({ value: t.id, label: t.name }))}
           people={(users ?? []).map((u) => ({ value: u.email, label: `${u.displayName} · ${u.email}` }))} />
       </PageBody>
@@ -257,8 +270,57 @@ function Connection({ db }: { db: Database }) {
   )
 }
 
-function GiveAccess({ dbId, db, opened, onClose, teams, people }: {
-  dbId: string; db: Database; opened: boolean; onClose: () => void
+/**
+ * Where a Redis or a RabbitMQ is, and how the agent signs in as its admin
+ * there. Nothing here is a credential: for Redis it is the path of the file
+ * on the server that holds one.
+ */
+function StoreConnection({ db }: { db: Database }) {
+  const update = useUpdateDatabase()
+  const [host, setHost] = useState(db.host)
+  const [port, setPort] = useState<number | string>(db.port)
+  const [conf, setConf] = useState(db.configPath ?? '')
+  const dirty = host.trim() !== db.host || Number(port) !== db.port || (db.engine === 'redis' && conf.trim() !== (db.configPath ?? ''))
+  const save = async () => {
+    try {
+      await update.mutateAsync({ id: db.id, host: host.trim(), port: Number(port) || db.port,
+        ...(db.engine === 'redis' ? { configPath: conf.trim() } : {}) })
+      notifyOk('Saved', 'New sessions go to the new address; open ones keep theirs.')
+    } catch (err) {
+      notifyError('Not saved', err)
+    }
+  }
+  return (
+    <Stack gap="md">
+      <SectionCard title={db.engine === 'redis' ? 'Redis' : 'RabbitMQ management API'}
+        description={db.engine === 'redis'
+          ? 'On the server itself: a loopback address or the path of its unix socket. The agent refuses anything else.'
+          : 'On the server itself, on loopback. The agent refuses anything else.'}>
+        <Stack gap="sm">
+          <Group align="flex-end" gap="sm">
+            <TextInput label="Address" value={host} onChange={(e) => setHost(e.currentTarget.value)} w={280} aria-label="Address" />
+            <NumberInput label="Port" value={port} onChange={setPort} min={1} max={65535} w={120} aria-label="Port" />
+          </Group>
+          {db.engine === 'redis' && (
+            <TextInput label="redis.conf" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
+              description="The agent reads requirepass from this file on the server to sign in as admin, only to give and take each person’s ACL user. If the default user has no password, nothing is read." />
+          )}
+          <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
+        </Stack>
+      </SectionCard>
+      <SectionCard title="How people sign in">
+        <Text size={FS.meta} c="dimmed">
+          {db.engine === 'redis'
+            ? 'Each person gets a Redis ACL user named argus-<login>-<level> with a one-time password for their session, and it is deleted when their last session closes. Redis 6 or later. Argus never touches a user whose name does not start with argus-.'
+            : 'The agent runs rabbitmqctl on the server to add a user named argus-<login>-<level> with its tag and permissions on this vhost, the password on standard input, and deletes it when the last session closes. Argus never touches a user whose name does not start with argus-.'}
+        </Text>
+      </SectionCard>
+    </Stack>
+  )
+}
+
+function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, people }: {
+  dbId: string; db: Database; levels: { value: DBLevel; label: string; blurb: string }[]; opened: boolean; onClose: () => void
   teams: { value: string; label: string }[]; people: { value: string; label: string }[]
 }) {
   const [kind, setKind] = useState<'team' | 'person'>('team')
@@ -338,20 +400,41 @@ function Safety({ db }: { db: Database }) {
           data={[{ label: 'Production', value: 'production' }, { label: 'Staging', value: 'staging' }, { label: 'Development', value: 'development' }]} />
       </SectionCard>
       <SectionCard title="Limits">
-        <Stack gap="sm">
-          {num('statementTimeoutS', 'Stop a statement after', 'A runaway query ends on its own.', 60, 's')}
-          {num('idleTxTimeoutS', 'End a transaction left idle after', 'So a forgotten BEGIN does not hold locks.', 120, 's')}
-          {num('maxRows', 'Rows a person can see per statement', 'They can always narrow with LIMIT.', 100000, 'rows')}
-          {num('idleTimeoutS', 'End idle sessions after', '', 1800, 's')}
-          {num('maxSessionS', 'Longest session', 'The role’s one-time password expires with it.', 28800, 's')}
-        </Stack>
+        {db.engine === 'postgres' ? (
+          <Stack gap="sm">
+            {num('statementTimeoutS', 'Stop a statement after', 'A runaway query ends on its own.', 60, 's')}
+            {num('idleTxTimeoutS', 'End a transaction left idle after', 'So a forgotten BEGIN does not hold locks.', 120, 's')}
+            {num('maxRows', 'Rows a person can see per statement', 'They can always narrow with LIMIT.', 100000, 'rows')}
+            {num('idleTimeoutS', 'End idle sessions after', '', 1800, 's')}
+            {num('maxSessionS', 'Longest session', 'The role’s one-time password expires with it.', 28800, 's')}
+          </Stack>
+        ) : (
+          <Stack gap="sm">
+            {num('statementTimeoutS', db.engine === 'redis' ? 'Stop waiting for a command after' : 'Stop waiting for RabbitMQ after', 'The session then starts a fresh connection.', 60, 's')}
+            {num('maxRows', db.engine === 'redis' ? 'Items shown per value or reply' : 'Queues or messages shown at once', 'Larger answers are cut and say so.', 10000, 'items')}
+            {db.engine === 'redis' && num('keysLimit', 'Run KEYS only on dbs up to', 'KEYS stops Redis while it walks every key; past this, people use the key browser, which uses SCAN.', 10000, 'keys')}
+            {num('idleTimeoutS', 'End idle sessions after', '', 1800, 's')}
+            {num('maxSessionS', 'Longest session', 'The person’s user is removed when it ends.', 28800, 's')}
+          </Stack>
+        )}
       </SectionCard>
+      {db.engine !== 'postgres' ? (
+        <SectionCard title="Recording">
+          <Group justify="space-between"><Box><Text size={FS.body} fw={600}>Commands</Text><Text size={FS.micro} c="dimmed">{db.engine === 'redis'
+            ? 'Every command, and every value read in the key browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'
+            : 'Every peek, publish (with its payload), purge and change is recorded before it is sent, in a hash chain the verifier checks.'}</Text></Box>
+            <Badge variant="light" color="teal" radius="sm">Always on</Badge></Group>
+          <Group justify="space-between" mt="sm"><Box><Text size={FS.body} fw={600}>Replies</Text><Text size={FS.micro} c="dimmed">Never recorded. A SHA-256 of each reply is kept, so a replay can prove what came back without holding it.</Text></Box>
+            <Badge variant="light" color="slate" radius="sm">Hash only</Badge></Group>
+        </SectionCard>
+      ) : (
       <SectionCard title="Recording">
         <Group justify="space-between"><Box><Text size={FS.body} fw={600}>Statements</Text><Text size={FS.micro} c="dimmed">Always recorded, before they run, in a hash chain the verifier checks.</Text></Box>
           <Badge variant="light" color="teal" radius="sm">Always on</Badge></Group>
         <Group justify="space-between" mt="sm"><Box><Text size={FS.body} fw={600}>Query results</Text><Text size={FS.micro} c="dimmed">Never recorded, so customer data stays out of recordings. The row count and a SHA-256 of each result are kept, so a replay can prove what a statement returned without holding it.</Text></Box>
           <Badge variant="light" color="slate" radius="sm">Rows and hash only</Badge></Group>
       </SectionCard>
+      )}
       <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
     </Stack>
   )

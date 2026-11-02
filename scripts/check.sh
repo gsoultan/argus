@@ -68,6 +68,9 @@ if [[ "$TARGET" == all || "$TARGET" == go ]]; then
     packages=$(go list ./... | grep -v '/node_modules/')
     run_check "vet" go vet $packages
     run_check "test" go test $packages
+    # The agent binary carries no control-plane code; the rule and the shared
+    # set it allows are in cmd/argus-agent/layering_test.go.
+    run_check "agent layering" go test -count=1 -run 'TestAgentLinksNoControlPlaneCode|TestSharedPackagesStayNeutral|TestControlPlaneShipsNoAgentCode' ./cmd/argus-agent/
     # gofmt exits 0 even when files need formatting, so check for output instead.
     run_check "gofmt" bash -c '[[ -z "$(gofmt -l .)" ]] || { gofmt -l .; exit 1; }'
     # The storm model in internal/control/rmodel is a PROJECTION of this

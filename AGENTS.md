@@ -62,6 +62,11 @@ honestly. Name both in the summary: `Driver: sec · Challenger: dist`.
 - An optional dependency is an interface field, so it is never assigned a nil
   pointer — a nil pointer in an interface is not a nil interface.
 - Kernel tests skip themselves. Check the skip count, not the exit code.
+- The agent links no control-plane code. Agent-only code lives under
+  `internal/agent/`, control-only code under `internal/control/` or the
+  control packages beside it, and the shared set is the short list in
+  `cmd/argus-agent/layering_test.go`. Growing that list is a decision, not a
+  convenience.
 
 ## Before you start
 

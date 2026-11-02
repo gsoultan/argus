@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"math"
 	"net/http"
@@ -17,7 +18,6 @@ import (
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
-	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -102,6 +102,14 @@ type API struct {
 	// the API alone, as before it existed. See console.go.
 	Console http.Handler
 
+	// Version is this control plane's own, stamped from the release tag:
+	// the version an agent is offered when it is updated from the console.
+	Version string
+	// AgentReleasesURL is where agents download packages to update from;
+	// empty is DefaultAgentReleasesURL. A mirror, for servers that cannot
+	// reach GitHub.
+	AgentReleasesURL string
+
 	// Settings reads and writes the configuration file for the console's
 	// Settings page. Nil leaves the page read-only; see settings_routes.go.
 	Settings SettingsBackend
@@ -113,6 +121,10 @@ type API struct {
 	setup setupGate
 	// proxyNotice logs an ignored proxy once; see noticeUntrustedProxy.
 	proxyNotice sync.Once
+
+	// RequireMFA says which roles must enrol a second factor; see
+	// session_gate.go. Empty means MFAPrivileged.
+	RequireMFA MFAPolicy
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -138,7 +150,9 @@ func (a *API) Handler() http.Handler {
 	a.registerCommon(mux)
 	a.registerConsole(mux)
 	a.registerFleet(mux)
-	return a.securityHeaders(a.cors(a.scope(mux)))
+	// scope first: the gate checks the cookie against the organization's
+	// own table, so it needs to know which one.
+	return a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))
 }
 
 // ConsoleHandler serves the surface a person reaches: sign-in, the console's
@@ -153,7 +167,9 @@ func (a *API) ConsoleHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerConsole(mux)
-	return a.securityHeaders(a.cors(a.scope(mux)))
+	// scope first: the gate checks the cookie against the organization's
+	// own table, so it needs to know which one.
+	return a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))
 }
 
 // FleetHandler serves the surface gateways and agents reach.
@@ -189,9 +205,10 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	// and the only one left.
 	mux.HandleFunc("POST /auth/password", a.limitLogin(a.handlePasswordLogin))
 	mux.HandleFunc("POST /auth/mfa", a.limitLogin(a.handleMFAVerify))
-	mux.HandleFunc("POST /auth/mfa/enrol", a.handleMFABegin)
-	mux.HandleFunc("POST /auth/mfa/confirm", a.handleMFAConfirm)
-	mux.HandleFunc("POST /auth/password/change", a.handleChangePassword)
+	mux.HandleFunc("POST /auth/mfa/enrol", a.limitLogin(a.handleMFABegin))
+	mux.HandleFunc("POST /auth/mfa/confirm", a.limitLogin(a.handleMFAConfirm))
+	mux.HandleFunc("POST /auth/password/change", a.limitLogin(a.handleChangePassword))
+	mux.HandleFunc("POST /auth/sessions/revoke", a.handleRevokeSessions)
 	mux.HandleFunc("GET /auth/me", a.handleMe)
 	mux.HandleFunc("POST /auth/switch", a.handleSwitchOrg)
 	// First run: the first account, once, with a token read from the host.
@@ -237,6 +254,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
+	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
+	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh/accounts/{account}", a.putAssetDirectSSHAccount)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
@@ -245,6 +265,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/users/{email}/disable", a.postAccountDisabled(true))
 	mux.HandleFunc("POST /api/v1/users/{email}/enable", a.postAccountDisabled(false))
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
+	mux.HandleFunc("POST /api/v1/users/{email}/reset-mfa", a.postResetMFA)
+	mux.HandleFunc("POST /api/v1/users/{email}/sign-out", a.postSignOutAccount)
 	mux.HandleFunc("PUT /api/v1/users/{email}/login-name", a.putLoginName)
 	mux.HandleFunc("GET /api/v1/users/{email}/servers", a.getPersonServers)
 	mux.HandleFunc("GET /api/v1/me/server-account", a.getMyServerAccount)
@@ -254,6 +276,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
 	mux.HandleFunc("GET /api/v1/assets/{id}/login-accounts", a.getLoginAccounts)
+	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
 	mux.HandleFunc("GET /api/v1/assets/{id}/team-assignments", a.getTeamAssignments)
@@ -382,7 +405,7 @@ func (a *API) reporter(next func(http.ResponseWriter, *http.Request)) http.Handl
 			return
 		}
 		if a.RequirePeerCert {
-			peer := tlsconfig.PeerIdentity(r.TLS)
+			peer := servertls.PeerIdentity(r.TLS)
 			if peer == "" {
 				a.log.Warn("reporter call without a client certificate",
 					"remote", r.RemoteAddr, "path", r.URL.Path)
@@ -687,6 +710,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// PersonalAccounts is what the agent did with the personal accounts
 		// it was last given. Absent from an agent older than them.
 		PersonalAccounts *[]PersonalAccountState `json:"personal_accounts"`
+		// Update is what the agent says about updating itself. Absent from
+		// an agent too old to update from the console.
+		Update *AgentUpdateStatus `json:"update"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -757,6 +783,12 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		reply["uninstall"] = true
 	} else if uerr != nil {
 		a.log.Error("heartbeat: cannot read whether the agent should uninstall", "error", uerr)
+	}
+	// An update the console asked for, until the agent reports how it went.
+	if err == nil || errors.Is(err, ErrAgentUnmatched) {
+		if u := a.heartbeatUpdate(r.Context(), in.Hostname, in.Update); u != nil {
+			reply["update"] = u
+		}
 	}
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",

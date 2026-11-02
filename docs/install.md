@@ -321,17 +321,54 @@ account out of the server. Pick the groups with
 off with `--break-glass=none` and rely on the machine's own console
 (hypervisor or physical) instead.
 
-If a server ever locks everyone out, follow [lockout.md](lockout.md).
+If a server ever locks everyone out, follow [lockout.md](lockout.md). If the
+last administrator loses their password or authenticator, follow
+[admin-recovery.md](admin-recovery.md): recovery runs on this host with
+`argus-control users reset-mfa|set-password|set-role|sign-out`, never in the
+console.
 
 Every login that is admitted -- every session opened from the console -- is
 recorded. There is no setting to record fewer.
 
 ### Upgrading the agent
 
-Install the new package over the old one. An enrolled agent is restarted on
-the new version about 10 seconds after the package finishes, and enabled if an
-older package had disabled it. A console session to that server ends when the
-agent restarts; reconnect once the server shows connected again.
+**From the console** (Linux servers with systemd, agent installed from the
+package): open the server under **Servers**. The **Agent** card shows the
+version it runs and offers **Update to** this control plane's version. The
+agent then:
+
+1. downloads the package for the new version, and the one for the version it
+   runs, and checks both against the release's `checksums.txt`;
+2. waits until nobody is connected to the server: no SSH login, no console
+   terminal, desktop, file transfer or database session. **Update now** skips
+   the wait and closes sessions opened from the console; SSH logins stay
+   connected and their recording carries on under the new agent;
+3. restarts on the new version, in a second or two. SSH logins that arrive
+   meanwhile wait for it instead of being refused;
+4. checks the new version takes SSH logins and reconnects to Argus within 90
+   seconds, and if it does not (or keeps exiting), reinstalls the version that
+   was running.
+
+The card shows each step as the agent reports it, and the audit log records
+who asked and how it went (`agent.update_requested`, then `agent.updated`,
+`agent.update_rolled_back` or `agent.update_failed`). Agents download from
+GitHub releases; servers that cannot reach GitHub can use a mirror laid out the
+same way (`<url>/v<version>/argus-agent_<version>_linux_<arch>.deb` beside
+`checksums.txt`), named in `control.yaml`:
+
+```yaml
+agent_releases_url: "https://mirror.internal/argus/releases/download"
+```
+
+An agent older than this needs one upgrade by hand; after that it updates from
+the console. macOS and Windows agents are upgraded by hand.
+
+**By hand:** install the new package over the old one. An enrolled agent is
+restarted on the new version about 10 seconds after the package finishes, and
+enabled if an older package had disabled it. A console session to that server
+ends when the agent restarts; reconnect once the server shows connected again.
+SSH logins stay connected, and logins that arrive during the restart wait a
+few seconds for it rather than being refused.
 
 ### Uninstalling the agent
 

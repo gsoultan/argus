@@ -110,7 +110,7 @@ func (a *API) postDatabase(w http.ResponseWriter, r *http.Request, actor string)
 		return
 	}
 	a.auditDB(r.Context(), "db.added", "notice", actor, db.Hostname,
-		"Added database "+db.Name+" ("+db.Label+") on "+db.Hostname+".")
+		"Added "+engineName(db.Engine)+" "+db.Name+" ("+db.Label+") on "+db.Hostname+" at "+db.Host+":"+itoa(db.Port)+".")
 	writeJSON(w, http.StatusCreated, db)
 }
 
@@ -129,6 +129,7 @@ func (a *API) patchDatabase(w http.ResponseWriter, r *http.Request, actor string
 		Policy     *DBPolicy `json:"policy"`
 		PoolerHost *string   `json:"poolerHost"`
 		PoolerPort *int      `json:"poolerPort"`
+		ConfigPath *string   `json:"configPath"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -139,6 +140,9 @@ func (a *API) patchDatabase(w http.ResponseWriter, r *http.Request, actor string
 	}
 	if in.PoolerPort != nil {
 		db.PoolerPort = *in.PoolerPort
+	}
+	if in.ConfigPath != nil {
+		db.ConfigPath = *in.ConfigPath
 	}
 	if in.Label != nil {
 		db.Label = *in.Label
@@ -174,6 +178,10 @@ func (a *API) getDBPoolerSetup(w http.ResponseWriter, r *http.Request, _ string)
 	db, err := a.store.Database(r.Context(), r.PathValue("id"))
 	if err != nil {
 		a.dbErr(w, "database", err)
+		return
+	}
+	if db.Engine != tunnel.EnginePostgres {
+		writeErr(w, http.StatusBadRequest, "PgBouncer is only for Postgres")
 		return
 	}
 	host := db.Host
@@ -307,6 +315,17 @@ func (a *API) postDatabaseRequest(w http.ResponseWriter, r *http.Request) {
 	a.auditDB(r.Context(), "db.requested", "notice", sess.Email, req.AssetHostnames[0],
 		"Asked for "+in.Level+" on a database for "+itoa(in.DurationMinutes)+" minutes: "+in.Justification)
 	writeJSON(w, http.StatusCreated, req)
+}
+
+// engineName is how an engine reads in the audit log.
+func engineName(engine string) string {
+	switch engine {
+	case tunnel.EngineRedis:
+		return "Redis db"
+	case tunnel.EngineRabbitMQ:
+		return "RabbitMQ vhost"
+	}
+	return "database"
 }
 
 func deref(s *string) string {
