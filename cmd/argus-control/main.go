@@ -475,6 +475,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			"admins", api.SignInPolicy.Admins, "person", api.SignInPolicy.Person, "every", api.SignInPolicy.Every)
 	}
 	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
+	if cfg.Console != nil {
+		api.FleetURL = cfg.Console.FleetURL
+	}
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
 			Dir: cfg.Console.Dir, Version: version,

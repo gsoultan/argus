@@ -148,15 +148,24 @@ func (a *API) postEnrollToken(w http.ResponseWriter, r *http.Request) {
 		"id": tok.ID, "token": tok.Token, "hostname": tok.Hostname,
 		"expiresAt": tok.ExpiresAt,
 	}
-	if a.Enroll.Pin != nil {
-		if pin, perr := a.Enroll.Pin(); perr != nil {
-			a.log.Error("could not compute the control plane's certificate pin", "error", perr)
-		} else if pin != "" {
-			out["pin"] = pin
-			// The same key, in the form curl's --pinnedpubkey reads, for the
-			// one-line install that fetches its script from here.
-			out["curlPin"] = curlPin(pin)
-		}
+	if a.FleetURL != "" {
+		// The address the command uses, as this process has it now. The
+		// console read the same setting when its page loaded, which is stale
+		// after a save in Settings until the tab is reloaded.
+		out["fleetUrl"] = a.FleetURL
+	}
+	pin, address, problem := a.enrolPin(r)
+	if pin != "" {
+		out["pin"] = pin
+		// The same key, in the form curl's --pinnedpubkey reads, for the
+		// one-line install that fetches its script from here.
+		out["curlPin"] = curlPin(pin)
+	}
+	if problem != "" {
+		// A command with a pin would fail there, and one without would
+		// install an agent that cannot connect. The console says this instead.
+		out["address"] = address
+		out["addressProblem"] = problem
 	}
 	writeJSON(w, http.StatusOK, out)
 }

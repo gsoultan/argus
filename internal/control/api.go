@@ -99,6 +99,12 @@ type API struct {
 	// Enroll is what an agent is handed to trust this control plane when it
 	// enrolls. Zero means it relies on the system trust store.
 	Enroll EnrollTrust
+	// FleetURL is where servers reach this control plane, when it is not the
+	// address the console is opened at. The install command uses it.
+	FleetURL string
+	// PinProbe reports the pin of the key presented at a host:port. Nil dials
+	// it; tests replace it. See enroll_address.go.
+	PinProbe func(ctx context.Context, hostport string) (string, error)
 	// agentCreds caches per-host agent credential lookups.
 	agentCreds agentCredCache
 

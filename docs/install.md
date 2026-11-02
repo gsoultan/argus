@@ -484,7 +484,10 @@ turning it on would stop enrollment pinning the control plane's certificate.
 
 "Address servers use" matters because "Add a server" otherwise writes the
 address the console was opened at into the enrollment command, and agents
-cannot enrol through the tunnel. The control plane's own certificate is
+cannot enrol through the tunnel. Without it the command would fail with curl's
+`public key does not match pinned public key`, since curl meets Cloudflare's
+certificate rather than the control plane's; "Add a server" checks the address
+first and says to set this instead of showing such a command. The control plane's own certificate is
 reissued to cover the new names when you save.
 
 **Save and apply**, then check the new listener answers locally:
