@@ -154,6 +154,20 @@ account follows the server. An account's setting wins over the server's, which
 wins over the deployment's, and changing one is audited as
 `asset.direct_ssh_account_changed` (a warning when it lets more logins in).
 
+The same list shows **every account that can log in** directly, from the
+agent's scan of passwd, shadow, each account's `authorized_keys` and
+`sshd_config` (following its `Include`s): whether it has a password sshd would
+accept and how many keys it holds. A password is only ever reported as set,
+empty or locked, never its hash. Run `argus-agent scan` on the server for the
+same list.
+
+Each direct login also says **how it signed in**: a password, or which key,
+named by its comment when the agent finds that key in the account's
+`authorized_keys`. That shows on the approval and in the audit log. It needs
+`ExposeAuthInfo yes` in `sshd_config`, which the install snippet now adds; on
+a server installed before, add it and reload sshd (the server page says when
+it is missing).
+
 Whatever the setting, a login that is let in is recorded like any other
 session. A direct login only tells Argus the server account and the address it
 came from, not which person it was, so its recording is attributed to

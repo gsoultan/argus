@@ -312,9 +312,19 @@ type DirectLoginRequest struct {
 	DecidedAt      *time.Time
 	DecidedByEmail *string
 	DecisionNote   *string
+	AuthMethod     string
+	KeyFingerprint string
+	KeyType        string
+	KeyComment     string
+	KeyFound       bool
 }
 
 func (m *DirectLoginRequest) Schema(t *storm.Table) {
+	t.Col(&m.AuthMethod).Default("''::text")
+	t.Col(&m.KeyFingerprint).Default("''::text")
+	t.Col(&m.KeyType).Default("''::text")
+	t.Col(&m.KeyComment).Default("''::text")
+	t.Col(&m.KeyFound).Default("false")
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.ClientAddr).Default("''::text")
 	t.Col(&m.Command).Default("''::text")

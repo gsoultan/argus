@@ -50,6 +50,10 @@ export const assetsQuery = (q: AssetQuery = {}) =>
 export const assetQuery = (id: string) =>
   queryOptions({ queryKey: qk.asset(id), queryFn: () => api.asset(id) })
 
+/** Who can log in to a server directly; whoever sees the whole fleet. */
+export const loginAccountsQuery = (id: string) =>
+  queryOptions({ queryKey: ['asset', id, 'login-accounts'] as const, queryFn: () => api.loginAccounts(id) })
+
 export const sessionsQuery = (state?: Session['state']) =>
   queryOptions({
     queryKey: qk.sessions(state),

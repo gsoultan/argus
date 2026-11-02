@@ -240,6 +240,11 @@ func _assertDirectLoginRequestShape(m m0.DirectLoginRequest) {
 		m.DecidedAt,
 		m.DecidedByEmail,
 		m.DecisionNote,
+		m.AuthMethod,
+		m.KeyFingerprint,
+		m.KeyType,
+		m.KeyComment,
+		m.KeyFound,
 	}
 }
 

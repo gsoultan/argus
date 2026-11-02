@@ -247,6 +247,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
+	mux.HandleFunc("GET /api/v1/assets/{id}/login-accounts", a.getLoginAccounts)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
 	mux.HandleFunc("GET /api/v1/assets/{id}/team-assignments", a.getTeamAssignments)
@@ -540,6 +541,8 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 		// what the control plane holds before either is believed.
 		DirectLoginID  string `json:"directLoginId"`
 		DirectApproval string `json:"directApproval"`
+		// Auth is how a direct login signed in: a password, or which key.
+		Auth *LoginAuth `json:"auth"`
 	}
 	if err := decodeReport(r, &report, a.log, "report/session"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -641,6 +644,7 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 			report.DirectApproval); ok {
 			e.Action, e.Severity, e.Detail = "session.direct_recorded", "notice", detail
 		}
+		e.Detail += report.Auth.bounded().describe()
 		if _, err := a.store.AppendAudit(r.Context(), e); err != nil {
 			a.log.Error("audit append failed", "error", err)
 		}

@@ -1,5 +1,5 @@
 import { Suspense, lazy, useState } from 'react'
-import { Alert, Autocomplete, Badge, Box, Button, Card, Grid, Group, Modal, Select, Stack, Table, Text } from '@mantine/core'
+import { Alert, Autocomplete, Badge, Box, Button, Card, Grid, Group, Modal, Select, Stack, Table, Text, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
@@ -19,11 +19,11 @@ import {
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import {
-  assetQuery, meQuery, policyQuery, sessionsQuery, useArchiveAsset, usePinHostKey,
+  assetQuery, loginAccountsQuery, meQuery, policyQuery, sessionsQuery, useArchiveAsset, usePinHostKey,
   useSetAssetDirectSsh, useSetAssetDirectSshAccount,
 } from '~/lib/queries'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
-import type { Asset, DirectSsh } from '~/types/domain'
+import type { Asset, DirectSsh, ServerLoginAccount, ServerLoginAccounts } from '~/types/domain'
 import { guard } from '~/lib/guard'
 import { isElevatedAccount } from '~/lib/roles'
 
@@ -390,26 +390,64 @@ function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
 /** Login account names as the control plane accepts them. */
 const ACCOUNT_NAME = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/
 
+const PASSWORD_LABEL: Record<ServerLoginAccount['password'], string> = {
+  set: 'Password',
+  none: 'Empty password',
+  locked: 'No password',
+  unknown: 'Password unknown',
+}
+
+/** What an account could sign in with, as badges. */
+function SignInBadges({ account, auth }: { account: ServerLoginAccount; auth: ServerLoginAccounts }) {
+  const password = account.password === 'set' || account.password === 'none' || account.password === 'unknown'
+  return (
+    <Group gap={SP.tight} wrap="wrap">
+      {password && (
+        <Tooltip label={auth.passwords ? 'sshd accepts passwords' : 'sshd does not accept passwords, so this password cannot be used over SSH'}>
+          <Badge size="xs" variant={auth.passwords ? 'light' : 'outline'} color={account.password === 'none' ? 'rose' : 'amber'}>
+            {PASSWORD_LABEL[account.password]}
+          </Badge>
+        </Tooltip>
+      )}
+      {account.keys > 0 && (
+        <Badge size="xs" variant={auth.keys ? 'light' : 'outline'} color="azure">
+          {account.keys} {account.keys === 1 ? 'key' : 'keys'}
+        </Badge>
+      )}
+      {!account.canLogin && <Badge size="xs" variant="outline" color="slate">Cannot log in</Badge>}
+    </Group>
+  )
+}
+
 /**
- * Login accounts on this server that do something other than the server's
- * setting: staging allowed and recorded, sys-admin held for approval. An
- * account not listed follows the setting above.
+ * Every account that can log in to this server directly -- with a password,
+ * a key, or both, as its agent last reported -- and what each one does with a
+ * direct login: the server's setting, or its own. An account the server
+ * names that the agent did not report is listed too.
  */
 function AccountDirectSsh({ asset, canEdit, server }: {
   asset: Asset; canEdit: boolean; server: DirectSsh | null
 }) {
   const setAccount = useSetAssetDirectSshAccount()
+  const { data: report } = useQuery(loginAccountsQuery(asset.id))
   const [name, setName] = useState('')
   const [mode, setMode] = useState<DirectSsh>('approve')
-  const named = Object.entries(asset.directSshAccounts ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const own = asset.directSshAccounts ?? {}
   const serverLabel = server ? directSshLabel(server) : 'the server\'s setting'
   const trimmed = name.trim()
   const nameError = trimmed && !ACCOUNT_NAME.test(trimmed)
     ? 'Letters, digits, ".", "_" or "-", starting with a letter or "_"'
     : null
 
+  const reported = new Map((report?.accounts ?? []).map((a) => [a.user, a]))
+  const rows = [
+    ...(report?.accounts ?? []).filter((a) => a.canLogin || a.user in own).map((a) => a.user),
+    ...Object.keys(own).filter((u) => !reported.has(u)).sort((a, b) => a.localeCompare(b)),
+  ]
+  const hidden = (report?.accounts ?? []).filter((a) => !a.canLogin && !(a.user in own)).length
+
   const change = (account: string, next: DirectSsh | null) => {
-    const before = asset.directSshAccounts?.[account] ?? server
+    const before = own[account] ?? server
     const after = next ?? server
     const loosens = before && after ? directSshLoosens(before, after) : false
     return run(
@@ -429,46 +467,69 @@ function AccountDirectSsh({ asset, canEdit, server }: {
     if (await change(trimmed, mode)) setName('')
   }
 
-  const suggestions = asset.principals.filter((p) => !(p in (asset.directSshAccounts ?? {})))
-
   return (
     <Stack gap={SP.cozy} mt={SP.cozy}>
       <div>
-        <Text size="sm" fw={500}>Different for some accounts</Text>
+        <Text size="sm" fw={500}>Accounts that can log in</Text>
         <Text size={FS.meta} c="dimmed" lh={1.5}>
-          Name a login account to give it its own setting. Every account not listed here uses {serverLabel}.
+          {report?.reported
+            ? `Every account on this server with a password or a key sshd accepts, from its agent's last check-in${report.checkedAt ? ` (${relTime(report.checkedAt)})` : ''}. Each one uses ${serverLabel} unless you pick something else for it.`
+            : `This server's agent has not reported its accounts yet; an older agent does not. Accounts you name here still get their own setting, and every other account uses ${serverLabel}.`}
         </Text>
       </div>
-      {named.map(([account, m]) => (
-        <Group key={account} gap={SP.cozy} wrap="wrap" align="center">
-          <Box style={{ flex: '1 1 90px', minWidth: 0, whiteSpace: 'nowrap' }}><Mono>{account}</Mono></Box>
-          <Select
-            size="xs"
-            aria-label={`Direct SSH logins as ${account}`}
-            allowDeselect={false}
-            disabled={!canEdit || setAccount.isPending}
-            value={m}
-            onChange={(v) => {
-              if (!v || v === m) return
-              void change(account, v === INHERIT ? null : (v as DirectSsh))
-            }}
-            data={[
-              ...DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label })),
-              { value: INHERIT, label: `Remove: use the server's (${serverLabel})` },
-            ]}
-            style={{ flex: '1 1 170px' }}
-          />
-        </Group>
-      ))}
+      {report?.reported && !report.exposeAuthInfo && (
+        <Alert color="amber" variant="light" p="xs" icon={<IconAlertTriangle size={16} />}>
+          <Text size={FS.meta} lh={1.5}>
+            This server&rsquo;s sshd does not say how each login signed in, so Argus records the
+            login but not whether it used a password or which key. Add <Mono>ExposeAuthInfo yes</Mono> to
+            /etc/ssh/sshd_config and reload sshd.
+          </Text>
+        </Alert>
+      )}
+      {rows.map((account) => {
+        const r = reported.get(account)
+        const m = own[account]
+        return (
+          <Group key={account} gap={SP.cozy} wrap="wrap" align="center">
+            <Stack gap={SP.hair} style={{ flex: '1 1 140px', minWidth: 0 }}>
+              <Box style={{ whiteSpace: 'nowrap' }}><Mono>{account}</Mono></Box>
+              {r && report
+                ? <SignInBadges account={r} auth={report} />
+                : report?.reported && <Text size={FS.micro} c="dimmed">Not on this server now</Text>}
+            </Stack>
+            <Select
+              size="xs"
+              aria-label={`Direct SSH logins as ${account}`}
+              allowDeselect={false}
+              disabled={!canEdit || setAccount.isPending}
+              value={m ?? INHERIT}
+              onChange={(v) => {
+                if (!v || v === (m ?? INHERIT)) return
+                void change(account, v === INHERIT ? null : (v as DirectSsh))
+              }}
+              data={[
+                { value: INHERIT, label: `Server's (${serverLabel})` },
+                ...DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label })),
+              ]}
+              style={{ flex: '1 1 170px' }}
+            />
+          </Group>
+        )
+      })}
+      {hidden > 0 && (
+        <Text size={FS.micro} c="dimmed">
+          {hidden} more {hidden === 1 ? 'account has' : 'accounts have'} a login shell but nothing sshd would accept.
+        </Text>
+      )}
       {canEdit && (
         <Group gap={SP.cozy} align="flex-start" wrap="wrap">
           <Autocomplete
             size="xs"
-            placeholder="Account, e.g. sys-admin"
+            placeholder="Another account, e.g. sys-admin"
             aria-label="Login account"
             value={name}
             onChange={setName}
-            data={suggestions}
+            data={asset.principals.filter((p) => !rows.includes(p))}
             error={nameError}
             style={{ flex: '1 1 160px' }}
           />

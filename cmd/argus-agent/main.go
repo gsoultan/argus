@@ -303,6 +303,7 @@ func runDaemon(args []string) int {
 			// Set when the login used a personal account its owner may
 			// reach directly, which is what let it in.
 			"owner": m.Actor,
+			"auth":  m.Auth,
 			"at":    time.Now().UTC(),
 		})
 	}
@@ -316,6 +317,7 @@ func runDaemon(args []string) int {
 			"origin":      m.Origin,
 			"scope":       "console_only",
 			"refused":     true,
+			"auth":        m.Auth,
 			"at":          time.Now().UTC(),
 		})
 	}
@@ -411,6 +413,8 @@ func runDaemon(args []string) int {
 				"unmanaged_keys": p.UnmanagedKeys,
 				"shim_installed": p.ShimInstalled,
 				"drift":          p.Drift,
+				"login_accounts": p.LoginAccounts,
+				"sshd_auth":      p.SSHDAuth,
 			}
 		}
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
@@ -600,6 +604,9 @@ func sessionReport(rec agent.SessionRecord) map[string]any {
 		out["terminatedBy"] = rec.TerminatedBy
 		out["terminationReason"] = rec.TerminationReason
 	}
+	if rec.Auth != nil {
+		out["auth"] = rec.Auth
+	}
 	if rec.DirectApproval != "" {
 		out["directApproval"] = rec.DirectApproval
 		out["directLoginId"] = rec.DirectLoginID
@@ -626,6 +633,7 @@ func askDirectApproval(ctx context.Context, rep *reporter.Client, m agent.Sessio
 		"principal":   m.Principal,
 		"client_addr": m.ClientAddr,
 		"command":     m.Command,
+		"auth":        m.Auth,
 	}, &a); err != nil {
 		log.Warn("direct login: cannot ask the control plane; refusing", "error", err)
 		return agent.Approval{Reason: "Argus could not be reached to approve this login"}
@@ -743,6 +751,17 @@ func runScan(args []string) int {
 	fmt.Printf("cert auth  %s\n", yesNo(p.TrustedCAConfigured, "configured", "not configured"))
 	fmt.Printf("passwords  %s\n", yesNo(!p.PasswordAuthEnabled, "disabled", "ENABLED"))
 
+	var canLogin []agent.LoginAccount
+	for _, a := range p.LoginAccounts {
+		if a.CanLogin {
+			canLogin = append(canLogin, a)
+		}
+	}
+	fmt.Printf("\n%d account(s) can log in over SSH:\n", len(canLogin))
+	for _, a := range canLogin {
+		fmt.Printf("  %-16s password %-8s keys %d\n", a.User, a.Password, a.Keys)
+	}
+
 	if len(p.UnmanagedKeys) > 0 {
 		fmt.Printf("\n%d key(s) Argus did not issue — each can reach this host directly:\n",
 			len(p.UnmanagedKeys))
@@ -792,6 +811,10 @@ func runInstall(args []string) int {
 # not use sshd at all; they reach the agent over its tunnel.
 
 ForceCommand %s shim
+
+# Tells the recorder how each direct login signed in -- a password, or which
+# key -- so the console can show it on the approval and in Activity.
+ExposeAuthInfo yes
 
 # If the agent is ever stopped, root and members of sudo, wheel or admin can
 # still log in (unrecorded, with a warning and a line in the auth log) so they

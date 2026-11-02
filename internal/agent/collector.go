@@ -29,6 +29,10 @@ type Collector struct {
 	dir string
 	log *slog.Logger
 
+	// PasswdFile is where accounts are read from when a key login is checked
+	// against authorized_keys. Empty is the system's.
+	PasswdFile string
+
 	mu       sync.Mutex
 	active   map[string]*activeSession
 	listener net.Listener
@@ -141,6 +145,8 @@ type SessionRecord struct {
 	// setting. Empty for a login let in before the agent heard any setting.
 	DirectApproval string `json:"direct_approval,omitempty"`
 	DirectLoginID  string `json:"direct_login_id,omitempty"`
+	// Auth is how a direct login signed in: a password, or which key.
+	Auth *LoginAuth `json:"auth,omitempty"`
 }
 
 type activeSession struct {
@@ -497,6 +503,9 @@ func (c *Collector) handle(conn net.Conn) {
 			// the socket is open to every local user, and a claim of having
 			// come through Argus is not something to take from one of them.
 			m.Origin = Direct
+			// How it signed in, checked against authorized_keys here rather
+			// than taken from the shim.
+			m.Auth = c.loginAuth(m)
 			// A login that did not come through Argus happens only if the
 			// server's setting lets it: held for an admin, or allowed and
 			// recorded. Every login that is admitted is recorded.
@@ -711,6 +720,7 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 
 		DirectApproval: sess.directApproval,
 		DirectLoginID:  sess.directLoginID,
+		Auth:           sess.start.Auth,
 	}
 
 	c.log.Info("recording sealed",

@@ -22,6 +22,8 @@ const (
 	// /etc/passwd lists only the handful used in single-user mode. An empty
 	// path means "ask dscl"; see openPasswd.
 	systemPasswd = ""
+	// systemShadow says which accounts have a password; "" where there is none.
+	systemShadow = ""
 	// macOS has neither; osName and machineID ask sw_vers and ioreg instead.
 	osReleasePath = ""
 	machineIDPath = ""

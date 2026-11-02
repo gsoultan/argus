@@ -33,6 +33,12 @@ type Posture struct {
 	// PasswordAuthEnabled is a bypass route that needs no key at all.
 	PasswordAuthEnabled bool `json:"password_auth_enabled"`
 
+	// LoginAccounts is every account with a login shell, with whether it has
+	// a password and how many keys, and whether sshd would let it in.
+	LoginAccounts []LoginAccount `json:"login_accounts"`
+	// SSHDAuth is how sshd lets people sign in.
+	SSHDAuth SSHDAuth `json:"sshd_auth"`
+
 	// Drift lists sshd_config settings that differ from what Argus expects.
 	// A host whose config quietly changed is the most likely way for recording
 	// to stop without anyone noticing.
@@ -70,6 +76,9 @@ type ScanConfig struct {
 	SSHDConfig string
 	// PasswdFile lists the accounts whose authorized_keys are checked.
 	PasswdFile string
+	// ShadowFile says which accounts have a password; empty where there is
+	// none to read.
+	ShadowFile string
 	// ManagedFingerprints are keys Argus issued; anything else is unmanaged.
 	ManagedFingerprints map[string]bool
 	// ShimPath is the recorder binary that ForceCommand must point at.
@@ -81,6 +90,7 @@ func DefaultScanConfig(shimPath string) ScanConfig {
 	return ScanConfig{
 		SSHDConfig:          sshdConfigPath,
 		PasswdFile:          systemPasswd,
+		ShadowFile:          systemShadow,
 		ManagedFingerprints: map[string]bool{},
 		ShimPath:            shimPath,
 	}
@@ -102,6 +112,12 @@ func Scan(cfg ScanConfig) (Posture, error) {
 		return p, err
 	}
 	p.UnmanagedKeys = keys
+	p.SSHDAuth = readSSHDAuth(cfg.SSHDConfig)
+	p.LoginAccounts = scanLoginAccounts(cfg, p.SSHDAuth)
+	if p.ShimInstalled && !p.SSHDAuth.ExposeAuthInfo {
+		p.Drift = append(p.Drift, "ExposeAuthInfo is off — a direct login is recorded, "+
+			"but not whether it used a password or which key")
+	}
 	return p, nil
 }
 
