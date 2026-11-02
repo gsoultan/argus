@@ -181,6 +181,14 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 	a.log.Info("access request decided",
 		"decision", in.Decision, "by", sess.Email,
 		"requester", out.RequesterEmail, "principal", out.Principal)
+	// A request that stands for a database restore in place runs it now.
+	if out.Principal == "db:restore" {
+		if in.Decision == "approved" {
+			a.restoreApproved(r.Context(), out.ID, sess.Email)
+		} else {
+			a.restoreDenied(r.Context(), out.ID, sess.Email, in.Note)
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -24,8 +24,18 @@ import {
   agentUpdate as liveAgentUpdate,
   requestAgentUpdate as liveRequestAgentUpdate,
   cancelAgentUpdate as liveCancelAgentUpdate,
+  databaseBackups as liveDatabaseBackups,
+  backupCatalog as liveBackupCatalog,
+  startBackup as liveStartBackup,
+  cancelBackup as liveCancelBackup,
+  deleteBackup as liveDeleteBackup,
+  pinBackup as livePinBackup,
+  restoreBackup as liveRestoreBackup,
+  cancelRestore as liveCancelRestore,
+  undoRestore as liveUndoRestore,
+  setBackupSchedule as liveSetBackupSchedule,
 } from '~/lib/live'
-import type { AccessRequest, AssetInput, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
+import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -594,3 +604,57 @@ export function useCancelAgentUpdate(assetId: string) {
     onSettled: () => void qc.invalidateQueries({ queryKey: agentUpdateKey(assetId) }),
   })
 }
+/* ── Database backups ───────────────────────────────────────────────────── */
+
+export const backupqk = {
+  backups: (id: string) => ['database', id, 'backups'] as const,
+  catalog: (id: string) => ['database', id, 'backups', 'catalog'] as const,
+}
+
+/** Polled every 2 s while a backup or restore runs, otherwise every 30 s. */
+export const databaseBackupsQuery = (id: string) =>
+  queryOptions({
+    queryKey: backupqk.backups(id),
+    queryFn: () => liveDatabaseBackups(id),
+    enabled: isConfigured(),
+    refetchInterval: (q) => {
+      const v = q.state.data as BackupsView | undefined
+      const busy = Boolean(v?.running) || (v?.restores ?? []).some((r) => r.state === 'running')
+      return busy ? 2_000 : 30_000
+    },
+  })
+
+export const backupCatalogQuery = (id: string) =>
+  queryOptions({ queryKey: backupqk.catalog(id), queryFn: () => liveBackupCatalog(id), enabled: isConfigured(), staleTime: 60_000 })
+
+function useBackupMutation<V, R>(fn: (v: V) => Promise<R>, idOf: (v: V) => string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSettled: (_d, _e, v) => {
+      void qc.invalidateQueries({ queryKey: backupqk.backups(idOf(v)) })
+      void qc.invalidateQueries({ queryKey: dbqk.databases })
+      void qc.invalidateQueries({ queryKey: ['requests'] })
+    },
+  })
+}
+
+export const useStartBackup = () =>
+  useBackupMutation((v: { id: string; reason?: string; destination?: BackupsView['schedule']['destination'] }) =>
+    liveStartBackup(v.id, { reason: v.reason, destination: v.destination }), (v) => v.id)
+export const useCancelBackup = () =>
+  useBackupMutation((v: { id: string; backupId: string }) => liveCancelBackup(v.id, v.backupId), (v) => v.id)
+export const useDeleteBackup = () =>
+  useBackupMutation((v: { id: string; backupId: string }) => liveDeleteBackup(v.id, v.backupId), (v) => v.id)
+export const usePinBackup = () =>
+  useBackupMutation((v: { id: string; backupId: string; pinned: boolean }) => livePinBackup(v.id, v.backupId, v.pinned), (v) => v.id)
+export const useRestoreBackup = () =>
+  useBackupMutation((v: { id: string; backupId: string } & Parameters<typeof liveRestoreBackup>[2]) =>
+    liveRestoreBackup(v.id, v.backupId, v), (v) => v.id)
+export const useCancelRestore = () =>
+  useBackupMutation((v: { id: string; restoreId: string }) => liveCancelRestore(v.id, v.restoreId), (v) => v.id)
+export const useUndoRestore = () =>
+  useBackupMutation((v: { id: string; restoreId: string; confirm: string }) => liveUndoRestore(v.id, v.restoreId, v.confirm), (v) => v.id)
+export const useSetBackupSchedule = () =>
+  useBackupMutation((v: { id: string } & Parameters<typeof liveSetBackupSchedule>[1]) =>
+    liveSetBackupSchedule(v.id, v), (v) => v.id)

@@ -59,6 +59,8 @@ type Grant struct {
 	Service string `json:"svc,omitempty"`
 	// DB is the database a postgres grant opens; nil for every other service.
 	DB *GrantDB `json:"db,omitempty"`
+	// Backup is the job a backup grant allows; nil for every other service.
+	Backup *GrantBackup `json:"backup,omitempty"`
 }
 
 // ForService reports whether g may open svc.

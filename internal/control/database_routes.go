@@ -65,7 +65,10 @@ func (a *API) getDatabases(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "databases", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"databases": list, "access": access})
+	// The newest backup of each, for the list's column; absent when the
+	// table is not there yet.
+	last, _ := a.store.LastBackups(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{"databases": list, "access": access, "lastBackups": last})
 }
 
 // GET /api/v1/databases/{id}

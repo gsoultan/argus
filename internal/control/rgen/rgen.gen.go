@@ -15,6 +15,9 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/database"
 	"github.com/gsoultan/argus/internal/control/rgen/databaseassignment"
+	"github.com/gsoultan/argus/internal/control/rgen/databasebackup"
+	"github.com/gsoultan/argus/internal/control/rgen/databasebackupschedule"
+	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
 	"github.com/gsoultan/argus/internal/control/rgen/team"
@@ -28,28 +31,31 @@ import (
 // runtime code inspects a schema and no constraint has to be deferred for
 // a graph write to succeed.
 var FlushOrder = map[string]int{
-	"agent_enrollment_tokens": 0,
-	"agents":                  1,
-	"assets":                  2,
-	"audit_events":            3,
-	"databases":               4,
-	"direct_login_requests":   5,
-	"gateway_policy":          6,
-	"host_key_pins":           7,
-	"redeemed_tickets":        8,
-	"revoked_sessions":        9,
-	"schema_migrations":       10,
-	"sessions":                11,
-	"sign_in_devices":         12,
-	"teams":                   13,
-	"users":                   14,
-	"access_requests":         15,
-	"agent_credentials":       16,
-	"asset_assignments":       17,
-	"asset_team_assignments":  18,
-	"database_assignments":    19,
-	"recovery_codes":          20,
-	"team_members":            21,
+	"agent_enrollment_tokens":   0,
+	"agents":                    1,
+	"assets":                    2,
+	"audit_events":              3,
+	"databases":                 4,
+	"direct_login_requests":     5,
+	"gateway_policy":            6,
+	"host_key_pins":             7,
+	"redeemed_tickets":          8,
+	"revoked_sessions":          9,
+	"schema_migrations":         10,
+	"sessions":                  11,
+	"sign_in_devices":           12,
+	"teams":                     13,
+	"users":                     14,
+	"access_requests":           15,
+	"agent_credentials":         16,
+	"asset_assignments":         17,
+	"asset_team_assignments":    18,
+	"database_assignments":      19,
+	"database_backup_schedules": 20,
+	"database_backups":          21,
+	"database_restores":         22,
+	"recovery_codes":            23,
+	"team_members":              24,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -894,6 +900,724 @@ func (p DatabaseAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Exe
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_assignments", "teams")
 		}
 		out[i].Team = &targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseBackupScheduleWithDatabaseRow is database_backup_schedules with its Database loaded.
+type DatabaseBackupScheduleWithDatabaseRow struct {
+	databasebackupschedule.Row
+	Database database.Row
+}
+
+type DatabaseBackupScheduleWithDatabaseQuery struct {
+	q databasebackupschedule.Query
+}
+
+// DatabaseBackupScheduleWithDatabase starts the plan.
+func DatabaseBackupScheduleWithDatabase() DatabaseBackupScheduleWithDatabaseQuery {
+	return DatabaseBackupScheduleWithDatabaseQuery{q: databasebackupschedule.New()}
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) Where(ps ...databasebackupschedule.Pred) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) WhereIf(cond bool, pr databasebackupschedule.Pred) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) Any(ps ...databasebackupschedule.Pred) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) Not(pr databasebackupschedule.Pred) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) NotAny(ps ...databasebackupschedule.Pred) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) Order(ts ...databasebackupschedule.Sort) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) Limit(n int64) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseBackupScheduleWithDatabaseQuery) Offset(n int64) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseBackupScheduleWithDatabaseQuery) After(r DatabaseBackupScheduleWithDatabaseRow) DatabaseBackupScheduleWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseBackupScheduleWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseBackupScheduleWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseBackupScheduleWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseBackupScheduleWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseBackupScheduleWithDatabaseRow{Row: r}
+		key := r.DatabaseID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.DatabaseID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_backup_schedules", "databases")
+		}
+		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseBackupWithDatabaseRow is database_backups with its Database loaded.
+type DatabaseBackupWithDatabaseRow struct {
+	databasebackup.Row
+	Database database.Row
+}
+
+type DatabaseBackupWithDatabaseQuery struct {
+	q databasebackup.Query
+}
+
+// DatabaseBackupWithDatabase starts the plan.
+func DatabaseBackupWithDatabase() DatabaseBackupWithDatabaseQuery {
+	return DatabaseBackupWithDatabaseQuery{q: databasebackup.New()}
+}
+
+func (p DatabaseBackupWithDatabaseQuery) Where(ps ...databasebackup.Pred) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseBackupWithDatabaseQuery) WhereIf(cond bool, pr databasebackup.Pred) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseBackupWithDatabaseQuery) Any(ps ...databasebackup.Pred) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseBackupWithDatabaseQuery) Not(pr databasebackup.Pred) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseBackupWithDatabaseQuery) NotAny(ps ...databasebackup.Pred) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseBackupWithDatabaseQuery) Order(ts ...databasebackup.Sort) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseBackupWithDatabaseQuery) Limit(n int64) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseBackupWithDatabaseQuery) Offset(n int64) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseBackupWithDatabaseQuery) After(r DatabaseBackupWithDatabaseRow) DatabaseBackupWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseBackupWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseBackupWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseBackupWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseBackupWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseBackupWithDatabaseRow{Row: r}
+		key := r.DatabaseID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.DatabaseID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_backups", "databases")
+		}
+		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseRestoreWithBackupRow is database_restores with its Backup loaded.
+type DatabaseRestoreWithBackupRow struct {
+	databaserestore.Row
+	Backup databasebackup.Row
+}
+
+type DatabaseRestoreWithBackupQuery struct {
+	q databaserestore.Query
+}
+
+// DatabaseRestoreWithBackup starts the plan.
+func DatabaseRestoreWithBackup() DatabaseRestoreWithBackupQuery {
+	return DatabaseRestoreWithBackupQuery{q: databaserestore.New()}
+}
+
+func (p DatabaseRestoreWithBackupQuery) Where(ps ...databaserestore.Pred) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithBackupQuery) WhereIf(cond bool, pr databaserestore.Pred) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseRestoreWithBackupQuery) Any(ps ...databaserestore.Pred) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithBackupQuery) Not(pr databaserestore.Pred) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseRestoreWithBackupQuery) NotAny(ps ...databaserestore.Pred) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithBackupQuery) Order(ts ...databaserestore.Sort) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseRestoreWithBackupQuery) Limit(n int64) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseRestoreWithBackupQuery) Offset(n int64) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseRestoreWithBackupQuery) After(r DatabaseRestoreWithBackupRow) DatabaseRestoreWithBackupQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseRestoreWithBackupQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseRestoreWithBackupQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseRestoreWithBackupRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseRestoreWithBackupRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseRestoreWithBackupRow{Row: r}
+		key := r.BackupID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := databasebackup.New().Unordered().
+		Where(databasebackup.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.BackupID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_restores", "database_backups")
+		}
+		out[i].Backup = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseRestoreWithCreatedDatabaseRow is database_restores with its CreatedDatabase loaded.
+type DatabaseRestoreWithCreatedDatabaseRow struct {
+	databaserestore.Row
+	// A pointer because the link is optional. nil means the row has no
+	// CreatedDatabase, which is different from having one that failed to load.
+	CreatedDatabase *database.Row
+}
+
+type DatabaseRestoreWithCreatedDatabaseQuery struct {
+	q databaserestore.Query
+}
+
+// DatabaseRestoreWithCreatedDatabase starts the plan.
+func DatabaseRestoreWithCreatedDatabase() DatabaseRestoreWithCreatedDatabaseQuery {
+	return DatabaseRestoreWithCreatedDatabaseQuery{q: databaserestore.New()}
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) Where(ps ...databaserestore.Pred) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) WhereIf(cond bool, pr databaserestore.Pred) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) Any(ps ...databaserestore.Pred) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) Not(pr databaserestore.Pred) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) NotAny(ps ...databaserestore.Pred) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) Order(ts ...databaserestore.Sort) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) Limit(n int64) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseRestoreWithCreatedDatabaseQuery) Offset(n int64) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseRestoreWithCreatedDatabaseQuery) After(r DatabaseRestoreWithCreatedDatabaseRow) DatabaseRestoreWithCreatedDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseRestoreWithCreatedDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseRestoreWithCreatedDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseRestoreWithCreatedDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseRestoreWithCreatedDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseRestoreWithCreatedDatabaseRow{Row: r}
+		key, ok := r.CreatedDatabaseID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.CreatedDatabaseID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_restores", "databases")
+		}
+		out[i].CreatedDatabase = &targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseRestoreWithDatabaseRow is database_restores with its Database loaded.
+type DatabaseRestoreWithDatabaseRow struct {
+	databaserestore.Row
+	Database database.Row
+}
+
+type DatabaseRestoreWithDatabaseQuery struct {
+	q databaserestore.Query
+}
+
+// DatabaseRestoreWithDatabase starts the plan.
+func DatabaseRestoreWithDatabase() DatabaseRestoreWithDatabaseQuery {
+	return DatabaseRestoreWithDatabaseQuery{q: databaserestore.New()}
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) Where(ps ...databaserestore.Pred) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) WhereIf(cond bool, pr databaserestore.Pred) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) Any(ps ...databaserestore.Pred) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) Not(pr databaserestore.Pred) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) NotAny(ps ...databaserestore.Pred) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) Order(ts ...databaserestore.Sort) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) Limit(n int64) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseRestoreWithDatabaseQuery) Offset(n int64) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseRestoreWithDatabaseQuery) After(r DatabaseRestoreWithDatabaseRow) DatabaseRestoreWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseRestoreWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseRestoreWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseRestoreWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseRestoreWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseRestoreWithDatabaseRow{Row: r}
+		key := r.DatabaseID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.DatabaseID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_restores", "databases")
+		}
+		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseRestoreWithRequestRow is database_restores with its Request loaded.
+type DatabaseRestoreWithRequestRow struct {
+	databaserestore.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Request, which is different from having one that failed to load.
+	Request *accessrequest.Row
+}
+
+type DatabaseRestoreWithRequestQuery struct {
+	q databaserestore.Query
+}
+
+// DatabaseRestoreWithRequest starts the plan.
+func DatabaseRestoreWithRequest() DatabaseRestoreWithRequestQuery {
+	return DatabaseRestoreWithRequestQuery{q: databaserestore.New()}
+}
+
+func (p DatabaseRestoreWithRequestQuery) Where(ps ...databaserestore.Pred) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithRequestQuery) WhereIf(cond bool, pr databaserestore.Pred) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseRestoreWithRequestQuery) Any(ps ...databaserestore.Pred) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithRequestQuery) Not(pr databaserestore.Pred) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseRestoreWithRequestQuery) NotAny(ps ...databaserestore.Pred) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseRestoreWithRequestQuery) Order(ts ...databaserestore.Sort) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseRestoreWithRequestQuery) Limit(n int64) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseRestoreWithRequestQuery) Offset(n int64) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseRestoreWithRequestQuery) After(r DatabaseRestoreWithRequestRow) DatabaseRestoreWithRequestQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseRestoreWithRequestQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseRestoreWithRequestQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseRestoreWithRequestRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseRestoreWithRequestRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseRestoreWithRequestRow{Row: r}
+		key, ok := r.RequestID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := accessrequest.New().Unordered().
+		Where(accessrequest.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.RequestID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_restores", "access_requests")
+		}
+		out[i].Request = &targets[j]
 	}
 	return out, nil
 }

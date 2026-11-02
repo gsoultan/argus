@@ -114,6 +114,7 @@ function DatabasePage() {
           getTicket={getTicket}
           endpoint={postgresEndpoint}
           onAskForAccess={access.approvable ? ask.open : undefined}
+          orgAdmin={admin}
         />
       )}
       {access.approvable && (

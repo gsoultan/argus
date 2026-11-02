@@ -155,6 +155,14 @@ func (c *Client) UploadKey(ctx context.Context, path, key, sessionID, chainHead 
 	return key, nil
 }
 
+// Delete removes an object. A missing one is not an error.
+func (c *Client) Delete(ctx context.Context, key string) error {
+	if c == nil {
+		return ErrNotConfigured
+	}
+	return c.mc.RemoveObject(ctx, c.bucket, key, minio.RemoveObjectOptions{})
+}
+
 // extOf is the extension a recording has on disk, .cast when it has none.
 func extOf(path string) string {
 	if ext := filepath.Ext(path); ext != "" {

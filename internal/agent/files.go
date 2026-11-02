@@ -259,6 +259,10 @@ type helperRun struct {
 	actor  string
 	// home runs it from the account's home directory.
 	home bool
+	// stderr, when set, sees the helper's stderr as it is written, for a
+	// helper that reports progress there; the last line still names the
+	// error when it fails.
+	stderr io.Writer
 }
 
 // runAs starts this executable (or h.helper) as h.acct and waits for it: in a
@@ -313,6 +317,9 @@ func runAs(ctx context.Context, h helperRun) error {
 	}
 	var stderr bytes.Buffer
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = h.stdin, h.stdout, &stderr
+	if h.stderr != nil {
+		cmd.Stderr = io.MultiWriter(h.stderr, &stderr)
+	}
 	if err := cmd.Run(); err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return errors.New(lastLine(msg))
@@ -320,13 +327,6 @@ func runAs(ctx context.Context, h helperRun) error {
 		return fmt.Errorf("the helper failed: %w", err)
 	}
 	return nil
-}
-
-func lastLine(s string) string {
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
 }
 
 // frameWriter sends what it is written as data frames, counting and

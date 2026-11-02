@@ -21,6 +21,7 @@ import type {
   TeamAssignment,
   ServerAccount,
   User,
+  BackupCatalog, BackupDestination, BackupSchedule, BackupsView, DatabaseBackup, DatabaseRestore,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
 } from '~/types/domain'
 
@@ -1298,7 +1299,7 @@ export const live = {
 
 /* ── Databases ──────────────────────────────────────────────────────────── */
 
-export async function databases(): Promise<{ databases: Database[]; access: Record<string, DBAccess> }> {
+export async function databases(): Promise<{ databases: Database[]; access: Record<string, DBAccess>; lastBackups?: Record<string, DatabaseBackup> }> {
   return get('/api/v1/databases')
 }
 
@@ -1425,6 +1426,64 @@ export async function requestAgentUpdate(assetId: string, body: { version?: stri
 
 export async function cancelAgentUpdate(assetId: string): Promise<unknown> {
   return send('DELETE', `/api/v1/assets/${encodeURIComponent(assetId)}/agent/update`)
+}
+
+/* ── Database backups ───────────────────────────────────────────────────── */
+
+const dbPath = (id: string) => `/api/v1/databases/${encodeURIComponent(id)}`
+
+export async function databaseBackups(id: string): Promise<BackupsView> {
+  return get(`${dbPath(id)}/backups`)
+}
+
+export async function backupCatalog(id: string): Promise<{ catalog: BackupCatalog; keyId: string }> {
+  return get(`${dbPath(id)}/backups/catalog`)
+}
+
+/** Starts a backup now; the answer is the running row. */
+export async function startBackup(id: string, input: { reason?: string; destination?: BackupDestination }): Promise<DatabaseBackup> {
+  return post<DatabaseBackup>(`${dbPath(id)}/backups`, input)
+}
+
+export async function cancelBackup(id: string, backupId: string): Promise<void> {
+  await post(`${dbPath(id)}/backups/${encodeURIComponent(backupId)}/cancel`, {})
+}
+
+export async function deleteBackup(id: string, backupId: string): Promise<void> {
+  await send('DELETE', `${dbPath(id)}/backups/${encodeURIComponent(backupId)}`)
+}
+
+export async function pinBackup(id: string, backupId: string, pinned: boolean): Promise<DatabaseBackup> {
+  return post<DatabaseBackup>(`${dbPath(id)}/backups/${encodeURIComponent(backupId)}/pin`, { pinned })
+}
+
+/** The encrypted file; the browser downloads it as is. */
+export function backupDownloadUrl(id: string, backupId: string): string {
+  return `${BASE}${dbPath(id)}/backups/${encodeURIComponent(backupId)}/download`
+}
+
+export async function restoreBackup(id: string, backupId: string, input: {
+  mode: 'new' | 'replace'; newName?: string; reason?: string; confirm?: string
+}): Promise<DatabaseRestore> {
+  return post<DatabaseRestore>(`${dbPath(id)}/backups/${encodeURIComponent(backupId)}/restore`, input)
+}
+
+export async function cancelRestore(id: string, restoreId: string): Promise<void> {
+  await post(`${dbPath(id)}/restores/${encodeURIComponent(restoreId)}/cancel`, {})
+}
+
+/** Puts the copy a replace kept back in place of the restored database. */
+export async function undoRestore(id: string, restoreId: string, confirm: string): Promise<DatabaseRestore> {
+  return post<DatabaseRestore>(`${dbPath(id)}/restores/${encodeURIComponent(restoreId)}/undo`, { confirm })
+}
+
+export async function backupSchedule(id: string): Promise<BackupSchedule> {
+  return get(`${dbPath(id)}/backup-schedule`)
+}
+
+export async function setBackupSchedule(id: string, input: Pick<BackupSchedule,
+  'enabled' | 'every' | 'atHour' | 'atMinute' | 'weekday' | 'destination' | 'keepLast' | 'keepDays'>): Promise<BackupSchedule> {
+  return send<BackupSchedule>('PUT', `${dbPath(id)}/backup-schedule`, input)
 }
 
 /* ── Organizations ──────────────────────────────────────────────────────── */

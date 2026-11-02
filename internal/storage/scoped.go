@@ -73,6 +73,37 @@ func (s *Scoped) Upload(ctx context.Context, path, sessionID, chainHead string,
 		sessionID, chainHead, startedAt)
 }
 
+// PutKey stores a file under key within the organization's prefix, for
+// objects that are not recordings (database backups). The key returned is
+// the one to read it back with.
+func (s *Scoped) PutKey(ctx context.Context, path, key string) (string, error) {
+	if s == nil || s.inner == nil {
+		return "", ErrNotConfigured
+	}
+	ku, ok := s.inner.(keyUploader)
+	if !ok {
+		return "", fmt.Errorf("%T cannot store an object under a key", s.inner)
+	}
+	return ku.UploadKey(ctx, path, s.prefix+key, "", "", time.Now())
+}
+
+// Delete removes an object the organization owns.
+func (s *Scoped) Delete(ctx context.Context, key string) error {
+	if s == nil || s.inner == nil {
+		return ErrNotConfigured
+	}
+	if !s.Owns(key) {
+		return fmt.Errorf("object %q is not this organization's", key)
+	}
+	d, ok := s.inner.(interface {
+		Delete(context.Context, string) error
+	})
+	if !ok {
+		return fmt.Errorf("%T cannot delete an object", s.inner)
+	}
+	return d.Delete(ctx, key)
+}
+
 // Get opens a recording the organization owns.
 func (s *Scoped) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	if s == nil || s.inner == nil {

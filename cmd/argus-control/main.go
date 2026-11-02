@@ -610,6 +610,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		} else if expired > 0 {
 			log.Info("access grants expired", "count", expired)
 		}
+		// Scheduled backups, retention, stale jobs and the copies a restore
+		// in place kept.
+		api.BackupSweep(ctx)
 		if n > 0 {
 			log.Warn("agents went silent",
 				"count", n,

@@ -35,6 +35,7 @@ type Row struct {
 	BreakGlass      bool
 	DatabaseID      runtime.Null[[16]byte]
 	DatabaseLevel   runtime.Null[string]
+	RestoreID       runtime.Null[[16]byte]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -73,7 +74,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 15
+const nCols = 16
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -286,6 +287,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.DatabaseLevel.V
 		q.ns++
+	case 15:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.RestoreID.V
+		q.nr++
 	}
 }
 
@@ -469,6 +477,7 @@ var (
 	BreakGlass      = BoolCol{12}
 	DatabaseID      = NullUUIDCol{13}
 	DatabaseLevel   = NullTextCol{14}
+	RestoreID       = NullUUIDCol{15}
 )
 
 // UUIDCol addresses a uuid column.
@@ -900,6 +909,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 15:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1007,6 +1023,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 15:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1146,8 +1169,14 @@ func (q Query) DatabaseLevelIn(v ...string) Query     { return q.Where(DatabaseL
 func (q Query) DatabaseLevelNotIn(v ...string) Query  { return q.Where(DatabaseLevel.NotIn(v...)) }
 func (q Query) DatabaseLevelIsNull() Query            { return q.Where(DatabaseLevel.IsNull()) }
 func (q Query) DatabaseLevelIsNotNull() Query         { return q.Where(DatabaseLevel.IsNotNull()) }
+func (q Query) RestoreIDEq(v [16]byte) Query          { return q.Where(RestoreID.Eq(v)) }
+func (q Query) RestoreIDNotEq(v [16]byte) Query       { return q.Where(RestoreID.NotEq(v)) }
+func (q Query) RestoreIDIn(v ...[16]byte) Query       { return q.Where(RestoreID.In(v...)) }
+func (q Query) RestoreIDNotIn(v ...[16]byte) Query    { return q.Where(RestoreID.NotIn(v...)) }
+func (q Query) RestoreIDIsNull() Query                { return q.Where(RestoreID.IsNull()) }
+func (q Query) RestoreIDIsNotNull() Query             { return q.Where(RestoreID.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "requester_email", "asset_hostnames", "principal", "justification", "duration_minutes", "state", "created_at", "decided_at", "decided_by_email", "decision_note", "expires_at", "break_glass", "database_id", "database_level" FROM "access_requests"`
+const selectPrefix = `SELECT "id", "requester_email", "asset_hostnames", "principal", "justification", "duration_minutes", "state", "created_at", "decided_at", "decided_by_email", "decision_note", "expires_at", "break_glass", "database_id", "database_level", "restore_id" FROM "access_requests"`
 const countPrefix = `SELECT count(*) FROM "access_requests"`
 const existsPrefix = `SELECT 1 FROM "access_requests"`
 const existsSuffix = ` LIMIT 1`
@@ -1274,6 +1303,12 @@ var orderTable = [nCols][4]string{
 		"\"database_level\" ASC NULLS FIRST",
 		"\"database_level\" DESC NULLS LAST",
 	},
+	{ // restore_id
+		"\"restore_id\"",
+		"\"restore_id\" DESC",
+		"\"restore_id\" ASC NULLS FIRST",
+		"\"restore_id\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1294,6 +1329,7 @@ var identTable = [nCols]string{
 	"\"break_glass\"",
 	"\"database_id\"",
 	"\"database_level\"",
+	"\"restore_id\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1326,7 +1362,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [15][28]runtime.Frag{
+var fragTable = [16][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1777,6 +1813,36 @@ var fragTable = [15][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // restore_id
+		{}, // opNone
+		{A: "\"restore_id\" = $", B: ""},
+		{A: "\"restore_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"restore_id\" = ANY($", B: ")"},
+		{A: "\"restore_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"restore_id\" IS NULL", B: ""},
+		{A: "\"restore_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1952,6 +2018,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.BreakGlass = runtime.Bool(rv[12])
 	r.DatabaseID = runtime.Nullable(rv[13], runtime.UUID)
 	r.DatabaseLevel = runtime.NullText(rv[14], sl)
+	r.RestoreID = runtime.Nullable(rv[15], runtime.UUID)
 	return decErr
 }
 
@@ -2066,6 +2133,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 15:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
 			}
 			continue
 		}
@@ -2126,6 +2197,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 15:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
 		}
 	}
 	b.vals = v
@@ -2263,7 +2338,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "access_requests" ("id", "requester_email", "asset_hostnames", "principal", "justification", "duration_minutes", "state", "created_at", "decided_at", "decided_by_email", "decision_note", "expires_at", "break_glass", "database_id", "database_level") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING "id", "requester_email", "asset_hostnames", "principal", "justification", "duration_minutes", "state", "created_at", "decided_at", "decided_by_email", "decision_note", "expires_at", "break_glass", "database_id", "database_level"`
+const insertSQL = `INSERT INTO "access_requests" ("id", "requester_email", "asset_hostnames", "principal", "justification", "duration_minutes", "state", "created_at", "decided_at", "decided_by_email", "decision_note", "expires_at", "break_glass", "database_id", "database_level", "restore_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "requester_email", "asset_hostnames", "principal", "justification", "duration_minutes", "state", "created_at", "decided_at", "decided_by_email", "decision_note", "expires_at", "break_glass", "database_id", "database_level", "restore_id"`
 
 const updatePrefix = `UPDATE "access_requests" SET `
 const deletePrefix = `DELETE FROM "access_requests"`
@@ -2285,9 +2360,10 @@ const (
 	dBreakGlass      uint64 = 1 << 11
 	dDatabaseID      uint64 = 1 << 12
 	dDatabaseLevel   uint64 = 1 << 13
+	dRestoreID       uint64 = 1 << 14
 )
 
-const nUpdatable = 14
+const nUpdatable = 15
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2305,6 +2381,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"break_glass\" = $", B: ""},      // break_glass
 	{A: "\"database_id\" = $", B: ""},      // database_id
 	{A: "\"database_level\" = $", B: ""},   // database_level
+	{A: "\"restore_id\" = $", B: ""},       // restore_id
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2325,6 +2402,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                   // break_glass has no server-side form
 	{},                                   // database_id has no server-side form
 	{},                                   // database_level has no server-side form
+	{},                                   // restore_id has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2351,9 +2429,10 @@ const (
 	iBreakGlass      uint64 = 1 << 12
 	iDatabaseID      uint64 = 1 << 13
 	iDatabaseLevel   uint64 = 1 << 14
+	iRestoreID       uint64 = 1 << 15
 )
 
-const nInsertable = 15
+const nInsertable = 16
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2372,6 +2451,7 @@ var insCols = [nInsertable]string{
 	"\"break_glass\"",
 	"\"database_id\"",
 	"\"database_level\"",
+	"\"restore_id\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2380,7 +2460,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"access_requests\""
-const insReturning = " RETURNING \"id\", \"requester_email\", \"asset_hostnames\", \"principal\", \"justification\", \"duration_minutes\", \"state\", \"created_at\", \"decided_at\", \"decided_by_email\", \"decision_note\", \"expires_at\", \"break_glass\", \"database_id\", \"database_level\""
+const insReturning = " RETURNING \"id\", \"requester_email\", \"asset_hostnames\", \"principal\", \"justification\", \"duration_minutes\", \"state\", \"created_at\", \"decided_at\", \"decided_by_email\", \"decision_note\", \"expires_at\", \"break_glass\", \"database_id\", \"database_level\", \"restore_id\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2399,7 +2479,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"requester_email\", \"asset_hostnames\", \"principal\", \"justification\", \"duration_minutes\", \"state\", \"created_at\", \"decided_at\", \"decided_by_email\", \"decision_note\", \"expires_at\", \"break_glass\", \"database_id\", \"database_level\""
+const updReturning = " RETURNING \"id\", \"requester_email\", \"asset_hostnames\", \"principal\", \"justification\", \"duration_minutes\", \"state\", \"created_at\", \"decided_at\", \"decided_by_email\", \"decision_note\", \"expires_at\", \"break_glass\", \"database_id\", \"database_level\", \"restore_id\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2622,6 +2702,20 @@ func (m *Mut) SetDatabaseLevelNull() {
 	m.expr &^= dDatabaseLevel
 }
 
+func (m *Mut) SetRestoreID(v [16]byte) {
+	m.row.RestoreID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dRestoreID
+	m.expr &^= dRestoreID
+}
+
+// SetRestoreIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetRestoreIDNull() {
+	m.row.RestoreID = runtime.Null[[16]byte]{}
+	m.dirty |= dRestoreID
+	m.expr &^= dRestoreID
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2784,6 +2878,18 @@ func (n *Ins) SetDatabaseLevelNull() {
 	n.set |= iDatabaseLevel
 }
 
+func (n *Ins) SetRestoreID(v [16]byte) {
+	n.row.RestoreID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iRestoreID
+}
+
+// SetRestoreIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetRestoreIDNull() {
+	n.row.RestoreID = runtime.Null[[16]byte]{}
+	n.set |= iRestoreID
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2833,7 +2939,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 14)
+	set := make([]string, 0, 15)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2877,6 +2983,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<14) != 0 {
 			set = append(set, "database_level")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "restore_id")
 		}
 	}
 	return set
@@ -2956,6 +3065,7 @@ var assignFor = map[string]string{
 	"break_glass":      "\"break_glass\" = EXCLUDED.\"break_glass\"",
 	"database_id":      "\"database_id\" = EXCLUDED.\"database_id\"",
 	"database_level":   "\"database_level\" = EXCLUDED.\"database_level\"",
+	"restore_id":       "\"restore_id\" = EXCLUDED.\"restore_id\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3036,6 +3146,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.DatabaseID.Arg())
 		case 14:
 			args = append(args, n.row.DatabaseLevel.Arg())
+		case 15:
+			args = append(args, n.row.RestoreID.Arg())
 		}
 	}
 	var out Row
@@ -3073,7 +3185,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 15)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.RequesterEmail)
 	args = append(args, r.AssetHostnames)
@@ -3089,6 +3201,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.BreakGlass)
 	args = append(args, r.DatabaseID.Arg())
 	args = append(args, r.DatabaseLevel.Arg())
+	args = append(args, r.RestoreID.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3130,13 +3243,14 @@ var copyCols = []string{
 	"break_glass",
 	"database_id",
 	"database_level",
+	"restore_id",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [15]any
+	buf  [16]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3169,6 +3283,7 @@ func (s *rowSource) Values() []any {
 	s.buf[12] = &r.BreakGlass
 	s.buf[13] = r.DatabaseID.Ptr()
 	s.buf[14] = r.DatabaseLevel.Ptr()
+	s.buf[15] = r.RestoreID.Ptr()
 	return s.buf[:]
 }
 
@@ -3214,8 +3329,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 12
 	mask |= 1 << 13
 	mask |= 1 << 14
+	mask |= 1 << 15
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 15)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.RequesterEmail)
 	args = append(args, r.AssetHostnames)
@@ -3231,6 +3347,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.BreakGlass)
 	args = append(args, r.DatabaseID.Arg())
 	args = append(args, r.DatabaseLevel.Arg())
+	args = append(args, r.RestoreID.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3294,6 +3411,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.DatabaseID.Arg())
 		case 14:
 			args = append(args, n.row.DatabaseLevel.Arg())
+		case 15:
+			args = append(args, n.row.RestoreID.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3377,6 +3496,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.DatabaseID.Arg())
 		case 13:
 			args = append(args, m.row.DatabaseLevel.Arg())
+		case 14:
+			args = append(args, m.row.RestoreID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3487,6 +3608,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.DatabaseID.Arg())
 		case 13:
 			args = append(args, m.row.DatabaseLevel.Arg())
+		case 14:
+			args = append(args, m.row.RestoreID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3663,6 +3786,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.DatabaseID.Arg())
 		case 13:
 			args = append(args, m.row.DatabaseLevel.Arg())
+		case 14:
+			args = append(args, m.row.RestoreID.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

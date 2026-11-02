@@ -8,6 +8,18 @@
 //	argus-verify session.cast <chain-head>
 //	argus-verify --head session.cast          # just print the computed head
 //
+// It also opens an encrypted database backup (.argusdump) outside Argus, for
+// break-glass recovery when the control plane is gone:
+//
+//	argus-verify backup.argusdump                      # print the header
+//	argus-verify --secret <root secret> backup.argusdump --out plain.dump
+//	argus-verify --key <data key> backup.argusdump --out plain.dump
+//
+// The root secret is the control plane's grant key seed, as hex; the data
+// key is the one a restore grant carries. The output is a pg_dump custom
+// archive for pg_restore. Every frame is authenticated before it is written,
+// and a file that fails to open is reported, never half written.
+//
 // Exit status is 0 when the recording is intact and 1 when it is not, so this
 // drops into a compliance pipeline directly.
 package main
@@ -15,8 +27,10 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
+	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/gsoultan/argus/internal/recorder"
@@ -30,8 +44,12 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	headOnly := flag.Bool("head", false, "print the computed chain head and exit")
 	quiet := flag.Bool("quiet", false, "suppress output; rely on exit status")
+	secret := flag.String("secret", "", "the control plane's root secret, to open a backup")
+	dataKey := flag.String("key", "", "a backup's data key (base64), to open it without the secret")
+	out := flag.String("out", "", "where a decrypted backup goes (default: stdout)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: argus-verify [--head] [--quiet] <recording.cast> [expected-head]\n")
+		fmt.Fprintf(os.Stderr, "usage: argus-verify [--head] [--quiet] <recording.cast> [expected-head]\n"+
+			"       argus-verify [--secret S | --key K] [--out plain.dump] <backup.argusdump>\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -50,17 +68,28 @@ func main() {
 	if flag.NArg() > 1 {
 		expected = flag.Arg(1)
 	}
-	if !*headOnly && expected == "" {
-		fmt.Fprintln(os.Stderr, "argus-verify: an expected chain head is required (or pass --head)")
-		os.Exit(2)
-	}
-
 	f, err := os.Open(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
 		os.Exit(2)
 	}
 	defer f.Close()
+
+	if peek, _ := bufio.NewReader(f).Peek(16); tunnel.IsDumpFile(peek) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+			os.Exit(2)
+		}
+		os.Exit(openBackup(f, *secret, *dataKey, *out, *quiet))
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+		os.Exit(2)
+	}
+	if !*headOnly && expected == "" {
+		fmt.Fprintln(os.Stderr, "argus-verify: an expected chain head is required (or pass --head)")
+		os.Exit(2)
+	}
 
 	// An agent gzips its own copy of a recording once the control plane has
 	// stored it. The chain covers the recording's bytes, not the file's, so a
@@ -126,4 +155,94 @@ func main() {
 		fmt.Println("  Preserve it as evidence and treat this as an incident.")
 	}
 	os.Exit(1)
+}
+
+// openBackup prints a backup's header and, given a secret or a data key,
+// decrypts it. The exit status is 0 when every frame opened, 1 when the file
+// is not what it says it is, 2 for a usage or I/O problem.
+func openBackup(f *os.File, secret, dataKey, out string, quiet bool) int {
+	br := bufio.NewReaderSize(f, 1<<20)
+	h, _, err := tunnel.ReadDumpHeader(br)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+		return 1
+	}
+	if !quiet {
+		fmt.Printf("BACKUP   %s\n", f.Name())
+		fmt.Printf("  id        %s\n", h.BackupID)
+		fmt.Printf("  database  %s on %s (org %s)\n", h.DBName, h.Host, h.Organization)
+		fmt.Printf("  taken     %s\n", h.StartedAt.Format("2006-01-02 15:04:05 MST"))
+		fmt.Printf("  server    %s, pg_dump %s, %s\n", h.ServerVersion, h.DumpVersion, h.Compression)
+		fmt.Printf("  key       %s\n", h.KeyID)
+		if h.Reason != "" {
+			fmt.Printf("  reason    %s\n", h.Reason)
+		}
+	}
+	if secret == "" && dataKey == "" {
+		if !quiet {
+			fmt.Println("  pass --secret or --key to decrypt it")
+		}
+		return 0
+	}
+	var key []byte
+	if dataKey != "" {
+		key, err = base64.StdEncoding.DecodeString(dataKey)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "argus-verify: the data key is not base64")
+			return 2
+		}
+	} else {
+		priv, derr := tunnel.DeriveBackupKey(secret, h.Organization)
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", derr)
+			return 2
+		}
+		if got := tunnel.BackupKeyID(priv.PublicKey()); got != h.KeyID {
+			fmt.Fprintf(os.Stderr, "argus-verify: this secret derives key %s, and the backup was made for %s\n", got, h.KeyID)
+			return 1
+		}
+		key, err = tunnel.UnwrapBackupKey(priv, h)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+			return 1
+		}
+	}
+	// Re-read from the start: the reader checks the header itself.
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+		return 2
+	}
+	dr, err := tunnel.NewDumpReader(bufio.NewReaderSize(f, 1<<20), key, h.BackupID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+		return 1
+	}
+	var w io.Writer = os.Stdout
+	var of *os.File
+	if out != "" {
+		of, err = os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+			return 2
+		}
+		w = of
+	}
+	n, err := io.Copy(w, dr)
+	if of != nil {
+		// Closed before any remove: Windows refuses to delete an open file.
+		if cerr := of.Close(); err == nil {
+			err = cerr
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus-verify: %v (after %d bytes; the output is incomplete)\n", err, n)
+		if out != "" {
+			_ = os.Remove(out)
+		}
+		return 1
+	}
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "  wrote     %d bytes of pg_dump archive; restore with pg_restore -d <db> %s\n", n, out)
+	}
+	return 0
 }

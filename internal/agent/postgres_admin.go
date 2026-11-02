@@ -44,9 +44,15 @@ A role Argus did not create is never touched: it is reported as taken.
 
 // PGAdminRequest is one provisioning operation.
 type PGAdminRequest struct {
-	Op string `json:"op"` // open, close, admin
-	// Database to connect to and grant in.
+	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases
+	// Database to connect to and grant in. The replace operations connect
+	// to the maintenance database and act on Target, since a database
+	// cannot be renamed from inside itself.
 	Database string `json:"database"`
+	// Target is the database a replace operation acts on, and RenameTo
+	// where it goes.
+	Target   string `json:"target,omitempty"`
+	RenameTo string `json:"renameTo,omitempty"`
 	// Socket is the directory of the server's Unix socket; Port its port.
 	Socket string `json:"socket"`
 	Port   int    `json:"port"`
@@ -83,6 +89,8 @@ type PGAdminResult struct {
 	Detail string          `json:"detail,omitempty"`
 	Hint   string          `json:"hint,omitempty"`
 	Data   json.RawMessage `json:"data,omitempty"`
+	// Databases is what list-databases found.
+	Databases []string `json:"databases,omitempty"`
 }
 
 // pgAdminRunner performs provisioning; the production one runs the helper as
@@ -138,6 +146,10 @@ func levelsUpTo(level string) []string {
 // RunPGAdmin performs req on conn, which is signed in as a superuser to
 // req.Database. It is what the helper runs.
 func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+	switch req.Op {
+	case "prepare-replace", "rollback-replace", "drop-database", "list-databases":
+		return pgReplaceOp(ctx, conn, req)
+	}
 	if !tunnel.ValidPersonalRole(req.Role) {
 		return PGAdminResult{Error: "not a role name Argus will manage: " + req.Role}
 	}
@@ -394,3 +406,106 @@ func sessionPassword() (string, error) {
 
 // errPGAdmin wraps a provisioning failure for the person.
 var errPGAdmin = errors.New("could not prepare your database role")
+
+/*
+Replacing a database from a backup, in three fixed steps the daemon drives:
+
+	prepare-replace   end every connection to Target, then rename it to
+	                  RenameTo. The restore then creates Target afresh.
+	rollback-replace  the restore failed: drop the half-made Target (if any)
+	                  and rename RenameTo back. The person has lost nothing.
+	drop-database     the kept copy's day is up: drop RenameTo.
+
+The database is renamed, never dropped, until the control plane says the
+restore succeeded and the keep window has passed. Every name is checked
+against tunnel.ValidDBName and quoted anyway; Argus only renames to names
+it made, and only drops a database whose name carries its own marker.
+*/
+
+// replaceMarker is in every name Argus renames a database to, so
+// drop-database can refuse anything else.
+const replaceMarker = tunnel.KeptMarker
+
+func pgReplaceOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+	version := conn.ParameterStatus("server_version")
+	if req.Op == "list-databases" {
+		res := conn.ExecParams(ctx, `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1`,
+			nil, nil, nil, nil).Read()
+		if res.Err != nil {
+			return PGAdminResult{Error: res.Err.Error(), Version: version}
+		}
+		out := PGAdminResult{OK: true, Version: version}
+		for _, r := range res.Rows {
+			out.Databases = append(out.Databases, string(r[0]))
+		}
+		return out
+	}
+	if !tunnel.ValidDBName.MatchString(req.Target) {
+		return PGAdminResult{Error: "not a database name Argus will act on: " + req.Target}
+	}
+	if req.Op != "drop-database" && (!tunnel.ValidDBName.MatchString(req.RenameTo) || req.RenameTo == req.Target) {
+		return PGAdminResult{Error: "not a name Argus will rename to: " + req.RenameTo}
+	}
+	exists := func(name string) (bool, error) {
+		res := conn.ExecParams(ctx, `SELECT 1 FROM pg_database WHERE datname = $1`,
+			[][]byte{[]byte(name)}, nil, nil, nil).Read()
+		return len(res.Rows) > 0, res.Err
+	}
+	terminate := func(name string) error {
+		// Nobody may reconnect while the restore runs: the level roles lose
+		// CONNECT until the next session re-grants it, and every backend goes.
+		res := conn.ExecParams(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+			WHERE datname = $1 AND pid <> pg_backend_pid()`, [][]byte{[]byte(name)}, nil, nil, nil).Read()
+		return res.Err
+	}
+	switch req.Op {
+	case "prepare-replace":
+		if ok, err := exists(req.Target); err != nil {
+			return PGAdminResult{Error: err.Error(), Version: version}
+		} else if !ok {
+			return PGAdminResult{Error: "there is no database named " + req.Target + " to replace", Version: version}
+		}
+		if ok, _ := exists(req.RenameTo); ok {
+			return PGAdminResult{Error: "a database named " + req.RenameTo + " already exists", Version: version}
+		}
+		if err := execAll(ctx, conn, "ALTER DATABASE "+pgx(req.Target)+" WITH ALLOW_CONNECTIONS false"); err != nil {
+			return PGAdminResult{Error: err.Error(), Version: version}
+		}
+		if err := terminate(req.Target); err != nil {
+			return PGAdminResult{Error: err.Error(), Version: version}
+		}
+		if err := execAll(ctx, conn, "ALTER DATABASE "+pgx(req.Target)+" RENAME TO "+pgx(req.RenameTo)); err != nil {
+			_ = execAll(ctx, conn, "ALTER DATABASE "+pgx(req.Target)+" WITH ALLOW_CONNECTIONS true")
+			return PGAdminResult{Error: err.Error(), Version: version}
+		}
+		return PGAdminResult{OK: true, Version: version}
+	case "rollback-replace":
+		if ok, _ := exists(req.Target); ok {
+			_ = terminate(req.Target)
+			if err := execAll(ctx, conn, "DROP DATABASE "+pgx(req.Target)); err != nil {
+				return PGAdminResult{Error: "the half-restored " + req.Target + " could not be dropped: " + err.Error(), Version: version}
+			}
+		}
+		if ok, err := exists(req.RenameTo); err != nil || !ok {
+			return PGAdminResult{Error: "the kept copy " + req.RenameTo + " is not there to put back", Version: version}
+		}
+		if err := execAll(ctx, conn, "ALTER DATABASE "+pgx(req.RenameTo)+" RENAME TO "+pgx(req.Target),
+			"ALTER DATABASE "+pgx(req.Target)+" WITH ALLOW_CONNECTIONS true"); err != nil {
+			return PGAdminResult{Error: err.Error(), Version: version}
+		}
+		return PGAdminResult{OK: true, Version: version}
+	case "drop-database":
+		if !strings.Contains(req.Target, replaceMarker) {
+			return PGAdminResult{Error: "Argus only drops the copies it kept from a restore; " + req.Target + " is not one"}
+		}
+		if ok, _ := exists(req.Target); !ok {
+			return PGAdminResult{OK: true, Version: version}
+		}
+		_ = terminate(req.Target)
+		if err := execAll(ctx, conn, "DROP DATABASE "+pgx(req.Target)); err != nil {
+			return PGAdminResult{Error: err.Error(), Version: version}
+		}
+		return PGAdminResult{OK: true, Version: version}
+	}
+	return PGAdminResult{Error: "unknown operation " + req.Op}
+}

@@ -191,6 +191,9 @@ func TestAnUpdateAskedNowDoesNotWait(t *testing.T) {
 	if !strings.Contains(s.Message, "ending 3 open session(s)") {
 		t.Errorf("a forced update should say what it ends: %s", s.Message)
 	}
+	// The plan is written after the status says restarting; returning
+	// before the launch leaves the test's temp dir in use on Windows.
+	waitLaunched(t, plat, 1)
 }
 
 // A package that does not match its checksum changes nothing.

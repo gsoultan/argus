@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconCheck, IconCopy, IconInfoCircle, IconPlus, IconTrash, IconUser, IconUsersGroup } from '@tabler/icons-react'
 import { useState } from 'react'
+import { BackupSettings } from '~/components/DatabaseBackups'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { notifyError, notifyOk } from '~/lib/notify'
@@ -27,8 +28,12 @@ import type { DBLabel, DBLevel, DBPolicy, Database } from '~/types/domain'
  * when giving Write or above on a production database is "needs approval
  * each time", which is the one security step most people ever meet.
  */
+type Tab = 'who' | 'safety' | 'connection' | 'backups'
+
 export const Route = createFileRoute('/databases/$dbId_/settings')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
+  validateSearch: (s: Record<string, unknown>): { tab?: Tab } =>
+    s.tab === 'safety' || s.tab === 'connection' || s.tab === 'backups' ? { tab: s.tab } : {},
   component: DatabaseSettings,
   loader: ({ context, params }) =>
     Promise.all([
@@ -57,7 +62,8 @@ function DatabaseSettings() {
   const del = useDeleteDatabase()
   const navigate = useNavigate()
   const [adding, add] = useDisclosure(false)
-  const [tab, setTab] = useState<'who' | 'safety' | 'connection'>('who')
+  const { tab: initialTab } = Route.useSearch()
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'who')
 
   if (error) {
     return (
@@ -100,7 +106,7 @@ function DatabaseSettings() {
         crumbs={[{ label: 'Databases', to: '/databases' }]}
         status={<Badge variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[db.label]} radius="sm">{db.label}</Badge>}
         description={db.engine === 'postgres'
-          ? `On ${db.hostname}. Who can open this database and what they can do; Argus keeps a Postgres role for each person to match.`
+          ? `On ${db.hostname}. Who can open this database, its safety settings, and how it is backed up.`
           : `${info.label} on ${db.hostname}. Who can open it and what they can do; each person gets their own ${info.label} user for the length of their session.`}
         actions={
           <Group gap="xs">
@@ -111,8 +117,8 @@ function DatabaseSettings() {
       />
       <PageBody>
         <Stack gap="md">
-          <SegmentedControl value={tab} onChange={(v) => setTab(v as 'who' | 'safety' | 'connection')}
-            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }, { label: 'Connection', value: 'connection' }]} w="fit-content" />
+          <SegmentedControl value={tab} onChange={(v) => setTab(v as Tab)}
+            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }, { label: 'Connection', value: 'connection' }, ...(db.engine === 'postgres' ? [{ label: 'Backups', value: 'backups' }] : [])]} w="fit-content" />
 
           {tab === 'who' && (
             <Stack gap="md">
@@ -170,6 +176,7 @@ function DatabaseSettings() {
 
           {tab === 'safety' && <Safety db={db} />}
           {tab === 'connection' && (db.engine === 'postgres' ? <Connection db={db} /> : <StoreConnection db={db} />)}
+          {tab === 'backups' && db.engine === 'postgres' && <BackupSettings db={db} />}
 
           <SectionCard title="Remove from Argus" description={db.engine === 'postgres'
             ? 'Sessions and recordings are kept. Nothing is changed in Postgres; locked roles stay locked.'
