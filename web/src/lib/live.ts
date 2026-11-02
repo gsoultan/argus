@@ -873,6 +873,14 @@ export interface EnrollToken {
   pin?: string
   /** The same pin in curl's --pinnedpubkey form. */
   curlPin?: string
+  /**
+   * Set when the address servers would use answers with a certificate other
+   * than the control plane's own (a proxy or Cloudflare Tunnel in front), so
+   * no command made from it would work. Says what to change.
+   */
+  addressProblem?: string
+  /** The address that was checked. */
+  address?: string
 }
 
 /** Makes an enrollment token. Admin or owner; audited by the control plane. */

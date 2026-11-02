@@ -224,14 +224,23 @@ function InstallStep({ name, kind, token, since, onBack, onFound }: {
           : 'Copy this, paste it into PowerShell opened with Run as administrator on the server, and press Enter.'}
       </StepTitle>
 
-      <Command text={command} />
+      {token?.addressProblem ? (
+        <Alert color="amber" icon={<IconInfoCircle size={16} />} title="Servers cannot reach Argus at this address">
+          <Text size="sm" mb="sm">{token.addressProblem}</Text>
+          <Anchor href="/settings" size="sm">Open Settings</Anchor>
+        </Alert>
+      ) : (
+        <Command text={command} />
+      )}
 
-      <Text size={FS.meta} c="dimmed" mt="sm" lh={1.5}>
-        {token
-          ? `It works once, until ${new Date(token.expiresAt).toLocaleTimeString()}. If it runs out, go back and press Next again.`
-          : 'This console has no control plane behind it, so the line above is only an example.'}
-        {kind === 'linux' && ' Your current ssh session stays open; if anything goes wrong it puts the ssh settings back as they were.'}
-      </Text>
+      {!token?.addressProblem && (
+        <Text size={FS.meta} c="dimmed" mt="sm" lh={1.5}>
+          {token
+            ? `It works once, until ${new Date(token.expiresAt).toLocaleTimeString()}. If it runs out, go back and press Next again.`
+            : 'This console has no control plane behind it, so the line above is only an example.'}
+          {kind === 'linux' && ' Your current ssh session stays open; if anything goes wrong it puts the ssh settings back as they were.'}
+        </Text>
+      )}
 
       <Box mt="xl">
         {isConfigured() ? (
