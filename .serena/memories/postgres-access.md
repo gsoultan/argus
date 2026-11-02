@@ -109,3 +109,16 @@ as a statement list (`PostgresReplay`).
 - The control plane decodes request bodies with DisallowUnknownFields, so a
   console mutation must not pass its `{id, ...}` variables object as the
   body; strip the id first (this silently 400'd every settings save once).
+
+## Editor autocomplete
+
+`web/src/lib/sqlComplete.ts` (pure, tested) and `web/src/components/Autocomplete.tsx`
+(a list under the caret of the native textarea; Ctrl+Space, ↑/↓, Enter/Tab, Esc).
+Names come from the `schema` op as the person's role, like the tree, and are
+not recorded: `kind: "completion"` answers schemas, the search_path, tables,
+views, sequences and functions in one go (privilege-filtered the same way as
+the tree, 20,000 rows max); columns come per table from `kind: "columns"`
+only once a statement names the table, cached for the session (500 tables
+max). An agent too old to know "completion" answers an error, which leaves
+keywords and built-in functions. `web/src/lib/redisComplete.ts` is the same
+for a Redis command line (commands, subcommands, keys the browser listed).
