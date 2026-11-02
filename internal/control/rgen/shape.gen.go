@@ -133,6 +133,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.DirectSsh,
 		m.AgentDirectSsh,
 		m.AgentPersonalAccounts,
+		m.DirectSshAccounts,
 	}
 }
 

@@ -723,6 +723,15 @@ export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Pro
   return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh`, { mode: mode ?? '' })
 }
 
+/** Sets what one login account on a server does; null follows the server. */
+export async function setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
+  return send<Asset>(
+    'PUT',
+    `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh/accounts/${encodeURIComponent(account)}`,
+    { mode: mode ?? '' },
+  )
+}
+
 /** What an approval grants: the accounts allowed, and who may use them. */
 export interface EnrolGrant {
   principals: string[]

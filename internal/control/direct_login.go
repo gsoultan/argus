@@ -23,8 +23,9 @@ the console.
 	allow    let through and recorded, and reported as allowed by the setting
 
 Whatever is chosen, a login that is admitted is recorded. The deployment holds
-one choice in gateway_policy and a server may hold its own; the agent learns
-the effective one on its heartbeat.
+one choice in gateway_policy, a server may hold its own, and a server may name
+login accounts that do something else (direct_ssh_accounts.go); the agent
+learns all of it on its heartbeat.
 
 What this cannot do is say who the person was. A direct login carries the local
 account and the address it came from, nothing else, so its sessions are
@@ -349,7 +350,7 @@ func (a *API) postDirectLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode, err := a.store.EffectiveDirectSSH(r.Context(), in.Hostname)
+	mode, err := a.store.EffectiveDirectSSHFor(r.Context(), in.Hostname, in.Principal)
 	if err != nil {
 		// Fail closed: a setting that cannot be read cannot let anyone in.
 		a.log.Error("direct login: cannot read the setting; refusing", "error", err)
@@ -625,12 +626,12 @@ func (a *API) directSessionAdmitted(
 			"because a team of theirs may SSH directly to it, and was recorded as session %s. "+
 			"Nobody approved it.", p.Owner, s.Principal, s.AssetHostname, s.ID)
 	case "allowed":
-		mode, err := a.store.EffectiveDirectSSH(ctx, s.AssetHostname)
+		mode, err := a.store.EffectiveDirectSSHFor(ctx, s.AssetHostname, s.Principal)
 		if err != nil || mode != DirectSSHAllow {
 			return false, ""
 		}
-		return true, fmt.Sprintf("Direct login by %s on %s was let in because the server is set to "+
-			"allow and record direct SSH logins, and was recorded as session %s. Nobody approved it.",
+		return true, fmt.Sprintf("Direct login by %s on %s was let in because the account is set to "+
+			"allow and record direct SSH logins there, and was recorded as session %s. Nobody approved it.",
 			s.Principal, s.AssetHostname, s.ID)
 	}
 	return false, ""

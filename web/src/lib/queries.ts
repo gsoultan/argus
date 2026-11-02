@@ -231,6 +231,18 @@ export function useSetAssetDirectSsh() {
   })
 }
 
+export function useSetAssetDirectSshAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; account: string; mode: DirectSsh | null }) =>
+      api.setAssetDirectSshAccount(v.id, v.account, v.mode),
+    onSuccess: (asset) => {
+      qc.setQueryData(qk.asset(asset.id), asset)
+      void qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 /* ── The inventory ───────────────────────────────────────────────────────── */
 
 export const assignmentsQuery = (assetId: string) =>

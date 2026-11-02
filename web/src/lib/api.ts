@@ -15,6 +15,7 @@ import {
   removeAssetAssignment,
   setAssetAssignment,
   setAssetDirectSsh,
+  setAssetDirectSshAccount,
   updateAsset as updateOnControlPlane,
   whoami,
   saveGatewayPolicy,
@@ -699,6 +700,18 @@ export const api = {
     const a = db.assets.find((x) => x.id === id)
     if (!a) throw new Error('asset not found')
     a.directSsh = mode
+    return a
+  },
+
+  async setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
+    if (isConfigured()) return setAssetDirectSshAccount(id, account, mode)
+    await latency(300)
+    const a = db.assets.find((x) => x.id === id)
+    if (!a) throw new Error('asset not found')
+    const accounts = { ...(a.directSshAccounts ?? {}) }
+    if (mode) accounts[account] = mode
+    else delete accounts[account]
+    a.directSshAccounts = accounts
     return a
   },
 

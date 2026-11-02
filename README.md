@@ -147,6 +147,13 @@ own page:
 | **Ask for approval** | The person's terminal says the login is waiting. It shows on **Access requests** with the server, account, source address and command, for an approver, admin or owner to approve or deny. Nobody answering in two minutes, a denial, or the control plane being unreachable all refuse it. Each step is in the audit log (`session.direct_requested`, `_approved`, `_denied`, `_expired`). |
 | **Allow and record** | The login opens with nobody approving it and is reported as `session.direct_allowed`. |
 
+A server can also give named login accounts a setting of their own, under
+**Different for some accounts** on its page: for example `staging` allowed and
+recorded, `sys-admin` held for approval, and `root` refused, while every other
+account follows the server. An account's setting wins over the server's, which
+wins over the deployment's, and changing one is audited as
+`asset.direct_ssh_account_changed` (a warning when it lets more logins in).
+
 Whatever the setting, a login that is let in is recorded like any other
 session. A direct login only tells Argus the server account and the address it
 came from, not which person it was, so its recording is attributed to
@@ -157,6 +164,7 @@ came from, not which person it was, so its recording is attributed to
 | A server whose agent is not connected | Nothing opens from the console. The Servers page says the agent is offline and when it last checked in. |
 | An agent restarted while the control plane is down | It keeps applying the last setting it heard; it remembers it in its state directory. Under **Ask for approval** that means refusing, since there is nobody to ask. |
 | An agent older than the setting | It refuses direct logins under **Refuse** and **Ask for approval**, and records them under **Allow and record**. |
+| An agent older than per-account settings | It applies the strictest setting any account on the server has to every account, so a named account is never more open than it was set to be. The control plane still decides each approval for the account it is asked about. |
 
 The machine's own console (hypervisor or physical) is not affected, and is the
 break-glass path when the control plane is down.

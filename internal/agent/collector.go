@@ -79,6 +79,11 @@ type Collector struct {
 	// every login meanwhile.
 	directSSH atomic.Pointer[string]
 
+	// directSSHAccounts is the login accounts the console names, each with
+	// its own direct SSH mode, as of the last heartbeat. An account not in
+	// it gets directSSH.
+	directSSHAccounts atomic.Pointer[map[string]string]
+
 	// personal is the personal accounts this server holds, by name, as of
 	// the last heartbeat. Nil until the control plane says: no account is
 	// treated as personal before then.
@@ -211,6 +216,46 @@ func (c *Collector) DirectSSH() string {
 		return *m
 	}
 	return ""
+}
+
+// SetDirectSSHAccounts applies the console's per-account modes. An entry
+// that is not one of the three modes refuses that account, rather than
+// being dropped and leaving the account to a more open server setting.
+func (c *Collector) SetDirectSSHAccounts(accounts map[string]string) {
+	m := make(map[string]string, len(accounts))
+	for account, mode := range accounts {
+		switch mode {
+		case DirectSSHRefuse, DirectSSHApprove, DirectSSHAllow:
+		default:
+			mode = DirectSSHRefuse
+		}
+		m[account] = mode
+	}
+	c.directSSHAccounts.Store(&m)
+}
+
+// DirectSSHAccounts is a copy of the per-account modes being applied.
+func (c *Collector) DirectSSHAccounts() map[string]string {
+	p := c.directSSHAccounts.Load()
+	if p == nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(*p))
+	for k, v := range *p {
+		out[k] = v
+	}
+	return out
+}
+
+// DirectSSHFor is the mode for a login as account: its own, when the
+// console names it, otherwise the server's.
+func (c *Collector) DirectSSHFor(account string) string {
+	if p := c.directSSHAccounts.Load(); p != nil {
+		if m, ok := (*p)[account]; ok {
+			return m
+		}
+	}
+	return c.DirectSSH()
 }
 
 // SetConsoleOnly applies a control plane older than the direct SSH setting,
@@ -773,12 +818,12 @@ func (c *Collector) admitDirect(conn net.Conn, m SessionStart) (Approval, bool) 
 			return a, ok
 		}
 	}
-	switch c.DirectSSH() {
+	switch c.DirectSSHFor(m.Principal) {
 	case "":
 		// Never heard from the control plane: record, do not refuse.
 		return Approval{}, true
 	case DirectSSHAllow:
-		c.log.Warn("DIRECT LOGIN ALLOWED — this server is set to allow and record them",
+		c.log.Warn("DIRECT LOGIN ALLOWED — this account is set to allow and record them",
 			"principal", m.Principal, "client", m.ClientAddr, "command", m.Command)
 		return Approval{Approved: true, Allowed: true}, true
 	case DirectSSHApprove:

@@ -98,7 +98,7 @@ func (a *API) postLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if in.Allowed {
-		if mode, err := a.store.EffectiveDirectSSH(r.Context(), in.Hostname); err == nil &&
+		if mode, err := a.store.EffectiveDirectSSHFor(r.Context(), in.Hostname, in.Principal); err == nil &&
 			mode == DirectSSHAllow {
 			if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 				Action:   "session.direct_allowed",

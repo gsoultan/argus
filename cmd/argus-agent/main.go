@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -245,8 +246,19 @@ func runDaemon(args []string) int {
 	// what an agent older than the setting wrote, and is read when the newer
 	// file is absent.
 	directSSHFile := *stateDir + "/direct-ssh"
+	// direct-ssh.json holds the mode and the named accounts together, written
+	// in one rename so a restart never pairs one heartbeat's mode with
+	// another's accounts. direct-ssh, the mode alone, is still written for an
+	// agent downgraded to before per-account modes.
+	directSSHStateFile := *stateDir + "/direct-ssh.json"
 	consoleOnlyFile := *stateDir + "/console-only"
-	if b, err := os.ReadFile(directSSHFile); err == nil {
+	var saved directSSHState
+	if b, err := os.ReadFile(directSSHStateFile); err == nil && json.Unmarshal(b, &saved) == nil && saved.Mode != "" {
+		col.SetDirectSSH(saved.Mode)
+		col.SetDirectSSHAccounts(saved.Accounts)
+		log.Info("direct ssh logins: applying the last setting heard",
+			"mode", col.DirectSSH(), "accounts", len(saved.Accounts))
+	} else if b, err := os.ReadFile(directSSHFile); err == nil {
 		col.SetDirectSSH(strings.TrimSpace(string(b)))
 		log.Info("direct ssh logins: applying the last setting heard", "mode", col.DirectSSH())
 	} else if b, err := os.ReadFile(consoleOnlyFile); err == nil && strings.TrimSpace(string(b)) == "1" {
@@ -438,10 +450,28 @@ func runDaemon(args []string) int {
 			// Absent from an older control plane, or one that could not read
 			// its policy: keep what was last heard.
 			if reply.DirectSSH != nil {
-				if *reply.DirectSSH != col.DirectSSH() {
-					log.Warn("direct ssh logins changed by the console", "mode", *reply.DirectSSH)
+				// A control plane with per-account modes says what every
+				// other account gets in direct_ssh_default; direct_ssh is
+				// then the strictest mode, for agents that cannot tell
+				// accounts apart. An older one sends direct_ssh alone.
+				mode, accounts := *reply.DirectSSH, map[string]string{}
+				if reply.DirectSSHDefault != nil {
+					mode, accounts = *reply.DirectSSHDefault, reply.DirectSSHAccounts
 				}
-				col.SetDirectSSH(*reply.DirectSSH)
+				if mode != col.DirectSSH() {
+					log.Warn("direct ssh logins changed by the console", "mode", mode)
+				}
+				if !maps.Equal(accounts, col.DirectSSHAccounts()) {
+					log.Warn("direct ssh logins for named accounts changed by the console",
+						"accounts", len(accounts))
+				}
+				col.SetDirectSSHAccounts(accounts)
+				col.SetDirectSSH(mode)
+				if err := saveDirectSSHState(directSSHStateFile, directSSHState{
+					Mode: col.DirectSSH(), Accounts: col.DirectSSHAccounts(),
+				}); err != nil {
+					log.Error("direct ssh: cannot persist the setting", "error", err)
+				}
 				if err := os.WriteFile(directSSHFile, []byte(col.DirectSSH()+"\n"), 0o600); err != nil {
 					log.Error("direct ssh: cannot persist the setting", "error", err)
 				}
@@ -459,7 +489,9 @@ func runDaemon(args []string) int {
 				if err := os.WriteFile(consoleOnlyFile, []byte(v+"\n"), 0o600); err != nil {
 					log.Error("console-only: cannot persist the setting", "error", err)
 				}
-				// Read first on a restart, so it must not hold an older answer.
+				// Read first on a restart, so they must not hold an older answer.
+				col.SetDirectSSHAccounts(nil)
+				_ = saveDirectSSHState(directSSHStateFile, directSSHState{Mode: col.DirectSSH()})
 				_ = os.WriteFile(directSSHFile, []byte(col.DirectSSH()+"\n"), 0o600)
 			}
 		}
@@ -919,4 +951,25 @@ func runEnroll(args []string) int {
 	}
 	fmt.Println("start it with: " + startHint)
 	return 0
+}
+
+// directSSHState is what the agent keeps of the direct SSH setting across a
+// restart: the mode for every account, and the accounts the console names.
+type directSSHState struct {
+	Mode     string            `json:"mode"`
+	Accounts map[string]string `json:"accounts,omitempty"`
+}
+
+// saveDirectSSHState writes the setting by rename, so a crash mid-write
+// leaves the previous one rather than half of this one.
+func saveDirectSSHState(path string, st directSSHState) error {
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

@@ -172,6 +172,11 @@ export interface Asset {
   directSsh?: DirectSsh | null
   /** What the agent said at its last check-in it is applying. Null is unconfirmed. */
   agentDirectSsh?: DirectSsh | null
+  /**
+   * Login accounts on this server that do something other than `directSsh`,
+   * each with its own mode. An account not named follows the server.
+   */
+  directSshAccounts?: Record<string, DirectSsh>
   /** What the agent said about the personal accounts it keeps. Admins only. */
   agentPersonalAccounts?: PersonalAccountState[]
 }

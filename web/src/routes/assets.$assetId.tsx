@@ -1,5 +1,5 @@
 import { Suspense, lazy, useState } from 'react'
-import { Alert, Badge, Box, Button, Card, Grid, Group, Modal, Select, Stack, Table, Text } from '@mantine/core'
+import { Alert, Autocomplete, Badge, Box, Button, Card, Grid, Group, Modal, Select, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
@@ -20,7 +20,7 @@ import {
 import { FS, SP } from '~/theme'
 import {
   assetQuery, meQuery, policyQuery, sessionsQuery, useArchiveAsset, usePinHostKey,
-  useSetAssetDirectSsh,
+  useSetAssetDirectSsh, useSetAssetDirectSshAccount,
 } from '~/lib/queries'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
 import type { Asset, DirectSsh } from '~/types/domain'
@@ -381,8 +381,112 @@ function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
               ? `This server's agent confirmed at its last check-in that it is applying ${directSshLabel(applied)}.`
               : `This server's agent is still applying ${directSshLabel(applied)}; it picks up ${effective ? directSshLabel(effective) : 'the change'} at its next check-in.`}
         </Text>
+        <AccountDirectSsh asset={asset} canEdit={canEdit} server={effective} />
       </Stack>
     </SectionCard>
+  )
+}
+
+/** Login account names as the control plane accepts them. */
+const ACCOUNT_NAME = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/
+
+/**
+ * Login accounts on this server that do something other than the server's
+ * setting: staging allowed and recorded, sys-admin held for approval. An
+ * account not listed follows the setting above.
+ */
+function AccountDirectSsh({ asset, canEdit, server }: {
+  asset: Asset; canEdit: boolean; server: DirectSsh | null
+}) {
+  const setAccount = useSetAssetDirectSshAccount()
+  const [name, setName] = useState('')
+  const [mode, setMode] = useState<DirectSsh>('approve')
+  const named = Object.entries(asset.directSshAccounts ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const serverLabel = server ? directSshLabel(server) : 'the server\'s setting'
+  const trimmed = name.trim()
+  const nameError = trimmed && !ACCOUNT_NAME.test(trimmed)
+    ? 'Letters, digits, ".", "_" or "-", starting with a letter or "_"'
+    : null
+
+  const change = (account: string, next: DirectSsh | null) => {
+    const before = asset.directSshAccounts?.[account] ?? server
+    const after = next ?? server
+    const loosens = before && after ? directSshLoosens(before, after) : false
+    return run(
+      () => setAccount.mutateAsync({ id: asset.id, account, mode: next }),
+      {
+        success: ['Direct SSH logins changed',
+          `${account} on ${asset.hostname}: ${next ? directSshLabel(next) : `the server's setting (${serverLabel})`}. ` +
+          (loosens ? 'This lets more logins in, and is in the audit log as a loosening. ' : '') +
+          'The agent applies it at its next check-in, within a minute.'],
+        failure: 'Direct SSH logins not changed',
+      },
+    )
+  }
+
+  const add = async () => {
+    if (!trimmed || nameError) return
+    if (await change(trimmed, mode)) setName('')
+  }
+
+  const suggestions = asset.principals.filter((p) => !(p in (asset.directSshAccounts ?? {})))
+
+  return (
+    <Stack gap={SP.cozy} mt={SP.cozy}>
+      <div>
+        <Text size="sm" fw={500}>Different for some accounts</Text>
+        <Text size={FS.meta} c="dimmed" lh={1.5}>
+          Name a login account to give it its own setting. Every account not listed here uses {serverLabel}.
+        </Text>
+      </div>
+      {named.map(([account, m]) => (
+        <Group key={account} gap={SP.cozy} wrap="wrap" align="center">
+          <Box style={{ flex: '1 1 90px', minWidth: 0, whiteSpace: 'nowrap' }}><Mono>{account}</Mono></Box>
+          <Select
+            size="xs"
+            aria-label={`Direct SSH logins as ${account}`}
+            allowDeselect={false}
+            disabled={!canEdit || setAccount.isPending}
+            value={m}
+            onChange={(v) => {
+              if (!v || v === m) return
+              void change(account, v === INHERIT ? null : (v as DirectSsh))
+            }}
+            data={[
+              ...DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label })),
+              { value: INHERIT, label: `Remove: use the server's (${serverLabel})` },
+            ]}
+            style={{ flex: '1 1 170px' }}
+          />
+        </Group>
+      ))}
+      {canEdit && (
+        <Group gap={SP.cozy} align="flex-start" wrap="wrap">
+          <Autocomplete
+            size="xs"
+            placeholder="Account, e.g. sys-admin"
+            aria-label="Login account"
+            value={name}
+            onChange={setName}
+            data={suggestions}
+            error={nameError}
+            style={{ flex: '1 1 160px' }}
+          />
+          <Select
+            size="xs"
+            aria-label="What happens when this account logs in directly"
+            allowDeselect={false}
+            value={mode}
+            onChange={(v) => v && setMode(v as DirectSsh)}
+            data={DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label }))}
+            style={{ flex: '0 1 180px' }}
+          />
+          <Button size="xs" variant="light" disabled={!trimmed || !!nameError} loading={setAccount.isPending} onClick={() => void add()}>
+            Add
+          </Button>
+        </Group>
+      )}
+    </Stack>
   )
 }
 
