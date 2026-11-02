@@ -28,6 +28,7 @@ func _assertAccessRequestShape(m m0.AccessRequest) {
 		m.BreakGlass,
 		m.Database,
 		m.DatabaseLevel,
+		m.RestoreID,
 	}
 }
 
@@ -229,6 +230,89 @@ func _assertDatabaseAssignmentShape(m m0.DatabaseAssignment) {
 		m.NeedsApproval,
 		m.GrantedBy,
 		m.GrantedAt,
+	}
+}
+
+// _assertDatabaseBackupShape fails to compile if m0.DatabaseBackup gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseBackupShape(m m0.DatabaseBackup) {
+	type shape m0.DatabaseBackup
+	_ = shape{
+		m.ID,
+		m.Database,
+		m.StartedBy,
+		m.Reason,
+		m.State,
+		m.Stage,
+		m.Detail,
+		m.Error,
+		m.Destination,
+		m.LocalPath,
+		m.StorageKey,
+		m.Bytes,
+		m.Sha256,
+		m.WrappedKey,
+		m.KeyID,
+		m.ServerVersion,
+		m.DumpVersion,
+		m.Compression,
+		m.Verified,
+		m.Pinned,
+		m.GrantID,
+		m.StartedAt,
+		m.FinishedAt,
+		m.ReportedAt,
+	}
+}
+
+// _assertDatabaseBackupScheduleShape fails to compile if m0.DatabaseBackupSchedule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseBackupScheduleShape(m m0.DatabaseBackupSchedule) {
+	type shape m0.DatabaseBackupSchedule
+	_ = shape{
+		m.Database,
+		m.Enabled,
+		m.Every,
+		m.AtHour,
+		m.AtMinute,
+		m.Weekday,
+		m.Destination,
+		m.KeepLast,
+		m.KeepDays,
+		m.NextRunAt,
+		m.Misses,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
+// _assertDatabaseRestoreShape fails to compile if m0.DatabaseRestore gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseRestoreShape(m m0.DatabaseRestore) {
+	type shape m0.DatabaseRestore
+	_ = shape{
+		m.ID,
+		m.Backup,
+		m.Database,
+		m.Mode,
+		m.NewName,
+		m.RequestedBy,
+		m.Reason,
+		m.Request,
+		m.State,
+		m.Stage,
+		m.Detail,
+		m.Error,
+		m.RenamedTo,
+		m.KeepUntil,
+		m.KeptDropped,
+		m.CreatedDatabase,
+		m.Warnings,
+		m.GrantID,
+		m.CreatedAt,
+		m.StartedAt,
+		m.FinishedAt,
+		m.ReportedAt,
 	}
 }
 

@@ -105,4 +105,8 @@ CREATE TABLE IF NOT EXISTS database_restores (
 );
 CREATE INDEX IF NOT EXISTS database_restores_db_idx ON database_restores (database_id, created_at DESC);
 
-ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS restore_id UUID REFERENCES database_restores(id) ON DELETE SET NULL;
+-- No foreign key: the restore already points at the request, and a cycle of
+-- keys is one the generated readers cannot write in any order. A restore is
+-- only ever removed with its database, and a request left pointing at one
+-- simply finds none.
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS restore_id UUID;

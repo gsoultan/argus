@@ -34,6 +34,10 @@ type AccessRequest struct {
 	// level, instead of hosts as a principal (migration 026).
 	Database      *Database
 	DatabaseLevel *string
+	// RestoreID makes the request the approval a database restore in place
+	// waits on (migration 032). Not a key: the restore points back here, and
+	// a cycle of keys has no write order.
+	RestoreID *[16]byte
 }
 
 func (m *AccessRequest) Schema(t *storm.Table) {
@@ -654,6 +658,174 @@ func (m *DatabaseAssignment) Schema(t *storm.Table) {
 	t.Index(&m.Database, &m.UserEmail).Unique().Where("user_email IS NOT NULL").Named("database_assignments_user_key")
 }
 
+// DatabaseBackupSchedule is table database_backup_schedules: when a database
+// is backed up and what is kept (migration 032).
+type DatabaseBackupSchedule struct {
+	Database    Database
+	Enabled     bool
+	Every       string
+	AtHour      int32
+	AtMinute    int32
+	Weekday     int32
+	Destination string
+	KeepLast    int32
+	KeepDays    int32
+	NextRunAt   *time.Time
+	Misses      int32
+	UpdatedBy   string
+	UpdatedAt   time.Time
+}
+
+func (m *DatabaseBackupSchedule) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Database)
+	t.Col(&m.Database).ConstraintName("database_backup_schedules_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.Enabled).Default("true")
+	t.Col(&m.Every).Default("'daily'::text")
+	t.Col(&m.AtHour).Default("2")
+	t.Col(&m.AtMinute).Default("0")
+	t.Col(&m.Weekday).Default("0")
+	t.Col(&m.Destination).Default("'server'::text")
+	t.Col(&m.KeepLast).Default("14")
+	t.Col(&m.KeepDays).Default("0")
+	t.Col(&m.Misses).Default("0")
+	t.Col(&m.UpdatedBy).Default("''::text")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("database_backup_schedules_at_hour_check", "(at_hour >= 0) AND (at_hour <= 23)")
+	t.CheckNamed("database_backup_schedules_at_minute_check", "(at_minute >= 0) AND (at_minute <= 59)")
+	t.CheckNamed("database_backup_schedules_destination_check",
+		"destination = ANY (ARRAY['server'::text, 'control'::text, 'both'::text])")
+	t.CheckNamed("database_backup_schedules_every_check",
+		"every = ANY (ARRAY['hourly'::text, 'daily'::text, 'weekly'::text])")
+	t.CheckNamed("database_backup_schedules_keep_days_check", "(keep_days >= 0) AND (keep_days <= 3650)")
+	t.CheckNamed("database_backup_schedules_keep_last_check", "(keep_last >= 1) AND (keep_last <= 1000)")
+	t.CheckNamed("database_backup_schedules_weekday_check", "(weekday >= 0) AND (weekday <= 6)")
+}
+
+// DatabaseBackup is table database_backups: one backup, running or kept, with
+// where its encrypted file is and the wrapped key only a restore grant
+// unwraps (migration 032).
+type DatabaseBackup struct {
+	ID            [16]byte
+	Database      Database
+	StartedBy     string
+	Reason        string
+	State         string
+	Stage         string
+	Detail        string
+	Error         string
+	Destination   string
+	LocalPath     string
+	StorageKey    string
+	Bytes         int64
+	Sha256        string
+	WrappedKey    string
+	KeyID         string
+	ServerVersion string
+	DumpVersion   string
+	Compression   string
+	Verified      bool
+	Pinned        bool
+	GrantID       string
+	StartedAt     time.Time
+	FinishedAt    *time.Time
+	ReportedAt    time.Time
+}
+
+func (m *DatabaseBackup) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Database).ConstraintName("database_backups_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.State).Default("'running'::text")
+	t.Col(&m.Stage).Default("''::text")
+	t.Col(&m.Detail).Default("''::text")
+	t.Col(&m.Error).Default("''::text")
+	t.Col(&m.Destination).Default("'server'::text")
+	t.Col(&m.LocalPath).Default("''::text")
+	t.Col(&m.StorageKey).Default("''::text")
+	t.Col(&m.Bytes).Default("0")
+	t.Col(&m.Sha256).Default("''::text")
+	t.Col(&m.WrappedKey).Default("''::text")
+	t.Col(&m.KeyID).Default("''::text")
+	t.Col(&m.ServerVersion).Default("''::text")
+	t.Col(&m.DumpVersion).Default("''::text")
+	t.Col(&m.Compression).Default("''::text")
+	t.Col(&m.Verified).Default("false")
+	t.Col(&m.Pinned).Default("false")
+	t.Col(&m.GrantID).Default("''::text")
+	t.Col(&m.StartedAt).Default("now()")
+	t.Col(&m.ReportedAt).Default("now()")
+	t.CheckNamed("database_backups_destination_check",
+		"destination = ANY (ARRAY['server'::text, 'control'::text, 'both'::text])")
+	t.CheckNamed("database_backups_state_check",
+		"state = ANY (ARRAY['running'::text, 'done'::text, 'failed'::text, 'skipped'::text, 'missed'::text, 'deleted'::text])")
+	t.Index(&m.Database, storm.Desc(&m.StartedAt)).Named("database_backups_db_idx")
+	t.Index(&m.Database).Unique().Where("state = 'running'::text").Named("database_backups_one_running")
+}
+
+// DatabaseRestore is table database_restores: one restore, into a new
+// database or over the existing one, and the copy a replace kept
+// (migration 032).
+type DatabaseRestore struct {
+	ID              [16]byte
+	Backup          DatabaseBackup
+	Database        Database
+	Mode            string
+	NewName         string
+	RequestedBy     string
+	Reason          string
+	Request         *AccessRequest
+	State           string
+	Stage           string
+	Detail          string
+	Error           string
+	RenamedTo       string
+	KeepUntil       *time.Time
+	KeptDropped     bool
+	CreatedDatabase *Database
+	Warnings        int32
+	GrantID         string
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	ReportedAt      time.Time
+}
+
+func (m *DatabaseRestore) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Backup).ConstraintName("database_restores_backup_id_fkey")
+	t.Col(&m.Backup).OnDelete(storm.Cascade)
+	t.Col(&m.Backup).NoIndex()
+	t.Col(&m.Database).ConstraintName("database_restores_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.Request).ConstraintName("database_restores_request_id_fkey")
+	t.Col(&m.Request).NoIndex()
+	t.Col(&m.CreatedDatabase).ConstraintName("database_restores_created_database_id_fkey")
+	t.Col(&m.CreatedDatabase).OnDelete(storm.SetNull)
+	t.Col(&m.CreatedDatabase).NoIndex()
+	t.Col(&m.NewName).Default("''::text")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.Stage).Default("''::text")
+	t.Col(&m.Detail).Default("''::text")
+	t.Col(&m.Error).Default("''::text")
+	t.Col(&m.RenamedTo).Default("''::text")
+	t.Col(&m.KeptDropped).Default("false")
+	t.Col(&m.Warnings).Default("0")
+	t.Col(&m.GrantID).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.ReportedAt).Default("now()")
+	t.CheckNamed("database_restores_check", "(mode = 'replace'::text) = (new_name = ''::text)")
+	t.CheckNamed("database_restores_mode_check", "mode = ANY (ARRAY['new'::text, 'replace'::text])")
+	t.CheckNamed("database_restores_state_check",
+		"state = ANY (ARRAY['pending'::text, 'denied'::text, 'running'::text, 'done'::text, 'failed'::text, 'undone'::text])")
+	t.Index(&m.Database, storm.Desc(&m.CreatedAt)).Named("database_restores_db_idx")
+}
+
 // User is table users.
 type User struct {
 	ID            [16]byte
@@ -713,6 +885,9 @@ func All() []any {
 		&AuditEvent{},
 		&Database{},
 		&DatabaseAssignment{},
+		&DatabaseBackup{},
+		&DatabaseBackupSchedule{},
+		&DatabaseRestore{},
 		&DirectLoginRequest{},
 		&GatewayPolicy{},
 		&HostKeyPin{},
