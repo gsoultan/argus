@@ -45,8 +45,8 @@ export interface WorkspaceProps {
   getTicket: (level?: DBLevel) => Promise<{ ticket: string; role: string; level: DBLevel } | null>
   endpoint: string
   onAskForAccess?: () => void
-  /** The person is an admin: the backups panel links them to Settings. */
-  admin?: boolean
+  /** The person is an organization admin: the backups panel links them to Settings. */
+  orgAdmin?: boolean
 }
 
 type Col = { name: string; type: string }
@@ -130,7 +130,7 @@ const KIND_ICON: Record<string, typeof IconTable> = {
   sequence: IconHash,
 }
 
-export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, admin }: WorkspaceProps) {
+export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, orgAdmin }: WorkspaceProps) {
   const narrow = useMediaQuery('(max-width: 48em)')
   const [treeOpen, tree] = useDisclosure(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -495,7 +495,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {panel === 'roles' && <RolesPanel {...adminProps} />}
         {panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {panel === 'replication' && <ReplicationPanel {...adminProps} />}
-        {panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(admin)} />}
+        {panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(orgAdmin)} />}
         {panel === 'query' && <>
         <Box style={{ borderBottom: '1px solid var(--color-line)' }}>
           <Textarea
