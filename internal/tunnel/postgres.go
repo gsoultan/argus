@@ -80,7 +80,9 @@ type PGRequest struct {
 	// MaxRows is how many rows run sends before it stops the statement.
 	MaxRows int `json:"maxRows,omitempty"`
 	// Kind and Schema are what schema lists: "schemas", "objects" (in
-	// Schema) or "columns" (of Object in Schema).
+	// Schema), "columns" (of Object in Schema) or "completion" (every
+	// table, view, sequence and function the role may use, in every schema
+	// it may use, plus its search_path, for the editor's autocomplete).
 	Kind   string `json:"kind,omitempty"`
 	Schema string `json:"schema,omitempty"`
 	Object string `json:"object,omitempty"`
@@ -103,6 +105,9 @@ type PGObject struct {
 	Detail string `json:"detail,omitempty"`
 	// Count is how many tables a schema holds, or a table's estimated rows.
 	Count int64 `json:"count,omitempty"`
+	// Schema is the object's schema, set only in a completion answer, which
+	// spans schemas. Its "path" entries name the role's search_path in order.
+	Schema string `json:"schema,omitempty"`
 }
 
 // PGAnswer is the agent's reply to a request, or news about the session.
