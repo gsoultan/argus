@@ -258,7 +258,22 @@ func TestPostgresReadSession(t *testing.T) {
 		t.Fatalf("syntax error: %+v", final)
 	}
 
-	// The object tree shows what the role may see.
+	// The object tree shows what the role may see, with each table's size:
+	// a read role can measure a table it may read.
+	h.send(tunnel.PGRequest{ID: 70, Op: "schema", Kind: "objects", Schema: "public"})
+	if a := h.answer(); a.Type != "schema" {
+		t.Fatalf("objects: %+v", a)
+	} else {
+		var orders *tunnel.PGObject
+		for i := range a.Objects {
+			if a.Objects[i].Name == "argus_t_orders" {
+				orders = &a.Objects[i]
+			}
+		}
+		if orders == nil || orders.Kind != "table" || !strings.HasSuffix(orders.Detail, " kB") && !strings.HasSuffix(orders.Detail, " MB") {
+			t.Fatalf("orders table with its size: %+v", a.Objects)
+		}
+	}
 	h.send(tunnel.PGRequest{ID: 7, Op: "schema", Kind: "columns", Schema: "public", Object: "argus_t_orders"})
 	if a := h.answer(); a.Type != "schema" || len(a.Objects) != 4 || a.Objects[0].Name != "id" ||
 		!strings.Contains(a.Objects[0].Detail, "primary key") {
@@ -459,5 +474,15 @@ func TestRateLimit(t *testing.T) {
 	}
 	if !r.allow(now.Add(time.Minute)) {
 		t.Fatal("the window must slide")
+	}
+}
+
+func TestPGMajor(t *testing.T) {
+	for in, want := range map[string]int{
+		"16.4 (Debian 16.4-1.pgdg120+1)": 16, "13.15": 13, "9.6.24": 96, "14beta1": 14, "": 0, "x": 0,
+	} {
+		if got := pgMajor(in); got != want {
+			t.Errorf("pgMajor(%q) = %d, want %d", in, got, want)
+		}
 	}
 }

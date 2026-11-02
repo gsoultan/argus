@@ -97,7 +97,9 @@ type PGObject struct {
 	Name string `json:"name"`
 	// Kind is schema, table, view, matview, function, sequence or column.
 	Kind string `json:"kind"`
-	// Detail is the column's type, a function's arguments, a schema's owner.
+	// Detail is the column's type, a function's arguments, a schema's owner,
+	// or a table's, materialized view's or sequence's size on disk (with its
+	// indexes and TOAST; a partitioned table's is the sum of its partitions).
 	Detail string `json:"detail,omitempty"`
 	// Count is how many tables a schema holds, or a table's estimated rows.
 	Count int64 `json:"count,omitempty"`

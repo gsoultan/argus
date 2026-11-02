@@ -158,7 +158,11 @@ func Postgres(cfg PostgresConfig) TunnelService {
 			return
 		}
 		log.Info("tunnel: database session opened", "database", db.Name, "role", g.Principal,
-			"level", db.Level, "for", g.Email, "session", s.id)
+			"level", db.Level, "for", g.Email, "session", s.id, "postgres", s.version)
+		if major := pgMajor(s.version); major > 0 && major < pgOldestTested {
+			log.Warn("tunnel: this Postgres is older than any Argus is tested against",
+				"database", db.Name, "postgres", s.version, "tested", pgOldestTested)
+		}
 		s.serve(ctx, call.Stream)
 		_ = call.Stream.Close()
 	}
@@ -809,7 +813,14 @@ const (
 	pgObjectsSQL = `SELECT c.relname,
 	  CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'table' WHEN 'v' THEN 'view'
 	    WHEN 'm' THEN 'matview' WHEN 'S' THEN 'sequence' WHEN 'f' THEN 'table' END,
-	  '', greatest(c.reltuples, 0)::bigint
+	  CASE c.relkind
+	    WHEN 'p' THEN pg_size_pretty(coalesce((SELECT sum(pg_total_relation_size(i.inhrelid))
+	                                           FROM pg_inherits i WHERE i.inhparent = c.oid), 0))
+	    WHEN 'r' THEN pg_size_pretty(pg_total_relation_size(c.oid))
+	    WHEN 'm' THEN pg_size_pretty(pg_total_relation_size(c.oid))
+	    WHEN 'S' THEN pg_size_pretty(pg_total_relation_size(c.oid))
+	    ELSE '' END,
+	  greatest(c.reltuples, 0)::bigint
 	FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 	WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','S','f')
 	  AND (has_table_privilege(c.oid, 'SELECT') OR has_any_column_privilege(c.oid, 'SELECT')
@@ -948,4 +959,33 @@ func sessionUUID(b []byte) string {
 	u[8] = (u[8] & 0x3f) | 0x80
 	h := hex.EncodeToString(u[:])
 	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
+}
+
+// pgOldestTested is the oldest Postgres major the agent's statements are
+// written for and the test suite runs against. Everything the agent sends is
+// catalogue SQL that has been in Postgres since 11 (prokind) or earlier, so an
+// older server is warned about at session open rather than refused.
+const pgOldestTested = 13
+
+// pgMajor reads the major from a server_version such as "16.4 (Debian ...)"
+// or "9.6.24"; 0 when it cannot.
+func pgMajor(version string) int {
+	digits := func(s string) (int, string) {
+		i := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		n, err := strconv.Atoi(s[:i])
+		if err != nil {
+			return 0, ""
+		}
+		return n, s[i:]
+	}
+	n, rest := digits(version)
+	if n < 10 && strings.HasPrefix(rest, ".") {
+		// Before 10 the major was two numbers: 9.6.
+		m, _ := digits(rest[1:])
+		return n*10 + m
+	}
+	return n
 }
