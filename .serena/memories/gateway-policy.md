@@ -197,9 +197,9 @@ and the e2e bundle runs against the fixture.
 
 Everything else in `internal/rdp` is tested against pipes and hand-built
 frames, which proves the parsing and proves nothing about whether Windows
-agrees. `internal/rdp/target_integration_test.go` is opt-in:
+agrees. `internal/agent/rdpdial/target_integration_test.go` is opt-in:
 
-    ARGUS_TEST_RDP_TARGET=<host>:3389 go test ./internal/rdp/ -run Target -v
+    ARGUS_TEST_RDP_TARGET=<host>:3389 go test ./internal/agent/rdpdial/ -run Target -v
 
 A host was available on 2026-09-23 at `192.168.101.91` (RDP and WinRM open, no
 credentials given). What it established:
@@ -252,7 +252,7 @@ failure, which is how I know it is the server and not the change.
 
     ARGUS_TEST_RDP_TARGET=<host>:3389 ARGUS_TEST_RDP_DOMAIN=<COMPUTERNAME> \
     ARGUS_TEST_RDP_USER=<user> ARGUS_TEST_RDP_PASSWORD=<pass> \
-    go test ./internal/rdp/ -run Target -v
+    go test ./internal/agent/rdpdial/ -run Target -v
 
 Pace attempts: the host tolerates very few before it starts refusing.
 

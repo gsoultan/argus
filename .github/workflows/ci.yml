@@ -528,7 +528,7 @@ jobs:
           powershell -NoProfile -Command "Get-WindowsFeature Server-Media-Foundation | Format-Table -AutoSize" || true
           ARGUS_TEST_RDP_TARGET=127.0.0.1:3389 ARGUS_TEST_RDP_USER=argusdrill \
             ARGUS_TEST_RDP_PASSWORD="$DRILL_PASSWORD" ARGUS_TEST_RDP_REPORT="$tmp/graphics.json" \
-            go test ./internal/rdp/ -run TestTargetGraphics -count=1 -v
+            go test ./internal/agent/rdpdial/ -run TestTargetGraphics -count=1 -v
           cp "$tmp/graphics.json" measure/
           jq -r '"### Bitmaps and the graphics pipeline, straight from Windows at 1920x1080",
             "", "| | Mbit/s | frames/s | what arrived |", "|---|---|---|---|",
