@@ -172,6 +172,11 @@ export interface Asset {
   directSsh?: DirectSsh | null
   /** What the agent said at its last check-in it is applying. Null is unconfirmed. */
   agentDirectSsh?: DirectSsh | null
+  /**
+   * Login accounts on this server that do something other than `directSsh`,
+   * each with its own mode. An account not named follows the server.
+   */
+  directSshAccounts?: Record<string, DirectSsh>
   /** What the agent said about the personal accounts it keeps. Admins only. */
   agentPersonalAccounts?: PersonalAccountState[]
 }
@@ -195,6 +200,41 @@ export interface DirectLogin {
   decidedAt: ISOTime | null
   decidedByEmail: string | null
   decisionNote: string | null
+  /**
+   * How it signed in: 'publickey', 'password', ... Empty when the server's
+   * sshd does not say (ExposeAuthInfo off) or the agent is older than this.
+   */
+  authMethod?: string
+  /** The key a key login used. */
+  keyFingerprint?: string
+  keyType?: string
+  /** The key's comment in authorized_keys; set only when the agent found it there. */
+  keyComment?: string
+  /** Whether the agent found that key in the account's authorized_keys. */
+  keyFound?: boolean
+}
+
+/** One account with a login shell on a server, as its agent last reported it. */
+export interface ServerLoginAccount {
+  user: string
+  /** 'set', 'none', 'locked', or 'unknown' when the agent could not read shadow. Never the hash. */
+  password: 'set' | 'none' | 'locked' | 'unknown'
+  /** Keys in its authorized_keys, Argus's or not. */
+  keys: number
+  /** Whether sshd as configured would let it in with either. */
+  canLogin: boolean
+}
+
+/** Who can log in to a server directly, from its agent's last check-in. */
+export interface ServerLoginAccounts {
+  /** False when the agent has not sent the list: too old, or not checked in. */
+  reported: boolean
+  checkedAt: ISOTime | null
+  accounts: ServerLoginAccount[]
+  passwords: boolean
+  keys: boolean
+  /** Whether sshd tells the agent how each login signed in. */
+  exposeAuthInfo: boolean
 }
 
 /**

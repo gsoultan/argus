@@ -57,6 +57,7 @@ func RunShim(cfg ShimConfig) int {
 		StartedAt:    time.Now().UTC(),
 		PID:          os.Getpid(),
 		OriginReason: "a login through sshd; Argus opens its own sessions over the tunnel",
+		UserAuth:     readUserAuth(),
 	}
 
 	enc := json.NewEncoder(conn)
@@ -530,4 +531,21 @@ func terminalSize() (cols, rows int) {
 		return 80, 24
 	}
 	return int(ws.Col), int(ws.Row)
+}
+
+// readUserAuth is the file sshd names in SSH_USER_AUTH when ExposeAuthInfo
+// is on: each method the login signed in with, and the key for a key login.
+// Empty when sshd did not set it.
+func readUserAuth() string {
+	path := os.Getenv("SSH_USER_AUTH")
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	b, _ := io.ReadAll(io.LimitReader(f, maxUserAuth))
+	return string(b)
 }

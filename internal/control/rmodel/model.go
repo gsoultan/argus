@@ -176,6 +176,9 @@ type Asset struct {
 	// AgentPersonalAccounts is what the agent last said about the personal
 	// accounts it keeps.
 	AgentPersonalAccounts *storm.JSON
+	// DirectSshAccounts is this server's direct SSH setting for named login
+	// accounts, account to mode; an account not named follows DirectSsh.
+	DirectSshAccounts storm.JSON
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -201,6 +204,8 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.Index(&m.Hostname).Where("archived_at IS NULL").Named("assets_live_idx")
 	t.CheckNamed("assets_direct_ssh_check",
 		"direct_ssh IS NULL OR direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
+	t.Col(&m.DirectSshAccounts).Default("'{}'::jsonb")
+	t.CheckNamed("assets_direct_ssh_accounts_check", "jsonb_typeof(direct_ssh_accounts) = 'object'::text")
 }
 
 // AssetAssignment is table asset_assignments: who may reach which host, as whom.
@@ -307,9 +312,19 @@ type DirectLoginRequest struct {
 	DecidedAt      *time.Time
 	DecidedByEmail *string
 	DecisionNote   *string
+	AuthMethod     string
+	KeyFingerprint string
+	KeyType        string
+	KeyComment     string
+	KeyFound       bool
 }
 
 func (m *DirectLoginRequest) Schema(t *storm.Table) {
+	t.Col(&m.AuthMethod).Default("''::text")
+	t.Col(&m.KeyFingerprint).Default("''::text")
+	t.Col(&m.KeyType).Default("''::text")
+	t.Col(&m.KeyComment).Default("''::text")
+	t.Col(&m.KeyFound).Default("false")
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.ClientAddr).Default("''::text")
 	t.Col(&m.Command).Default("''::text")

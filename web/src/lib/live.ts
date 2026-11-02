@@ -9,6 +9,7 @@ import type {
   AuditEvent,
   DirectLogin,
   DirectSsh,
+  ServerLoginAccounts,
   Coverage,
   DiscoveredHost,
   FleetStats,
@@ -723,6 +724,20 @@ export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Pro
   return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh`, { mode: mode ?? '' })
 }
 
+/** Who can log in to a server directly, from its agent's last check-in. */
+export async function loginAccounts(id: string): Promise<ServerLoginAccounts> {
+  return get<ServerLoginAccounts>(`/api/v1/assets/${encodeURIComponent(id)}/login-accounts`)
+}
+
+/** Sets what one login account on a server does; null follows the server. */
+export async function setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
+  return send<Asset>(
+    'PUT',
+    `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh/accounts/${encodeURIComponent(account)}`,
+    { mode: mode ?? '' },
+  )
+}
+
 /** What an approval grants: the accounts allowed, and who may use them. */
 export interface EnrolGrant {
   principals: string[]
@@ -1013,6 +1028,7 @@ export const live = {
 
   stats: () => get<FleetStats>('/api/v1/stats'),
   assets: () => get<Asset[]>('/api/v1/assets'),
+  loginAccounts,
 
   /**
    * The accounts that exist, for deciding who to assign a host to.

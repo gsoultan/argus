@@ -232,6 +232,7 @@ function DirectLoginCard({ login: d, canDecide }: { login: DirectLogin; canDecid
             {' · '}asked <Tooltip label={absTime(d.createdAt)}><span>{relTime(d.createdAt)}</span></Tooltip>
             {' · '}refused in {secondsLeft(d.expiresAt)} if nobody answers
           </Text>
+          <SignedInWith d={d} />
           <Text size={FS.micro} c="dimmed" mt={SP.tight} lh={1.5}>
             The server already accepted this account&rsquo;s key or password. Argus cannot tell
             which person is using it, so approve only a login you expect.
@@ -597,5 +598,37 @@ function NewRequestModal({ opened, onClose, host, account }: {
         </Stack>
       </form>
     </Modal>
+  )
+}
+
+/**
+ * How a held login signed in: which key, with its comment from the account's
+ * authorized_keys, or a password. Said plainly when the server does not tell.
+ */
+function SignedInWith({ d }: { d: DirectLogin }) {
+  if (!d.authMethod) {
+    return (
+      <Text size={FS.meta} c="dimmed" mt={SP.tight}>
+        Signed in with: not known (the server&rsquo;s sshd has ExposeAuthInfo off)
+      </Text>
+    )
+  }
+  if (!d.keyFingerprint) {
+    return (
+      <Text size={FS.meta} mt={SP.tight}>
+        Signed in with <Badge size="xs" variant="light" color="amber">{d.authMethod === 'keyboard-interactive' ? 'password (keyboard-interactive)' : d.authMethod}</Badge>
+      </Text>
+    )
+  }
+  return (
+    <Text size={FS.meta} mt={SP.tight} style={{ overflowWrap: 'anywhere' }}>
+      Signed in with key{' '}
+      {d.keyComment && <Badge size="xs" variant="light" color="azure" mr={SP.tight}>{d.keyComment}</Badge>}
+      <Mono>{d.keyFingerprint}</Mono>
+      {d.keyType && <Text span size={FS.micro} c="dimmed"> {d.keyType}</Text>}
+      {!d.keyFound && (
+        <Badge size="xs" variant="light" color="rose" ml={SP.tight}>not in the account&rsquo;s authorized_keys</Badge>
+      )}
+    </Text>
   )
 }

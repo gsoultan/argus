@@ -14,7 +14,9 @@ const (
 	DefaultShimPath = ""
 
 	// systemPasswd is empty: accounts come from the local account database.
-	systemPasswd  = ""
+	systemPasswd = ""
+	// systemShadow says which accounts have a password; "" where there is none.
+	systemShadow  = ""
 	osReleasePath = ""
 	machineIDPath = ""
 
