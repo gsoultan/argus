@@ -37,23 +37,26 @@ func TestOpenBackup(t *testing.T) {
 	}
 	f.Close()
 
-	open := func() *os.File {
+	// Each call opens and closes its own handle: Windows cannot remove the
+	// temp dir while one is open.
+	run := func(secret, key, out string) int {
 		f, err := os.Open(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return f
+		defer f.Close()
+		return openBackup(f, secret, key, out, true)
 	}
 	// Header only.
-	if code := openBackup(open(), "", "", "", true); code != 0 {
+	if code := run("", "", ""); code != 0 {
 		t.Fatalf("header: exit %d", code)
 	}
 	// Wrong secret.
-	if code := openBackup(open(), strings.Repeat("cd", 32), "", "", true); code != 1 {
+	if code := run(strings.Repeat("cd", 32), "", ""); code != 1 {
 		t.Fatalf("wrong secret: exit %d", code)
 	}
 	out := filepath.Join(dir, "plain.dump")
-	if code := openBackup(open(), strings.Repeat("ab", 32), "", out, true); code != 0 {
+	if code := run(strings.Repeat("ab", 32), "", out); code != 0 {
 		t.Fatalf("decrypt: exit %d", code)
 	}
 	got, _ := os.ReadFile(out)
@@ -65,7 +68,7 @@ func TestOpenBackup(t *testing.T) {
 	raw[len(raw)-10] ^= 1
 	os.WriteFile(path, raw, 0o600)
 	out2 := filepath.Join(dir, "plain2.dump")
-	if code := openBackup(open(), strings.Repeat("ab", 32), "", out2, true); code != 1 {
+	if code := run(strings.Repeat("ab", 32), "", out2); code != 1 {
 		t.Fatalf("tampered: exit %d", code)
 	}
 	if _, err := os.Stat(out2); !os.IsNotExist(err) {
