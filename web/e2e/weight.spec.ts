@@ -56,8 +56,12 @@ const BUDGET_KB = {
    * The two-column sign-in page adds about 0.6 kB. It renders before the
    * router, so its layout, three icons and the brand panel's CSS are eager;
    * lazy would put a round trip in front of the first screen anyone sees.
+   *
+   * 276.0 kB with PasswordInput's stylesheet, which app.css had left out: every
+   * password field rendered its input at the browser's default width. About
+   * 0.3 kB, in the shared stylesheet, so every route pays it once.
    */
-  overview: 276,
+  overview: 277,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -68,8 +72,9 @@ const BUDGET_KB = {
    * 378.4 kB with two-step sign-in, for the shared weight above.
    * 376.0 kB with organizations: the same shared 1.6 kB as the overview, above.
    * With both, 380.1 kB.
+   * 383.2 kB with PasswordInput's stylesheet, the same 0.3 kB as the overview.
    */
-  sessionDetail: 383,
+  sessionDetail: 384,
 }
 
 /**
@@ -80,8 +85,12 @@ const BUDGET_KB = {
  * cascade.spec.ts checks that list is in the right *order*; this checks nobody
  * gave up and swapped the concatenated one back in, which would leave the
  * cascade correct and the bundle fat.
+ *
+ * 32.1 kB on a session detail once PasswordInput's stylesheet joined the list.
+ * It had been missing, which left every password field's input at the
+ * browser's default width. Still 7 kB under the concatenated one.
  */
-const CSS_BUDGET_KB = 32
+const CSS_BUDGET_KB = 33
 
 /**
  * The two self-hosted variable fonts, latin subsets.
