@@ -78,6 +78,10 @@ func main() {
 		plan := fs.String("plan", "", "the update plan the daemon wrote")
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(agent.RunUpdateApply(*plan, os.Stdout))
+	case "pg-backup":
+		// Run by the backup service as the postgres account: one dump,
+		// restore or catalog, with the archive on stdout or stdin.
+		os.Exit(agent.PGBackupMain(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	case "scan":
 		os.Exit(runScan(os.Args[2:]))
 	case "probe":
@@ -269,6 +273,13 @@ func runDaemon(args []string) int {
 			RecordDir: *dir,
 			Log:       log,
 		}})
+		// Backups of those databases, as the postgres account, encrypted
+		// here before they touch a disk; see internal/agent/backup.go.
+		services[agent.BackupService] = agent.Backup(agent.BackupConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Dir:      filepath.Join(*stateDir, "backups"),
+			Log:      log,
+		})
 		// Remote Desktop, to this host's own listener, on Windows: the agent is
 		// the RDP client and records the session before it is shown.
 		if runtime.GOOS == "windows" {

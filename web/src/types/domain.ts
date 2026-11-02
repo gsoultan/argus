@@ -552,6 +552,8 @@ export interface AccessRequest {
   /** When an approved grant stops working. */
   expiresAt: ISOTime | null
   breakGlass: boolean
+  /** Set when the request stands for restoring a database in place. */
+  restoreId?: string
 }
 
 /* ── Audit ───────────────────────────────────────────────────────────────── */
@@ -776,4 +778,114 @@ export interface DBAssignment {
   needsApproval: boolean
   grantedBy: string
   grantedAt: string
+}
+
+/* ── Database backups ────────────────────────────────────────────────────── */
+
+export type BackupDestination = 'server' | 'control' | 'both'
+
+/** When a database is backed up and what is kept. */
+export interface BackupSchedule {
+  databaseId: UUID
+  enabled: boolean
+  every: 'hourly' | 'daily' | 'weekly'
+  atHour: number
+  atMinute: number
+  /** 0 is Sunday. */
+  weekday: number
+  destination: BackupDestination
+  keepLast: number
+  /** 0 keeps by count only. */
+  keepDays: number
+  nextRunAt: string | null
+  misses: number
+  updatedBy: string
+  updatedAt: string
+  /** False until an admin saves one; the rest are the defaults. */
+  exists: boolean
+}
+
+export type BackupState = 'running' | 'done' | 'failed' | 'skipped' | 'missed' | 'deleted'
+
+/** One backup, running or kept. */
+export interface DatabaseBackup {
+  id: UUID
+  databaseId: UUID
+  /** An email, or schedule:<id> for a scheduled run. */
+  startedBy: string
+  reason: string
+  state: BackupState
+  stage: string
+  detail: string
+  error: string
+  destination: BackupDestination
+  onServer: boolean
+  onControl: boolean
+  bytes: number
+  sha256: string
+  keyId: string
+  serverVersion: string
+  dumpVersion: string
+  verified: boolean
+  pinned: boolean
+  startedAt: string
+  finishedAt?: string
+  reportedAt: string
+}
+
+export type RestoreState = 'pending' | 'denied' | 'running' | 'done' | 'failed' | 'undone'
+
+/** One restore: into a new database, or over the existing one. */
+export interface DatabaseRestore {
+  id: UUID
+  backupId: UUID
+  databaseId: UUID
+  mode: 'new' | 'replace'
+  newName: string
+  requestedBy: string
+  reason: string
+  requestId?: string
+  state: RestoreState
+  stage: string
+  detail: string
+  error: string
+  /** replace: where the previous database went, until keepUntil. */
+  renamedTo: string
+  keepUntil?: string
+  keptDropped: boolean
+  createdDatabaseId?: string
+  warnings: number
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  reportedAt: string
+  backupStartedAt: string
+  backupBytes: number
+  backupReason: string
+  backupBy: string
+  dbname: string
+  hostname: string
+}
+
+/** What a server can do about backups, from its agent. */
+export interface BackupCatalog {
+  dumpVersion: string
+  restoreVersion: string
+  serverVersion: string
+  freeBytes: number
+  dir: string
+  compression: string
+  local?: Record<string, number>
+}
+
+/** The backups page of one database. */
+export interface BackupsView {
+  backups: DatabaseBackup[]
+  running: DatabaseBackup | null
+  schedule: BackupSchedule
+  restores: DatabaseRestore[]
+  level: DBLevel
+  /** The control plane has storage a backup can be sent to. */
+  storage: boolean
+  staleAfterS: number
 }

@@ -159,3 +159,24 @@ bring the agent back.
 - [ ] You know where this server's provider console is, and you have logged
       in there once.
 - [ ] `systemctl is-enabled argus-agent` says `enabled`.
+
+## Opening a database backup without Argus
+
+Backups Argus takes of a Postgres database (`.argusdump` files, on the
+server under the agent's state directory in `backups/`, or in the control
+plane's storage under `backups/`) are encrypted before they are written, to
+a key derived from the control plane's secret. If the control plane is gone,
+the secret still opens them:
+
+```
+argus-verify backup.argusdump                                   # prints the header: database, when, key id
+argus-verify --secret <grant key seed, hex> backup.argusdump --out plain.dump
+pg_restore --create -d postgres plain.dump                      # or -d <db> to restore into one that exists
+```
+
+The secret is the control plane's grant signing key seed, as hex, from its
+configuration or secret store. Keep it somewhere the control plane's own
+server is not, or a lost server takes its backups with it. `--key` takes a
+backup's own data key instead (base64), which a restore grant carries; it
+opens that one file only. Every frame is authenticated as it is read, so a
+corrupt or altered file is reported and no partial output is left behind.

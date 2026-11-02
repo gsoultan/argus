@@ -5,6 +5,7 @@ import { IconDatabase, IconInfoCircle, IconLock, IconPlus, IconSearch } from '@t
 import { useMemo, useState } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
+import { LastBackupCell } from '~/components/DatabaseBackups'
 import { relTime } from '~/components/primitives'
 import { databasesQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
@@ -124,7 +125,7 @@ function Databases() {
           </Toolbar>
           {error && <Alert color="rose" variant="light">{(error as Error).message}</Alert>}
           <DataTable
-            minWidth={720}
+            minWidth={820}
             loading={isPending}
             isEmpty={rows.length === 0}
             empty={
@@ -138,7 +139,7 @@ function Databases() {
                 }
               />
             }
-            columns={['Database', 'Engine', 'Label', 'Your access', 'Agent', { label: '', hidden: true }]}
+            columns={['Database', 'Engine', 'Label', 'Your access', 'Last backup', 'Agent', { label: '', hidden: true }]}
           >
             {rows.map((d: Database) => {
               const acc = data?.access[d.id]
@@ -160,6 +161,7 @@ function Databases() {
                   <LevelBadge level={acc?.level} />
                   <Text size={FS.micro} c="dimmed">{describeAccess(acc)}</Text>
                 </Group></Table.Td>
+                <Table.Td><LastBackupCell b={data?.lastBackups?.[d.id]} /></Table.Td>
                 <Table.Td><Text size={FS.meta} c={d.tunnelConnected ? 'dimmed' : 'rose'}>
                   {d.tunnelConnected ? 'connected' : 'offline'}
                 </Text></Table.Td>

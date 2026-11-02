@@ -7,7 +7,7 @@ import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
-  IconArrowsExchange,
+  IconArrowsExchange, IconArchive,
 } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
@@ -18,6 +18,7 @@ import {
 } from '~/components/DatabaseAdmin'
 import { ExtensionsPanel } from '~/components/DatabaseExtensions'
 import { ReplicationPanel } from '~/components/DatabaseReplication'
+import { BackupsPanel } from '~/components/DatabaseBackups'
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -44,6 +45,8 @@ export interface WorkspaceProps {
   getTicket: (level?: DBLevel) => Promise<{ ticket: string; role: string; level: DBLevel } | null>
   endpoint: string
   onAskForAccess?: () => void
+  /** The person is an admin: the backups panel links them to Settings. */
+  admin?: boolean
 }
 
 type Col = { name: string; type: string }
@@ -73,7 +76,7 @@ interface PGAnswer {
   levels?: Partial<Record<DBLevel, string>>
 }
 
-type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication'
+type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups'
 
 interface Result {
   id: number
@@ -127,7 +130,7 @@ const KIND_ICON: Record<string, typeof IconTable> = {
   sequence: IconHash,
 }
 
-export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess }: WorkspaceProps) {
+export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, admin }: WorkspaceProps) {
   const narrow = useMediaQuery('(max-width: 48em)')
   const [treeOpen, tree] = useDisclosure(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -492,6 +495,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {panel === 'roles' && <RolesPanel {...adminProps} />}
         {panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {panel === 'replication' && <ReplicationPanel {...adminProps} />}
+        {panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(admin)} />}
         {panel === 'query' && <>
         <Box style={{ borderBottom: '1px solid var(--color-line)' }}>
           <Textarea
@@ -723,6 +727,11 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
                 <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
               </UnstyledButton>
             </Tooltip>
+            <UnstyledButton onClick={() => onPanel(panel === 'backups' ? 'query' : 'backups')} px={4} py={4}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'backups' ? 'var(--color-raised)' : undefined }}
+              aria-pressed={panel === 'backups'}>
+              <IconArchive size={13} /><Text size={FS.meta}>Backups</Text>
+            </UnstyledButton>
           </Box>
         </Box>
       )}

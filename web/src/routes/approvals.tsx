@@ -299,7 +299,9 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
       title: decision === 'approved' ? 'Access granted' : 'Request denied',
       message:
         decision === 'approved'
-          ? `${r.requesterEmail} can reach ${r.assetHostnames.length} host(s) as ${r.principal} for ${r.durationMinutes / 60}h.`
+          ? r.principal === 'db:restore'
+            ? `The restore ${r.requesterEmail} asked for starts now on ${r.assetHostnames[0]}.`
+            : `${r.requesterEmail} can reach ${r.assetHostnames.length} host(s) as ${r.principal} for ${r.durationMinutes / 60}h.`
           : `${r.requesterEmail} was notified.`,
     })
   }
@@ -330,12 +332,16 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
           </Group>
           <Text size={FS.body} c="dimmed" mb="xs" lh={1.5}>{r.justification}</Text>
           <Group gap={SP.snug} wrap="wrap">
-            {r.principal.startsWith('db:') ? (
+            {r.principal === 'db:restore' ? (
+              <Tooltip label="Approving replaces the database in place from a backup. The current one is renamed and kept for a day, so it can be put back.">
+                <Badge size="xs" variant="filled" color="rose" leftSection={<IconAlertTriangle size={10} />}>restore in place</Badge>
+              </Tooltip>
+            ) : r.principal.startsWith('db:') ? (
               <Badge size="xs" variant="light" color="azure">{r.principal.slice(3)} on a database</Badge>
             ) : (
               <Badge size="xs" variant="outline" color="slate">as {r.principal}</Badge>
             )}
-            <Badge size="xs" variant="outline" color="slate">{r.durationMinutes / 60}h window</Badge>
+            {r.principal !== 'db:restore' && <Badge size="xs" variant="outline" color="slate">{r.durationMinutes / 60}h window</Badge>}
             {r.assetHostnames.slice(0, 3).map((h) => (
               <Badge key={h} size="xs" variant="outline" color="slate" className="argus-digest">
                 {h.split('.')[0]}
@@ -414,7 +420,7 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
                 loading={decide.isPending}
                 onClick={() => onDecide('approved')}
               >
-                Approve {r.durationMinutes / 60}h
+                {r.principal === 'db:restore' ? 'Approve the restore' : `Approve ${r.durationMinutes / 60}h`}
               </Button>
             </Group>
           </Group>

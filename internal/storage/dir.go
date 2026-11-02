@@ -98,6 +98,18 @@ func (d *Dir) UploadKey(_ context.Context, path, key, _, _ string, _ time.Time) 
 	return key, nil
 }
 
+// Delete removes an object. A missing one is not an error.
+func (d *Dir) Delete(_ context.Context, key string) error {
+	p, err := d.path(key)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // Get opens a recording for reading.
 func (d *Dir) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	if d == nil {

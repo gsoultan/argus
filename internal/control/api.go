@@ -73,6 +73,9 @@ type API struct {
 	// uses recordings; set by tests that have no object store.
 	storeRecording recordingUploader
 
+	// jobs is the backups and restores running through this replica.
+	jobs backupJobs
+
 	signer        *auth.Signer
 	consoleURL    string
 	secureCookies bool
@@ -241,6 +244,19 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/databases/{id}/assignments", a.dbAdmin(a.putDBAssignment))
 	mux.HandleFunc("DELETE /api/v1/databases/{id}/assignments/{assignment}", a.dbAdmin(a.deleteDBAssignment))
 	mux.HandleFunc("POST /api/v1/databases/{id}/requests", a.postDatabaseRequest)
+	// Backups and restores; see backup_routes.go.
+	mux.HandleFunc("GET /api/v1/databases/{id}/backups", a.withDatabase(tunnel.LevelRead, a.getBackups))
+	mux.HandleFunc("GET /api/v1/databases/{id}/backups/catalog", a.withDatabase(tunnel.LevelRead, a.getBackupCatalog))
+	mux.HandleFunc("POST /api/v1/databases/{id}/backups", a.withDatabase(tunnel.LevelOwner, a.postBackup))
+	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{backup}/cancel", a.withDatabase(tunnel.LevelOwner, a.postBackupCancel))
+	mux.HandleFunc("DELETE /api/v1/databases/{id}/backups/{backup}", a.withDatabase(tunnel.LevelDBA, a.deleteBackupRoute))
+	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{backup}/pin", a.withDatabase(tunnel.LevelDBA, a.postBackupPin))
+	mux.HandleFunc("GET /api/v1/databases/{id}/backups/{backup}/download", a.withDatabase(tunnel.LevelDBA, a.getBackupDownload))
+	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{backup}/restore", a.withDatabase(tunnel.LevelOwner, a.postRestore))
+	mux.HandleFunc("POST /api/v1/databases/{id}/restores/{restore}/undo", a.withDatabase(tunnel.LevelDBA, a.postRestoreUndo))
+	mux.HandleFunc("POST /api/v1/databases/{id}/restores/{restore}/cancel", a.withDatabase(tunnel.LevelOwner, a.postRestoreCancel))
+	mux.HandleFunc("GET /api/v1/databases/{id}/backup-schedule", a.withDatabase(tunnel.LevelRead, a.getBackupSchedule))
+	mux.HandleFunc("PUT /api/v1/databases/{id}/backup-schedule", a.dbAdmin(a.putBackupSchedule))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/shadow/ticket", a.limitTickets(a.handleShadowTicket))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate/ticket", a.limitTickets(a.handleTerminateTicket))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/watch", a.handleWatch)

@@ -29,6 +29,9 @@ type AccessRequest struct {
 	DecisionNote    *string    `json:"decisionNote"`
 	ExpiresAt       *time.Time `json:"expiresAt"`
 	BreakGlass      bool       `json:"breakGlass"`
+	// RestoreID is set when the request stands for restoring a database in
+	// place; the approver's card shows what it would replace.
+	RestoreID *string `json:"restoreId,omitempty"`
 }
 
 var (
@@ -120,12 +123,12 @@ func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy
 		WHERE id = $1
 		RETURNING id::text, requester_email, asset_hostnames, principal,
 		          justification, duration_minutes, state, created_at, decided_at,
-		          decided_by_email, decision_note, expires_at, break_glass`,
+		          decided_by_email, decision_note, expires_at, break_glass, restore_id::text`,
 		id, decision, decidedBy, note, expires).
 		Scan(&out.ID, &out.RequesterEmail, &out.AssetHostnames, &out.Principal,
 			&out.Justification, &out.DurationMinutes, &out.State, &out.CreatedAt,
 			&out.DecidedAt, &out.DecidedByEmail, &out.DecisionNote, &out.ExpiresAt,
-			&out.BreakGlass)
+			&out.BreakGlass, &out.RestoreID)
 	if err != nil {
 		return AccessRequest{}, err
 	}
@@ -141,7 +144,7 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 	rows, err := s.db(ctx).Query(ctx, `
 		SELECT id::text, requester_email, asset_hostnames, principal, justification,
 		       duration_minutes, state, created_at, decided_at, decided_by_email,
-		       decision_note, expires_at, break_glass
+		       decision_note, expires_at, break_glass, restore_id::text
 		FROM access_requests
 		WHERE ($1 = '' OR state = $1)
 		  AND ($3 = '' OR lower(requester_email) = lower($3))
@@ -156,7 +159,7 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 		var r AccessRequest
 		if err := rows.Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
 			&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
-			&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass); err != nil {
+			&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
