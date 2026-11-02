@@ -129,6 +129,11 @@ func TestAnUpdateWaitsUntilNothingIsOpen(t *testing.T) {
 
 	busy.Store(0)
 	waitState(t, u, UpdateRestarting)
+	// The status is written just before the helper is launched (the helper
+	// takes the file over), so the launch can trail the state by a moment.
+	for deadline := time.Now().Add(5 * time.Second); plat.count() == 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if plat.count() != 1 {
 		t.Fatalf("launched %d times", plat.count())
 	}
