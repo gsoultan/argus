@@ -208,7 +208,7 @@ func TestEmailSubjectCannotAddHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg := string(e.compose("Argus: evil\r\nBcc: attacker@x.io", "body"))
+	msg := string(e.compose(e.cfg.To, "Argus: evil\r\nBcc: attacker@x.io", "body", ""))
 	head, _, _ := strings.Cut(msg, "\r\n\r\n")
 	for _, line := range strings.Split(head, "\r\n") {
 		if strings.HasPrefix(strings.ToLower(line), "bcc:") {

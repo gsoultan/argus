@@ -130,6 +130,9 @@ type alertsConfig struct {
 	Email    *notify.EmailConfig    `yaml:"email,omitempty"`
 	Telegram *notify.TelegramConfig `yaml:"telegram,omitempty"`
 	FCM      *notify.FCMConfig      `yaml:"fcm,omitempty"`
+	// SignIn is who is told when someone signs in to the console; see
+	// signin_alerts.go.
+	SignIn *signInAlertsConfig `yaml:"sign_in,omitempty"`
 }
 
 // alertSenders builds a sender per configured channel.
@@ -461,6 +464,16 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		}
 	}
 	api.Alerts = alerts
+	signIns, err := signInNotifier(cfg.Alerts, cfg.ConsoleURL, log)
+	if err != nil {
+		return err
+	}
+	api.SignInAlerts = signIns
+	api.SignInPolicy = signInConfigOf(cfg.Alerts).policy()
+	if signIns != nil {
+		log.Info("sign-in alerts on", "email", signIns.EmailOn(), "telegram", signIns.TelegramOn(),
+			"admins", api.SignInPolicy.Admins, "person", api.SignInPolicy.Person, "every", api.SignInPolicy.Every)
+	}
 	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
@@ -804,6 +817,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// After the listeners, so an alert for a report that arrived during
 	// the drain is still sent.
 	alerts.Close(shutdownCtx)
+	signIns.Close(shutdownCtx)
 	if stopping == nil {
 		log.Info("shutdown complete")
 	}

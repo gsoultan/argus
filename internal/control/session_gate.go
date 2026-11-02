@@ -130,6 +130,8 @@ var mfaSetupPaths = map[string]bool{
 	"/auth/mfa/confirm":     true,
 	"/auth/password/change": true,
 	"/auth/sessions/revoke": true,
+	// The "this wasn't me" link works whoever's browser opens it.
+	"/auth/sign-in-report": true,
 }
 
 // sessionGate resolves the cookie once per request, refuses cross-site
