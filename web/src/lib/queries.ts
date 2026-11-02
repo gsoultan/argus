@@ -54,6 +54,10 @@ export const assetQuery = (id: string) =>
 export const loginAccountsQuery = (id: string) =>
   queryOptions({ queryKey: ['asset', id, 'login-accounts'] as const, queryFn: () => api.loginAccounts(id) })
 
+/** What runs on a server, from its agent's last report. */
+export const applicationsQuery = (id: string) =>
+  queryOptions({ queryKey: ['asset', id, 'applications'] as const, queryFn: () => api.applications(id) })
+
 export const sessionsQuery = (state?: Session['state']) =>
   queryOptions({
     queryKey: qk.sessions(state),

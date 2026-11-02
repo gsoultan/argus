@@ -42,7 +42,7 @@ import {
 import type { AuditPage } from '~/lib/live'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
-  ServerLoginAccount, ServerLoginAccounts,
+  ServerLoginAccount, ServerLoginAccounts, ServerApplications,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, User,
 } from '~/types/domain'
@@ -417,6 +417,54 @@ export const api = {
       return {
         reported: true, checkedAt: a.agentLastSeenAt ?? null, accounts,
         passwords: true, keys: true, exposeAuthInfo: true,
+      }
+    })
+  },
+
+  /** What runs on a server, from its agent's last report. */
+  async applications(id: string): Promise<ServerApplications> {
+    return live.orFallback(() => live.applications(id), async () => {
+      await latency(90)
+      const a = db.assets.find((x) => x.id === id)
+      const none: ServerApplications = {
+        reported: false, checkedAt: null, applications: [], listeners: [], containers: [], services: [], sources: [],
+      }
+      if (!a || a.agentState === 'absent' || a.protocol === 'rdp') return none
+      const l = (address: string, port: number, extra: Partial<ServerApplications['listeners'][number]> = {}) =>
+        ({ address, port, localOnly: address.startsWith('127.') || address === '::1', ...extra })
+      return {
+        reported: true,
+        checkedAt: a.agentLastSeenAt ?? null,
+        applications: [
+          { kind: 'nginx', name: 'nginx', version: '1.24.0-2ubuntu7', running: true,
+            listen: [l('0.0.0.0', 80), l('0.0.0.0', 443)], process: 'nginx', unit: 'nginx.service',
+            package: 'nginx', container: '', image: '', evidence: ['package', 'unit', 'process'] },
+          { kind: 'postgres', name: 'PostgreSQL', version: '16.4-1.pgdg24.04+1', running: true,
+            listen: [l('127.0.0.1', 5432), l('10.20.0.14', 5432)], process: 'postgres',
+            unit: 'postgresql@16-main.service', package: 'postgresql-16', container: '', image: '',
+            evidence: ['package', 'unit', 'process'] },
+          { kind: 'redis', name: 'Redis', version: '7.2', running: true, listen: [l('127.0.0.1', 6379)],
+            process: '', unit: '', package: '', container: 'cache', image: 'redis:7.2', evidence: ['container'] },
+          { kind: 'docker', name: 'Docker', version: '5:27.3.1-1~ubuntu.24.04~noble', running: true, listen: [],
+            process: '', unit: 'docker.service', package: 'docker-ce', container: '', image: '',
+            evidence: ['package', 'unit', 'containers'] },
+        ],
+        listeners: [
+          l('0.0.0.0', 22, { process: 'sshd', unit: 'ssh.service' }),
+          l('0.0.0.0', 80, { process: 'nginx', unit: 'nginx.service', kind: 'nginx' }),
+          l('0.0.0.0', 443, { process: 'nginx', unit: 'nginx.service', kind: 'nginx' }),
+          l('127.0.0.1', 5432, { process: 'postgres', unit: 'postgresql@16-main.service', kind: 'postgres' }),
+          l('10.20.0.14', 5432, { process: 'postgres', unit: 'postgresql@16-main.service', kind: 'postgres' }),
+          l('127.0.0.1', 6379, { process: 'docker-proxy', unit: 'docker.service', kind: 'redis' }),
+          l('0.0.0.0', 9100, { process: 'node_exporter', unit: 'node-exporter.service' }),
+        ],
+        containers: [
+          { name: 'cache', image: 'redis:7.2', state: 'running', runtime: 'docker', ports: [l('127.0.0.1', 6379)], kind: 'redis' },
+          { name: 'billing-worker', image: 'ghcr.io/acme/billing:2.3.1', state: 'running', runtime: 'docker', ports: [], kind: '' },
+        ],
+        services: ['containerd.service', 'cron.service', 'docker.service', 'nginx.service', 'node-exporter.service',
+          'postgresql@16-main.service', 'ssh.service', 'systemd-journald.service'],
+        sources: ['sockets', 'systemd', 'dpkg', 'docker'],
       }
     })
   },

@@ -28,6 +28,7 @@ Read this file first, then only the memory a task actually needs.
 | [upgrades-and-bootstrap-auth](upgrades-and-bootstrap-auth.md) | Migrations, account identity, static tokens, multi-gateway |
 | [shutdown-and-evidence](shutdown-and-evidence.md) | Any long-running loop, restarts, drains, reporting goroutines |
 | [postgres-access](postgres-access.md) | Databases: levels to Postgres roles, the pg-admin helper, the statement recording, the query workspace |
+| [app-discovery](app-discovery.md) | What the agent finds running on a server, and what it must never read |
 | [multi-tenant](multi-tenant.md) | Organizations sharing one control plane: schema per organization, `scope`, per-organization keys, what is still platform-wide |
 
 ## Standing rules for this repo

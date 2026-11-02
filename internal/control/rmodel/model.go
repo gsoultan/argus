@@ -70,6 +70,8 @@ type Agent struct {
 	FirstSeenAt     time.Time
 	ExecTracing     bool
 	ExecReason      string
+	// Applications is what runs on the host, as its agent last reported.
+	Applications *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
