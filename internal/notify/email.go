@@ -2,7 +2,9 @@ package notify
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"mime"
 	"net"
@@ -53,7 +55,7 @@ func NewEmail(cfg EmailConfig) (*Email, error) {
 		return nil, fmt.Errorf("alerts.email: %w: set both username and password, or neither", ErrNotConfigured)
 	}
 	for _, a := range append([]string{cfg.From}, cfg.To...) {
-		if strings.ContainsAny(a, "\r\n<>,") || !strings.Contains(a, "@") {
+		if !singleAddress(a) {
 			return nil, fmt.Errorf("alerts.email: %q is not a single email address", a)
 		}
 	}
@@ -63,8 +65,38 @@ func NewEmail(cfg EmailConfig) (*Email, error) {
 // Name implements Sender.
 func (e *Email) Name() string { return "email" }
 
-// Send implements Sender.
+// Send implements Sender: one plain-text message to the configured recipients.
 func (e *Email) Send(ctx context.Context, subject, body string) error {
+	return e.deliver(ctx, e.cfg.To, e.compose(e.cfg.To, subject, body, ""))
+}
+
+// Recipients is the configured list of addresses every alert goes to.
+func (e *Email) Recipients() []string { return append([]string(nil), e.cfg.To...) }
+
+// SendTo sends one message to the given addresses, with an HTML part when html
+// is not empty. The plain-text part always carries the whole message, so a
+// client that shows only text -- or a lock screen -- loses nothing.
+//
+// The addresses come from accounts, not from the config file, so each is
+// checked here as NewEmail checks the configured ones: a line break in an
+// address would otherwise become a header of its own.
+func (e *Email) SendTo(ctx context.Context, to []string, subject, text, html string) error {
+	if len(to) == 0 {
+		return nil
+	}
+	for _, a := range to {
+		if !singleAddress(a) {
+			return fmt.Errorf("%q is not a single email address", a)
+		}
+	}
+	return e.deliver(ctx, to, e.compose(to, subject, text, html))
+}
+
+func singleAddress(a string) bool {
+	return !strings.ContainsAny(a, "\r\n<>,") && strings.Contains(a, "@")
+}
+
+func (e *Email) deliver(ctx context.Context, to []string, msg []byte) error {
 	addr := net.JoinHostPort(e.cfg.Host, strconv.Itoa(e.cfg.Port))
 	tlsConf := &tls.Config{ServerName: e.cfg.Host, MinVersion: tls.VersionTLS12}
 
@@ -111,16 +143,16 @@ func (e *Email) Send(ctx context.Context, subject, body string) error {
 	if err := c.Mail(e.cfg.From); err != nil {
 		return fmt.Errorf("smtp MAIL FROM: %w", err)
 	}
-	for _, to := range e.cfg.To {
-		if err := c.Rcpt(to); err != nil {
-			return fmt.Errorf("smtp RCPT TO %s: %w", to, err)
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("smtp RCPT TO %s: %w", rcpt, err)
 		}
 	}
 	w, err := c.Data()
 	if err != nil {
 		return fmt.Errorf("smtp DATA: %w", err)
 	}
-	if _, err := w.Write(e.compose(subject, body)); err != nil {
+	if _, err := w.Write(msg); err != nil {
 		return fmt.Errorf("write message: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -129,27 +161,54 @@ func (e *Email) Send(ctx context.Context, subject, body string) error {
 	return c.Quit()
 }
 
-// compose builds the RFC 5322 message.
+// compose builds the RFC 5322 message: plain text, or plain text and HTML as
+// multipart/alternative.
 //
 // The subject carries a hostname and an email address that came from a session
 // report, so a line break in either is stripped before it reaches a header:
 // otherwise a crafted hostname could add recipients or rewrite the message.
-func (e *Email) compose(subject, body string) []byte {
+func (e *Email) compose(to []string, subject, body, html string) []byte {
 	clean := strings.NewReplacer("\r", " ", "\n", " ").Replace(subject)
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", e.cfg.From)
-	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(e.cfg.To, ", "))
+	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", clean))
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123Z))
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("Content-Transfer-Encoding: 8bit\r\n")
 	b.WriteString("Auto-Submitted: auto-generated\r\n")
+	if html == "" {
+		b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+		b.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+		b.WriteString("\r\n")
+		b.WriteString(crlf(body))
+		return []byte(b.String())
+	}
+	boundary := mimeBoundary()
+	fmt.Fprintf(&b, "Content-Type: multipart/alternative; boundary=%q\r\n", boundary)
 	b.WriteString("\r\n")
-	// SMTP wants CRLF line endings, and a line that is just "." ends DATA;
-	// smtp's DATA writer handles the dot, the endings are ours.
-	b.WriteString(strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\n", "\r\n"))
+	fmt.Fprintf(&b, "--%s\r\n", boundary)
+	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+	b.WriteString(crlf(body))
+	fmt.Fprintf(&b, "\r\n--%s\r\n", boundary)
+	b.WriteString("Content-Type: text/html; charset=utf-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+	b.WriteString(crlf(html))
+	fmt.Fprintf(&b, "\r\n--%s--\r\n", boundary)
 	return []byte(b.String())
+}
+
+// crlf gives a body the line endings SMTP wants. A line that is just "." ends
+// DATA; smtp's DATA writer handles the dot, the endings are ours.
+func crlf(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")
+}
+
+// mimeBoundary is random so no body can contain it by accident or design.
+func mimeBoundary() string {
+	var b [12]byte
+	_, _ = rand.Read(b[:])
+	return "argus-" + hex.EncodeToString(b[:])
 }
 
 func isLocal(host string) bool {

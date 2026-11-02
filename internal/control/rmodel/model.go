@@ -442,6 +442,21 @@ func (m *SchemaMigration) Schema(t *storm.Table) {
 	t.Col(&m.AppliedAt).Default("now()")
 }
 
+// SignInDevice is table sign_in_devices: a browser and address that has
+// signed in to an account, so a sign-in alert can tell a new one.
+type SignInDevice struct {
+	Email       string
+	Fingerprint string
+	FirstSeenAt time.Time
+	LastSeenAt  time.Time
+}
+
+func (m *SignInDevice) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Email, &m.Fingerprint)
+	t.Col(&m.FirstSeenAt).Default("now()")
+	t.Col(&m.LastSeenAt).Default("now()")
+}
+
 // Team is table teams: a named group of people.
 type Team struct {
 	ID        [16]byte
@@ -691,6 +706,7 @@ func All() []any {
 		&RevokedSession{},
 		&SchemaMigration{},
 		&Session{},
+		&SignInDevice{},
 		&Team{},
 		&TeamMember{},
 		&User{},

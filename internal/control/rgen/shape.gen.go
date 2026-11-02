@@ -362,6 +362,18 @@ func _assertSessionShape(m m0.Session) {
 	}
 }
 
+// _assertSignInDeviceShape fails to compile if m0.SignInDevice gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSignInDeviceShape(m m0.SignInDevice) {
+	type shape m0.SignInDevice
+	_ = shape{
+		m.Email,
+		m.Fingerprint,
+		m.FirstSeenAt,
+		m.LastSeenAt,
+	}
+}
+
 // _assertTeamShape fails to compile if m0.Team gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertTeamShape(m m0.Team) {

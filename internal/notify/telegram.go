@@ -73,11 +73,54 @@ func (t *Telegram) Send(ctx context.Context, _, body string) error {
 	return errors.Join(errs...)
 }
 
+// SendHTML posts a message written in Telegram's HTML subset, with a button
+// under it that opens link when link is not empty. Every chat is tried.
+//
+// Telegram refuses a button whose address it does not consider public -- a
+// console on a private name or a bare IP address is common -- and refuses the
+// whole message with it. A message that did not arrive because of its button
+// is worse than one without, so the refusal is retried with the address as a
+// line of text instead.
+func (t *Telegram) SendHTML(ctx context.Context, text, linkLabel, link string) error {
+	if r := []rune(text); len(r) > 3800 {
+		text = string(r[:3800]) + "…"
+	}
+	var errs []error
+	for _, chat := range t.chatIDs {
+		err := t.postForm(ctx, chat, text, "HTML", linkLabel, link)
+		if err != nil && link != "" && buttonRefused(err) {
+			err = t.postForm(ctx, chat, text+"\n\n"+escapeHTML(linkLabel)+": "+escapeHTML(link), "HTML", "", "")
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("chat %s: %w", chat, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func buttonRefused(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "button") || strings.Contains(m, "url")
+}
+
 func (t *Telegram) post(ctx context.Context, chat, text string) error {
+	return t.postForm(ctx, chat, text, "", "", "")
+}
+
+func (t *Telegram) postForm(ctx context.Context, chat, text, parseMode, linkLabel, link string) error {
 	form := url.Values{
 		"chat_id":                  {chat},
 		"text":                     {text},
 		"disable_web_page_preview": {"true"},
+	}
+	if parseMode != "" {
+		form.Set("parse_mode", parseMode)
+	}
+	if link != "" {
+		markup, _ := json.Marshal(map[string]any{
+			"inline_keyboard": [][]map[string]string{{{"text": linkLabel, "url": link}}},
+		})
+		form.Set("reply_markup", string(markup))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		t.api+"/bot"+t.token+"/sendMessage", strings.NewReader(form.Encode()))

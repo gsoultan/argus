@@ -187,9 +187,13 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	how := "password+mfa"
+	if in.Recovery {
+		how = "password+recovery"
+	}
 	a.completeSignIn(w, r, auth.Session{
 		Email: acct.Email, Name: acct.DisplayName, Role: acct.Role,
-	}, "password+mfa")
+	}, how)
 }
 
 // completeSignIn issues the session cookie and records the event.
@@ -200,6 +204,7 @@ func (a *API) completeSignIn(w http.ResponseWriter, r *http.Request, sess auth.S
 		return
 	}
 	auth.SetCookie(w, auth.SessionCookieName, token, a.sessionTTL(), a.secureCookies)
+	a.announceSignIn(r, sess, how)
 
 	_, _ = a.store.db(r.Context()).Exec(r.Context(),
 		`UPDATE users SET last_seen_at = now() WHERE lower(email) = lower($1)`, sess.Email)
