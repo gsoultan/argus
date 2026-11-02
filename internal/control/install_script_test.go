@@ -37,7 +37,8 @@ func TestTheInstallScriptCarriesTheTokenAndAddress(t *testing.T) {
 		"TOKEN='" + goodToken + "'",
 		"CONTROL='https://argus.example.com:8443'",
 		"PIN='sha256:" + strings.Repeat("ab", 32) + "'",
-		"releases/download/v${VERSION}",
+		`RELEASES="https://github.com/gsoultan/argus/releases"`,
+		"${RELEASES}/download/v${VERSION}",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("script does not contain %q", want)
