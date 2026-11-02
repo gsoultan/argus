@@ -329,13 +329,6 @@ func runAs(ctx context.Context, h helperRun) error {
 	return nil
 }
 
-func lastLine(s string) string {
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
-}
-
 // frameWriter sends what it is written as data frames, counting and
 // hashing it on the way.
 type frameWriter struct {
