@@ -908,7 +908,7 @@ jobs:
           # Every page goes to /setup until it is done.
           to=$(curl -s -o /dev/null -w '%{redirect_url}' --cacert "$tmp/ca.crt" https://localhost:8080/assets)
           [ "$to" = https://localhost:8080/setup ] || { echo "::error::first run did not send /assets to /setup (got '$to')"; exit 1; }
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep -q '<div id="root">'
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/setup | grep '<div id="root">' >/dev/null
           tok=$(sudo cat /var/lib/argus-control/setup-token)
           jq -n --arg tok "$tok" '{token: $tok,
               database: {host: "localhost", port: 5433, name: "argus", user: "argus", password: "argus", sslMode: "disable"},
@@ -918,10 +918,10 @@ jobs:
             curl -fsS --cacert "$tmp/ca.crt" -H Content-Type:application/json -d @- \
               https://localhost:8080/auth/setup/install
           for i in $(seq 1 30); do
-            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' && break
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep '"ok"' >/dev/null && break
             sleep 1
           done
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep -q '"ok"' || {
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz | grep '"ok"' >/dev/null || {
             sudo journalctl -u argus-control --no-pager | tail -50; exit 1; }
           # What setup wrote is the service's own, and nobody else's.
           [ "$(sudo stat -c '%a %U' /var/lib/argus-control/control.yaml)" = "600 argus" ]
@@ -930,8 +930,8 @@ jobs:
           ! sudo test -e /var/lib/argus-control/setup-token
 
           # The console ships in the package and is served same-origin.
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep -q '<div id="root">'
-          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep -q fleetUrl
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep '<div id="root">' >/dev/null
+          curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep fleetUrl >/dev/null
 
           # Enroll this runner's agent with a token from the console API.
           go build -o "$tmp/totp" ./scripts/tools/totp
