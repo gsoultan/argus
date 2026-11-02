@@ -63,8 +63,15 @@ export function fleetURL(): string {
  * so the agent it offers to install matches it.
  */
 export function controlPlaneVersion(): string | undefined {
-  const v = runtimeConfig()?.version?.replace(/^v/, '')
-  return v && /^\d+\.\d+\.\d+/.test(v) ? v : undefined
+  // A build between tags is stamped by git describe, like
+  // "v0.9.0-3-gabc1234-dirty". No release carries that name, so it is read as
+  // the release it was built from.
+  const v = runtimeConfig()
+    ?.version?.trim()
+    .replace(/^v/, '')
+    .replace(/-dirty$/, '')
+    .replace(/-\d+-g[0-9a-f]+$/, '')
+  return v && /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(v) ? v : undefined
 }
 
 /**
