@@ -35,7 +35,7 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (AuditVerification, error)
 	started := time.Now()
 	v := AuditVerification{OK: true, Head: GenesisHash}
 
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db(ctx).Query(ctx, `
 		SELECT seq, at, action, severity, actor_email, target, detail, prev_hash, hash
 		FROM audit_events ORDER BY seq ASC`)
 	if err != nil {

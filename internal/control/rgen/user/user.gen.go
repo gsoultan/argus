@@ -34,6 +34,8 @@ type Row struct {
 	LoginName     runtime.Null[string]
 	SshPublicKey  string
 	DisabledBy    runtime.Null[string]
+	HomeTenant    runtime.Null[string]
+	Shareable     bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -72,7 +74,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 14
+const nCols = 16
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -283,6 +285,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.DisabledBy.V
 		q.ns++
+	case 14:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.HomeTenant.V
+		q.ns++
+	case 15:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.Shareable
+		q.nbo++
 	}
 }
 
@@ -463,6 +479,8 @@ var (
 	LoginName     = NullTextCol{11}
 	SshPublicKey  = TextCol{12}
 	DisabledBy    = NullTextCol{13}
+	HomeTenant    = NullTextCol{14}
+	Shareable     = BoolCol{15}
 )
 
 // UUIDCol addresses a uuid column.
@@ -803,6 +821,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 14:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -910,6 +935,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 14:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 15:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1047,8 +1086,23 @@ func (q Query) DisabledByIn(v ...string) Query       { return q.Where(DisabledBy
 func (q Query) DisabledByNotIn(v ...string) Query    { return q.Where(DisabledBy.NotIn(v...)) }
 func (q Query) DisabledByIsNull() Query              { return q.Where(DisabledBy.IsNull()) }
 func (q Query) DisabledByIsNotNull() Query           { return q.Where(DisabledBy.IsNotNull()) }
+func (q Query) HomeTenantEq(v string) Query          { return q.Where(HomeTenant.Eq(v)) }
+func (q Query) HomeTenantNotEq(v string) Query       { return q.Where(HomeTenant.NotEq(v)) }
+func (q Query) HomeTenantGt(v string) Query          { return q.Where(HomeTenant.Gt(v)) }
+func (q Query) HomeTenantGte(v string) Query         { return q.Where(HomeTenant.Gte(v)) }
+func (q Query) HomeTenantLt(v string) Query          { return q.Where(HomeTenant.Lt(v)) }
+func (q Query) HomeTenantLte(v string) Query         { return q.Where(HomeTenant.Lte(v)) }
+func (q Query) HomeTenantEqLower(v string) Query     { return q.Where(HomeTenant.EqLower(v)) }
+func (q Query) HomeTenantLike(v string) Query        { return q.Where(HomeTenant.Like(v)) }
+func (q Query) HomeTenantILike(v string) Query       { return q.Where(HomeTenant.ILike(v)) }
+func (q Query) HomeTenantIn(v ...string) Query       { return q.Where(HomeTenant.In(v...)) }
+func (q Query) HomeTenantNotIn(v ...string) Query    { return q.Where(HomeTenant.NotIn(v...)) }
+func (q Query) HomeTenantIsNull() Query              { return q.Where(HomeTenant.IsNull()) }
+func (q Query) HomeTenantIsNotNull() Query           { return q.Where(HomeTenant.IsNotNull()) }
+func (q Query) ShareableEq(v bool) Query             { return q.Where(Shareable.Eq(v)) }
+func (q Query) ShareableNotEq(v bool) Query          { return q.Where(Shareable.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by" FROM "users"`
+const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "home_tenant", "shareable" FROM "users"`
 const countPrefix = `SELECT count(*) FROM "users"`
 const existsPrefix = `SELECT 1 FROM "users"`
 const existsSuffix = ` LIMIT 1`
@@ -1169,6 +1223,18 @@ var orderTable = [nCols][4]string{
 		"\"disabled_by\" ASC NULLS FIRST",
 		"\"disabled_by\" DESC NULLS LAST",
 	},
+	{ // home_tenant
+		"\"home_tenant\"",
+		"\"home_tenant\" DESC",
+		"\"home_tenant\" ASC NULLS FIRST",
+		"\"home_tenant\" DESC NULLS LAST",
+	},
+	{ // shareable
+		"\"shareable\"",
+		"\"shareable\" DESC",
+		"\"shareable\" ASC NULLS FIRST",
+		"\"shareable\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1188,6 +1254,8 @@ var identTable = [nCols]string{
 	"\"login_name\"",
 	"\"ssh_public_key\"",
 	"\"disabled_by\"",
+	"\"home_tenant\"",
+	"\"shareable\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1220,7 +1288,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [14][28]runtime.Frag{
+var fragTable = [16][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1641,6 +1709,66 @@ var fragTable = [14][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // home_tenant
+		{}, // opNone
+		{A: "\"home_tenant\" = $", B: ""},
+		{A: "\"home_tenant\" <> $", B: ""},
+		{A: "\"home_tenant\" > $", B: ""},
+		{A: "\"home_tenant\" >= $", B: ""},
+		{A: "\"home_tenant\" < $", B: ""},
+		{A: "\"home_tenant\" <= $", B: ""},
+		{A: "lower(\"home_tenant\") = lower($", B: ")"},
+		{A: "\"home_tenant\" LIKE $", B: ""},
+		{A: "\"home_tenant\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"home_tenant\" = ANY($", B: ")"},
+		{A: "\"home_tenant\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"home_tenant\" IS NULL", B: ""},
+		{A: "\"home_tenant\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // shareable
+		{}, // opNone
+		{A: "\"shareable\" = $", B: ""},
+		{A: "\"shareable\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1811,6 +1939,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.LoginName = runtime.NullText(rv[11], sl)
 	r.SshPublicKey = sl.Str(rv[12])
 	r.DisabledBy = runtime.NullText(rv[13], sl)
+	r.HomeTenant = runtime.NullText(rv[14], sl)
+	r.Shareable = runtime.Bool(rv[15])
 	return nil
 }
 
@@ -1912,6 +2042,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 14:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -1972,6 +2106,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 14:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 15:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -2109,7 +2251,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by"`
+const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "home_tenant", "shareable") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "home_tenant", "shareable"`
 
 const updatePrefix = `UPDATE "users" SET `
 const deletePrefix = `DELETE FROM "users"`
@@ -2130,9 +2272,11 @@ const (
 	dLoginName     uint64 = 1 << 10
 	dSshPublicKey  uint64 = 1 << 11
 	dDisabledBy    uint64 = 1 << 12
+	dHomeTenant    uint64 = 1 << 13
+	dShareable     uint64 = 1 << 14
 )
 
-const nUpdatable = 13
+const nUpdatable = 15
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2149,6 +2293,8 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"login_name\" = $", B: ""},      // login_name
 	{A: "\"ssh_public_key\" = $", B: ""},  // ssh_public_key
 	{A: "\"disabled_by\" = $", B: ""},     // disabled_by
+	{A: "\"home_tenant\" = $", B: ""},     // home_tenant
+	{A: "\"shareable\" = $", B: ""},       // shareable
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2168,6 +2314,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                        // login_name has no server-side form
 	{},                                        // ssh_public_key has no server-side form
 	{},                                        // disabled_by has no server-side form
+	{},                                        // home_tenant has no server-side form
+	{},                                        // shareable has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2193,9 +2341,11 @@ const (
 	iLoginName     uint64 = 1 << 11
 	iSshPublicKey  uint64 = 1 << 12
 	iDisabledBy    uint64 = 1 << 13
+	iHomeTenant    uint64 = 1 << 14
+	iShareable     uint64 = 1 << 15
 )
 
-const nInsertable = 14
+const nInsertable = 16
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2213,6 +2363,8 @@ var insCols = [nInsertable]string{
 	"\"login_name\"",
 	"\"ssh_public_key\"",
 	"\"disabled_by\"",
+	"\"home_tenant\"",
+	"\"shareable\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2221,7 +2373,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"users\""
-const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\""
+const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"home_tenant\", \"shareable\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2240,7 +2392,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\""
+const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"home_tenant\", \"shareable\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2466,6 +2618,26 @@ func (m *Mut) SetDisabledByNull() {
 	m.expr &^= dDisabledBy
 }
 
+func (m *Mut) SetHomeTenant(v string) {
+	m.row.HomeTenant = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dHomeTenant
+	m.expr &^= dHomeTenant
+}
+
+// SetHomeTenantNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetHomeTenantNull() {
+	m.row.HomeTenant = runtime.Null[string]{}
+	m.dirty |= dHomeTenant
+	m.expr &^= dHomeTenant
+}
+
+func (m *Mut) SetShareable(v bool) {
+	m.row.Shareable = v
+	m.dirty |= dShareable
+	m.expr &^= dShareable
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2610,6 +2782,23 @@ func (n *Ins) SetDisabledByNull() {
 	n.set |= iDisabledBy
 }
 
+func (n *Ins) SetHomeTenant(v string) {
+	n.row.HomeTenant = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iHomeTenant
+}
+
+// SetHomeTenantNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetHomeTenantNull() {
+	n.row.HomeTenant = runtime.Null[string]{}
+	n.set |= iHomeTenant
+}
+
+func (n *Ins) SetShareable(v bool) {
+	n.row.Shareable = v
+	n.set |= iShareable
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2658,7 +2847,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 13)
+	set := make([]string, 0, 15)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2700,6 +2889,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
 		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "shareable")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "display_name")
@@ -2736,6 +2931,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "shareable")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -2777,6 +2978,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
 		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "shareable")
+		}
 	case 3:
 		if mask&(1<<1) != 0 {
 			set = append(set, "email")
@@ -2813,6 +3020,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<13) != 0 {
 			set = append(set, "disabled_by")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "home_tenant")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "shareable")
 		}
 	}
 	return set
@@ -2905,6 +3118,8 @@ var assignFor = map[string]string{
 	"login_name":      "\"login_name\" = EXCLUDED.\"login_name\"",
 	"ssh_public_key":  "\"ssh_public_key\" = EXCLUDED.\"ssh_public_key\"",
 	"disabled_by":     "\"disabled_by\" = EXCLUDED.\"disabled_by\"",
+	"home_tenant":     "\"home_tenant\" = EXCLUDED.\"home_tenant\"",
+	"shareable":       "\"shareable\" = EXCLUDED.\"shareable\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2976,6 +3191,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.SshPublicKey)
 		case 13:
 			args = append(args, n.row.DisabledBy.Arg())
+		case 14:
+			args = append(args, n.row.HomeTenant.Arg())
+		case 15:
+			args = append(args, n.row.Shareable)
 		}
 	}
 	var out Row
@@ -3013,7 +3232,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3028,6 +3247,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.LoginName.Arg())
 	args = append(args, r.SshPublicKey)
 	args = append(args, r.DisabledBy.Arg())
+	args = append(args, r.HomeTenant.Arg())
+	args = append(args, r.Shareable)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3068,13 +3289,15 @@ var copyCols = []string{
 	"login_name",
 	"ssh_public_key",
 	"disabled_by",
+	"home_tenant",
+	"shareable",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [14]any
+	buf  [16]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3106,6 +3329,8 @@ func (s *rowSource) Values() []any {
 	s.buf[11] = r.LoginName.Ptr()
 	s.buf[12] = &r.SshPublicKey
 	s.buf[13] = r.DisabledBy.Ptr()
+	s.buf[14] = r.HomeTenant.Ptr()
+	s.buf[15] = &r.Shareable
 	return s.buf[:]
 }
 
@@ -3150,8 +3375,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 11
 	mask |= 1 << 12
 	mask |= 1 << 13
+	mask |= 1 << 14
+	mask |= 1 << 15
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3166,6 +3393,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.LoginName.Arg())
 	args = append(args, r.SshPublicKey)
 	args = append(args, r.DisabledBy.Arg())
+	args = append(args, r.HomeTenant.Arg())
+	args = append(args, r.Shareable)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3227,6 +3456,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.SshPublicKey)
 		case 13:
 			args = append(args, n.row.DisabledBy.Arg())
+		case 14:
+			args = append(args, n.row.HomeTenant.Arg())
+		case 15:
+			args = append(args, n.row.Shareable)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3299,6 +3532,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.SshPublicKey)
 		case 12:
 			args = append(args, m.row.DisabledBy.Arg())
+		case 13:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 14:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3407,6 +3644,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.SshPublicKey)
 		case 12:
 			args = append(args, m.row.DisabledBy.Arg())
+		case 13:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 14:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3581,6 +3822,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.SshPublicKey)
 		case 12:
 			args = append(args, m.row.DisabledBy.Arg())
+		case 13:
+			args = append(args, m.row.HomeTenant.Arg())
+		case 14:
+			args = append(args, m.row.Shareable)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

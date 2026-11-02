@@ -171,6 +171,58 @@ export interface Identity {
   installing?: boolean
   /** Whether the signed-in account has a second factor. */
   mfaEnrolled?: boolean
+  /**
+   * True when more than one organization shares this control plane, so the
+   * sign-in form has to ask which one. Until then nobody is asked.
+   */
+  multiOrg?: boolean
+  /** The organization this sign-in, or this session, is in. */
+  org?: Organization
+  /**
+   * Every organization this sign-in can switch to, this one included: the
+   * ones where the same identity has an enabled account. One entry means
+   * there is nothing to switch to.
+   */
+  orgs?: OrganizationMembership[]
+  /** True when the signed-in person's password lives in another organization. */
+  shared?: boolean
+  /**
+   * True for an owner of the default organization: the one account that may
+   * list, create and disable organizations. The control plane checks it
+   * again on every such request; this only draws the menu entry.
+   */
+  platformOwner?: boolean
+}
+
+/** An organization the signed-in person is a member of. */
+export interface OrganizationMembership extends Organization {
+  role: string
+  /** The organization that holds their password and second factor. */
+  home: boolean
+}
+
+/** One organization sharing the control plane. */
+export interface Organization {
+  id: string
+  slug: string
+  name: string
+  default: boolean
+  createdAt?: string
+  createdBy?: string
+  disabledAt?: string | null
+  disabledBy?: string | null
+  counts?: { servers: number; people: number }
+}
+
+/**
+ * The organization a sign-in is for, sent as a header on the sign-in
+ * requests. Everything after sign-in carries it inside the cookie instead,
+ * and the control plane ignores the header once a cookie is present.
+ */
+let signInOrg = ''
+export function setSignInOrg(slug: string): void { signInOrg = slug.trim().toLowerCase() }
+function orgHeader(): Record<string, string> {
+  return signInOrg ? { 'X-Argus-Org': signInOrg } : {}
 }
 
 /** What a password sign-in returns: a session, or a demand for a second factor. */
@@ -353,6 +405,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: {
       'Content-Type': 'application/json',
       ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+      ...orgHeader(),
     },
     body: JSON.stringify(body),
   })
@@ -1021,6 +1074,33 @@ export async function createAccount(input: {
   return post('/api/v1/users', input)
 }
 
+/**
+ * Adds a person who already signs in to another organization. No password:
+ * they keep the one they have, and their home organization must have marked
+ * them shareable. homeOrg is needed only when more than one has.
+ */
+export async function createSharedAccount(input: {
+  email: string
+  displayName: string
+  role: string
+  homeOrg?: string
+}): Promise<{ email: string; role: string; displayName: string; shared: true }> {
+  return post('/api/v1/users/shared', input)
+}
+
+/** Lets, or stops letting, other organizations add one of our people. */
+export async function setAccountShareable(email: string, shareable: boolean): Promise<{ email: string; shareable: boolean }> {
+  return send('PUT', `/api/v1/users/${encodeURIComponent(email)}/shareable`, { shareable })
+}
+
+/**
+ * Moves this session to another organization the same person is a member of.
+ * The cookie is replaced; the caller reloads so every query starts over there.
+ */
+export async function switchOrganization(slug: string): Promise<void> {
+  await post('/auth/switch', { org: slug })
+}
+
 /** Changes someone's role. Not your own; only an owner makes an owner. */
 export async function setAccountRole(email: string, role: string): Promise<{ email: string; role: string }> {
   return send('PUT', `/api/v1/users/${encodeURIComponent(email)}/role`, { role })
@@ -1261,3 +1341,27 @@ export async function databaseTicket(
 
 /** The WebSocket a database session runs over. */
 export const postgresEndpoint = `${BASE}/api/v1/postgres`
+
+/* ── Organizations ──────────────────────────────────────────────────────── */
+
+/** Every organization on this control plane. Platform owners only. */
+export async function organizations(): Promise<Organization[]> {
+  return get<Organization[]>('/api/v1/platform/organizations')
+}
+
+/** Creates an organization with its first owner. */
+export async function createOrganization(input: {
+  slug: string
+  name: string
+  ownerEmail: string
+  ownerName: string
+  ownerPassword: string
+}): Promise<Organization> {
+  return post<Organization>('/api/v1/platform/organizations', input)
+}
+
+/** Switches an organization off, or back on. */
+export async function setOrganizationDisabled(id: string, disabled: boolean): Promise<Organization> {
+  return post<Organization>(
+    `/api/v1/platform/organizations/${encodeURIComponent(id)}/${disabled ? 'disable' : 'enable'}`, {})
+}

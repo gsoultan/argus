@@ -72,6 +72,8 @@ func runUsersAdd(configPath string, args []string) error {
 		return err
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	password, err := readPassword()
 	if err != nil {
@@ -145,6 +147,8 @@ func runUsersList(configPath string) error {
 		return err
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	accounts, err := store.Accounts(ctx)
 	if err != nil {
@@ -207,6 +211,8 @@ func runUsersSetDisabled(configPath string, args []string, disabled bool) error 
 		return err
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	switch err := store.SetAccountDisabled(ctx, email, disabled); {
 	case err == nil:

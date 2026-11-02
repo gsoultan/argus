@@ -177,6 +177,8 @@ func (i *installer) Install(ctx context.Context, in control.InstallRequest, clie
 		return control.InstallResult{}, control.BadInput(fmt.Errorf("could not set up that database: %w", err))
 	}
 	defer store.Close()
+	// The command line acts on the platform, which is the default organization.
+	ctx = control.PlatformContext(ctx)
 
 	email := ""
 	if !check.AccountsExist {

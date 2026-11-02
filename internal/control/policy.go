@@ -65,7 +65,7 @@ func DefaultGatewayPolicy() GatewayPolicy {
 // GatewayPolicy reads the single policy row.
 func (s *Store) GatewayPolicy(ctx context.Context) (GatewayPolicy, error) {
 	var p GatewayPolicy
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT allow_local_forward, allow_remote_forward, allow_agent_forward,
 		       allow_x11_forward, proxy_sftp_subsystem, fail_closed_on_recording_loss,
 		       require_ebpf_for_root, direct_ssh,
@@ -92,7 +92,7 @@ func (s *Store) SaveGatewayPolicy(
 	if !validDirectSSH(p.DirectSSH) {
 		return GatewayPolicy{}, ErrInvalidDirectSSH
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db(ctx).Exec(ctx, `
 		UPDATE gateway_policy SET
 			allow_local_forward             = $1,
 			allow_remote_forward            = $2,

@@ -7,8 +7,8 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock, IconNetwork,
-  IconShieldLock, IconTerminal2, type IconProps,
+  IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
+  IconNetwork, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -20,6 +20,7 @@ import type { DirectSsh, GatewayPolicy, PolicyKey } from '~/types/domain'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
 import { guard } from '~/lib/guard'
 import { EnrolledAgents } from '~/components/EnrolledAgents'
+import { Organizations } from '~/components/Organizations'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
@@ -64,7 +65,8 @@ const ALL_FIELDS = RECORDING_POLICY
 const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
-type SectionId = PolicySectionId | ControlSectionId
+type PlatformSectionId = 'organizations'
+type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId
 
 interface NavItem {
   id: SectionId
@@ -133,7 +135,12 @@ function Settings() {
   const controlItems: NavItem[] = showControl
     ? CONTROL_SECTIONS.map((c) => ({ id: c.id, label: c.label, icon: c.icon, changed: ctl.changedSections.includes(c) }))
     : []
-  const items = [...policyItems, ...controlItems]
+  // Organizations: platform owners only, and only against a real control
+  // plane. The server decides who that is; this only places the entry.
+  const platformItems: NavItem[] = me?.platformOwner && isConfigured()
+    ? [{ id: 'organizations', label: 'Organizations', icon: IconBuilding, changed: false }]
+    : []
+  const items = [...policyItems, ...controlItems, ...platformItems]
   const active: SectionId = items.find((i) => i.id === section)?.id ?? 'access'
   const open = (id: string | null) => {
     if (id) void navigate({ to: '/settings', search: { section: id }, replace: true })
@@ -233,6 +240,9 @@ function Settings() {
             {controlItems.length > 0 && (
               <SectionNav title="Advanced" items={controlItems} active={active} onOpen={open} />
             )}
+            {platformItems.length > 0 && (
+              <SectionNav title="Platform" items={platformItems} active={active} onOpen={open} />
+            )}
           </Box>
 
           <Stack gap="sm" style={{ flex: 1, minWidth: 0 }} maw={960}>
@@ -246,6 +256,9 @@ function Settings() {
                 { group: 'Sessions', items: policyItems.map(navOption) },
                 ...(controlItems.length > 0
                   ? [{ group: 'Advanced', items: controlItems.map(navOption) }]
+                  : []),
+                ...(platformItems.length > 0
+                  ? [{ group: 'Platform', items: platformItems.map(navOption) }]
                   : []),
               ]}
             />
@@ -306,6 +319,8 @@ function Settings() {
                 <HostsAndTrust />
               </>
             )}
+
+            {active === 'organizations' && platformItems.length > 0 && <Organizations />}
 
             {showControl && controlItems.some((c) => c.id === active) && (
               <>

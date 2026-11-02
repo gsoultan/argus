@@ -41,6 +41,12 @@ var (
 
 // Session is what a console cookie carries.
 type Session struct {
+	// Tenant is the organization the account belongs to. Empty means the
+	// default organization, which is what every cookie minted before there
+	// were several says. Every signed value carries it, and the key that
+	// signs it is derived from it, so a value minted for one organization
+	// fails its signature check in another; see Signer.ForTenant.
+	Tenant    string    `json:"org,omitempty"`
 	Email     string    `json:"email"`
 	Name      string    `json:"name"`
 	Role      string    `json:"role"`
@@ -51,8 +57,10 @@ type Session struct {
 
 // Ticket authorises exactly one terminal session.
 type Ticket struct {
-	ID    string `json:"jti"`
-	Email string `json:"email"`
+	ID string `json:"jti"`
+	// Tenant is the organization the ticket was minted in; see Session.
+	Tenant string `json:"org,omitempty"`
+	Email  string `json:"email"`
 	// Scope is what the ticket permits. Empty means ScopeSession, so tickets
 	// minted before scopes existed keep working as terminal tickets and cannot
 	// be silently promoted into shadow or terminate rights.
@@ -108,6 +116,12 @@ type Redeemer interface {
 // asymmetric when a third party needs to verify without being able to mint.
 type Signer struct {
 	key []byte
+	// tenant is the organization this signer's key was derived for; empty
+	// for the root signer, which is the default organization's.
+	tenant string
+	// root is the signer this one was derived from, which holds the shared
+	// redemption state. Nil on the root itself.
+	root *Signer
 
 	// redeemer is shared state when configured. Nil falls back to the
 	// in-memory set below, which holds for one instance only.
@@ -131,6 +145,57 @@ func (s *Signer) SetRedeemer(r Redeemer) { s.redeemer = r }
 
 // SharedRedemption reports whether replay protection spans instances.
 func (s *Signer) SharedRedemption() bool { return s.redeemer != nil }
+
+// ForTenant returns the signer for one organization.
+//
+// Its key is HMAC-SHA256(root key, "argus tenant key v1:" || id), so a cookie,
+// ticket or challenge minted in one organization is a forgery in every other
+// one without any handler having to compare a field. The empty id, and the
+// default organization's, is the root signer itself, which keeps every value
+// minted before organizations existed valid.
+//
+// Redemption state is the root's: single-use is one property for the whole
+// control plane, and a derived signer shares the set rather than keeping one.
+func (s *Signer) ForTenant(id string) *Signer {
+	if id == "" || id == "default" {
+		return s
+	}
+	root := s
+	if s.root != nil {
+		root = s.root
+	}
+	m := hmac.New(sha256.New, root.key)
+	m.Write([]byte("argus tenant key v1:" + id))
+	return &Signer{key: m.Sum(nil), tenant: id, root: root}
+}
+
+// Tenant is the organization this signer mints for; "" is the default.
+func (s *Signer) Tenant() string { return s.tenant }
+
+// PeekTenant reads which organization a signed value claims to belong to,
+// without verifying it.
+//
+// The claim chooses which key to verify with and nothing else. A value that
+// lies about its organization is then checked with that organization's key
+// and fails; one that tells the truth is checked with the right key. Either
+// way nothing is believed until a signature has been.
+func PeekTenant(token string) string {
+	body, _, found := strings.Cut(token, ".")
+	if !found {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(body)
+	if err != nil {
+		return ""
+	}
+	var claim struct {
+		Tenant string `json:"org"`
+	}
+	if json.Unmarshal(payload, &claim) != nil {
+		return ""
+	}
+	return claim.Tenant
+}
 
 // NewSigner builds a signer from a secret.
 // placeholderSecrets are values that ship in example configs and documentation.
@@ -233,6 +298,7 @@ func (s *Signer) sweep() {
 
 // IssueSession signs a session for the cookie.
 func (s *Signer) IssueSession(sess Session, ttl time.Duration) (string, error) {
+	sess.Tenant = s.tenant
 	sess.IssuedAt = time.Now().UTC()
 	sess.ExpiresAt = sess.IssuedAt.Add(ttl)
 	return s.sign(sess)
@@ -246,6 +312,11 @@ func (s *Signer) VerifySession(token string) (Session, error) {
 	}
 	if time.Now().After(sess.ExpiresAt) {
 		return Session{}, ErrExpired
+	}
+	if sess.Tenant != s.tenant {
+		// Signed with this key and yet naming another organization: not a
+		// shape the issuer produces.
+		return Session{}, ErrInvalid
 	}
 	return sess, nil
 }
@@ -264,6 +335,7 @@ func (s *Signer) IssueTicket(email, target, principal string, ttl time.Duration)
 	}
 	return s.sign(Ticket{
 		ID:        id,
+		Tenant:    s.tenant,
 		Email:     email,
 		Scope:     ScopeSession,
 		Target:    target,
@@ -291,6 +363,7 @@ func (s *Signer) IssueSessionScopedTicket(email, scope, sessionID string, ttl ti
 	}
 	return s.sign(Ticket{
 		ID:        id,
+		Tenant:    s.tenant,
 		Email:     email,
 		Scope:     scope,
 		SessionID: sessionID,
@@ -309,6 +382,9 @@ func (s *Signer) RedeemSessionScoped(ctx context.Context, token, scope, sessionI
 	}
 	if time.Now().After(t.ExpiresAt) {
 		return Ticket{}, ErrExpired
+	}
+	if t.Tenant != s.tenant {
+		return Ticket{}, ErrInvalid
 	}
 	if scopeOf(t) != scope {
 		return Ticket{}, fmt.Errorf("%w: ticket is scoped %q, not %q",
@@ -332,6 +408,9 @@ func (s *Signer) RedeemTicket(ctx context.Context, token, target, principal stri
 	if time.Now().After(t.ExpiresAt) {
 		return Ticket{}, ErrExpired
 	}
+	if t.Tenant != s.tenant {
+		return Ticket{}, ErrInvalid
+	}
 
 	// A valid signature is not enough: the ticket must be for what is actually
 	// being opened, and must be the kind of ticket that opens anything at all.
@@ -354,6 +433,9 @@ func (s *Signer) RedeemTicket(ctx context.Context, token, target, principal stri
 // that makes it acceptable to pass a ticket in a query string, and a second
 // copy of this logic would be a second place for that property to be lost.
 func (s *Signer) burn(ctx context.Context, t Ticket) error {
+	if s.root != nil {
+		return s.root.burn(ctx, t)
+	}
 	if s.redeemer != nil {
 		used, err := s.redeemer.Redeem(ctx, t)
 		if err != nil {
@@ -434,6 +516,7 @@ func randomID() (string, error) {
 // nothing on its own, and naming the type separately keeps it from being handed
 // to something expecting one.
 type mfaChallenge struct {
+	Tenant    string    `json:"org,omitempty"`
 	Email     string    `json:"email"`
 	ExpiresAt time.Time `json:"expiresAt"`
 	// Purpose pins what this token may be redeemed for, so a challenge cannot
@@ -446,6 +529,7 @@ const mfaChallengePurpose = "mfa-challenge"
 // IssueMFAChallenge returns a token proving a password was accepted.
 func (s *Signer) IssueMFAChallenge(email string, ttl time.Duration) (string, error) {
 	return s.sign(mfaChallenge{
+		Tenant:    s.tenant,
 		Email:     email,
 		ExpiresAt: time.Now().Add(ttl),
 		Purpose:   mfaChallengePurpose,
@@ -465,6 +549,9 @@ func (s *Signer) RedeemMFAChallenge(token string) (string, error) {
 	}
 	if c.Purpose != mfaChallengePurpose {
 		return "", fmt.Errorf("%w: token is not a second-factor challenge", ErrInvalid)
+	}
+	if c.Tenant != s.tenant {
+		return "", ErrInvalid
 	}
 	if time.Now().After(c.ExpiresAt) {
 		return "", ErrExpired
