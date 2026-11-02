@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsoultan/argus/internal/recorder"
 )
@@ -195,6 +196,11 @@ func TestStatsTrackTheRecording(t *testing.T) {
 	var buf bytes.Buffer
 	rec, _ := NewRecorder(&buf, Header{})
 	_ = rec.Write(ServerOutput, bytes.Repeat([]byte{0xAB}, 512))
+	// Windows reads its monotonic clock in coarse ticks, so a recorder
+	// opened and asked for its stats in the same tick reports no time at
+	// all. Let one tick pass; the test is that the duration tracks the
+	// clock, not that it does so within microseconds.
+	time.Sleep(20 * time.Millisecond)
 
 	lines, size, dur := rec.Stats()
 	if lines != 2 { // header plus one frame
