@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Mono, relTime } from '~/components/primitives'
-import { generatePassword } from '~/components/Setup'
+import { generatePassword } from '~/lib/password'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
   createOrganization, organizations, setOrganizationDisabled, type Organization,

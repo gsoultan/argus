@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generatePassword } from '~/components/Setup'
+import { generatePassword } from '~/lib/password'
 
 describe('generatePassword', () => {
   it('is long enough for the control plane and free of look-alike characters', () => {

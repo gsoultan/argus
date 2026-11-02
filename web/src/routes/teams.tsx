@@ -12,7 +12,7 @@ import {
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, relTime } from '~/components/primitives'
-import { generatePassword } from '~/components/Setup'
+import { generatePassword } from '~/lib/password'
 import { guard } from '~/lib/guard'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
