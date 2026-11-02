@@ -103,6 +103,19 @@ func waitState(t *testing.T, u *Updater, state string) UpdateStatus {
 	return UpdateStatus{}
 }
 
+// waitLaunched waits for the helper to have been launched n times.
+func waitLaunched(t *testing.T, plat *fakeUpdates, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if plat.count() == n {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("launched %d times, want %d", plat.count(), n)
+}
+
 // The update waits for what is open on the server to end before it restarts,
 // and holds new sessions only once it is about to.
 func TestAnUpdateWaitsUntilNothingIsOpen(t *testing.T) {
@@ -129,9 +142,10 @@ func TestAnUpdateWaitsUntilNothingIsOpen(t *testing.T) {
 
 	busy.Store(0)
 	waitState(t, u, UpdateRestarting)
-	if plat.count() != 1 {
-		t.Fatalf("launched %d times", plat.count())
-	}
+	// The status is written before the helper is launched, on purpose (the
+	// helper takes the file over from there), so the launch is a moment
+	// behind the state and is waited for on its own.
+	waitLaunched(t, plat, 1)
 	if !held.Load() {
 		t.Error("new sessions were not held for the restart")
 	}
