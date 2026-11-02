@@ -52,6 +52,10 @@ const BUDGET_KB = {
    * sign-in client's organization calls. Measured against main at 267.9 kB
    * in the same build; two more chunk files account for about a third of it.
    * With both, 273.5 kB.
+   *
+   * The two-column sign-in page adds about 0.6 kB. It renders before the
+   * router, so its layout, three icons and the brand panel's CSS are eager;
+   * lazy would put a round trip in front of the first screen anyone sees.
    */
   overview: 276,
   /**
