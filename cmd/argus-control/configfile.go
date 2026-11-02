@@ -5,14 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 /*
@@ -67,8 +66,8 @@ func (l configLocation) dataDir() string { return filepath.Dir(l.Managed) }
 func (l configLocation) secretsDir() string {
 	return filepath.Join(l.dataDir(), "secrets")
 }
-func (l configLocation) pki() tlsconfig.ManagedPKI {
-	return tlsconfig.ManagedPKI{Dir: filepath.Join(l.dataDir(), "tls")}
+func (l configLocation) pki() servertls.ManagedPKI {
+	return servertls.ManagedPKI{Dir: filepath.Join(l.dataDir(), "tls")}
 }
 
 // locateConfig finds the configuration for the --config path given.

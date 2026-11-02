@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"github.com/gsoultan/argus/internal/agent/rdpdial"
 	"log/slog"
 	"net"
 	"os"
@@ -66,7 +67,7 @@ func main() {
 	}
 	cs := conn.ConnectionState()
 	fmt.Printf("tls         %s, cert %s\n", tlsVersion(cs.Version),
-		rdp.CertFingerprint(cs.PeerCertificates[0].Raw))
+		rdpdial.CertFingerprint(cs.PeerCertificates[0].Raw))
 
 	client, err := rdp.Connect(conn, rdp.ClientConfig{
 		Width: *width, Height: *height, Depth: *depth,

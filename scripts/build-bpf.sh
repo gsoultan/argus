@@ -41,7 +41,7 @@ fi
 command -v "$RUNTIME" >/dev/null 2>&1 || die "$RUNTIME is not installed"
 
 IMAGE="docker.io/library/debian:13"
-BPF_DIR="internal/execlog/bpf"
+BPF_DIR="internal/agent/execlog/bpf"
 
 banner "Building the eBPF execution probe"
 step "Using $RUNTIME"

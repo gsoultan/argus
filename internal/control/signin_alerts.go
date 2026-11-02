@@ -329,7 +329,7 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 		a.log.Error("could not sign out a reported account", "email", rep.Account, "error", err)
 	}
 	detail := "The account holder reported that a sign-in at " +
-		rep.At.UTC().Format(time.RFC3339) + " from " + orUnknown(rep.ClientIP) + " (" + orUnknown(rep.Device) +
+		rep.At.UTC().Format(time.RFC3339) + " from " + orUnknownValue(rep.ClientIP) + " (" + orUnknownValue(rep.Device) +
 		") was not them, using the link in their sign-in email. "
 	if signedOut {
 		detail += "Every session on the account was signed out. "
@@ -415,7 +415,7 @@ func reportFacts(r auth.SignInReport) [][2]string {
 	return f
 }
 
-func orUnknown(s string) string {
+func orUnknownValue(s string) string {
 	if s == "" {
 		return "unknown"
 	}

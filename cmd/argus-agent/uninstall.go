@@ -17,7 +17,7 @@ import (
 	xterm "golang.org/x/term"
 
 	"github.com/gsoultan/argus/internal/agent"
-	"github.com/gsoultan/argus/internal/reporter"
+	"github.com/gsoultan/argus/internal/agent/reporter"
 )
 
 /*
@@ -52,6 +52,7 @@ var secretStateFiles = []string{
 	"heartbeat.json",
 	"posture.json",
 	"facts.json",
+	"applications.json",
 }
 
 func runUninstall(args []string) int {

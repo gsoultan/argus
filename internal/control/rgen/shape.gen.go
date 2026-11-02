@@ -56,6 +56,8 @@ func _assertAgentShape(m m0.Agent) {
 		m.FirstSeenAt,
 		m.ExecTracing,
 		m.ExecReason,
+		m.UpdateStatus,
+		m.Applications,
 	}
 }
 
@@ -78,6 +80,11 @@ func _assertAgentCredentialShape(m m0.AgentCredential) {
 		m.TunnelRttUs,
 		m.UninstallRequestedAt,
 		m.UninstallRequestedBy,
+		m.UpdateID,
+		m.UpdateVersion,
+		m.UpdateNow,
+		m.UpdateRequestedAt,
+		m.UpdateRequestedBy,
 	}
 }
 
@@ -199,6 +206,7 @@ func _assertDatabaseShape(m m0.Database) {
 		m.Port,
 		m.PoolerHost,
 		m.PoolerPort,
+		m.ConfigPath,
 		m.Dbname,
 		m.AdminUser,
 		m.Label,

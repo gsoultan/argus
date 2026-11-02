@@ -132,6 +132,11 @@ type Decision struct {
 	// decision follows. Sent with Refused and Error set, so a shim older than
 	// Pending refuses the login rather than letting it through.
 	Pending bool `json:"pending,omitempty"`
+	// Restarting means the agent is about to restart for an update: the
+	// shim waits for the agent that replaces it and asks again. Sent with
+	// Error set, so a shim older than Restarting treats it as the recorder
+	// being down -- which is what it is about to be.
+	Restarting bool `json:"restarting,omitempty"`
 }
 
 // Reply is anything the daemon sends a shim: a Decision, or an Ack, which has
@@ -145,6 +150,8 @@ type Reply struct {
 	Pending   bool   `json:"pending"`
 	ChainHead string `json:"chain_head"`
 	Error     string `json:"error"`
+	// Restarting: the agent is restarting for an update; try again.
+	Restarting bool `json:"restarting"`
 }
 
 // envelope is used to peek at a message's type before full decoding.

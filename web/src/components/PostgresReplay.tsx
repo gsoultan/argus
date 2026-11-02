@@ -5,8 +5,8 @@ import { IconDatabaseOff } from '@tabler/icons-react'
 import { FS } from '~/theme'
 
 /*
-A database session's replay: the statements, in order, each with what Postgres
-answered. The recording is JSON lines; each line was written before its
+A database session's replay: the statements (or Redis and RabbitMQ commands),
+in order, each with what the engine answered. The recording is JSON lines; each line was written before its
 statement ran and hashes the line before it, so the list is what happened,
 not what the person says happened.
 
@@ -74,7 +74,12 @@ export function parseRecording(text: string): { open?: Line; close?: Line; state
       case 'error':
       case 'cancel': {
         const s = l.req ? byReq.get(l.req) : undefined
-        if (!s) break
+        if (!s) {
+          // A command the agent refused before sending it (Redis and
+          // RabbitMQ) is one line: what was asked and why not.
+          if (l.kind === 'error' && l.sql) statements.push({ seq: l.seq, t: l.t, sql: l.sql, error: l.error })
+          break
+        }
         if (l.kind === 'done') {
           s.tag = l.tag; s.rows = l.rows; s.ms = l.ms; s.truncated = l.truncated
         } else if (l.kind === 'error') {

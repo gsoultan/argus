@@ -46,6 +46,7 @@ import {
 import { FS, SP } from '~/theme'
 import { buildCast } from '~/lib/cast'
 import { downloadText, stamp } from '~/lib/download'
+import { isStatementProtocol } from '~/lib/engines'
 import { notifyOk } from '~/lib/notify'
 import type { KernelExec } from '~/lib/castDecode'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
@@ -157,7 +158,7 @@ function SessionDetail() {
 
   // A database session's recording is statements, not a cast; the terminal
   // decoder never sees it.
-  const isPG = session?.protocol === 'postgres'
+  const isPG = isStatementProtocol(session?.protocol)
   const cast = useMemo(() => {
     if (isPG) return undefined
     if (realCast) return realCast

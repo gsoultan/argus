@@ -186,18 +186,20 @@ func (a *API) handlePostgres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	conn.SetReadLimit(int64(tunnel.MaxSQL) + 4096)
+	conn.SetReadLimit(int64(max(tunnel.MaxSQL, tunnel.MaxCommand)) + 4096)
 	a.relayPostgres(r.Context(), conn, t.Email, db, role, level, a.clientAddr(r))
 }
 
 // pgBrowserMessage is what crosses the websocket as text; row batches cross
-// as binary, exactly as the agent sent them.
+// as binary, exactly as the agent sent them. The same shape carries Redis and
+// RabbitMQ sessions, whose requests and answers are tunnel.StoreRequest and
+// tunnel.StoreAnswer.
 type pgBrowserMessage struct {
 	Type string `json:"type"`
 	// Toward the control plane: a request.
-	Req *tunnel.PGRequest `json:"req,omitempty"`
-	// Toward the browser: an answer.
-	Ans *tunnel.PGAnswer `json:"ans,omitempty"`
+	Req json.RawMessage `json:"req,omitempty"`
+	// Toward the browser: an answer, as the agent sent it.
+	Ans json.RawMessage `json:"ans,omitempty"`
 	// Data is an error's text, or the session id on ready.
 	Data string `json:"data,omitempty"`
 }
@@ -222,12 +224,24 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		_ = conn.Close(websocket.StatusNormalClosure, "refused")
 	}
 
+	pg := db.Engine == "" || db.Engine == tunnel.EnginePostgres
+	protocol := tunnel.EnginePostgres
+	if !pg {
+		protocol = db.Engine
+	}
+	service := tunnel.ServiceForEngine(protocol)
 	g := tunnel.NewGrant(email, db.Hostname, role, client)
-	g.Service = agentPostgresService
+	g.Service = service
 	g.DB = &tunnel.GrantDB{ID: db.ID, Name: db.Name, Host: db.Host, Port: db.Port, Level: level,
 		PoolHost: db.PoolerHost, PoolPort: db.PoolerPort,
 		StatementTimeoutMS: db.Policy.StatementTimeoutS * 1000, IdleTxTimeoutMS: db.Policy.IdleTxTimeoutS * 1000,
 		MaxRows: db.Policy.MaxRows, IdleTimeoutS: db.Policy.IdleTimeoutS, MaxSessionS: db.Policy.MaxSessionS}
+	if !pg {
+		// A Postgres grant names no engine, so an older agent reads it as it
+		// always has; the others say which they are.
+		g.DB.Engine, g.DB.ConfigPath, g.DB.KeysLimit = db.Engine, db.ConfigPath, db.Policy.KeysLimit
+		g.DB.PoolHost, g.DB.PoolPort, g.DB.IdleTxTimeoutMS = "", 0, 0
+	}
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the session grant")
@@ -235,7 +249,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 	}
 	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
 	st, answer, err := a.Tunnels.OpenWith(octx, db.Hostname,
-		tunnel.Header{Service: agentPostgresService, Grant: grant})
+		tunnel.Header{Service: service, Grant: grant})
 	cancel()
 	switch {
 	case errors.Is(err, ErrNoTunnel):
@@ -243,7 +257,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 			"database cannot open through it; check the agent is running and shows as connected under Servers")
 		return
 	case tunnel.IsRefused(err):
-		a.log.Warn("postgres: the agent refused the session", "host", db.Hostname, "database", db.Name,
+		a.log.Warn(protocol+": the agent refused the session", "host", db.Hostname, "database", db.Name,
 			"role", role, "email", email, "error", err)
 		fail("the agent on " + db.Hostname + " refused the session: " + answer.Error)
 		return
@@ -259,7 +273,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		"Database session "+sessionID+" opened on "+db.Name+" at "+level+" as "+role+
 			" through the agent's tunnel; statements are recorded on the server and streamed here.")
 	if err := a.store.UpsertSession(ctx, Session{ID: sessionID, UserEmail: email, AssetHostname: db.Hostname,
-		Principal: role, Protocol: "postgres", Origin: "console", State: "active", StartedAt: started,
+		Principal: role, Protocol: protocol, Origin: "console", State: "active", StartedAt: started,
 		ClientIP: client, Fidelity: "statement", RiskFlags: []string{}, ReportedBy: "control",
 		Kind: "database", DatabaseID: &db.ID}); err != nil {
 		a.log.Error("recording a database session failed", "session", sessionID, "error", err)
@@ -287,7 +301,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		defer stmu.Unlock()
 		return tunnel.WriteFrame(st, typ, p)
 	}
-	ls := &liveSession{tenant: tenantIDOf(ctx), id: sessionID, protocol: "postgres", hub: live.NewHub()}
+	ls := &liveSession{tenant: tenantIDOf(ctx), id: sessionID, protocol: protocol, hub: live.NewHub()}
 	var endOnce sync.Once
 	var endedBy, endReason string
 	ls.terminate = func(by, reason string) bool {
@@ -321,7 +335,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		by, why := endedBy, endReason
 		stmu.Unlock()
 		s := Session{ID: sessionID, UserEmail: email, AssetHostname: db.Hostname, Principal: role,
-			Protocol: "postgres", Origin: "console", State: state, StartedAt: started, EndedAt: &end,
+			Protocol: protocol, Origin: "console", State: state, StartedAt: started, EndedAt: &end,
 			ClientIP: client, Fidelity: "statement", RiskFlags: []string{}, ReportedBy: "control",
 			Kind: "database", DatabaseID: &db.ID, CommandCount: &n}
 		if head != "" {
@@ -369,15 +383,35 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 				continue
 			}
 			var m pgBrowserMessage
-			if json.Unmarshal(data, &m) != nil || m.Req == nil {
+			if json.Unmarshal(data, &m) != nil || len(m.Req) == 0 {
 				continue
 			}
-			if len(m.Req.SQL) > tunnel.MaxSQL {
-				_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: &tunnel.PGAnswer{ID: m.Req.ID,
-					Type: "error", Error: "the statement is too long"}})
-				continue
+			// Decoded into the engine's own request and encoded again, so
+			// only fields the agent knows cross the tunnel.
+			var b []byte
+			if pg {
+				var req tunnel.PGRequest
+				if json.Unmarshal(m.Req, &req) != nil {
+					continue
+				}
+				if len(req.SQL) > tunnel.MaxSQL {
+					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "the statement is too long"})
+					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+					continue
+				}
+				b, _ = json.Marshal(req)
+			} else {
+				var req tunnel.StoreRequest
+				if json.Unmarshal(m.Req, &req) != nil {
+					continue
+				}
+				if len(req.Command) > tunnel.MaxCommand || len(req.Payload) > tunnel.MaxCommand {
+					ans, _ := json.Marshal(tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: "the command is too long"})
+					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+					continue
+				}
+				b, _ = json.Marshal(req)
 			}
-			b, _ := json.Marshal(m.Req)
 			if writeStream(tunnel.FramePGRequest, b) != nil {
 				return
 			}
@@ -401,11 +435,13 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 				return
 			}
 		case tunnel.FramePGAnswer:
-			var ans tunnel.PGAnswer
+			var ans struct {
+				Type string `json:"type"`
+			}
 			if json.Unmarshal(p, &ans) != nil {
 				continue
 			}
-			if sendJSON(pgBrowserMessage{Type: "ans", Ans: &ans}) != nil {
+			if sendJSON(pgBrowserMessage{Type: "ans", Ans: bytes.Clone(p)}) != nil {
 				return
 			}
 			if ans.Type == "closed" {

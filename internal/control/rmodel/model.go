@@ -70,6 +70,9 @@ type Agent struct {
 	FirstSeenAt     time.Time
 	ExecTracing     bool
 	ExecReason      string
+	UpdateStatus    *storm.JSON
+	// Applications is what runs on the host, as its agent last reported.
+	Applications *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -130,6 +133,12 @@ type AgentCredential struct {
 
 	UninstallRequestedAt *time.Time
 	UninstallRequestedBy *string
+
+	UpdateID          *string
+	UpdateVersion     *string
+	UpdateNow         bool
+	UpdateRequestedAt *time.Time
+	UpdateRequestedBy *string
 }
 
 func (m *AgentCredential) Schema(t *storm.Table) {
@@ -137,6 +146,7 @@ func (m *AgentCredential) Schema(t *storm.Table) {
 	t.Col(&m.Token).ConstraintName("agent_credentials_token_id_fkey")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("agent_credentials_secret_hash_key", &m.SecretHash)
+	t.Col(&m.UpdateNow).Default("false")
 	t.Index(storm.Lower(&m.Hostname)).Unique().Where("revoked_at IS NULL").Named("agent_credentials_live_host_idx")
 }
 
@@ -576,6 +586,7 @@ type Database struct {
 	Port       int32
 	PoolerHost string
 	PoolerPort int32
+	ConfigPath string
 	Dbname     string
 	AdminUser  string
 	Label      string
@@ -587,6 +598,7 @@ type Database struct {
 func (m *Database) Schema(t *storm.Table) {
 	t.Col(&m.PoolerHost).Default("''::text")
 	t.Col(&m.PoolerPort).Default("0")
+	t.Col(&m.ConfigPath).Default("''::text")
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.Asset).ConstraintName("databases_asset_id_fkey")
 	t.Col(&m.Asset).OnDelete(storm.Cascade)
@@ -600,12 +612,14 @@ func (m *Database) Schema(t *storm.Table) {
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("databases_asset_id_port_dbname_key", &m.Asset, &m.Port, &m.Dbname)
 	t.CheckNamed("databases_dbname_check", "(length(dbname) >= 1) AND (length(dbname) <= 63)")
-	t.CheckNamed("databases_engine_check", "engine = 'postgres'::text")
+	t.CheckNamed("databases_engine_check",
+		"engine = ANY (ARRAY['postgres'::text, 'redis'::text, 'rabbitmq'::text])")
 	t.CheckNamed("databases_label_check",
 		"label = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("databases_port_check", "(port >= 1) AND (port <= 65535)")
 	t.CheckNamed("databases_pooler_port_check", "(pooler_port >= 0) AND (pooler_port <= 65535)")
 	t.Index(&m.Asset).Named("databases_asset_idx")
+	t.Index(&m.Asset, &m.Port).Unique().Where("engine = 'redis'::text").Named("databases_redis_server_key")
 }
 
 // DatabaseAssignment is table database_assignments: who may open a database

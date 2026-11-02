@@ -1,103 +1,32 @@
-// Package tlsconfig builds the TLS configurations Argus uses.
+// Package tlsconfig builds the TLS configurations both ends of Argus share.
+//
+// This is the client half: what an agent needs to reach the control plane and
+// nothing more. The inbound listener, the control plane's own CA and the
+// certificate renewal that goes with them live in internal/control/pki, so
+// the agent binary carries none of it.
 //
 // Two things it does that a bare tls.LoadX509KeyPair does not:
 //
 //   - Certificates are re-read from disk when they change, so renewal does not
-//     require a restart. Restarting a gateway drops every live session, which
-//     turns a routine 90-day renewal into a scheduled outage — and an outage
-//     people schedule around is one they eventually skip.
-//   - Machine-to-machine links can require a client certificate, so a gateway
-//     or agent proves who it is rather than presenting a shared bearer token
-//     that is identical on every host and never expires.
+//     require a restart. Restarting drops every live session, which turns a
+//     routine 90-day renewal into a scheduled outage — and an outage people
+//     schedule around is one they eventually skip.
+//   - Machine-to-machine links can present a client certificate, so an agent
+//     proves who it is rather than presenting a shared bearer token that is
+//     identical on every host and never expires.
 package tlsconfig
 
 import (
-	"github.com/gsoultan/argus/internal/secrets"
-	"log/slog"
-
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/gsoultan/argus/internal/secrets"
 )
-
-// ServerOptions configures an inbound listener.
-type ServerOptions struct {
-	CertFile string
-	KeyFile  string
-
-	// ClientCAFile enables mutual TLS. When set, a client must present a
-	// certificate signed by this CA. Used for the reporter endpoints, where the
-	// callers are gateways and agents rather than people.
-	ClientCAFile string
-
-	// RequireClientCert makes mTLS mandatory rather than optional. Leave false
-	// when the same listener also serves browsers, which have no client cert.
-	RequireClientCert bool
-
-	// Log receives rotation failures. Without it a refused rotation is visible
-	// only as a per-connection handshake error, which is the quietest possible
-	// way to report that the certificate on disk is being ignored.
-	Log *slog.Logger
-}
-
-// Server builds a *tls.Config for an inbound listener.
-func Server(opts ServerOptions) (*tls.Config, error) {
-	if opts.CertFile == "" || opts.KeyFile == "" {
-		return nil, fmt.Errorf("cert_file and key_file are both required")
-	}
-
-	log := opts.Log
-	if log == nil {
-		log = slog.Default()
-	}
-	r := &reloader{certFile: opts.CertFile, keyFile: opts.KeyFile, log: log}
-	// Load once up front so a bad path or an unreadable key fails at startup
-	// rather than on the first connection, when nobody is watching.
-	if _, err := r.get(); err != nil {
-		return nil, err
-	}
-
-	cfg := &tls.Config{
-		// GetCertificate rather than Certificates: this is what allows a
-		// renewed certificate to be picked up without a restart.
-		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			return r.get()
-		},
-		// 1.2 floor. 1.0 and 1.1 have no place in a product whose entire
-		// purpose is protecting privileged access.
-		MinVersion: tls.VersionTLS12,
-		// For 1.2 only; 1.3 negotiates its own and ignores this. AEAD suites
-		// with forward secrecy, nothing with CBC or RSA key exchange.
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-		},
-	}
-
-	if opts.ClientCAFile != "" {
-		pool, err := loadCAPool(opts.ClientCAFile)
-		if err != nil {
-			return nil, fmt.Errorf("client CA: %w", err)
-		}
-		cfg.ClientCAs = pool
-		if opts.RequireClientCert {
-			cfg.ClientAuth = tls.RequireAndVerifyClientCert
-		} else {
-			// Verify it when offered, but do not demand one — the same listener
-			// serves browsers, which have none.
-			cfg.ClientAuth = tls.VerifyClientCertIfGiven
-		}
-	}
-
-	return cfg, nil
-}
 
 // ClientOptions configures an outbound connection.
 type ClientOptions struct {
@@ -128,7 +57,7 @@ func Client(opts ClientOptions) (*tls.Config, error) {
 	}
 
 	if opts.CAFile != "" {
-		pool, err := loadCAPool(opts.CAFile)
+		pool, err := LoadCAPool(opts.CAFile)
 		if err != nil {
 			return nil, err
 		}
@@ -139,24 +68,24 @@ func Client(opts ClientOptions) (*tls.Config, error) {
 		if opts.CertFile == "" || opts.KeyFile == "" {
 			return nil, fmt.Errorf("client cert and key must be given together")
 		}
-		r := &reloader{certFile: opts.CertFile, keyFile: opts.KeyFile}
-		if _, err := r.get(); err != nil {
+		r := NewReloader(opts.CertFile, opts.KeyFile, nil)
+		if _, err := r.Get(); err != nil {
 			return nil, err
 		}
 		cfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			return r.get()
+			return r.Get()
 		}
 	}
 
 	return cfg, nil
 }
 
-// reloader re-reads a certificate when the files change.
+// Reloader re-reads a certificate pair when the files change.
 //
 // Keyed on modification time rather than a timer: a renewal should take effect
 // on the next connection, and an unchanged certificate should not be parsed
 // on every handshake.
-type reloader struct {
+type Reloader struct {
 	certFile string
 	keyFile  string
 
@@ -173,7 +102,18 @@ type reloader struct {
 	refusedKeyMod time.Time
 }
 
-func (r *reloader) get() (*tls.Certificate, error) {
+// NewReloader watches a certificate and key pair. log receives refused
+// rotations; nil means the default logger.
+func NewReloader(certFile, keyFile string, log *slog.Logger) *Reloader {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Reloader{certFile: certFile, keyFile: keyFile, log: log}
+}
+
+// Get returns the current certificate, re-reading the files when they have
+// changed and keeping the loaded one when the new files cannot be used.
+func (r *Reloader) Get() (*tls.Certificate, error) {
 	certMod, keyMod, err := modTimes(r.certFile, r.keyFile)
 	if err != nil {
 		// Fall back to what is already loaded: a certificate momentarily
@@ -252,7 +192,8 @@ func modTimes(certFile, keyFile string) (time.Time, time.Time, error) {
 	return cs.ModTime(), ks.ModTime(), nil
 }
 
-func loadCAPool(path string) (*x509.CertPool, error) {
+// LoadCAPool reads a PEM bundle into a pool.
+func LoadCAPool(path string) (*x509.CertPool, error) {
 	pem, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read CA %s: %w", path, err)
@@ -262,23 +203,4 @@ func loadCAPool(path string) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("%s contains no usable certificates", path)
 	}
 	return pool, nil
-}
-
-// PeerIdentity returns the common name of a verified client certificate.
-//
-// Used to attribute reporter calls to a specific gateway or agent, so an audit
-// record can say which host reported a session rather than only that something
-// holding the shared token did.
-func PeerIdentity(state *tls.ConnectionState) string {
-	if state == nil || len(state.VerifiedChains) == 0 {
-		return ""
-	}
-	leaf := state.VerifiedChains[0][0]
-	if leaf.Subject.CommonName != "" {
-		return leaf.Subject.CommonName
-	}
-	if len(leaf.DNSNames) > 0 {
-		return leaf.DNSNames[0]
-	}
-	return ""
 }

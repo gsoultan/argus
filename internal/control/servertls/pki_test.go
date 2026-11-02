@@ -1,4 +1,4 @@
-package tlsconfig
+package servertls
 
 import (
 	"encoding/pem"

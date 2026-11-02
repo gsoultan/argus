@@ -16,6 +16,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/confexpand"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,8 +30,6 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"gopkg.in/yaml.v3"
-
-	"github.com/gsoultan/argus/internal/secrets"
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
@@ -58,8 +58,13 @@ type config struct {
 	ReporterToken  string            `yaml:"reporter_token,omitempty"`
 	// AgentStaleAfter is how long an agent may be silent before the fleet is
 	// told. Short on purpose: silence is how a killed agent looks.
-	AgentStaleAfter time.Duration   `yaml:"agent_stale_after,omitempty"`
-	Storage         *storage.Config `yaml:"storage,omitempty"`
+	AgentStaleAfter time.Duration `yaml:"agent_stale_after,omitempty"`
+	// AgentReleasesURL is where agents download a new version from when the
+	// console updates them: <url>/v<version>/<package>, with checksums.txt
+	// beside it. Empty is the project's GitHub releases; set it to a mirror
+	// for servers that cannot reach GitHub.
+	AgentReleasesURL string          `yaml:"agent_releases_url,omitempty"`
+	Storage          *storage.Config `yaml:"storage,omitempty"`
 	// RecordingsDir is where recordings agents ship are kept when there is
 	// no object storage. Empty means /var/lib/argus-control/recordings when
 	// that directory exists, and beside the config file otherwise.
@@ -469,6 +474,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		log.Info("sign-in alerts on", "email", signIns.EmailOn(), "telegram", signIns.TelegramOn(),
 			"admins", api.SignInPolicy.Admins, "person", api.SignInPolicy.Person, "every", api.SignInPolicy.Every)
 	}
+	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
 	if cfg.Console != nil && cfg.Console.Dir != "" {
 		h, err := control.NewConsoleHandler(control.ConsoleConfig{
 			Dir: cfg.Console.Dir, Version: version,
@@ -664,7 +670,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			// they verify one when given and the reporter routes check for it
 			// themselves, exactly as before.
 			requireCert := l.name == "fleet" && cfg.TLS.ClientCAFile != ""
-			l.srv.TLSConfig, err = tlsconfig.Server(tlsconfig.ServerOptions{
+			l.srv.TLSConfig, err = servertls.Server(servertls.ServerOptions{
 				CertFile:          cfg.TLS.CertFile,
 				KeyFile:           cfg.TLS.KeyFile,
 				ClientCAFile:      cfg.TLS.ClientCAFile,
@@ -703,7 +709,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			return errors.New("tunnel.quic_listen needs `tls`: QUIC carries this " +
 				"process's certificate, and there is none configured")
 		}
-		qtls, err := tlsconfig.Server(tlsconfig.ServerOptions{
+		qtls, err := servertls.Server(servertls.ServerOptions{
 			CertFile: cfg.TLS.CertFile, KeyFile: cfg.TLS.KeyFile, Log: log,
 		})
 		if err != nil {
@@ -868,7 +874,7 @@ func loadConfig(path string) (config, error) {
 	}
 	// Resolve ${VAR} and ${file:/path} references before parsing, so the file
 	// on disk never has to contain a live credential.
-	data, err = secrets.Expand(data)
+	data, err = confexpand.Expand(data)
 	if err != nil {
 		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}

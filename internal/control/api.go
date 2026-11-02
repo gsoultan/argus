@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
 	"math"
 	"net/http"
@@ -17,7 +18,6 @@ import (
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
-	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -107,6 +107,14 @@ type API struct {
 	// Console serves the built web console on the console surface. Nil serves
 	// the API alone, as before it existed. See console.go.
 	Console http.Handler
+
+	// Version is this control plane's own, stamped from the release tag:
+	// the version an agent is offered when it is updated from the console.
+	Version string
+	// AgentReleasesURL is where agents download packages to update from;
+	// empty is DefaultAgentReleasesURL. A mirror, for servers that cannot
+	// reach GitHub.
+	AgentReleasesURL string
 
 	// Settings reads and writes the configuration file for the console's
 	// Settings page. Nil leaves the page read-only; see settings_routes.go.
@@ -255,6 +263,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
+	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
+	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh/accounts/{account}", a.putAssetDirectSSHAccount)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
@@ -274,6 +285,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
 	mux.HandleFunc("GET /api/v1/assets/{id}/login-accounts", a.getLoginAccounts)
+	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
 	mux.HandleFunc("GET /api/v1/assets/{id}/team-assignments", a.getTeamAssignments)
@@ -402,7 +414,7 @@ func (a *API) reporter(next func(http.ResponseWriter, *http.Request)) http.Handl
 			return
 		}
 		if a.RequirePeerCert {
-			peer := tlsconfig.PeerIdentity(r.TLS)
+			peer := servertls.PeerIdentity(r.TLS)
 			if peer == "" {
 				a.log.Warn("reporter call without a client certificate",
 					"remote", r.RemoteAddr, "path", r.URL.Path)
@@ -707,6 +719,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// PersonalAccounts is what the agent did with the personal accounts
 		// it was last given. Absent from an agent older than them.
 		PersonalAccounts *[]PersonalAccountState `json:"personal_accounts"`
+		// Update is what the agent says about updating itself. Absent from
+		// an agent too old to update from the console.
+		Update *AgentUpdateStatus `json:"update"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -777,6 +792,12 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		reply["uninstall"] = true
 	} else if uerr != nil {
 		a.log.Error("heartbeat: cannot read whether the agent should uninstall", "error", uerr)
+	}
+	// An update the console asked for, until the agent reports how it went.
+	if err == nil || errors.Is(err, ErrAgentUnmatched) {
+		if u := a.heartbeatUpdate(r.Context(), in.Hostname, in.Update); u != nil {
+			reply["update"] = u
+		}
 	}
 	if errors.Is(err, ErrAgentUnmatched) {
 		a.log.Warn("agent reports from a host the inventory does not know",

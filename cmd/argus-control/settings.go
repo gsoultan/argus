@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gsoultan/argus/internal/control/confexpand"
+	"github.com/gsoultan/argus/internal/control/servertls"
 	"net"
 	"net/url"
 	"os"
@@ -21,9 +23,7 @@ import (
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
 	"github.com/gsoultan/argus/internal/notify"
-	"github.com/gsoultan/argus/internal/secrets"
 	"github.com/gsoultan/argus/internal/storage"
-	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 // settingsBackend is the console's Settings page's view of the
@@ -120,7 +120,7 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 	if t := c.TLS; t != nil {
 		s.TLS.Enabled = true
 		s.TLS.MutualTLS = t.ClientCAFile != ""
-		if sum, err := tlsconfig.Summarize(t.CertFile); err == nil {
+		if sum, err := servertls.Summarize(t.CertFile); err == nil {
 			s.TLS.Certificate = &sum
 		}
 		s.TLS.Managed = filepath.Clean(t.CertFile) == pki.ServerCert() && pki.IssuesServer()
@@ -460,7 +460,7 @@ func validateConfig(c config) error {
 		}
 	}
 	if c.TLS != nil {
-		if _, err := tlsconfig.Server(tlsconfig.ServerOptions{CertFile: c.TLS.CertFile,
+		if _, err := servertls.Server(servertls.ServerOptions{CertFile: c.TLS.CertFile,
 			KeyFile: c.TLS.KeyFile, ClientCAFile: c.TLS.ClientCAFile}); err != nil {
 			return err
 		}
@@ -498,7 +498,7 @@ func resolveConfig(c config, base string) (config, error) {
 	if err != nil {
 		return config{}, err
 	}
-	body, err = secrets.Expand(body)
+	body, err = confexpand.Expand(body)
 	if err != nil {
 		return config{}, err
 	}

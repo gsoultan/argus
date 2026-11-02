@@ -35,12 +35,6 @@ func RunShim(cfg ShimConfig) int {
 	origCmd := os.Getenv("SSH_ORIGINAL_COMMAND")
 	clientAddr, _, _ := strings.Cut(os.Getenv("SSH_CONNECTION"), " ")
 
-	conn, err := net.DialTimeout("unix", cfg.SocketPath, 5*time.Second)
-	if err != nil {
-		return recorderDown(cfg, origCmd, "the host agent is not running")
-	}
-	defer conn.Close()
-
 	hostname, _ := os.Hostname()
 	cols, rows := terminalSize()
 
@@ -60,22 +54,18 @@ func RunShim(cfg ShimConfig) int {
 		UserAuth:     readUserAuth(),
 	}
 
-	enc := json.NewEncoder(conn)
-	if err := enc.Encode(start); err != nil {
-		return recorderDown(cfg, origCmd, "the host agent closed the connection")
+	rc, why := openRecording(cfg.SocketPath, start, restartWait, true)
+	if rc == nil {
+		return recorderDown(cfg, origCmd, why)
 	}
-
-	// One decoder for the life of the connection: the decision and the final
-	// acknowledgement arrive on the same stream, and a second buffered reader
-	// would lose whatever the first had already read past.
-	dec := json.NewDecoder(bufio.NewReader(conn))
-	d := awaitDecision(conn, dec, decisionWait)
+	defer func() { _ = rc.conn.Close() }()
+	d := rc.d
 	if d.pending {
 		// Held for an admin. Said on the person's terminal so the wait is not
 		// mistaken for a hang, and a second answer is required: silence now
 		// is a refusal, not an old daemon.
 		fmt.Fprintf(os.Stderr, "argus: %s.\n", d.reason)
-		if d = awaitDecision(conn, dec, approvalWait); d.pending || d.silent {
+		if d = awaitDecision(rc.conn, rc.dec, approvalWait); d.pending || d.silent {
 			fmt.Fprintln(os.Stderr, "argus: nobody approved this login in time, so it was refused.")
 			return 1
 		}
@@ -93,14 +83,18 @@ func RunShim(cfg ShimConfig) int {
 		// shim decided. Said to the user, because a login that is reported but
 		// not recorded should not look the same as one that is recorded.
 		fmt.Fprintf(os.Stderr, "argus: %s.\n", d.reason)
-		_ = conn.Close()
+		_ = rc.conn.Close()
 		return execSession(cfg, origCmd, nil)
 	}
 
-	stream := newStream(conn, enc)
+	stream := newStream(rc, d.sessionID)
+	stream.socket, stream.start = cfg.SocketPath, start
 	code := execSession(cfg, origCmd, stream)
 
-	stream.close(code)
+	conn, dec := stream.close(code)
+	if conn == nil {
+		return code
+	}
 	// Wait briefly for the daemon's acknowledgement so the chain head reaches
 	// the log before the process exits. Not fatal if it does not arrive.
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -110,6 +104,75 @@ func RunShim(cfg ShimConfig) int {
 			ack.SessionID, ack.ChainHead[:12])
 	}
 	return code
+}
+
+// restartWait is how long a login waits for a collector that is not
+// answering, when nothing says why: long enough for `systemctl restart` (a
+// package upgraded by hand restarts the agent), short enough that a stopped
+// agent sends an administrator to break-glass without a long pause.
+const restartWait = 5 * time.Second
+
+// updateWait is how long a login waits when the agent has said it is
+// restarting for an update. The agent drains before it restarts, so this
+// covers sessions it ends as well as its own start.
+const updateWait = 75 * time.Second
+
+// recording is an open connection to the collector, with its decision.
+type recording struct {
+	conn net.Conn
+	enc  *json.Encoder
+	dec  *json.Decoder
+	d    decision
+}
+
+// openRecording connects to the collector and sends start, waiting for an
+// agent that is restarting rather than reporting it down. It returns nil and
+// why when it gave up.
+//
+// Before this, a login in the second or two of an agent restart found no
+// socket and was refused -- every agent upgrade refused whoever logged in at
+// that moment, and break-glass only covered administrators.
+func openRecording(socket string, start SessionStart, wait time.Duration, say bool) (*recording, string) {
+	deadline := time.Now().Add(wait)
+	extended, announced := false, false
+	why := "the host agent is not running"
+	for {
+		restarting := false
+		if conn, err := net.DialTimeout("unix", socket, 5*time.Second); err == nil {
+			enc := json.NewEncoder(conn)
+			if err := enc.Encode(start); err == nil {
+				// One decoder for the life of the connection: the decision and
+				// the final acknowledgement arrive on the same stream, and a
+				// second buffered reader would lose whatever the first had
+				// already read past.
+				dec := json.NewDecoder(bufio.NewReader(conn))
+				d := awaitDecision(conn, dec, decisionWait)
+				if !d.restarting {
+					return &recording{conn: conn, enc: enc, dec: dec, d: d}, ""
+				}
+				restarting = true
+			} else {
+				why = "the host agent closed the connection"
+			}
+			_ = conn.Close()
+		}
+		if (restarting || updateMarkerSet(socket)) && !extended {
+			extended = true
+			if until := time.Now().Add(updateWait); until.After(deadline) {
+				deadline = until
+			}
+			why = "the host agent did not come back from its update"
+		}
+		if time.Now().After(deadline) {
+			return nil, why
+		}
+		if say && extended && !announced {
+			announced = true
+			fmt.Fprintln(os.Stderr, "argus: this server's Argus agent is restarting for an update; "+
+				"your login continues in a moment.")
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // recorderDown is what a login gets when the recorder cannot take it: the
@@ -200,33 +263,116 @@ func logBreakGlass(why string) {
 //
 // A session writes stdout and stdin from separate goroutines, so encoding must
 // be serialised or the JSON lines interleave and corrupt the recording.
+//
+// The shim belongs to sshd, not to the agent, so an agent restart does not
+// end the login -- it ends the recording. A stream whose collector went away
+// keeps what the session produces and reconnects to the agent that replaces
+// it, which records the rest as a new session naming this one. Before this,
+// the rest of the session went unrecorded, without a word to anyone.
 type stream struct {
 	mu      sync.Mutex
 	enc     *json.Encoder
 	conn    net.Conn
+	dec     *json.Decoder
 	started time.Time
 	dead    bool
+
+	// For resuming: the socket, the session's start, and the recording it
+	// is in now.
+	socket    string
+	start     SessionStart
+	sessionID string
+	resuming  bool
+	// pending holds what the session produced while no collector was
+	// listening, up to pendingMax.
+	pending     []Frame
+	pendingSize int
+	lost        bool
+	closed      bool
+	exitCode    int
 }
 
-func newStream(conn net.Conn, enc *json.Encoder) *stream {
-	return &stream{enc: enc, conn: conn, started: time.Now()}
+// pendingMax bounds what is kept while the agent restarts.
+const pendingMax = 4 << 20
+
+// resumeWait is how long a stream looks for the agent that replaces the one
+// that went away.
+const resumeWait = 2 * time.Minute
+
+func newStream(rc *recording, sessionID string) *stream {
+	return &stream{enc: rc.enc, conn: rc.conn, dec: rc.dec, started: time.Now(), sessionID: sessionID}
 }
 
 func (s *stream) frame(kind string, data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dead {
+	f := Frame{Type: kind, Offset: time.Since(s.started).Seconds(), Data: string(data)}
+	if !s.dead {
+		if err := s.enc.Encode(f); err == nil {
+			return
+		}
+		// The collector went away mid-session. Stop writing to it rather
+		// than blocking the user's terminal on a dead socket; the daemon
+		// seals what it has, and the rest is kept for the next one.
+		s.dead = true
+		if s.socket != "" && !s.resuming {
+			s.resuming = true
+			go s.resume()
+		}
+	}
+	if !s.resuming {
 		return
 	}
-	if err := s.enc.Encode(Frame{
-		Type:   kind,
-		Offset: time.Since(s.started).Seconds(),
-		Data:   string(data),
-	}); err != nil {
-		// The collector went away mid-session. Stop trying rather than
-		// blocking the user's terminal on a dead socket; the daemon will seal
-		// what it has.
-		s.dead = true
+	if s.pendingSize+len(data) > pendingMax {
+		s.lost = true
+		return
+	}
+	s.pending = append(s.pending, f)
+	s.pendingSize += len(data)
+}
+
+// resume finds the collector again and continues the recording there.
+func (s *stream) resume() {
+	start := s.start
+	s.mu.Lock()
+	prev := s.sessionID
+	s.mu.Unlock()
+	start.StartedAt = time.Now().UTC()
+	start.OriginReason = "continues session " + prev + " after the host agent restarted; " +
+		"the session before that is in that recording"
+
+	rc, why := openRecording(s.socket, start, resumeWait, false)
+	if rc != nil && rc.d.pending {
+		rc.d = awaitDecision(rc.conn, rc.dec, approvalWait)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rc == nil || !rc.d.record() {
+		if rc != nil {
+			_ = rc.conn.Close()
+			why = "the agent that came back did not take it"
+		}
+		s.resuming, s.pending = false, nil
+		fmt.Fprintf(os.Stderr, "\r\nargus: WARNING — the rest of this session is NOT being "+
+			"recorded (%s).\r\n", why)
+		logBreakGlass("recording of session " + prev + " stopped part way: " + why)
+		return
+	}
+	s.conn, s.enc, s.dec, s.sessionID = rc.conn, rc.enc, rc.dec, rc.d.sessionID
+	s.started = time.Now()
+	for _, f := range s.pending {
+		f.Offset = 0
+		if err := s.enc.Encode(f); err != nil {
+			break
+		}
+	}
+	if s.lost {
+		_ = s.enc.Encode(Frame{Type: "o", Data: "\r\n[argus: output past 4 MB while the agent " +
+			"restarted was not kept]\r\n"})
+	}
+	s.pending, s.pendingSize, s.dead, s.resuming = nil, 0, false, false
+	if s.closed {
+		_ = s.enc.Encode(SessionEnd{Type: "end", ExitCode: s.exitCode})
 	}
 }
 
@@ -234,13 +380,17 @@ func (s *stream) resize(cols, rows int) {
 	s.frame("r", []byte(fmt.Sprintf("%dx%d", cols, rows)))
 }
 
-func (s *stream) close(exitCode int) {
+// close ends the recording and returns the connection the acknowledgement
+// arrives on, nil when there is none.
+func (s *stream) close(exitCode int) (net.Conn, *json.Decoder) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closed, s.exitCode = true, exitCode
 	if s.dead {
-		return
+		return nil, nil
 	}
 	_ = s.enc.Encode(SessionEnd{Type: "end", ExitCode: exitCode})
+	return s.conn, s.dec
 }
 
 // execSession runs the user's shell or command, teeing through st when non-nil.
