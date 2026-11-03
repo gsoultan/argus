@@ -89,10 +89,13 @@ func RunTunnel(ctx context.Context, cfg TunnelConfig) {
 	}
 
 	var (
-		quicPort    int
-		quicFailed  time.Time
-		backoff     = time.Second
-		lastRefusal string
+		quicPort   int
+		quicFailed time.Time
+		// viaWebSocket remembers that only a WebSocket reached the control
+		// plane, so reconnects skip the upgrade that will not.
+		viaWebSocket bool
+		backoff      = time.Second
+		lastRefusal  string
 	)
 	for ctx.Err() == nil {
 		var (
@@ -114,9 +117,38 @@ func RunTunnel(ctx context.Context, cfg TunnelConfig) {
 		if sess == nil && (err == nil || !tunnel.IsRefused(err)) {
 			dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			var port int
-			sess, port, err = tunnel.DialUpgrade(dctx, cfg.Dial)
+			if viaWebSocket {
+				// Last time only a WebSocket got through: go straight there
+				// rather than spend a round trip on an upgrade a proxy drops.
+				sess, err = tunnel.DialWebSocket(dctx, cfg.Dial)
+				if err != nil && !tunnel.IsRefused(err) {
+					viaWebSocket = false
+				}
+			} else {
+				sess, port, err = tunnel.DialUpgrade(dctx, cfg.Dial)
+				if err != nil && !tunnel.IsRefused(err) {
+					// Something in front of the control plane, such as a
+					// Cloudflare Tunnel, forwards WebSocket upgrades only.
+					wctx, wcancel := context.WithTimeout(ctx, 15*time.Second)
+					ws, werr := tunnel.DialWebSocket(wctx, cfg.Dial)
+					wcancel()
+					switch {
+					case werr == nil:
+						log.Info("tunnel: the HTTPS upgrade did not get through; using a WebSocket",
+							"upgrade_error", err)
+						sess, err, viaWebSocket = ws, nil, true
+					case tunnel.IsRefused(werr):
+						err = werr
+					}
+				}
+			}
 			cancel()
-			if err == nil {
+			if err == nil && viaWebSocket {
+				// The proxy that let only a WebSocket through will not carry
+				// UDP either.
+				quicPort = 0
+			}
+			if err == nil && !viaWebSocket {
 				if port != quicPort && port > 0 {
 					// Offered for the first time, or moved: try it next.
 					quicFailed = time.Time{}

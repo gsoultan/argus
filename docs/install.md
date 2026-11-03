@@ -456,10 +456,14 @@ afterwards.
 The console and its API can be published through a
 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/),
 so people reach `https://argus.example.com` with no inbound port open on the
-control plane. Agents cannot use the same tunnel (see
-[What cannot go through the tunnel](#what-cannot-go-through-the-tunnel)), so
-the control plane gives the two audiences separate listeners: the tunnel gets
-the console, and the fleet keeps reaching `8080` directly.
+control plane. There are two ways to lay it out:
+
+- **Console through the tunnel, agents direct** (below): the tunnel gets the
+  console, and the fleet keeps reaching `8080` directly over QUIC. The fastest
+  for agents, and it needs `8080` reachable from your servers.
+- **Everything through the tunnel** ([Agents through the tunnel too](#agents-through-the-tunnel-too)):
+  no inbound port at all. Agents connect over a WebSocket, as fast as the
+  HTTPS fallback but without QUIC.
 
 ### Control plane
 
@@ -562,6 +566,51 @@ ahead of Argus's own. It does not replace it: Argus still asks for its password
 and second factor and attributes everything to its own account. The console and
 its API are one origin, so one Access application on that hostname covers both.
 
+### Agents through the tunnel too
+
+When every name has to go through Cloudflare, agents can use the same tunnel.
+They try QUIC and the plain HTTPS upgrade first; a Cloudflare Tunnel carries
+neither, so they fall back to a WebSocket, which it does carry, and remember
+that for the next reconnect. Agents that reach the control plane directly are
+unaffected.
+
+Under **Settings**, unlike the layout above:
+
+| Setting | Value |
+|---|---|
+| Addresses > Listen | `:8080`, unchanged |
+| Addresses > Console listen | empty: one listener serves people and agents |
+| Addresses > Console address | `https://argus.example.com` |
+| Addresses > Address servers use | empty: servers use the console address |
+
+and point cloudflared at that one listener, `service: https://localhost:8080`,
+with the same `originRequest` as below. `8080` then needs no inbound rule.
+
+When cloudflared runs on another machine, point it at the control plane's
+address on your network instead (`service: https://10.0.0.10:8080`), keep
+`originServerName` set to a name on the control plane's certificate, allow
+`8080/tcp` from that machine alone, and put its address, not loopback, under
+**Trusted proxies**.
+
+**Add a server** sees Cloudflare's certificate at `argus.example.com`, which a
+public authority signed, so the command it shows has no pin: curl and the agent
+check that certificate the ordinary way, as a browser does. The server's page
+says "Connected over WebSocket".
+
+What this costs is QUIC. Measured, a WebSocket carries what the HTTPS fallback
+does (see [capacity](capacity.md#what-one-tunnel-carries)): typing feels the
+same, and one large download is bounded by the round trip to Cloudflare's edge
+and back rather than straight to the control plane.
+
+Cloudflare refuses a request body over 100 MB (200 MB on Business plans). A
+recording larger than that, which in practice means a long desktop session, is
+refused on the way in; the agent keeps it on the host as it does any recording
+the control plane will not take, and says so in its log.
+
+Gateways reporting with the shared reporter token still need the client
+certificate on their requests, which Cloudflare cannot pass on, so a gateway
+still reaches `8080` directly.
+
 ### What cannot go through the tunnel
 
 A Cloudflare Tunnel carries HTTP and WebSocket traffic from browsers. Two
@@ -569,8 +618,8 @@ things Argus does are not that:
 
 | Traffic | Why it cannot use the tunnel | Instead |
 |---|---|---|
-| Agents' connection to the control plane | On QUIC it is UDP, which a public hostname does not carry. Its HTTPS fallback upgrades the connection to a protocol of its own, and Cloudflare forwards only WebSocket upgrades. | Keep `8080/tcp` and `8080/udp` reachable from your servers: open them only to their addresses, or put them on a private network (WireGuard, Tailscale, a VPC). Cloudflare's private networking (WARP Connector on the servers) can carry both, but is not something we have tested. |
-| Agents' reports | The control plane requires the reporter's client certificate on these routes, and Cloudflare terminates TLS, so the certificate never arrives. | The same direct `listen` address as above. This is why the console and the fleet have separate listeners. |
+| Agents' QUIC | UDP, which a public hostname does not carry. | Agents fall back to a WebSocket through the tunnel ([above](#agents-through-the-tunnel-too)), or keep `8080/tcp` and `8080/udp` reachable from your servers for QUIC: open them only to their addresses, or put them on a private network (WireGuard, Tailscale, a VPC). |
+| Gateways' reports | The shared reporter token also needs the reporter's client certificate, and Cloudflare terminates TLS, so the certificate never arrives. Agents' own per-host credentials do not need it. | The direct `listen` address. |
 
 Terminals, desktops and file transfer are browser traffic to the console, so
 they go through the tunnel like the rest of it.

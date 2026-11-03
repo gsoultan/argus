@@ -104,7 +104,7 @@ type API struct {
 	FleetURL string
 	// PinProbe reports the pin of the key presented at a host:port. Nil dials
 	// it; tests replace it. See enroll_address.go.
-	PinProbe func(ctx context.Context, hostport string) (string, error)
+	PinProbe func(ctx context.Context, hostport string) (PinProbeResult, error)
 	// agentCreds caches per-host agent credential lookups.
 	agentCreds agentCredCache
 

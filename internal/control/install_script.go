@@ -66,7 +66,11 @@ func (a *API) getInstallScript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pin := ""
-	if a.Enroll.Pin != nil {
+	// pin=off: the console found that the address servers use presents a
+	// public certificate other than this process's -- a Cloudflare Tunnel --
+	// so the agent enrols with ordinary verification. Only the person
+	// running the command is affected by it, and they chose the command.
+	if q.Get("pin") != "off" && a.Enroll.Pin != nil {
 		if p, perr := a.Enroll.Pin(); perr == nil && reShellSafe.MatchString(p) {
 			pin = p
 		}
