@@ -24,6 +24,9 @@ import {
   agentUpdate as liveAgentUpdate,
   requestAgentUpdate as liveRequestAgentUpdate,
   cancelAgentUpdate as liveCancelAgentUpdate,
+  agentFleet as liveAgentFleet,
+  updateAgentFleet as liveUpdateAgentFleet,
+  setAgentAutoUpdate as liveSetAgentAutoUpdate,
   databaseBackups as liveDatabaseBackups,
   backupCatalog as liveBackupCatalog,
   startBackup as liveStartBackup,
@@ -639,6 +642,34 @@ export function useCancelAgentUpdate(assetId: string) {
   return useMutation({
     mutationFn: () => liveCancelAgentUpdate(assetId),
     onSettled: () => void qc.invalidateQueries({ queryKey: agentUpdateKey(assetId) }),
+  })
+}
+
+/** Every server's agent. Polled fast while any is updating. */
+export const agentFleetQuery = () =>
+  queryOptions({
+    queryKey: ['agent-fleet'] as const,
+    queryFn: () => liveAgentFleet(),
+    enabled: isConfigured(),
+    refetchInterval: (q) => ((q.state.data?.updating ?? 0) > 0 ? 3_000 : 60_000),
+  })
+
+export function useUpdateAgentFleet() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { hostnames?: string[]; now?: boolean }) => liveUpdateAgentFleet(body),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['agent-fleet'] })
+      void qc.invalidateQueries({ queryKey: ['agent-update'] })
+    },
+  })
+}
+
+export function useSetAgentAutoUpdate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (on: boolean) => liveSetAgentAutoUpdate(on),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['agent-fleet'] }),
   })
 }
 /* ── Database backups ───────────────────────────────────────────────────── */

@@ -31,6 +31,7 @@ type Row struct {
 	UpdatedAt                 time.Time
 	UpdatedBy                 string
 	DirectSsh                 string
+	AgentAutoUpdate           bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -69,7 +70,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 11
+const nCols = 12
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -257,6 +258,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.DirectSsh
 		q.ns++
+	case 11:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.AgentAutoUpdate
+		q.nbo++
 	}
 }
 
@@ -432,6 +440,7 @@ var (
 	UpdatedAt                 = TimeCol{8}
 	UpdatedBy                 = TextCol{9}
 	DirectSsh                 = TextCol{10}
+	AgentAutoUpdate           = BoolCol{11}
 )
 
 // BoolCol addresses a bool column.
@@ -737,6 +746,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 11:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -790,8 +806,10 @@ func (q Query) DirectSshLike(v string) Query         { return q.Where(DirectSsh.
 func (q Query) DirectSshILike(v string) Query        { return q.Where(DirectSsh.ILike(v)) }
 func (q Query) DirectSshIn(v ...string) Query        { return q.Where(DirectSsh.In(v...)) }
 func (q Query) DirectSshNotIn(v ...string) Query     { return q.Where(DirectSsh.NotIn(v...)) }
+func (q Query) AgentAutoUpdateEq(v bool) Query       { return q.Where(AgentAutoUpdate.Eq(v)) }
+func (q Query) AgentAutoUpdateNotEq(v bool) Query    { return q.Where(AgentAutoUpdate.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh" FROM "gateway_policy"`
+const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update" FROM "gateway_policy"`
 const countPrefix = `SELECT count(*) FROM "gateway_policy"`
 const existsPrefix = `SELECT 1 FROM "gateway_policy"`
 const existsSuffix = ` LIMIT 1`
@@ -894,6 +912,12 @@ var orderTable = [nCols][4]string{
 		"\"direct_ssh\" ASC NULLS FIRST",
 		"\"direct_ssh\" DESC NULLS LAST",
 	},
+	{ // agent_auto_update
+		"\"agent_auto_update\"",
+		"\"agent_auto_update\" DESC",
+		"\"agent_auto_update\" ASC NULLS FIRST",
+		"\"agent_auto_update\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -910,6 +934,7 @@ var identTable = [nCols]string{
 	"\"updated_at\"",
 	"\"updated_by\"",
 	"\"direct_ssh\"",
+	"\"agent_auto_update\"",
 }
 
 var lowering = runtime.Lowering{
@@ -942,7 +967,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [11][28]runtime.Frag{
+var fragTable = [12][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1273,6 +1298,36 @@ var fragTable = [11][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // agent_auto_update
+		{}, // opNone
+		{A: "\"agent_auto_update\" = $", B: ""},
+		{A: "\"agent_auto_update\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1440,6 +1495,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.UpdatedAt = runtime.Timestamptz(rv[8])
 	r.UpdatedBy = sl.Str(rv[9])
 	r.DirectSsh = sl.Str(rv[10])
+	r.AgentAutoUpdate = runtime.Bool(rv[11])
 	return nil
 }
 
@@ -1556,6 +1612,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 11:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -1693,7 +1753,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh"`
+const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update"`
 
 const updatePrefix = `UPDATE "gateway_policy" SET `
 const deletePrefix = `DELETE FROM "gateway_policy"`
@@ -1711,9 +1771,10 @@ const (
 	dUpdatedAt                 uint64 = 1 << 7
 	dUpdatedBy                 uint64 = 1 << 8
 	dDirectSsh                 uint64 = 1 << 9
+	dAgentAutoUpdate           uint64 = 1 << 10
 )
 
-const nUpdatable = 10
+const nUpdatable = 11
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1727,6 +1788,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"updated_at\" = $", B: ""},                    // updated_at
 	{A: "\"updated_by\" = $", B: ""},                    // updated_by
 	{A: "\"direct_ssh\" = $", B: ""},                    // direct_ssh
+	{A: "\"agent_auto_update\" = $", B: ""},             // agent_auto_update
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1743,6 +1805,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"updated_at\" = now()", B: ""}, // updated_at = the database's clock
 	{},                                   // updated_by has no server-side form
 	{},                                   // direct_ssh has no server-side form
+	{},                                   // agent_auto_update has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1765,9 +1828,10 @@ const (
 	iUpdatedAt                 uint64 = 1 << 8
 	iUpdatedBy                 uint64 = 1 << 9
 	iDirectSsh                 uint64 = 1 << 10
+	iAgentAutoUpdate           uint64 = 1 << 11
 )
 
-const nInsertable = 11
+const nInsertable = 12
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1782,6 +1846,7 @@ var insCols = [nInsertable]string{
 	"\"updated_at\"",
 	"\"updated_by\"",
 	"\"direct_ssh\"",
+	"\"agent_auto_update\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1790,7 +1855,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"gateway_policy\""
-const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\""
+const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1809,7 +1874,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\""
+const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -1928,6 +1993,12 @@ func (m *Mut) SetDirectSsh(v string) {
 	m.expr &^= dDirectSsh
 }
 
+func (m *Mut) SetAgentAutoUpdate(v bool) {
+	m.row.AgentAutoUpdate = v
+	m.dirty |= dAgentAutoUpdate
+	m.expr &^= dAgentAutoUpdate
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2008,6 +2079,11 @@ func (n *Ins) SetDirectSsh(v string) {
 	n.set |= iDirectSsh
 }
 
+func (n *Ins) SetAgentAutoUpdate(v bool) {
+	n.row.AgentAutoUpdate = v
+	n.set |= iAgentAutoUpdate
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2053,7 +2129,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 10)
+	set := make([]string, 0, 11)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2085,6 +2161,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<10) != 0 {
 			set = append(set, "direct_ssh")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "agent_auto_update")
 		}
 	}
 	return set
@@ -2144,6 +2223,7 @@ var assignFor = map[string]string{
 	"updated_at":                    "\"updated_at\" = EXCLUDED.\"updated_at\"",
 	"updated_by":                    "\"updated_by\" = EXCLUDED.\"updated_by\"",
 	"direct_ssh":                    "\"direct_ssh\" = EXCLUDED.\"direct_ssh\"",
+	"agent_auto_update":             "\"agent_auto_update\" = EXCLUDED.\"agent_auto_update\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2209,6 +2289,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.UpdatedBy)
 		case 10:
 			args = append(args, n.row.DirectSsh)
+		case 11:
+			args = append(args, n.row.AgentAutoUpdate)
 		}
 	}
 	var out Row
@@ -2246,7 +2328,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 12)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2258,6 +2340,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.UpdatedAt)
 	args = append(args, r.UpdatedBy)
 	args = append(args, r.DirectSsh)
+	args = append(args, r.AgentAutoUpdate)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2295,13 +2378,14 @@ var copyCols = []string{
 	"updated_at",
 	"updated_by",
 	"direct_ssh",
+	"agent_auto_update",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [11]any
+	buf  [12]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2330,6 +2414,7 @@ func (s *rowSource) Values() []any {
 	s.buf[8] = &r.UpdatedAt
 	s.buf[9] = &r.UpdatedBy
 	s.buf[10] = &r.DirectSsh
+	s.buf[11] = &r.AgentAutoUpdate
 	return s.buf[:]
 }
 
@@ -2371,8 +2456,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 8
 	mask |= 1 << 9
 	mask |= 1 << 10
+	mask |= 1 << 11
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 11)
+	args := make([]any, 0, 12)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2384,6 +2470,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.UpdatedAt)
 	args = append(args, r.UpdatedBy)
 	args = append(args, r.DirectSsh)
+	args = append(args, r.AgentAutoUpdate)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2439,6 +2526,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.UpdatedBy)
 		case 10:
 			args = append(args, n.row.DirectSsh)
+		case 11:
+			args = append(args, n.row.AgentAutoUpdate)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2505,6 +2594,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.UpdatedBy)
 		case 9:
 			args = append(args, m.row.DirectSsh)
+		case 10:
+			args = append(args, m.row.AgentAutoUpdate)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2607,6 +2698,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.UpdatedBy)
 		case 9:
 			args = append(args, m.row.DirectSsh)
+		case 10:
+			args = append(args, m.row.AgentAutoUpdate)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2775,6 +2868,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.UpdatedBy)
 		case 9:
 			args = append(args, m.row.DirectSsh)
+		case 10:
+			args = append(args, m.row.AgentAutoUpdate)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

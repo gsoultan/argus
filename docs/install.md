@@ -349,10 +349,29 @@ recorded. There is no setting to record fewer.
 
 ### Upgrading the agent
 
-**From the console** (Linux servers with systemd, agent installed from the
-package): open the server under **Servers**. The **Agent** card shows the
-version it runs and offers **Update to** this control plane's version. The
-agent then:
+**Which version is offered.** Every six hours the control plane checks the
+project's GitHub releases for the newest one with agent packages, and offers
+agents whichever is newer: that release or its own version. A release with no
+agent packages (a build that failed) is skipped. If the check fails, for
+example with no internet access, agents are offered the control plane's own
+version. To turn the check off, set `agent_release_check: false` in
+`control.yaml`.
+
+**Every server at once:** the **Agents** card at the top of **Servers** lists
+each server whose agent is behind the newest version, or can't update itself
+and why. **Update N servers** asks every agent that is behind, and **Update**
+on a row asks one. An admin can also turn on **Update agents automatically
+when a new version is out**. With it on, each agent that is behind is asked on
+its next check-in, within 30 seconds, and from then on whenever a new version
+comes out. A version that went back on a server is not tried there again
+automatically. The row says what happened, and **Try again** retries it.
+Turning the setting on or off is audited (`agent.auto_update_on`,
+`agent.auto_update_off`).
+
+**One server, from the console** (Linux servers with systemd, agent installed
+from the package): open the server under **Servers**. The **Agent** card shows
+the version it runs and offers **Update to** the newest version. Either way,
+the agent then:
 
 1. downloads the package for the new version, and the one for the version it
    runs, and checks both against the release's `checksums.txt`;
@@ -375,6 +394,10 @@ same way (`<url>/v<version>/argus-agent_<version>_linux_<arch>.deb` beside
 
 ```yaml
 agent_releases_url: "https://mirror.internal/argus/releases/download"
+# Optional: the mirror's list of releases, in the shape GitHub's releases API
+# answers. Without one, a control plane using a mirror offers agents its own
+# version only.
+agent_releases_api: "https://mirror.internal/argus/releases.json"
 ```
 
 An agent older than this needs one upgrade by hand; after that it updates from

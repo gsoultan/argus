@@ -1517,8 +1517,13 @@ export interface AgentUpdateView {
   agentVersion: string
   agentLastSeenAt: string | null
   activeSessions: number
-  /** This control plane's own release, '' when it was built from source. */
+  /**
+   * The version agents are offered: the newest agent release the console
+   * found, or its own version when that is newer. '' when there is neither.
+   */
   latest: string
+  /** This control plane's own release, '' when it was built from source. */
+  consoleVersion: string
   /** Null from an agent too old to update itself from the console. */
   status: AgentUpdateStatus | null
   request: { id: string; version: string; now: boolean; requestedAt: string; requestedBy: string } | null
@@ -1534,6 +1539,72 @@ export async function requestAgentUpdate(assetId: string, body: { version?: stri
 
 export async function cancelAgentUpdate(assetId: string): Promise<unknown> {
   return send('DELETE', `/api/v1/assets/${encodeURIComponent(assetId)}/agent/update`)
+}
+
+/** Where one server's agent stands against the version agents are offered. */
+export type AgentFleetState = 'current' | 'behind' | 'updating' | 'held' | 'cannot' | 'too_old' | 'not_reported'
+
+export interface AgentFleetRow {
+  assetId: string
+  hostname: string
+  agentVersion: string
+  agentLastSeenAt: string | null
+  activeSessions: number
+  status: AgentUpdateStatus | null
+  request: AgentUpdateView['request']
+  state: AgentFleetState
+  /** What keeps a held or cannot agent where it is. */
+  why?: string
+}
+
+/** Every server's agent, for the Servers page. */
+export interface AgentFleetView {
+  latest: string
+  consoleVersion: string
+  /** The newest release found on GitHub; null when none was, or it does not look. */
+  release: { version: string; publishedAt: string; page: string } | null
+  /** When the console last looked for releases; null when it does not look. */
+  checkedAt: string | null
+  checkFailure?: string
+  /** Whether agents update on their own when a newer version is out. */
+  automatic: boolean
+  servers: AgentFleetRow[]
+  behind: number
+  updating: number
+}
+
+export async function agentFleet(): Promise<AgentFleetView> {
+  return get('/api/v1/agents/updates')
+}
+
+export interface AgentFleetUpdateResult {
+  version: string
+  asked: string[]
+  skipped: { hostname: string; why: string }[]
+}
+
+/** Asks every agent that is behind, or the hostnames named, to update. */
+export async function updateAgentFleet(body: { hostnames?: string[]; now?: boolean }): Promise<AgentFleetUpdateResult> {
+  return send<AgentFleetUpdateResult>('POST', '/api/v1/agents/updates', body)
+}
+
+export async function setAgentAutoUpdate(on: boolean): Promise<unknown> {
+  return send('PUT', '/api/v1/agents/updates/automatic', { on })
+}
+
+/** Whether release a comes before b: 1.9.0 before 1.10.0, 1.2.0-rc.1 before 1.2.0. */
+export function versionBefore(a: string, b: string): boolean {
+  const parse = (v: string) => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(v)
+    return m ? { n: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? '' } : null
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  if (!pa || !pb) return !pa && !!pb
+  for (let i = 0; i < 3; i++) if (pa.n[i] !== pb.n[i]) return pa.n[i]! < pb.n[i]!
+  if (pa.pre === pb.pre || pa.pre === '') return false
+  if (pb.pre === '') return true
+  return pa.pre < pb.pre
 }
 
 /* ── Database backups ───────────────────────────────────────────────────── */

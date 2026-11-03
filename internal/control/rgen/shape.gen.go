@@ -403,6 +403,7 @@ func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
 		m.UpdatedAt,
 		m.UpdatedBy,
 		m.DirectSsh,
+		m.AgentAutoUpdate,
 	}
 }
 

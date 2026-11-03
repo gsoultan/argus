@@ -124,6 +124,9 @@ type API struct {
 	// empty is DefaultAgentReleasesURL. A mirror, for servers that cannot
 	// reach GitHub.
 	AgentReleasesURL string
+	// Releases finds the newest agent release, so the console can offer a
+	// version newer than its own. Nil offers only Version.
+	Releases *ReleaseWatcher
 
 	// Settings reads and writes the configuration file for the console's
 	// Settings page. Nil leaves the page read-only; see settings_routes.go.
@@ -314,6 +317,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)
+	mux.HandleFunc("GET /api/v1/agents/updates", a.getAgentFleet)
+	mux.HandleFunc("POST /api/v1/agents/updates", a.postAgentFleetUpdate)
+	mux.HandleFunc("PUT /api/v1/agents/updates/automatic", a.putAgentAutoUpdate)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh/accounts/{account}", a.putAssetDirectSSHAccount)
 	mux.HandleFunc("GET /api/v1/users", a.getUsers)
 	mux.HandleFunc("POST /api/v1/users", a.postAccount)
@@ -875,7 +881,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	// An update the console asked for, until the agent reports how it went.
 	if err == nil || errors.Is(err, ErrAgentUnmatched) {
-		if u := a.heartbeatUpdate(r.Context(), in.Hostname, in.Update); u != nil {
+		if u := a.heartbeatUpdate(r.Context(), in.Hostname, in.Version, in.Update); u != nil {
 			reply["update"] = u
 		}
 	}
