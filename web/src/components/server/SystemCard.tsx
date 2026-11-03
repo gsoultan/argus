@@ -251,7 +251,7 @@ function DiskMeter({ disk: d }: { disk: ServerDisk }) {
   )
 }
 
-function Meter({ label, value, pct, sub, tone, testId }: {
+export function Meter({ label, value, pct, sub, tone, testId }: {
   label: React.ReactNode
   value: React.ReactNode
   pct: number

@@ -7,7 +7,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
+  IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
   IconNetwork, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
@@ -21,6 +21,7 @@ import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/dire
 import { guard } from '~/lib/guard'
 import { EnrolledAgents } from '~/components/EnrolledAgents'
 import { Organizations } from '~/components/Organizations'
+import { ControlStatusSection, useStatusProblems } from '~/components/ControlStatus'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
@@ -65,7 +66,7 @@ const ALL_FIELDS = RECORDING_POLICY
 const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
-type PlatformSectionId = 'organizations'
+type PlatformSectionId = 'organizations' | 'status'
 type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId
 
 interface NavItem {
@@ -73,6 +74,8 @@ interface NavItem {
   label: string
   icon: ComponentType<IconProps>
   changed: boolean
+  /** A count to show beside it, such as Status's problems. */
+  count?: { n: number; color: string }
 }
 
 const POLICY_SECTIONS: { id: PolicySectionId; label: string; icon: ComponentType<IconProps> }[] = [
@@ -140,7 +143,19 @@ function Settings() {
   const platformItems: NavItem[] = me?.platformOwner && isConfigured()
     ? [{ id: 'organizations', label: 'Organizations', icon: IconBuilding, changed: false }]
     : []
-  const items = [...policyItems, ...controlItems, ...platformItems]
+  // Status: argus-control's own health. The same audience as Organizations,
+  // because the host and the database it describes are every organization's.
+  const showStatus = Boolean(me?.platformOwner) && isConfigured()
+  const problems = useStatusProblems(showStatus)
+  const statusItems: NavItem[] = showStatus
+    ? [{
+        id: 'status', label: 'Status', icon: IconActivityHeartbeat, changed: false,
+        ...(problems && problems.length > 0
+          ? { count: { n: problems.length, color: problems.some((p) => p.severity === 'critical') ? 'rose' : 'amber' } }
+          : {}),
+      }]
+    : []
+  const items = [...statusItems, ...policyItems, ...controlItems, ...platformItems]
   const active: SectionId = items.find((i) => i.id === section)?.id ?? 'access'
   const open = (id: string | null) => {
     if (id) void navigate({ to: '/settings', search: { section: id }, replace: true })
@@ -236,6 +251,9 @@ function Settings() {
             further down a long page than the screen. */}
         <Group align="flex-start" gap="lg" wrap="nowrap">
           <Box component="nav" aria-label="Settings sections" w={210} visibleFrom="md" style={{ flexShrink: 0 }}>
+            {statusItems.length > 0 && (
+              <SectionNav title="Control plane" items={statusItems} active={active} onOpen={open} />
+            )}
             <SectionNav title="Sessions" items={policyItems} active={active} onOpen={open} />
             {controlItems.length > 0 && (
               <SectionNav title="Advanced" items={controlItems} active={active} onOpen={open} />
@@ -253,6 +271,9 @@ function Settings() {
               value={active}
               onChange={open}
               data={[
+                ...(statusItems.length > 0
+                  ? [{ group: 'Control plane', items: statusItems.map(navOption) }]
+                  : []),
                 { group: 'Sessions', items: policyItems.map(navOption) },
                 ...(controlItems.length > 0
                   ? [{ group: 'Advanced', items: controlItems.map(navOption) }]
@@ -321,6 +342,8 @@ function Settings() {
             )}
 
             {active === 'organizations' && platformItems.length > 0 && <Organizations />}
+
+            {active === 'status' && statusItems.length > 0 && <ControlStatusSection onOpen={open} />}
 
             {showControl && controlItems.some((c) => c.id === active) && (
               <>
@@ -432,7 +455,11 @@ function SectionNav({ title, items, active, onOpen }: {
           active={i.id === active}
           variant="light"
           leftSection={<i.icon size={15} />}
-          rightSection={i.changed ? <Badge size="xs" color="amber" variant="outline">unsaved</Badge> : null}
+          rightSection={i.changed
+            ? <Badge size="xs" color="amber" variant="outline">unsaved</Badge>
+            : i.count
+              ? <Badge size="xs" color={i.count.color} variant="light" aria-label={`${i.count.n} problems`}>{i.count.n}</Badge>
+              : null}
           onClick={() => onOpen(i.id)}
           aria-current={i.id === active ? 'page' : undefined}
           style={{ borderRadius: 'var(--mantine-radius-sm)' }}

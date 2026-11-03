@@ -41,6 +41,7 @@ enforces all of it and CI runs it by name.
 | [server-system](server-system.md) | The System card: OS, processor, memory, disks, load, and how fresh they are |
 | [console-alerts](console-alerts.md) | The bell in the header: who sees which alert, the SSE stream, per-person settings |
 | [multi-tenant](multi-tenant.md) | Organizations sharing one control plane: schema per organization, `scope`, per-organization keys, what is still platform-wide |
+| [control-status](control-status.md) | Settings › Status: argus-control's own health, where each number comes from, what counts as a problem |
 
 ## Standing rules for this repo
 

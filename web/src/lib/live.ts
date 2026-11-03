@@ -1751,6 +1751,82 @@ export async function setOrganizationDisabled(id: string, disabled: boolean): Pr
     `/api/v1/platform/organizations/${encodeURIComponent(id)}/${disabled ? 'disable' : 'enable'}`, {})
 }
 
+/* ── Control plane status ───────────────────────────────────────────────── */
+
+/** How argus-control itself is doing. Platform owners only. */
+export interface ControlStatus {
+  version: string
+  hostname: string
+  startedAt: string
+  uptimeSeconds: number
+  checkedAt: string
+  machine: {
+    os?: string
+    cores: number
+    load1?: number
+    /** Nil on the first look, which has nothing to compare against. */
+    cpuBusy?: number
+    memTotal?: number
+    memAvailable?: number
+    disks: { path: string; use: string; total: number; avail: number }[]
+  }
+  process: { memoryBytes: number; goroutines: number; tunnels: number; goVersion: string }
+  database: {
+    ok: boolean
+    error?: string
+    latencyMs: number
+    version?: string
+    name?: string
+    inUse: number
+    open: number
+    max: number
+    sizeBytes?: number
+    /** The largest tables; a row with no name is everything else. */
+    tables: { name: string; bytes: number }[]
+    measuredAt?: string
+  }
+  /** Absent when the database could not be asked. */
+  fleet?: {
+    organizations: number
+    agentsEnrolled: number
+    agentsConnected: number
+    sessionsActive: number
+    sessionsSilent: number
+    sessionsToday: number
+    measuredAt: string
+  }
+  recordings: {
+    where: '' | 'bucket' | 'directory'
+    location?: string
+    count: number
+    bytes: number
+    weekBytes: number
+    oldest?: string
+    measuredAt?: string
+    lastUpload?: string
+    lastFailure?: string
+    lastUploadError?: string
+  }
+  certificate?: { subject: string; notAfter: string; daysLeft: number; managed: boolean }
+  errors: {
+    lastHour: number
+    sinceStart: number
+    recent: { at: string; op: string; message: string; count: number }[]
+  }
+  problems: StatusProblem[]
+}
+
+export interface StatusProblem {
+  severity: 'critical' | 'warning'
+  area: 'database' | 'disk' | 'memory' | 'certificate' | 'recordings' | 'errors'
+  title: string
+  detail?: string
+}
+
+export async function controlStatus(): Promise<ControlStatus> {
+  return get<ControlStatus>('/api/v1/platform/status')
+}
+
 /* ── Console alerts (the bell) ──────────────────────────────────────────── */
 
 export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server'

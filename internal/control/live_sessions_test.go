@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,6 +37,32 @@ func (e *tunnelEnv) openWatch(t *testing.T, id, ticket string) (*websocket.Conn,
 		HTTPClient: e.srv.Client(),
 		HTTPHeader: http.Header{"Origin": {e.srv.URL}},
 	})
+}
+
+// watchRefusal opens a view that should be refused and returns why it was:
+// the first message, which must be an error, with no output before it.
+func (e *tunnelEnv) watchRefusal(t *testing.T, id, ticket string) string {
+	t.Helper()
+	c, _, err := e.openWatch(t, id, ticket)
+	if err != nil {
+		t.Fatalf("the view did not open to say why it was refused: %v", err)
+	}
+	defer c.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	typ, data, err := c.Read(ctx)
+	if err != nil || typ != websocket.MessageText {
+		t.Fatalf("no refusal: %v", err)
+	}
+	var m terminalMessage
+	_ = json.Unmarshal(data, &m)
+	if m.Type != "error" {
+		t.Fatalf("first message = %+v, want an error", m)
+	}
+	if _, _, err := c.Read(ctx); err == nil {
+		t.Error("the refused view stayed open")
+	}
+	return m.Data
 }
 
 // wsEvent is one message off a socket.
@@ -132,14 +159,15 @@ func TestAViewerSeesTheSessionAndAnAdminCanEndIt(t *testing.T) {
 
 	// A ticket for another session, or for ending rather than watching,
 	// does not open this view.
+	// Each is told why, in words, rather than seeing a handshake fail.
 	wrong, _ := signer.IssueSessionScopedTicket("aud@example.com", auth.ScopeShadow,
 		"00000000-0000-0000-0000-000000000000", time.Minute)
-	if _, resp, err := e.openWatch(t, id, wrong); err == nil || resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("a ticket for another session: %v", err)
+	if why := e.watchRefusal(t, id, wrong); !strings.Contains(why, "not authorised") {
+		t.Errorf("a ticket for another session: %q", why)
 	}
 	kill, _ := signer.IssueSessionScopedTicket("aud@example.com", auth.ScopeTerminate, id, time.Minute)
-	if _, resp, err := e.openWatch(t, id, kill); err == nil || resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("a terminate ticket opened a view: %v", err)
+	if why := e.watchRefusal(t, id, kill); !strings.Contains(why, "not authorised") {
+		t.Errorf("a terminate ticket opened a view: %q", why)
 	}
 
 	watch, _ := signer.IssueSessionScopedTicket("aud@example.com", auth.ScopeShadow, id, time.Minute)
@@ -211,5 +239,130 @@ func TestAViewerSeesTheSessionAndAnAdminCanEndIt(t *testing.T) {
 	kill, _ = signer.IssueSessionScopedTicket("admin@example.com", auth.ScopeTerminate, id, time.Minute)
 	if code := end(kill, `{"reason":"again"}`); code != http.StatusNotFound {
 		t.Errorf("ending an ended session: %d", code)
+	}
+}
+
+// A session this replica is not relaying -- a login through sshd, which
+// never passes through the control plane, or a browser terminal another
+// replica holds -- is shown from its server's own recording.
+func TestASessionNotRelayedHereIsWatchedThroughItsAgent(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("live")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	e.runTerminalAgent(t, cred, host, t.TempDir())
+
+	ticket, _ := signer.IssueTicket("ana@example.com", host, me(t), time.Minute)
+	c, _, err := e.openTerminal(t, host, me(t), ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	cev := pump(c)
+	_, msgs := readUntil(cev, "", "ready", 10*time.Second)
+	var id string
+	for _, m := range msgs {
+		if m.Type == "ready" {
+			id = m.Session
+		}
+	}
+	if id == "" {
+		t.Fatalf("no ready: %+v", msgs)
+	}
+	send(t, c, terminalMessage{Type: "resize", Cols: 100, Rows: 30})
+	send(t, c, terminalMessage{Type: "input", Data: "echo before-$((1+1))\n"})
+	readUntil(cev, "before-2", "closed", 10*time.Second)
+	if _, err := e.store.RecordSession(context.Background(), Session{ID: id,
+		UserEmail: "ana@example.com", AssetHostname: host, Principal: me(t), Protocol: "ssh",
+		Origin: "console", State: "active", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	// As another replica sees it: not in this one's registry.
+	e.api.live.mu.Lock()
+	ls := e.api.live.m[tunnelKey(DefaultTenantID, id)]
+	delete(e.api.live.m, tunnelKey(DefaultTenantID, id))
+	e.api.live.mu.Unlock()
+	if ls == nil {
+		t.Fatal("the session was not registered")
+	}
+
+	watch, _ := signer.IssueSessionScopedTicket("aud@example.com", auth.ScopeShadow, id, time.Minute)
+	v, _, err := e.openWatch(t, id, watch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.CloseNow()
+	vev := pump(v)
+	send(t, c, terminalMessage{Type: "input", Data: "echo after-$((20+1))\n"})
+	seen, vmsgs := readUntil(vev, "after-21", "closed", 10*time.Second)
+	if !strings.Contains(seen, "before-2") || !strings.Contains(seen, "after-21") {
+		t.Fatalf("the viewer did not see the session: %q %+v", seen, vmsgs)
+	}
+	ready, sized := false, false
+	for _, m := range vmsgs {
+		ready = ready || (m.Type == "ready" && m.Session == id)
+		sized = sized || (m.Type == "resize" && m.Data == "100x30")
+	}
+	if !ready || !sized {
+		t.Errorf("the viewer was not told it was watching, at 100x30: %+v", vmsgs)
+	}
+
+	// The session ending ends the view, saying so.
+	send(t, c, terminalMessage{Type: "input", Data: "exit\n"})
+	_, vmsgs = readUntil(vev, "", "closed", 10*time.Second)
+	if len(vmsgs) == 0 || vmsgs[len(vmsgs)-1].Type != "closed" {
+		t.Errorf("the view did not say the session ended: %+v", vmsgs)
+	}
+
+	// Ended, the session has nothing to show, and says that in words.
+	if _, err := e.store.RecordSession(context.Background(), Session{ID: id,
+		UserEmail: "ana@example.com", AssetHostname: host, Principal: me(t), Protocol: "ssh",
+		Origin: "console", State: "closed", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := signer.IssueSessionScopedTicket("aud@example.com", auth.ScopeShadow, id, time.Minute)
+	w, _, err := e.openWatch(t, id, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.CloseNow()
+	_, wmsgs := readUntil(pump(w), "", "closed", 10*time.Second)
+	if len(wmsgs) == 0 || wmsgs[0].Type != "closed" {
+		t.Errorf("an ended session: %+v", wmsgs)
+	}
+}
+
+// A server whose agent is not connected says so, rather than failing the
+// handshake.
+func TestWatchingASessionWhoseAgentIsGoneSaysWhy(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("gone")
+	id := fmt.Sprintf("%032x", time.Now().UnixNano())
+	if _, err := e.store.RecordSession(context.Background(), Session{ID: id,
+		UserEmail: "ops@db-01", AssetHostname: host, Principal: "ops", Protocol: "ssh",
+		Origin: "direct", State: "active", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	watch, _ := signer.IssueSessionScopedTicket("aud@example.com", auth.ScopeShadow, id, time.Minute)
+	if why := e.watchRefusal(t, id, watch); !strings.Contains(why, "not connected") {
+		t.Errorf("refusal = %q", why)
+	}
+
+	// And a direct login cannot be ended from here; it says that too.
+	kill, _ := signer.IssueSessionScopedTicket("admin@example.com", auth.ScopeTerminate, id, time.Minute)
+	r, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/api/v1/sessions/"+id+"/terminate",
+		strings.NewReader(`{"reason":"why not"}`))
+	r.Header.Set("Authorization", "Bearer "+kill)
+	resp, err := e.srv.Client().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct{ Error string }
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(body.Error, "direct SSH login") {
+		t.Errorf("terminate: %d %q", resp.StatusCode, body.Error)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/live"
 	"github.com/gsoultan/argus/internal/rdp"
+	"github.com/gsoultan/argus/internal/tunnel"
 	"github.com/gsoultan/argus/internal/wskeep"
 )
 
@@ -132,26 +134,18 @@ const notRelayedHere = "this session is not running through this control plane: 
 // handleWatch serves GET /api/v1/sessions/{id}/watch: a read-only view of a
 // session in flight, on a shadow ticket from handleShadowTicket, which
 // decided who may watch whom and audited it.
+//
+// The socket is opened before the ticket is checked, so that a refusal
+// reaches the person as a sentence. A browser is told nothing about an HTTP
+// answer to a WebSocket handshake but that it failed, and every refusal --
+// a spent ticket, a session that just ended, an agent that is not connected
+// -- read in the console as the same bare "connection failed". Nothing but
+// the refusal is sent until the ticket has been redeemed.
 func (a *API) handleWatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	token := r.URL.Query().Get("ticket")
 	if token == "" {
 		token = bearer(r)
-	}
-	if token == "" || a.signer == nil {
-		writeErr(w, http.StatusUnauthorized, "no ticket supplied")
-		return
-	}
-	t, err := a.signerFor(r).RedeemSessionScoped(r.Context(), token, auth.ScopeShadow, id)
-	if err != nil {
-		a.log.Warn("watch refused", "session", id, "error", err)
-		writeErr(w, http.StatusUnauthorized, "unauthorized: "+err.Error())
-		return
-	}
-	sess, ok := a.live.get(r.Context(), id)
-	if !ok {
-		writeErr(w, http.StatusNotFound, notRelayedHere)
-		return
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: originPatterns(a.AllowedOrigins),
@@ -160,11 +154,184 @@ func (a *API) handleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	go wskeep.Run(r.Context(), conn)
+	ctx := r.Context()
 
-	a.log.Info("watching a session", "session", id, "viewer", t.Email, "protocol", sess.protocol)
-	a.runWatch(r.Context(), conn, sess)
-	a.log.Info("stopped watching a session", "session", id, "viewer", t.Email)
+	if token == "" || a.signer == nil {
+		refuseWatch(ctx, conn, "no ticket was supplied to watch this session")
+		return
+	}
+	t, err := a.signerFor(r).RedeemSessionScoped(ctx, token, auth.ScopeShadow, id)
+	if err != nil {
+		a.log.Warn("watch refused", "session", id, "error", err)
+		refuseWatch(ctx, conn, "not authorised to watch this session: "+err.Error())
+		return
+	}
+	go wskeep.Run(ctx, conn)
+
+	if sess, ok := a.live.get(ctx, id); ok {
+		a.log.Info("watching a session", "session", id, "viewer", t.Email, "protocol", sess.protocol)
+		a.runWatch(ctx, conn, sess)
+		a.log.Info("stopped watching a session", "session", id, "viewer", t.Email)
+		return
+	}
+	// Not relayed here: a login through sshd, which never passes through
+	// the control plane, or a browser session another replica relays. The
+	// server's agent records both, and shows them from its recording.
+	a.watchThroughAgent(ctx, conn, id, t.Email, a.clientAddr(r))
+}
+
+// refuseWatch tells the viewer why the view cannot open, and closes it.
+func refuseWatch(ctx context.Context, conn *websocket.Conn, why string) {
+	b, _ := json.Marshal(terminalMessage{Type: "error", Data: why})
+	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	_ = conn.Write(wctx, websocket.MessageText, b)
+	cancel()
+	_ = conn.Close(websocket.StatusNormalClosure, "refused")
+}
+
+// watchOpenWait bounds how long the agent has to answer a watch.
+const watchOpenWait = 15 * time.Second
+
+// agentWatchService is the agent's name for it; see agent.WatchService.
+const agentWatchService = "watch"
+
+// watchThroughAgent shows a session from its server's own recording.
+//
+// The grant names the session, and the person, host and account it was
+// recorded for, signed here after the shadow ticket was redeemed; the agent
+// checks it as it checks every grant and does not take the session id on
+// trust.
+func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
+	id, email, client string) {
+
+	subject, err := a.store.Session(ctx, id)
+	switch {
+	case err != nil:
+		a.log.Error("watch: load session", "session", id, "error", err)
+		refuseWatch(ctx, conn, "the session could not be loaded; try again")
+		return
+	case subject == nil:
+		refuseWatch(ctx, conn, "no such session")
+		return
+	case subject.State != "active":
+		closedWatch(ctx, conn, "the session ended")
+		return
+	case subject.Protocol == "rdp":
+		// A desktop's frames are relayed, not recorded as a screen: only
+		// the replica relaying it can show it.
+		refuseWatch(ctx, conn, notRelayedHere)
+		return
+	case a.Tunnels == nil || a.Tunnels.GrantKey == nil:
+		refuseWatch(ctx, conn, "this control plane cannot reach agents to watch a session: "+
+			"set signing_secret")
+		return
+	}
+	host := subject.AssetHostname
+
+	g := tunnel.NewGrant(email, host, subject.Principal, client)
+	g.Service, g.Session = agentWatchService, id
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
+	if err != nil {
+		refuseWatch(ctx, conn, "could not sign the watch grant")
+		return
+	}
+	octx, cancel := context.WithTimeout(ctx, watchOpenWait)
+	st, answer, err := a.Tunnels.OpenWith(octx, host,
+		tunnel.Header{Service: agentWatchService, Grant: grant})
+	cancel()
+	switch {
+	case errors.Is(err, ErrNoTunnel):
+		refuseWatch(ctx, conn, "the agent on "+host+" is not connected to this control plane, "+
+			"so the session cannot be watched through it; check the agent is running and "+
+			"shows as connected under Servers")
+		return
+	case tunnel.IsRefused(err):
+		why := answer.Error
+		if strings.Contains(why, "unknown service") {
+			why = "its agent is older than this control plane and cannot show a session " +
+				"live; update the agent from the server's page"
+		}
+		a.log.Warn("watch: the agent refused", "session", id, "host", host, "error", err)
+		refuseWatch(ctx, conn, "the agent on "+host+" refused: "+why)
+		return
+	case err != nil:
+		refuseWatch(ctx, conn, "could not reach the agent on "+host+": "+err.Error())
+		return
+	}
+	defer st.Close()
+
+	a.log.Info("watching a session through its agent", "session", id, "viewer", email, "host", host)
+	defer a.log.Info("stopped watching a session", "session", id, "viewer", email)
+
+	// Nothing a viewer sends goes anywhere; reading notices that they left,
+	// and closing the stream then tells the agent.
+	ctx, viewerLeft := context.WithCancel(ctx)
+	defer viewerLeft()
+	go func() {
+		defer viewerLeft()
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				return
+			}
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		_ = st.Close()
+	}()
+
+	write := func(typ websocket.MessageType, b []byte) error {
+		wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		return conn.Write(wctx, typ, b)
+	}
+	writeJSON := func(m terminalMessage) error {
+		b, _ := json.Marshal(m)
+		return write(websocket.MessageText, b)
+	}
+	if writeJSON(terminalMessage{Type: "ready", Session: id}) != nil {
+		return
+	}
+	fr := tunnel.NewFrameReader(st)
+	for {
+		typ, p, err := fr.Next()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			// The agent let this view go -- it fell behind -- or the
+			// connection to it dropped. Either way the session may well be
+			// running still.
+			_ = writeJSON(terminalMessage{Type: "error",
+				Data: "this view lost the session's stream and was closed; open it again to keep watching"})
+			_ = conn.Close(websocket.StatusTryAgainLater, "behind")
+			return
+		}
+		switch typ {
+		case tunnel.FrameOutput:
+			if write(websocket.MessageBinary, p) != nil {
+				return
+			}
+		case tunnel.FrameResize:
+			if cols, rows, ok := tunnel.ParseResize(p); ok {
+				if writeJSON(terminalMessage{Type: "resize", Data: sizeString(cols, rows)}) != nil {
+					return
+				}
+			}
+		case tunnel.FrameExit:
+			closedWatch(ctx, conn, "the session ended")
+			return
+		}
+	}
+}
+
+// closedWatch tells the viewer the session is over.
+func closedWatch(ctx context.Context, conn *websocket.Conn, why string) {
+	b, _ := json.Marshal(terminalMessage{Type: "closed", Data: why})
+	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	_ = conn.Write(wctx, websocket.MessageText, b)
+	cancel()
+	_ = conn.Close(websocket.StatusNormalClosure, "ended")
 }
 
 func (a *API) runWatch(ctx context.Context, conn *websocket.Conn, sess *liveSession) {
@@ -292,7 +459,19 @@ func (a *API) handleTerminate(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, ok := a.live.get(r.Context(), id)
 	if !ok {
-		writeErr(w, http.StatusNotFound, notRelayedHere)
+		why := notRelayedHere
+		if a.store == nil {
+			writeErr(w, http.StatusNotFound, why)
+			return
+		}
+		if subject, err := a.store.Session(r.Context(), id); err == nil && subject != nil &&
+			subject.Origin == "direct" && subject.State == "active" {
+			// Shown running, and watchable, since its agent reports it while
+			// it runs; ending it is still the server's to do.
+			why = "this is a direct SSH login, which did not come through Argus, so it " +
+				"cannot be ended from the console; end it on the server"
+		}
+		writeErr(w, http.StatusNotFound, why)
 		return
 	}
 	if !sess.terminate(t.Email, reason) {
