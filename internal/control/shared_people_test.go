@@ -268,3 +268,57 @@ func TestSwitchingOrganizationsOverHTTP(t *testing.T) {
 		t.Errorf("other's owner switched into home: %d", code)
 	}
 }
+
+func TestAnAdminCreatesAnOrganizationAndCanSwitchToIt(t *testing.T) {
+	h := newTenantHarness(t)
+	admin, pw := newAccount(t, h.store, "admin")
+	in := h.signIn(t, "", admin, pw)
+
+	// An admin of the main organization, as first-run setup makes, manages
+	// organizations; nobody below admin does.
+	_, me := h.call(t, in, "", http.MethodGet, "/auth/me", "")
+	if !strings.Contains(me, `"platformOwner":true`) {
+		t.Fatalf("an admin of the main organization is not offered organizations: %s", me)
+	}
+	op, opPw := newAccount(t, h.store, "operator")
+	if code, _ := h.call(t, h.signIn(t, "", op, opPw), "", http.MethodGet,
+		"/api/v1/platform/organizations", ""); code != http.StatusNotFound {
+		t.Errorf("an operator reached the platform routes: %d", code)
+	}
+
+	slug := strings.ToLower(unique("acme"))
+	code, body := h.call(t, in, "", http.MethodPost, "/api/v1/platform/organizations",
+		`{"slug":"`+slug+`","name":"Acme","ownerEmail":"owner-`+slug+`@acme.id","ownerPassword":"correct horse battery staple"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create organization = %d: %s", code, body)
+	}
+	var created Tenant
+	_ = json.Unmarshal([]byte(body), &created)
+	t.Cleanup(func() {
+		h.store.closeTenants()
+		_, _ = h.store.pool.Exec(context.Background(), `DELETE FROM argus_platform.memberships WHERE tenant_id = $1`, created.ID)
+		_, _ = h.store.pool.Exec(context.Background(), `DROP SCHEMA IF EXISTS "`+created.Schema+`" CASCADE`)
+		_, _ = h.store.pool.Exec(context.Background(), `DELETE FROM argus_platform.tenants WHERE id = $1`, created.ID)
+	})
+
+	// It is in their organization menu straight away, and choosing it moves
+	// the session there as an owner.
+	_, me = h.call(t, in, "", http.MethodGet, "/auth/me", "")
+	var id struct {
+		Role string           `json:"role"`
+		Org  map[string]any   `json:"org"`
+		Orgs []map[string]any `json:"orgs"`
+	}
+	_ = json.Unmarshal([]byte(me), &id)
+	if len(id.Orgs) != 2 {
+		t.Fatalf("after creating, the menu lists %d organizations: %s", len(id.Orgs), me)
+	}
+	if code, body := h.call(t, in, "", http.MethodPost, "/auth/switch", `{"org":"`+slug+`"}`); code != http.StatusOK {
+		t.Fatalf("switch = %d: %s", code, body)
+	}
+	_, me = h.call(t, in, "", http.MethodGet, "/auth/me", "")
+	_ = json.Unmarshal([]byte(me), &id)
+	if id.Org["slug"] != slug || id.Role != "owner" {
+		t.Errorf("after switching: %s", me)
+	}
+}

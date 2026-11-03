@@ -191,7 +191,7 @@ func (a *API) platformOwner(w http.ResponseWriter, r *http.Request) (auth.Sessio
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return sess, false
 	}
-	if tenantIDOf(r.Context()) != DefaultTenantID || sess.Role != "owner" {
+	if tenantIDOf(r.Context()) != DefaultTenantID || !managesPlatform(sess.Role) {
 		// Not found, not forbidden: an organization's own admin learns nothing
 		// about whether a platform exists above them.
 		writeErr(w, http.StatusNotFound, "not found")
@@ -199,6 +199,12 @@ func (a *API) platformOwner(w http.ResponseWriter, r *http.Request) (auth.Sessio
 	}
 	return sess, true
 }
+
+// managesPlatform is the role check behind platformOwner. Admins too, not
+// owners only: first-run setup makes the install's first account an admin,
+// and a platform whose own administrator cannot see its organizations has
+// shipped a feature nobody can reach.
+func managesPlatform(role string) bool { return role == "owner" || role == "admin" }
 
 type tenantView struct {
 	Tenant
@@ -270,6 +276,13 @@ func (a *API) postTenant(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "create organization", err)
 		return
 	}
+	// The administrator who created it becomes one of its owners, signing in
+	// with the account they already have, so it appears in their organization
+	// menu at once instead of needing a second password. The new
+	// organization's owner can remove them like anyone else.
+	if err := a.joinCreatedTenant(r, sess, t); err != nil {
+		a.log.Warn("creator not added to the new organization", "tenant", t.ID, "error", err)
+	}
 	// The platform's own chain records it too, so both sides can show who
 	// created the organization and when.
 	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
@@ -318,4 +331,26 @@ func (a *API) postTenantDisabled(disabled bool) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, t)
 	}
+}
+
+// joinCreatedTenant adds the creating administrator to t as an owner, shared
+// from the default organization.
+func (a *API) joinCreatedTenant(r *http.Request, sess auth.Session, t *Tenant) error {
+	ctx := r.Context()
+	if err := a.store.SetAccountShareable(ctx, sess.Email, true); err != nil &&
+		!errors.Is(err, ErrAlreadyInState) {
+		return err
+	}
+	tctx := WithTenant(ctx, t)
+	if _, _, err := a.store.AddSharedMember(tctx, SharedMember{
+		Email: sess.Email, DisplayName: sess.Name, Role: "owner", HomeSlug: DefaultTenantID,
+	}); err != nil && !errors.Is(err, ErrAccountExists) {
+		return err
+	}
+	_, err := a.store.AppendAudit(tctx, AuditEvent{
+		Action: "user.shared_in", Severity: "notice", ActorEmail: sess.Email, Target: sess.Email,
+		Detail: sess.Email + ", who created this organization on the platform, was added as an owner. " +
+			"They sign in with their platform account; remove them here to revoke that.",
+	})
+	return err
 }

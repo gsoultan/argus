@@ -1,13 +1,13 @@
 import {
-  ActionIcon, Alert, AppShell, Avatar, Badge, Box, Burger, Center, Group,
+  ActionIcon, Alert, AppShell, Avatar, Badge, Box, Burger, Button, Center, Group,
   Loader, Menu, NavLink as MantineNavLink, Stack, Text, Tooltip,
   UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { Link, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconBuilding, IconCheck, IconChevronDown, IconInfoCircle, IconKey, IconLogout,
+  IconAlertTriangle, IconBuilding, IconCheck, IconSettings, IconChevronDown, IconInfoCircle, IconKey, IconLogout,
   IconSearch, IconShieldLock,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
@@ -229,18 +229,16 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           <Group gap="xs" wrap="nowrap">
             {source !== 'live' && source !== 'connecting' && <DataSourceBadge source={source} />}
 
-            {/* Which organization this console is signed in to. Only when it
-                is not the default one: an install with one organization has
-                nothing to tell apart, and a label it never needed would read
-                as a switcher. */}
-            {me?.org && (me.orgs?.length ?? 0) > 1 ? (
-              <OrgSwitcher current={me.org} orgs={me.orgs!} />
-            ) : me?.org && !me.org.default && (
-              <Tooltip label={`You are signed in to ${me.org.name}. Everything on screen is this organization's.`}>
-                <Badge variant="light" color="violet" size="sm" visibleFrom="sm">
-                  {me.org.name}
-                </Badge>
-              </Tooltip>
+            {/* Which organization this console is signed in to, always, so
+                the feature is visible before a second organization exists.
+                The menu switches between the ones this person is in and, for
+                a platform owner, opens the place to add more. */}
+            {me?.org && (
+              <OrgSwitcher
+                current={me.org}
+                orgs={me.orgs?.length ? me.orgs : [{ ...me.org, role: me.role, home: true }]}
+                canManage={me.platformOwner === true}
+              />
             )}
 
             {whole && stats && stats.sessionsActive > 0 && (
@@ -588,42 +586,46 @@ function DataSourceBadge({ source }: { source: DataSource }) {
 
 
 /**
- * The organization switcher, shown only to someone who is in more than one.
+ * The organization menu: which one this is, the others this person can
+ * switch to, and for a platform owner the way to manage them.
  *
  * Switching replaces the session cookie with the other organization's and
  * reloads, so every query on screen starts over there: nothing from the
  * organization being left survives the switch, which is the point of it.
  */
-function OrgSwitcher({ current, orgs }: {
+function OrgSwitcher({ current, orgs, canManage }: {
   current: NonNullable<Identity['org']>
   orgs: NonNullable<Identity['orgs']>
+  canManage: boolean
 }) {
+  const navigate = useNavigate()
   const [switching, setSwitching] = useState<string | null>(null)
   return (
-    <Menu position="bottom-end" withinPortal>
+    <Menu position="bottom-end" withinPortal width={280}>
       <Menu.Target>
-        <UnstyledButton aria-label={`Organization: ${current.name}. Switch organization`}>
-          <Badge
-            variant="light"
-            color="violet"
-            size="sm"
-            style={{ cursor: 'pointer' }}
-            leftSection={<IconBuilding size={11} />}
-            rightSection={<IconChevronDown size={11} />}
-          >
-            {current.name}
-          </Badge>
-        </UnstyledButton>
+        <Button
+          variant="default"
+          size="xs"
+          radius="md"
+          aria-label={`Organization: ${current.name}. Open the organization menu`}
+          leftSection={<IconBuilding size={14} color="var(--mantine-color-violet-6)" />}
+          rightSection={<IconChevronDown size={13} opacity={0.6} />}
+          styles={{ label: { maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' } }}
+        >
+          {current.name}
+        </Button>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Label>Switch organization</Menu.Label>
+        <Menu.Label>{orgs.length > 1 ? 'Switch organization' : 'Organization'}</Menu.Label>
         {orgs.map((o) => (
           <Menu.Item
             key={o.id}
-            disabled={o.id === current.id || switching !== null}
-            leftSection={o.id === current.id ? <IconCheck size={14} /> : <Box w={14} />}
+            disabled={switching !== null && o.slug !== switching}
+            fw={o.id === current.id ? 600 : undefined}
+            leftSection={o.id === current.id ? <IconCheck size={14} color="var(--mantine-color-violet-6)" /> : <Box w={14} />}
             rightSection={<Text size={FS.micro} c="dimmed">{roleLabel(o.role as UserRole)}</Text>}
             onClick={async () => {
+              if (o.id === current.id) return
               setSwitching(o.slug)
               try {
                 await switchOrganization(o.slug)
@@ -634,9 +636,20 @@ function OrgSwitcher({ current, orgs }: {
             }}
           >
             {o.name}
-            {o.home && <Text span size={FS.micro} c="dimmed"> · your password lives here</Text>}
+            {o.home && orgs.length > 1 && <Text span size={FS.micro} c="dimmed"> · home</Text>}
           </Menu.Item>
         ))}
+        {canManage && (
+          <>
+            <Menu.Divider />
+            <Menu.Item
+              leftSection={<IconSettings size={14} />}
+              onClick={() => void navigate({ to: '/settings', search: { section: 'organizations' } })}
+            >
+              Manage organizations
+            </Menu.Item>
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   )

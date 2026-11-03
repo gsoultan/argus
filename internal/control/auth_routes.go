@@ -164,7 +164,7 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		// platformOwner is who may manage organizations: an owner of the
 		// default one. Said here so the console can draw the menu entry;
 		// the routes check it again.
-		"platformOwner": t.IsDefault() && sess.Role == "owner",
+		"platformOwner": t.IsDefault() && managesPlatform(sess.Role),
 	})
 }
 
