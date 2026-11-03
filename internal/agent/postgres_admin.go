@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
