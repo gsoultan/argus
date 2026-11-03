@@ -21,9 +21,12 @@ import { join } from 'node:path'
 
 const DIST = new URL('../dist/', import.meta.url).pathname
 
-/** 8 entries and 623.5 kB on disk when these were set. */
+/**
+ * 8 entries and 623.5 kB on disk when these were set. 705.7 kB with the
+ * alerts bell (697.3 before), whose eager code and stylesheet are in the shell.
+ */
 const MAX_ENTRIES = 10
-const MAX_KB = 700
+const MAX_KB = 712
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')

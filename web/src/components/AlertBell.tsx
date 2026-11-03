@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import {
-  ActionIcon, Box, Button, Center, Drawer, Group, Indicator, Loader, Popover, Text, Tooltip,
+  ActionIcon, Box, Button, Center, Group, Indicator, Loader, Popover, Text, Tooltip,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
@@ -8,13 +8,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { IconBell } from '@tabler/icons-react'
 import {
-  alertPrefsQuery, chime, notifyDesktop, subscribeAlertStream, unreadAlertsQuery, urgent,
-  type ConsoleAlert, type StreamStatus,
+  alertPrefsQuery, unreadAlertsQuery, urgent, type ConsoleAlert, type StreamStatus,
 } from '~/lib/alerts'
 import { FS } from '~/theme'
 
 // The list itself is only fetched when the bell is opened.
 const AlertPanel = lazy(() => import('~/components/AlertPanel'))
+const PhoneAlerts = lazy(() => import('~/components/AlertPanel').then((m) => ({ default: m.PhoneAlerts })))
 
 const TONE: Record<ConsoleAlert['severity'], string> = { info: 'azure', warning: 'amber', critical: 'rose' }
 
@@ -71,17 +71,11 @@ export function AlertBell() {
     return (
       <>
         {bell}
-        <Drawer
-          opened={open}
-          onClose={() => setOpen(false)}
-          position="right"
-          size="100%"
-          withCloseButton={false}
-          padding={0}
-          aria-label="Alerts"
-        >
-          {open && panel}
-        </Drawer>
+        {open && (
+          <Suspense fallback={null}>
+            <PhoneAlerts onClose={() => setOpen(false)}>{panel}</PhoneAlerts>
+          </Suspense>
+        )}
       </>
     )
   }
@@ -127,7 +121,12 @@ function useAlertStream(panelOpen: boolean): StreamStatus {
 
   useEffect(() => {
     const go = (link: string) => router.history.push(link)
-    return subscribeAlertStream(
+    let stop: (() => void) | undefined
+    let gone = false
+    // After the first paint: nothing on screen waits for the stream.
+    void import('~/lib/alertStream').then(({ chime, notifyDesktop, subscribeAlertStream }) => {
+      if (gone) return
+      stop = subscribeAlertStream(
       (e) => {
         if (e.type === 'end') return
         void qc.invalidateQueries({ queryKey: ['alerts', 'list'] })
@@ -166,7 +165,12 @@ function useAlertStream(panelOpen: boolean): StreamStatus {
         })
       },
       setStatus,
-    )
+      )
+    })
+    return () => {
+      gone = true
+      stop?.()
+    }
   }, [qc, router])
 
   return status

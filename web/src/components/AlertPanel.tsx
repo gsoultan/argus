@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Center, Divider, Group, Loader, ScrollArea, SegmentedControl,
+  ActionIcon, Badge, Box, Drawer, Button, Center, Divider, Group, Loader, ScrollArea, SegmentedControl,
   Stack, Switch, Text, ThemeIcon, UnstyledButton,
 } from '@mantine/core'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
@@ -10,10 +10,12 @@ import {
   IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import {
-  ALERT_KINDS, alertPrefsQuery, allAlertsQuery, desktopPermission, desktopWanted, setDesktopWanted,
-  unreadAlertsQuery, useMarkAlertsRead, useSaveAlertPrefs,
-  type AlertKind, type AlertPrefs, type ConsoleAlert, type StreamStatus,
+  alertPrefsQuery, unreadAlertsQuery, type AlertKind, type AlertPrefs, type ConsoleAlert, type StreamStatus,
 } from '~/lib/alerts'
+import {
+  ALERT_KINDS, allAlertsQuery, desktopPermission, desktopWanted, setDesktopWanted, useMarkAlertsRead,
+  useSaveAlertPrefs,
+} from '~/lib/alertsPanel'
 import { meQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
 import { notifyError } from '~/lib/notify'
@@ -49,6 +51,16 @@ export function agoText(iso: string, now = Date.now()): string {
   if (h < 24) return `${h} h ago`
   const d = Math.round(h / 24)
   return d === 1 ? 'yesterday' : `${d} days ago`
+}
+
+/** The bell's list on a phone: the whole screen, with room for a thumb. */
+export function PhoneAlerts({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  return (
+    <Drawer opened onClose={onClose} position="right" size="100%" withCloseButton={false} padding={0}
+      aria-label="Alerts">
+      {children}
+    </Drawer>
+  )
 }
 
 /** The list under the bell, and the person's choices for it. */
