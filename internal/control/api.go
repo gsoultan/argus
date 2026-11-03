@@ -175,6 +175,13 @@ type API struct {
 	// Locate names a place for a client address in sign-in alerts. Nil
 	// names none; see location.go.
 	Locate Locator
+
+	// errs and uploads are what the Status page reports about requests and
+	// recordings on this process; see server_errors.go and control_status.go.
+	errs    errorLog
+	uploads uploadLog
+	status  statusCache
+	cpu     cpuSampler
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -403,6 +410,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", a.postRevokeAgent)
 
 	// Organizations. Platform owners only; see tenant_routes.go.
+	mux.HandleFunc("GET /api/v1/platform/status", a.getControlStatus)
 	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
 	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
 	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/disable", a.postTenantDisabled(true))
@@ -981,5 +989,6 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 // in the operator's log, not in a response to a browser.
 func (a *API) fail(w http.ResponseWriter, op string, err error) {
 	a.log.Error("request failed", "op", op, "error", err)
+	a.errs.record(time.Now(), op, err.Error())
 	writeErr(w, http.StatusInternalServerError, "internal error")
 }
