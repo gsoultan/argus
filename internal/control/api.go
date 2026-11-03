@@ -278,6 +278,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/postgres", a.handlePostgres)
 	mux.HandleFunc("GET /api/v1/databases", a.getDatabases)
 	mux.HandleFunc("POST /api/v1/databases", a.dbAdmin(a.postDatabase))
+	mux.HandleFunc("GET /api/v1/assets/{id}/databases/discover", a.dbAdmin(a.getDiscoverDatabases))
 	mux.HandleFunc("GET /api/v1/databases/{id}", a.getDatabase)
 	mux.HandleFunc("PATCH /api/v1/databases/{id}", a.dbAdmin(a.patchDatabase))
 	mux.HandleFunc("DELETE /api/v1/databases/{id}", a.dbAdmin(a.deleteDatabase))
