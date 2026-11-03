@@ -55,6 +55,16 @@ type Account struct {
 	// them; only an organization they belong to sets it.
 	HomeTenant string
 	Shareable  bool
+	// PasswordChangeRequired is set while the password is a temporary one,
+	// and PasswordExpiresAt is when that temporary password stops working.
+	PasswordChangeRequired bool
+	PasswordExpiresAt      *time.Time
+}
+
+// PasswordExpired reports whether the account's temporary password has run
+// out.
+func (a *Account) PasswordExpired(now time.Time) bool {
+	return a.PasswordExpiresAt != nil && !now.Before(*a.PasswordExpiresAt)
 }
 
 // Shared reports whether this row is a person shared in from elsewhere.
@@ -67,10 +77,11 @@ func (s *Store) Account(ctx context.Context, email string) (*Account, error) {
 	var enrolledAt, disabledAt *time.Time
 	err := s.db(ctx).QueryRow(ctx, `
 		SELECT id::text, email, display_name, role, password_hash, totp_secret,
-		       mfa_enrolled_at, disabled_at, home_tenant, shareable
+		       mfa_enrolled_at, disabled_at, home_tenant, shareable,
+		       password_change_required, password_expires_at
 		  FROM users WHERE lower(email) = lower($1)`, email).
 		Scan(&a.ID, &a.Email, &a.DisplayName, &a.Role, &pw, &secret, &enrolledAt, &disabledAt,
-			&home, &a.Shareable)
+			&home, &a.Shareable, &a.PasswordChangeRequired, &a.PasswordExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoAccount
 	}
@@ -141,8 +152,11 @@ func (s *Store) SetPassword(ctx context.Context, email, password string) error {
 	if err != nil {
 		return err
 	}
+	// A password set this way is the person's own (or set on the host by
+	// someone with root): it is not temporary, whatever the one before was.
 	tag, err := s.db(ctx).Exec(ctx,
-		`UPDATE users SET password_hash = $2, sessions_valid_after = $3
+		`UPDATE users SET password_hash = $2, sessions_valid_after = $3,
+		                  password_change_required = false, password_expires_at = NULL
 		  WHERE lower(email) = lower($1)`, email, hash, revocationMoment())
 	if err != nil {
 		return fmt.Errorf("set password: %w", err)
@@ -329,11 +343,28 @@ func normaliseEmail(email string) string {
 
 // CreateAccount adds a local user. Used to bootstrap the first administrator.
 func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, password string) (string, error) {
-	hash, err := auth.HashPassword(password)
+	return s.CreateAccountWith(ctx, NewAccount{Email: email, DisplayName: displayName, Role: role,
+		Password: password})
+}
+
+// NewAccount is an account to create.
+type NewAccount struct {
+	Email, DisplayName, Role, Password string
+	// TemporaryUntil makes Password a temporary one: the account must change
+	// it at its first sign-in, and it stops working at this time if unused.
+	TemporaryUntil *time.Time
+}
+
+// CreateAccountWith adds a local user, with a temporary password when asked.
+// Written in one statement, so an account is never left holding the
+// administrator-known password as a permanent one.
+func (s *Store) CreateAccountWith(ctx context.Context, n NewAccount) (string, error) {
+	hash, err := auth.HashPassword(n.Password)
 	if err != nil {
 		return "", err
 	}
-	email = normaliseEmail(email)
+	email := normaliseEmail(n.Email)
+	displayName := n.DisplayName
 	if displayName == "" {
 		displayName = strings.SplitN(email, "@", 2)[0]
 	}
@@ -346,14 +377,18 @@ func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, pas
 	// A person shared in from another organization is not overwritten into a
 	// local account: that would give one address two passwords.
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (email, display_name, role, password_hash)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO users (email, display_name, role, password_hash,
+		                   password_change_required, password_expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (email) DO UPDATE
 		   SET display_name = EXCLUDED.display_name,
 		       role         = EXCLUDED.role,
-		       password_hash = EXCLUDED.password_hash
+		       password_hash = EXCLUDED.password_hash,
+		       password_change_required = EXCLUDED.password_change_required,
+		       password_expires_at = EXCLUDED.password_expires_at
 		 WHERE users.home_tenant IS NULL
-		RETURNING id::text`, email, displayName, role, hash).Scan(&id)
+		RETURNING id::text`, email, displayName, n.Role, hash,
+		n.TemporaryUntil != nil, n.TemporaryUntil).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrSharedAccount
 	}
@@ -372,6 +407,29 @@ func (s *Store) CreateAccount(ctx context.Context, email, displayName, role, pas
 		return id, fmt.Errorf("name server account: %w", err)
 	}
 	return id, nil
+}
+
+// SetTemporaryPassword gives an account a new temporary password: it must be
+// changed at the next sign-in and stops working at until. Every session on
+// the account ends. The second factor is left as it is, so whoever learns
+// the temporary password still needs the person's authenticator.
+func (s *Store) SetTemporaryPassword(ctx context.Context, email, password string, until time.Time) error {
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	tag, err := s.db(ctx).Exec(ctx, `
+		UPDATE users SET password_hash = $2, sessions_valid_after = $3,
+		                 password_change_required = true, password_expires_at = $4
+		 WHERE lower(email) = lower($1) AND home_tenant IS NULL`,
+		email, hash, revocationMoment(), until)
+	if err != nil {
+		return fmt.Errorf("set temporary password: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNoAccount
+	}
+	return nil
 }
 
 // AnyAccountExists reports whether anyone can sign in yet.
@@ -472,7 +530,8 @@ func (s *Store) SetAccountDisabledBy(ctx context.Context, email string, disabled
 func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.db(ctx).Query(ctx, `
 		SELECT email, display_name, role, mfa_enrolled, disabled_at, COALESCE(disabled_by, ''),
-		       COALESCE(login_name, ''), ssh_public_key <> '', COALESCE(home_tenant, ''), shareable
+		       COALESCE(login_name, ''), ssh_public_key <> '', COALESCE(home_tenant, ''), shareable,
+		       password_change_required, password_expires_at
 		  FROM users ORDER BY lower(email)`)
 	if err != nil {
 		return nil, err
@@ -484,7 +543,8 @@ func (s *Store) Accounts(ctx context.Context) ([]Account, error) {
 		var a Account
 		var disabledAt *time.Time
 		if err := rows.Scan(&a.Email, &a.DisplayName, &a.Role, &a.MFAEnrolled, &disabledAt,
-			&a.DisabledBy, &a.LoginName, &a.HasSSHKey, &a.HomeTenant, &a.Shareable); err != nil {
+			&a.DisabledBy, &a.LoginName, &a.HasSSHKey, &a.HomeTenant, &a.Shareable,
+			&a.PasswordChangeRequired, &a.PasswordExpiresAt); err != nil {
 			return nil, err
 		}
 		a.DisabledAt = disabledAt

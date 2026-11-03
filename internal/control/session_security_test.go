@@ -317,6 +317,7 @@ func TestAnAuthenticatorCodeSignsInOnce(t *testing.T) {
 
 func TestPrivilegedRolesMustEnrolBeforeAnythingElse(t *testing.T) {
 	h := newSecHarness(t)
+	h.api.RequireMFA = MFAPrivileged
 	admin, apw := newAccount(t, h.store, "admin")
 	op, opw := newAccount(t, h.store, "operator")
 

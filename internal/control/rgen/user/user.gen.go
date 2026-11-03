@@ -20,25 +20,27 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID                 [16]byte
-	Email              string
-	DisplayName        string
-	Role               string
-	MfaEnrolled        bool
-	LastSeenAt         runtime.Null[time.Time]
-	CreatedAt          time.Time
-	PasswordHash       runtime.Null[string]
-	TotpSecret         runtime.Null[string]
-	MfaEnrolledAt      runtime.Null[time.Time]
-	DisabledAt         runtime.Null[time.Time]
-	LoginName          runtime.Null[string]
-	SshPublicKey       string
-	DisabledBy         runtime.Null[string]
-	SessionsValidAfter runtime.Null[time.Time]
-	TotpPendingSecret  runtime.Null[string]
-	TotpLastStep       runtime.Null[int64]
-	HomeTenant         runtime.Null[string]
-	Shareable          bool
+	ID                     [16]byte
+	Email                  string
+	DisplayName            string
+	Role                   string
+	MfaEnrolled            bool
+	LastSeenAt             runtime.Null[time.Time]
+	CreatedAt              time.Time
+	PasswordHash           runtime.Null[string]
+	TotpSecret             runtime.Null[string]
+	MfaEnrolledAt          runtime.Null[time.Time]
+	DisabledAt             runtime.Null[time.Time]
+	LoginName              runtime.Null[string]
+	SshPublicKey           string
+	DisabledBy             runtime.Null[string]
+	SessionsValidAfter     runtime.Null[time.Time]
+	TotpPendingSecret      runtime.Null[string]
+	TotpLastStep           runtime.Null[int64]
+	HomeTenant             runtime.Null[string]
+	Shareable              bool
+	PasswordChangeRequired bool
+	PasswordExpiresAt      runtime.Null[time.Time]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -77,7 +79,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 19
+const nCols = 21
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -325,6 +327,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.bools[q.nbo] = r.Shareable
 		q.nbo++
+	case 19:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.PasswordChangeRequired
+		q.nbo++
+	case 20:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.PasswordExpiresAt.V
+		q.ntm++
 	}
 }
 
@@ -493,25 +509,27 @@ func b2i(b bool) int64 {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID                 = UUIDCol{0}
-	Email              = TextCol{1}
-	DisplayName        = TextCol{2}
-	Role               = TextCol{3}
-	MfaEnrolled        = BoolCol{4}
-	LastSeenAt         = NullTimeCol{5}
-	CreatedAt          = TimeCol{6}
-	PasswordHash       = NullTextCol{7}
-	TotpSecret         = NullTextCol{8}
-	MfaEnrolledAt      = NullTimeCol{9}
-	DisabledAt         = NullTimeCol{10}
-	LoginName          = NullTextCol{11}
-	SshPublicKey       = TextCol{12}
-	DisabledBy         = NullTextCol{13}
-	SessionsValidAfter = NullTimeCol{14}
-	TotpPendingSecret  = NullTextCol{15}
-	TotpLastStep       = NullInt64Col{16}
-	HomeTenant         = NullTextCol{17}
-	Shareable          = BoolCol{18}
+	ID                     = UUIDCol{0}
+	Email                  = TextCol{1}
+	DisplayName            = TextCol{2}
+	Role                   = TextCol{3}
+	MfaEnrolled            = BoolCol{4}
+	LastSeenAt             = NullTimeCol{5}
+	CreatedAt              = TimeCol{6}
+	PasswordHash           = NullTextCol{7}
+	TotpSecret             = NullTextCol{8}
+	MfaEnrolledAt          = NullTimeCol{9}
+	DisabledAt             = NullTimeCol{10}
+	LoginName              = NullTextCol{11}
+	SshPublicKey           = TextCol{12}
+	DisabledBy             = NullTextCol{13}
+	SessionsValidAfter     = NullTimeCol{14}
+	TotpPendingSecret      = NullTextCol{15}
+	TotpLastStep           = NullInt64Col{16}
+	HomeTenant             = NullTextCol{17}
+	Shareable              = BoolCol{18}
+	PasswordChangeRequired = BoolCol{19}
+	PasswordExpiresAt      = NullTimeCol{20}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1042,6 +1060,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 19:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 20:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1202,35 +1234,47 @@ func (q Query) TotpPendingSecretIn(v ...string) Query   { return q.Where(TotpPen
 func (q Query) TotpPendingSecretNotIn(v ...string) Query {
 	return q.Where(TotpPendingSecret.NotIn(v...))
 }
-func (q Query) TotpPendingSecretIsNull() Query     { return q.Where(TotpPendingSecret.IsNull()) }
-func (q Query) TotpPendingSecretIsNotNull() Query  { return q.Where(TotpPendingSecret.IsNotNull()) }
-func (q Query) TotpLastStepEq(v int64) Query       { return q.Where(TotpLastStep.Eq(v)) }
-func (q Query) TotpLastStepNotEq(v int64) Query    { return q.Where(TotpLastStep.NotEq(v)) }
-func (q Query) TotpLastStepGt(v int64) Query       { return q.Where(TotpLastStep.Gt(v)) }
-func (q Query) TotpLastStepGte(v int64) Query      { return q.Where(TotpLastStep.Gte(v)) }
-func (q Query) TotpLastStepLt(v int64) Query       { return q.Where(TotpLastStep.Lt(v)) }
-func (q Query) TotpLastStepLte(v int64) Query      { return q.Where(TotpLastStep.Lte(v)) }
-func (q Query) TotpLastStepIn(v ...int64) Query    { return q.Where(TotpLastStep.In(v...)) }
-func (q Query) TotpLastStepNotIn(v ...int64) Query { return q.Where(TotpLastStep.NotIn(v...)) }
-func (q Query) TotpLastStepIsNull() Query          { return q.Where(TotpLastStep.IsNull()) }
-func (q Query) TotpLastStepIsNotNull() Query       { return q.Where(TotpLastStep.IsNotNull()) }
-func (q Query) HomeTenantEq(v string) Query        { return q.Where(HomeTenant.Eq(v)) }
-func (q Query) HomeTenantNotEq(v string) Query     { return q.Where(HomeTenant.NotEq(v)) }
-func (q Query) HomeTenantGt(v string) Query        { return q.Where(HomeTenant.Gt(v)) }
-func (q Query) HomeTenantGte(v string) Query       { return q.Where(HomeTenant.Gte(v)) }
-func (q Query) HomeTenantLt(v string) Query        { return q.Where(HomeTenant.Lt(v)) }
-func (q Query) HomeTenantLte(v string) Query       { return q.Where(HomeTenant.Lte(v)) }
-func (q Query) HomeTenantEqLower(v string) Query   { return q.Where(HomeTenant.EqLower(v)) }
-func (q Query) HomeTenantLike(v string) Query      { return q.Where(HomeTenant.Like(v)) }
-func (q Query) HomeTenantILike(v string) Query     { return q.Where(HomeTenant.ILike(v)) }
-func (q Query) HomeTenantIn(v ...string) Query     { return q.Where(HomeTenant.In(v...)) }
-func (q Query) HomeTenantNotIn(v ...string) Query  { return q.Where(HomeTenant.NotIn(v...)) }
-func (q Query) HomeTenantIsNull() Query            { return q.Where(HomeTenant.IsNull()) }
-func (q Query) HomeTenantIsNotNull() Query         { return q.Where(HomeTenant.IsNotNull()) }
-func (q Query) ShareableEq(v bool) Query           { return q.Where(Shareable.Eq(v)) }
-func (q Query) ShareableNotEq(v bool) Query        { return q.Where(Shareable.NotEq(v)) }
+func (q Query) TotpPendingSecretIsNull() Query        { return q.Where(TotpPendingSecret.IsNull()) }
+func (q Query) TotpPendingSecretIsNotNull() Query     { return q.Where(TotpPendingSecret.IsNotNull()) }
+func (q Query) TotpLastStepEq(v int64) Query          { return q.Where(TotpLastStep.Eq(v)) }
+func (q Query) TotpLastStepNotEq(v int64) Query       { return q.Where(TotpLastStep.NotEq(v)) }
+func (q Query) TotpLastStepGt(v int64) Query          { return q.Where(TotpLastStep.Gt(v)) }
+func (q Query) TotpLastStepGte(v int64) Query         { return q.Where(TotpLastStep.Gte(v)) }
+func (q Query) TotpLastStepLt(v int64) Query          { return q.Where(TotpLastStep.Lt(v)) }
+func (q Query) TotpLastStepLte(v int64) Query         { return q.Where(TotpLastStep.Lte(v)) }
+func (q Query) TotpLastStepIn(v ...int64) Query       { return q.Where(TotpLastStep.In(v...)) }
+func (q Query) TotpLastStepNotIn(v ...int64) Query    { return q.Where(TotpLastStep.NotIn(v...)) }
+func (q Query) TotpLastStepIsNull() Query             { return q.Where(TotpLastStep.IsNull()) }
+func (q Query) TotpLastStepIsNotNull() Query          { return q.Where(TotpLastStep.IsNotNull()) }
+func (q Query) HomeTenantEq(v string) Query           { return q.Where(HomeTenant.Eq(v)) }
+func (q Query) HomeTenantNotEq(v string) Query        { return q.Where(HomeTenant.NotEq(v)) }
+func (q Query) HomeTenantGt(v string) Query           { return q.Where(HomeTenant.Gt(v)) }
+func (q Query) HomeTenantGte(v string) Query          { return q.Where(HomeTenant.Gte(v)) }
+func (q Query) HomeTenantLt(v string) Query           { return q.Where(HomeTenant.Lt(v)) }
+func (q Query) HomeTenantLte(v string) Query          { return q.Where(HomeTenant.Lte(v)) }
+func (q Query) HomeTenantEqLower(v string) Query      { return q.Where(HomeTenant.EqLower(v)) }
+func (q Query) HomeTenantLike(v string) Query         { return q.Where(HomeTenant.Like(v)) }
+func (q Query) HomeTenantILike(v string) Query        { return q.Where(HomeTenant.ILike(v)) }
+func (q Query) HomeTenantIn(v ...string) Query        { return q.Where(HomeTenant.In(v...)) }
+func (q Query) HomeTenantNotIn(v ...string) Query     { return q.Where(HomeTenant.NotIn(v...)) }
+func (q Query) HomeTenantIsNull() Query               { return q.Where(HomeTenant.IsNull()) }
+func (q Query) HomeTenantIsNotNull() Query            { return q.Where(HomeTenant.IsNotNull()) }
+func (q Query) ShareableEq(v bool) Query              { return q.Where(Shareable.Eq(v)) }
+func (q Query) ShareableNotEq(v bool) Query           { return q.Where(Shareable.NotEq(v)) }
+func (q Query) PasswordChangeRequiredEq(v bool) Query { return q.Where(PasswordChangeRequired.Eq(v)) }
+func (q Query) PasswordChangeRequiredNotEq(v bool) Query {
+	return q.Where(PasswordChangeRequired.NotEq(v))
+}
+func (q Query) PasswordExpiresAtEq(v time.Time) Query    { return q.Where(PasswordExpiresAt.Eq(v)) }
+func (q Query) PasswordExpiresAtNotEq(v time.Time) Query { return q.Where(PasswordExpiresAt.NotEq(v)) }
+func (q Query) PasswordExpiresAtGt(v time.Time) Query    { return q.Where(PasswordExpiresAt.Gt(v)) }
+func (q Query) PasswordExpiresAtGte(v time.Time) Query   { return q.Where(PasswordExpiresAt.Gte(v)) }
+func (q Query) PasswordExpiresAtLt(v time.Time) Query    { return q.Where(PasswordExpiresAt.Lt(v)) }
+func (q Query) PasswordExpiresAtLte(v time.Time) Query   { return q.Where(PasswordExpiresAt.Lte(v)) }
+func (q Query) PasswordExpiresAtIsNull() Query           { return q.Where(PasswordExpiresAt.IsNull()) }
+func (q Query) PasswordExpiresAtIsNotNull() Query        { return q.Where(PasswordExpiresAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable" FROM "users"`
+const selectPrefix = `SELECT "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable", "password_change_required", "password_expires_at" FROM "users"`
 const countPrefix = `SELECT count(*) FROM "users"`
 const existsPrefix = `SELECT 1 FROM "users"`
 const existsSuffix = ` LIMIT 1`
@@ -1381,6 +1425,18 @@ var orderTable = [nCols][4]string{
 		"\"shareable\" ASC NULLS FIRST",
 		"\"shareable\" DESC NULLS LAST",
 	},
+	{ // password_change_required
+		"\"password_change_required\"",
+		"\"password_change_required\" DESC",
+		"\"password_change_required\" ASC NULLS FIRST",
+		"\"password_change_required\" DESC NULLS LAST",
+	},
+	{ // password_expires_at
+		"\"password_expires_at\"",
+		"\"password_expires_at\" DESC",
+		"\"password_expires_at\" ASC NULLS FIRST",
+		"\"password_expires_at\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1405,6 +1461,8 @@ var identTable = [nCols]string{
 	"\"totp_last_step\"",
 	"\"home_tenant\"",
 	"\"shareable\"",
+	"\"password_change_required\"",
+	"\"password_expires_at\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1437,7 +1495,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [19][28]runtime.Frag{
+var fragTable = [21][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2008,6 +2066,66 @@ var fragTable = [19][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // password_change_required
+		{}, // opNone
+		{A: "\"password_change_required\" = $", B: ""},
+		{A: "\"password_change_required\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // password_expires_at
+		{}, // opNone
+		{A: "\"password_expires_at\" = $", B: ""},
+		{A: "\"password_expires_at\" <> $", B: ""},
+		{A: "\"password_expires_at\" > $", B: ""},
+		{A: "\"password_expires_at\" >= $", B: ""},
+		{A: "\"password_expires_at\" < $", B: ""},
+		{A: "\"password_expires_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"password_expires_at\" IS NULL", B: ""},
+		{A: "\"password_expires_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2183,6 +2301,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.TotpLastStep = runtime.Nullable(rv[16], runtime.Int8)
 	r.HomeTenant = runtime.NullText(rv[17], sl)
 	r.Shareable = runtime.Bool(rv[18])
+	r.PasswordChangeRequired = runtime.Bool(rv[19])
+	r.PasswordExpiresAt = runtime.Nullable(rv[20], runtime.Timestamptz)
 	return nil
 }
 
@@ -2381,6 +2501,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 19:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 20:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		}
 	}
 	b.vals = v
@@ -2518,7 +2646,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable"`
+const insertSQL = `INSERT INTO "users" ("id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable", "password_change_required", "password_expires_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING "id", "email", "display_name", "role", "mfa_enrolled", "last_seen_at", "created_at", "password_hash", "totp_secret", "mfa_enrolled_at", "disabled_at", "login_name", "ssh_public_key", "disabled_by", "sessions_valid_after", "totp_pending_secret", "totp_last_step", "home_tenant", "shareable", "password_change_required", "password_expires_at"`
 
 const updatePrefix = `UPDATE "users" SET `
 const deletePrefix = `DELETE FROM "users"`
@@ -2526,48 +2654,52 @@ const deletePrefix = `DELETE FROM "users"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dEmail              uint64 = 1 << 0
-	dDisplayName        uint64 = 1 << 1
-	dRole               uint64 = 1 << 2
-	dMfaEnrolled        uint64 = 1 << 3
-	dLastSeenAt         uint64 = 1 << 4
-	dCreatedAt          uint64 = 1 << 5
-	dPasswordHash       uint64 = 1 << 6
-	dTotpSecret         uint64 = 1 << 7
-	dMfaEnrolledAt      uint64 = 1 << 8
-	dDisabledAt         uint64 = 1 << 9
-	dLoginName          uint64 = 1 << 10
-	dSshPublicKey       uint64 = 1 << 11
-	dDisabledBy         uint64 = 1 << 12
-	dSessionsValidAfter uint64 = 1 << 13
-	dTotpPendingSecret  uint64 = 1 << 14
-	dTotpLastStep       uint64 = 1 << 15
-	dHomeTenant         uint64 = 1 << 16
-	dShareable          uint64 = 1 << 17
+	dEmail                  uint64 = 1 << 0
+	dDisplayName            uint64 = 1 << 1
+	dRole                   uint64 = 1 << 2
+	dMfaEnrolled            uint64 = 1 << 3
+	dLastSeenAt             uint64 = 1 << 4
+	dCreatedAt              uint64 = 1 << 5
+	dPasswordHash           uint64 = 1 << 6
+	dTotpSecret             uint64 = 1 << 7
+	dMfaEnrolledAt          uint64 = 1 << 8
+	dDisabledAt             uint64 = 1 << 9
+	dLoginName              uint64 = 1 << 10
+	dSshPublicKey           uint64 = 1 << 11
+	dDisabledBy             uint64 = 1 << 12
+	dSessionsValidAfter     uint64 = 1 << 13
+	dTotpPendingSecret      uint64 = 1 << 14
+	dTotpLastStep           uint64 = 1 << 15
+	dHomeTenant             uint64 = 1 << 16
+	dShareable              uint64 = 1 << 17
+	dPasswordChangeRequired uint64 = 1 << 18
+	dPasswordExpiresAt      uint64 = 1 << 19
 )
 
-const nUpdatable = 18
+const nUpdatable = 20
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"email\" = $", B: ""},                // email
-	{A: "\"display_name\" = $", B: ""},         // display_name
-	{A: "\"role\" = $", B: ""},                 // role
-	{A: "\"mfa_enrolled\" = $", B: ""},         // mfa_enrolled
-	{A: "\"last_seen_at\" = $", B: ""},         // last_seen_at
-	{A: "\"created_at\" = $", B: ""},           // created_at
-	{A: "\"password_hash\" = $", B: ""},        // password_hash
-	{A: "\"totp_secret\" = $", B: ""},          // totp_secret
-	{A: "\"mfa_enrolled_at\" = $", B: ""},      // mfa_enrolled_at
-	{A: "\"disabled_at\" = $", B: ""},          // disabled_at
-	{A: "\"login_name\" = $", B: ""},           // login_name
-	{A: "\"ssh_public_key\" = $", B: ""},       // ssh_public_key
-	{A: "\"disabled_by\" = $", B: ""},          // disabled_by
-	{A: "\"sessions_valid_after\" = $", B: ""}, // sessions_valid_after
-	{A: "\"totp_pending_secret\" = $", B: ""},  // totp_pending_secret
-	{A: "\"totp_last_step\" = $", B: ""},       // totp_last_step
-	{A: "\"home_tenant\" = $", B: ""},          // home_tenant
-	{A: "\"shareable\" = $", B: ""},            // shareable
+	{A: "\"email\" = $", B: ""},                    // email
+	{A: "\"display_name\" = $", B: ""},             // display_name
+	{A: "\"role\" = $", B: ""},                     // role
+	{A: "\"mfa_enrolled\" = $", B: ""},             // mfa_enrolled
+	{A: "\"last_seen_at\" = $", B: ""},             // last_seen_at
+	{A: "\"created_at\" = $", B: ""},               // created_at
+	{A: "\"password_hash\" = $", B: ""},            // password_hash
+	{A: "\"totp_secret\" = $", B: ""},              // totp_secret
+	{A: "\"mfa_enrolled_at\" = $", B: ""},          // mfa_enrolled_at
+	{A: "\"disabled_at\" = $", B: ""},              // disabled_at
+	{A: "\"login_name\" = $", B: ""},               // login_name
+	{A: "\"ssh_public_key\" = $", B: ""},           // ssh_public_key
+	{A: "\"disabled_by\" = $", B: ""},              // disabled_by
+	{A: "\"sessions_valid_after\" = $", B: ""},     // sessions_valid_after
+	{A: "\"totp_pending_secret\" = $", B: ""},      // totp_pending_secret
+	{A: "\"totp_last_step\" = $", B: ""},           // totp_last_step
+	{A: "\"home_tenant\" = $", B: ""},              // home_tenant
+	{A: "\"shareable\" = $", B: ""},                // shareable
+	{A: "\"password_change_required\" = $", B: ""}, // password_change_required
+	{A: "\"password_expires_at\" = $", B: ""},      // password_expires_at
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2592,6 +2724,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"totp_last_step\" = \"totp_last_step\" + 1", B: ""}, // totp_last_step = its own value plus one
 	{}, // home_tenant has no server-side form
 	{}, // shareable has no server-side form
+	{}, // password_change_required has no server-side form
+	{A: "\"password_expires_at\" = now()", B: ""}, // password_expires_at = the database's clock
 }
 
 // pkFrags addresses one row.
@@ -2603,28 +2737,30 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID                 uint64 = 1 << 0
-	iEmail              uint64 = 1 << 1
-	iDisplayName        uint64 = 1 << 2
-	iRole               uint64 = 1 << 3
-	iMfaEnrolled        uint64 = 1 << 4
-	iLastSeenAt         uint64 = 1 << 5
-	iCreatedAt          uint64 = 1 << 6
-	iPasswordHash       uint64 = 1 << 7
-	iTotpSecret         uint64 = 1 << 8
-	iMfaEnrolledAt      uint64 = 1 << 9
-	iDisabledAt         uint64 = 1 << 10
-	iLoginName          uint64 = 1 << 11
-	iSshPublicKey       uint64 = 1 << 12
-	iDisabledBy         uint64 = 1 << 13
-	iSessionsValidAfter uint64 = 1 << 14
-	iTotpPendingSecret  uint64 = 1 << 15
-	iTotpLastStep       uint64 = 1 << 16
-	iHomeTenant         uint64 = 1 << 17
-	iShareable          uint64 = 1 << 18
+	iID                     uint64 = 1 << 0
+	iEmail                  uint64 = 1 << 1
+	iDisplayName            uint64 = 1 << 2
+	iRole                   uint64 = 1 << 3
+	iMfaEnrolled            uint64 = 1 << 4
+	iLastSeenAt             uint64 = 1 << 5
+	iCreatedAt              uint64 = 1 << 6
+	iPasswordHash           uint64 = 1 << 7
+	iTotpSecret             uint64 = 1 << 8
+	iMfaEnrolledAt          uint64 = 1 << 9
+	iDisabledAt             uint64 = 1 << 10
+	iLoginName              uint64 = 1 << 11
+	iSshPublicKey           uint64 = 1 << 12
+	iDisabledBy             uint64 = 1 << 13
+	iSessionsValidAfter     uint64 = 1 << 14
+	iTotpPendingSecret      uint64 = 1 << 15
+	iTotpLastStep           uint64 = 1 << 16
+	iHomeTenant             uint64 = 1 << 17
+	iShareable              uint64 = 1 << 18
+	iPasswordChangeRequired uint64 = 1 << 19
+	iPasswordExpiresAt      uint64 = 1 << 20
 )
 
-const nInsertable = 19
+const nInsertable = 21
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2647,6 +2783,8 @@ var insCols = [nInsertable]string{
 	"\"totp_last_step\"",
 	"\"home_tenant\"",
 	"\"shareable\"",
+	"\"password_change_required\"",
+	"\"password_expires_at\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2655,7 +2793,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"users\""
-const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\""
+const insReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\", \"password_change_required\", \"password_expires_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2674,7 +2812,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\""
+const updReturning = " RETURNING \"id\", \"email\", \"display_name\", \"role\", \"mfa_enrolled\", \"last_seen_at\", \"created_at\", \"password_hash\", \"totp_secret\", \"mfa_enrolled_at\", \"disabled_at\", \"login_name\", \"ssh_public_key\", \"disabled_by\", \"sessions_valid_after\", \"totp_pending_secret\", \"totp_last_step\", \"home_tenant\", \"shareable\", \"password_change_required\", \"password_expires_at\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2983,6 +3121,37 @@ func (m *Mut) SetShareable(v bool) {
 	m.expr &^= dShareable
 }
 
+func (m *Mut) SetPasswordChangeRequired(v bool) {
+	m.row.PasswordChangeRequired = v
+	m.dirty |= dPasswordChangeRequired
+	m.expr &^= dPasswordChangeRequired
+}
+
+func (m *Mut) SetPasswordExpiresAt(v time.Time) {
+	m.row.PasswordExpiresAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dPasswordExpiresAt
+	m.expr &^= dPasswordExpiresAt
+}
+
+// SetPasswordExpiresAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetPasswordExpiresAtNow() {
+	m.expr |= dPasswordExpiresAt
+	m.dirty &^= dPasswordExpiresAt
+}
+
+// SetPasswordExpiresAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetPasswordExpiresAtNull() {
+	m.row.PasswordExpiresAt = runtime.Null[time.Time]{}
+	m.dirty |= dPasswordExpiresAt
+	m.expr &^= dPasswordExpiresAt
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -3180,6 +3349,23 @@ func (n *Ins) SetShareable(v bool) {
 	n.set |= iShareable
 }
 
+func (n *Ins) SetPasswordChangeRequired(v bool) {
+	n.row.PasswordChangeRequired = v
+	n.set |= iPasswordChangeRequired
+}
+
+func (n *Ins) SetPasswordExpiresAt(v time.Time) {
+	n.row.PasswordExpiresAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iPasswordExpiresAt
+}
+
+// SetPasswordExpiresAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetPasswordExpiresAtNull() {
+	n.row.PasswordExpiresAt = runtime.Null[time.Time]{}
+	n.set |= iPasswordExpiresAt
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3228,7 +3414,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 18)
+	set := make([]string, 0, 20)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -3285,6 +3471,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<18) != 0 {
 			set = append(set, "shareable")
 		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "password_change_required")
+		}
+		if mask&(1<<20) != 0 {
+			set = append(set, "password_expires_at")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "display_name")
@@ -3336,6 +3528,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<18) != 0 {
 			set = append(set, "shareable")
+		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "password_change_required")
+		}
+		if mask&(1<<20) != 0 {
+			set = append(set, "password_expires_at")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -3392,6 +3590,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<18) != 0 {
 			set = append(set, "shareable")
 		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "password_change_required")
+		}
+		if mask&(1<<20) != 0 {
+			set = append(set, "password_expires_at")
+		}
 	case 3:
 		if mask&(1<<1) != 0 {
 			set = append(set, "email")
@@ -3443,6 +3647,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<18) != 0 {
 			set = append(set, "shareable")
+		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "password_change_required")
+		}
+		if mask&(1<<20) != 0 {
+			set = append(set, "password_expires_at")
 		}
 	}
 	return set
@@ -3522,24 +3732,26 @@ func joinAssign(set []string) string {
 }
 
 var assignFor = map[string]string{
-	"email":                "\"email\" = EXCLUDED.\"email\"",
-	"display_name":         "\"display_name\" = EXCLUDED.\"display_name\"",
-	"role":                 "\"role\" = EXCLUDED.\"role\"",
-	"mfa_enrolled":         "\"mfa_enrolled\" = EXCLUDED.\"mfa_enrolled\"",
-	"last_seen_at":         "\"last_seen_at\" = EXCLUDED.\"last_seen_at\"",
-	"created_at":           "\"created_at\" = EXCLUDED.\"created_at\"",
-	"password_hash":        "\"password_hash\" = EXCLUDED.\"password_hash\"",
-	"totp_secret":          "\"totp_secret\" = EXCLUDED.\"totp_secret\"",
-	"mfa_enrolled_at":      "\"mfa_enrolled_at\" = EXCLUDED.\"mfa_enrolled_at\"",
-	"disabled_at":          "\"disabled_at\" = EXCLUDED.\"disabled_at\"",
-	"login_name":           "\"login_name\" = EXCLUDED.\"login_name\"",
-	"ssh_public_key":       "\"ssh_public_key\" = EXCLUDED.\"ssh_public_key\"",
-	"disabled_by":          "\"disabled_by\" = EXCLUDED.\"disabled_by\"",
-	"sessions_valid_after": "\"sessions_valid_after\" = EXCLUDED.\"sessions_valid_after\"",
-	"totp_pending_secret":  "\"totp_pending_secret\" = EXCLUDED.\"totp_pending_secret\"",
-	"totp_last_step":       "\"totp_last_step\" = EXCLUDED.\"totp_last_step\"",
-	"home_tenant":          "\"home_tenant\" = EXCLUDED.\"home_tenant\"",
-	"shareable":            "\"shareable\" = EXCLUDED.\"shareable\"",
+	"email":                    "\"email\" = EXCLUDED.\"email\"",
+	"display_name":             "\"display_name\" = EXCLUDED.\"display_name\"",
+	"role":                     "\"role\" = EXCLUDED.\"role\"",
+	"mfa_enrolled":             "\"mfa_enrolled\" = EXCLUDED.\"mfa_enrolled\"",
+	"last_seen_at":             "\"last_seen_at\" = EXCLUDED.\"last_seen_at\"",
+	"created_at":               "\"created_at\" = EXCLUDED.\"created_at\"",
+	"password_hash":            "\"password_hash\" = EXCLUDED.\"password_hash\"",
+	"totp_secret":              "\"totp_secret\" = EXCLUDED.\"totp_secret\"",
+	"mfa_enrolled_at":          "\"mfa_enrolled_at\" = EXCLUDED.\"mfa_enrolled_at\"",
+	"disabled_at":              "\"disabled_at\" = EXCLUDED.\"disabled_at\"",
+	"login_name":               "\"login_name\" = EXCLUDED.\"login_name\"",
+	"ssh_public_key":           "\"ssh_public_key\" = EXCLUDED.\"ssh_public_key\"",
+	"disabled_by":              "\"disabled_by\" = EXCLUDED.\"disabled_by\"",
+	"sessions_valid_after":     "\"sessions_valid_after\" = EXCLUDED.\"sessions_valid_after\"",
+	"totp_pending_secret":      "\"totp_pending_secret\" = EXCLUDED.\"totp_pending_secret\"",
+	"totp_last_step":           "\"totp_last_step\" = EXCLUDED.\"totp_last_step\"",
+	"home_tenant":              "\"home_tenant\" = EXCLUDED.\"home_tenant\"",
+	"shareable":                "\"shareable\" = EXCLUDED.\"shareable\"",
+	"password_change_required": "\"password_change_required\" = EXCLUDED.\"password_change_required\"",
+	"password_expires_at":      "\"password_expires_at\" = EXCLUDED.\"password_expires_at\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3621,6 +3833,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.HomeTenant.Arg())
 		case 18:
 			args = append(args, n.row.Shareable)
+		case 19:
+			args = append(args, n.row.PasswordChangeRequired)
+		case 20:
+			args = append(args, n.row.PasswordExpiresAt.Arg())
 		}
 	}
 	var out Row
@@ -3658,7 +3874,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 19)
+	args := make([]any, 0, 21)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3678,6 +3894,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.TotpLastStep.Arg())
 	args = append(args, r.HomeTenant.Arg())
 	args = append(args, r.Shareable)
+	args = append(args, r.PasswordChangeRequired)
+	args = append(args, r.PasswordExpiresAt.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3723,13 +3941,15 @@ var copyCols = []string{
 	"totp_last_step",
 	"home_tenant",
 	"shareable",
+	"password_change_required",
+	"password_expires_at",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [19]any
+	buf  [21]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3766,6 +3986,8 @@ func (s *rowSource) Values() []any {
 	s.buf[16] = r.TotpLastStep.Ptr()
 	s.buf[17] = r.HomeTenant.Ptr()
 	s.buf[18] = &r.Shareable
+	s.buf[19] = &r.PasswordChangeRequired
+	s.buf[20] = r.PasswordExpiresAt.Ptr()
 	return s.buf[:]
 }
 
@@ -3815,8 +4037,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 16
 	mask |= 1 << 17
 	mask |= 1 << 18
+	mask |= 1 << 19
+	mask |= 1 << 20
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 19)
+	args := make([]any, 0, 21)
 	args = append(args, r.ID)
 	args = append(args, r.Email)
 	args = append(args, r.DisplayName)
@@ -3836,6 +4060,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.TotpLastStep.Arg())
 	args = append(args, r.HomeTenant.Arg())
 	args = append(args, r.Shareable)
+	args = append(args, r.PasswordChangeRequired)
+	args = append(args, r.PasswordExpiresAt.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3907,6 +4133,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.HomeTenant.Arg())
 		case 18:
 			args = append(args, n.row.Shareable)
+		case 19:
+			args = append(args, n.row.PasswordChangeRequired)
+		case 20:
+			args = append(args, n.row.PasswordExpiresAt.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3989,6 +4219,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.HomeTenant.Arg())
 		case 17:
 			args = append(args, m.row.Shareable)
+		case 18:
+			args = append(args, m.row.PasswordChangeRequired)
+		case 19:
+			args = append(args, m.row.PasswordExpiresAt.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4107,6 +4341,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.HomeTenant.Arg())
 		case 17:
 			args = append(args, m.row.Shareable)
+		case 18:
+			args = append(args, m.row.PasswordChangeRequired)
+		case 19:
+			args = append(args, m.row.PasswordExpiresAt.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4291,6 +4529,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.HomeTenant.Arg())
 		case 17:
 			args = append(args, m.row.Shareable)
+		case 18:
+			args = append(args, m.row.PasswordChangeRequired)
+		case 19:
+			args = append(args, m.row.PasswordExpiresAt.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

@@ -45,4 +45,24 @@ alerts:
     admins: true      # tell administrators
     person: true      # email the person who signed in
     when: new_device  # or: every
+    location: proxy   # or: lookup, off
+  server_connected: first  # or: every, off
 ```
+
+## Where a sign-in came from
+
+Every alert names the address and, when Argus can tell, the place. With the
+default `location: proxy` the place comes from Cloudflare's visitor location
+headers (`CF-IPCity`, `CF-Region`, `CF-IPCountry`), read only from a proxy
+listed in `trusted_proxies`; anyone else could forge them. `location: lookup`
+asks ipinfo.io instead, which sends it the address; answers are cached for a
+day. `off` sends the address only. Private addresses are named "a private
+network".
+
+## Servers connecting
+
+When a server's agent connects for the first time, administrators get an
+email and a bell alert naming the server and the address it came from.
+`server_connected: every` also emails when a server reconnects after a drop
+(at most once per server every 30 minutes); `off` sends nothing. Servers
+already connected before upgrading are not announced.

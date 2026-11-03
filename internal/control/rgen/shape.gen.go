@@ -86,6 +86,7 @@ func _assertAgentCredentialShape(m m0.AgentCredential) {
 		m.UpdateNow,
 		m.UpdateRequestedAt,
 		m.UpdateRequestedBy,
+		m.FirstConnectedAt,
 	}
 }
 
@@ -557,5 +558,7 @@ func _assertUserShape(m m0.User) {
 		m.TotpLastStep,
 		m.HomeTenant,
 		m.Shareable,
+		m.PasswordChangeRequired,
+		m.PasswordExpiresAt,
 	}
 }

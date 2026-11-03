@@ -82,12 +82,16 @@ func (a *API) announceSignIn(r *http.Request, sess auth.Session, how string) {
 	}
 
 	method := signInMethod(how)
+	place := ""
+	if a.Locate != nil {
+		place = a.Locate.Locate(ctx, r, ip)
+	}
 	// The bell is told of every sign-in; each administrator chooses whether
 	// to see only new devices. Not rate limited like mail: a row costs
 	// nothing, and the sign-in itself had to succeed.
 	a.alertSignIn(ctx, notify.SignIn{
 		Email: sess.Email, Name: sess.Name, Role: sess.Role,
-		ClientIP: ip, Device: device, Method: method, NewDevice: isNew,
+		ClientIP: ip, Location: place, Device: device, Method: method, NewDevice: isNew,
 	})
 
 	n := a.SignInAlerts
@@ -107,7 +111,7 @@ func (a *API) announceSignIn(r *http.Request, sess auth.Session, how string) {
 
 	e := notify.SignIn{
 		Email: sess.Email, Name: sess.Name, Role: sess.Role, Org: orgLabel(ctx),
-		ClientIP: ip, Device: device, Method: method, NewDevice: isNew,
+		ClientIP: ip, Location: place, Device: device, Method: method, NewDevice: isNew,
 		At: time.Now().UTC(),
 	}
 	personTold := p.Person && n.EmailOn()

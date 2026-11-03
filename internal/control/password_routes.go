@@ -80,6 +80,17 @@ func (a *API) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A temporary password that was not used in time is refused. Said
+	// plainly: whoever typed it knew it, so this reveals nothing, and the
+	// remedy -- ask for a new one -- is not "check your password".
+	if acct.PasswordChangeRequired && acct.PasswordExpired(time.Now()) {
+		a.auditAuth(r, "auth.temporary_password_expired", "notice", acct.Email,
+			"A sign-in with an expired temporary password was refused.")
+		writeErr(w, http.StatusUnauthorized,
+			"your temporary password has expired; ask an administrator to send you a new one")
+		return
+	}
+
 	// The password was right. If a second factor is enrolled it is owed now,
 	// and the account is not signed in until it is presented.
 	if acct.MFAEnrolled {
@@ -201,6 +212,8 @@ func (a *API) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 
 // completeSignIn issues the session cookie and records the event.
 func (a *API) completeSignIn(w http.ResponseWriter, r *http.Request, sess auth.Session, how string) {
+	// The cookie works from this browser only; see session_binding.go.
+	sess.Browser = browserFamily(r)
 	token, err := a.signerFor(r).IssueSession(sess, a.sessionTTL())
 	if err != nil {
 		a.fail(w, "issue session", err)
@@ -361,10 +374,19 @@ func (a *API) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		a.refuse(w, r, a.clientAddr(r), retry, "too many wrong passwords for this account; wait and try again")
 		return
 	}
-	if _, err := a.store.Authenticate(r.Context(), sess.Email, in.Current); err != nil {
+	acct, err := a.store.Authenticate(r.Context(), sess.Email, in.Current)
+	if err != nil {
 		a.RecordAuthFailure(r)
 		a.recordAccountFailure(r, sess.Email, false)
 		writeErr(w, http.StatusUnauthorized, "your current password is not correct")
+		return
+	}
+	if in.New == in.Current {
+		writeErr(w, http.StatusBadRequest, "choose a password different from the current one")
+		return
+	}
+	if err := checkNewPassword(in.New, acct.Email, acct.DisplayName); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := a.store.SetPassword(r.Context(), sess.Email, in.New); err != nil {
@@ -375,8 +397,12 @@ func (a *API) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	a.auditAuth(r, "auth.password_changed", "notice", sess.Email,
-		"Changed their own password. Every other session for this account was signed out.")
+	detail := "Changed their own password. Every other session for this account was signed out."
+	if acct.PasswordChangeRequired {
+		detail = "Replaced their temporary password with one of their own. " +
+			"Every other session for this account was signed out."
+	}
+	a.auditAuth(r, "auth.password_changed", "notice", sess.Email, detail)
 	a.reissue(w, r, sess)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
 }
@@ -405,6 +431,7 @@ func (a *API) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
 // session issued before it. Same identity, new id and issue time.
 func (a *API) reissue(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	sess.ID = ""
+	sess.Browser = browserFamily(r)
 	token, err := a.signerFor(r).IssueSession(sess, a.sessionTTL())
 	if err != nil {
 		a.log.Error("could not reissue a session", "error", err)

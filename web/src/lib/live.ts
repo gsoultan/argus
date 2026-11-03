@@ -20,6 +20,7 @@ import type {
   TeamAccess,
   TeamAssignment,
   ServerAccount,
+  TemporaryPasswordOutcome,
   User,
   BackupCatalog, BackupDestination, BackupSchedule, BackupsView, DatabaseBackup, DatabaseRestore,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
@@ -181,6 +182,16 @@ export interface Identity {
   mfaSetupRequired?: boolean
   /** Whether this account's role is required to have a second factor at all. */
   mfaRequiredForRole?: boolean
+  /**
+   * True while the account is signed in with a temporary password. The
+   * control plane refuses everything but changing it, so the console shows
+   * only "choose your password" -- before the second step, if one is owed.
+   */
+  passwordChangeRequired?: boolean
+  /** When that temporary password stops working. */
+  temporaryPasswordExpiresAt?: string | null
+  /** Whether a person added now can be emailed their first password. */
+  canEmailPeople?: boolean
   /**
    * True when more than one organization shares this control plane, so the
    * sign-in form has to ask which one. Until then nobody is asked.
@@ -1092,7 +1103,22 @@ export interface ControlSettings {
     caCert?: string; mutualTls: boolean; certPem?: string; keyPem?: string; reissue?: boolean
   }
   /** Who is told when someone signs in to the console. Absent from an older control plane. */
-  signInAlerts?: { admins: boolean; person: boolean; when: 'new_device' | 'every' }
+  signInAlerts?: {
+    admins: boolean
+    person: boolean
+    when: 'new_device' | 'every'
+    /** How an alert names where a sign-in came from. */
+    location?: 'proxy' | 'lookup' | 'off'
+  }
+  /** When administrators are emailed that a server connected. */
+  serverAlerts?: { connected: 'first' | 'every' | 'off' }
+  security?: {
+    requireMfa: 'all' | 'privileged' | 'off'
+    temporaryPasswordTtl: string
+    allowBrowserChange: boolean
+    accountFailuresPerHour: number
+    accountCodeFailuresPerHour: number
+  }
 }
 
 export async function controlSettings(): Promise<ControlSettings> {
@@ -1130,13 +1156,21 @@ export async function waitForControlPlane(timeoutMs = 30_000): Promise<boolean> 
   return false
 }
 
+/**
+ * Adds a person. No password is sent: the control plane makes a temporary
+ * one, emails it to them, and returns it only when it could not.
+ */
 export async function createAccount(input: {
   email: string
   displayName: string
   role: string
-  password: string
-}): Promise<{ email: string; role: string }> {
+}): Promise<TemporaryPasswordOutcome> {
   return post('/api/v1/users', input)
+}
+
+/** Sends someone a new temporary password, signing them out everywhere. */
+export async function sendTemporaryPassword(email: string): Promise<TemporaryPasswordOutcome> {
+  return post(`/api/v1/users/${encodeURIComponent(email)}/temporary-password`, {})
 }
 
 /**

@@ -83,8 +83,10 @@ const BUDGET_KB = {
    * 384.1 kB with the phone-friendly page header, the same 0.9 kB as the
    * overview.
    * 389.6 kB with the alerts bell, the same shared 5 kB as the overview.
+   * 390.0 kB with temporary passwords: the shell's gate for a password that
+   * must be replaced and its "Change my password" item; the form is lazy.
    */
-  sessionDetail: 390,
+  sessionDetail: 392,
 }
 
 /**

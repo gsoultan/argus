@@ -224,6 +224,12 @@ func (a *API) noticeUntrustedProxy(r *http.Request, key string) {
 // a throttle all name the same address. Behind a proxy -- a Cloudflare Tunnel
 // most often, whose connector reaches this process over loopback -- the peer
 // is the proxy, and every person would otherwise be recorded as 127.0.0.1.
+// FromTrustedProxy reports whether r arrived through a proxy listed in
+// trusted_proxies, so headers it adds may be believed.
+func (t *Throttles) FromTrustedProxy(r *http.Request) bool {
+	return t != nil && t.resolver.FromTrustedProxy(r)
+}
+
 func (a *API) clientAddr(r *http.Request) string {
 	if a.throttles != nil {
 		return a.throttles.resolver.Key(r)

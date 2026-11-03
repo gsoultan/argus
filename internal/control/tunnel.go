@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,6 +54,9 @@ type TunnelHub struct {
 	// GrantKey signs session grants; see tunnel.Grant. Nil when there is
 	// no signing secret, and then no session opens through a tunnel.
 	GrantKey ed25519.PrivateKey
+	// OnConnect is told of every admitted tunnel, after it can be used.
+	// Called on the admitting goroutine; it must not block. Nil is none.
+	OnConnect func(ctx context.Context, c ServerConnection)
 
 	mu     sync.Mutex
 	byCred map[string]*liveTunnel
@@ -77,6 +81,29 @@ type liveTunnel struct {
 
 // tunnelKey is how the hub's maps are keyed: the organization first.
 func tunnelKey(tenant, name string) string { return tenant + "\x00" + strings.ToLower(name) }
+
+// ServerConnection is an agent's tunnel being admitted.
+type ServerConnection struct {
+	Host string
+	// First is the credential's first connection since it enrolled.
+	First bool
+	// Replaced is set when it took over from a connection still open here,
+	// which is the agent redialling rather than coming back.
+	Replaced   bool
+	Transport  string
+	RemoteAddr string
+}
+
+// remoteHost is an address without its port.
+func remoteHost(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(addr.String()); err == nil {
+		return h
+	}
+	return addr.String()
+}
 
 // NewTunnelHub returns a hub writing tunnel state through store.
 func NewTunnelHub(store *Store, log *slog.Logger, replica string) *TunnelHub {
@@ -104,8 +131,9 @@ func (h *TunnelHub) admit(ctx context.Context, credID, host string, sess tunnel.
 	// The database is told before the tunnel can be found here. Published
 	// first, the tunnel could be used, and the old one's disconnection
 	// clear the row, while the console still said the host was offline.
-	if err := h.store.tunnelConnected(t.ctx(), credID,
-		string(sess.Transport()), h.Replica, t.since); err != nil {
+	first, err := h.store.tunnelConnected(t.ctx(), credID,
+		string(sess.Transport()), h.Replica, t.since)
+	if err != nil {
 		h.log.Error("tunnel: recording the connection failed", "host", host, "error", err)
 	}
 
@@ -129,6 +157,11 @@ func (h *TunnelHub) admit(ctx context.Context, credID, host string, sess tunnel.
 	}
 	h.log.Info("tunnel: agent connected", "host", host,
 		"transport", sess.Transport(), "remote", sess.RemoteAddr())
+	if h.OnConnect != nil {
+		h.OnConnect(t.ctx(), ServerConnection{Host: t.host, First: first,
+			Transport: string(sess.Transport()), RemoteAddr: remoteHost(sess.RemoteAddr()),
+			Replaced: old != nil})
+	}
 
 	go h.refuseAgentStreams(t)
 	go h.watch(t)
@@ -411,18 +444,29 @@ func (a *API) admitQUIC(ctx context.Context, sess tunnel.Session) {
 
 /* ── Store ───────────────────────────────────────────────────────────────── */
 
+// tunnelConnected records a connection, and reports whether it is the
+// credential's first.
 func (s *Store) tunnelConnected(ctx context.Context, credID, transport, replica string,
-	since time.Time) error {
-	_, err := s.db(ctx).Exec(ctx, `
+	since time.Time) (first bool, err error) {
+	// first_connected_at becomes $4 only when it was unset, so it equals $4
+	// afterwards only for the first connection; the row lock the update
+	// takes means two replicas admitting the agent at once cannot both see
+	// that.
+	err = s.db(ctx).QueryRow(ctx, `
 		UPDATE agent_credentials SET
 			tunnel_transport = $2, tunnel_replica = $3,
-			tunnel_connected_at = $4, tunnel_seen_at = now(), tunnel_rtt_us = NULL
+			tunnel_connected_at = $4, tunnel_seen_at = now(), tunnel_rtt_us = NULL,
+			first_connected_at = COALESCE(first_connected_at, $4)
 		 WHERE id::text = $1
 		   -- Two connections admitted at once on this replica: the newer
 		   -- one is kept, whichever is recorded last.
 		   AND (tunnel_replica IS DISTINCT FROM $3 OR tunnel_connected_at IS NULL
-		        OR tunnel_connected_at < $4)`, credID, transport, replica, since)
-	return err
+		        OR tunnel_connected_at < $4)
+		RETURNING first_connected_at = $4`, credID, transport, replica, since).Scan(&first)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return first, err
 }
 
 // tunnelSeen records a ping and reports whether the tunnel should stay: the

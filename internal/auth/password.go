@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -51,7 +52,9 @@ func HashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("generate salt: %w", err)
 	}
+	release := acquireHashSlot()
 	sum := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	release()
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, argonMemory, argonTime, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt),
@@ -90,11 +93,29 @@ func VerifyPassword(encoded, password string) error {
 		return fmt.Errorf("%w: unreadable digest", ErrPasswordMismatch)
 	}
 
+	release := acquireHashSlot()
 	got := argon2.IDKey([]byte(password), salt, times, memory, threads, uint32(len(want)))
+	release()
 	// Constant time: a timing difference here leaks how much of a guess was
 	// correct, which is enough to recover a password byte by byte.
 	if subtle.ConstantTimeCompare(got, want) != 1 {
 		return ErrPasswordMismatch
 	}
 	return nil
+}
+
+// hashSlots bounds how many argon2id computations run at once.
+//
+// Each one holds 19 MiB for its duration. The per-address and per-account
+// limits bound how many a single client can cause, but not a flood spread
+// across thousands of addresses each trying a different account: without a
+// ceiling, five hundred concurrent sign-ins are ten gigabytes, and the
+// control plane is killed for memory rather than merely slow to sign people
+// in. With one, a flood queues here -- sign-in gets slower for everybody,
+// and everything else the control plane does keeps working.
+var hashSlots = make(chan struct{}, max(2, runtime.NumCPU()))
+
+func acquireHashSlot() (release func()) {
+	hashSlots <- struct{}{}
+	return func() { <-hashSlots }
 }

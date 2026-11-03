@@ -35,6 +35,8 @@ type SessionAccount struct {
 	Revoked bool
 	// MFAEnrolled is whether the account has a confirmed second factor.
 	MFAEnrolled bool
+	// PasswordChangeRequired is set while the password is a temporary one.
+	PasswordChangeRequired bool
 }
 
 // SessionState looks up the account behind a cookie and whether sid was
@@ -74,6 +76,7 @@ func (s *Store) SessionState(ctx context.Context, email, sid string) (*SessionAc
 	}
 	a.Disabled = a.Disabled || h.Disabled
 	a.MFAEnrolled = h.MFAEnrolled
+	a.PasswordChangeRequired = h.PasswordChangeRequired
 	if h.ValidAfter != nil && (a.ValidAfter == nil || h.ValidAfter.After(*a.ValidAfter)) {
 		a.ValidAfter = h.ValidAfter
 	}
@@ -94,11 +97,12 @@ func (s *Store) sessionRow(ctx context.Context, email, sid string) (sessionRow, 
 	err := s.db(ctx).QueryRow(ctx, `
 		SELECT u.email, u.display_name, u.role, u.disabled_at, u.sessions_valid_after,
 		       ($2 <> '' AND EXISTS (SELECT 1 FROM revoked_sessions r WHERE r.sid = $2)),
-		       u.mfa_enrolled_at IS NOT NULL, u.password_hash IS NOT NULL, u.home_tenant
+		       u.mfa_enrolled_at IS NOT NULL, u.password_hash IS NOT NULL, u.home_tenant,
+		       u.password_change_required
 		  FROM users u
 		 WHERE lower(u.email) = lower($1)`, email, sid).
 		Scan(&a.Email, &a.DisplayName, &a.Role, &disabledAt, &a.ValidAfter, &a.Revoked,
-			&a.MFAEnrolled, &a.hasPassword, &home)
+			&a.MFAEnrolled, &a.hasPassword, &home, &a.PasswordChangeRequired)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, "", ErrNoAccount
 	}

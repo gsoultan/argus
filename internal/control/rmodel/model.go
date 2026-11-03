@@ -143,6 +143,9 @@ type AgentCredential struct {
 	UpdateNow         bool
 	UpdateRequestedAt *time.Time
 	UpdateRequestedBy *string
+
+	// FirstConnectedAt is when the agent first opened its tunnel.
+	FirstConnectedAt *time.Time
 }
 
 func (m *AgentCredential) Schema(t *storm.Table) {
@@ -925,6 +928,11 @@ type User struct {
 	// them, set here by the organization they belong to.
 	HomeTenant *string
 	Shareable  bool
+	// PasswordChangeRequired holds the account to "change your password"
+	// while its password is a temporary one; PasswordExpiresAt is when that
+	// temporary password stops working.
+	PasswordChangeRequired bool
+	PasswordExpiresAt      *time.Time
 }
 
 func (m *User) Schema(t *storm.Table) {
@@ -932,6 +940,7 @@ func (m *User) Schema(t *storm.Table) {
 	t.Col(&m.Role).Default("'operator'::text")
 	t.Col(&m.MfaEnrolled).Default("false")
 	t.Col(&m.Shareable).Default("false")
+	t.Col(&m.PasswordChangeRequired).Default("false")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("users_email_key", &m.Email)
 	t.Index(storm.Lower(&m.Email)).Unique().Named("users_email_lower_key")

@@ -487,6 +487,14 @@ export function useAddAccount() {
   })
 }
 
+export function useSendTemporaryPassword() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: api.sendTemporaryPassword,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+  })
+}
+
 /* ── Databases ──────────────────────────────────────────────────────────── */
 
 export const dbqk = {

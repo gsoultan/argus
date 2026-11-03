@@ -35,6 +35,11 @@ type resolvedSession struct {
 	// mfaSetupRequired is set when the account's role must have a second
 	// factor and has none, so only enrolment is open to it.
 	mfaSetupRequired bool
+	// passwordChangeRequired is set while the account's password is a
+	// temporary one: only changing it is open, before anything else --
+	// enrolment included, so the second factor is set up by whoever chose
+	// the password, not whoever could have read the temporary one.
+	passwordChangeRequired bool
 }
 
 // MFAPolicy says which accounts must enrol a second factor before they may do
@@ -43,9 +48,11 @@ type MFAPolicy string
 
 const (
 	// MFAPrivileged requires it of owners, admins and approvers: the roles
-	// that change who can reach what, or approve it. The default.
+	// that change who can reach what, or approve it.
 	MFAPrivileged MFAPolicy = "privileged"
-	// MFAAll requires it of everyone.
+	// MFAAll requires it of everyone. The default: an operator's session
+	// opens shells on servers, which is no less worth a second factor than
+	// an approver's.
 	MFAAll MFAPolicy = "all"
 	// MFAOff requires it of no one. Enrolment is still offered.
 	MFAOff MFAPolicy = "off"
@@ -64,10 +71,10 @@ func (a *API) mfaRequiredFor(role string) bool {
 	switch a.RequireMFA {
 	case MFAOff:
 		return false
-	case MFAAll:
-		return true
-	default:
+	case MFAPrivileged:
 		return role == "owner" || role == "admin" || role == "approver"
+	default:
+		return true
 	}
 }
 
@@ -101,6 +108,9 @@ func (a *API) resolveSession(r *http.Request) resolvedSession {
 	if st.ValidAfter != nil && sess.IssuedAt.Before(*st.ValidAfter) {
 		return resolvedSession{}
 	}
+	if !a.browserMatches(r, sess) {
+		return resolvedSession{}
+	}
 	// The role is the account's now, not the one the cookie was issued with:
 	// a demotion applies to the next request, as the People page says.
 	sess.Email, sess.Role = st.Email, st.Role
@@ -108,6 +118,7 @@ func (a *API) resolveSession(r *http.Request) resolvedSession {
 		sess.Name = st.DisplayName
 	}
 	out := resolvedSession{sess: sess, ok: true}
+	out.passwordChangeRequired = st.PasswordChangeRequired
 	out.mfaSetupRequired = a.mfaRequiredFor(st.Role) && !st.MFAEnrolled
 	return out
 }
@@ -124,7 +135,11 @@ func (a *API) sessionOf(r *http.Request) resolvedSession {
 // mfaSetupPaths are what an account that owes a second factor may still reach:
 // enough to see who it is, enrol, change its password, and leave.
 var mfaSetupPaths = map[string]bool{
-	"/auth/me":              true,
+	"/auth/me": true,
+	// Signing in again from a browser that is held: what it gets is held
+	// the same way.
+	"/auth/password":        true,
+	"/auth/mfa":             true,
 	"/auth/logout":          true,
 	"/auth/mfa/enrol":       true,
 	"/auth/mfa/confirm":     true,
@@ -132,6 +147,18 @@ var mfaSetupPaths = map[string]bool{
 	"/auth/sessions/revoke": true,
 	// The "this wasn't me" link works whoever's browser opens it.
 	"/auth/sign-in-report": true,
+}
+
+// passwordChangePaths are what an account signed in with a temporary password
+// may reach: who it is, changing the password, and leaving.
+var passwordChangePaths = map[string]bool{
+	"/auth/me":              true,
+	"/auth/password":        true,
+	"/auth/mfa":             true,
+	"/auth/logout":          true,
+	"/auth/password/change": true,
+	"/auth/sessions/revoke": true,
+	"/auth/sign-in-report":  true,
 }
 
 // sessionGate resolves the cookie once per request, refuses cross-site
@@ -156,6 +183,15 @@ func (a *API) sessionGate(next http.Handler) http.Handler {
 			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(30 * time.Second))
 		}
 		rs := a.resolveSession(r)
+		if rs.ok && rs.passwordChangeRequired && !passwordChangePaths[r.URL.Path] &&
+			(strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/auth/")) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "you are signed in with a temporary password; " +
+					"choose a password of your own before doing anything else",
+				"passwordChangeRequired": true,
+			})
+			return
+		}
 		if rs.ok && rs.mfaSetupRequired && !mfaSetupPaths[r.URL.Path] &&
 			(strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/auth/")) {
 			writeJSON(w, http.StatusForbidden, map[string]any{

@@ -1,28 +1,27 @@
 import { useMemo, useState } from 'react'
 import {
-  ActionIcon, Avatar, Badge, Box, Button, Card, Group, Menu, Modal, MultiSelect, SegmentedControl, Select,
-  SimpleGrid, Stack, Switch, Table, Tabs, Text, TextInput, Tooltip, UnstyledButton,
+  ActionIcon, Alert, Avatar, Badge, Box, Button, Card, Code, CopyButton, Group, Menu, Modal, MultiSelect,
+  SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Tabs, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconDots, IconPencil, IconPlus, IconSearch, IconServer2, IconTrash, IconUserPlus, IconUsers,
-  IconUsersGroup, IconX,
+  IconAlertTriangle, IconCopy, IconDots, IconMail, IconPencil, IconPlus, IconSearch, IconServer2, IconTrash,
+  IconUserPlus, IconUsers, IconUsersGroup, IconX,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, relTime } from '~/components/primitives'
-import { generatePassword } from '~/lib/password'
 import { guard } from '~/lib/guard'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
   meQuery, teamsQuery, useAddAccount, useAddSharedAccount, useAddTeamMember, useCreateTeam, useDeleteTeam,
   useRemoveTeamMember, useRenameTeam, useResetMFA, useSetDisabled, useSetLoginName, useSetRole,
-  useSetShareable, useSignOutAccount, usersQuery,
+  useSendTemporaryPassword, useSetShareable, useSignOutAccount, usersQuery,
 } from '~/lib/queries'
 import { canSee, roleLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
-import type { Team, User, UserRole } from '~/types/domain'
+import type { Team, TemporaryPasswordOutcome, User, UserRole } from '~/types/domain'
 import { PersonServersModal } from '~/components/PersonServers'
 
 /**
@@ -403,6 +402,24 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
   }
   const resetMFA = useResetMFA()
   const signOut = useSignOutAccount()
+  const sendTemp = useSendTemporaryPassword()
+  const [handOver, setHandOver] = useState<TemporaryPasswordOutcome | null>(null)
+  const sendNewPassword = async (u: User) => {
+    const what = me?.canEmailPeople
+      ? `Email ${u.displayName} a new temporary password?`
+      : `Make a new temporary password for ${u.displayName}? Email is not set up, so it is shown to you once to hand over.`
+    if (!window.confirm(`${what} Their current password stops working and they are signed out everywhere. Their authenticator stays as it is.`)) return
+    try {
+      const out = await sendTemp.mutateAsync(u.email)
+      if (out.emailed) {
+        notifyOk('Temporary password emailed', `${u.email} gets it by email. It works until ${new Date(out.temporaryPasswordExpiresAt).toLocaleString()}.`)
+      } else {
+        setHandOver(out)
+      }
+    } catch (err) {
+      notifyError('Not sent', err)
+    }
+  }
   const reset2fa = async (u: User) => {
     if (!window.confirm(`Remove ${u.displayName}'s authenticator and recovery codes? They are signed out everywhere and set up a new one at their next sign-in. Only do this for a person you have identified yourself.`)) return
     try {
@@ -515,7 +532,10 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                           </Tooltip>
                         )}
                         {u.disabled && <Badge color="rose" variant="light">cannot sign in</Badge>}
-                        {!u.disabled && !u.mfaEnrolled && (
+                        {!u.disabled && u.temporaryPassword && (
+                          <InvitedBadge expiresAt={u.temporaryPasswordExpiresAt} />
+                        )}
+                        {!u.disabled && !u.temporaryPassword && !u.mfaEnrolled && (
                           <Tooltip label="They sign in with a password only. They are asked to add a second step next time.">
                             <Badge color="amber" variant="light">no second step</Badge>
                           </Tooltip>
@@ -583,6 +603,11 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                                 </Button>
                               </Menu.Target>
                               <Menu.Dropdown>
+                                {!u.shared && (
+                                  <Menu.Item leftSection={<IconMail size={14} />} onClick={() => void sendNewPassword(u)}>
+                                    {u.temporaryPassword ? 'Send the invitation again' : 'Send a new temporary password'}
+                                  </Menu.Item>
+                                )}
                                 <Menu.Item onClick={() => void signOutAll(u)}>
                                   Sign out everywhere
                                 </Menu.Item>
@@ -616,6 +641,7 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
             : <EmptyState icon={IconUsers} title="Nobody matches" description="Clear the search to see everyone." />
         )}
       </Card>
+      {handOver && <HandOverPassword outcome={handOver} onClose={() => setHandOver(null)} />}
       <Text size={FS.meta} c="dimmed">
         Removing someone stops them signing in, and locks their own accounts on every server within a
         minute. Nothing is deleted: their sessions, recordings and activity stay under their name.
@@ -671,20 +697,23 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [role, setRole] = useState<UserRole>('operator')
-  const [password, setPassword] = useState(() => generatePassword())
+  const [handOver, setHandOver] = useState<TemporaryPasswordOutcome | null>(null)
   // A person who already signs in to another organization on this control
   // plane keeps their password and second step; only their home has to have
   // allowed it. Offered only where there is another organization to share from.
   const [shared, setShared] = useState(false)
   const [homeOrg, setHomeOrg] = useState('')
   const canShare = me?.multiOrg === true
-  const close = () => {
+  const canEmail = me?.canEmailPeople === true
+  const reset = () => {
     setEmail('')
     setName('')
     setRole('operator')
-    setPassword(generatePassword())
     setShared(false)
     setHomeOrg('')
+  }
+  const close = () => {
+    reset()
     onClose()
   }
   const submit = async () => {
@@ -692,19 +721,26 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
       if (shared) {
         await addShared.mutateAsync({ email, displayName: name, role, ...(homeOrg.trim() ? { homeOrg: homeOrg.trim() } : {}) })
         notifyOk('Person added', `${email} can switch to this organization from the one they sign in to. Nothing to send them.`)
-      } else {
-        await add.mutateAsync({ email, displayName: name, role, password })
-        notifyOk(
-          'Person added',
-          `${email} can sign in now. Send them the first password over a channel you trust; they set up a second step when they first sign in.`,
-        )
+        close()
+        return
       }
-      close()
+      const out = await add.mutateAsync({ email, displayName: name, role })
+      if (out.emailed) {
+        notifyOk('Person added', `We emailed ${out.email} a temporary password. They choose their own and set up two-step sign-in when they first sign in.`)
+        close()
+      } else {
+        // Shown in place of the form, once; closing it forgets it.
+        setHandOver(out)
+        reset()
+      }
     } catch (err) {
       notifyError('Not added', err)
     }
   }
   const pending = add.isPending || addShared.isPending
+  if (handOver) {
+    return <HandOverPassword outcome={handOver} onClose={() => { setHandOver(null); onClose() }} />
+  }
   return (
     <Modal opened={opened} onClose={close} title="Add person">
       <Stack gap="md">
@@ -736,28 +772,79 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
             onChange={(e) => setHomeOrg(e.currentTarget.value.toLowerCase())}
             styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
           />
+        ) : canEmail ? (
+          <Alert color="azure" variant="light" icon={<IconMail size={16} />} p="xs">
+            <Text size={FS.body}>
+              Argus emails them a temporary password. At their first sign-in they choose a strong
+              password of their own, then set up two-step sign-in.
+            </Text>
+          </Alert>
         ) : (
-          <Group align="flex-end" gap="xs" wrap="nowrap">
-            <TextInput
-              label="First password"
-              description="They can change it after signing in"
-              style={{ flex: 1 }}
-              value={password}
-              onChange={(e) => setPassword(e.currentTarget.value)}
-              styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
-            />
-            <Button variant="default" onClick={() => setPassword(generatePassword())}>New</Button>
-          </Group>
+          <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />} p="xs">
+            <Text size={FS.body}>
+              Email is not set up, so Argus shows you their temporary password once to hand over.
+              Set up email in Settings, Alerts to send it to them instead.
+            </Text>
+          </Alert>
         )}
         <Group justify="flex-end">
           <Button variant="default" onClick={close}>Cancel</Button>
-          <Button
-            loading={pending}
-            disabled={!email.includes('@') || (!shared && [...password].length < 12)}
-            onClick={() => void submit()}
-          >
+          <Button loading={pending} disabled={!email.includes('@')} onClick={() => void submit()}>
             Add person
           </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  )
+}
+
+/** "Invited": they have not chosen a password yet, and when theirs runs out. */
+function InvitedBadge({ expiresAt }: { expiresAt?: string | null | undefined }) {
+  const expired = !!expiresAt && new Date(expiresAt).getTime() <= Date.now()
+  const when = expiresAt ? new Date(expiresAt).toLocaleString() : ''
+  return (
+    <Tooltip label={expired
+      ? 'Their temporary password ran out before they used it. Send them a new one from Security.'
+      : `They have not signed in yet. Their temporary password works until ${when}.`}>
+      <Badge color={expired ? 'rose' : 'azure'} variant="light">{expired ? 'invitation expired' : 'invited'}</Badge>
+    </Tooltip>
+  )
+}
+
+/**
+ * A temporary password that could not be emailed, shown once to hand over.
+ * Closing it forgets it: the control plane keeps only a hash.
+ */
+function HandOverPassword({ outcome, onClose }: { outcome: TemporaryPasswordOutcome; onClose: () => void }) {
+  const pw = outcome.temporaryPassword ?? ''
+  return (
+    <Modal opened onClose={onClose} title="Hand over the temporary password" closeOnClickOutside={false}>
+      <Stack gap="md">
+        {outcome.emailError ? (
+          <Alert color="rose" variant="light" icon={<IconAlertTriangle size={16} />} p="xs">
+            <Text size={FS.body}>Argus could not email it: {outcome.emailError}</Text>
+          </Alert>
+        ) : (
+          <Text size={FS.body}>Email is not set up, so here is the temporary password for {outcome.email}.</Text>
+        )}
+        <Group gap="xs" wrap="nowrap" align="center">
+          <Code block style={{ flex: 1, fontSize: 16, letterSpacing: 1, wordBreak: 'break-all' }}>{pw}</Code>
+          <CopyButton value={pw}>
+            {({ copied, copy }) => (
+              <Button variant="light" leftSection={<IconCopy size={14} />} onClick={copy}>
+                {copied ? 'Copied' : 'Copy'}
+              </Button>
+            )}
+          </CopyButton>
+        </Group>
+        <Text size={FS.meta} c="dimmed">
+          Give it to them over a channel you trust. It works until{' '}
+          {new Date(outcome.temporaryPasswordExpiresAt).toLocaleString()}, once: at their first
+          sign-in they must choose their own password and set up two-step sign-in. This is the only
+          time it is shown.
+        </Text>
+        <Group justify="flex-end">
+          <Button onClick={onClose}>Done</Button>
         </Group>
       </Stack>
     </Modal>

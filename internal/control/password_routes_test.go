@@ -21,6 +21,21 @@ type loginHarness struct {
 	srv    *httptest.Server
 	client *http.Client
 	store  *Store
+	// ua is the browser this harness's client is: every request that does
+	// not name one carries it, so a cookie bound to the browser that signed
+	// in keeps working. signIn sets it.
+	ua *string
+}
+
+// uaTransport gives a request the harness's browser when it names none.
+type uaTransport struct{ ua *string }
+
+func (u uaTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Header.Get("User-Agent") == "" && *u.ua != "" {
+		r = r.Clone(r.Context())
+		r.Header.Set("User-Agent", *u.ua)
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }
 
 func newLoginHarness(t *testing.T) *loginHarness {
@@ -36,7 +51,9 @@ func newLoginHarness(t *testing.T) *loginHarness {
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &loginHarness{api: api, srv: srv, client: &http.Client{Jar: jar}, store: store}
+	ua := new(string)
+	return &loginHarness{api: api, srv: srv, store: store, ua: ua,
+		client: &http.Client{Jar: jar, Transport: uaTransport{ua: ua}}}
 }
 
 func (h *loginHarness) post(t *testing.T, path string, body any) (int, map[string]any) {

@@ -20,6 +20,18 @@ type signInAlertsConfig struct {
 	Person *bool `yaml:"person,omitempty"`
 	// When is "new_device" (the default) or "every".
 	When string `yaml:"when,omitempty"`
+	// Location is how an alert names where a sign-in came from: "proxy"
+	// (the default; Cloudflare's visitor location headers, from a trusted
+	// proxy only), "lookup" (asks ipinfo.io, sending it the address) or
+	// "off".
+	Location string `yaml:"location,omitempty"`
+}
+
+func (c *signInAlertsConfig) locationMode() control.LocationMode {
+	if c == nil || c.Location == "" {
+		return control.LocationProxy
+	}
+	return control.LocationMode(c.Location)
 }
 
 func (c *signInAlertsConfig) policy() control.SignInAlertPolicy {

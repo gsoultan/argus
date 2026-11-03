@@ -92,11 +92,18 @@ type config struct {
 	RateLimit  *rateLimitConfig `yaml:"rate_limit,omitempty"`
 	SessionTTL time.Duration    `yaml:"session_ttl,omitempty"`
 	// RequireMFA is which accounts must set up a second factor before they
-	// may do anything else in the console: "privileged" (owners, admins and
-	// approvers; the default), "all", or "off".
-	RequireMFA string        `yaml:"require_mfa,omitempty"`
-	TicketTTL  time.Duration `yaml:"ticket_ttl,omitempty"`
-	LogLevel   string        `yaml:"log_level,omitempty"`
+	// may do anything else in the console: "all" (the default),
+	// "privileged" (owners, admins and approvers), or "off".
+	RequireMFA string `yaml:"require_mfa,omitempty"`
+	// TemporaryPasswordTTL is how long the temporary password a person is
+	// sent when added keeps working if unused. 72h.
+	TemporaryPasswordTTL time.Duration `yaml:"temporary_password_ttl,omitempty"`
+	// AllowBrowserChange stops refusing a session cookie presented by a
+	// different browser than the one that signed in. Default false: such a
+	// cookie was copied, and is refused and revoked.
+	AllowBrowserChange bool          `yaml:"allow_browser_change,omitempty"`
+	TicketTTL          time.Duration `yaml:"ticket_ttl,omitempty"`
+	LogLevel           string        `yaml:"log_level,omitempty"`
 	// Alerts tells administrators, by email, Telegram or a push notification
 	// through Firebase Cloud Messaging, every time somebody opens a session.
 	// Omit for none.
@@ -133,6 +140,10 @@ type alertsConfig struct {
 	// SignIn is who is told when someone signs in to the console; see
 	// signin_alerts.go.
 	SignIn *signInAlertsConfig `yaml:"sign_in,omitempty"`
+	// ServerConnected is when administrators are told, by email and
+	// Telegram, that a server connected: "first" (the default), "every" or
+	// "off".
+	ServerConnected string `yaml:"server_connected,omitempty"`
 }
 
 // alertSenders builds a sender per configured channel.
@@ -470,6 +481,23 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	api.SignInAlerts = signIns
 	api.SignInPolicy = signInConfigOf(cfg.Alerts).policy()
+	locMode := signInConfigOf(cfg.Alerts).locationMode()
+	if !control.ValidLocationMode(string(locMode)) {
+		return fmt.Errorf("alerts.sign_in.location is %q; use proxy, lookup or off", locMode)
+	}
+	// Assigned only when there is one: a nil Locator stays a nil interface.
+	if l := control.NewLocator(locMode, throttles.FromTrustedProxy, nil); l != nil {
+		api.Locate = l
+	}
+	serverAlerts := ""
+	if cfg.Alerts != nil {
+		serverAlerts = cfg.Alerts.ServerConnected
+	}
+	if !control.ValidServerAlertPolicy(serverAlerts) {
+		return fmt.Errorf("alerts.server_connected is %q; use first, every or off", serverAlerts)
+	}
+	api.ServerAlerts = control.ServerAlertPolicy(serverAlerts)
+	api.Tunnels.OnConnect = api.ServerConnected
 	if signIns != nil {
 		log.Info("sign-in alerts on", "email", signIns.EmailOn(), "telegram", signIns.TelegramOn(),
 			"admins", api.SignInPolicy.Admins, "person", api.SignInPolicy.Person, "every", api.SignInPolicy.Every)
@@ -522,9 +550,15 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	api.SessionTTL = cfg.SessionTTL
 	api.TicketTTL = cfg.TicketTTL
 	if !control.ValidMFAPolicy(cfg.RequireMFA) {
-		return fmt.Errorf("require_mfa is %q; use privileged, all or off", cfg.RequireMFA)
+		return fmt.Errorf("require_mfa is %q; use all, privileged or off", cfg.RequireMFA)
 	}
 	api.RequireMFA = control.MFAPolicy(cfg.RequireMFA)
+	api.TemporaryPasswordTTL = cfg.TemporaryPasswordTTL
+	api.AllowBrowserChange = cfg.AllowBrowserChange
+	if api.AllowBrowserChange {
+		log.Warn("allow_browser_change is on",
+			"detail", "a session cookie copied into another browser keeps working")
+	}
 	if api.RequireMFA == control.MFAOff {
 		log.Warn("require_mfa is off",
 			"detail", "owners and admins can sign in with a password alone; one phished "+

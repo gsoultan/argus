@@ -353,6 +353,12 @@ type mailData struct {
 	Note      string
 	Footer    string
 	Host      string
+	// Code is a value to copy, shown large in a monospace box: a
+	// temporary password.
+	CodeLabel string
+	Code      string
+	// Steps is a numbered list after the facts.
+	Steps []string
 }
 
 // Inline styles and a table layout, because that is what mail clients render.
@@ -373,6 +379,9 @@ var mailTemplate = template.Must(template.New("mail").Parse(`<!doctype html>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 6px;border:1px solid #e4e7ec;border-radius:8px;border-collapse:separate">
 {{range $i, $f := .Facts}}<tr><td style="padding:9px 14px;font-size:13.5px;color:#667085;width:120px;{{if $i}}border-top:1px solid #e4e7ec{{end}}">{{$f.K}}</td><td style="padding:9px 14px;font-size:13.5px;font-weight:500;{{if $i}}border-top:1px solid #e4e7ec{{end}}">{{$f.V}}</td></tr>
 {{end}}</table>
+{{if .Code}}<p style="font-size:12.5px;color:#667085;margin:14px 0 4px">{{.CodeLabel}}</p>
+<div style="font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:18px;letter-spacing:1px;font-weight:600;background:#f2f4f7;border:1px solid #e4e7ec;border-radius:8px;padding:12px 14px;word-break:break-all">{{.Code}}</div>{{end}}
+{{if .Steps}}<ol style="font-size:14px;line-height:1.6;color:#344054;margin:14px 0 0;padding-left:20px">{{range .Steps}}<li>{{.}}</li>{{end}}</ol>{{end}}
 {{if .After}}<p style="font-size:14px;line-height:1.55;color:#344054;margin:12px 0 0">{{.After}}</p>{{end}}
 {{if .Warn}}<div style="margin-top:14px;border-radius:8px;padding:11px 14px;font-size:13px;line-height:1.45;{{if .WarnAmber}}background:#fffaeb;color:#7a2e0e;border:1px solid #fedf89{{else}}background:#fef3f2;color:#7a271a;border:1px solid #fecdca{{end}}">{{.Warn}}</div>{{end}}
 {{if .Link}}<p style="margin:20px 0 0"><a href="{{.Link}}" style="display:inline-block;background:{{if .Danger}}#d92d20{{else}}#2563eb{{end}};color:#ffffff;border-radius:8px;padding:10px 18px;font-weight:600;font-size:14px;text-decoration:none">{{.Button}}</a></p>{{end}}

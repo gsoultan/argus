@@ -45,6 +45,27 @@ export interface User {
   loginName?: string
   /** Whether they have added a public key to SSH directly with. */
   hasSshKey?: boolean
+  /** They have not chosen a password of their own yet; the one they were sent is temporary. */
+  temporaryPassword?: boolean
+  /** When the temporary password they were sent stops working. */
+  temporaryPasswordExpiresAt?: ISOTime | null
+  /** Whether a person added now can be emailed their first password (signed-in user only). */
+  canEmailPeople?: boolean
+}
+
+/**
+ * What adding a person, or sending them a new temporary password, did: it was
+ * emailed to them, or here it is to hand over, shown once.
+ */
+export interface TemporaryPasswordOutcome {
+  email: string
+  role?: string
+  temporaryPasswordExpiresAt: ISOTime
+  emailed: boolean
+  /** Why it could not be emailed, when sending was tried and failed. */
+  emailError?: string
+  /** Present only when it was not emailed. */
+  temporaryPassword?: string
 }
 
 /** The signed-in person's own server account. */
