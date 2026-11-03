@@ -50,10 +50,12 @@ func (a *API) getInstallScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "token is missing or is not an enrollment token")
 		return
 	}
+	version = strings.TrimPrefix(version, "v")
 	if version != "latest" && !reAgentVer.MatchString(version) {
 		writeErr(w, http.StatusBadRequest, "version must look like 1.2.3, or be latest")
 		return
 	}
+	version = a.installVersion(version)
 	u, err := CheckURL(q.Get("url"), "the control plane address", true)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -88,8 +90,31 @@ func (a *API) getInstallScript(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(script))
 }
 
+// installVersion is the agent version a new server installs: the newest
+// release found with agent packages, or this control plane's own version if
+// that is newer, rather than whatever the console asked for. The console asks
+// for its own version, so a control plane that was not upgraded used to put
+// its old agent on every new server, which then had to be updated straight
+// away. A version newer than both is kept; "latest" stays "latest" when no
+// release is known, and the script finds the newest itself.
+func (a *API) installVersion(asked string) string {
+	offer, _, _ := a.agentTarget()
+	if offer != "" && (asked == "latest" || versionLess(asked, offer)) {
+		return offer
+	}
+	return asked
+}
+
 // agentInstallScript is POSIX sh, for every distribution the packages exist
 // for. Package names follow what .goreleaser.yaml produces.
+//
+// VERSION is the newest release the control plane knows has agent packages,
+// or "latest" when it knows none (a build from source that cannot reach
+// GitHub). With "latest", or when the release asked for has no package for
+// this server, the script finds the newest release that does itself. A
+// release tag may or may not start with "v" (1.2.0 was published as "1.2.0",
+// with no files), so a tag is read from the release, never assumed, and a
+// release with nothing attached is passed over rather than downloaded from.
 const agentInstallScript = `#!/bin/sh
 # Argus agent install. Made by the Argus console for one server.
 set -eu
@@ -99,31 +124,13 @@ VERSION='@VERSION@'
 CONTROL='@CONTROL@'
 PIN='@PIN@'
 RELEASES="https://github.com/gsoultan/argus/releases"
+API="https://api.github.com/repos/gsoultan/argus/releases?per_page=30"
 
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nArgus install stopped: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "run it with sudo"
 command -v curl >/dev/null 2>&1 || die "curl is not installed"
-
-# A control plane built from source does not know which release it matches,
-# and asks for the newest one. GitHub redirects /releases/latest to its tag.
-if [ "$VERSION" = latest ]; then
-  TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${RELEASES}/latest") ||
-    die "could not reach ${RELEASES} to find the newest release"
-  VERSION=${TAG##*/v}
-  case "$VERSION" in
-    [0-9]*.[0-9]*.[0-9]*) ;;
-    *) die "could not tell the newest release from ${TAG}" ;;
-  esac
-fi
-BASE="${RELEASES}/download/v${VERSION}"
-
-# fetch names the file it could not download, which curl -f alone does not.
-fetch() {
-  curl -fsSLO "${BASE}/$1" ||
-    die "could not download ${BASE}/$1. Check that release v${VERSION} exists and this server can reach github.com."
-}
 
 # Release packages are named argus-agent_<version>_linux_<arch>.<format>,
 # goreleaser's default, with Go's names for the processor in every format.
@@ -133,26 +140,80 @@ case "$(uname -m)" in
   *) die "this processor ($(uname -m)) has no agent package" ;;
 esac
 
+if command -v apt-get >/dev/null 2>&1; then
+  FMT=deb
+elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+  FMT=rpm
+elif command -v apk >/dev/null 2>&1; then
+  FMT=apk
+else
+  die "no apt, dnf, yum or apk here; install the package by hand from ${RELEASES}"
+fi
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 
-say "Installing the Argus agent ${VERSION}"
-if command -v apt-get >/dev/null 2>&1; then
-  F="argus-agent_${VERSION}_linux_${ARCH}.deb"
-  fetch "${F}"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "./${F}" >/dev/null
-elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
-  F="argus-agent_${VERSION}_linux_${ARCH}.rpm"
-  fetch "${F}"
-  if command -v dnf >/dev/null 2>&1; then dnf install -y "./${F}" >/dev/null; else yum install -y "./${F}" >/dev/null; fi
-elif command -v apk >/dev/null 2>&1; then
-  F="argus-agent_${VERSION}_linux_${ARCH}.apk"
-  fetch "${F}"
-  apk add --allow-untrusted "./${F}" >/dev/null
-else
-  die "no apt, dnf, yum or apk here; install the package by hand from ${BASE}"
+# get downloads release tag $1's package for this server, and its checksums.
+get() {
+  F="argus-agent_${VERSION}_linux_${ARCH}.${FMT}"
+  BASE="${RELEASES}/download/$1"
+  curl -fsLO "${BASE}/${F}" && curl -fsLO "${BASE}/checksums.txt"
+}
+
+# newest prints "<version> <tag>" for the highest release that has this
+# server's package attached: drafts are not listed, and pre-releases, whose
+# versions carry a "-", do not match. It prints nothing if GitHub cannot be
+# asked (rate limited, say).
+newest() {
+  curl -fsSL -H 'Accept: application/vnd.github+json' "$API" 2>/dev/null |
+    grep -o "/releases/download/[^/\"]*/argus-agent_[0-9]*\.[0-9]*\.[0-9]*_linux_${ARCH}\.${FMT}\"" |
+    sed 's|^/releases/download/\([^/]*\)/argus-agent_\([0-9.]*\)_linux_.*|\2 \1|' |
+    sort -t . -k1,1n -k2,2n -k3,3n | tail -n 1 || true
+}
+
+GOT=
+if [ "$VERSION" != latest ]; then
+  for t in "v${VERSION}" "${VERSION}"; do
+    if get "$t"; then GOT=$t; break; fi
+  done
+  [ -n "$GOT" ] || say "Release ${VERSION} has no agent package for this server; looking for the newest that does"
 fi
+
+if [ -z "$GOT" ]; then
+  N=$(newest)
+  if [ -n "$N" ]; then
+    VERSION=${N%% *}
+    GOT=${N#* }
+  else
+    # The list could not be had: GitHub sends /releases/latest to its tag.
+    URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${RELEASES}/latest") ||
+      die "could not reach ${RELEASES} to find the newest release"
+    GOT=${URL##*/}
+    VERSION=${GOT#v}
+  fi
+  case "$VERSION" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) die "could not tell the newest release (found '${GOT}')" ;;
+  esac
+  get "$GOT" ||
+    die "could not download ${BASE}/${F}. Check that release ${GOT} has its files attached and this server can reach github.com."
+fi
+
+# The package is the one the release published, or nothing is installed.
+grep "  ${F}\$" checksums.txt > "${F}.sha256" ||
+  die "release ${GOT} lists no checksum for ${F}"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum -c "${F}.sha256" >/dev/null 2>&1 ||
+    die "${F} does not match the checksum release ${GOT} publishes; nothing was installed"
+fi
+
+say "Installing the Argus agent ${VERSION}"
+case "$FMT" in
+  deb) DEBIAN_FRONTEND=noninteractive apt-get install -y "./${F}" >/dev/null ;;
+  rpm) if command -v dnf >/dev/null 2>&1; then dnf install -y "./${F}" >/dev/null; else yum install -y "./${F}" >/dev/null; fi ;;
+  apk) apk add --allow-untrusted "./${F}" >/dev/null ;;
+esac
 
 say "Linking this server to Argus"
 if [ -n "$PIN" ]; then
