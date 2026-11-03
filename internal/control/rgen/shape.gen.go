@@ -59,6 +59,9 @@ func _assertAgentShape(m m0.Agent) {
 		m.ExecReason,
 		m.UpdateStatus,
 		m.Applications,
+		m.System,
+		m.Usage,
+		m.UsageAt,
 	}
 }
 

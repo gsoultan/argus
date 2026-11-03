@@ -13,6 +13,7 @@ import type {
   RequestableHost,
   ServerLogin,
   ServerApplications,
+  ServerSystem,
   Coverage,
   DiscoveredHost,
   FleetStats,
@@ -879,6 +880,11 @@ export async function applications(id: string): Promise<ServerApplications> {
   return get<ServerApplications>(`/api/v1/assets/${encodeURIComponent(id)}/applications`)
 }
 
+/** What kind of machine a server is and how busy it is, from its agent. */
+export async function system(id: string): Promise<ServerSystem> {
+  return get<ServerSystem>(`/api/v1/assets/${encodeURIComponent(id)}/system`)
+}
+
 /** Sets what one login account on a server does; null follows the server. */
 export async function setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
   return send<Asset>(
@@ -1260,6 +1266,7 @@ export const live = {
   createServerLogin,
   removeServerLogin,
   applications,
+  system,
 
   /**
    * The accounts that exist, for deciding who to assign a host to.

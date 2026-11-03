@@ -77,6 +77,11 @@ type Agent struct {
 	UpdateStatus    *storm.JSON
 	// Applications is what runs on the host, as its agent last reported.
 	Applications *storm.JSON
+	// System is what kind of machine the host is; Usage how busy it was at
+	// UsageAt. Both as its agent last reported (migration 040).
+	System  *storm.JSON
+	Usage   *storm.JSON
+	UsageAt *time.Time
 }
 
 func (m *Agent) Schema(t *storm.Table) {

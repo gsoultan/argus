@@ -42,6 +42,9 @@ type Row struct {
 	ExecReason      string
 	UpdateStatus    runtime.Null[runtime.JSON]
 	Applications    runtime.Null[runtime.JSON]
+	System          runtime.Null[runtime.JSON]
+	Usage           runtime.Null[runtime.JSON]
+	UsageAt         runtime.Null[time.Time]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -80,7 +83,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 22
+const nCols = 25
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -306,6 +309,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.ExecReason
 		q.ns++
+	case 24:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.UsageAt.V
+		q.ntm++
 	}
 }
 
@@ -495,6 +505,9 @@ var (
 	ExecReason      = TextCol{19}
 	UpdateStatus    = NullJSONCol{20}
 	Applications    = NullJSONCol{21}
+	System          = NullJSONCol{22}
+	Usage           = NullJSONCol{23}
+	UsageAt         = NullTimeCol{24}
 )
 
 // TextCol addresses a text column.
@@ -967,6 +980,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 22:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 23:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1109,6 +1136,27 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.jsns[q.njs] = p.jsn
 		q.njs++
+	case 22:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 23:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 24:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1290,10 +1338,30 @@ func (q Query) ApplicationsHasAnyKey(v ...string) Query { return q.Where(Applica
 func (q Query) ApplicationsHasAllKeys(v ...string) Query {
 	return q.Where(Applications.HasAllKeys(v...))
 }
-func (q Query) ApplicationsIsNull() Query    { return q.Where(Applications.IsNull()) }
-func (q Query) ApplicationsIsNotNull() Query { return q.Where(Applications.IsNotNull()) }
+func (q Query) ApplicationsIsNull() Query              { return q.Where(Applications.IsNull()) }
+func (q Query) ApplicationsIsNotNull() Query           { return q.Where(Applications.IsNotNull()) }
+func (q Query) SystemContains(v runtime.JSON) Query    { return q.Where(System.Contains(v)) }
+func (q Query) SystemContainedBy(v runtime.JSON) Query { return q.Where(System.ContainedBy(v)) }
+func (q Query) SystemHasAnyKey(v ...string) Query      { return q.Where(System.HasAnyKey(v...)) }
+func (q Query) SystemHasAllKeys(v ...string) Query     { return q.Where(System.HasAllKeys(v...)) }
+func (q Query) SystemIsNull() Query                    { return q.Where(System.IsNull()) }
+func (q Query) SystemIsNotNull() Query                 { return q.Where(System.IsNotNull()) }
+func (q Query) UsageContains(v runtime.JSON) Query     { return q.Where(Usage.Contains(v)) }
+func (q Query) UsageContainedBy(v runtime.JSON) Query  { return q.Where(Usage.ContainedBy(v)) }
+func (q Query) UsageHasAnyKey(v ...string) Query       { return q.Where(Usage.HasAnyKey(v...)) }
+func (q Query) UsageHasAllKeys(v ...string) Query      { return q.Where(Usage.HasAllKeys(v...)) }
+func (q Query) UsageIsNull() Query                     { return q.Where(Usage.IsNull()) }
+func (q Query) UsageIsNotNull() Query                  { return q.Where(Usage.IsNotNull()) }
+func (q Query) UsageAtEq(v time.Time) Query            { return q.Where(UsageAt.Eq(v)) }
+func (q Query) UsageAtNotEq(v time.Time) Query         { return q.Where(UsageAt.NotEq(v)) }
+func (q Query) UsageAtGt(v time.Time) Query            { return q.Where(UsageAt.Gt(v)) }
+func (q Query) UsageAtGte(v time.Time) Query           { return q.Where(UsageAt.Gte(v)) }
+func (q Query) UsageAtLt(v time.Time) Query            { return q.Where(UsageAt.Lt(v)) }
+func (q Query) UsageAtLte(v time.Time) Query           { return q.Where(UsageAt.Lte(v)) }
+func (q Query) UsageAtIsNull() Query                   { return q.Where(UsageAt.IsNull()) }
+func (q Query) UsageAtIsNotNull() Query                { return q.Where(UsageAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "usage_at" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1462,6 +1530,24 @@ var orderTable = [nCols][4]string{
 		"\"applications\" ASC NULLS FIRST",
 		"\"applications\" DESC NULLS LAST",
 	},
+	{ // system
+		"\"system\"",
+		"\"system\" DESC",
+		"\"system\" ASC NULLS FIRST",
+		"\"system\" DESC NULLS LAST",
+	},
+	{ // usage
+		"\"usage\"",
+		"\"usage\" DESC",
+		"\"usage\" ASC NULLS FIRST",
+		"\"usage\" DESC NULLS LAST",
+	},
+	{ // usage_at
+		"\"usage_at\"",
+		"\"usage_at\" DESC",
+		"\"usage_at\" ASC NULLS FIRST",
+		"\"usage_at\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1489,6 +1575,9 @@ var identTable = [nCols]string{
 	"\"exec_reason\"",
 	"\"update_status\"",
 	"\"applications\"",
+	"\"system\"",
+	"\"usage\"",
+	"\"usage_at\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1521,7 +1610,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [22][28]runtime.Frag{
+var fragTable = [25][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2182,6 +2271,96 @@ var fragTable = [22][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // system
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"system\" @> $", B: ""},
+		{A: "\"system\" <@ $", B: ""},
+		{A: "\"system\" ?| $", B: ""},
+		{A: "\"system\" ?& $", B: ""},
+		{A: "\"system\" IS NULL", B: ""},
+		{A: "\"system\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // usage
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"usage\" @> $", B: ""},
+		{A: "\"usage\" <@ $", B: ""},
+		{A: "\"usage\" ?| $", B: ""},
+		{A: "\"usage\" ?& $", B: ""},
+		{A: "\"usage\" IS NULL", B: ""},
+		{A: "\"usage\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // usage_at
+		{}, // opNone
+		{A: "\"usage_at\" = $", B: ""},
+		{A: "\"usage_at\" <> $", B: ""},
+		{A: "\"usage_at\" > $", B: ""},
+		{A: "\"usage_at\" >= $", B: ""},
+		{A: "\"usage_at\" < $", B: ""},
+		{A: "\"usage_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"usage_at\" IS NULL", B: ""},
+		{A: "\"usage_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2369,6 +2548,9 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ExecReason = sl.Str(rv[19])
 	r.UpdateStatus = runtime.NullJSON(rv[20], sl)
 	r.Applications = runtime.NullJSON(rv[21], sl)
+	r.System = runtime.NullJSON(rv[22], sl)
+	r.Usage = runtime.NullJSON(rv[23], sl)
+	r.UsageAt = runtime.Nullable(rv[24], runtime.Timestamptz)
 	return decErr
 }
 
@@ -2499,6 +2681,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 22:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 23:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2579,6 +2769,18 @@ func (q Query) bindPreds(b *binder) []any {
 			b.jsns[njs] = q.jsns[njs]
 			v = append(v, &b.jsns[njs])
 			njs++
+		case 22:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 23:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 24:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		}
 	}
 	b.vals = v

@@ -9,6 +9,7 @@ import {
 } from '~/components/primitives'
 import { HostKeyUnpinned } from '~/components/server/hostKey'
 import { LoginAccounts } from '~/components/server/layout'
+import { SystemCard } from '~/components/server/SystemCard'
 import type { ServerTab } from '~/components/server/tabs'
 import { directSshLabel } from '~/lib/directSsh'
 import { agentUpdateQuery, assignmentsQuery, policyQuery, teamAssignmentsQuery } from '~/lib/queries'
@@ -18,8 +19,8 @@ import type { Asset, Session } from '~/types/domain'
 const WEEK = 7 * 24 * 60 * 60 * 1000
 
 /**
- * Whether this server is all right, at a glance: four facts, the last few
- * sessions and the essentials. Each tile opens the tab that owns its detail.
+ * Whether this server is all right, at a glance: four facts, what the
+ * machine is and how busy it is, the last few sessions and the essentials. Each tile opens the tab that owns its detail.
  */
 export function OverviewTab({ asset, sessions, onTab }: {
   asset: Asset
@@ -86,6 +87,8 @@ export function OverviewTab({ asset, sessions, onTab }: {
         />
       </SimpleGrid>
 
+      <SystemCard asset={asset} onTab={onTab} />
+
       <Grid gap="md">
         <Grid.Col span={{ base: 12, lg: 8 }}>
           <SectionCard
@@ -140,8 +143,8 @@ export function OverviewTab({ asset, sessions, onTab }: {
             <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>About</Text>
             <Stack gap="sm" mt="sm">
               <Fact label="Address"><Mono>{asset.address}{asset.port ? `:${asset.port}` : ''}</Mono></Fact>
-              <Fact label="System">
-                <Text size={FS.meta}>{asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')} · {asset.protocol === 'rdp' ? 'RDP' : 'SSH'}</Text>
+              <Fact label="Connects by">
+                <Text size={FS.meta}>{asset.protocol === 'rdp' ? 'Remote Desktop (RDP)' : 'SSH'}</Text>
               </Fact>
               <Fact label="Login accounts"><LoginAccounts asset={asset} /></Fact>
               {asset.protocol !== 'rdp' && (

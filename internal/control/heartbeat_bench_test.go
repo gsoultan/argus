@@ -71,7 +71,7 @@ func BenchmarkHeartbeat(b *testing.B) {
 	// Every agent once, so what is measured is the steady state.
 	for i := 1; i <= fleet; i++ {
 		if err := s.Heartbeat(ctx, fmt.Sprintf("%s-%d", prefix, i), "dev", 0, posture, true, "",
-			nil, nil); err != nil && err != ErrAgentUnmatched {
+			nil, nil, nil); err != nil && err != ErrAgentUnmatched {
 			b.Fatal(err)
 		}
 	}
@@ -84,7 +84,7 @@ func BenchmarkHeartbeat(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		host := fmt.Sprintf("%s-%d", prefix, i%fleet+1)
-		if err := s.Heartbeat(ctx, host, "dev", 0, posture, true, "", nil, nil); err != nil {
+		if err := s.Heartbeat(ctx, host, "dev", 0, posture, true, "", nil, nil, nil); err != nil {
 			b.Fatal(err)
 		}
 	}
