@@ -317,7 +317,9 @@ jobs:
           go build -o "$tmp/argus-verify.exe" ./cmd/argus-verify
           # A sealed recording is compressed before it ships (<id>.cast.zst);
           # read it through argus-verify, whichever name it has by now.
-          recfile() { if [ -e "$1.zst" ]; then echo "$1.zst"; else echo "$1"; fi; }
+          # Windows paths out: argus-verify.exe is a native program and is
+          # not handed /c/... translated in this job.
+          recfile() { if [ -e "$1.zst" ]; then cygpath -m "$1.zst"; else cygpath -m "$1"; fi; }
           reccat() { "$tmp/argus-verify.exe" --cat "$(recfile "$1")"; }
           go run ./scripts/tools/gencerts "$tmp"
           # The Windows "chmod 600", which the control plane checks for.
