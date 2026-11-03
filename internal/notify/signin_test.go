@@ -3,6 +3,7 @@ package notify
 import (
 	"bufio"
 	"context"
+	"github.com/gsoultan/gsmail"
 	"io"
 	"net"
 	"net/http"
@@ -114,13 +115,16 @@ func TestDescribeUserAgent(t *testing.T) {
 
 func TestSignInEmailIsPlainTextAndHTML(t *testing.T) {
 	e, _ := NewEmail(EmailConfig{Host: "smtp", From: "argus@x.io", To: []string{"sec@x.io"}})
-	msg := string(e.compose([]string{"dewi@acme.co"}, "subject", "text body", "<p>html body</p>"))
-	if !strings.Contains(msg, "Content-Type: multipart/alternative") ||
-		!strings.Contains(msg, "Content-Type: text/plain") || !strings.Contains(msg, "text body") ||
-		!strings.Contains(msg, "Content-Type: text/html") || !strings.Contains(msg, "<p>html body</p>") {
-		t.Fatalf("message:\n%s", msg)
+	raw, err := gsmail.RenderMessage(e.message([]string{"dewi@acme.co"}, "subject", "text body", "<p>html body</p>"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "To: dewi@acme.co\r\n") || strings.Contains(msg, "sec@x.io") {
+	head, parts := mimeParts(t, raw)
+	if !strings.HasPrefix(head.Get("Content-Type"), "multipart/alternative") ||
+		parts["text/plain"] != "text body" || parts["text/html"] != "<p>html body</p>" {
+		t.Fatalf("message:\n%s", raw)
+	}
+	if head.Get("To") != "dewi@acme.co" || strings.Contains(string(raw), "sec@x.io") {
 		t.Fatal("addressed to the configured list instead of the account")
 	}
 }

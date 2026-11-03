@@ -93,8 +93,11 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 	}
 	if a := c.Alerts; a != nil {
 		if e := a.Email; e != nil {
-			s.Email = control.EmailSettings{Enabled: true, Host: e.Host, Port: e.Port, Username: e.Username,
+			s.Email = control.EmailSettings{Enabled: true, Via: e.Via, Host: e.Host, Port: e.Port, Username: e.Username,
 				PasswordSet: e.Password != "", From: e.From, To: nonNil(e.To)}
+			if p := e.Panmail; p != nil {
+				s.Email.Panmail = control.PanmailSettings{URL: p.URL, ProviderID: p.ProviderID, APIKeySet: p.APIKey != ""}
+			}
 		}
 		if t := a.Telegram; t != nil {
 			s.Telegram = control.TelegramSettings{Enabled: true, BotTokenSet: t.BotToken != "",
@@ -123,6 +126,9 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 	if rl := c.RateLimit; rl != nil {
 		s.Security.AccountFailuresPerHour = rl.AccountFailuresPerHour
 		s.Security.AccountCodeFailuresPerHour = rl.AccountCodeFailuresPerHour
+	}
+	if s.Email.Via == "" {
+		s.Email.Via = notify.ViaSMTP
 	}
 	s.Email.To, s.Telegram.ChatIDs, s.FCM.Tokens = nonNil(s.Email.To), nonNil(s.Telegram.ChatIDs), nonNil(s.FCM.Tokens)
 
@@ -346,20 +352,11 @@ func applyAlerts(c *config, in control.Settings, st *secretStage) error {
 	}
 	next := &alertsConfig{}
 	if e := in.Email; e.Enabled {
-		next.Email = &notify.EmailConfig{Host: strings.TrimSpace(e.Host), Port: e.Port,
-			Username: strings.TrimSpace(e.Username), From: strings.TrimSpace(e.From), To: cleanList(e.To)}
-		switch {
-		case e.Password != nil && *e.Password == "":
-			// An empty password sends no AUTH; nothing to keep in a file.
-		case e.Password != nil:
-			ref, err := st.write("smtp-password", *e.Password)
-			if err != nil {
-				return err
-			}
-			next.Email.Password = ref
-		case prev.Email != nil:
-			next.Email.Password = prev.Email.Password
+		email, err := emailConfigFrom(e, prev.Email, st)
+		if err != nil {
+			return err
 		}
+		next.Email = email
 	}
 	if t := in.Telegram; t.Enabled {
 		next.Telegram = &notify.TelegramConfig{ChatIDs: cleanList(t.ChatIDs)}
@@ -455,6 +452,87 @@ func (b *settingsBackend) applyTLS(c *config, in control.Settings) error {
 	}
 	c.TLS.CertFile, c.TLS.KeyFile = pki.ServerCert(), pki.ServerKey()
 	return nil
+}
+
+// emailConfigFrom is the email block for e. A secret e leaves out is kept
+// from prev; one it sends is written to a file through st, or, with st nil,
+// used as it is -- for a test send that saves nothing.
+//
+// Both the SMTP server and the Panmail gateway are kept whichever is chosen,
+// so switching to try the other and back does not lose the first one's
+// settings.
+func emailConfigFrom(e control.EmailSettings, prev *notify.EmailConfig, st *secretStage) (*notify.EmailConfig, error) {
+	if prev == nil {
+		prev = &notify.EmailConfig{}
+	}
+	via := strings.TrimSpace(e.Via)
+	if via == "" {
+		via = notify.ViaSMTP
+	}
+	out := &notify.EmailConfig{Via: via, Host: strings.TrimSpace(e.Host), Port: e.Port,
+		Username: strings.TrimSpace(e.Username), From: strings.TrimSpace(e.From), To: cleanList(e.To)}
+	if via == notify.ViaSMTP {
+		// The default stays out of the file, as it was before Panmail.
+		out.Via = ""
+	}
+	keep := func(name string, in *string, old string) (string, error) {
+		switch {
+		case in == nil:
+			return old, nil
+		case *in == "":
+			return "", nil
+		case st == nil:
+			return *in, nil
+		}
+		return st.write(name, *in)
+	}
+	var err error
+	if out.Password, err = keep("smtp-password", e.Password, prev.Password); err != nil {
+		return nil, err
+	}
+	p := e.Panmail
+	if url, id := strings.TrimSpace(p.URL), strings.TrimSpace(p.ProviderID); url != "" || id != "" ||
+		p.APIKey != nil || via == notify.ViaPanmail {
+		out.Panmail = &notify.PanmailConfig{URL: url, ProviderID: id}
+		var oldKey string
+		if prev.Panmail != nil {
+			oldKey = prev.Panmail.APIKey
+		}
+		var key *string
+		if p.APIKey != nil {
+			k := strings.TrimSpace(*p.APIKey)
+			key = &k
+		}
+		if out.Panmail.APIKey, err = keep("panmail-api-key", key, oldKey); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// TestEmail sends one message with e to its recipients, without saving it.
+func (b *settingsBackend) TestEmail(ctx context.Context, e control.EmailSettings) error {
+	var prev *notify.EmailConfig
+	if b.cfg.Alerts != nil {
+		prev = b.cfg.Alerts.Email
+	}
+	cfg, err := emailConfigFrom(e, prev, nil)
+	if err != nil {
+		return err
+	}
+	sender, err := notify.NewEmail(*cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	how := "your SMTP server"
+	if sender.Via() == notify.ViaPanmail {
+		how = "Panmail"
+	}
+	return sender.Send(ctx, "Argus: test email",
+		"This is a test from Argus, sent through "+how+".\n\n"+
+			"Session and sign-in alerts will arrive the same way once these settings are saved.\n")
 }
 
 func (b *settingsBackend) TestDatabase(ctx context.Context, d control.DatabaseSettings) (control.DatabaseCheck, error) {
