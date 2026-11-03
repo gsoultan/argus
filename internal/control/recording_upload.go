@@ -154,6 +154,7 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.log.Error("storing a shipped recording failed", "session", id, "error", err)
+		a.uploads.failed(time.Now(), err)
 		writeErr(w, http.StatusServiceUnavailable, "recording storage did not take the recording")
 		return
 	}
@@ -161,6 +162,7 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "store recording key", err)
 		return
 	}
+	a.uploads.ok(time.Now())
 	a.log.Info("recording shipped by agent", "session", id, "host", host, "key", key, "bytes", n)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stored", "key": key})
 }

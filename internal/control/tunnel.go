@@ -495,6 +495,13 @@ func (s *Store) tunnelDisconnected(ctx context.Context, credID string, since tim
 	return err
 }
 
+// count is how many agents hold a tunnel to this replica.
+func (h *TunnelHub) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.byCred)
+}
+
 // TunnelState is what the console is told about one agent's tunnel.
 type TunnelState struct {
 	Connected   bool       `json:"connected"`

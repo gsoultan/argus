@@ -21,6 +21,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackupschedule"
 	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
+	"github.com/gsoultan/argus/internal/control/rgen/savedquery"
 	"github.com/gsoultan/argus/internal/control/rgen/serverlogin"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
 	"github.com/gsoultan/argus/internal/control/rgen/team"
@@ -46,23 +47,24 @@ var FlushOrder = map[string]int{
 	"host_key_pins":             9,
 	"redeemed_tickets":          10,
 	"revoked_sessions":          11,
-	"schema_migrations":         12,
-	"server_logins":             13,
-	"sessions":                  14,
-	"sign_in_devices":           15,
-	"teams":                     16,
-	"users":                     17,
-	"access_requests":           18,
-	"agent_credentials":         19,
-	"asset_assignments":         20,
-	"asset_team_assignments":    21,
-	"console_alert_reads":       22,
-	"database_assignments":      23,
-	"database_backup_schedules": 24,
-	"database_backups":          25,
-	"database_restores":         26,
-	"recovery_codes":            27,
-	"team_members":              28,
+	"saved_queries":             12,
+	"schema_migrations":         13,
+	"server_logins":             14,
+	"sessions":                  15,
+	"sign_in_devices":           16,
+	"teams":                     17,
+	"users":                     18,
+	"access_requests":           19,
+	"agent_credentials":         20,
+	"asset_assignments":         21,
+	"asset_team_assignments":    22,
+	"console_alert_reads":       23,
+	"database_assignments":      24,
+	"database_backup_schedules": 25,
+	"database_backups":          26,
+	"database_restores":         27,
+	"recovery_codes":            28,
+	"team_members":              29,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -1974,6 +1976,123 @@ func (p RecoveryCodeWithUserQuery) All(ctx context.Context, ex runtime.Executor)
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "recovery_codes", "users")
 		}
 		out[i].User = targets[j]
+	}
+	return out, nil
+}
+
+// SavedQueryWithDatabaseRow is saved_queries with its Database loaded.
+type SavedQueryWithDatabaseRow struct {
+	savedquery.Row
+	Database database.Row
+}
+
+type SavedQueryWithDatabaseQuery struct {
+	q savedquery.Query
+}
+
+// SavedQueryWithDatabase starts the plan.
+func SavedQueryWithDatabase() SavedQueryWithDatabaseQuery {
+	return SavedQueryWithDatabaseQuery{q: savedquery.New()}
+}
+
+func (p SavedQueryWithDatabaseQuery) Where(ps ...savedquery.Pred) SavedQueryWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p SavedQueryWithDatabaseQuery) WhereIf(cond bool, pr savedquery.Pred) SavedQueryWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p SavedQueryWithDatabaseQuery) Any(ps ...savedquery.Pred) SavedQueryWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p SavedQueryWithDatabaseQuery) Not(pr savedquery.Pred) SavedQueryWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p SavedQueryWithDatabaseQuery) NotAny(ps ...savedquery.Pred) SavedQueryWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p SavedQueryWithDatabaseQuery) Order(ts ...savedquery.Sort) SavedQueryWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p SavedQueryWithDatabaseQuery) Limit(n int64) SavedQueryWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p SavedQueryWithDatabaseQuery) Offset(n int64) SavedQueryWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p SavedQueryWithDatabaseQuery) After(r SavedQueryWithDatabaseRow) SavedQueryWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p SavedQueryWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p SavedQueryWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]SavedQueryWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]SavedQueryWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = SavedQueryWithDatabaseRow{Row: r}
+		key := r.DatabaseID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.DatabaseID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "saved_queries", "databases")
+		}
+		out[i].Database = targets[j]
 	}
 	return out, nil
 }
