@@ -10,6 +10,7 @@ import type {
   DirectLogin,
   DirectSsh,
   ServerLoginAccounts,
+  RequestableHost,
   ServerApplications,
   Coverage,
   DiscoveredHost,
@@ -843,6 +844,13 @@ export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Pro
   return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh`, { mode: mode ?? '' })
 }
 
+/** The accounts a person can ask for on each server, from its Login accounts list and agent. */
+export async function requestAccounts(hostnames: string[]): Promise<RequestableHost[]> {
+  if (hostnames.length === 0) return []
+  const q = new URLSearchParams(hostnames.map((h) => ['host', h]))
+  return get<RequestableHost[]>(`/api/v1/requests/accounts?${q}`)
+}
+
 /** Who can log in to a server directly, from its agent's last check-in. */
 export async function loginAccounts(id: string): Promise<ServerLoginAccounts> {
   return get<ServerLoginAccounts>(`/api/v1/assets/${encodeURIComponent(id)}/login-accounts`)
@@ -1215,6 +1223,7 @@ export const live = {
   stats: () => get<FleetStats>('/api/v1/stats'),
   assets: () => get<Asset[]>('/api/v1/assets'),
   loginAccounts,
+  requestAccounts,
   applications,
 
   /**

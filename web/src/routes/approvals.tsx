@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, MultiSelect, Radio,
+  Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, MultiSelect,
   SegmentedControl, Stack, Text, TextInput, Textarea, Tooltip,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -19,6 +19,7 @@ import {
   useDecideRequest,
 } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
+import { LoginAsPicker } from '~/components/LoginAsPicker'
 import type { AccessRequest, DirectLogin } from '~/types/domain'
 
 /**
@@ -55,7 +56,7 @@ interface RequestDraft {
 
 const EMPTY_REQUEST: RequestDraft = {
   assetHostnames: [],
-  principal: 'ops',
+  principal: '',
   durationMinutes: 60,
   justification: '',
   breakGlass: false,
@@ -462,7 +463,7 @@ function NewRequestModal({ opened, onClose, host, account }: {
     assetHostnames: validateAssetIds(value.assetHostnames),
     justification: validateJustification(value.justification),
   }
-  const canSubmit = !errors.assetHostnames && !errors.justification
+  const canSubmit = !errors.assetHostnames && !errors.justification && value.principal !== ''
 
   const close = () => {
     setValue(EMPTY_REQUEST)
@@ -520,28 +521,11 @@ function NewRequestModal({ opened, onClose, host, account }: {
             error={touched.assetHostnames ? errors.assetHostnames : undefined}
           />
 
-          <Radio.Group
-            label="Log in as"
+          <LoginAsPicker
+            hostnames={value.assetHostnames}
             value={value.principal}
             onChange={(v) => set('principal', v)}
-          >
-            <Group gap="lg" mt={SP.snug}>
-              {!['deploy', 'ops', 'root'].includes(value.principal) && (
-                <Radio value={value.principal} label={value.principal} />
-              )}
-              <Radio value="deploy" label="deploy" />
-              <Radio value="ops" label="ops" />
-              <Radio
-                value="root"
-                label={
-                  <Group gap={SP.snug}>
-                    <Text size="sm">root</Text>
-                    <Badge size="xs" color="rose">elevated</Badge>
-                  </Group>
-                }
-              />
-            </Group>
-          </Radio.Group>
+          />
 
           <Box>
             <Text size="sm" fw={500} mb={SP.snug}>Window</Text>

@@ -42,9 +42,10 @@ import {
   resetAccountMFA, signOutAccount,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
+import { isElevatedAccount } from '~/lib/roles'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
-  ServerLoginAccount, ServerLoginAccounts, ServerApplications,
+  ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, TemporaryPasswordOutcome, User,
 } from '~/types/domain'
@@ -448,6 +449,29 @@ export const api = {
         reported: true, checkedAt: a.agentLastSeenAt ?? null, accounts,
         passwords: true, keys: true, exposeAuthInfo: true,
       }
+    })
+  },
+
+  /**
+   * The accounts a person can ask for on each server: its Login accounts list,
+   * each checked against what its agent last reported.
+   */
+  async requestAccounts(hostnames: string[]): Promise<RequestableHost[]> {
+    return live.orFallback(() => live.requestAccounts(hostnames), async () => {
+      await latency(90)
+      return hostnames.map((hostname) => {
+        const a = db.assets.find((x) => x.hostname === hostname)
+        if (!a) return { hostname, known: false, agentReported: false, accounts: [] }
+        const reported = a.agentState !== 'absent'
+        return {
+          hostname, known: true, agentReported: reported,
+          // The demo fleet has no deploy account wherever the agent reports,
+          // so the form's "not on this server" path is visible without a backend.
+          accounts: a.principals.map((name) => ({
+            name, elevated: isElevatedAccount(name), onServer: !reported || name !== 'deploy',
+          })),
+        }
+      })
     })
   },
 

@@ -259,6 +259,25 @@ export interface ServerLoginAccount {
 }
 
 /** Who can log in to a server directly, from its agent's last check-in. */
+/** One account on a server's Login accounts list, as the request form offers it. */
+export interface RequestableAccount {
+  name: string
+  /** root and the like: approved per request, never held standing. */
+  elevated: boolean
+  /** False when the server's agent reported its accounts and this was not among them. */
+  onServer: boolean
+}
+
+/** What one server lets a person ask for. */
+export interface RequestableHost {
+  hostname: string
+  /** False when no server in the inventory has that name: the approver decides. */
+  known: boolean
+  /** Whether `onServer` was checked against the agent's last report. */
+  agentReported: boolean
+  accounts: RequestableAccount[]
+}
+
 export interface ServerLoginAccounts {
   /** False when the agent has not sent the list: too old, or not checked in. */
   reported: boolean

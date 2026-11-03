@@ -67,6 +67,14 @@ export const assetQuery = (id: string) =>
 export const loginAccountsQuery = (id: string) =>
   queryOptions({ queryKey: ['asset', id, 'login-accounts'] as const, queryFn: () => api.loginAccounts(id) })
 
+/** The accounts a person can ask for on the servers they picked. */
+export const requestAccountsQuery = (hostnames: string[]) =>
+  queryOptions({
+    queryKey: ['request-accounts', [...hostnames].sort()] as const,
+    queryFn: () => api.requestAccounts(hostnames),
+    enabled: hostnames.length > 0,
+  })
+
 /** What runs on a server, from its agent's last report. */
 export const applicationsQuery = (id: string) =>
   queryOptions({ queryKey: ['asset', id, 'applications'] as const, queryFn: () => api.applications(id) })
