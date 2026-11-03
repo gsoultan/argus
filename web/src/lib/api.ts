@@ -45,7 +45,7 @@ import type { AuditPage } from '~/lib/live'
 import { isElevatedAccount } from '~/lib/roles'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
-  ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost, ServerLogin, ServerSystem,
+  ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost, ServerLogin,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, TemporaryPasswordOutcome, User,
 } from '~/types/domain'
@@ -579,37 +579,6 @@ export const api = {
         services: ['containerd.service', 'cron.service', 'docker.service', 'nginx.service', 'node-exporter.service',
           'postgresql@16-main.service', 'ssh.service', 'systemd-journald.service'],
         sources: ['sockets', 'systemd', 'dpkg', 'docker'],
-      }
-    })
-  },
-
-  /** What kind of machine a server is and how busy it is, from its agent. */
-  async system(id: string): Promise<ServerSystem> {
-    return live.orFallback(() => live.system(id), async () => {
-      await latency(80)
-      const a = db.assets.find((x) => x.id === id)
-      const none: ServerSystem = { reported: false, os: a?.os ?? '', system: null, usage: null, usageAt: null }
-      if (!a || a.agentState === 'absent' || a.protocol === 'rdp') return none
-      const GB = 1024 ** 3
-      const day = 24 * 60 * 60 * 1000
-      const at = a.agentLastSeenAt ?? new Date().toISOString()
-      return {
-        reported: true,
-        os: a.os || 'Ubuntu 24.04.1 LTS',
-        system: {
-          kernel: '6.8.0-45-generic', arch: 'x86_64', cpuModel: 'Intel Xeon Gold 6248R', cpus: 8,
-          memoryBytes: 32 * GB, machine: 'virtual', hypervisor: 'KVM',
-          bootedAt: new Date(Date.parse(at) - 23 * day).toISOString(), timeZone: 'Asia/Jakarta', utcOffsetSeconds: 7 * 3600,
-        },
-        usage: {
-          load: [1.42, 1.3, 1.18], cpuBusy: 18, memTotal: 32 * GB, memAvailable: 12.5 * GB,
-          swapTotal: 4 * GB, swapFree: 3.8 * GB,
-          disks: [
-            { mount: '/', fs: 'ext4', total: 100 * GB, used: 47 * GB, avail: 48 * GB },
-            { mount: '/var/lib/postgresql', fs: 'xfs', total: 500 * GB, used: 455 * GB, avail: 45 * GB },
-          ],
-        },
-        usageAt: at,
       }
     })
   },

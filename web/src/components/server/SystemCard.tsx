@@ -1,10 +1,48 @@
 import { Alert, Box, Button, Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
-import { useQuery } from '@tanstack/react-query'
+import { queryOptions, useQuery } from '@tanstack/react-query'
 import { Mono, absTime, now as clockNow, relTime } from '~/components/primitives'
 import type { ServerTab } from '~/components/server/tabs'
-import { systemQuery } from '~/lib/queries'
+import { live } from '~/lib/live'
 import { FS } from '~/theme'
 import type { Asset, ServerDisk, ServerSystem, ServerSystemFacts, ServerUsage } from '~/types/domain'
+
+/**
+ * Here rather than in lib/queries and lib/api, so the card's fixture and
+ * fetch load with the server page and not on every first visit. Usage
+ * arrives about once a minute, so the card refreshes on the same beat.
+ */
+const systemQuery = (asset: Asset) =>
+  queryOptions({
+    queryKey: ['asset', asset.id, 'system'] as const,
+    queryFn: () => live.orFallback(() => live.system(asset.id), async () => fixtureSystem(asset)),
+    refetchInterval: 60_000,
+    retry: false,
+  })
+
+/** What the sample data shows: a busy KVM guest with one disk filling up. */
+function fixtureSystem(a: Asset): ServerSystem {
+  const none: ServerSystem = { reported: false, os: a.os ?? '', system: null, usage: null, usageAt: null }
+  if (a.agentState === 'absent' || a.protocol === 'rdp') return none
+  const GB = 1024 ** 3
+  const at = a.agentLastSeenAt ?? new Date().toISOString()
+  return {
+    reported: true,
+    os: a.os || 'Ubuntu 24.04.1 LTS',
+    system: {
+      kernel: '6.8.0-45-generic', arch: 'x86_64', cpuModel: 'Intel Xeon Gold 6248R', cpus: 8,
+      memoryBytes: 32 * GB, machine: 'virtual', hypervisor: 'KVM',
+      bootedAt: new Date(Date.parse(at) - 23 * 86_400_000).toISOString(), timeZone: 'Asia/Jakarta', utcOffsetSeconds: 25_200,
+    },
+    usage: {
+      load: [1.42, 1.3, 1.18], cpuBusy: 18, memTotal: 32 * GB, memAvailable: 12.5 * GB, swapTotal: 4 * GB, swapFree: 3.8 * GB,
+      disks: [
+        { mount: '/', fs: 'ext4', total: 100 * GB, used: 47 * GB, avail: 48 * GB },
+        { mount: '/var/lib/postgresql', fs: 'xfs', total: 500 * GB, used: 455 * GB, avail: 45 * GB },
+      ],
+    },
+    usageAt: at,
+  }
+}
 
 /** Usage older than this is shown faded, with the time it is from. */
 const QUIET_AFTER = 3 * 60 * 1000
@@ -19,7 +57,7 @@ const QUIET_AFTER = 3 * 60 * 1000
  * Fleet roles only, like what runs on a server; anyone else sees no card.
  */
 export function SystemCard({ asset, onTab }: { asset: Asset; onTab: (t: ServerTab) => void }) {
-  const { data, isError } = useQuery(systemQuery(asset.id))
+  const { data, isError } = useQuery(systemQuery(asset))
   if (isError) return null
   if (!data) {
     return (

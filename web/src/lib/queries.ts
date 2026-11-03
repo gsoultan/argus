@@ -100,15 +100,6 @@ export const requestAccountsQuery = (hostnames: string[]) =>
 export const applicationsQuery = (id: string) =>
   queryOptions({ queryKey: ['asset', id, 'applications'] as const, queryFn: () => api.applications(id) })
 
-/** Usage arrives about once a minute, so the card refreshes on the same beat. */
-export const systemQuery = (id: string) =>
-  queryOptions({
-    queryKey: ['asset', id, 'system'] as const,
-    queryFn: () => api.system(id),
-    refetchInterval: 60_000,
-    retry: false,
-  })
-
 export const sessionsQuery = (state?: Session['state']) =>
   queryOptions({
     queryKey: qk.sessions(state),
