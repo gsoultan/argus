@@ -46,12 +46,16 @@ var shared = []string{
 }
 
 // controlOnlyModules are third-party dependencies that exist for the control
-// plane: its database, object store, console WebSockets and YAML config. None
-// of them has any business in the agent.
+// plane: its database, object store and YAML config. None of them has any
+// business in the agent.
+//
+// github.com/coder/websocket used to be here, for the console's WebSockets.
+// The tunnel now also runs over a WebSocket where a proxy in front of the
+// control plane forwards nothing else (internal/tunnel/transport_ws.go), so
+// both ends link it through the shared tunnel package.
 var controlOnlyModules = []string{
 	"github.com/gsoultan/storm",
 	"github.com/minio/minio-go",
-	"github.com/coder/websocket",
 	"gopkg.in/yaml.v3",
 	"github.com/google/uuid",
 }
