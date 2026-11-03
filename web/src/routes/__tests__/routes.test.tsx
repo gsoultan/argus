@@ -274,9 +274,18 @@ describe('sessions by server', () => {
 
   it('is one click from a server\'s own page', async () => {
     const asset = assets.find((a) => sessions.some((s) => s.assetId === a.id))!
-    await renderRoute(`/assets/${asset.id}`)
+    await renderRoute(`/assets/${asset.id}?tab=sessions`)
     const link = await screen.findByRole('link', { name: /all sessions on this server/i })
     expect(link.getAttribute('href')).toContain(`host=${encodeURIComponent(asset.hostname)}`)
+  })
+
+  it('narrows a server\'s sessions by search, and says when nothing matches', async () => {
+    const asset = assets.find((a) => sessions.some((s) => s.assetId === a.id))!
+    await renderRoute(`/assets/${asset.id}?tab=sessions`)
+    const search = await screen.findByRole('textbox', { name: /search sessions/i })
+    expect(await screen.findByText(/^Showing \d+ of \d+$/)).toBeInTheDocument()
+    fireEvent.change(search, { target: { value: 'nobody-by-this-name' } })
+    expect(await screen.findByText('No session matches.')).toBeInTheDocument()
   })
 })
 

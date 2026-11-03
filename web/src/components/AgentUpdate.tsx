@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Badge, Button, Group, Loader, Modal, Stack, Text, TextInput, ThemeIcon } from '@mantine/core'
+import { Alert, Badge, Button, Card, Group, Loader, Modal, Stack, Text, TextInput, ThemeIcon } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconCheck, IconCircleDashed, IconRefresh } from '@tabler/icons-react'
@@ -24,11 +24,26 @@ const RELEASE = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/
  * the old version on its own if the new one does not reconnect. The card says
  * which of those steps it is on, from what the agent itself reports.
  */
-export function AgentUpdateCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
+export function AgentUpdateCard({ asset, canEdit, bare = false }: {
+  asset: Asset
+  canEdit: boolean
+  /** A plain card under a heading the page already shows, rather than a titled one. */
+  bare?: boolean
+}) {
   const { data: v } = useQuery(agentUpdateQuery(asset.id))
   const [asking, ask] = useDisclosure(false)
   const cancel = useCancelAgentUpdate(asset.id)
   const request = useRequestAgentUpdate(asset.id)
+  if (bare && isConfigured() && v && !v.enrolled) {
+    return (
+      <Card padding="md">
+        <Text size={FS.body} c="dimmed" lh={1.5}>
+          No agent is enrolled on this server. Install one from Servers, Add a server, and it
+          appears here.
+        </Text>
+      </Card>
+    )
+  }
   if (!isConfigured() || !v || !v.enrolled) return null
 
   const st = v.status
@@ -37,21 +52,19 @@ export function AgentUpdateCard({ asset, canEdit }: { asset: Asset; canEdit: boo
   const pickedUp = live && st?.id === v.request?.id
   const offer = canEdit && !live && st?.supported === true && !current
 
-  return (
-    <SectionCard
-      title="Agent"
-      icon={IconRefresh}
-      badge={versionBadge(v, current)}
-      description="The Argus agent on this server, which opens and records every session here."
-    >
+  const body = (
+    <>
       <Stack gap="sm">
         <Field label="Version">
-          <Text size="xs" ff="monospace">
-            {v.agentVersion || 'not reported yet'}
-            {v.agentLastSeenAt && (
-              <Text span size={FS.micro} c="dimmed" ff="inherit"> · checked in {relTime(v.agentLastSeenAt)}</Text>
-            )}
-          </Text>
+          <Group gap={SP.snug}>
+            <Text size="xs" ff="monospace">
+              {v.agentVersion || 'not reported yet'}
+              {v.agentLastSeenAt && (
+                <Text span size={FS.micro} c="dimmed" ff="inherit"> · checked in {relTime(v.agentLastSeenAt)}</Text>
+              )}
+            </Text>
+            {bare && versionBadge(v, current)}
+          </Group>
         </Field>
 
         {st === null && (
@@ -99,6 +112,18 @@ export function AgentUpdateCard({ asset, canEdit }: { asset: Asset; canEdit: boo
         )}
       </Stack>
       {asking && <AskUpdate view={v} onClose={ask.close} assetId={asset.id} />}
+    </>
+  )
+
+  if (bare) return <Card padding="md">{body}</Card>
+  return (
+    <SectionCard
+      title="Agent"
+      icon={IconRefresh}
+      badge={versionBadge(v, current)}
+      description="The Argus agent on this server, which opens and records every session here."
+    >
+      {body}
     </SectionCard>
   )
 }

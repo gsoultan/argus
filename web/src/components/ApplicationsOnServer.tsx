@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Badge, Button, Group, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core'
+import { Badge, Box, Button, Group, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core'
+import { ButtonLink } from '~/components/links'
+import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconApps, IconDatabasePlus } from '@tabler/icons-react'
 import { AddDatabase } from '~/components/DatabasesOnServer'
@@ -8,7 +10,7 @@ import { absTime, relTime } from '~/components/primitives'
 import { isConfigured } from '~/lib/live'
 import { applicationsQuery, databasesOnAssetQuery } from '~/lib/queries'
 import { FS, SP } from '~/theme'
-import type { Asset, ServerApp, ServerAppListen } from '~/types/domain'
+import type { Asset, Database, ServerApp, ServerAppListen } from '~/types/domain'
 
 /**
  * What runs on a server, as its agent found it: databases, brokers, web
@@ -24,13 +26,16 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
   const { data } = useQuery(applicationsQuery(asset.id))
   const { data: dbs } = useQuery(databasesOnAssetQuery(asset.id))
   const [adding, setAdding] = useState<{ port: number; poolerPort?: number } | null>(null)
+  const phone = useMediaQuery('(max-width: 48em)') ?? false
 
   if (asset.protocol === 'rdp') return null
   const apps = data?.applications ?? []
   const listeners = data?.listeners ?? []
   const containers = data?.containers ?? []
   const services = data?.services ?? []
-  const addedPorts = new Set((dbs?.databases ?? []).map((d) => d.port))
+  // A Postgres already in Argus says so by name, matched on its port: the
+  // agent reports ports, and a database in Argus is kept by port too.
+  const added = new Map((dbs?.databases ?? []).filter((d) => d.engine === 'postgres').map((d) => [d.port, d]))
   const pooler = apps.find((a) => a.kind === 'pgbouncer' && !a.container && a.listen.length > 0)
 
   return (
@@ -49,7 +54,7 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
             : 'The agent on this server has not reported what runs on it. An agent older than this console does not look; upgrading it is enough.'} />
       ) : (
         <Tabs defaultValue="apps" variant="pills" radius="sm">
-          <Tabs.List mb="xs">
+          <Tabs.List mb="xs" className="argus-tabs-scroll">
             <Tabs.Tab value="apps" fz={FS.meta}>Applications {apps.length}</Tabs.Tab>
             <Tabs.Tab value="ports" fz={FS.meta}>Listening ports {listeners.length}</Tabs.Tab>
             <Tabs.Tab value="containers" fz={FS.meta} disabled={!data.sources.some((s) => s === 'docker' || s === 'podman')}>
@@ -63,7 +68,7 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
               <EmptyState compact icon={IconApps} title="Nothing Argus recognises."
                 description="No known database, broker, web server or container runtime. Every listening port is still on the next tab." />
             ) : (
-              <Table.ScrollContainer minWidth={640} type="native">
+              <Table.ScrollContainer minWidth={0} type="native">
                 <Table verticalSpacing="xs">
                   <Table.Tbody>
                     {apps.map((a) => (
@@ -76,16 +81,18 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
                             )}
                           </Group>
                           <Text size={FS.micro} c="dimmed">{whereFrom(a)}</Text>
+                          {/* On a phone the ports go under the name, and the state column goes. */}
+                          {phone && <Box mt={SP.tight}><Listens listen={a.listen} /></Box>}
                         </Table.Td>
-                        <Table.Td>
+                        <Table.Td visibleFrom="sm">
                           <Badge size="xs" variant="light" radius="sm" color={a.running ? 'teal' : 'slate'}>
                             {a.running ? 'running' : 'installed, not running'}
                           </Badge>
                         </Table.Td>
-                        <Table.Td><Listens listen={a.listen} /></Table.Td>
+                        {!phone && <Table.Td><Listens listen={a.listen} /></Table.Td>}
                         <Table.Td ta="right">
                           {canEdit && isConfigured() && a.kind === 'postgres' && a.running && (
-                            <AddPostgres app={a} addedPorts={addedPorts}
+                            <AddPostgres app={a} added={added}
                               onAdd={(port) => setAdding({ port, poolerPort: pooler?.listen[0]?.port })} />
                           )}
                         </Table.Td>
@@ -98,10 +105,10 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
           </Tabs.Panel>
 
           <Tabs.Panel value="ports">
-            <Table.ScrollContainer minWidth={480} type="native">
+            <Table.ScrollContainer minWidth={0} type="native">
               <Table verticalSpacing={4}>
                 <Table.Thead>
-                  <Table.Tr><Table.Th>Port</Table.Th><Table.Th>Address</Table.Th><Table.Th>Process</Table.Th><Table.Th>Service</Table.Th></Table.Tr>
+                  <Table.Tr><Table.Th>Port</Table.Th><Table.Th>Address</Table.Th><Table.Th>Process</Table.Th><Table.Th visibleFrom="sm">Service</Table.Th></Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {listeners.map((l) => (
@@ -109,7 +116,7 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
                       <Table.Td><Text size={FS.meta} ff="monospace" fw={600}>{l.port}</Text></Table.Td>
                       <Table.Td><Reach l={l} /></Table.Td>
                       <Table.Td><Text size={FS.meta} ff="monospace">{l.process || '—'}</Text></Table.Td>
-                      <Table.Td><Text size={FS.micro} c="dimmed" ff="monospace">{l.unit || ''}</Text></Table.Td>
+                      <Table.Td visibleFrom="sm"><Text size={FS.micro} c="dimmed" ff="monospace">{l.unit || ''}</Text></Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
@@ -121,7 +128,7 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
             {containers.length === 0 ? (
               <Text size={FS.meta} c="dimmed">No containers.</Text>
             ) : (
-              <Table.ScrollContainer minWidth={480} type="native">
+              <Table.ScrollContainer minWidth={0} type="native">
                 <Table verticalSpacing={4}>
                   <Table.Tbody>
                     {containers.map((c) => (
@@ -207,7 +214,7 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
  * offered: Argus opens a database as the host's postgres account over its
  * local socket, which a container does not share.
  */
-function AddPostgres({ app, addedPorts, onAdd }: { app: ServerApp; addedPorts: Set<number>; onAdd: (port: number) => void }) {
+function AddPostgres({ app, added, onAdd }: { app: ServerApp; added: Map<number, Database>; onAdd: (port: number) => void }) {
   if (app.container) {
     return (
       <Tooltip multiline w={260} label="Argus opens a database as this server's postgres account over its local socket. A Postgres inside a container has neither, so it cannot be added from here yet.">
@@ -219,12 +226,22 @@ function AddPostgres({ app, addedPorts, onAdd }: { app: ServerApp; addedPorts: S
   if (ports.length === 0) ports.push(5432)
   return (
     <Stack gap={4} align="flex-end">
-      {ports.map((p) => (
-        <Button key={p} size="compact-xs" variant={addedPorts.has(p) ? 'subtle' : 'default'}
-          leftSection={<IconDatabasePlus size={12} />} onClick={() => onAdd(p)}>
-          {addedPorts.has(p) ? 'Add another database' : 'Add as database'}{ports.length > 1 ? ` · ${p}` : ''}
-        </Button>
-      ))}
+      {ports.map((p) => {
+        const db = added.get(p)
+        return (
+          <Group key={p} gap={SP.tight} justify="flex-end" wrap="wrap">
+            {db && (
+              <ButtonLink to="/databases/$dbId" params={{ dbId: db.id }} size="compact-xs" variant="light" color="teal">
+                In Argus as {db.dbname}
+              </ButtonLink>
+            )}
+            <Button size="compact-xs" variant={db ? 'subtle' : 'default'}
+              leftSection={<IconDatabasePlus size={12} />} onClick={() => onAdd(p)}>
+              {db ? 'Add another' : 'Add as database'}{ports.length > 1 ? ` · ${p}` : ''}
+            </Button>
+          </Group>
+        )
+      })}
     </Stack>
   )
 }

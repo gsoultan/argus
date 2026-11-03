@@ -268,6 +268,33 @@ button.argus-navsection:hover {
   background: var(--color-void);
 }
 
+/* With a tab row the header is title, actions and tabs. Pinned on a phone
+   that is a third of the screen, so there it scrolls with the page. */
+@media (max-width: 48em) {
+  .argus-pagehead-tabs {
+    position: static;
+  }
+  /* On a phone the page's main action is the last one, and it takes the
+     rest of the row so it is easy to hit with a thumb. */
+  .argus-pagehead-actions > :last-child {
+    flex: 1;
+  }
+}
+
+/* A tab row wider than the screen scrolls sideways instead of wrapping onto
+   a second line that reads as a different control. */
+.argus-tabs-scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.argus-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+.argus-tabs-scroll > * {
+  flex-shrink: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

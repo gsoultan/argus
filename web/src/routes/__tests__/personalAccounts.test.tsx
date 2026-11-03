@@ -26,7 +26,7 @@ describe('giving a team its own accounts on a server', () => {
     signedInAs('admin')
     const set = vi.spyOn(api, 'setTeamAssignment')
     const asset = (await api.assets())[0]!
-    await renderRoute(`/assets/${asset.id}`)
+    await renderRoute(`/assets/${asset.id}?tab=access`)
 
     fireEvent.click(await screen.findByRole('button', { name: /add team or person/i }))
     const dialog = await screen.findByRole('dialog')
@@ -50,7 +50,7 @@ describe('giving a team its own accounts on a server', () => {
   it('offers sudo and direct SSH only with own accounts', async () => {
     signedInAs('admin')
     const asset = (await api.assets())[0]!
-    await renderRoute(`/assets/${asset.id}`)
+    await renderRoute(`/assets/${asset.id}?tab=access`)
     fireEvent.click(await screen.findByRole('button', { name: /add team or person/i }))
     const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByRole('switch', { name: /their own account/i }))
@@ -117,7 +117,7 @@ describe('one person, on one server', () => {
       grantedBy: currentUser.email, grantedAt: new Date().toISOString(),
     }])
     const set = vi.spyOn(api, 'setAssignment')
-    await renderRoute(`/assets/${asset.id}`)
+    await renderRoute(`/assets/${asset.id}?tab=access`)
 
     fireEvent.click(await screen.findByRole('button', { name: /add team or person/i }))
     const dialog = await screen.findByRole('dialog')

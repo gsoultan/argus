@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderRoute } from '~/test/renderRoute'
 import { api } from '~/lib/api'
@@ -53,19 +53,48 @@ describe('a server’s page', () => {
 
   it('says who can connect, with admins always first', async () => {
     signedInAs('admin')
-    await renderRoute(`/assets/${host.id}`)
+    await renderRoute(`/assets/${host.id}?tab=access`)
     expect(await screen.findByText('Who can connect')).toBeInTheDocument()
     expect(screen.getByText('Always, as any account')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /add team or person/i })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /^remove$/i })).toBeInTheDocument()
+  }, 15_000)
+
+  it('keeps removing the server on its Settings tab', async () => {
+    signedInAs('admin')
+    await renderRoute(`/assets/${host.id}?tab=settings`)
+    expect(await screen.findByRole('button', { name: /^remove$/i })).toBeInTheDocument()
   }, 15_000)
 
   it('shows a viewer who can connect without the buttons', async () => {
     signedInAs('auditor')
-    await renderRoute(`/assets/${host.id}`)
+    await renderRoute(`/assets/${host.id}?tab=access`)
     expect(await screen.findByText('Who can connect')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /add team or person/i })).not.toBeInTheDocument()
+  })
+
+  it('shows a viewer the Settings tab without Remove', async () => {
+    signedInAs('auditor')
+    await renderRoute(`/assets/${host.id}?tab=settings`)
+    expect(await screen.findByText('Host key')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^remove$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /edit details/i })).not.toBeInTheDocument()
+  })
+
+  it('opens on Overview and moves between tabs', async () => {
+    signedInAs('admin')
+    await renderRoute(`/assets/${host.id}`)
+    expect(await screen.findByRole('tab', { name: /overview/i, selected: true })).toBeInTheDocument()
+    expect(screen.getByText('Recent sessions')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /^access/i }))
+    expect(await screen.findByRole('tab', { name: /^access/i, selected: true })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /add team or person/i })).toBeInTheDocument()
+    expect(screen.queryByText('Recent sessions')).not.toBeInTheDocument()
+  }, 15_000)
+
+  it('ignores a tab it does not know', async () => {
+    signedInAs('admin')
+    await renderRoute(`/assets/${host.id}?tab=nonsense`)
+    expect(await screen.findByRole('tab', { name: /overview/i, selected: true })).toBeInTheDocument()
   })
 })
 
