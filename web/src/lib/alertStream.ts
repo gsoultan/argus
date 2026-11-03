@@ -70,6 +70,12 @@ class AlertStream {
 
   private open() {
     if (this.stopped) return
+    // No EventSource (an old embedded browser, or a test DOM): the bell
+    // still works from its refetch interval, just without pop-ups.
+    if (typeof EventSource === 'undefined') {
+      this.emit({ status: 'ended' }, true)
+      return
+    }
     const es = new EventSource(alertStreamURL(), { withCredentials: true })
     this.es = es
     es.onopen = () => this.emit({ status: 'live' }, true)
