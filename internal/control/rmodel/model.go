@@ -1010,6 +1010,7 @@ func All() []any {
 		&GatewayPolicy{},
 		&HostKeyPin{},
 		&RecoveryCode{},
+		&SavedQuery{},
 		&RedeemedTicket{},
 		&RevokedSession{},
 		&SchemaMigration{},
@@ -1023,4 +1024,27 @@ func All() []any {
 		&TeamMember{},
 		&User{},
 	}
+}
+
+// SavedQuery is table saved_queries: a query someone kept from the database
+// workspace, private or shared with everyone who may open the database
+// (migration 043).
+type SavedQuery struct {
+	storm.Model
+
+	Database Database
+	Owner    string
+	Name     string
+	Sql      string
+	Shared   bool
+}
+
+func (m *SavedQuery) Schema(t *storm.Table) {
+	t.Col(&m.Database).ConstraintName("saved_queries_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Shared).Default("false")
+	t.CheckNamed("saved_queries_name_check", "(length(name) >= 1) AND (length(name) <= 120)")
+	t.CheckNamed("saved_queries_sql_check", "(length(sql) >= 1) AND (length(sql) <= 100000)")
+	t.Index(&m.Database, &m.Owner).Named("saved_queries_database_owner")
+	t.Index(&m.Database).Where("shared").Named("saved_queries_database_shared")
 }

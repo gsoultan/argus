@@ -457,6 +457,20 @@ func _assertRevokedSessionShape(m m0.RevokedSession) {
 	}
 }
 
+// _assertSavedQueryShape fails to compile if m0.SavedQuery gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSavedQueryShape(m m0.SavedQuery) {
+	type shape m0.SavedQuery
+	_ = shape{
+		m.Model,
+		m.Database,
+		m.Owner,
+		m.Name,
+		m.Sql,
+		m.Shared,
+	}
+}
+
 // _assertSchemaMigrationShape fails to compile if m0.SchemaMigration gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertSchemaMigrationShape(m m0.SchemaMigration) {
