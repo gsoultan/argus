@@ -144,7 +144,9 @@ export function OverviewTab({ asset, sessions, onTab }: {
             <Stack gap="sm" mt="sm">
               <Fact label="Address"><Mono>{asset.address}{asset.port ? `:${asset.port}` : ''}</Mono></Fact>
               <Fact label="Connects by">
-                <Text size={FS.meta}>{asset.protocol === 'rdp' ? 'Remote Desktop (RDP)' : 'SSH'}</Text>
+                <Text size={FS.meta}>{asset.protocol === 'rdp'
+                  ? asset.desktopMode === 'screen' ? 'Screen sharing (no RDP)' : 'Remote Desktop (RDP)'
+                  : 'SSH'}</Text>
               </Fact>
               <Fact label="Login accounts"><LoginAccounts asset={asset} /></Fact>
               {asset.protocol !== 'rdp' && (

@@ -291,3 +291,150 @@ func TestARemoteDesktopOpensThroughTheAgentAndCanBeWatchedAndEnded(t *testing.T)
 		t.Error("what was shown is not in the recording")
 	}
 }
+
+// runScreenAgent is an agent offering both ways in, with the console and
+// the Remote Desktop listener both replaced, counting which one opened.
+func (e *tunnelEnv) runScreenAgent(t *testing.T, cred, host string, desk *fakeDesktop,
+	opened *[]string, offerScreen bool) {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	col := agent.NewCollector(t.TempDir(), log)
+	var mu sync.Mutex
+	connect := func(kind string, info agent.DesktopInfo) func(agent.DesktopConfig, string,
+		tunnel.DesktopOpen, *slog.Logger) (agent.DesktopClient, agent.DesktopInfo, error) {
+		return func(_ agent.DesktopConfig, _ string, open tunnel.DesktopOpen,
+			_ *slog.Logger) (agent.DesktopClient, agent.DesktopInfo, error) {
+			mu.Lock()
+			*opened = append(*opened, kind+":"+open.Password)
+			mu.Unlock()
+			return desk, info, nil
+		}
+	}
+	services := agent.DefaultTunnelServices()
+	cfg := agent.DesktopConfig{Collector: col, Verifier: &tunnel.GrantVerifier{Host: host},
+		Hostname: host, Log: log}
+	rdpCfg := cfg
+	rdpCfg.Connect = connect("rdp", agent.DesktopInfo{Protocol: rdp.ProtocolHybrid})
+	services[agent.DesktopService] = agent.Desktop(rdpCfg)
+	if offerScreen {
+		scrCfg := cfg
+		scrCfg.Connect = connect("screen", agent.DesktopInfo{Screen: true})
+		services[agent.ScreenService] = agent.Screen(scrCfg)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go agent.RunTunnel(ctx, agent.TunnelConfig{Dial: e.dial(cred, host), Services: services, Log: log})
+	e.waitTunnel(t, host, "")
+}
+
+func TestAServerSetToScreenSharingOpensItsConsoleAndNeverPassesThePassword(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("console")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	if _, err := e.store.CreateAsset(context.Background(), AssetInput{
+		Hostname: host, Protocol: "rdp", DesktopMode: "screen", Principals: []string{"ana"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	desk := newFakeDesktop()
+	var opened []string
+	e.runScreenAgent(t, cred, host, desk, &opened, true)
+
+	ticket, _ := signer.IssueTicket("ana@example.com", host, "ana", time.Minute)
+	c := e.openDesktop(t, host, "ana", ticket)
+	defer c.CloseNow()
+	b, _ := json.Marshal(map[string]any{"type": "logon", "password": "typed anyway",
+		"width": 1024, "height": 768})
+	if err := c.Write(context.Background(), websocket.MessageText, b); err != nil {
+		t.Fatal(err)
+	}
+	cev := pump(c)
+	var msgs []terminalMessage
+	frame := nextBinary(cev, &msgs, 10*time.Second)
+	if len(frame) < rdp.FrameHeaderSize || frame[0] != rdp.FrameReady {
+		t.Fatalf("not ready: %v %+v", frame, msgs)
+	}
+	if len(opened) != 1 || opened[0] != "screen:" {
+		t.Fatalf("opened %q; want the console, with no password", opened)
+	}
+	desk.frames <- []rdp.Bitmap{{Width: 4, Height: 1, BPP: 16, Data: []byte("console!")}}
+	if frame = nextBinary(cev, &msgs, 10*time.Second); !strings.Contains(string(frame), "console!") {
+		t.Fatalf("screen update: %v", frame)
+	}
+
+	// A Remote Desktop grant does not open the console.
+	g := tunnel.NewGrant("ana@example.com", host, "ana", "")
+	g.Service = agent.DesktopService
+	grant, _ := tunnel.SignGrant(e.api.Tunnels.GrantKey, g)
+	octx, ocancel := context.WithTimeout(context.Background(), 10*time.Second)
+	st, _, err := e.api.Tunnels.OpenWith(octx, host, tunnel.Header{Service: agent.ScreenService,
+		Grant: grant, Desktop: &tunnel.DesktopOpen{}})
+	ocancel()
+	if st != nil {
+		_ = st.Close()
+	}
+	if !tunnel.IsRefused(err) {
+		t.Fatalf("a Remote Desktop grant opened the console: %v", err)
+	}
+
+	events, err := e.store.AuditEvents(context.Background(), 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ev := range events {
+		if ev.Action == "desktop.opened" && ev.Target == host {
+			found = strings.Contains(ev.Detail, "whoever is signed in at the console")
+		}
+	}
+	if !found {
+		t.Error("the audit does not say the session acts as whoever is at the console")
+	}
+}
+
+func TestScreenSharingOnAnAgentTooOldForItSaysToUpdate(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("oldagent")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	if _, err := e.store.CreateAsset(context.Background(), AssetInput{
+		Hostname: host, Protocol: "rdp", DesktopMode: "screen", Principals: []string{"ana"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var opened []string
+	e.runScreenAgent(t, cred, host, newFakeDesktop(), &opened, false)
+	ticket, _ := signer.IssueTicket("ana@example.com", host, "ana", time.Minute)
+	c := e.openDesktop(t, host, "ana", ticket)
+	defer c.CloseNow()
+	b, _ := json.Marshal(map[string]any{"type": "logon", "width": 1024, "height": 768})
+	_ = c.Write(context.Background(), websocket.MessageText, b)
+	var msgs []terminalMessage
+	frame := nextBinary(pump(c), &msgs, 10*time.Second)
+	if len(frame) == 0 || frame[0] != rdp.FrameClosed || len(msgs) == 0 ||
+		!strings.Contains(msgs[0].Data, "too old to share its screen") {
+		t.Fatalf("got %v %+v", frame, msgs)
+	}
+	if len(opened) != 0 {
+		t.Fatalf("fell back to %q; the server's setting must decide", opened)
+	}
+}
+
+func TestDesktopModeIsValidated(t *testing.T) {
+	for _, tc := range []struct {
+		in   AssetInput
+		want string
+		bad  bool
+	}{
+		{AssetInput{Hostname: "w1", Protocol: "rdp"}, "rdp", false},
+		{AssetInput{Hostname: "w1", Protocol: "rdp", DesktopMode: "Screen"}, "screen", false},
+		{AssetInput{Hostname: "l1", Protocol: "ssh", DesktopMode: "screen"}, "", true},
+		{AssetInput{Hostname: "w1", Protocol: "rdp", DesktopMode: "vnc"}, "", true},
+	} {
+		got, err := tc.in.normalise()
+		if (err != nil) != tc.bad || (!tc.bad && got.DesktopMode != tc.want) {
+			t.Errorf("%+v: %q %v", tc.in, got.DesktopMode, err)
+		}
+	}
+}

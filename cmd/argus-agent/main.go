@@ -68,6 +68,10 @@ func main() {
 	case "file-op":
 		// Run by the files service as the account, one per operation.
 		os.Exit(agent.RunFileOp(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	case "screen-helper":
+		// Run by the daemon in the console's session, on Windows, to share
+		// the screen: input on stdin, screen updates on stdout.
+		os.Exit(agent.RunScreenHelper(os.Stdin, os.Stdout))
 	case "pg-admin":
 		// Run by the postgres service as the postgres account: one request
 		// on stdin, one answer on stdout, over the local socket.
@@ -285,6 +289,13 @@ func runDaemon(args []string) int {
 		// the RDP client and records the session before it is shown.
 		if runtime.GOOS == "windows" {
 			services[agent.DesktopService] = agent.Desktop(agent.DesktopConfig{
+				Collector: col,
+				Verifier:  &tunnel.GrantVerifier{Host: hostname},
+				Hostname:  hostname,
+				Log:       log,
+			})
+			// The console itself, for a host without Remote Desktop.
+			services[agent.ScreenService] = agent.Screen(agent.DesktopConfig{
 				Collector: col,
 				Verifier:  &tunnel.GrantVerifier{Host: hostname},
 				Hostname:  hostname,

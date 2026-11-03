@@ -159,6 +159,7 @@ function fixtureAsset(input: AssetInput): Asset {
       input.credentialMode ?? (input.protocol === 'rdp' ? 'injected-password' : 'injected-key'),
     credentialRef: input.credentialRef ?? '',
     domain: input.domain ?? '',
+    desktopMode: input.desktopMode ?? 'rdp',
     hostKeyState: 'unpinned',
     hostKeyFingerprint: null,
     hostKeyPinnedAt: null,

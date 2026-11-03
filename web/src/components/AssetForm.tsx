@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  Button, Group, Modal, NumberInput, SegmentedControl, Stack, TagsInput, TextInput,
+  Box, Button, Group, Modal, NumberInput, SegmentedControl, Stack, TagsInput, Text, TextInput,
 } from '@mantine/core'
 import { useCreateAsset, useUpdateAsset } from '~/lib/queries'
 import { run } from '~/lib/notify'
 import { SP } from '~/theme'
-import type { Asset, AssetInput, AssetProtocol } from '~/types/domain'
+import type { Asset, AssetInput, AssetProtocol, DesktopMode } from '~/types/domain'
 
 /**
  * Adding a host to the inventory, and editing one.
@@ -30,6 +30,7 @@ const empty: AssetInput = {
   credentialMode: 'injected-key',
   credentialRef: '',
   domain: '',
+  desktopMode: 'rdp',
 }
 
 function fromAsset(a: Asset): AssetInput {
@@ -44,6 +45,7 @@ function fromAsset(a: Asset): AssetInput {
     credentialMode: a.credentialMode,
     credentialRef: a.credentialRef ?? '',
     domain: a.domain ?? '',
+    desktopMode: a.desktopMode ?? 'rdp',
     rotationIntervalDays: a.rotationIntervalDays,
   }
 }
@@ -81,6 +83,7 @@ export function AssetForm({
       port: f.port === 22 || f.port === 3389 || !f.port ? (p === 'rdp' ? 3389 : 22) : f.port,
       credentialMode: p === 'rdp' ? 'injected-password' : 'injected-key',
       domain: p === 'rdp' ? f.domain : '',
+      desktopMode: 'rdp',
     }))
 
   const isRDP = form.protocol === 'rdp'
@@ -165,6 +168,26 @@ export function AssetForm({
         />
 
         {isRDP && (
+          <Box>
+            <Text size="sm" fw={500}>Opens with</Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              {form.desktopMode === 'screen'
+                ? 'Shows the server\u2019s screen as it is, without Remote Desktop: whoever is signed in there, or the sign-in screen. Anyone in front of the server sees what is done. For servers with Remote Desktop turned off.'
+                : 'Signs in through the server\u2019s own Remote Desktop, as the account picked, with its Windows password.'}
+            </Text>
+            <SegmentedControl
+              fullWidth
+              value={form.desktopMode ?? 'rdp'}
+              onChange={(v) => set('desktopMode', v as DesktopMode)}
+              data={[
+                { value: 'rdp', label: 'Remote Desktop' },
+                { value: 'screen', label: 'Screen sharing (no RDP)' },
+              ]}
+            />
+          </Box>
+        )}
+
+        {isRDP && form.desktopMode !== 'screen' && (
           <TextInput
             label="Windows domain"
             description="Empty means the account is local to the server."

@@ -206,6 +206,13 @@ export interface Asset {
   credentialRef?: string
   /** Windows domain for an RDP asset. Empty means the account is local. */
   domain?: string
+  /**
+   * How a Windows server's desktop opens: `rdp` through its own Remote
+   * Desktop, as the account, with its password; `screen` by sharing the
+   * console as it is, without Remote Desktop. Absent from an older control
+   * plane, which is `rdp`.
+   */
+  desktopMode?: DesktopMode
   /** Null when credentialMode is 'ca-certificate' — nothing to rotate. */
   credentialRotatedAt: ISOTime | null
   rotationIntervalDays: number | null
@@ -502,8 +509,12 @@ export interface AssetInput {
   credentialMode?: CredentialMode
   credentialRef?: string
   domain?: string
+  desktopMode?: DesktopMode
   rotationIntervalDays?: number | null
 }
+
+/** How a Windows server's desktop opens; see Asset.desktopMode. */
+export type DesktopMode = 'rdp' | 'screen'
 
 export interface AssetGroup {
   id: UUID

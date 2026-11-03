@@ -113,6 +113,9 @@ function Connect() {
 
   const selected = assets?.find((a) => a.hostname === target)
   const isRDPTarget = selected?.protocol === 'rdp'
+  // A Windows server set to screen sharing opens its console as it is: no
+  // Windows sign-in here, so no password to ask for.
+  const isScreenTarget = isRDPTarget && selected?.desktopMode === 'screen'
   // Everything opens through the server's own agent, and only through it: a
   // server whose agent is not connected has no way in until it reconnects.
   const viaAgent = selected?.tunnelConnected === true
@@ -155,20 +158,22 @@ function Connect() {
 
   // Opened once, and only for what the link named: a server that is listed,
   // whose agent is connected, as an account it lists for this person. A
-  // desktop is left to the button because Windows needs the password first.
+  // Remote Desktop is left to the button because Windows needs the password
+  // first; a shared screen needs none.
   const autoOpened = useRef(false)
   useEffect(() => {
     if (!open || autoOpened.current || !loaded || !selected || session) return
     autoOpened.current = true
-    if (!viaAgent || isRDPTarget || !principals.includes(principal)) return
+    if (!viaAgent || (isRDPTarget && !isScreenTarget) || !principals.includes(principal)) return
     void onConnect()
     // onConnect is recreated every render and reads the same state this
     // effect already gates on.
-  }, [open, loaded, selected, viaAgent, isRDPTarget, principals, principal])
+  }, [open, loaded, selected, viaAgent, isRDPTarget, isScreenTarget, principals, principal])
 
   if (session) {
     const isRDP = session.protocol === 'rdp'
     const isFiles = session.protocol === 'files'
+    const isScreen = isRDP && assets?.find((a) => a.hostname === session.target)?.desktopMode === 'screen'
     return (
       <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
@@ -183,7 +188,9 @@ function Connect() {
             </Badge>
           }
           description={
-            isRDP
+            isScreen
+              ? 'The server\u2019s own screen, shared: anyone in front of it sees what you do. Everything on screen is recorded.'
+              : isRDP
               ? 'Windows desktop. Everything on screen is recorded.'
               : isFiles
                 ? 'Files on the server. Every upload and download is recorded.'
@@ -443,7 +450,18 @@ function Connect() {
               {/* Windows asks for the account's own password before it shows
                   a desktop. It goes to the server's agent for this one sign-in
                   and is kept nowhere. */}
-              {target && isRDPTarget && principals.length > 0 && (
+              {target && isScreenTarget && principals.length > 0 && (
+                <Alert color="amber" variant="light" icon={<IconDeviceDesktop size={16} />}
+                  title="Screen sharing, not Remote Desktop">
+                  <Text size={FS.body} lh={1.5}>
+                    You will see the server&rsquo;s screen as it is: whoever is signed in there, or
+                    the Windows sign-in screen. Anyone in front of the server sees what you do. The
+                    recording notes which Windows account was signed in.
+                  </Text>
+                </Alert>
+              )}
+
+              {target && isRDPTarget && !isScreenTarget && principals.length > 0 && (
                 <PasswordInput
                   size="md"
                   label={`Windows password for ${principal}`}

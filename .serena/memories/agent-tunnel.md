@@ -147,3 +147,29 @@ matches every ForceCommand. Service via `x/sys/windows/svc`
   `--gateway-keys`, `--gateways`, `--skip-brokered` are accepted and ignored.
 - Tickets are burned in `redeemed_tickets` (`Store.Redeem`), shared across
   control plane replicas.
+
+## Screen sharing (Windows, no RDP)
+
+Per-server `assets.desktop_mode` (migration 042): `rdp` (default) or
+`screen`. The control plane, not the browser, picks the tunnel service from
+it (`AssetDesktopMode`): `"desktop"` dials the host's RDP listener, `"screen"`
+(`internal/agent/screen*.go`) shares the physical console. Separate service
+names so a grant for one cannot open the other, and an old agent answers
+"unknown service", which the console turns into "update the agent". No
+password crosses in screen mode; it acts as whoever is signed in at the
+console (the owner's choice, 2026-11-03), so the agent records the account as
+a `console-account` meta event at open and on every change, flags the session
+`console-takeover`, and the audit says so.
+
+Mechanics: the service (session 0) starts `argus-agent screen-helper` in the
+console session with its own SYSTEM token moved there (`TokenSessionId`), only
+two pipes inherited (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), kill-on-close job.
+The helper locks one OS thread, follows `OpenInputDesktop` (sign-in and UAC
+desktops too), captures with GDI BitBlt + cursor, diffs 64px tiles and encodes
+them with `rdp.CompressRect` (24-bit interleaved RLE). The agent re-packs them
+as Fast-Path bitmap PDUs (`rdp.FastPathBitmaps`) for the recording, so replay,
+live view and the browser decoder are unchanged. Ctrl+Alt+Del becomes
+`SendSAS`; the agent sets `SoftwareSASGeneration=1` only if the policy is
+unset. A console session change (sign-out) gets a new helper. Session and
+account are checked on a schedule independent of NextBitmaps calls: a
+per-call timer never fired on a busy screen.

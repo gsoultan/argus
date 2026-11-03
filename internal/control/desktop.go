@@ -36,6 +36,11 @@ can say why.
 // agentDesktopService is the agent's name for it; see agent.DesktopService.
 const agentDesktopService = "desktop"
 
+// agentScreenService is screen sharing, for a server whose desktop mode is
+// "screen": the agent shares the console itself, without Remote Desktop.
+// See agent.ScreenService. A grant for one cannot be spent on the other.
+const agentScreenService = "screen"
+
 // desktopLogonWait bounds how long the browser has to send its logon.
 const desktopLogonWait = 2 * time.Minute
 
@@ -118,8 +123,23 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	// nowhere but the agent's stream header.
 	defer func() { logon.Password = "" }()
 
+	// The server's setting decides, not the browser: a console cannot ask
+	// for the console's screen on a server set to Remote Desktop.
+	mode, err := a.store.AssetDesktopMode(ctx, host)
+	if err != nil {
+		fail("could not read how this server's desktop opens: " + err.Error())
+		return
+	}
+	service, what := agentDesktopService, "Remote Desktop"
+	if mode == "screen" {
+		// Sharing the console signs nobody in, so there is no password to
+		// pass on, and none is.
+		service, what = agentScreenService, "Screen sharing of the console"
+		logon.Password = ""
+	}
+
 	g := tunnel.NewGrant(email, host, principal, client)
-	g.Service = agentDesktopService
+	g.Service = service
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the session grant")
@@ -127,7 +147,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	}
 	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
 	st, answer, err := a.Tunnels.OpenWith(octx, host, tunnel.Header{
-		Service: agentDesktopService, Grant: grant,
+		Service: service, Grant: grant,
 		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height,
 			Graphics: logon.Graphics},
 	})
@@ -139,9 +159,13 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 			"desktop cannot open through it; check the agent is running and shows as " +
 			"connected under Servers")
 		return
+	case tunnel.IsRefused(err) && service == agentScreenService && answer.Error == "unknown service":
+		fail("the agent on " + host + " is too old to share its screen; update it, or set " +
+			"this server back to Remote Desktop")
+		return
 	case tunnel.IsRefused(err):
 		a.log.Warn("desktop: the agent refused the session", "host", host,
-			"principal", principal, "email", email, "error", err)
+			"principal", principal, "email", email, "service", service, "error", err)
 		fail("the agent on " + host + " refused the session: " + answer.Error)
 		return
 	case err != nil:
@@ -155,8 +179,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 		Severity:   "notice",
 		ActorEmail: email,
 		Target:     host,
-		Detail: "Remote Desktop opened in the browser as " + principal + " through the " +
-			"agent's tunnel; session " + answer.Session + ", recorded on the host.",
+		Detail:     desktopAuditDetail(what, service, principal, answer.Session),
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
@@ -266,4 +289,17 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 			return
 		}
 	}
+}
+
+// desktopAuditDetail says what opened. Screen sharing acts as whoever is
+// signed in at the console rather than as the principal the grant names, and
+// the audit says so instead of naming an account that may not be the one.
+func desktopAuditDetail(what, service, principal, session string) string {
+	if service == agentScreenService {
+		return what + " opened in the browser through the agent's tunnel, acting as " +
+			"whoever is signed in at the console (requested as " + principal + "; the " +
+			"recording names each account); session " + session + ", recorded on the host."
+	}
+	return what + " opened in the browser as " + principal + " through the agent's " +
+		"tunnel; session " + session + ", recorded on the host."
 }
