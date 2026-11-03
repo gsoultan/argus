@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"github.com/gsoultan/gsmail"
 	"io"
 	"log/slog"
 	"net"
@@ -211,7 +212,11 @@ func TestEmailSubjectCannotAddHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg := string(e.compose(e.cfg.To, "Argus: evil\r\nBcc: attacker@x.io", "body", ""))
+	raw, err := gsmail.RenderMessage(e.message(e.cfg.To, "Argus: evil\r\nBcc: attacker@x.io", "body", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := string(raw)
 	head, _, _ := strings.Cut(msg, "\r\n\r\n")
 	for _, line := range strings.Split(head, "\r\n") {
 		if strings.HasPrefix(strings.ToLower(line), "bcc:") {
@@ -287,8 +292,10 @@ func TestEmailDeliversToALocalRelayWithoutTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := <-received
-	if !strings.Contains(msg, "Subject: Argus: ana opened SSH on db-01 as root") ||
-		!strings.Contains(msg, "line one\r\nline two") {
+	head, parts := mimeParts(t, []byte(msg))
+	if head.Get("Subject") != "Argus: ana opened SSH on db-01 as root" ||
+		!strings.Contains(parts["text/plain"], "line one\nline two") ||
+		head.Get("Auto-Submitted") != "auto-generated" {
 		t.Fatalf("message:\n%s", msg)
 	}
 }

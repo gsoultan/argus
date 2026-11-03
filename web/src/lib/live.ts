@@ -1092,6 +1092,10 @@ export interface ControlSettings {
   email: {
     enabled: boolean; host: string; port: number; username: string
     passwordSet: boolean; password?: string; from: string; to: string[]
+    /** How mail leaves. Absent from a control plane older than Panmail: SMTP. */
+    via?: EmailVia
+    /** The Panmail gateway, when mail goes through one. The API key is write-only. */
+    panmail?: { url: string; providerId: string; apiKeySet: boolean; apiKey?: string }
   }
   telegram: { enabled: boolean; botTokenSet: boolean; botToken?: string; chatIds: string[] }
   fcm: {
@@ -1130,6 +1134,16 @@ export async function saveControlSettings(
   s: ControlSettings,
 ): Promise<{ changed: string[]; restarting: boolean }> {
   return send('PUT', '/api/v1/settings', s)
+}
+
+export type EmailVia = 'smtp' | 'panmail'
+
+/**
+ * Sends a test message with the email settings on the form, unsaved, to its
+ * recipients. A secret left out is the one configured.
+ */
+export async function testEmail(e: ControlSettings['email']): Promise<{ sent: boolean; to: string[] }> {
+  return post<{ sent: boolean; to: string[] }>('/api/v1/settings/test-email', e)
 }
 
 export async function testDatabase(d: ControlSettings['database']): Promise<DatabaseCheck> {

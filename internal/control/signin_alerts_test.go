@@ -3,10 +3,15 @@ package control
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -38,6 +43,45 @@ func (m *mailbox) total() int {
 		n += len(v)
 	}
 	return n
+}
+
+// readable is a message as a person reads it: the header block as sent, then
+// every body part decoded from its transfer encoding, so a test can look for
+// words in it however the mailer chose to encode them.
+func readable(raw string) string {
+	m, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		return raw
+	}
+	head, _, _ := strings.Cut(raw, "\r\n\r\n")
+	var b strings.Builder
+	b.WriteString(head)
+	b.WriteString("\r\n\r\n")
+	decode := func(enc string, r io.Reader) {
+		switch strings.ToLower(enc) {
+		case "base64":
+			r = base64.NewDecoder(base64.StdEncoding, r)
+		case "quoted-printable":
+			r = quotedprintable.NewReader(r)
+		}
+		body, _ := io.ReadAll(r)
+		b.Write(body)
+		b.WriteString("\n")
+	}
+	ct, params, _ := mime.ParseMediaType(m.Header.Get("Content-Type"))
+	if !strings.HasPrefix(ct, "multipart/") {
+		decode(m.Header.Get("Content-Transfer-Encoding"), m.Body)
+		return b.String()
+	}
+	mr := multipart.NewReader(m.Body, params["boundary"])
+	for {
+		p, err := mr.NextRawPart()
+		if err != nil {
+			break
+		}
+		decode(p.Header.Get("Content-Transfer-Encoding"), p)
+	}
+	return b.String()
 }
 
 func newMailbox(t *testing.T) (*notify.Email, *mailbox) {
@@ -82,7 +126,7 @@ func newMailbox(t *testing.T) (*notify.Email, *mailbox) {
 						}
 						mb.mu.Lock()
 						for _, to := range rcpt {
-							mb.got[to] = append(mb.got[to], b.String())
+							mb.got[to] = append(mb.got[to], readable(b.String()))
 						}
 						mb.mu.Unlock()
 						say("250 queued")

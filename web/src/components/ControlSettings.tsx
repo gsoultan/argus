@@ -14,7 +14,7 @@ import { Mono } from '~/components/primitives'
 import { PemField } from '~/components/Install'
 import {
   controlSettings, saveControlSettings,
-  testDatabase, waitForControlPlane, type ControlSettings as Settings,
+  testDatabase, testEmail, waitForControlPlane, type ControlSettings as Settings,
 } from '~/lib/live'
 import { downloadText } from '~/lib/download'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
@@ -438,9 +438,29 @@ function Alerts({ s, edit }: CardProps) {
   // What the control plane needs before it can start on a channel. Listed in
   // one line under the form rather than under each field, so the two columns
   // of a row stay the same height.
+  const via = e.via ?? 'smtp'
+  const pm = e.panmail ?? { url: '', providerId: '', apiKeySet: false }
+  const setPm = (patch: Partial<typeof pm>) => edit({ email: { ...e, panmail: { ...pm, ...patch } } })
   const emailMissing = [
-    !e.host.trim() && 'SMTP server', !e.from.trim() && 'From', e.to.length === 0 && 'To',
+    ...(via === 'panmail'
+      ? [!pm.url.trim() && 'Panmail address', !pm.apiKeySet && !pm.apiKey && 'API key', !pm.providerId.trim() && 'Provider id']
+      : [!e.host.trim() && 'SMTP server']),
+    !e.from.trim() && 'From', e.to.length === 0 && 'To',
   ].filter(Boolean) as string[]
+  const [testing, setTesting] = useState(false)
+  const sendTest = async () => {
+    setTesting(true)
+    try {
+      const r = await testEmail({ ...e, via, panmail: pm })
+      notifyOk('Test email sent', via === 'panmail'
+        ? `Panmail queued it for ${r.to.join(', ')}. Check the inbox, then save.`
+        : `Sent to ${r.to.join(', ')}. Check the inbox, then save.`)
+    } catch (err) {
+      notifyError('Test email not sent', err)
+    } finally {
+      setTesting(false)
+    }
+  }
   const telegramMissing = [
     !t.botTokenSet && !t.botToken && 'Bot token', t.chatIds.length === 0 && 'Chat ids',
   ].filter(Boolean) as string[]
@@ -465,6 +485,14 @@ function Alerts({ s, edit }: CardProps) {
                 <Text size={FS.meta} c="dimmed">Turn this on to enter your mail server, then save.</Text>
               )}
               {e.enabled && (
+                <SegmentedControl size="xs" fullWidth value={via} aria-label="Delivery method"
+                  onChange={(v) => edit({ email: { ...e, via: v as 'smtp' | 'panmail', port: e.port || 587, panmail: pm } })}
+                  data={[
+                    { value: 'smtp', label: 'SMTP server' },
+                    { value: 'panmail', label: 'Panmail' },
+                  ]} />
+              )}
+              {e.enabled && via === 'smtp' && (
                 <Grid gap="xs">
                   <Grid.Col span={{ base: 12, sm: 8 }}>
                     <TextInput size="xs" label="SMTP server" placeholder="smtp.example.com" data-first-field
@@ -483,22 +511,59 @@ function Alerts({ s, edit }: CardProps) {
                     <SecretInput label="Password" set={e.passwordSet} value={e.password}
                       onChange={(v) => edit({ email: { ...e, password: v } })} />
                   </Grid.Col>
+                </Grid>
+              )}
+              {e.enabled && via === 'panmail' && (
+                <Grid gap="xs">
+                  <Grid.Col span={12}>
+                    <TextInput size="xs" label="Panmail address" placeholder="https://mail.example.com"
+                      data-first-field withAsterisk value={pm.url} inputMode="url" autoComplete="off"
+                      onChange={(ev) => setPm({ url: ev.currentTarget.value })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <SecretInput label="API key" required set={pm.apiKeySet} value={pm.apiKey}
+                      description="Panmail, API Keys. Needs the email:send scope."
+                      onChange={(v) => setPm({ apiKey: v })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <TextInput size="xs" label="Provider id" withAsterisk value={pm.providerId}
+                      description="Panmail, Email Providers. The one Argus sends through."
+                      placeholder="0f8b8f4e-…" autoComplete="off"
+                      styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+                      onChange={(ev) => setPm({ providerId: ev.currentTarget.value })} />
+                  </Grid.Col>
+                </Grid>
+              )}
+              {e.enabled && (
+                <Grid gap="xs">
                   <Grid.Col span={{ base: 12, sm: 6 }}>
                     <TextInput size="xs" label="From" placeholder="argus@example.com"
-                      withAsterisk value={e.from}
+                      withAsterisk value={e.from} inputMode="email"
+                      description={via === 'panmail' ? 'An allowed sender for that provider.' : undefined}
                       onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 6 }}>
                     <TagsInput size="xs" label="To" withAsterisk value={e.to}
+                      description={via === 'panmail' ? 'Administrators who get every alert.' : undefined}
                       placeholder={e.to.length ? '' : 'Type an address, press Enter'}
                       onChange={(v) => edit({ email: { ...e, to: v } })} />
                   </Grid.Col>
                 </Grid>
               )}
               {e.enabled && (
-                <FormNote missing={emailMissing}>
-                  Port 465 connects over TLS; any other port upgrades with STARTTLS.
-                </FormNote>
+                <Group gap="xs" justify="space-between" align="center" wrap="wrap">
+                  <div style={{ flex: '1 1 16rem', minWidth: 0 }}>
+                    <FormNote missing={emailMissing}>
+                      {via === 'panmail'
+                        ? 'Panmail queues each message and delivers it through the provider, with its own retries.'
+                        : 'Port 465 connects over TLS; any other port upgrades with STARTTLS.'}
+                    </FormNote>
+                  </div>
+                  <Button size="xs" variant="light" loading={testing} disabled={emailMissing.length > 0}
+                    onClick={sendTest}>
+                    Send test email
+                  </Button>
+                </Group>
               )}
             </Stack>
           )}

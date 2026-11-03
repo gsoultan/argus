@@ -129,9 +129,13 @@ type StorageSettings struct {
 	SecretKey    *string `json:"secretKey,omitempty"`
 }
 
-// EmailSettings is the SMTP alert channel.
+// EmailSettings is the email alert channel: through an SMTP server, or
+// through a Panmail gateway.
 type EmailSettings struct {
-	Enabled     bool     `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Via is "smtp" or "panmail". Empty, from a console older than Panmail,
+	// is "smtp".
+	Via         string   `json:"via"`
 	Host        string   `json:"host"`
 	Port        int      `json:"port"`
 	Username    string   `json:"username"`
@@ -139,6 +143,17 @@ type EmailSettings struct {
 	Password    *string  `json:"password,omitempty"`
 	From        string   `json:"from"`
 	To          []string `json:"to"`
+
+	Panmail PanmailSettings `json:"panmail"`
+}
+
+// PanmailSettings is the Panmail gateway email goes through, with the API key
+// write-only.
+type PanmailSettings struct {
+	URL        string  `json:"url"`
+	ProviderID string  `json:"providerId"`
+	APIKeySet  bool    `json:"apiKeySet"`
+	APIKey     *string `json:"apiKey,omitempty"`
 }
 
 // TelegramSettings is the Telegram alert channel.
@@ -190,6 +205,9 @@ type SettingsBackend interface {
 	// did, the control plane reloads itself shortly after.
 	SaveSettings(ctx context.Context, in Settings, actor string) ([]string, error)
 	TestDatabase(ctx context.Context, d DatabaseSettings) (DatabaseCheck, error)
+	// TestEmail sends one message with e, unsaved, to its recipients. A
+	// secret e leaves out is the one configured.
+	TestEmail(ctx context.Context, e EmailSettings) error
 }
 
 func (a *API) admin(w http.ResponseWriter, r *http.Request, what string) (string, bool) {
@@ -271,4 +289,25 @@ func (a *API) postTestDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, check)
+}
+
+// postTestEmail sends a test message with the email settings on the form, so
+// an administrator learns that mail arrives before relying on it for alerts.
+func (a *API) postTestEmail(w http.ResponseWriter, r *http.Request) {
+	actor, ok := a.admin(w, r, "sending a test email")
+	if !ok {
+		return
+	}
+	var in EmailSettings
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.Settings.TestEmail(r.Context(), in); err != nil {
+		a.log.Info("test email failed", "by", actor, "via", in.Via, "error", err)
+		writeErr(w, http.StatusBadRequest, "the test email was not sent: "+err.Error())
+		return
+	}
+	a.log.Info("test email sent", "by", actor, "via", in.Via, "to", len(in.To))
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "to": in.To})
 }

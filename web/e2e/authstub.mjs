@@ -232,7 +232,8 @@ const SETTINGS = {
   ticketsPerMinute: 30, sessionTtl: '8h', ticketTtl: '1m', agentStaleAfter: '2m', logLevel: 'info',
   database: { host: 'db', port: 5432, name: 'argus', user: 'argus', sslMode: 'disable', passwordSet: true },
   storage: { enabled: false, endpoint: '', bucket: '', region: '', useSsl: true, accessKey: '', secretKeySet: false },
-  email: { enabled: false, host: '', port: 0, username: '', passwordSet: false, from: '', to: [] },
+  email: { enabled: false, via: 'smtp', host: '', port: 0, username: '', passwordSet: false, from: '', to: [],
+    panmail: { url: '', providerId: '', apiKeySet: false } },
   telegram: { enabled: false, botTokenSet: false, chatIds: [] },
   fcm: { enabled: false, credentialsSet: false, projectId: '', topic: '', tokens: [] },
   tls: { enabled: false, managed: false, canIssue: false, mutualTls: false },
@@ -344,6 +345,15 @@ const server = createServer(async (req, res) => {
     }
     if (path === '/api/v1/stats') return json(res, 200, STATS)
     if (path === '/api/v1/settings' && req.method === 'GET') return json(res, 200, SETTINGS)
+    // A test send: refused, as the control plane refuses it, when Panmail is
+    // chosen without an API key; otherwise "sent" to the form's recipients.
+    if (path === '/api/v1/settings/test-email' && req.method === 'POST') {
+      const body = /** @type {any} */ (await readBody(req))
+      if (body.via === 'panmail' && !body.panmail?.apiKey && !body.panmail?.apiKeySet) {
+        return json(res, 400, { error: 'the test email was not sent: alerts.email: not configured: set panmail.api_key' })
+      }
+      return json(res, 200, { sent: true, to: body.to ?? [] })
+    }
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
     // A window of a larger log, which is what a real control plane serves: the

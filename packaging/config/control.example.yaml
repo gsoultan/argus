@@ -105,11 +105,18 @@ log_level: "info"
 # alerts:
 #   email:
 #     host: "smtp.example.com"
-#     port: 587                     # 465 for implicit TLS; others must offer STARTTLS
+#     port: 587                     # 465 for implicit TLS; others upgrade with STARTTLS
 #     username: "argus@example.com"
 #     password: "${file:/etc/argus/smtp-password}"
 #     from: "argus@example.com"
 #     to: ["security@example.com"]
+#     # Or send through a Panmail gateway instead of an SMTP server: set `via`
+#     # and the gateway, and leave host/port/username/password out.
+#     # via: "panmail"
+#     # panmail:
+#     #   url: "https://mail.example.com"
+#     #   api_key: "${file:/etc/argus/panmail-api-key}"   # needs the email:send scope
+#     #   provider_id: "0f8b8f4e-0000-4000-8000-000000000000"
 #   telegram:
 #     # From @BotFather. Add the bot to the group first, then use the group's id.
 #     bot_token: "${file:/etc/argus/telegram-bot-token}"
