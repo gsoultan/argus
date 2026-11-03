@@ -16,7 +16,7 @@ in use, swap, how full each disk is) changes all the time, so it rides the
 heartbeat, about once a minute.
 
 Read-only and nothing a local user could not already see: /proc, /sys's DMI
-names, the mount table and statfs. No process, no file content, no
+names, the mount table, statfs and the interface table. No process, no file content, no
 configuration. A mount point is a path, not what is stored under it.
 */
 
@@ -43,6 +43,9 @@ type SystemInfo struct {
 	// at the moment of the report.
 	TimeZone      string `json:"time_zone,omitempty"`
 	OffsetSeconds int    `json:"utc_offset_seconds"`
+	// Interfaces are the network interfaces that are up and the addresses
+	// each holds (netinfo.go).
+	Interfaces []NetInterface `json:"interfaces,omitempty"`
 }
 
 // Usage is how busy the machine is now.
@@ -96,6 +99,7 @@ func DiscoverSystem() SystemInfo {
 		}
 	}
 	s.OffsetSeconds = off
+	s.Interfaces = DiscoverInterfaces()
 	return s
 }
 

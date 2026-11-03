@@ -411,6 +411,29 @@ export interface ServerSystem {
   system: ServerSystemFacts | null
   usage: ServerUsage | null
   usageAt: ISOTime | null
+  /**
+   * The addresses the server's network interfaces hold. An agent older than
+   * per-interface reporting gives one entry with no name. Missing from a
+   * control plane older than this field.
+   */
+  network?: ServerInterface[]
+}
+
+/** One network interface on a server, as its agent reports it. */
+export interface ServerInterface {
+  /** Empty for an older agent's flat list of addresses. */
+  name: string
+  mac: string
+  addresses: ServerAddress[]
+}
+
+export interface ServerAddress {
+  address: string
+  /** Network length in bits; -1 when the agent did not say. */
+  prefix: number
+  family: 'ipv4' | 'ipv6'
+  /** Globally routable: not private, carrier NAT or reserved. */
+  public: boolean
 }
 
 /**

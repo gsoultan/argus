@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,6 +34,16 @@ type HostSystem struct {
 	BootedAt      *time.Time `json:"booted_at,omitempty"`
 	TimeZone      string     `json:"time_zone,omitempty"`
 	OffsetSeconds int        `json:"utc_offset_seconds"`
+	// Interfaces is nil from an agent older than per-interface addresses;
+	// the card then falls back to the flat list on the agents row.
+	Interfaces []HostInterface `json:"interfaces,omitempty"`
+}
+
+// HostInterface mirrors agent.NetInterface.
+type HostInterface struct {
+	Name      string   `json:"name"`
+	MAC       string   `json:"mac,omitempty"`
+	Addresses []string `json:"addresses"`
 }
 
 // HostUsage mirrors agent.Usage, in the agent's spelling.
@@ -59,6 +71,8 @@ const (
 	maxSystemDisks = 32
 	maxSystemText  = 200
 	maxMountText   = 512
+	maxInterfaces  = 32
+	maxIfaceAddrs  = 16
 )
 
 // bounded cuts what an agent sent to sizes the console can show, and
@@ -84,7 +98,45 @@ func (s *HostSystem) bounded() *HostSystem {
 	if c.OffsetSeconds < -14*3600 || c.OffsetSeconds > 14*3600 {
 		c.OffsetSeconds = 0
 	}
+	c.Interfaces = boundedInterfaces(c.Interfaces)
 	return &c
+}
+
+// boundedInterfaces keeps what parses: an address that is not an address,
+// or a MAC that is not one, is dropped rather than shown. Each address is
+// stored in its canonical spelling.
+func boundedInterfaces(in []HostInterface) []HostInterface {
+	if in == nil {
+		return nil
+	}
+	out := make([]HostInterface, 0, min(len(in), maxInterfaces))
+	for _, i := range in {
+		if len(out) == maxInterfaces {
+			break
+		}
+		name := clipText(i.Name, 64)
+		if name == "" {
+			continue
+		}
+		mac := ""
+		if hw, err := net.ParseMAC(i.MAC); err == nil {
+			mac = hw.String()
+		}
+		addrs := make([]string, 0, min(len(i.Addresses), maxIfaceAddrs))
+		for _, a := range i.Addresses {
+			if len(addrs) == maxIfaceAddrs {
+				break
+			}
+			if p, err := netip.ParsePrefix(a); err == nil {
+				addrs = append(addrs, p.String())
+			}
+		}
+		if len(addrs) == 0 {
+			continue
+		}
+		out = append(out, HostInterface{Name: name, MAC: mac, Addresses: addrs})
+	}
+	return out
 }
 
 func (u *HostUsage) bounded() *HostUsage {
@@ -143,6 +195,110 @@ type ServerSystem struct {
 	Usage  *SystemUsage `json:"usage"`
 	// UsageAt is when Usage was sampled; nil when no usage was reported.
 	UsageAt *time.Time `json:"usageAt"`
+	// Network is the addresses the server's interfaces hold. From an agent
+	// older than per-interface reporting it is one entry with no name,
+	// holding the flat list that agent sends. Empty when none reported.
+	Network []SystemInterface `json:"network"`
+}
+
+// SystemInterface is one network interface on the System card.
+type SystemInterface struct {
+	// Name is "" for the flat list of an older agent.
+	Name      string          `json:"name"`
+	MAC       string          `json:"mac"`
+	Addresses []SystemAddress `json:"addresses"`
+}
+
+// SystemAddress is one address and what kind it is.
+type SystemAddress struct {
+	Address string `json:"address"`
+	// Prefix is the network's length in bits, or -1 when the agent did not
+	// say (an older agent's flat list).
+	Prefix int `json:"prefix"`
+	// Family is "ipv4" or "ipv6".
+	Family string `json:"family"`
+	// Public is true for a globally routable address: not private (RFC 1918
+	// or IPv6 unique local), not shared address space (RFC 6598, carrier NAT)
+	// and not reserved. It says what the address is, not that it can be
+	// reached from the internet; a firewall may still stand in the way.
+	Public bool `json:"public"`
+}
+
+// nonPublic are the ranges netip has no method for that are still not on
+// the internet.
+var nonPublic = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),  // shared address space, carrier NAT
+	netip.MustParsePrefix("192.0.0.0/24"),   // IETF protocol assignments
+	netip.MustParsePrefix("198.18.0.0/15"),  // benchmarking
+	netip.MustParsePrefix("240.0.0.0/4"),    // reserved
+	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64
+}
+
+// isPublicAddr is whether a is globally routable.
+func isPublicAddr(a netip.Addr) bool {
+	a = a.Unmap()
+	if !a.IsGlobalUnicast() || a.IsPrivate() {
+		return false
+	}
+	for _, p := range nonPublic {
+		if p.Contains(a) {
+			return false
+		}
+	}
+	return true
+}
+
+// systemAddress reads one reported address, with or without a prefix.
+func systemAddress(s string) (SystemAddress, bool) {
+	var (
+		a      netip.Addr
+		prefix = -1
+	)
+	if p, err := netip.ParsePrefix(s); err == nil {
+		a, prefix = p.Addr(), p.Bits()
+	} else if v, err := netip.ParseAddr(s); err == nil {
+		a = v
+	} else {
+		return SystemAddress{}, false
+	}
+	fam := "ipv6"
+	if a.Unmap().Is4() {
+		fam, a = "ipv4", a.Unmap()
+	}
+	return SystemAddress{Address: a.String(), Prefix: prefix, Family: fam, Public: isPublicAddr(a)}, true
+}
+
+// systemNetwork is the card's network section: the interfaces when the agent
+// reported them, else the flat list on the agents row.
+func systemNetwork(ifs []HostInterface, flat []string) []SystemInterface {
+	out := []SystemInterface{}
+	for _, i := range ifs {
+		si := SystemInterface{Name: i.Name, MAC: i.MAC, Addresses: []SystemAddress{}}
+		for _, s := range i.Addresses {
+			if a, ok := systemAddress(s); ok {
+				si.Addresses = append(si.Addresses, a)
+			}
+		}
+		if len(si.Addresses) > 0 {
+			out = append(out, si)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	si := SystemInterface{Addresses: []SystemAddress{}}
+	for _, s := range flat {
+		if len(si.Addresses) == maxIfaceAddrs {
+			break
+		}
+		if a, ok := systemAddress(s); ok {
+			si.Addresses = append(si.Addresses, a)
+		}
+	}
+	if len(si.Addresses) > 0 {
+		out = append(out, si)
+	}
+	return out
 }
 
 // SystemFacts is HostSystem as the console spells it.
@@ -186,24 +342,25 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 		osName       *string
 		sysRaw, uRaw []byte
 		usageAt      *time.Time
+		flat         []string
 	)
 	err := s.db(ctx).QueryRow(ctx, `
-		SELECT ag.os, ag.system, ag.usage, ag.usage_at
+		SELECT ag.os, ag.system, ag.usage, ag.usage_at, ag.addresses
 		  FROM assets a
 		  LEFT JOIN LATERAL (
-		       SELECT os, system, usage, usage_at FROM agents g
+		       SELECT os, system, usage, usage_at, addresses FROM agents g
 		        WHERE g.hostname = a.hostname OR g.hostname = a.agent_hostname
 		           OR g.hostname = split_part(a.hostname, '.', 1)
 		        ORDER BY g.last_seen_at DESC NULLS LAST
 		        LIMIT 1) ag ON TRUE
-		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&osName, &sysRaw, &uRaw, &usageAt)
+		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&osName, &sysRaw, &uRaw, &usageAt, &flat)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ServerSystem{}, ErrAssetNotFound
 	}
 	if err != nil {
 		return ServerSystem{}, err
 	}
-	out := ServerSystem{}
+	out := ServerSystem{Network: []SystemInterface{}}
 	if osName != nil {
 		out.OS = *osName
 	}
@@ -216,6 +373,7 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 			BootedAt: hs.BootedAt, TimeZone: hs.TimeZone, OffsetSeconds: hs.OffsetSeconds,
 		}
 	}
+	out.Network = systemNetwork(hs.Interfaces, flat)
 	var hu HostUsage
 	if len(uRaw) > 0 && string(uRaw) != "null" && json.Unmarshal(uRaw, &hu) == nil {
 		out.Reported = true

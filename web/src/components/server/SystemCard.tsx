@@ -4,7 +4,7 @@ import { Mono, absTime, now as clockNow, relTime } from '~/components/primitives
 import type { ServerTab } from '~/components/server/tabs'
 import { live } from '~/lib/live'
 import { FS } from '~/theme'
-import type { Asset, ServerDisk, ServerSystem, ServerSystemFacts, ServerUsage } from '~/types/domain'
+import type { Asset, ServerDisk, ServerInterface, ServerSystem, ServerSystemFacts, ServerUsage } from '~/types/domain'
 
 /**
  * Here rather than in lib/queries and lib/api, so the card's fixture and
@@ -19,7 +19,10 @@ const systemQuery = (asset: Asset) =>
     retry: false,
   })
 
-/** What the sample data shows: a busy KVM guest with one disk filling up. */
+/**
+ * What the sample data shows: a busy KVM guest with one disk filling up, a
+ * public and a private interface, and a container bridge.
+ */
 function fixtureSystem(a: Asset): ServerSystem {
   const none: ServerSystem = { reported: false, os: a.os ?? '', system: null, usage: null, usageAt: null }
   if (a.agentState === 'absent' || a.protocol === 'rdp') return none
@@ -41,6 +44,16 @@ function fixtureSystem(a: Asset): ServerSystem {
       ],
     },
     usageAt: at,
+    network: [
+      {
+        name: 'eth0', mac: '52:54:00:3a:91:c4', addresses: [
+          { address: '203.0.113.24', prefix: 24, family: 'ipv4', public: true },
+          { address: '2001:db8:4f8::24', prefix: 64, family: 'ipv6', public: true },
+        ],
+      },
+      { name: 'eth1', mac: '52:54:00:3a:91:c5', addresses: [{ address: '10.20.0.14', prefix: 16, family: 'ipv4', public: false }] },
+      { name: 'docker0', mac: '02:42:7d:1e:0a:33', addresses: [{ address: '172.17.0.1', prefix: 16, family: 'ipv4', public: false }] },
+    ],
   }
 }
 
@@ -104,6 +117,7 @@ export function SystemCardBody({ asset, data, onTab, now }: {
             </>
           )}
         </Box>
+        <Network ifaces={data.network ?? []} />
       </Card>
     )
   }
@@ -132,6 +146,9 @@ export function SystemCardBody({ asset, data, onTab, now }: {
             : <Text size={FS.meta} c="dimmed" p="md">Waiting for the agent&apos;s first report of how busy this server is.</Text>}
         </Box>
       </SimpleGrid>
+      <Box style={{ opacity: quiet ? 0.6 : 1 }}>
+        <Network ifaces={data.network ?? []} />
+      </Box>
     </Card>
   )
 }
@@ -183,6 +200,46 @@ function Facts({ rows }: { rows: Row[] }) {
           </Box>
         </Group>
       ))}
+    </Stack>
+  )
+}
+
+/**
+ * The addresses each interface holds, in the order the agent lists them. Says out loud when none is public, because a machine
+ * behind NAT has a public address no interface holds, and the card must not
+ * read as "this server has no public address".
+ */
+function Network({ ifaces }: { ifaces: ServerInterface[] }) {
+  if (ifaces.length === 0) return null
+  const anyPublic = ifaces.some((i) => i.addresses.some((a) => a.public))
+  return (
+    <Stack gap="sm" p="md" style={{ borderTop: '1px solid var(--color-line)' }} data-testid="system-network">
+      <Text size={FS.micro} c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.05em' }}>Network</Text>
+      {ifaces.map((i, n) => (
+        <Group key={i.name || n} gap="sm" wrap="nowrap" align="flex-start" data-testid={`iface-${i.name || 'addresses'}`}>
+          <Box w={120} style={{ flexShrink: 0, minWidth: 0, overflowWrap: 'anywhere' }}>
+            {i.name ? <Text size={FS.meta} ff="monospace">{i.name}</Text> : <Text size={FS.meta} c="dimmed">Addresses</Text>}
+            {i.mac && <Text size={FS.micro} c="dimmed" ff="monospace">{i.mac}</Text>}
+          </Box>
+          <Stack gap={2} style={{ minWidth: 0 }}>
+            {i.addresses.map((a) => (
+              <Group key={a.address} gap={6} wrap="nowrap" align="baseline">
+                <Text size={FS.meta} ff="monospace" style={{ overflowWrap: 'anywhere' }}>
+                  {a.address}
+                  {a.prefix >= 0 && <Text span inherit c="dimmed">/{a.prefix}</Text>}
+                </Text>
+                <Text size={FS.micro} c="dimmed" style={{ flexShrink: 0 }}>{a.public ? 'public' : 'private'}</Text>
+              </Group>
+            ))}
+          </Stack>
+        </Group>
+      ))}
+      {!anyPublic && (
+        <Text size={FS.micro} c="dimmed" lh={1.5}>
+          No interface on this server holds a public address. If it reaches the internet through NAT or a cloud
+          provider&apos;s public IP, that address is not on the machine and the agent does not report it.
+        </Text>
+      )}
     </Stack>
   )
 }

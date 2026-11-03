@@ -30,3 +30,12 @@ swap, each real disk). Code: `internal/agent/sysinfo*.go`,
   architecture, CPU count and time zone.
 - NULL columns (migration 040) mean "not reported": the card then asks for
   an agent update, or says there is no agent.
+- **Network** (2026-11): `system.interfaces` is each interface that is up,
+  its MAC and its addresses in CIDR form (`internal/agent/netinfo.go`, Go's
+  interface table, so Linux and Windows alike). Loopback and link-local are
+  dropped. The control plane parses each address (bad ones dropped) and marks
+  it public when globally routable: not RFC 1918/ULA, not 100.64/10, not
+  reserved. An agent without interfaces falls back to the flat `addresses`
+  column, shown unnamed. When no interface holds a public address the card
+  says so and why (NAT / cloud public IPs are not on the machine); the agent
+  never asks an outside service for its public IP.
