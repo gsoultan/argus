@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentType } from 'react'
+import { useRef, useState, type ComponentType, type ReactNode } from 'react'
 import {
   Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput, Radio,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
@@ -433,9 +433,15 @@ function Alerts({ s, edit }: CardProps) {
       el.querySelector<HTMLInputElement>('[data-first-field] input, input[data-first-field]')?.focus({ preventScroll: true })
     })
   }
-  const need = (on: boolean, missing: boolean, what: string) => (on && missing ? what : undefined)
-  const emailToMissing = e.to.length === 0
-  const tokenMissing = !t.botTokenSet && !t.botToken
+  // What the control plane needs before it can start on a channel. Listed in
+  // one line under the form rather than under each field, so the two columns
+  // of a row stay the same height.
+  const emailMissing = [
+    !e.host.trim() && 'SMTP server', !e.from.trim() && 'From', e.to.length === 0 && 'To',
+  ].filter(Boolean) as string[]
+  const telegramMissing = [
+    !t.botTokenSet && !t.botToken && 'Bot token', t.chatIds.length === 0 && 'Chat ids',
+  ].filter(Boolean) as string[]
   return (
     <Stack gap="sm">
       <SignInAlerts s={s} edit={edit} onSetUp={setUp} />
@@ -459,11 +465,11 @@ function Alerts({ s, edit }: CardProps) {
                 <Grid gap="xs">
                   <Grid.Col span={{ base: 12, sm: 8 }}>
                     <TextInput size="xs" label="SMTP server" placeholder="smtp.example.com" data-first-field
-                      error={need(e.enabled, !e.host.trim(), 'Required')} value={e.host}
+                      withAsterisk value={e.host}
                       onChange={(ev) => edit({ email: { ...e, host: ev.currentTarget.value } })} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 4 }}>
-                    <NumberInput size="xs" label="Port" description="465 is TLS; others STARTTLS" min={1} max={65535}
+                    <NumberInput size="xs" label="Port" min={1} max={65535}
                       value={e.port || 587} onChange={(v) => edit({ email: { ...e, port: Number(v) || 0 } })} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 6 }}>
@@ -476,15 +482,20 @@ function Alerts({ s, edit }: CardProps) {
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 6 }}>
                     <TextInput size="xs" label="From" placeholder="argus@example.com"
-                      error={need(e.enabled, !e.from.trim(), 'Required')} value={e.from}
+                      withAsterisk value={e.from}
                       onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 6 }}>
-                    <TagsInput size="xs" label="To" description="Press Enter after each address" value={e.to}
-                      error={need(e.enabled, emailToMissing, 'Add at least one address')}
+                    <TagsInput size="xs" label="To" withAsterisk value={e.to}
+                      placeholder={e.to.length ? '' : 'Type an address, press Enter'}
                       onChange={(v) => edit({ email: { ...e, to: v } })} />
                   </Grid.Col>
                 </Grid>
+              )}
+              {e.enabled && (
+                <FormNote missing={emailMissing}>
+                  Port 465 connects over TLS; any other port upgrades with STARTTLS.
+                </FormNote>
               )}
             </Stack>
           )}
@@ -498,16 +509,20 @@ function Alerts({ s, edit }: CardProps) {
               {t.enabled && (
                 <Grid gap="xs">
                   <Grid.Col span={{ base: 12, sm: 6 }}>
-                    <SecretInput label="Bot token" description="From @BotFather" set={t.botTokenSet} value={t.botToken} first
-                      error={need(t.enabled, tokenMissing, 'Required')}
+                    <SecretInput label="Bot token" required set={t.botTokenSet} value={t.botToken} first
                       onChange={(v) => edit({ telegram: { ...t, botToken: v } })} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 6 }}>
-                    <TagsInput size="xs" label="Chat ids" description="Add the bot to a group first. Press Enter after each id."
-                      error={need(t.enabled, t.chatIds.length === 0, 'Add at least one chat')}
+                    <TagsInput size="xs" label="Chat ids" withAsterisk
+                      placeholder={t.chatIds.length ? '' : 'Type a chat id, press Enter'}
                       value={t.chatIds} onChange={(v) => edit({ telegram: { ...t, chatIds: v } })} />
                   </Grid.Col>
                 </Grid>
+              )}
+              {t.enabled && (
+                <FormNote missing={telegramMissing}>
+                  Get a bot token from @BotFather, add the bot to your group, then add the group's chat id.
+                </FormNote>
               )}
             </Stack>
           )}
@@ -531,11 +546,11 @@ function Alerts({ s, edit }: CardProps) {
                       onChange={(ev) => edit({ fcm: { ...f, topic: ev.currentTarget.value } })} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 4 }}>
-                    <TextInput size="xs" label="Project id" description="Optional" value={f.projectId}
+                    <TextInput size="xs" label="Project id (optional)" value={f.projectId}
                       onChange={(ev) => edit({ fcm: { ...f, projectId: ev.currentTarget.value } })} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, sm: 4 }}>
-                    <TagsInput size="xs" label="Device tokens" description="Optional"
+                    <TagsInput size="xs" label="Device tokens (optional)"
                       value={f.tokens} onChange={(v) => edit({ fcm: { ...f, tokens: v } })} />
                   </Grid.Col>
                 </Grid>
@@ -617,20 +632,31 @@ function ChannelRow({ name, on, detail, onSetUp }: {
   )
 }
 
+/**
+ * The one line under a channel's form: what is still needed to save it, or
+ * else the hint for filling it in.
+ */
+function FormNote({ missing, children }: { missing: string[]; children: ReactNode }) {
+  return missing.length > 0
+    ? <Text size={FS.meta} c="amber.7">Still needed: {missing.join(', ')}.</Text>
+    : <Text size={FS.meta} c="dimmed">{children}</Text>
+}
+
 /** A write-only secret: empty keeps the configured one. */
-function SecretInput({ label, description, set, value, onChange, error, first }: {
+function SecretInput({ label, description, set, value, onChange, required, first }: {
   label: string
   description?: string
   set: boolean
   value?: string
   onChange: (v: string | undefined) => void
-  error?: string
+  /** Shows the required mark, as the fields beside it do. */
+  required?: boolean
   /** Marks the field "Set up" focuses. */
   first?: boolean
 }) {
   return (
     <PasswordInput size="xs" label={label} description={description} autoComplete="new-password"
-      error={error} {...(first ? { 'data-first-field': true } : {})}
+      withAsterisk={required} {...(first ? { 'data-first-field': true } : {})}
       placeholder={set ? 'Set. Type to replace it.' : 'Not set'}
       value={value ?? ''} onChange={(e) => onChange(e.currentTarget.value || undefined)} />
   )
