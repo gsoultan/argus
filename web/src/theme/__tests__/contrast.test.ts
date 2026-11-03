@@ -1,5 +1,7 @@
+/// <reference types="node" />
+// Reads the stylesheet from disk (vitest runs from web/): it does not process
+// CSS, so a ?raw import of it comes back empty.
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { cssVariablesResolver, theme } from '~/theme'
 
@@ -14,8 +16,6 @@ import { cssVariablesResolver, theme } from '~/theme'
  * per scheme, and this checks what they resolve to.
  */
 
-const css = readFileSync(join(__dirname, '../../app.tokens.css'), 'utf8')
-
 function surfaces(block: string) {
   const pick = (name: string) => {
     const m = block.match(new RegExp(`--color-${name}:\\s*(#[0-9a-f]{6})`, 'i'))
@@ -24,6 +24,8 @@ function surfaces(block: string) {
   }
   return { void: pick('void'), surface: pick('surface'), raised: pick('raised') }
 }
+
+const css = readFileSync(`${process.cwd()}/src/app.tokens.css`, 'utf8')
 
 const LIGHT = surfaces(css.slice(css.indexOf('@theme'), css.indexOf('}', css.indexOf('@theme'))))
 const darkStart = css.indexOf(":root[data-mantine-color-scheme='dark']")
@@ -63,8 +65,8 @@ const INKS = [
 ]
 
 describe.each([
-  ['light', vars.light, LIGHT],
-  ['dark', vars.dark, DARK],
+  ['light', vars.light as Record<string, string>, LIGHT],
+  ['dark', vars.dark as Record<string, string>, DARK],
 ] as const)('%s scheme', (_name, scheme, bgs) => {
   for (const ink of [...INKS, '--mantine-color-text']) {
     it(`${ink} is AA on the page, a card and an inset panel`, () => {
