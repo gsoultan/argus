@@ -1,4 +1,4 @@
-import { Box, Card, Center, Group, Loader, Skeleton, Stack, Table, Text, ThemeIcon } from '@mantine/core'
+import { Box, Card, Center, Flex, Group, Loader, Skeleton, Stack, Table, Text, ThemeIcon } from '@mantine/core'
 import { Link } from '@tanstack/react-router'
 import { IconChevronRight, type IconProps } from '@tabler/icons-react'
 import type { ComponentType, ReactNode } from 'react'
@@ -44,16 +44,29 @@ export function PageHeader({
   status,
   description,
   actions,
+  tabs,
 }: {
   crumbs?: Crumb[]
   title: string
   /** Rendered next to the title but outside the heading — a state badge, usually. */
   status?: ReactNode
-  description?: string
+  description?: ReactNode
   actions?: ReactNode
+  /**
+   * A tab row under the title, for a page split into views. On a phone the
+   * header then scrolls away with the page instead of staying put, because a
+   * title, two buttons and a tab row pinned to the top would leave less than
+   * half the screen for the tab itself.
+   */
+  tabs?: ReactNode
 }) {
   return (
-    <Box className="argus-pagehead" px={{ base: 'md', sm: 'xl' }} pt="xl" pb="xs">
+    <Box
+      className={tabs ? 'argus-pagehead argus-pagehead-tabs' : 'argus-pagehead'}
+      px={{ base: 'md', sm: 'xl' }}
+      pt={{ base: 'md', sm: 'xl' }}
+      pb={tabs ? 0 : 'xs'}
+    >
       {crumbs && crumbs.length > 0 && (
         <Group gap={SP.tight} mb={SP.snug} wrap="nowrap" aria-label="Breadcrumb">
           {crumbs.map((c, i) => (
@@ -81,26 +94,35 @@ export function PageHeader({
         </Group>
       )}
 
-      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
+      {/* Actions sit beside the title from a tablet up, and under it on a
+          phone, where a long hostname and two buttons on one line squeezed
+          the title into a column a few letters wide. */}
+      <Flex
+        justify="space-between"
+        align={{ base: 'stretch', sm: 'flex-start' }}
+        direction={{ base: 'column', sm: 'row' }}
+        gap={{ base: 'sm', sm: 'md' }}
+      >
         <Box style={{ minWidth: 0 }}>
           <Group gap="xs" wrap="nowrap">
-            <Text component="h1" fw={700} size={FS.title} lh={1.25} style={{ margin: 0, letterSpacing: '-0.01em' }}>
+            <Text component="h1" fw={700} size={FS.title} lh={1.25} style={{ margin: 0, letterSpacing: '-0.01em', overflowWrap: 'anywhere' }}>
               {title}
             </Text>
             {status}
           </Group>
           {description && (
-            <Text size="sm" c="dimmed" mt={SP.tight} maw={680} lh={1.5}>
+            <Text component="div" size="sm" c="dimmed" mt={SP.tight} maw={680} lh={1.5}>
               {description}
             </Text>
           )}
         </Box>
         {actions && (
-          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          <Group gap="xs" wrap="nowrap" className="argus-pagehead-actions" style={{ flexShrink: 0 }}>
             {actions}
           </Group>
         )}
-      </Group>
+      </Flex>
+      {tabs && <Box mt="md">{tabs}</Box>}
     </Box>
   )
 }

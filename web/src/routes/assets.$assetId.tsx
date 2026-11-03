@@ -1,33 +1,21 @@
 import { Suspense, lazy, useState } from 'react'
-import { Alert, Autocomplete, Badge, Box, Button, Card, Grid, Group, Modal, Select, Stack, Table, Text, Tooltip } from '@mantine/core'
+import { Badge, Box, Button, Card, Group, Tabs, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import {
-  IconAlertTriangle, IconHistory, IconPencil, IconPlugConnected, IconRouteOff,
-  IconServer2, IconTrash, IconUsers,
-} from '@tabler/icons-react'
-import { useDisclosure } from '@mantine/hooks'
-import { WhoCanConnect } from '~/components/WhoCanConnect'
-import { DatabasesOnServer } from '~/components/DatabasesOnServer'
-import { AgentUpdateCard } from '~/components/AgentUpdate'
-import { ApplicationsOnServer } from '~/components/ApplicationsOnServer'
+import { IconPencil, IconPlugConnected, IconServer2 } from '@tabler/icons-react'
 import { ReachBadge, reachOf } from '~/components/myservers'
-import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
+import { EmptyState, PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
-import { run } from '~/lib/notify'
-import {
-  ArtefactPending, Digest, Field, FidelityBadge,
-  HostKeyBadge, Mono, SessionDuration, SessionStateBadge, absTime, relTime, rowNav,
-} from '~/components/primitives'
-import { FS, SP } from '~/theme'
-import {
-  assetQuery, loginAccountsQuery, meQuery, policyQuery, sessionsQuery, useArchiveAsset, usePinHostKey,
-  useSetAssetDirectSsh, useSetAssetDirectSshAccount,
-} from '~/lib/queries'
-import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
-import type { Asset, DirectSsh, ServerLoginAccount, ServerLoginAccounts } from '~/types/domain'
+import { AccessTab } from '~/components/server/AccessTab'
+import { AppsTab } from '~/components/server/AppsTab'
+import { HostKeyChanged } from '~/components/server/hostKey'
+import { OverviewTab } from '~/components/server/OverviewTab'
+import { SessionsTab } from '~/components/server/SessionsTab'
+import { SettingsTab } from '~/components/server/SettingsTab'
+import { SERVER_TABS, SERVER_TAB_LABEL, parseServerTab, type ServerTab } from '~/components/server/tabs'
+import { assetQuery, meQuery, sessionsQuery } from '~/lib/queries'
 import { guard } from '~/lib/guard'
-import { isElevatedAccount } from '~/lib/roles'
+import { SP } from '~/theme'
 
 /** Opened only by an administrator, so their chunks are fetched only for one. */
 const AssetForm = lazy(() =>
@@ -36,18 +24,28 @@ const AssetForm = lazy(() =>
 
 export const Route = createFileRoute('/assets/$assetId')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
+  // The tab is in the address, so a link or a reload lands on the same view.
+  // Overview is the default and is never written out. An unknown tab is
+  // returned as undefined rather than left out: the root route passes the raw
+  // query through, so leaving it out would let ?tab=nonsense reach the page.
+  validateSearch: (s: Record<string, unknown>): { tab?: ServerTab } => ({ tab: parseServerTab(s.tab) }),
   component: AssetDetail,
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(assetQuery(params.assetId)),
 })
 
+/**
+ * One server, in five tabs: whether it is all right, who can reach it, who
+ * did, what runs on it, and the controls it needs rarely. It used to be every
+ * one of those at once, as nine cards in two columns.
+ */
 function AssetDetail() {
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: Route.fullPath })
   const { assetId } = Route.useParams()
+  const tab: ServerTab = parseServerTab(Route.useSearch().tab) ?? 'overview'
   const { data: asset } = useQuery(assetQuery(assetId))
   const { data: allSessions } = useQuery(sessionsQuery())
   const { data: me } = useQuery(meQuery())
-  const pin = usePinHostKey()
 
   const canEdit = me?.role === 'admin' || me?.role === 'owner'
   const [editing, setEditing] = useState(false)
@@ -69,20 +67,10 @@ function AssetDetail() {
     )
   }
 
-  const history = (allSessions ?? []).filter((s) => s.assetId === asset.id).slice(0, 12)
-
-  // Guarded. Pinning is the control an admin reaches for when they suspect
-  // interception, so a refusal that looked like success would be the worst
-  // possible moment to leave someone guessing.
-  const onPin = () =>
-    run(() => pin.mutateAsync(asset.id), {
-      failure: 'Host key not pinned',
-      success: [
-        'Host key pinned',
-        'Argus will now refuse any connection where the presented key differs.',
-      ],
-    })
-
+  const sessions = allSessions?.filter((s) => s.assetId === asset.id)
+  const setTab = (t: ServerTab) =>
+    void navigate({ search: t === 'overview' ? {} : { tab: t }, replace: true, resetScroll: false })
+  const needsAttention = asset.hostKeyState !== 'pinned'
 
   return (
     <Box>
@@ -93,12 +81,22 @@ function AssetDetail() {
         ]}
         title={asset.hostname}
         status={<ReachBadge reach={reachOf(asset)} />}
-        description={`${asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')} · ${asset.address}`}
+        description={
+          <Group gap={SP.snug} wrap="wrap">
+            <Text span size="sm" c="dimmed">
+              {asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')} · {asset.address}
+            </Text>
+            {asset.tags.map((t) => (
+              <Badge key={t} size="xs" variant="outline" color="slate">{t}</Badge>
+            ))}
+          </Group>
+        }
         actions={
-          <Group gap={SP.cozy}>
+          <>
             {canEdit && (
               <Button
                 variant="default"
+                size="sm"
                 leftSection={<IconPencil size={16} />}
                 onClick={() => setEditing(true)}
               >
@@ -106,7 +104,7 @@ function AssetDetail() {
               </Button>
             )}
             <ButtonLink
-              size="md"
+              size="sm"
               to="/connect"
               search={{ host: asset.hostname }}
               leftSection={<IconPlugConnected size={18} />}
@@ -114,209 +112,47 @@ function AssetDetail() {
             >
               Connect
             </ButtonLink>
-          </Group>
+          </>
+        }
+        tabs={
+          <Tabs value={tab} onChange={(v) => v && setTab(v as ServerTab)} keepMounted={false}>
+            <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
+              {SERVER_TABS.map((t) => (
+                <Tabs.Tab
+                  key={t}
+                  value={t}
+                  fz="sm"
+                  rightSection={
+                    t === 'sessions' && sessions && sessions.length > 0 ? (
+                      <Badge size="xs" variant="light" color="slate" circle={false}>{sessions.length}</Badge>
+                    ) : t === 'settings' && needsAttention ? (
+                      <Box
+                        component="span"
+                        aria-label="Needs attention"
+                        w={7}
+                        h={7}
+                        style={{ borderRadius: '50%', background: 'var(--mantine-color-amber-5)', display: 'inline-block' }}
+                      />
+                    ) : undefined
+                  }
+                >
+                  {SERVER_TAB_LABEL[t]}
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+          </Tabs>
         }
       />
 
       <PageBody>
-        {asset.hostKeyState === 'changed' && (
-          <Alert
-            color="rose"
-            icon={<IconAlertTriangle size={17} />}
-            title="Host key does not match the pin"
-          >
-            <Text size={FS.body} mb="sm" lh={1.5}>
-              Argus is refusing connections to this host. Either it was rebuilt or reprovisioned,
-              or something is intercepting the connection. Verify the new fingerprint out of band
-              — console access, your provisioning system, or a colleague physically at the host —
-              before re-pinning. Do not re-pin just to clear the alert.
-            </Text>
-            <Button size="compact-xs" color="rose" loading={pin.isPending} onClick={onPin}>
-              I verified out of band — re-pin
-            </Button>
-          </Alert>
+        <HostKeyChanged asset={asset} />
+        {tab === 'overview' && <OverviewTab asset={asset} sessions={sessions} onTab={setTab} />}
+        {tab === 'access' && <AccessTab asset={asset} canEdit={canEdit} />}
+        {tab === 'sessions' && <SessionsTab asset={asset} sessions={sessions} />}
+        {tab === 'apps' && <AppsTab asset={asset} canEdit={canEdit} />}
+        {tab === 'settings' && (
+          <SettingsTab asset={asset} canEdit={canEdit} onEdit={() => setEditing(true)} />
         )}
-
-        {asset.hostKeyState === 'unpinned' && (
-          <Alert
-            color="amber"
-            icon={<IconAlertTriangle size={17} />}
-            title="No host key pinned"
-          >
-            <Text size={FS.body} mb="sm" lh={1.5}>
-              Argus terminates SSH for this host, which means it is responsible for verifying the
-              target's identity. Until a key is pinned, nothing has been verified — the first
-              connection is trust-on-first-use.
-            </Text>
-            <Button size="compact-xs" color="amber" loading={pin.isPending} onClick={onPin}>
-              Pin currently presented key
-            </Button>
-          </Alert>
-        )}
-
-        <Grid gap="sm">
-          <Grid.Col span={{ base: 12, md: 5 }}>
-            <Stack gap="sm">
-              <SectionCard title="Who can connect" icon={IconUsers}>
-                <Stack gap="sm">
-                  <WhoCanConnect asset={asset} canEdit={canEdit} />
-                  <Field label="Login accounts on this server">
-                    <Group gap={SP.snug}>
-                      {asset.principals.length === 0 && (
-                        <Text size="xs" c="dimmed">
-                          None yet.{canEdit && ' Press Edit and add the account you log in with.'}
-                        </Text>
-                      )}
-                      {asset.principals.map((p) => (
-                        <Badge
-                          key={p}
-                          size="sm"
-                          color={isElevatedAccount(p) ? 'rose' : 'slate'}
-                          variant={isElevatedAccount(p) ? 'light' : 'outline'}
-                          tt="none"
-                          ff="monospace"
-                        >
-                          {p}
-                        </Badge>
-                      ))}
-                    </Group>
-                  </Field>
-                </Stack>
-              </SectionCard>
-
-              <DirectSshCard asset={asset} canEdit={canEdit} />
-
-              <DatabasesOnServer asset={asset} canEdit={canEdit} />
-
-              {me?.role !== 'operator' && <AgentUpdateCard asset={asset} canEdit={canEdit} />}
-
-              <SectionCard
-                title="Server details"
-                icon={IconServer2}
-                badge={
-                  <Badge size="xs" variant="light" color="slate" tt="capitalize">
-                    {asset.health}
-                  </Badge>
-                }
-              >
-                <Stack gap="sm">
-                  <Field label="Host key">
-                    <Group gap={SP.cozy}>
-                      <HostKeyBadge state={asset.hostKeyState} />
-                      {asset.hostKeyPinnedAt && (
-                        <Text size={FS.micro} c="dimmed">
-                          pinned {relTime(asset.hostKeyPinnedAt)}
-                        </Text>
-                      )}
-                    </Group>
-                  </Field>
-                  <Field label="Fingerprint">
-                    {asset.hostKeyFingerprint
-                      ? <Digest value={asset.hostKeyFingerprint} chars={40} />
-                      : <Text size="xs" c="amber.4">not pinned</Text>}
-                  </Field>
-                  <Field label="Last reachability check">
-                    <Text size="xs" c="dimmed">{relTime(asset.lastCheckedAt)}</Text>
-                  </Field>
-                  <Field label="Tags">
-                    <Group gap={SP.tight}>
-                      {asset.tags.map((t) => (
-                        <Badge key={t} size="xs" variant="outline" color="slate">{t}</Badge>
-                      ))}
-                    </Group>
-                  </Field>
-                </Stack>
-              </SectionCard>
-
-              {canEdit && <RemoveServer asset={asset} />}
-            </Stack>
-          </Grid.Col>
-
-          <Grid.Col span={{ base: 12, md: 7 }}>
-            <SectionCard
-              title="Recent sessions"
-              icon={IconHistory}
-              flush
-              badge={<Badge size="xs" variant="light" color="slate">{history.length}</Badge>}
-              // This card shows the latest twelve; the Sessions page has the
-              // rest, already narrowed to this server.
-              action={
-                <ButtonLink
-                  size="compact-xs"
-                  variant="subtle"
-                  to="/sessions"
-                  search={{ host: asset.hostname }}
-                >
-                  All sessions on this server
-                </ButtonLink>
-              }
-            >
-              <Table.ScrollContainer minWidth={640} type="native">
-                <Table>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>State</Table.Th>
-                      <Table.Th>User</Table.Th>
-                      <Table.Th>As</Table.Th>
-                      <Table.Th>Started</Table.Th>
-                      <Table.Th>Duration</Table.Th>
-                      <Table.Th>Recording</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {history.map((s) => (
-                      <Table.Tr
-                        key={s.id}
-                        {...rowNav(() =>
-                          navigate({ to: '/sessions/$sessionId', params: { sessionId: s.id } }),
-                        )}
-                      >
-                        <Table.Td>
-                          <SessionStateBadge
-                            state={s.state}
-                            silent={s.silent}
-                            lastReportedAt={s.lastReportedAt}
-                            endInferred={s.endInferred}
-                          />
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="xs">{s.userEmail.split('@')[0]}</Text>
-                        </Table.Td>
-                        <Table.Td><Mono c="azure.3">{s.principal}</Mono></Table.Td>
-                        <Table.Td>
-                          <Text size="xs" c="dimmed" title={absTime(s.startedAt)}>
-                            {relTime(s.startedAt)}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <SessionDuration session={s} />
-                        </Table.Td>
-                        <Table.Td>
-                          <Group gap={SP.snug} wrap="nowrap">
-                            <FidelityBadge fidelity={s.fidelity} />
-                            <ArtefactPending session={s} />
-                          </Group>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Table.ScrollContainer>
-              {history.length === 0 && (
-                <EmptyState
-                  compact
-                  icon={IconHistory}
-                  title="Nobody has connected to this host yet."
-                  description="Brokered sessions and anything the agent reports will appear here."
-                />
-              )}
-            </SectionCard>
-          </Grid.Col>
-
-          <Grid.Col span={12}>
-            <ApplicationsOnServer asset={asset} canEdit={canEdit} />
-          </Grid.Col>
-        </Grid>
       </PageBody>
 
       <Suspense fallback={null}>
@@ -325,304 +161,5 @@ function AssetDetail() {
         )}
       </Suspense>
     </Box>
-  )
-}
-
-const INHERIT = 'inherit'
-
-/**
- * Direct SSH logins on this server: its own choice, or the one in Settings,
- * and whether its agent has said it is applying it.
- */
-function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
-  const { data: policy } = useQuery(policyQuery())
-  const setMode = useSetAssetDirectSsh()
-  const own = asset.directSsh ?? null
-  const global = policy?.directSsh ?? null
-  const effective: DirectSsh | null = own ?? global
-  const applied = asset.agentDirectSsh ?? null
-
-  const choose = (v: string | null) => {
-    if (!v) return
-    const next = v === INHERIT ? null : (v as DirectSsh)
-    if (next === own) return
-    const nextEffective = next ?? global
-    const loosens = effective && nextEffective ? directSshLoosens(effective, nextEffective) : false
-    void run(
-      () => setMode.mutateAsync({ id: asset.id, mode: next }),
-      {
-        success: ['Direct SSH logins changed',
-          `${asset.hostname}: ${next ? directSshLabel(next) : `the setting in Settings (${global ? directSshLabel(global) : 'unknown'})`}. ` +
-          (loosens ? 'This lets more logins in, and is in the audit log as a loosening. ' : '') +
-          'The agent applies it at its next check-in, within a minute.'],
-        failure: 'Direct SSH logins not changed',
-      },
-    )
-  }
-
-  return (
-    <SectionCard
-      title="Logins that don't go through Argus"
-      icon={IconRouteOff}
-      description="Someone with a key or password can still reach the server with ssh, scp or sftp. Pick what happens then."
-    >
-      <Stack gap="sm">
-        <Select
-          label="When someone logs in directly"
-          size="xs"
-          allowDeselect={false}
-          disabled={!canEdit || setMode.isPending}
-          value={own ?? INHERIT}
-          onChange={choose}
-          data={[
-            { value: INHERIT, label: `Use Settings (${global ? directSshLabel(global) : '…'})` },
-            ...DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label })),
-          ]}
-          description={effective
-            ? DIRECT_SSH_CHOICES.find((c) => c.value === effective)?.description
-            : undefined}
-        />
-        <Text size={FS.meta} c="dimmed" lh={1.5}>
-          {applied === null
-            ? "This server's agent has not confirmed a setting. An agent older than this setting refuses direct logins under Refuse and Ask for approval, and accepts and records them under Allow; upgrade it to hold logins for approval."
-            : applied === effective
-              ? `This server's agent confirmed at its last check-in that it is applying ${directSshLabel(applied)}.`
-              : `This server's agent is still applying ${directSshLabel(applied)}; it picks up ${effective ? directSshLabel(effective) : 'the change'} at its next check-in.`}
-        </Text>
-        <AccountDirectSsh asset={asset} canEdit={canEdit} server={effective} />
-      </Stack>
-    </SectionCard>
-  )
-}
-
-/** Login account names as the control plane accepts them. */
-const ACCOUNT_NAME = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/
-
-const PASSWORD_LABEL: Record<ServerLoginAccount['password'], string> = {
-  set: 'Password',
-  none: 'Empty password',
-  locked: 'No password',
-  unknown: 'Password unknown',
-}
-
-/** What an account could sign in with, as badges. */
-function SignInBadges({ account, auth }: { account: ServerLoginAccount; auth: ServerLoginAccounts }) {
-  const password = account.password === 'set' || account.password === 'none' || account.password === 'unknown'
-  return (
-    <Group gap={SP.tight} wrap="wrap">
-      {password && (
-        <Tooltip label={auth.passwords ? 'sshd accepts passwords' : 'sshd does not accept passwords, so this password cannot be used over SSH'}>
-          <Badge size="xs" variant={auth.passwords ? 'light' : 'outline'} color={account.password === 'none' ? 'rose' : 'amber'}>
-            {PASSWORD_LABEL[account.password]}
-          </Badge>
-        </Tooltip>
-      )}
-      {account.keys > 0 && (
-        <Badge size="xs" variant={auth.keys ? 'light' : 'outline'} color="azure">
-          {account.keys} {account.keys === 1 ? 'key' : 'keys'}
-        </Badge>
-      )}
-      {!account.canLogin && <Badge size="xs" variant="outline" color="slate">Cannot log in</Badge>}
-    </Group>
-  )
-}
-
-/**
- * Every account that can log in to this server directly -- with a password,
- * a key, or both, as its agent last reported -- and what each one does with a
- * direct login: the server's setting, or its own. An account the server
- * names that the agent did not report is listed too.
- */
-function AccountDirectSsh({ asset, canEdit, server }: {
-  asset: Asset; canEdit: boolean; server: DirectSsh | null
-}) {
-  const setAccount = useSetAssetDirectSshAccount()
-  const { data: report } = useQuery(loginAccountsQuery(asset.id))
-  const [name, setName] = useState('')
-  const [mode, setMode] = useState<DirectSsh>('approve')
-  const own = asset.directSshAccounts ?? {}
-  const serverLabel = server ? directSshLabel(server) : 'the server\'s setting'
-  const trimmed = name.trim()
-  const nameError = trimmed && !ACCOUNT_NAME.test(trimmed)
-    ? 'Letters, digits, ".", "_" or "-", starting with a letter or "_"'
-    : null
-
-  const reported = new Map((report?.accounts ?? []).map((a) => [a.user, a]))
-  const rows = [
-    ...(report?.accounts ?? []).filter((a) => a.canLogin || a.user in own).map((a) => a.user),
-    ...Object.keys(own).filter((u) => !reported.has(u)).sort((a, b) => a.localeCompare(b)),
-  ]
-  const hidden = (report?.accounts ?? []).filter((a) => !a.canLogin && !(a.user in own)).length
-
-  const change = (account: string, next: DirectSsh | null) => {
-    const before = own[account] ?? server
-    const after = next ?? server
-    const loosens = before && after ? directSshLoosens(before, after) : false
-    return run(
-      () => setAccount.mutateAsync({ id: asset.id, account, mode: next }),
-      {
-        success: ['Direct SSH logins changed',
-          `${account} on ${asset.hostname}: ${next ? directSshLabel(next) : `the server's setting (${serverLabel})`}. ` +
-          (loosens ? 'This lets more logins in, and is in the audit log as a loosening. ' : '') +
-          'The agent applies it at its next check-in, within a minute.'],
-        failure: 'Direct SSH logins not changed',
-      },
-    )
-  }
-
-  const add = async () => {
-    if (!trimmed || nameError) return
-    if (await change(trimmed, mode)) setName('')
-  }
-
-  return (
-    <Stack gap={SP.cozy} mt={SP.cozy}>
-      <div>
-        <Text size="sm" fw={500}>Accounts that can log in</Text>
-        <Text size={FS.meta} c="dimmed" lh={1.5}>
-          {report?.reported
-            ? `Every account on this server with a password or a key sshd accepts, from its agent's last check-in${report.checkedAt ? ` (${relTime(report.checkedAt)})` : ''}. Each one uses ${serverLabel} unless you pick something else for it.`
-            : `This server's agent has not reported its accounts yet; an older agent does not. Accounts you name here still get their own setting, and every other account uses ${serverLabel}.`}
-        </Text>
-      </div>
-      {report?.reported && !report.exposeAuthInfo && (
-        <Alert color="amber" variant="light" p="xs" icon={<IconAlertTriangle size={16} />}>
-          <Text size={FS.meta} lh={1.5}>
-            This server&rsquo;s sshd does not say how each login signed in, so Argus records the
-            login but not whether it used a password or which key. Add <Mono>ExposeAuthInfo yes</Mono> to
-            /etc/ssh/sshd_config and reload sshd.
-          </Text>
-        </Alert>
-      )}
-      {rows.map((account) => {
-        const r = reported.get(account)
-        const m = own[account]
-        return (
-          <Group key={account} gap={SP.cozy} wrap="wrap" align="center">
-            <Stack gap={SP.hair} style={{ flex: '1 1 140px', minWidth: 0 }}>
-              <Box style={{ whiteSpace: 'nowrap' }}><Mono>{account}</Mono></Box>
-              {r && report
-                ? <SignInBadges account={r} auth={report} />
-                : report?.reported && <Text size={FS.micro} c="dimmed">Not on this server now</Text>}
-            </Stack>
-            <Select
-              size="xs"
-              aria-label={`Direct SSH logins as ${account}`}
-              allowDeselect={false}
-              disabled={!canEdit || setAccount.isPending}
-              value={m ?? INHERIT}
-              onChange={(v) => {
-                if (!v || v === (m ?? INHERIT)) return
-                void change(account, v === INHERIT ? null : (v as DirectSsh))
-              }}
-              data={[
-                { value: INHERIT, label: `Server's (${serverLabel})` },
-                ...DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label })),
-              ]}
-              style={{ flex: '1 1 170px' }}
-            />
-          </Group>
-        )
-      })}
-      {hidden > 0 && (
-        <Text size={FS.micro} c="dimmed">
-          {hidden} more {hidden === 1 ? 'account has' : 'accounts have'} a login shell but nothing sshd would accept.
-        </Text>
-      )}
-      {canEdit && (
-        <Group gap={SP.cozy} align="flex-start" wrap="wrap">
-          <Autocomplete
-            size="xs"
-            placeholder="Another account, e.g. sys-admin"
-            aria-label="Login account"
-            value={name}
-            onChange={setName}
-            data={asset.principals.filter((p) => !rows.includes(p))}
-            error={nameError}
-            style={{ flex: '1 1 160px' }}
-          />
-          <Select
-            size="xs"
-            aria-label="What happens when this account logs in directly"
-            allowDeselect={false}
-            value={mode}
-            onChange={(v) => v && setMode(v as DirectSsh)}
-            data={DIRECT_SSH_CHOICES.map((c) => ({ value: c.value, label: c.label }))}
-            style={{ flex: '0 1 180px' }}
-          />
-          <Button size="xs" variant="light" disabled={!trimmed || !!nameError} loading={setAccount.isPending} onClick={() => void add()}>
-            Add
-          </Button>
-        </Group>
-      )}
-    </Stack>
-  )
-}
-
-/**
- * Takes a server out of Argus. Its recordings and its activity stay; nobody
- * can connect to it from here any more, and its agent uninstalls itself so
- * plain SSH works again. Left running, the agent kept refusing direct logins
- * to a server the console could no longer open.
- */
-function RemoveServer({ asset }: { asset: Asset }) {
-  const navigate = useNavigate()
-  const archive = useArchiveAsset()
-  const [open, modal] = useDisclosure(false)
-  const connected = asset.tunnelConnected === true
-  return (
-    <Card>
-      <Group justify="space-between" wrap="nowrap" gap="md">
-        <Box>
-          <Text size="sm" fw={600}>Remove server</Text>
-          <Text size={FS.meta} c="dimmed">
-            Takes it out of Argus and uninstalls the agent from it. Its recordings and activity
-            are kept.
-          </Text>
-        </Box>
-        <Button variant="light" color="rose" leftSection={<IconTrash size={16} />} onClick={modal.open}>
-          Remove
-        </Button>
-      </Group>
-      <Modal opened={open} onClose={modal.close} title={`Remove ${asset.hostname} from Argus?`}>
-        <Stack gap="sm" mb="md">
-          <Text size="sm">
-            Everyone loses access to it from Argus, right away. Its recordings and activity are
-            kept.
-          </Text>
-          <Text size="sm">
-            {connected
-              ? 'The agent then uninstalls itself from the server: it takes itself out of SSH, so people can log in to the server directly again, and switches itself off.'
-              : 'The agent is not connected right now, so it uninstalls itself when it next connects. To do it now, run "sudo argus-agent uninstall" on the server.'}
-          </Text>
-          <Alert color="amber" icon={<IconAlertTriangle size={16} />} title="Adding it back means installing the agent again">
-            <Text size={FS.meta} lh={1.5}>
-              Once removed, this server cannot simply be switched back on. To add it to Argus
-              again, install and enroll the agent on it again from Servers, Add a server.
-            </Text>
-          </Alert>
-        </Stack>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={modal.close}>Keep it</Button>
-          <Button
-            color="rose"
-            loading={archive.isPending}
-            onClick={() =>
-              void run(() => archive.mutateAsync(asset.id), {
-                failure: 'Server not removed',
-                success: [
-                  'Server removed',
-                  connected
-                    ? `${asset.hostname} is out of Argus, and its agent is uninstalling itself.`
-                    : `${asset.hostname} is out of Argus. Its agent uninstalls itself when it next connects.`,
-                ],
-              }).then((ok) => { if (ok) void navigate({ to: '/assets' }) })
-            }
-          >
-            Remove and uninstall agent
-          </Button>
-        </Group>
-      </Modal>
-    </Card>
   )
 }
