@@ -1,5 +1,5 @@
-import { Badge, Box, Group, Stack, Text } from '@mantine/core'
-import { useMemo } from 'react'
+import { Anchor, Badge, Box, Group, Stack, Text } from '@mantine/core'
+import { useMemo, useState } from 'react'
 import { EmptyState } from '~/components/page'
 import { IconDatabaseOff } from '@tabler/icons-react'
 import { FS } from '~/theme'
@@ -102,7 +102,36 @@ export function parseRecording(text: string): { open?: Line; close?: Line; state
   return { open, close, statements }
 }
 
-export function PostgresReplay({ text, verified, error }: { text?: string; verified?: string; error?: string }) {
+/**
+ * How much of a statement is drawn before "Show all". The recording holds
+ * every statement whole (up to the 192 KB a statement may be); this is only
+ * how much a list item shows until someone asks for the rest, so a session
+ * with a few huge INSERTs stays readable.
+ */
+export const STATEMENT_PREVIEW_CHARS = 1500
+
+export function StatementText({ sql }: { sql: string }) {
+  const [all, setAll] = useState(false)
+  const long = sql.length > STATEMENT_PREVIEW_CHARS
+  return (
+    <>
+      <Text size={FS.meta} ff="monospace" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        {long && !all ? sql.slice(0, STATEMENT_PREVIEW_CHARS) + ' …' : sql}
+      </Text>
+      {long && (
+        <Anchor component="button" type="button" size="xs" onClick={() => setAll((v) => !v)}>
+          {all ? 'Show less' : `Show all ${sql.length.toLocaleString()} characters`}
+        </Anchor>
+      )}
+    </>
+  )
+}
+
+export function PostgresReplay({ text, verified, error, live }: {
+  text?: string; verified?: string; error?: string
+  /** A session being watched: the list is still growing. */
+  live?: boolean
+}) {
   const parsed = useMemo(() => (text ? parseRecording(text) : undefined), [text])
   if (!text) {
     return (
@@ -127,7 +156,7 @@ export function PostgresReplay({ text, verified, error }: { text?: string; verif
         )}
       </Group>
       {statements.length === 0 && (
-        <Text size={FS.meta} c="dimmed" p="md">No statements were run in this session.</Text>
+        <Text size={FS.meta} c="dimmed" p="md">{live ? 'No statements yet.' : 'No statements were run in this session.'}</Text>
       )}
       <Stack gap={0}>
         {statements.map((s) => {
@@ -140,9 +169,7 @@ export function PostgresReplay({ text, verified, error }: { text?: string; verif
                   +{fmtOffset(at)}
                 </Text>
                 <Box style={{ minWidth: 0, flex: 1 }}>
-                  <Text size={FS.meta} ff="monospace" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {s.sql.length > 4000 ? s.sql.slice(0, 4000) + ' …' : s.sql}
-                  </Text>
+                  <StatementText sql={s.sql} />
                   <Group gap={6} mt={4} wrap="wrap">
                     {s.admin && <Badge size="xs" variant="outline" color="amber">as the server’s postgres account</Badge>}
                     {s.error ? (
@@ -153,6 +180,8 @@ export function PostgresReplay({ text, verified, error }: { text?: string; verif
                       <Badge size="xs" variant="light" color="amber">cancelled</Badge>
                     ) : s.tag ? (
                       <Badge size="xs" variant="light" color="slate">{s.tag}</Badge>
+                    ) : live ? (
+                      <Badge size="xs" variant="light" color="amber">running</Badge>
                     ) : null}
                     {typeof s.rows === 'number' && s.tag?.startsWith('SELECT') && (
                       <Text size={FS.micro} c="dimmed">{s.rows.toLocaleString()} rows{s.truncated ? ' (cut at the limit)' : ''}</Text>

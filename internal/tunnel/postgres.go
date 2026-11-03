@@ -65,9 +65,37 @@ const (
 	MaxRowsCeiling = 100_000
 	// DefaultMaxRows is what a request that names no limit gets.
 	DefaultMaxRows = 1_000
-	// MaxSQL bounds the text of one statement.
-	MaxSQL = 1 << 20
+	// MaxSQL bounds the text of one statement. A statement is recorded in
+	// full or not run at all, and its recording line travels to the control
+	// plane as one frame, so the bound is set by MaxFrame rather than by
+	// what Postgres would take; RecordedTextFits is the exact check.
+	MaxSQL = 192 << 10
+	// MaxRecordLine is the longest recording line, without its newline: one
+	// frame. VerifyPGRecording reads lines up to this and a little more.
+	MaxRecordLine = MaxFrame
 )
+
+// recordLineOverhead is room for a recording line's fields other than its
+// text: sequence, time, request, the two hashes, an error message.
+const recordLineOverhead = 4 << 10
+
+// ErrRecordTooLong is a recording line that would not fit in one frame. The
+// line is not written, so the chain is unbroken and the statement it was
+// about does not run.
+var ErrRecordTooLong = errors.New("the statement is too long to be recorded in full, so it was not run; " +
+	"split it into smaller statements")
+
+// RecordedTextFits reports whether a statement or command's text fits in one
+// recording line once JSON-encoded, which can make it up to six times longer
+// (a quote is two bytes, a '<' six). Checked before anything runs, so a long
+// statement gets a refusal rather than a session that ends.
+func RecordedTextFits(text string) bool {
+	if len(text) > MaxSQL {
+		return false
+	}
+	b, err := json.Marshal(text)
+	return err == nil && len(b)+recordLineOverhead <= MaxRecordLine
+}
 
 // PGRequest is one thing the browser asks of a session.
 type PGRequest struct {
@@ -591,7 +619,10 @@ type PGVerification struct {
 // Memory is one line at a time, whatever the recording's size.
 func VerifyPGRecording(r io.Reader, expectedHead string) (PGVerification, error) {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 2*MaxCell+64*1024)
+	// Any line an agent can send fits. This was 2*MaxCell+64KB, below
+	// MaxFrame, so a long statement the agent recorded and sent whole
+	// failed verification here as "token too long".
+	sc.Buffer(make([]byte, 0, 64*1024), MaxRecordLine+64*1024)
 	var v PGVerification
 	prev := ""
 	for sc.Scan() {

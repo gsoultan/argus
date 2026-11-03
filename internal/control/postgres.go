@@ -186,7 +186,12 @@ func (a *API) handlePostgres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	conn.SetReadLimit(int64(max(tunnel.MaxSQL, tunnel.MaxCommand)) + 4096)
+	// The longest statement, as the browser's JSON can encode it: a newline
+	// or a quote is two bytes there, a control character six. A message past
+	// this ends the socket, and with it the session, so it is set by the
+	// worst case rather than the usual one; the length check that answers in
+	// words is the one below.
+	conn.SetReadLimit(int64(6*max(tunnel.MaxSQL, tunnel.MaxCommand)) + 4096)
 	a.relayPostgres(r.Context(), conn, t.Email, db, role, level, a.clientAddr(r))
 }
 
@@ -394,8 +399,8 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 				if json.Unmarshal(m.Req, &req) != nil {
 					continue
 				}
-				if len(req.SQL) > tunnel.MaxSQL {
-					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "the statement is too long"})
+				if !tunnel.RecordedTextFits(req.SQL) {
+					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: tunnel.ErrRecordTooLong.Error()})
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
@@ -414,12 +419,20 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 				if json.Unmarshal(m.Req, &req) != nil {
 					continue
 				}
-				if len(req.Command) > tunnel.MaxCommand || len(req.Payload) > tunnel.MaxCommand {
-					ans, _ := json.Marshal(tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: "the command is too long"})
+				if !tunnel.RecordedTextFits(req.Command) || !tunnel.RecordedTextFits(req.Payload) {
+					ans, _ := json.Marshal(tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: tunnel.ErrRecordTooLong.Error()})
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
 				b, _ = json.Marshal(req)
+			}
+			if len(b) > tunnel.MaxFrame {
+				// Cannot happen once the text fits a recording line, which
+				// carries more than the request does. Were it to, writing it
+				// would fail and leave the session deaf to the browser.
+				ans, _ := json.Marshal(tunnel.PGAnswer{ID: reqID(m.Req), Type: "error", Error: tunnel.ErrRecordTooLong.Error()})
+				_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+				continue
 			}
 			if writeStream(tunnel.FramePGRequest, b) != nil {
 				return
@@ -439,7 +452,9 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		}
 		switch typ {
 		case tunnel.FramePGRows:
-			ls.hub.Broadcast(append([]byte{hubOutput}, p...))
+			// Not to watchers. Results are never recorded -- customer data
+			// stays out of recordings -- and a viewer sees what the
+			// recording holds, no more.
 			if send(websocket.MessageBinary, p) != nil {
 				return
 			}
@@ -471,6 +486,9 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 			if r.Kind == "stmt" || r.Kind == "admin" {
 				stmts++
 			}
+			// Watchers see every line as it is stored, in the order it was
+			// stored, which is what holding recMu across both guarantees.
+			ls.hub.Broadcast(append([]byte{hubRecord}, line[:len(line)-1]...))
 			recMu.Unlock()
 			if werr != nil {
 				a.log.Error("writing a database recording failed", "session", sessionID, "error", werr)
@@ -483,16 +501,22 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					"In database session "+sessionID+" on "+db.Name+", ran through the server's postgres account: "+
 						r.SQL)
 			}
-			// Watchers see each statement as it is sent.
-			if r.Kind == "stmt" || r.Kind == "admin" || r.Kind == "done" || r.Kind == "error" {
-				ls.hub.Broadcast(append([]byte{hubRecord}, p...))
-			}
 		}
 	}
 }
 
 // hubRecord marks a recording line on a live session's hub.
 const hubRecord = 'l'
+
+// reqID is the id of a browser request that could not be decoded further,
+// so its refusal can still be matched to it.
+func reqID(raw json.RawMessage) uint32 {
+	var v struct {
+		ID uint32 `json:"id"`
+	}
+	_ = json.Unmarshal(raw, &v)
+	return v.ID
+}
 
 func (a *API) auditDB(ctx context.Context, action, severity, email, host, detail string) {
 	if _, err := a.store.AppendAudit(ctx, AuditEvent{

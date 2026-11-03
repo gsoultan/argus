@@ -39,7 +39,7 @@ type liveSession struct {
 	// tenant is the organization the session is in; see liveRegistry.
 	tenant   string
 	id       string
-	protocol string // "ssh" or "rdp"
+	protocol string // "ssh", "rdp", or a database engine: see statements
 	hub      *live.Hub
 
 	mu sync.Mutex
@@ -54,6 +54,13 @@ type liveSession struct {
 	// term is set on a browser terminal, which its owner can come back to
 	// after their connection drops; see termSession.
 	term *termSession
+}
+
+// statements reports whether this is a database session, whose viewers are
+// sent its recording lines -- statements and what they answered -- rather
+// than terminal output.
+func (s *liveSession) statements() bool {
+	return s.protocol != "ssh" && s.protocol != "rdp"
 }
 
 func (s *liveSession) size() (int, int) {
@@ -208,8 +215,10 @@ func (a *API) runWatch(ctx context.Context, conn *websocket.Conn, sess *liveSess
 		return
 	}
 
-	if writeJSON(terminalMessage{Type: "ready", Session: sess.id}) != nil ||
-		writeJSON(terminalMessage{Type: "resize", Data: sizeString(width, height)}) != nil {
+	if writeJSON(terminalMessage{Type: "ready", Session: sess.id}) != nil {
+		return
+	}
+	if !sess.statements() && writeJSON(terminalMessage{Type: "resize", Data: sizeString(width, height)}) != nil {
 		return
 	}
 	send := func(f []byte) error {
@@ -219,6 +228,9 @@ func (a *API) runWatch(ctx context.Context, conn *websocket.Conn, sess *liveSess
 		switch f[0] {
 		case hubOutput:
 			return write(websocket.MessageBinary, f[1:])
+		case hubRecord:
+			// One line of a database session's recording, as stored.
+			return writeJSON(terminalMessage{Type: "record", Data: string(f[1:])})
 		case hubResize:
 			if len(f) == 5 {
 				return writeJSON(terminalMessage{Type: "resize", Data: sizeString(
@@ -228,7 +240,7 @@ func (a *API) runWatch(ctx context.Context, conn *websocket.Conn, sess *liveSess
 		return nil
 	}
 	// A screenful or two of what came before, so an idle shell does not look
-	// like a broken view.
+	// like a broken view. For a database session, its recent statements.
 	for _, f := range backlog {
 		if send(f) != nil {
 			return

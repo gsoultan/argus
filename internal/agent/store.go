@@ -208,6 +208,14 @@ func (s *storeSession) serve(ctx context.Context, st tunnel.Stream) {
 			s.cancel, s.curID = nil, 0
 			s.cmu.Unlock()
 			cancel()
+			if errors.Is(err, tunnel.ErrRecordTooLong) {
+				// Refused before anything was sent to the server: the
+				// command could not be recorded whole. The session goes on.
+				if s.rec.send(tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: err.Error()}) != nil {
+					return
+				}
+				continue
+			}
 			if err != nil {
 				reason = err.Error()
 				_ = s.rec.send(tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: err.Error()})
@@ -308,6 +316,11 @@ func (r *stmtRecorder) write(rec tunnel.PGRecord) error {
 	sum := sha256.Sum256(body)
 	rec.Hash = hex.EncodeToString(sum[:])
 	line, _ := json.Marshal(rec)
+	if len(line) > tunnel.MaxRecordLine {
+		// Not written; see pgSession.record.
+		r.seq--
+		return tunnel.ErrRecordTooLong
+	}
 	line = append(line, '\n')
 	if _, err := r.f.Write(line); err != nil {
 		return err
