@@ -201,6 +201,9 @@ type Asset struct {
 	// DirectSshAccounts is this server's direct SSH setting for named login
 	// accounts, account to mode; an account not named follows DirectSsh.
 	DirectSshAccounts storm.JSON
+	// DesktopMode is how a Windows server's desktop opens: rdp through its
+	// own Remote Desktop, screen by sharing the console without it.
+	DesktopMode string
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -229,6 +232,9 @@ func (m *Asset) Schema(t *storm.Table) {
 		"direct_ssh IS NULL OR direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
 	t.Col(&m.DirectSshAccounts).Default("'{}'::jsonb")
 	t.CheckNamed("assets_direct_ssh_accounts_check", "jsonb_typeof(direct_ssh_accounts) = 'object'::text")
+	t.Col(&m.DesktopMode).Default("'rdp'::text")
+	t.CheckNamed("assets_desktop_mode_check",
+		"desktop_mode = ANY (ARRAY['rdp'::text, 'screen'::text])")
 }
 
 // AssetAssignment is table asset_assignments: who may reach which host, as whom.

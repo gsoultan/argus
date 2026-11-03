@@ -604,7 +604,10 @@ type Asset struct {
 	CredentialRef string `json:"credentialRef"`
 	// Domain is the Windows domain for an RDP asset. Empty means the account is
 	// local to the host.
-	Domain               string     `json:"domain"`
+	Domain string `json:"domain"`
+	// DesktopMode is how the console opens a Windows server's desktop: "rdp"
+	// through its own Remote Desktop, "screen" by sharing the console.
+	DesktopMode          string     `json:"desktopMode"`
 	CredentialMode       string     `json:"credentialMode"`
 	CredentialRotatedAt  *time.Time `json:"credentialRotatedAt"`
 	RotationIntervalDays *int       `json:"rotationIntervalDays"`

@@ -52,6 +52,9 @@ type DesktopConfig struct {
 	// Connect opens the desktop. Nil dials Address; tests replace it.
 	Connect func(cfg DesktopConfig, principal string, open tunnel.DesktopOpen,
 		log *slog.Logger) (DesktopClient, DesktopInfo, error)
+	// ScreenHost is the console, for screen sharing. Nil is this platform's;
+	// tests replace it.
+	ScreenHost screenHost
 }
 
 // DesktopClient is an open desktop. *rdp.Client is one.
@@ -77,6 +80,8 @@ type DesktopInfo struct {
 	// GraphicsChannel is the channel the pipeline rides on, which the
 	// recording's header keeps so replay can find it.
 	GraphicsChannel uint16
+	// Screen is a shared console rather than a Remote Desktop connection.
+	Screen bool
 }
 
 // GraphicsSink holds graphics commands read but not yet sent, as display
@@ -115,14 +120,28 @@ func (g *GraphicsSink) take(limit int) []byte {
 // several frames rather than one that stalls everything behind it.
 const desktopBatch = 192 << 10
 
-// Desktop returns the desktop service.
+// Desktop returns the desktop service: Remote Desktop, to this host's own
+// listener.
 func Desktop(cfg DesktopConfig) TunnelService {
+	if cfg.Connect == nil {
+		cfg.Connect = connectDesktop
+	}
+	return desktopService(cfg, DesktopService)
+}
+
+// Screen returns the screen sharing service: the console itself, without
+// Remote Desktop. See screen.go.
+func Screen(cfg DesktopConfig) TunnelService {
+	if cfg.Connect == nil {
+		cfg.Connect = connectScreen
+	}
+	return desktopService(cfg, ScreenService)
+}
+
+func desktopService(cfg DesktopConfig, service string) TunnelService {
 	log := cfg.Log
 	if log == nil {
 		log = slog.Default()
-	}
-	if cfg.Connect == nil {
-		cfg.Connect = connectDesktop
 	}
 	return func(ctx context.Context, call *Call) {
 		if call.GrantKeyErr != nil {
@@ -135,10 +154,10 @@ func Desktop(cfg DesktopConfig) TunnelService {
 			call.Refuse(err.Error())
 			return
 		}
-		if !g.ForService(DesktopService) {
+		if !g.ForService(service) {
 			log.Warn("tunnel: refused a desktop on a grant for another service",
-				"service", g.Service, "for", g.Email)
-			call.Refuse(tunnel.ErrGrant{Reason: "it is not for a desktop"}.Error())
+				"service", g.Service, "want", service, "for", g.Email)
+			call.Refuse(tunnel.ErrGrant{Reason: "it is not for " + service}.Error())
 			return
 		}
 		// The same limit as a terminal on Windows: nothing tests a domain
@@ -167,20 +186,38 @@ func Desktop(cfg DesktopConfig) TunnelService {
 		width, height := client.Size()
 		var d *DesktopRecording
 		hangup := func() { _ = client.Close() }
+		reason := "opened through the Argus tunnel on a session grant signed by " +
+			"the control plane"
+		protocol, title := rdp.ProtocolName(info.Protocol), g.Principal+"@"+cfg.Hostname
+		principal := g.Principal
+		var console string
+		if info.Screen {
+			protocol = screenProtocol
+			// The session acts as whoever is at the console, which is
+			// what the recording says it was.
+			if sc, ok := client.(interface{ Account() string }); ok {
+				console = sc.Account()
+			}
+			reason = "the console's screen, shared through the Argus tunnel on a session " +
+				"grant signed by the control plane; " + consoleDescription(console)
+			title = "console@" + cfg.Hostname
+			if console != "" {
+				principal = console
+			}
+		}
 		d, err = cfg.Collector.StartDesktopRecording(SessionStart{
-			Type:       "start",
-			Principal:  g.Principal,
-			ClientAddr: g.ClientAddr,
-			Origin:     Brokered,
-			OriginReason: "opened through the Argus tunnel on a session grant signed by " +
-				"the control plane",
-			Hostname:  cfg.Hostname,
-			StartedAt: time.Now().UTC(),
-			Actor:     g.Email,
+			Type:         "start",
+			Principal:    principal,
+			ClientAddr:   g.ClientAddr,
+			Origin:       Brokered,
+			OriginReason: reason,
+			Hostname:     cfg.Hostname,
+			StartedAt:    time.Now().UTC(),
+			Actor:        g.Email,
 		}, rdp.Header{
 			Width: width, Height: height,
-			Title:    g.Principal + "@" + cfg.Hostname,
-			Protocol: rdp.ProtocolName(info.Protocol),
+			Title:    title,
+			Protocol: protocol,
 			Graphics: info.GraphicsChannel,
 		}, desktopFlags(info), hangup)
 		if err != nil {
@@ -188,6 +225,10 @@ func Desktop(cfg DesktopConfig) TunnelService {
 			_ = client.Close()
 			call.Refuse(fmt.Sprintf("the session could not be recorded, so it was not opened: %v", err))
 			return
+		}
+		if sc, ok := client.(*screenClient); ok {
+			sc.note = d.Note
+			sc.record(map[string]any{"type": "console-account", "account": console})
 		}
 		// Recorded as it is read, before it is decoded or sent anywhere.
 		client.SetTap(func(pdu []byte) {
@@ -198,7 +239,7 @@ func Desktop(cfg DesktopConfig) TunnelService {
 			}
 		})
 		dlog.Info("tunnel: desktop opened", "session", d.ID(), "client", g.ClientAddr,
-			"protocol", rdp.ProtocolName(info.Protocol), "size", [2]int{width, height})
+			"protocol", protocol, "console", console, "size", [2]int{width, height})
 		if err := call.Accept(d.ID()); err != nil {
 			_ = client.Close()
 		}
@@ -208,6 +249,11 @@ func Desktop(cfg DesktopConfig) TunnelService {
 
 // desktopFlags are what the console highlights about how a desktop opened.
 func desktopFlags(info DesktopInfo) []string {
+	if info.Screen {
+		// Whoever is signed in at the console is who the session acts as,
+		// and anyone in front of the screen sees it.
+		return []string{"console-takeover"}
+	}
 	// The password the person typed is one they hold for this host: a
 	// standing credential, which is what injection exists to remove.
 	flags := []string{"no-credential-injection"}
@@ -390,6 +436,12 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 	for err == nil {
 		var bitmaps []rdp.Bitmap
 		bitmaps, err = client.NextBitmaps()
+		// A shared console changes size when the display does; a Remote
+		// Desktop connection keeps the size it was opened at.
+		if w, h := client.Size(); err == nil && (w != width || h != height) {
+			width, height = w, h
+			err = write(tunnel.FrameResize, tunnel.ResizePayload(width, height))
+		}
 		if gfx != nil {
 			// Graphics commands go as they were read, in order, in batches
 			// the size bitmaps go in.
@@ -423,4 +475,12 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 	// that is still there.
 	_ = st.Close()
 	<-inputDone
+}
+
+// consoleDescription says who was at the console, for the session's record.
+func consoleDescription(account string) string {
+	if account == "" {
+		return "nobody was signed in at the console when it opened"
+	}
+	return account + " was signed in at the console when it opened"
 }

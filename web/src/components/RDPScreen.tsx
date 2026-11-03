@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Badge, Box, Group, Loader, Stack, Text } from '@mantine/core'
+import { Badge, Box, Button, Group, Loader, Stack, Text } from '@mantine/core'
 import { canDecodeH264 } from '~/lib/gfx'
 import type { RDPWorkerResponse } from '~/workers/rdp.worker'
 
@@ -305,6 +305,21 @@ export function RDPScreen({
     }
   }, [readOnly])
 
+  /**
+   * Ctrl+Alt+Del, which no browser lets a page capture from the keyboard.
+   * The sign-in screen of a Windows server asks for it; Remote Desktop
+   * passes the keys on as the secure attention sequence, and a shared
+   * console's agent sends that sequence itself.
+   */
+  const sendCtrlAltDel = () => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    const codes = ['ControlLeft', 'AltLeft', 'Delete']
+    for (const code of codes) ws.send(JSON.stringify({ type: 'key', code, down: true }))
+    for (const code of [...codes].reverse()) ws.send(JSON.stringify({ type: 'key', code, down: false }))
+    canvasRef.current?.focus()
+  }
+
   return (
     <Stack gap="xs">
       <Group justify="space-between">
@@ -320,11 +335,18 @@ export function RDPScreen({
             {size.width}×{size.height}
           </Text>
         </Group>
-        {detail && (
-          <Text size="xs" c="dimmed">
-            {detail}
-          </Text>
-        )}
+        <Group gap="xs">
+          {detail && (
+            <Text size="xs" c="dimmed">
+              {detail}
+            </Text>
+          )}
+          {!readOnly && state === 'live' && (
+            <Button size="compact-xs" variant="default" onClick={sendCtrlAltDel}>
+              Ctrl+Alt+Del
+            </Button>
+          )}
+        </Group>
       </Group>
       <Box
         style={{

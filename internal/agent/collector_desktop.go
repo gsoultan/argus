@@ -98,6 +98,18 @@ func (d *DesktopRecording) Screen(pdu []byte) error {
 	return nil
 }
 
+// Note records an observation in the recording's chain, such as who is
+// signed in at a shared console. An error ends the session, as Screen's does.
+func (d *DesktopRecording) Note(v any) error {
+	if err := d.rec.Event(v); err != nil {
+		d.mu.Lock()
+		d.broken = true
+		d.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 // Terminate records that by ended the session from the console, for reason.
 func (d *DesktopRecording) Terminate(by, reason string) {
 	d.mu.Lock()

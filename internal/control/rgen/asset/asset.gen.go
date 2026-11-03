@@ -54,6 +54,7 @@ type Row struct {
 	AgentDirectSsh        runtime.Null[string]
 	AgentPersonalAccounts runtime.Null[runtime.JSON]
 	DirectSshAccounts     runtime.JSON
+	DesktopMode           string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -92,7 +93,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 34
+const nCols = 35
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -418,6 +419,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.AgentDirectSsh.V
 		q.ns++
+	case 34:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.DesktopMode
+		q.ns++
 	}
 }
 
@@ -621,6 +629,7 @@ var (
 	AgentDirectSsh        = NullTextCol{31}
 	AgentPersonalAccounts = NullJSONCol{32}
 	DirectSshAccounts     = JSONCol{33}
+	DesktopMode           = TextCol{34}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1203,6 +1212,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 34:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1436,6 +1452,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.jsns[q.njs] = p.jsn
 		q.njs++
+	case 34:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1783,8 +1806,19 @@ func (q Query) DirectSshAccountsHasAnyKey(v ...string) Query {
 func (q Query) DirectSshAccountsHasAllKeys(v ...string) Query {
 	return q.Where(DirectSshAccounts.HasAllKeys(v...))
 }
+func (q Query) DesktopModeEq(v string) Query       { return q.Where(DesktopMode.Eq(v)) }
+func (q Query) DesktopModeNotEq(v string) Query    { return q.Where(DesktopMode.NotEq(v)) }
+func (q Query) DesktopModeGt(v string) Query       { return q.Where(DesktopMode.Gt(v)) }
+func (q Query) DesktopModeGte(v string) Query      { return q.Where(DesktopMode.Gte(v)) }
+func (q Query) DesktopModeLt(v string) Query       { return q.Where(DesktopMode.Lt(v)) }
+func (q Query) DesktopModeLte(v string) Query      { return q.Where(DesktopMode.Lte(v)) }
+func (q Query) DesktopModeEqLower(v string) Query  { return q.Where(DesktopMode.EqLower(v)) }
+func (q Query) DesktopModeLike(v string) Query     { return q.Where(DesktopMode.Like(v)) }
+func (q Query) DesktopModeILike(v string) Query    { return q.Where(DesktopMode.ILike(v)) }
+func (q Query) DesktopModeIn(v ...string) Query    { return q.Where(DesktopMode.In(v...)) }
+func (q Query) DesktopModeNotIn(v ...string) Query { return q.Where(DesktopMode.NotIn(v...)) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts" FROM "assets"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode" FROM "assets"`
 const countPrefix = `SELECT count(*) FROM "assets"`
 const existsPrefix = `SELECT 1 FROM "assets"`
 const existsSuffix = ` LIMIT 1`
@@ -2025,6 +2059,12 @@ var orderTable = [nCols][4]string{
 		"\"direct_ssh_accounts\" ASC NULLS FIRST",
 		"\"direct_ssh_accounts\" DESC NULLS LAST",
 	},
+	{ // desktop_mode
+		"\"desktop_mode\"",
+		"\"desktop_mode\" DESC",
+		"\"desktop_mode\" ASC NULLS FIRST",
+		"\"desktop_mode\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -2064,6 +2104,7 @@ var identTable = [nCols]string{
 	"\"agent_direct_ssh\"",
 	"\"agent_personal_accounts\"",
 	"\"direct_ssh_accounts\"",
+	"\"desktop_mode\"",
 }
 
 var lowering = runtime.Lowering{
@@ -2096,7 +2137,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [34][28]runtime.Frag{
+var fragTable = [35][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -3117,6 +3158,36 @@ var fragTable = [34][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // desktop_mode
+		{}, // opNone
+		{A: "\"desktop_mode\" = $", B: ""},
+		{A: "\"desktop_mode\" <> $", B: ""},
+		{A: "\"desktop_mode\" > $", B: ""},
+		{A: "\"desktop_mode\" >= $", B: ""},
+		{A: "\"desktop_mode\" < $", B: ""},
+		{A: "\"desktop_mode\" <= $", B: ""},
+		{A: "lower(\"desktop_mode\") = lower($", B: ")"},
+		{A: "\"desktop_mode\" LIKE $", B: ""},
+		{A: "\"desktop_mode\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"desktop_mode\" = ANY($", B: ")"},
+		{A: "\"desktop_mode\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3314,6 +3385,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.AgentDirectSsh = runtime.NullText(rv[31], sl)
 	r.AgentPersonalAccounts = runtime.NullJSON(rv[32], sl)
 	r.DirectSshAccounts = runtime.JSON(runtime.JSONB(rv[33], sl))
+	r.DesktopMode = sl.Str(rv[34])
 	return decErr
 }
 
@@ -3489,6 +3561,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 34:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3621,6 +3697,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.jsns[njs] = q.jsns[njs]
 			v = append(v, &b.jsns[njs])
 			njs++
+		case 34:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -3758,7 +3838,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts"`
+const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode"`
 
 const updatePrefix = `UPDATE "assets" SET `
 const deletePrefix = `DELETE FROM "assets"`
@@ -3798,9 +3878,10 @@ const (
 	dAgentDirectSsh        uint64 = 1 << 29
 	dAgentPersonalAccounts uint64 = 1 << 30
 	dDirectSshAccounts     uint64 = 1 << 31
+	dDesktopMode           uint64 = 1 << 32
 )
 
-const nUpdatable = 32
+const nUpdatable = 33
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3836,6 +3917,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"agent_direct_ssh\" = $", B: ""},        // agent_direct_ssh
 	{A: "\"agent_personal_accounts\" = $", B: ""}, // agent_personal_accounts
 	{A: "\"direct_ssh_accounts\" = $", B: ""},     // direct_ssh_accounts
+	{A: "\"desktop_mode\" = $", B: ""},            // desktop_mode
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3874,6 +3956,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                    // agent_direct_ssh has no server-side form
 	{},                                    // agent_personal_accounts has no server-side form
 	{},                                    // direct_ssh_accounts has no server-side form
+	{},                                    // desktop_mode has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3919,9 +4002,10 @@ const (
 	iAgentDirectSsh        uint64 = 1 << 31
 	iAgentPersonalAccounts uint64 = 1 << 32
 	iDirectSshAccounts     uint64 = 1 << 33
+	iDesktopMode           uint64 = 1 << 34
 )
 
-const nInsertable = 34
+const nInsertable = 35
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3959,6 +4043,7 @@ var insCols = [nInsertable]string{
 	"\"agent_direct_ssh\"",
 	"\"agent_personal_accounts\"",
 	"\"direct_ssh_accounts\"",
+	"\"desktop_mode\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3967,7 +4052,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"assets\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3986,7 +4071,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -4418,6 +4503,12 @@ func (m *Mut) SetDirectSshAccounts(v runtime.JSON) {
 	m.expr &^= dDirectSshAccounts
 }
 
+func (m *Mut) SetDesktopMode(v string) {
+	m.row.DesktopMode = v
+	m.dirty |= dDesktopMode
+	m.expr &^= dDesktopMode
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -4733,6 +4824,11 @@ func (n *Ins) SetDirectSshAccounts(v runtime.JSON) {
 	n.set |= iDirectSshAccounts
 }
 
+func (n *Ins) SetDesktopMode(v string) {
+	n.row.DesktopMode = v
+	n.set |= iDesktopMode
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4784,7 +4880,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 32)
+	set := make([]string, 0, 33)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -4883,6 +4979,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<33) != 0 {
 			set = append(set, "direct_ssh_accounts")
 		}
+		if mask&(1<<34) != 0 {
+			set = append(set, "desktop_mode")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -4977,6 +5076,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<33) != 0 {
 			set = append(set, "direct_ssh_accounts")
 		}
+		if mask&(1<<34) != 0 {
+			set = append(set, "desktop_mode")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -5070,6 +5172,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<33) != 0 {
 			set = append(set, "direct_ssh_accounts")
+		}
+		if mask&(1<<34) != 0 {
+			set = append(set, "desktop_mode")
 		}
 	}
 	return set
@@ -5189,6 +5294,7 @@ var assignFor = map[string]string{
 	"agent_direct_ssh":        "\"agent_direct_ssh\" = EXCLUDED.\"agent_direct_ssh\"",
 	"agent_personal_accounts": "\"agent_personal_accounts\" = EXCLUDED.\"agent_personal_accounts\"",
 	"direct_ssh_accounts":     "\"direct_ssh_accounts\" = EXCLUDED.\"direct_ssh_accounts\"",
+	"desktop_mode":            "\"desktop_mode\" = EXCLUDED.\"desktop_mode\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -5307,6 +5413,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.AgentPersonalAccounts.Arg())
 		case 33:
 			args = append(args, n.row.DirectSshAccounts)
+		case 34:
+			args = append(args, n.row.DesktopMode)
 		}
 	}
 	var out Row
@@ -5344,7 +5452,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 34)
+	args := make([]any, 0, 35)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -5379,6 +5487,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.AgentDirectSsh.Arg())
 	args = append(args, r.AgentPersonalAccounts.Arg())
 	args = append(args, r.DirectSshAccounts)
+	args = append(args, r.DesktopMode)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -5439,13 +5548,14 @@ var copyCols = []string{
 	"agent_direct_ssh",
 	"agent_personal_accounts",
 	"direct_ssh_accounts",
+	"desktop_mode",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [34]any
+	buf  [35]any
 }
 
 func (s *rowSource) Next() bool {
@@ -5497,6 +5607,7 @@ func (s *rowSource) Values() []any {
 	s.buf[31] = r.AgentDirectSsh.Ptr()
 	s.buf[32] = r.AgentPersonalAccounts.Ptr()
 	s.buf[33] = &r.DirectSshAccounts
+	s.buf[34] = &r.DesktopMode
 	return s.buf[:]
 }
 
@@ -5561,8 +5672,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 31
 	mask |= 1 << 32
 	mask |= 1 << 33
+	mask |= 1 << 34
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 34)
+	args := make([]any, 0, 35)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -5597,6 +5709,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.AgentDirectSsh.Arg())
 	args = append(args, r.AgentPersonalAccounts.Arg())
 	args = append(args, r.DirectSshAccounts)
+	args = append(args, r.DesktopMode)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -5698,6 +5811,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.AgentPersonalAccounts.Arg())
 		case 33:
 			args = append(args, n.row.DirectSshAccounts)
+		case 34:
+			args = append(args, n.row.DesktopMode)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -5817,6 +5932,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.AgentPersonalAccounts.Arg())
 		case 31:
 			args = append(args, m.row.DirectSshAccounts)
+		case 32:
+			args = append(args, m.row.DesktopMode)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5963,6 +6080,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.AgentPersonalAccounts.Arg())
 		case 31:
 			args = append(args, m.row.DirectSshAccounts)
+		case 32:
+			args = append(args, m.row.DesktopMode)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6175,6 +6294,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.AgentPersonalAccounts.Arg())
 		case 31:
 			args = append(args, m.row.DirectSshAccounts)
+		case 32:
+			args = append(args, m.row.DesktopMode)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

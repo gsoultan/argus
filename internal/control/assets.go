@@ -36,6 +36,7 @@ const assetSelect = `
 	       a.agent_state, a.agent_last_seen_at, a.bypass_posture,
 	       a.unmanaged_key_count, a.agent_console_only,
 	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts, a.direct_ssh_accounts,
+	       a.desktop_mode,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
@@ -50,7 +51,7 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.Health, &a.LastCheckedAt, &a.Principals,
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
 		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts, &a.DirectSSHAccounts,
-		&a.TunnelConnected)
+		&a.DesktopMode, &a.TunnelConnected)
 	return a, err
 }
 
@@ -85,6 +86,9 @@ type AssetInput struct {
 	// gateway's vault. A name, never a path: see validate below for why.
 	CredentialRef string `json:"credentialRef"`
 	Domain        string `json:"domain"`
+	// DesktopMode is how a Windows server's desktop opens: "rdp" through its
+	// own Remote Desktop, or "screen", sharing the console without it.
+	DesktopMode string `json:"desktopMode"`
 
 	RotationIntervalDays *int `json:"rotationIntervalDays"`
 }
@@ -125,6 +129,7 @@ func (in AssetInput) normalise() (AssetInput, error) {
 	in.CredentialMode = strings.TrimSpace(in.CredentialMode)
 	in.CredentialRef = strings.TrimSpace(in.CredentialRef)
 	in.Domain = strings.TrimSpace(in.Domain)
+	in.DesktopMode = strings.ToLower(strings.TrimSpace(in.DesktopMode))
 	in.OS = strings.TrimSpace(in.OS)
 	in.GroupName = strings.TrimSpace(in.GroupName)
 
@@ -202,6 +207,17 @@ func (in AssetInput) normalise() (AssetInput, error) {
 		}
 	}
 
+	switch in.DesktopMode {
+	case "", "rdp":
+		in.DesktopMode = "rdp"
+	case "screen":
+		if in.Protocol != "rdp" {
+			return bad("screen sharing applies to a Windows server; this one is reached over SSH")
+		}
+	default:
+		return bad("desktop mode must be rdp (Remote Desktop) or screen (screen sharing)")
+	}
+
 	if in.Domain != "" {
 		if in.Protocol != "rdp" {
 			return bad("a Windows domain only applies to a Remote Desktop asset")
@@ -276,12 +292,12 @@ func (s *Store) CreateAsset(ctx context.Context, in AssetInput) (Asset, error) {
 	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO assets (hostname, address, port, protocol, os, tags, group_name,
 			principals, credential_mode, credential_ref, domain,
-			rotation_interval_days, source, health, host_key_state)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'console','reachable','unpinned')
+			rotation_interval_days, desktop_mode, source, health, host_key_state)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'console','reachable','unpinned')
 		RETURNING id::text`,
 		v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays).Scan(&id)
+		v.RotationIntervalDays, v.DesktopMode).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrInvalidAsset{
@@ -308,11 +324,11 @@ func (s *Store) UpdateAsset(ctx context.Context, id string, in AssetInput) (Asse
 			hostname = $2, address = $3, port = $4, protocol = $5, os = $6,
 			tags = $7, group_name = $8, principals = $9, credential_mode = $10,
 			credential_ref = $11, domain = $12, rotation_interval_days = $13,
-			source = 'console', updated_at = now()
+			desktop_mode = $14, source = 'console', updated_at = now()
 		WHERE id = $1::uuid AND archived_at IS NULL`,
 		id, v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays)
+		v.RotationIntervalDays, v.DesktopMode)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrInvalidAsset{
@@ -647,4 +663,21 @@ func (s *Store) AssetIsManaged(ctx context.Context, target string) (bool, error)
 			  AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
 		)`, target).Scan(&ok)
 	return ok, err
+}
+
+// AssetDesktopMode is how a target's desktop opens: "rdp" or "screen". A
+// target with no live asset is "rdp", which is how a desktop opened before
+// the setting existed.
+func (s *Store) AssetDesktopMode(ctx context.Context, target string) (string, error) {
+	var mode string
+	err := s.db(ctx).QueryRow(ctx, `
+		SELECT a.desktop_mode FROM assets a
+		WHERE a.archived_at IS NULL
+		  AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
+		ORDER BY (a.hostname = lower($1)) DESC
+		LIMIT 1`, target).Scan(&mode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "rdp", nil
+	}
+	return mode, err
 }

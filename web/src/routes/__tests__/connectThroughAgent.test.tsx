@@ -62,6 +62,15 @@ describe('opening a desktop', () => {
     expect(screen.queryByRole('button', { name: /files only/i })).not.toBeInTheDocument()
   }, 15_000)
 
+  it('shares the screen without asking for a password when the server is set to', async () => {
+    withHost(true, { ...rdp, desktopMode: 'screen' })
+    await renderRoute(`/connect?host=${encodeURIComponent(rdp.hostname)}`)
+    expect(await screen.findByText(/screen sharing, not remote desktop/i)).toBeInTheDocument()
+    expect(screen.getByText(/anyone in front of the server sees what you do/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/windows password for/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled()
+  }, 15_000)
+
   it('does not open when the agent is not connected', async () => {
     withHost(false, rdp)
     await renderRoute(`/connect?host=${encodeURIComponent(rdp.hostname)}`)
