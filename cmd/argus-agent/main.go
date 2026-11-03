@@ -264,6 +264,13 @@ func runDaemon(args []string) int {
 			Hostname:  hostname,
 			Log:       log,
 		})
+		// A read-only view of any session being recorded here, for the
+		// console's Watch live.
+		services[agent.WatchService] = agent.Watch(agent.WatchConfig{
+			Collector: col,
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			Log:       log,
+		})
 		// File transfer, as the account, on a grant of its own.
 		services[agent.FilesService] = agent.Files(agent.FilesConfig{
 			Verifier: &tunnel.GrantVerifier{Host: hostname},

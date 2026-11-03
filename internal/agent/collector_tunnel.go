@@ -139,3 +139,36 @@ func (r *TunnelRecording) Seal(exitCode int) string {
 	r.c.seal(r.sess, exitCode, nil)
 	return r.sess.rec.Head()
 }
+
+// directRecording is a login through sshd, as the console should see it
+// while it runs.
+type directRecording struct {
+	c    *Collector
+	sess *activeSession
+}
+
+func (d *directRecording) activeRecord() SessionRecord {
+	s := d.sess
+	_, bytes, _ := s.rec.Stats()
+	s.mu.Lock()
+	approval, loginID := s.directApproval, s.directLoginID
+	s.mu.Unlock()
+	return SessionRecord{
+		ID:             s.id,
+		Principal:      s.start.Principal,
+		ClientAddr:     s.start.ClientAddr,
+		Origin:         s.start.Origin,
+		Command:        s.start.Command,
+		Hostname:       s.start.Hostname,
+		StartedAt:      s.start.StartedAt,
+		Bytes:          bytes,
+		Fidelity:       s.fidelity(d.c.Exec),
+		Commands:       s.commandCount(),
+		Actor:          s.start.Actor,
+		Protocol:       "ssh",
+		State:          "active",
+		DirectApproval: approval,
+		DirectLoginID:  loginID,
+		Auth:           s.start.Auth,
+	}
+}

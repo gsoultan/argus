@@ -330,3 +330,50 @@ func TestDirectSSHPolicyChangeIsALoosening(t *testing.T) {
 		t.Errorf("an unknown mode was saved: %d", w.Code)
 	}
 }
+
+// A direct login is reported while it runs, every minute, and once more
+// when it ends. Its alarm is raised once, on the report that first shows it.
+func TestARunningDirectLoginIsAuditedOnce(t *testing.T) {
+	s, h, _ := reportAPI(t)
+	asset, cred := enrolledAsset(t, s, h)
+	id := newUUID(t)
+	start := time.Now().UTC()
+	report := func(state string) {
+		t.Helper()
+		end := ""
+		if state != "active" {
+			end = `,"endedAt":"` + start.Add(time.Minute).Format(time.RFC3339Nano) + `","exitCode":0`
+		}
+		body := `{"id":"` + id + `","userEmail":"ops@` + asset.Hostname + `","assetHostname":"` +
+			asset.Hostname + `","principal":"ops","protocol":"ssh","origin":"direct","state":"` +
+			state + `","startedAt":"` + start.Format(time.RFC3339Nano) + `"` + end + `}`
+		if w := do(t, h, http.MethodPost, "/api/v1/report/session", cred, body); w.Code != http.StatusOK {
+			t.Fatalf("report session: %d %s", w.Code, w.Body)
+		}
+	}
+	count := func() int {
+		t.Helper()
+		var n int
+		if err := s.pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM audit_events
+			 WHERE target = $1 AND action IN ('session.direct_detected', 'session.direct_recorded')`,
+			asset.Hostname).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	report("active")
+	if n := count(); n != 1 {
+		t.Fatalf("a running direct login raised %d alarms, want 1", n)
+	}
+	report("active")
+	report("closed")
+	if n := count(); n != 1 {
+		t.Errorf("repeats and the end raised %d alarms in all, want 1", n)
+	}
+	got, err := s.Session(context.Background(), id)
+	if err != nil || got == nil || got.State != "closed" {
+		t.Errorf("session = %+v, %v", got, err)
+	}
+}

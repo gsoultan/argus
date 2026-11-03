@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent/execlog"
+	"github.com/gsoultan/argus/internal/live"
 	"github.com/gsoultan/argus/internal/recorder"
 )
 
@@ -48,20 +49,20 @@ type Collector struct {
 	// hangups ends each session the agent opened itself through the tunnel,
 	// for the same reason: those have no shim connection to close.
 	hangups map[string]func()
-	// tunnels is every session through the tunnel still open, terminal or
-	// desktop, for the reports that say they are running.
+	// tunnels is every session still open that is reported as running:
+	// through the tunnel, terminal or desktop, and direct logins.
 	tunnels map[string]liveRecording
 
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
 	OnSession func(SessionRecord)
 
-	// OnActive is called when a session through the tunnel starts, so the
-	// console can show it running -- and watch or end it -- rather than
-	// learning of it only once it is over. The daemon also repeats it for
-	// every such session still open, see ActiveTunnelRecords. Not called for
-	// logins through sshd: a direct login's report is an alarm, and one per
-	// minute would be noise.
+	// OnActive is called when a session starts, through the tunnel or a
+	// login through sshd, so the console can show it running -- and watch
+	// it -- rather than learning of it only once it is over. The daemon also
+	// repeats it for every such session still open, see ActiveTunnelRecords.
+	// The control plane raises a direct login's alarm once, on the report
+	// that first shows it, not on every repeat.
 	OnActive func(SessionRecord)
 
 	// OnRefused is called for a direct login turned away because the
@@ -177,6 +178,11 @@ type activeSession struct {
 	terminatedBy, terminationReason string
 	// directApproval and directLoginID say how a direct login was let in.
 	directApproval, directLoginID string
+
+	// hub carries what the recording commits to anyone watching it live,
+	// and cols and rows are the terminal's size now; see watch.go.
+	hub        *live.Hub
+	cols, rows int
 }
 
 // Direct SSH modes, as the control plane names them.
@@ -566,6 +572,16 @@ func (c *Collector) handle(conn net.Conn) {
 			_ = json.NewEncoder(conn).Encode(Decision{
 				Type: "decision", Record: true, SessionID: sess.id,
 			})
+			// Reported as running, and again every minute with the tunnel's
+			// sessions, so the console shows it while it runs -- and it can
+			// be watched -- rather than only once it is over.
+			d := &directRecording{c: c, sess: sess}
+			c.mu.Lock()
+			c.trackTunnel(sess.id, d)
+			c.mu.Unlock()
+			if c.OnActive != nil {
+				c.OnActive(d.activeRecord())
+			}
 			// A bypass is the event the agent exists to catch. Log it loudly at
 			// the moment it happens, not only when the session ends — a long
 			// session should not delay the alarm.
@@ -636,7 +652,9 @@ func (c *Collector) open(m SessionStart) (*activeSession, error) {
 		return nil, err
 	}
 
-	sess := &activeSession{id: id, start: m, rec: rec, file: f, path: path}
+	sess := &activeSession{id: id, start: m, rec: rec, file: f, path: path,
+		hub: live.NewHub(), cols: cols, rows: rows}
+	rec.SetTap(sess.watchTap)
 
 	// The shim's PID is the session leader; everything the user runs descends
 	// from it. Attached before the shell is exec'd, so the first command is
@@ -681,6 +699,8 @@ func (c *Collector) writeFrame(sess *activeSession, f Frame) error {
 func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 	c.mu.Lock()
 	delete(c.active, sess.id)
+	// A direct login's entry; a tunnel session's was taken by its Seal.
+	delete(c.tunnels, sess.id)
 	c.mu.Unlock()
 
 	c.Exec.Detach(sess.id, sess.start.PID)
@@ -690,6 +710,8 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 		c.log.Error("sealing recording failed", "session", sess.id, "error", err)
 	}
 	_ = sess.file.Close()
+	// After the last line: a viewer sees the whole session, then its end.
+	sess.hub.Close()
 
 	// After the close, before the claim. An execution that arrives between
 	// Detach and here finds no sink, and counting it anywhere the fidelity
