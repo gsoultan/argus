@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -127,10 +128,14 @@ func runInstallScript(t *testing.T, body, machine, sshdConfig string) (log, conf
 // script's failure returned rather than failing the test.
 func execInstallScript(t *testing.T, body, machine, sshdConfig, curl string) (log, conf, out string, err error) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the script is for Linux; its stubs are POSIX sh")
+	}
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh to run the script with")
 	}
-	if _, err := exec.LookPath("sha256sum"); err != nil {
+	sha, err := exec.LookPath("sha256sum")
+	if err != nil {
 		t.Skip("no sha256sum to make the stub release's checksums with")
 	}
 	dir := t.TempDir()
@@ -167,7 +172,8 @@ func execInstallScript(t *testing.T, body, machine, sshdConfig, curl string) (lo
 	// Only the stubs and what sh itself needs (grep, sed, sort, cp, mktemp,
 	// rm, printf, sha256sum).
 	cmd := exec.Command("sh", script)
-	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
+	// sha256sum is in /sbin on macOS.
+	cmd.Env = []string{"PATH=" + bin + ":" + filepath.Dir(sha) + ":/usr/bin:/bin"}
 	o, err := cmd.CombinedOutput()
 	l, _ := os.ReadFile(logFile)
 	c, _ := os.ReadFile(confPath)
