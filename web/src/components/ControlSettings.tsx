@@ -614,7 +614,7 @@ function SignInAlerts({ s, edit, onSetUp }: CardProps & { onSetUp: (channel: str
               description="At most one alert per person every 10 minutes." />
           </Stack>
         </Radio.Group>
-        <Select size="xs" label="Where they signed in from" allowDeselect={false}
+        <Select size="xs" label="Sign-in location" allowDeselect={false}
           description={LOCATION_HELP[p.location ?? 'proxy']}
           data={[
             { value: 'proxy', label: 'From the proxy in front (Cloudflare), sends nothing anywhere' },
