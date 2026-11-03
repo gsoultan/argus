@@ -774,7 +774,11 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	// A bypass is the event the whole agent exists to catch, so it goes into
 	// the audit chain rather than only the session table — the audit log is
 	// what an auditor reads, and it is the tamper-evident one.
-	if in.Origin == "direct" {
+	//
+	// Once, on the report that first shows the session: an agent reports a
+	// direct login while it runs, every minute, and then once more when it
+	// ends. An agent that reports only the end creates the row with that.
+	if in.Origin == "direct" && created {
 		e := AuditEvent{
 			Action:     "session.direct_detected",
 			Severity:   "critical",

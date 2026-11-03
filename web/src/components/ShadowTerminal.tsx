@@ -149,7 +149,12 @@ export function ShadowTerminal({
         }
       }
 
-      ws.onerror = () => setStatus('error', 'connection failed')
+      // The control plane answers a refusal on the socket, in words, so an
+      // error here is the network or a proxy in the way. Never over a reason
+      // already shown.
+      ws.onerror = () => {
+        if (stateRef.current !== 'error') setStatus('error', 'connection failed')
+      }
       ws.onclose = () => {
         if (stateRef.current === 'watching' || stateRef.current === 'connecting') {
           setStatus('ended', 'disconnected')

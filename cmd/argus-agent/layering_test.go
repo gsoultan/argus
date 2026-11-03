@@ -37,6 +37,9 @@ const module = "github.com/gsoultan/argus/"
 // verifies -- not when it is merely convenient to put it in one place.
 var shared = []string{
 	module + "internal/hashchain",
+	// The fan-out to live viewers: the control plane's for the sessions it
+	// relays, the agent's for every session it records.
+	module + "internal/live",
 	module + "internal/logquiet",
 	module + "internal/rdp",
 	module + "internal/rdp/pixels",

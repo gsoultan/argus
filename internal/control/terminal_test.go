@@ -72,6 +72,9 @@ func (e *tunnelEnv) runTerminalAgent(t *testing.T, cred, host, dir string) *term
 		Collector: col, Verifier: &tunnel.GrantVerifier{Host: host}, Hostname: host, Log: log,
 		Spawn: agent.SpawnDirect,
 	})
+	services[agent.WatchService] = agent.Watch(agent.WatchConfig{
+		Collector: col, Verifier: &tunnel.GrantVerifier{Host: host}, Log: log,
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go agent.RunTunnel(ctx, agent.TunnelConfig{Dial: e.dial(cred, host), Services: services, Log: log})
