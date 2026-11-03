@@ -60,6 +60,13 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 		return
 	}
 	if sess.RecordingKey == nil || *sess.RecordingKey == "" {
+		if sess.State == "active" {
+			// Not missing: still being written. Saying it exists only on the
+			// host would send someone looking for a fault that is not there.
+			writeErr(w, http.StatusConflict,
+				"the session is still running; its recording can be replayed once it ends")
+			return
+		}
 		writeErr(w, http.StatusNotFound,
 			"recording is not in object storage; it exists only on the host that produced it")
 		return

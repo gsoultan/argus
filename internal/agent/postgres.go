@@ -443,6 +443,12 @@ func (s *pgSession) record(r tunnel.PGRecord) error {
 	sum := sha256.Sum256(body)
 	r.Hash = hex.EncodeToString(sum[:])
 	line, _ := json.Marshal(r)
+	if len(line) > tunnel.MaxRecordLine {
+		// Not written: the line could not reach the control plane whole, and
+		// a chain with a link only one side holds is a broken chain.
+		s.seq--
+		return tunnel.ErrRecordTooLong
+	}
 	line = append(line, '\n')
 	if _, err := s.rec.Write(line); err != nil {
 		return err
@@ -622,8 +628,8 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	switch {
 	case sql == "":
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "there is no statement to run"})
-	case len(sql) > tunnel.MaxSQL:
-		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "the statement is too long"})
+	case !tunnel.RecordedTextFits(sql):
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: tunnel.ErrRecordTooLong.Error()})
 	case !utf8.ValidString(sql) || strings.IndexByte(sql, 0) >= 0:
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "the statement is not valid text"})
 	}
@@ -638,6 +644,9 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 
 	// Recorded and sent before Postgres sees it. No record, no statement.
 	if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql}); err != nil {
+		if errors.Is(err, tunnel.ErrRecordTooLong) {
+			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
+		}
 		return fmt.Errorf("the recording failed: %w", err)
 	}
 

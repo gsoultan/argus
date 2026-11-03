@@ -39,6 +39,9 @@ const PostgresReplay = lazy(() =>
 const ShadowTerminal = lazy(() =>
   import('~/components/ShadowTerminal').then((m) => ({ default: m.ShadowTerminal })),
 )
+const StatementWatch = lazy(() =>
+  import('~/components/StatementWatch').then((m) => ({ default: m.StatementWatch })),
+)
 import {
   ArtefactPending, Digest, Field, FidelityBadge, Mono, RiskFlags, SessionDuration,
   SessionStateBadge, absTime, bytes, relTime,
@@ -61,7 +64,13 @@ export const Route = createFileRoute('/sessions/$sessionId')({
 
 function SessionDetail() {
   const { sessionId } = Route.useParams()
-  const { data: session } = useQuery(sessionQuery(sessionId))
+  // Polled while the session runs, so the page notices it end: a database
+  // session's recording is stored at that moment, and a page opened while it
+  // ran otherwise kept saying there was nothing to replay until reloaded.
+  const { data: session } = useQuery({
+    ...sessionQuery(sessionId),
+    refetchInterval: (q) => (q.state.data?.state === 'active' ? 5_000 : false),
+  })
   const terminate = useTerminateSession()
   const [confirmOpen, confirm] = useDisclosure(false)
   const [shadowOpen, shadow] = useDisclosure(false)
@@ -146,7 +155,7 @@ function SessionDetail() {
       .recording(session.id)
       .then((r) => {
         if (cancelled) return
-        if (r?.kind === 'ok') { setRealCast(r.cast); setVerified(r.verified) }
+        if (r?.kind === 'ok') { setRealCast(r.cast); setVerified(r.verified); setCastError(undefined) }
         // `null` means no control plane is configured; anything else means one
         // answered and could not give us the artefact.
         if (r?.kind === 'unavailable') setCastError(r.reason)
@@ -154,7 +163,11 @@ function SessionDetail() {
       })
       .catch(() => { if (!cancelled) setFetched(true) })
     return () => { cancelled = true }
-  }, [castUrl, session])
+    // The session's state and key, not the object: polling an active session
+    // hands back a new object every few seconds, and each one refetched the
+    // recording.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [castUrl, session?.id, session?.state, session?.recordingKey])
 
   // A database session's recording is statements, not a cast; the terminal
   // decoder never sees it.
@@ -636,9 +649,10 @@ function SessionDetail() {
       >
         <Alert color="amber" icon={<IconEye size={16} />} mb="md">
           <Text size={FS.body} lh={1.5}>
-            Read-only. Keystrokes are not shown — the host echoes what the user types, so the
-            output below already contains it. Your attaching to this session has been written to
-            the audit log against your account.
+            {isPG
+              ? 'Read-only. Each statement appears as it is recorded, before it runs, with what the database answered. Query results are not shown: they are never recorded. '
+              : 'Read-only. Keystrokes are not shown — the host echoes what the user types, so the output below already contains it. '}
+            Your attaching to this session has been written to the audit log against your account.
           </Text>
         </Alert>
         {shadowError && (
@@ -669,7 +683,24 @@ function SessionDetail() {
           />
           </Suspense>
         )}
-        {shadowOpen && !isRDP && (
+        {shadowOpen && isPG && (
+          <Suspense fallback={<PlayerFallback label="Loading statements…" />}>
+          <StatementWatch
+            endpoint={watchEndpoint(session.id)}
+            sessionId={session.id}
+            getTicket={async () => {
+              const res = await shadowTicket(session.id)
+              if ('error' in res) {
+                setShadowError(res.error)
+                return null
+              }
+              setShadowError(undefined)
+              return res.ticket
+            }}
+          />
+          </Suspense>
+        )}
+        {shadowOpen && !isRDP && !isPG && (
           <Suspense fallback={<PlayerFallback label="Loading terminal…" />}>
           <ShadowTerminal
             endpoint={watchEndpoint(session.id)}

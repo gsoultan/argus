@@ -93,6 +93,27 @@ the first broken line. The session row is `kind = 'database'`,
 `protocol = 'postgres'`, `fidelity = 'statement'`, and the console replays it
 as a statement list (`PostgresReplay`).
 
+- **A statement is recorded whole or not run (2026-11).** A recording line
+  crosses to the control plane as one frame (`tunnel.MaxFrame`, 256 KB), and
+  JSON can make text up to six times longer (`<` is `\u003c`). So the bound
+  is `tunnel.RecordedTextFits` on the encoded text, checked by the control
+  plane and the agent before anything runs; both recorders also refuse a
+  line past `MaxRecordLine` without writing it (`ErrRecordTooLong`), and the
+  session goes on. `MaxSQL` and `MaxCommand` are 192 KB. Before this, a
+  statement over ~190 KB failed verification (`VerifyPGRecording`'s scanner
+  was capped under a frame), and one past a frame left the session deaf.
+  The replay shows the first 1,500 characters with "Show all"; the file
+  always holds the whole statement.
+- **Watch live** on a database session sends the viewer recording lines
+  (`{"type":"record","data":<line>}`) from the session's hub, broadcast under
+  `recMu` so the order is the stored order; `StatementWatch` renders them
+  with `PostgresReplay`. Result rows never go to the hub: they are not
+  recorded, and a viewer sees what the recording holds. A late viewer gets
+  the hub's 256 KB backlog of recent lines.
+- The recording route answers 409 "still running" for an active session
+  with no key yet, and the session page polls an active session so the
+  replay appears when it ends instead of after a reload.
+
 ## Testing
 
 - `internal/agent` Postgres tests need `ARGUS_TEST_PG_SUPER_DSN` (a superuser

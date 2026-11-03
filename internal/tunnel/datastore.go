@@ -63,7 +63,9 @@ func IsStoreUser(name string) bool { return strings.HasPrefix(name, StoreUserPre
 // Limits on one request.
 const (
 	// MaxCommand bounds the text of one Redis command or RabbitMQ payload.
-	MaxCommand = 1 << 20
+	// Each is recorded in full before it is sent, so it has the bound a SQL
+	// statement has; see MaxSQL and RecordedTextFits.
+	MaxCommand = MaxSQL
 	// MaxStoreItems bounds the items one answer carries: keys from a scan,
 	// elements of a value, messages peeked.
 	MaxStoreItems = 10_000

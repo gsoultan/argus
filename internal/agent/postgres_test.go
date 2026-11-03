@@ -522,3 +522,57 @@ func TestPGMajor(t *testing.T) {
 		}
 	}
 }
+
+// A long statement is recorded whole, and one too long to record whole is
+// refused in words before it runs, with the session going on. Before, a
+// statement whose recording line passed MaxFrame was written to the file,
+// then failed to reach the control plane, and the session ended with the two
+// copies of the recording disagreeing.
+func TestPostgresLongStatementIsRecordedWhole(t *testing.T) {
+	dsn, _, _, _ := pgTest(t)
+	superExec(t, dsn, "DROP ROLE IF EXISTS ana_sari")
+	h := openPG(t, tunnel.LevelRead, nil)
+
+	// Quotes and newlines encode as two bytes each: 100 KB of statement is a
+	// line well past what the verifier used to read.
+	var b strings.Builder
+	b.WriteString("SELECT length($$")
+	for b.Len() < 100<<10 {
+		b.WriteString("say \"hi\"\n")
+	}
+	b.WriteString("$$) AS n")
+	long := b.String()
+	if _, _, final := h.run(1, long, 0); final.Type != "done" {
+		t.Fatalf("a long statement: %+v", final)
+	}
+
+	// Under MaxSQL in bytes, and a request that fits a frame, but a
+	// recording line that would not once its fields are added.
+	tooLong := "SELECT length($$" + strings.Repeat(`"`, (tunnel.MaxFrame-2<<10)/2) + "$$)"
+	_, _, final := h.run(2, tooLong, 0)
+	if final.Type != "error" || !strings.Contains(final.Error, "too long to be recorded") {
+		t.Fatalf("a statement too long to record: %+v", final)
+	}
+	if _, _, final := h.run(3, "SELECT 1", 0); final.Type != "done" {
+		t.Fatalf("the session did not go on: %+v", final)
+	}
+	h.close()
+
+	var stmts []string
+	for _, r := range h.rec {
+		if r.Kind == "stmt" {
+			stmts = append(stmts, r.SQL)
+		}
+	}
+	if len(stmts) != 2 || stmts[0] != long || stmts[1] != "SELECT 1" {
+		t.Fatalf("recorded statements: %d, first whole: %v", len(stmts), len(stmts) > 0 && stmts[0] == long)
+	}
+	f, err := os.Open(filepath.Join(h.dir, h.ready.Session+".argussql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if v, err := tunnel.VerifyPGRecording(f, ""); err != nil || !v.OK || v.Lines < len(h.rec) {
+		t.Fatalf("the server's copy: %+v %v", v, err)
+	}
+}

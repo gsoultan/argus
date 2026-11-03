@@ -173,3 +173,42 @@ func TestVerifyPGRecording(t *testing.T) {
 		t.Fatal("an empty recording is not intact")
 	}
 }
+
+// A line as long as an agent can send verifies. The scanner's buffer was
+// 2*MaxCell+64KB, under MaxFrame, so a statement the agent recorded and sent
+// whole read here as "token too long" and the replay was marked an error.
+func TestVerifyPGRecordingTakesTheLongestLine(t *testing.T) {
+	// A quote is two bytes once encoded: 120 KB of statement, 240 KB of line.
+	sql := "SELECT '" + strings.Repeat(`"`, 120<<10) + "'"
+	if !RecordedTextFits(sql) {
+		t.Fatalf("a %d-byte statement should fit a line", len(sql))
+	}
+	r := PGRecord{Seq: 1, Time: "2026-01-01T00:00:00Z", Kind: "stmt", SQL: sql}
+	body, _ := json.Marshal(r)
+	sum := sha256.Sum256(body)
+	r.Hash = hex.EncodeToString(sum[:])
+	line, _ := json.Marshal(r)
+	if len(line) <= 2*MaxCell+64<<10 || len(line) > MaxRecordLine {
+		t.Fatalf("line of %d bytes does not exercise the old limit", len(line))
+	}
+	v, err := VerifyPGRecording(strings.NewReader(string(line)+"\n"), r.Hash)
+	if err != nil || !v.OK {
+		t.Fatalf("a long line: %+v %v", v, err)
+	}
+}
+
+// What fits is decided on the encoded text, which can be six times longer
+// than the statement: a statement short enough in bytes can still be too
+// long to record.
+func TestRecordedTextFits(t *testing.T) {
+	if !RecordedTextFits("SELECT 1") {
+		t.Fatal("a short statement must fit")
+	}
+	if RecordedTextFits(strings.Repeat("x", MaxSQL+1)) {
+		t.Fatal("past MaxSQL must not fit")
+	}
+	escaped := strings.Repeat("<", MaxSQL/4) // <: six bytes each
+	if len(escaped) > MaxSQL || RecordedTextFits(escaped) {
+		t.Fatal("a statement that encodes past a frame must not fit")
+	}
+}
