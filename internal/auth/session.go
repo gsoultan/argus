@@ -58,6 +58,12 @@ type Session struct {
 	Subject   string    `json:"sub"`
 	IssuedAt  time.Time `json:"iat"`
 	ExpiresAt time.Time `json:"exp"`
+	// Browser is the browser and operating system that signed in (a
+	// family, without the version: "Firefox on macOS"). A cookie presented
+	// by a different one was copied out of the browser it was issued to,
+	// and the gate refuses it. Empty on a cookie issued before this existed,
+	// which is not checked.
+	Browser string `json:"br,omitempty"`
 	// Purpose is never set on a session. Read so that a token of another kind
 	// that happens to carry an email and an expiry is refused as a cookie.
 	Purpose string `json:"purpose,omitempty"`

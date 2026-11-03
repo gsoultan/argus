@@ -141,8 +141,28 @@ type API struct {
 	proxyNotice sync.Once
 
 	// RequireMFA says which roles must enrol a second factor; see
-	// session_gate.go. Empty means MFAPrivileged.
+	// session_gate.go. Empty means MFAAll.
 	RequireMFA MFAPolicy
+
+	// AllowBrowserChange turns off the check that refuses a cookie presented
+	// by a different browser than the one it was issued to; see
+	// session_gate.go. Off (checked) unless the operator says otherwise.
+	AllowBrowserChange bool
+	// browserMismatch remembers which hijacked cookies were already reported.
+	browserMismatch reportedOnce
+
+	// TemporaryPasswordTTL is how long a temporary password works before it
+	// is used; zero is DefaultTemporaryPasswordTTL. See temporary_passwords.go.
+	TemporaryPasswordTTL time.Duration
+
+	// ServerAlerts is when administrators are told a server connected; see
+	// server_alerts.go.
+	ServerAlerts       ServerAlertPolicy
+	serverAlertLimiter reportedOnce
+
+	// Locate names a place for a client address in sign-in alerts. Nil
+	// names none; see location.go.
+	Locate Locator
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -303,6 +323,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/users/{email}/role", a.putAccountRole)
 	mux.HandleFunc("POST /api/v1/users/{email}/reset-mfa", a.postResetMFA)
 	mux.HandleFunc("POST /api/v1/users/{email}/sign-out", a.postSignOutAccount)
+	mux.HandleFunc("POST /api/v1/users/{email}/temporary-password", a.postTemporaryPassword)
 	mux.HandleFunc("PUT /api/v1/users/{email}/login-name", a.putLoginName)
 	mux.HandleFunc("GET /api/v1/users/{email}/servers", a.getPersonServers)
 	mux.HandleFunc("GET /api/v1/me/server-account", a.getMyServerAccount)

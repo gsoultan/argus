@@ -7,7 +7,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconBell, IconCertificate, IconCloudUpload, IconDatabase,
-  IconDownload, IconKey, IconLogin, IconNetwork, type IconProps,
+  IconDownload, IconKey, IconLogin, IconNetwork, IconServer2, IconShieldLock, type IconProps,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -23,7 +23,7 @@ import { FS } from '~/theme'
 const settingsKey = ['control-settings'] as const
 
 export type ControlSectionId =
-  | 'addresses' | 'signin' | 'database' | 'certificate' | 'storage' | 'alerts'
+  | 'addresses' | 'signin' | 'security' | 'database' | 'certificate' | 'storage' | 'alerts'
 
 export interface ControlSectionSpec {
   id: ControlSectionId
@@ -39,10 +39,11 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'signin', label: 'Sign-in and limits', icon: IconKey,
     keys: ['sessionTtl', 'ticketTtl', 'agentStaleAfter', 'loginPerMinute', 'failuresPerHour',
       'ticketsPerMinute', 'trustedProxies', 'logLevel'] },
+  { id: 'security', label: 'Account security', icon: IconShieldLock, keys: ['security'] },
   { id: 'database', label: 'Database', icon: IconDatabase, keys: ['database'] },
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
   { id: 'storage', label: 'Object storage', icon: IconCloudUpload, keys: ['storage'] },
-  { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts'] },
+  { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts'] },
 ]
 
 export type ControlSettingsState = ReturnType<typeof useControlSettings>
@@ -132,6 +133,7 @@ export function ControlSection({ id, ctl }: { id: ControlSectionId; ctl: Control
       )}
       {id === 'addresses' && <Addresses {...card} />}
       {id === 'signin' && <Sessions {...card} />}
+      {id === 'security' && <Security {...card} />}
       {id === 'database' && <Database {...card} />}
       {id === 'certificate' && <Certificate {...card} />}
       {id === 'storage' && <Storage {...card} />}
@@ -445,6 +447,7 @@ function Alerts({ s, edit }: CardProps) {
   return (
     <Stack gap="sm">
       <SignInAlerts s={s} edit={edit} onSetUp={setUp} />
+      <ServerAlerts s={s} edit={edit} />
       <div ref={channels} style={{ scrollMarginTop: 72 }}>
         <SectionCard title="Alert channels" icon={IconBell} iconColor="amber"
           description="Where alerts go. Every session opened is announced here, including logins that went around Argus; sign-ins too, as set above. Push notifications carry session alerts only.">
@@ -611,7 +614,103 @@ function SignInAlerts({ s, edit, onSetUp }: CardProps & { onSetUp: (channel: str
               description="At most one alert per person every 10 minutes." />
           </Stack>
         </Radio.Group>
+        <Select size="xs" label="Where they signed in from" allowDeselect={false}
+          description={LOCATION_HELP[p.location ?? 'proxy']}
+          data={[
+            { value: 'proxy', label: 'From the proxy in front (Cloudflare), sends nothing anywhere' },
+            { value: 'lookup', label: 'Look the address up at ipinfo.io' },
+            { value: 'off', label: 'IP address only' },
+          ]}
+          value={p.location ?? 'proxy'}
+          onChange={(v) => set({ location: (v ?? 'proxy') as 'proxy' | 'lookup' | 'off' })} />
       </Stack>
+    </SectionCard>
+  )
+}
+
+const LOCATION_HELP: Record<'proxy' | 'lookup' | 'off', string> = {
+  proxy: 'Every alert shows the IP address. Behind Cloudflare, the city and country are added from its visitor location headers, believed only from a trusted proxy (Sign-in and limits).',
+  lookup: 'The address of each new sign-in is sent to ipinfo.io to name a city and country, cached for a day. Use only if sending it there is acceptable.',
+  off: 'Alerts show the IP address and no place.',
+}
+
+/** When administrators are told a server connected. */
+function ServerAlerts({ s, edit }: CardProps) {
+  const v = s.serverAlerts?.connected ?? 'first'
+  const none = !s.email.enabled && !s.telegram.enabled
+  return (
+    <SectionCard title="Server alerts" icon={IconServer2} iconColor="teal"
+      description="Tell administrators, by the email and Telegram set up below, when a server's agent connects. The bell shows every new server either way.">
+      <Radio.Group size="xs" value={v}
+        onChange={(x) => edit({ serverAlerts: { connected: (x || 'first') as 'first' | 'every' | 'off' } })}>
+        <Stack gap={6}>
+          <Radio value="first" disabled={none} label="When a server first connects (recommended)"
+            description="Once per server, when it is ready to use after its install." />
+          <Radio value="every" disabled={none} label="Also when a server comes back"
+            description="After it was disconnected. At most once every 30 minutes per server." />
+          <Radio value="off" disabled={none} label="Don't send" />
+        </Stack>
+      </Radio.Group>
+    </SectionCard>
+  )
+}
+
+const SECURITY_DEFAULTS = {
+  requireMfa: 'all' as const, temporaryPasswordTtl: '', allowBrowserChange: false,
+  accountFailuresPerHour: 0, accountCodeFailuresPerHour: 0,
+}
+
+/** How sign-in is protected: two-step, temporary passwords, copied cookies, lockout. */
+function Security({ s, edit }: CardProps) {
+  const p = s.security ?? SECURITY_DEFAULTS
+  const set = (patch: Partial<typeof p>) => edit({ security: { ...p, ...patch } })
+  return (
+    <SectionCard title="Account security" icon={IconShieldLock} iconColor="teal"
+      description="How people sign in to the console. Changes apply to everyone at their next request.">
+      <Grid gap="xs">
+        <Grid.Col span={12}>
+          <Select size="xs" label="Two-step sign-in" allowDeselect={false}
+            description={p.requireMfa === 'off'
+              ? 'Nobody is made to set it up. One phished password is then every server this console reaches.'
+              : 'Whoever has to set it up cannot do anything else until they have.'}
+            data={[
+              { value: 'all', label: 'Required for everyone (recommended)' },
+              { value: 'privileged', label: 'Required for owners, admins and approvers' },
+              { value: 'off', label: 'Not required' },
+            ]}
+            value={p.requireMfa}
+            onChange={(v) => set({ requireMfa: (v ?? 'all') as 'all' | 'privileged' | 'off' })} />
+          {p.requireMfa === 'off' && (
+            <Alert color="rose" variant="light" icon={<IconAlertTriangle size={16} />} p="xs" mt="xs">
+              <Text size={FS.body}>Without two-step sign-in, a leaked password is enough to open shells on your servers.</Text>
+            </Alert>
+          )}
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, sm: 4 }}>
+          <TextInput size="xs" label="Temporary password lasts" placeholder="72h"
+            description="Sent to people you add. Unused, it stops working after this."
+            value={p.temporaryPasswordTtl}
+            onChange={(e) => set({ temporaryPasswordTtl: e.currentTarget.value })} />
+        </Grid.Col>
+        <Grid.Col span={{ base: 6, sm: 4 }}>
+          <NumberInput size="xs" label="Wrong passwords an hour" placeholder="10" min={0}
+            description="Per person, from every address. Browsers they used before are not held back."
+            value={p.accountFailuresPerHour || ''}
+            onChange={(v) => set({ accountFailuresPerHour: Number(v) || 0 })} />
+        </Grid.Col>
+        <Grid.Col span={{ base: 6, sm: 4 }}>
+          <NumberInput size="xs" label="Wrong codes an hour" placeholder="5" min={0}
+            description="Per person, for two-step codes. No exemptions."
+            value={p.accountCodeFailuresPerHour || ''}
+            onChange={(v) => set({ accountCodeFailuresPerHour: Number(v) || 0 })} />
+        </Grid.Col>
+        <Grid.Col span={12}>
+          <Switch size="xs" checked={!p.allowBrowserChange}
+            onChange={(e) => set({ allowBrowserChange: !e.currentTarget.checked })}
+            label="Sign out a session used from a different browser (recommended)"
+            description="A sign-in works only in the browser that made it. If its cookie turns up in another browser or a script, Argus refuses it, signs that session out and tells administrators. A browser updating itself is fine." />
+        </Grid.Col>
+      </Grid>
     </SectionCard>
   )
 }

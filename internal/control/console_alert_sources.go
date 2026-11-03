@@ -79,8 +79,12 @@ func (a *API) alertSignIn(ctx context.Context, e notify.SignIn) {
 		// someone else. Not something an administrator may mute.
 		kind, sev, title = AlertSecurity, "critical", e.Email+" signed in with a recovery code"
 	}
+	from := e.ClientIP
+	if from != "" && e.Location != "" {
+		from += " (" + e.Location + ")"
+	}
 	parts := []string{}
-	for _, p := range []string{e.Device, e.ClientIP, e.Method} {
+	for _, p := range []string{e.Device, from, e.Method} {
 		if p != "" {
 			parts = append(parts, p)
 		}

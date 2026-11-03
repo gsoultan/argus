@@ -134,6 +134,8 @@ func signIn(t *testing.T, h *loginHarness, email, password, ua string) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("sign-in = %d", res.StatusCode)
 	}
+	// This client is that browser now.
+	*h.ua = ua
 }
 
 const (

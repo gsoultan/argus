@@ -123,9 +123,11 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	// instead of at the next sign-in.
 	// Credentials rather than Account: a person shared in from another
 	// organization enrols where their password is, and this says so.
-	mfa, shared := false, false
+	mfa, shared, temporary := false, false, false
+	var temporaryUntil *time.Time
 	if acct, _, err := a.store.Credentials(r.Context(), sess.Email); err == nil {
 		mfa, shared = acct.MFAEnrolled, acct.Shared()
+		temporary, temporaryUntil = acct.PasswordChangeRequired, acct.PasswordExpiresAt
 	}
 	t := TenantOf(r.Context())
 	// multiOrg, after sign-in, is what offers sharing people between
@@ -157,10 +159,17 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		// API refuses everything else regardless.
 		"mfaSetupRequired":   !mfa && a.mfaRequiredFor(sess.Role),
 		"mfaRequiredForRole": a.mfaRequiredFor(sess.Role),
-		"shared":             shared,
-		"orgs":               orgs,
-		"multiOrg":           multi,
-		"org":                tenantSummary(r.Context(), t),
+		// Signed in with a temporary password: the console shows nothing
+		// but "choose your password" until it is changed, and the API
+		// refuses everything else.
+		"passwordChangeRequired":     temporary,
+		"temporaryPasswordExpiresAt": temporaryUntil,
+		// Whether a person added now can be emailed their first password.
+		"canEmailPeople": a.canEmailPeople(),
+		"shared":         shared,
+		"orgs":           orgs,
+		"multiOrg":       multi,
+		"org":            tenantSummary(r.Context(), t),
 		// platformOwner is who may manage organizations: an owner of the
 		// default one. Said here so the console can draw the menu entry;
 		// the routes check it again.

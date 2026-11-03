@@ -271,16 +271,16 @@ func TestTheNewerConnectionStaysRecorded(t *testing.T) {
 	older := time.Now().UTC().Truncate(time.Microsecond)
 	newer := older.Add(time.Millisecond)
 
-	if err := e.store.tunnelConnected(ctx, id, "quic", "test-replica", newer); err != nil {
+	if _, err := e.store.tunnelConnected(ctx, id, "quic", "test-replica", newer); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.tunnelConnected(ctx, id, "tcp", "test-replica", older); err != nil {
+	if _, err := e.store.tunnelConnected(ctx, id, "tcp", "test-replica", older); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.listed(t, host).Tunnel; got.Transport != "quic" {
 		t.Fatalf("an older connection recorded last replaced the newer: %+v", got)
 	}
-	if err := e.store.tunnelConnected(ctx, id, "tcp", "other-replica", older); err != nil {
+	if _, err := e.store.tunnelConnected(ctx, id, "tcp", "other-replica", older); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.listed(t, host).Tunnel; got.Transport != "tcp" || got.Replica != "other-replica" {

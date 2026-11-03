@@ -267,8 +267,9 @@ export function TwoFactorRequired({ email, onDone }: { email?: string; onDone: (
         <Brand />
         <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />} mb="md">
           <Text size="xs">
-            Your role can change who reaches which servers, so it needs two-step sign-in before
-            you can continue{email ? ` as ${email}` : ''}.
+            Argus needs two-step sign-in on your account before you can continue
+            {email ? ` as ${email}` : ''}: a code from an app on your phone, as well as your
+            password, so a leaked password alone is not enough to get in.
           </Text>
         </Alert>
         <TwoFactorSetup enrolled={false} onDone={onDone} />

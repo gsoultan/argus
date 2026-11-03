@@ -106,9 +106,23 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 		}
 	}
 	pol := signInConfigOf(c.Alerts).policy()
-	s.SignInAlerts = &control.SignInAlertSettings{Admins: pol.Admins, Person: pol.Person, When: "new_device"}
+	s.SignInAlerts = &control.SignInAlertSettings{Admins: pol.Admins, Person: pol.Person, When: "new_device",
+		Location: string(signInConfigOf(c.Alerts).locationMode())}
 	if pol.Every {
 		s.SignInAlerts.When = "every"
+	}
+	s.ServerAlerts = &control.ServerAlertSettings{Connected: string(control.ServerAlertFirst)}
+	if c.Alerts != nil && c.Alerts.ServerConnected != "" {
+		s.ServerAlerts.Connected = c.Alerts.ServerConnected
+	}
+	s.Security = &control.SecuritySettings{RequireMFA: c.RequireMFA,
+		TemporaryPasswordTTL: durationText(c.TemporaryPasswordTTL), AllowBrowserChange: c.AllowBrowserChange}
+	if s.Security.RequireMFA == "" {
+		s.Security.RequireMFA = string(control.MFAAll)
+	}
+	if rl := c.RateLimit; rl != nil {
+		s.Security.AccountFailuresPerHour = rl.AccountFailuresPerHour
+		s.Security.AccountCodeFailuresPerHour = rl.AccountCodeFailuresPerHour
 	}
 	s.Email.To, s.Telegram.ChatIDs, s.FCM.Tokens = nonNil(s.Email.To), nonNil(s.Telegram.ChatIDs), nonNil(s.FCM.Tokens)
 
@@ -211,10 +225,42 @@ func (b *settingsBackend) apply(ctx context.Context, c *config, in control.Setti
 	}
 	c.BehindTLSProxy = in.BehindTLSProxy
 	c.AllowedOrigins = cleanList(in.AllowedOrigins)
+	prevRL := c.RateLimit
 	c.RateLimit = &rateLimitConfig{
 		TrustedProxies: cleanList(in.TrustedProxies),
 		LoginPerMinute: in.LoginPerMinute, FailuresPerHour: in.FailuresPerHour,
 		TicketsPerMinute: in.TicketsPerMinute,
+	}
+	// The per-account limits are edited under Security; a console that does
+	// not send that section keeps them, rather than a save from the limits
+	// card quietly dropping them from the file.
+	if prevRL != nil {
+		c.RateLimit.AccountFailuresPerHour = prevRL.AccountFailuresPerHour
+		c.RateLimit.AccountCodeFailuresPerHour = prevRL.AccountCodeFailuresPerHour
+	}
+	if sec := in.Security; sec != nil {
+		if !control.ValidMFAPolicy(sec.RequireMFA) {
+			return control.BadInput(fmt.Errorf("unknown two-step policy %q", sec.RequireMFA))
+		}
+		// The default is written as nothing, so the file follows it.
+		c.RequireMFA = sec.RequireMFA
+		if c.RequireMFA == string(control.MFAAll) {
+			c.RequireMFA = ""
+		}
+		ttl, err := parseDuration("temporary password lifetime", sec.TemporaryPasswordTTL)
+		if err != nil {
+			return control.BadInput(err)
+		}
+		if ttl != 0 && (ttl < time.Hour || ttl > 30*24*time.Hour) {
+			return control.BadInput(fmt.Errorf("a temporary password must work for between 1h and 720h"))
+		}
+		c.TemporaryPasswordTTL = ttl
+		c.AllowBrowserChange = sec.AllowBrowserChange
+		if sec.AccountFailuresPerHour < 0 || sec.AccountCodeFailuresPerHour < 0 {
+			return control.BadInput(fmt.Errorf("limits cannot be negative"))
+		}
+		c.RateLimit.AccountFailuresPerHour = sec.AccountFailuresPerHour
+		c.RateLimit.AccountCodeFailuresPerHour = sec.AccountCodeFailuresPerHour
 	}
 	var err error
 	for _, d := range []struct {
@@ -345,9 +391,27 @@ func applyAlerts(c *config, in control.Settings, st *secretStage) error {
 	}
 	next.SignIn = prev.SignIn
 	if in.SignInAlerts != nil {
-		next.SignIn = signInFromSettings(*in.SignInAlerts)
+		sa := *in.SignInAlerts
+		if sa.Location == "" && prev.SignIn != nil {
+			sa.Location = prev.SignIn.Location
+		}
+		if !control.ValidLocationMode(sa.Location) {
+			return control.BadInput(fmt.Errorf("unknown location source %q", sa.Location))
+		}
+		next.SignIn = signInFromSettings(sa)
 	}
-	if next.Email == nil && next.Telegram == nil && next.FCM == nil && next.SignIn == nil {
+	next.ServerConnected = prev.ServerConnected
+	if in.ServerAlerts != nil {
+		if !control.ValidServerAlertPolicy(in.ServerAlerts.Connected) {
+			return control.BadInput(fmt.Errorf("unknown server alert setting %q", in.ServerAlerts.Connected))
+		}
+		next.ServerConnected = in.ServerAlerts.Connected
+		if next.ServerConnected == string(control.ServerAlertFirst) {
+			next.ServerConnected = ""
+		}
+	}
+	if next.Email == nil && next.Telegram == nil && next.FCM == nil && next.SignIn == nil &&
+		next.ServerConnected == "" {
 		c.Alerts = nil
 	} else {
 		c.Alerts = next
@@ -705,7 +769,10 @@ func signInFromSettings(in control.SignInAlertSettings) *signInAlertsConfig {
 	if in.When == "every" {
 		out.When = "every"
 	}
-	if out.Admins == nil && out.Person == nil && out.When == "" {
+	if in.Location != "" && in.Location != string(control.LocationProxy) {
+		out.Location = in.Location
+	}
+	if out.Admins == nil && out.Person == nil && out.When == "" && out.Location == "" {
 		return nil
 	}
 	return out

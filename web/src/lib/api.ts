@@ -35,6 +35,7 @@ import {
   setAccountRole,
   setAccountDisabled,
   createAccount,
+  sendTemporaryPassword,
   createSharedAccount,
   setAccountShareable,
   personServers as livePersonServers,
@@ -45,7 +46,7 @@ import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
   ServerLoginAccount, ServerLoginAccounts, ServerApplications,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
-  TeamAssignment, User,
+  TeamAssignment, TemporaryPasswordOutcome, User,
 } from '~/types/domain'
 
 /**
@@ -234,6 +235,7 @@ export const api = {
           shared: id.shared === true,
           multiOrg: id.multiOrg === true,
           platformOwner: id.platformOwner === true,
+          canEmailPeople: id.canEmailPeople === true,
         }
       }
     }
@@ -325,17 +327,28 @@ export const api = {
     u.disabledBy = disabled ? currentUser.email : ''
   },
 
-  async addAccount(input: { email: string; displayName: string; role: User['role']; password: string }): Promise<void> {
-    if (isConfigured()) {
-      await createAccount(input)
-      return
-    }
+  async addAccount(input: { email: string; displayName: string; role: User['role'] }): Promise<TemporaryPasswordOutcome> {
+    if (isConfigured()) return createAccount(input)
     await latency(250)
     if (users.some((u) => u.email === input.email.toLowerCase())) throw new Error(`${input.email} already has an account`)
+    const expires = new Date(Date.now() + 72 * 3600_000).toISOString()
     users.push({
       id: crypto.randomUUID(), email: input.email.toLowerCase(), displayName: input.displayName || input.email.split('@')[0]!,
       role: input.role, mfaEnrolled: false, lastSeenAt: null,
+      temporaryPassword: true, temporaryPasswordExpiresAt: expires,
     })
+    return { email: input.email.toLowerCase(), role: input.role, emailed: true, temporaryPasswordExpiresAt: expires }
+  },
+
+  async sendTemporaryPassword(email: string): Promise<TemporaryPasswordOutcome> {
+    if (isConfigured()) return sendTemporaryPassword(email)
+    await latency(250)
+    const u = users.find((x) => x.email === email)
+    if (!u) throw new Error(`no account for ${email}`)
+    const expires = new Date(Date.now() + 72 * 3600_000).toISOString()
+    u.temporaryPassword = true
+    u.temporaryPasswordExpiresAt = expires
+    return { email, emailed: true, temporaryPasswordExpiresAt: expires }
   },
 
   async addSharedAccount(input: { email: string; displayName: string; role: User['role']; homeOrg?: string }): Promise<void> {

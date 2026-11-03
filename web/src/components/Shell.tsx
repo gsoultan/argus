@@ -41,6 +41,12 @@ const TwoFactorModal = lazy(() =>
 const TwoFactorRequired = lazy(() =>
   import('~/components/TwoFactor').then((m) => ({ default: m.TwoFactorRequired })),
 )
+const PasswordChangeRequired = lazy(() =>
+  import('~/components/ChoosePassword').then((m) => ({ default: m.PasswordChangeRequired })),
+)
+const ChangePasswordModal = lazy(() =>
+  import('~/components/ChoosePassword').then((m) => ({ default: m.ChangePasswordModal })),
+)
 import {
   isActive, navFor, type NavCounts, type NavItem,
 } from '~/components/nav'
@@ -120,6 +126,18 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     return <SignIn identity={identity} onSignedIn={handleSignedIn} />
   }
 
+  // Signed in with a temporary password: choosing one's own comes first,
+  // before the second step, so the person who sets up the authenticator is
+  // the one who chose the password.
+  if (identity.passwordChangeRequired) {
+    return (
+      <Suspense fallback={null}>
+        <PasswordChangeRequired email={identity.email} name={identity.displayName}
+          expiresAt={identity.temporaryPasswordExpiresAt} onDone={handleSignedIn} />
+      </Suspense>
+    )
+  }
+
   // Signed in, but the role must have a second step and has none. The
   // control plane refuses every other request, so drawing the console would
   // be drawing errors.
@@ -147,6 +165,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [paletteOpen, palette] = useDisclosure(false)
   const [sshKeyOpen, sshKeyModal] = useDisclosure(false)
   const [twoFactorOpen, twoFactorModal] = useDisclosure(false)
+  const [passwordOpen, passwordModal] = useDisclosure(false)
   const { data: me } = useQuery(meQuery())
   const queryClient = useQueryClient()
   // A key is only asked of people a team lets SSH straight to a server; the
@@ -316,6 +335,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                     {me?.mfaEnrolled ? 'Replace my authenticator' : 'Turn on two-step sign-in'}
                   </Menu.Item>
                 )}
+                {isLive() && !me?.shared && (
+                  <Menu.Item leftSection={<IconKey size={14} />} onClick={passwordModal.open}>
+                    Change my password
+                  </Menu.Item>
+                )}
                 <Menu.Item
                   component={Link}
                   to="/about"
@@ -353,6 +377,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             {sshKeyOpen && (
               <Suspense fallback={null}>
                 <MySshKeyModal opened onClose={sshKeyModal.close} />
+              </Suspense>
+            )}
+            {passwordOpen && (
+              <Suspense fallback={null}>
+                <ChangePasswordModal opened email={me?.email} name={me?.displayName} onClose={passwordModal.close} />
               </Suspense>
             )}
             {twoFactorOpen && (

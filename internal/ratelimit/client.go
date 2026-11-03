@@ -54,6 +54,12 @@ func (r *ClientResolver) Key(req *http.Request) string {
 	return peer
 }
 
+// FromTrustedProxy reports whether the request's connection came from a
+// proxy this resolver trusts, so headers that proxy adds may be believed.
+func (r *ClientResolver) FromTrustedProxy(req *http.Request) bool {
+	return r != nil && len(r.TrustedProxies) > 0 && r.trusted(peerIP(req.RemoteAddr))
+}
+
 func (r *ClientResolver) trusted(ipStr string) bool {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {

@@ -62,6 +62,32 @@ type Settings struct {
 	// SignInAlerts is nil from a console older than sign-in alerts, which
 	// keeps what is configured rather than switching them off.
 	SignInAlerts *SignInAlertSettings `json:"signInAlerts,omitempty"`
+	// ServerAlerts and Security are nil from a console older than them, and
+	// are then kept as configured, for the same reason.
+	ServerAlerts *ServerAlertSettings `json:"serverAlerts,omitempty"`
+	Security     *SecuritySettings    `json:"security,omitempty"`
+}
+
+// ServerAlertSettings is when administrators are told a server connected.
+type ServerAlertSettings struct {
+	// Connected is "first", "every" or "off".
+	Connected string `json:"connected"`
+}
+
+// SecuritySettings is how sign-in is protected.
+type SecuritySettings struct {
+	// RequireMFA is "all", "privileged" or "off".
+	RequireMFA string `json:"requireMfa"`
+	// TemporaryPasswordTTL is how long a temporary password works unused, as
+	// Go writes durations: "72h".
+	TemporaryPasswordTTL string `json:"temporaryPasswordTtl"`
+	// AllowBrowserChange keeps a cookie working in another browser than the
+	// one that signed in. False refuses and revokes it.
+	AllowBrowserChange bool `json:"allowBrowserChange"`
+	// Wrong passwords and codes for one account an hour, from every address
+	// together. Zero is the default (10 and 5).
+	AccountFailuresPerHour     int `json:"accountFailuresPerHour"`
+	AccountCodeFailuresPerHour int `json:"accountCodeFailuresPerHour"`
 }
 
 // SignInAlertSettings is who is told when someone signs in to the console.
@@ -72,6 +98,9 @@ type SignInAlertSettings struct {
 	Person bool `json:"person"`
 	// When is "new_device" or "every".
 	When string `json:"when"`
+	// Location is how an alert names where a sign-in came from: "proxy",
+	// "lookup" or "off". Empty from an older console, which keeps it.
+	Location string `json:"location,omitempty"`
 }
 
 // DatabaseSettings is the database in parts, with the password write-only.

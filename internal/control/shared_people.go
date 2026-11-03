@@ -115,6 +115,8 @@ func (s *Store) Credentials(ctx context.Context, email string) (*Account, contex
 	merged.PasswordHash = cred.PasswordHash
 	merged.TOTPSecret = cred.TOTPSecret
 	merged.MFAEnrolled = cred.MFAEnrolled
+	merged.PasswordChangeRequired = cred.PasswordChangeRequired
+	merged.PasswordExpiresAt = cred.PasswordExpiresAt
 	merged.Disabled = local.Disabled || cred.Disabled
 	return &merged, hctx, nil
 }

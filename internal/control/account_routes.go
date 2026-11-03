@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
+	"github.com/gsoultan/argus/internal/notify"
 )
 
 // Accounts from the console: the same acts as `argus-control users add`,
@@ -53,7 +55,18 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown role %q", in.Role))
 		return
 	}
-	if len([]rune(in.Password)) < auth.MinPasswordLength {
+	// The first password is a temporary one whoever chose it: generated here
+	// unless the request names one (the API, a script), and changed by the
+	// person at their first sign-in either way.
+	password := in.Password
+	if password == "" {
+		pw, err := auth.NewTemporaryPassword()
+		if err != nil {
+			a.fail(w, "generate password", err)
+			return
+		}
+		password = pw
+	} else if len([]rune(password)) < auth.MinPasswordLength {
 		writeErr(w, http.StatusBadRequest,
 			fmt.Sprintf("the password must be at least %d characters", auth.MinPasswordLength))
 		return
@@ -61,7 +74,8 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 	// CreateAccount would overwrite an existing account's password and role,
 	// which from here would be a way to take one over. A row with no password
 	// is not an account yet, and giving it one is what this is for.
-	if existing, err := a.store.Account(r.Context(), email); err == nil && existing.Shared() {
+	existing, err := a.store.Account(r.Context(), email)
+	if err == nil && existing.Shared() {
 		// Nor is a person shared in from elsewhere given a second password here.
 		writeErr(w, http.StatusConflict, email+" is already here as a shared person")
 		return
@@ -72,8 +86,10 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "look up account", err)
 		return
 	}
-	if _, err := a.store.CreateAccount(r.Context(), email,
-		strings.TrimSpace(in.DisplayName), in.Role, in.Password); err != nil {
+	until := time.Now().Add(a.temporaryPasswordTTL()).UTC().Truncate(time.Second)
+	name := strings.TrimSpace(in.DisplayName)
+	if _, err := a.store.CreateAccountWith(r.Context(), NewAccount{Email: email,
+		DisplayName: name, Role: in.Role, Password: password, TemporaryUntil: &until}); err != nil {
 		if errors.Is(err, ErrSharedAccount) {
 			writeErr(w, http.StatusConflict, email+" is already here as a shared person")
 			return
@@ -81,14 +97,30 @@ func (a *API) postAccount(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "create account", err)
 		return
 	}
+	var out temporaryPasswordOutcome
+	if in.Password != "" {
+		// The administrator chose it and has it; there is nothing to send.
+		out = temporaryPasswordOutcome{Email: email, Role: in.Role, ExpiresAt: until}
+	} else {
+		out = a.deliverTemporaryPassword(r.Context(), notify.Welcome{
+			Email: email, Name: name, Role: in.Role, Password: password,
+			ExpiresAt: until, By: sess.Email,
+		})
+	}
+	detail := "Local account created from the console with role " + in.Role + ". "
+	if in.Password != "" {
+		detail += "The administrator set its first password; it must be changed at the first sign-in."
+	} else {
+		detail += out.auditText()
+	}
 	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action: "user.created", Severity: "notice", ActorEmail: sess.Email,
-		Target: email,
-		Detail: "Local account created from the console with role " + in.Role + ".",
+		Target: email, Detail: detail,
 	}); err != nil {
 		a.log.Error("audit append failed", "error", err)
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"email": email, "role": in.Role})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (a *API) postAccountDisabled(disabled bool) http.HandlerFunc {
