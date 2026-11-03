@@ -586,6 +586,12 @@ Under **Settings**, unlike the layout above:
 and point cloudflared at that one listener, `service: https://localhost:8080`,
 with the same `originRequest` as below. `8080` then needs no inbound rule.
 
+When cloudflared runs on another machine, point it at the control plane's
+address on your network instead (`service: https://10.0.0.10:8080`), keep
+`originServerName` set to a name on the control plane's certificate, allow
+`8080/tcp` from that machine alone, and put its address, not loopback, under
+**Trusted proxies**.
+
 **Add a server** sees Cloudflare's certificate at `argus.example.com`, which a
 public authority signed, so the command it shows has no pin: curl and the agent
 check that certificate the ordinary way, as a browser does. The server's page
