@@ -60,8 +60,11 @@ const BUDGET_KB = {
    * 276.0 kB with PasswordInput's stylesheet, which app.css had left out: every
    * password field rendered its input at the browser's default width. About
    * 0.3 kB, in the shared stylesheet, so every route pays it once.
+   * 276.9 kB when the page header learned to put its actions under the title
+   * on a phone and to carry a tab row: 0.9 kB of shared code, since every
+   * route renders that header.
    */
-  overview: 277,
+  overview: 278,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -73,8 +76,10 @@ const BUDGET_KB = {
    * 376.0 kB with organizations: the same shared 1.6 kB as the overview, above.
    * With both, 380.1 kB.
    * 383.2 kB with PasswordInput's stylesheet, the same 0.3 kB as the overview.
+   * 384.1 kB with the phone-friendly page header, the same 0.9 kB as the
+   * overview.
    */
-  sessionDetail: 384,
+  sessionDetail: 385,
 }
 
 /**
