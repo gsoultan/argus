@@ -371,6 +371,13 @@ example with no internet access, agents are offered the control plane's own
 version. To turn the check off, set `agent_release_check: false` in
 `control.yaml`.
 
+A new server added with the console's one-line install gets the same version.
+If the control plane knows of no release, or that release has no package for
+the server, the install script asks GitHub itself for the newest release that
+has one, and checks the package against the release's `checksums.txt` before
+installing it. Releases are tagged `v<version>`; the release workflow refuses
+any other tag and fails if the agent packages were not attached.
+
 **Every server at once:** the **Agents** card at the top of **Servers** lists
 each server whose agent is behind the newest version, or can't update itself
 and why. **Update N servers** asks every agent that is behind, and **Update**

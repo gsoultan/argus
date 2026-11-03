@@ -303,7 +303,7 @@ release:
     sudo dpkg -i argus-agent_{{ .Version }}_linux_amd64.deb
 
     # RHEL / Rocky / Alma
-    sudo rpm -i argus-agent-{{ .Version }}.linux-amd64.rpm
+    sudo rpm -i argus-agent_{{ .Version }}_linux_amd64.rpm
 
     # Alpine
     sudo apk add --allow-untrusted argus-agent_{{ .Version }}_linux_amd64.apk

@@ -2,7 +2,10 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # Bare version tags too, only so a release tagged 1.2.0 fails loudly
+    # below instead of never building: 1.2.0 was published that way, by hand,
+    # with no files, and agents and the install script cannot use it.
+    tags: ["v*", "[0-9]*"]
 
 permissions:
   contents: write   # create the release and upload artifacts
@@ -29,6 +32,18 @@ jobs:
           --health-retries 10
 
     steps:
+      # Agents update from <releases>/download/v<version>/, and the release
+      # watcher only offers v-tagged releases, so a release must be tagged
+      # v1.2.3.
+      - name: Check the tag
+        run: |
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::Tag releases as v<major>.<minor>.<patch> (v${GITHUB_REF_NAME#v}), not ${GITHUB_REF_NAME}. Delete this tag and its release, then push the v tag: agents cannot update from a release without the v."
+              exit 1 ;;
+          esac
+
       - uses: actions/checkout@v4
         with:
           # GoReleaser needs full history for the changelog, and the tag needs
@@ -67,6 +82,27 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A release without agent packages is passed over by the console and by
+      # the install script, so it must not look finished. Fail the run if
+      # goreleaser left any out.
+      - name: Check the agent packages were attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          have=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          missing=""
+          for want in checksums.txt \
+            argus-agent_${v}_linux_amd64.deb argus-agent_${v}_linux_arm64.deb \
+            argus-agent_${v}_linux_amd64.rpm argus-agent_${v}_linux_arm64.rpm \
+            argus-agent_${v}_linux_amd64.apk argus-agent_${v}_linux_arm64.apk; do
+            printf '%s\n' "$have" | grep -qxF "$want" || missing="$missing $want"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Release $GITHUB_REF_NAME is missing:$missing"
+            exit 1
+          fi
 
       - name: Summarise
         run: |
