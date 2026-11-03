@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Alert, Box, Group, Stack, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -5,9 +6,8 @@ import { IconClipboardCheck, IconHourglassHigh, IconPlus } from '@tabler/icons-r
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { ServerCards } from '~/components/myservers'
-import { AgentFleetCard } from '~/components/AgentFleet'
 import { relTime } from '~/components/primitives'
-import { assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
+import { agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
@@ -23,6 +23,12 @@ import { FS, SP } from '~/theme'
  * The old Manage table (host keys, credential modes, bypass posture) is gone
  * from the list; what an admin needs from it is on each server's own page.
  */
+// Loaded only once there are agents to show, so the first visit to a
+// console with no enrolled servers (and every non-admin) skips its code.
+const AgentFleetCard = lazy(() =>
+  import('~/components/AgentFleet').then((m) => ({ default: m.AgentFleetCard })),
+)
+
 export const Route = createFileRoute('/assets/')({
   // No role guard: this is the one page every role is sent to. The control
   // plane has already narrowed the list to what each person may reach.
@@ -65,10 +71,21 @@ function Servers() {
       />
       <PageBody>
         {admin && <WaitingServers />}
-        {whole && me?.role !== 'operator' && <AgentFleetCard canEdit={me?.role === 'admin' || me?.role === 'owner'} />}
+        {whole && <Agents canEdit={admin} />}
         <ServerCards />
       </PageBody>
     </Box>
+  )
+}
+
+/** Every server's agent, once the fleet has any. */
+function Agents({ canEdit }: { canEdit: boolean }) {
+  const { data } = useQuery(agentFleetQuery())
+  if (!Array.isArray(data?.servers) || data.servers.length === 0) return null
+  return (
+    <Suspense fallback={null}>
+      <AgentFleetCard canEdit={canEdit} />
+    </Suspense>
   )
 }
 

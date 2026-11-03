@@ -28,7 +28,7 @@ export function AgentFleetCard({ canEdit }: { canEdit: boolean }) {
   const [confirming, setConfirming] = useState(false)
   const update = useUpdateAgentFleet()
   const auto = useSetAgentAutoUpdate()
-  if (!isConfigured() || !v || v.servers.length === 0) return null
+  if (!isConfigured() || !v || !Array.isArray(v.servers) || v.servers.length === 0) return null
 
   const needsLook = v.servers.filter((s) => s.state !== 'current')
   const current = v.servers.length - needsLook.length

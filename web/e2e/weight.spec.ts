@@ -67,8 +67,12 @@ const BUDGET_KB = {
    * JS for the bell, its count and the pop-ups, and 0.5 kB of CSS, most of
    * it the notifications stylesheet every toast had been missing. The list,
    * the settings, the stream and the fixture load only when needed.
+   * 284.1 kB with the Agents card on Servers (282.9 before, same build): 1.2 kB
+   * for the query that asks whether there are agents to show, its two
+   * mutations and the API calls, which share the eager queries module. The
+   * card itself is lazy and loads only for a fleet with enrolled agents.
    */
-  overview: 283,
+  overview: 285,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
