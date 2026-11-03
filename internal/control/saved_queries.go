@@ -247,7 +247,7 @@ func (a *API) deleteSavedQuery(w http.ResponseWriter, r *http.Request, email str
 	}
 	a.auditDB(r.Context(), "db.query_removed", "info", email, db.Hostname,
 		fmt.Sprintf("Removed saved query %q on %s%s.", cur.Name, db.Name, by))
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
 }
 
 func (a *API) isAdmin(r *http.Request) bool {

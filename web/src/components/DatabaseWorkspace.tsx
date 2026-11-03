@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Drawer, Group, Loader, ScrollArea, Stack, Tabs, Text, Textarea, Tooltip,
-  UnstyledButton,
+  ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, SegmentedControl, Stack, Tabs, Text,
+  Textarea, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
-  IconArrowsExchange, IconArchive,
+  IconArrowsExchange, IconArchive, IconDots, IconStar,
 } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
@@ -19,6 +19,16 @@ import {
 import { ExtensionsPanel } from '~/components/DatabaseExtensions'
 import { ReplicationPanel } from '~/components/DatabaseReplication'
 import { BackupsPanel } from '~/components/DatabaseBackups'
+import { ExplainView, planSummary, type PlanRun } from '~/components/ExplainView'
+import { SchemaDiagram } from '~/components/SchemaDiagram'
+import { SaveQueryDialog, SavedQueriesList } from '~/components/SavedQueries'
+import { explainSQL, explainable, parsePlan } from '~/lib/explainPlan'
+import {
+  MAX_TABS, blankTab, loadEditorHeight, loadTabs, mayWrite, nameFromSQL, newKey, saveEditorHeight, saveTabs, txAfter,
+  type QueryTab,
+} from '~/lib/workspaceTabs'
+import { notifyWarn } from '~/lib/notify'
+import type { SavedQuery } from '~/lib/live'
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -130,6 +140,12 @@ const KIND_ICON: Record<string, typeof IconTable> = {
   sequence: IconHash,
 }
 
+type Job =
+  | { tab: string; kind: 'run'; text: string; maxRows: number }
+  | { tab: string; kind: 'explain'; text: string; mode: PlanRun['mode'] }
+
+const DEFAULT_H = { wide: 170, narrow: 110 }
+
 export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, orgAdmin }: WorkspaceProps) {
   const narrow = useMediaQuery('(max-width: 48em)')
   const [treeOpen, tree] = useDisclosure(false)
@@ -139,20 +155,51 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const [status, setStatus] = useState<'connecting' | 'ready' | 'closed'>('connecting')
   const [fatal, setFatal] = useState<string | null>(null)
   const [ready, setReady] = useState<PGAnswer | null>(null)
-  const [sql, setSql] = useState('')
-  const [result, setResult] = useState<Result | null>(null)
-  const [running, setRunning] = useState<number | null>(null)
   const [history, setHistory] = useState<{ sql: string; at: number; ok: boolean }[]>([])
-  const resultRef = useRef<Result | null>(null)
   const pending = useRef(new Map<number, (a: PGAnswer) => void>())
   // Requests made before the session is ready (the tree asks for schemas on
   // mount) wait here and go out together on 'ready'.
   const queue = useRef<string[]>([])
-  const [maxRows, setMaxRows] = useState(1000)
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
   const [panel, setPanel] = useState<Panel>('query')
+  const [view, setView] = useState<'query' | 'diagram'>('query')
+
+  // Tabs: each its own editor text, row limit, result and plan. Text is
+  // kept in this browser per database; results never are.
+  const initial = useMemo(() => loadTabs(database.id), [database.id])
+  const [tabs, setTabs] = useState<QueryTab[]>(initial.tabs)
+  const [active, setActive] = useState(initial.active)
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const tab = tabs.find((t) => t.key === active) ?? tabs[0]!
+  const sql = tab.sql
+  useEffect(() => { saveTabs(database.id, tabs, active) }, [database.id, tabs, active])
+  const [results, setResults] = useState<Record<string, Result | null>>({})
+  const [plans, setPlans] = useState<Record<string, PlanRun>>({})
+  const [shown, setShown] = useState<Record<string, 'results' | 'plan' | 'raw'>>({})
+  // What each running request belongs to, so a row batch finds its tab.
+  const live = useRef(new Map<number, { tab: string; r: Result }>())
+  // One statement at a time on the session: the rest wait their turn.
+  const [running, setRunning] = useState<{ id: number; tab: string } | null>(null)
+  const runningRef = useRef<{ id: number; tab: string } | null>(null)
+  const waiting = useRef<Job[]>([])
+  const [waitingTabs, setWaitingTabs] = useState<string[]>([])
+  // Whether the person's own statements left a transaction open.
+  const txOpen = useRef(false)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const result = results[tab.key] ?? null
+  const plan = plans[tab.key]
+  const resultView = shown[tab.key] ?? 'results'
+
+  const patchTab = useCallback((key: string, f: (t: QueryTab) => QueryTab) => {
+    setTabs((ts) => ts.map((t) => (t.key === key ? f(t) : t)))
+  }, [])
+  const setSql = useCallback((v: string) => {
+    patchTab(activeRef.current, (t) => ({ ...t, sql: v, name: t.named ? t.name : (nameFromSQL(v) ?? t.name) }))
+  }, [patchTab])
 
   const failPendingRef = useRef<() => void>(() => {})
   // One socket per mount; a dropped socket is a new session, by design.
@@ -184,13 +231,13 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             c.rows.push(...decodeBatch(ev.data, c.cols.length, dec).rows)
             return
           }
-          const r = resultRef.current
-          if (!r || bid !== r.id) return
-          const { rows } = decodeBatch(ev.data, r.cols.length, dec)
+          const e = live.current.get(bid)
+          if (!e) return
+          const { rows } = decodeBatch(ev.data, e.r.cols.length, dec)
           // Append in place and publish a new object once per batch, so React
           // re-renders per batch rather than per row.
-          r.rows.push(...rows)
-          setResult({ ...r })
+          e.r.rows.push(...rows)
+          setResults((prev) => ({ ...prev, [e.tab]: { ...e.r } }))
           return
         }
         const m = JSON.parse(ev.data as string) as { type: string; ans?: PGAnswer; data?: string }
@@ -241,6 +288,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Everything waiting gets a closed answer, so no promise is left hanging.
   failPendingRef.current = () => {
     queue.current = []
+    waiting.current = []
+    setWaitingTabs([])
     for (const [id, cb] of pending.current) cb({ id, type: 'closed', error: 'the session ended' })
     pending.current.clear()
     collectors.current.clear()
@@ -270,37 +319,12 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       }
     }), [send])
 
-  const run = useCallback((text: string) => {
-    const stmt = text.trim()
-    if (!stmt || running !== null) return
-    const id = nextId.current++
-    const r: Result = { id, sql: stmt, cols: [], rows: [], startedAt: Date.now() }
-    resultRef.current = r
-    setResult(r)
-    setRunning(id)
-    pending.current.set(id, (a) => {
-      if (a.type === 'cols') {
-        r.cols = a.cols ?? []
-        setResult({ ...r })
-        return
-      }
-      pending.current.delete(id)
-      if (a.type === 'done') r.done = a
-      else r.error = a
-      setResult({ ...r })
-      setRunning(null)
-      setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
-    })
-    if (!send({ id, op: 'run', sql: stmt, maxRows })) {
-      pending.current.delete(id)
-      setRunning(null)
-    }
-  }, [send, running, maxRows])
-
   // collect runs one statement for a panel and resolves with everything it
-  // returned. Recorded like any other statement; it is one.
-  const collect: Collect = useCallback((text, max = 1000) => new Promise<Collected>((resolve) => {
+  // returned. Recorded like any other statement; it is one. onId hears the
+  // request id, so a plan in progress can be cancelled.
+  const collectWithId = useCallback((text: string, max = 1000, onId?: (id: number) => void) => new Promise<Collected>((resolve) => {
     const id = nextId.current++
+    onId?.(id)
     const c: Collected = { cols: [], rows: [] }
     collectors.current.set(id, c)
     pending.current.set(id, (a) => {
@@ -319,6 +343,108 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       resolve({ cols: [], rows: [], error: { error: 'the session ended' } })
     }
   }), [send])
+  const collect: Collect = useCallback((text, max) => collectWithId(text, max), [collectWithId])
+
+  const startRef = useRef<(j: Job) => void>(() => {})
+  const finished = useCallback(() => {
+    runningRef.current = null
+    setRunning(null)
+    const next = waiting.current.shift()
+    setWaitingTabs(waiting.current.map((j) => j.tab))
+    if (next) startRef.current(next)
+  }, [])
+
+  const startRun = useCallback((job: Extract<Job, { kind: 'run' }>) => {
+    const stmt = job.text
+    const id = nextId.current++
+    const r: Result = { id, sql: stmt, cols: [], rows: [], startedAt: Date.now() }
+    live.current.set(id, { tab: job.tab, r })
+    runningRef.current = { id, tab: job.tab }
+    setRunning(runningRef.current)
+    setResults((prev) => ({ ...prev, [job.tab]: r }))
+    setShown((v) => ({ ...v, [job.tab]: 'results' }))
+    pending.current.set(id, (a) => {
+      if (a.type === 'cols') {
+        r.cols = a.cols ?? []
+        setResults((prev) => ({ ...prev, [job.tab]: { ...r } }))
+        return
+      }
+      pending.current.delete(id)
+      live.current.delete(id)
+      if (a.type === 'done') r.done = a
+      else r.error = a
+      setResults((prev) => ({ ...prev, [job.tab]: { ...r } }))
+      txOpen.current = txAfter(txOpen.current, stmt, a.type === 'done')
+      setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
+      finished()
+    })
+    if (!send({ id, op: 'run', sql: stmt, maxRows: job.maxRows })) {
+      pending.current.delete(id)
+      live.current.delete(id)
+      finished()
+    }
+  }, [send, finished])
+
+  const startExplain = useCallback((job: Extract<Job, { kind: 'explain' }>) => {
+    const key = job.tab
+    runningRef.current = { id: -1, tab: key }
+    setRunning(runningRef.current)
+    setPlans((p) => ({ ...p, [key]: { mode: job.mode, plan: null, running: true } }))
+    setShown((v) => ({ ...v, [key]: 'plan' }))
+    const done = (run: Omit<PlanRun, 'mode' | 'running'>) => {
+      setPlans((p) => ({ ...p, [key]: { mode: job.mode, running: false, ...run } }))
+      finished()
+    }
+    void (async () => {
+      const track = (id: number) => {
+        runningRef.current = { id, tab: key }
+        setRunning(runningRef.current)
+      }
+      // ANALYZE runs the statement. One that may write runs inside a
+      // transaction that is rolled back, so nothing it does stays; inside the
+      // person's own transaction that would roll back their work too, so it
+      // is refused instead.
+      const wrap = job.mode !== 'plan' && mayWrite(job.text)
+      if (wrap && txOpen.current) {
+        done({ plan: null, error: 'You are inside a transaction of your own. Finish it with COMMIT or ROLLBACK first, or use Explain, which runs nothing.' })
+        return
+      }
+      if (wrap) {
+        const b = await collectWithId('BEGIN', 1, track)
+        if (b.error) {
+          done({ plan: null, error: b.error.error ?? 'could not start a transaction to roll back' })
+          return
+        }
+      }
+      const stmt = explainSQL(job.text, job.mode)
+      const r = await collectWithId(stmt, 20000, track)
+      if (wrap) await collectWithId('ROLLBACK', 1, track)
+      setHistory((h) => [{ sql: stmt, at: Date.now(), ok: !r.error }, ...h].slice(0, 100))
+      if (r.error) {
+        done({ plan: null, error: `Postgres refused this: ${r.error.error ?? 'unknown error'}${r.error.code ? ` (${r.error.code})` : ''}` })
+        return
+      }
+      done({ plan: parsePlan(r.rows.map((x) => x[0] ?? '')), rolledBack: wrap })
+    })()
+  }, [collectWithId, finished])
+
+  startRef.current = (j: Job) => (j.kind === 'run' ? startRun(j) : startExplain(j))
+  const enqueue = useCallback((j: Job) => {
+    if (runningRef.current) {
+      // One waiting job per tab: pressing Run again replaces it.
+      waiting.current = [...waiting.current.filter((w) => w.tab !== j.tab), j]
+      setWaitingTabs(waiting.current.map((w) => w.tab))
+      return
+    }
+    startRef.current(j)
+  }, [])
+
+  const run = useCallback((text: string, key = activeRef.current) => {
+    const stmt = text.trim()
+    if (!stmt) return
+    const t = tabs.find((x) => x.key === key)
+    enqueue({ tab: key, kind: 'run', text: stmt, maxRows: t?.maxRows ?? 1000 })
+  }, [enqueue, tabs])
 
   // admin sends one administrative operation to the agent's helper. The
   // agent records a mutation (redacted) before running it and refuses the
@@ -337,8 +463,12 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }), [send]) as Admin
 
   const cancel = useCallback(() => {
-    if (running !== null) send({ id: running, op: 'cancel' })
-  }, [running, send])
+    const r = runningRef.current
+    if (r && r.id > 0) send({ id: r.id, op: 'cancel' })
+    // What was waiting for this tab goes too.
+    waiting.current = waiting.current.filter((w) => w.tab !== activeRef.current)
+    setWaitingTabs(waiting.current.map((w) => w.tab))
+  }, [send])
 
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -374,14 +504,22 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const completion = useCompletion({
     ref: editorRef, value: sql, setValue: setSql, complete: completeHere, refresh: columnsVersion,
   })
-  const runSelectionOrAll = useCallback(() => {
+  const selectionOrAll = useCallback(() => {
     const el = editorRef.current
-    if (el && el.selectionStart !== el.selectionEnd) {
-      run(el.value.slice(el.selectionStart, el.selectionEnd))
-    } else {
-      run(sql)
+    return el && el.selectionStart !== el.selectionEnd ? el.value.slice(el.selectionStart, el.selectionEnd) : sql
+  }, [sql])
+  const runSelectionOrAll = useCallback(() => run(selectionOrAll()), [run, selectionOrAll])
+  const explain = useCallback((mode: PlanRun['mode']) => {
+    const text = selectionOrAll().trim()
+    if (!text) return
+    if (!explainable(text)) {
+      setPlans((p) => ({ ...p, [activeRef.current]: { mode, plan: null, running: false,
+        error: 'EXPLAIN takes a SELECT, INSERT, UPDATE, DELETE, MERGE, VALUES or EXECUTE. Select just that statement and try again.' } }))
+      setShown((v) => ({ ...v, [activeRef.current]: 'plan' }))
+      return
     }
-  }, [run, sql])
+    enqueue({ tab: activeRef.current, kind: 'explain', text, mode })
+  }, [enqueue, selectionOrAll])
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (completion.onKeyDown(e)) return
@@ -389,12 +527,16 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       e.preventDefault()
       runSelectionOrAll()
     }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault()
+      if (sql.trim()) setSaving(true)
+    }
   }
 
   const insert = (text: string) => {
     const el = editorRef.current
     if (!el) {
-      setSql((s) => s + text)
+      setSql(sql + text)
       return
     }
     const a = el.selectionStart
@@ -427,23 +569,274 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     URL.revokeObjectURL(a.href)
   }
 
+  /* Tabs */
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  const openTab = useCallback((init?: Partial<QueryTab>) => {
+    const ts = tabsRef.current
+    if (ts.length >= MAX_TABS) {
+      notifyWarn('Too many tabs', `Close one first; a database keeps up to ${MAX_TABS}.`)
+      return ''
+    }
+    const t = { ...blankTab(ts, init?.sql ?? '', init?.name), ...init, key: newKey() }
+    tabsRef.current = [...ts, t]
+    setTabs(tabsRef.current)
+    setActive(t.key)
+    activeRef.current = t.key
+    return t.key
+  }, [])
+  const closeTab = (key: string) => {
+    if (running?.tab === key) return
+    waiting.current = waiting.current.filter((w) => w.tab !== key)
+    setWaitingTabs(waiting.current.map((w) => w.tab))
+    setResults(({ [key]: _r, ...rest }) => rest)
+    setPlans(({ [key]: _p, ...rest }) => rest)
+    setTabs((ts) => {
+      const i = ts.findIndex((t) => t.key === key)
+      const left = ts.filter((t) => t.key !== key)
+      const next = left.length ? left : [blankTab([])]
+      if (key === activeRef.current) setActive(next[Math.max(0, Math.min(i, next.length - 1))]!.key)
+      return next
+    })
+  }
+  const openSaved = (q: SavedQuery) => {
+    const had = tabs.find((t) => t.savedId && t.savedId === q.id)
+    if (had) setActive(had.key)
+    else openTab({ name: q.name, named: true, sql: q.sql, savedId: q.mine ? q.id : undefined, savedSql: q.mine ? q.sql : undefined })
+    setPanel('query')
+    setView('query')
+    if (narrow) tree.close()
+  }
+
+  /* Editor height: dragged, double-click resets, kept in this browser. */
+  const defaultH = narrow ? DEFAULT_H.narrow : DEFAULT_H.wide
+  const [editorH, setEditorH] = useState(() => loadEditorHeight(defaultH))
+  const area = useRef<HTMLDivElement | null>(null)
+  const dragH = useRef<{ y: number; h: number } | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const onGripDown = (e: React.PointerEvent) => {
+    e.preventDefault()
+    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+    dragH.current = { y: e.clientY, h: editorH }
+    setDragging(true)
+  }
+  const onGripMove = (e: React.PointerEvent) => {
+    const d = dragH.current
+    if (!d) return
+    const room = narrow ? window.innerHeight - 220 : (area.current?.clientHeight ?? 600) - 180
+    setEditorH(Math.round(Math.max(80, Math.min(Math.max(120, room), d.h + e.clientY - d.y))))
+  }
+  const onGripUp = () => {
+    if (!dragH.current) return
+    dragH.current = null
+    setDragging(false)
+    saveEditorHeight(editorH)
+  }
+  const onGripKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      const h = Math.max(80, editorH + (e.key === 'ArrowUp' ? -20 : 20))
+      setEditorH(h)
+      saveEditorHeight(h)
+    }
+  }
+
+  const [schemaNames, setSchemaNames] = useState<string[] | null>(null)
+  useEffect(() => {
+    if (view === 'diagram' && schemaNames === null) void schema('schemas').then((o) => setSchemaNames(o.map((s) => s.name)))
+  }, [view, schemaNames, schema])
+
   const level = ready?.level ?? access.level
   const bar = (
     <LeftBar
       database={database}
       level={level}
       schema={schema}
-      onPick={(q) => { insert(q); if (narrow) tree.close() }}
-      onRun={(q) => { setSql(q); setPanel('query'); run(q); if (narrow) tree.close() }}
+      onPick={(q) => { setView('query'); insert(q); if (narrow) tree.close() }}
+      onRun={(q) => { setSql(q); setPanel('query'); setView('query'); run(q); if (narrow) tree.close() }}
       history={history}
       panel={panel}
-      onPanel={(p) => { setPanel(p); if (narrow) tree.close() }}
+      onPanel={(p) => { setPanel(p); setView('query'); if (narrow) tree.close() }}
+      onOpenSaved={openSaved}
+      orgAdmin={Boolean(orgAdmin)}
     />
   )
   const adminProps = {
     collect, admin, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
     onBack: () => setPanel('query'), onAskForAccess,
   }
+  const busyElsewhere = running !== null && running.tab !== tab.key
+  const waitingHere = waitingTabs.includes(tab.key)
+  const runningHere = running?.tab === tab.key
+  const runningName = running ? tabs.find((t) => t.key === running.tab)?.name ?? 'another tab' : ''
+  const dirty = Boolean(tab.savedId) && tab.sql !== tab.savedSql
+  const canRun = status === 'ready' && Boolean(sql.trim()) && !runningHere
+
+  const tabStrip = (
+    <Group gap={2} px={narrow ? 6 : 'sm'} pt={6} wrap="nowrap" align="flex-end"
+      style={{ borderBottom: '1px solid var(--color-line)', background: 'var(--color-void)', overflowX: 'auto', scrollbarWidth: 'none' }}
+      role="tablist" aria-label="Query tabs">
+      {tabs.map((t) => {
+        const on = t.key === tab.key
+        const r = results[t.key]
+        const p = plans[t.key]
+        const isRunning = running?.tab === t.key
+        const failed = !isRunning && (Boolean(r?.error) || Boolean(p?.error))
+        const changed = Boolean(t.savedId) && t.sql !== t.savedSql
+        return (
+          <Group key={t.key} gap={6} wrap="nowrap" role="tab" aria-selected={on} tabIndex={0}
+            onClick={() => setActive(t.key)} onKeyDown={(e) => { if (e.key === 'Enter') setActive(t.key) }}
+            onDoubleClick={() => setRenaming(t.key)}
+            px={narrow ? 9 : 12} py={7}
+            style={{ flexShrink: 0, maxWidth: narrow ? 160 : 230, cursor: 'pointer', borderRadius: '7px 7px 0 0',
+              border: '1px solid', borderColor: on ? 'var(--color-line)' : 'transparent', borderBottom: 0,
+              marginBottom: on ? -1 : 0, background: on ? 'var(--color-surface)' : undefined }}>
+            {isRunning && <Box w={8} h={8} style={{ borderRadius: 4, background: 'var(--color-brand)', boxShadow: '0 0 0 3px var(--mantine-color-azure-light)', flexShrink: 0 }} aria-label="running" />}
+            {!isRunning && waitingTabs.includes(t.key) && <Loader size={10} />}
+            {failed && <Box w={8} h={8} style={{ borderRadius: 4, background: 'var(--mantine-color-rose-6)', flexShrink: 0 }} aria-label="failed" />}
+            {renaming === t.key ? (
+              <TextInput size="xs" autoFocus defaultValue={t.name} w={140} onClick={(e) => e.stopPropagation()}
+                onBlur={(e) => { const v = e.currentTarget.value.trim(); if (v) patchTab(t.key, (x) => ({ ...x, name: v.slice(0, 60), named: true })); setRenaming(null) }}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setRenaming(null) }}
+                aria-label="Tab name" />
+            ) : (
+              <Text size={FS.meta} fw={on ? 500 : 400} c={on ? undefined : 'dimmed'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                title={narrow ? t.name : `${t.name} · double-click to rename`}>
+                {t.name}{changed ? ' ●' : ''}
+              </Text>
+            )}
+            {!narrow && r?.done && !isRunning && (
+              <Badge size="xs" variant="light" color="slate" radius="xl" style={{ flexShrink: 0 }}>{r.rows.length.toLocaleString()}</Badge>
+            )}
+            {(on || !narrow) && tabs.length > 1 && (
+              <CloseButton size="xs" aria-label={`Close ${t.name}`} disabled={isRunning}
+                onClick={(e) => { e.stopPropagation(); closeTab(t.key) }} />
+            )}
+          </Group>
+        )
+      })}
+      <Tooltip label={tabs.length >= MAX_TABS ? `Up to ${MAX_TABS} tabs` : 'New tab'} withArrow>
+        <UnstyledButton onClick={() => openTab()} px={10} py={7} disabled={tabs.length >= MAX_TABS}
+          style={{ flexShrink: 0, color: 'var(--color-brand)', fontWeight: 600, fontSize: 13, position: narrow ? 'sticky' : undefined, right: 0,
+            background: narrow ? 'var(--color-void)' : undefined, marginLeft: narrow ? 'auto' : undefined }}
+          aria-label="New tab">
+          {narrow ? '+' : '+ New tab'}
+        </UnstyledButton>
+      </Tooltip>
+    </Group>
+  )
+
+  const rowLimit = (
+    <select value={tab.maxRows} onChange={(e) => { const n = Number(e.currentTarget.value); patchTab(tab.key, (t) => ({ ...t, maxRows: n })) }}
+      style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--color-line)', background: 'var(--color-surface)', color: 'inherit' }}
+      aria-label="Row limit">
+      {[100, 1000, 10000, 100000].map((n) => <option key={n} value={n}>{n.toLocaleString()} rows</option>)}
+    </select>
+  )
+  const explainMenu = (
+    <Menu position="bottom-start" withinPortal width={280}>
+      <Menu.Target>
+        <Button size="xs" variant="default" rightSection={<IconChevronDown size={12} />} disabled={status !== 'ready' || !sql.trim() || runningHere}>
+          Explain
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Item onClick={() => explain('plan')}>
+          <Text size={FS.meta} fw={600}>Explain</Text>
+          <Text size={FS.micro} c="dimmed">Shows the plan. Runs nothing.</Text>
+        </Menu.Item>
+        <Menu.Item onClick={() => explain('analyze')}>
+          <Text size={FS.meta} fw={600}>Explain analyze</Text>
+          <Text size={FS.micro} c="dimmed">Runs it to time each step. A statement that writes is rolled back.</Text>
+        </Menu.Item>
+        <Menu.Item onClick={() => explain('buffers')}>
+          <Text size={FS.meta} fw={600}>Explain analyze, buffers</Text>
+          <Text size={FS.micro} c="dimmed">Also shows cache hits and disk reads.</Text>
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  )
+  const runLabel = runningHere ? 'Running…' : busyElsewhere ? (waitingHere ? `Waiting for ${runningName}` : `Run after ${runningName}`) : 'Run'
+
+  const toolbar = (
+    <Group gap="xs" px={narrow ? 'sm' : 'md'} py={SP.cozy} wrap={narrow ? 'nowrap' : 'wrap'} style={{ borderBottom: '1px solid var(--color-line)' }}>
+      <Button size="xs" leftSection={runningHere ? <Loader size={12} color="white" /> : <IconPlayerPlay size={14} />} onClick={runSelectionOrAll}
+        disabled={!canRun} style={narrow ? { flex: 1, minWidth: 0 } : undefined}
+        styles={{ label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}>
+        {runLabel}
+      </Button>
+      {explainMenu}
+      {narrow ? (
+        <>
+          <ActionIcon size={30} variant="default" onClick={() => setSaving(true)} disabled={!sql.trim()} aria-label="Save query">
+            <IconStar size={14} />
+          </ActionIcon>
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon size={30} variant="default" aria-label="More"><IconDots size={14} /></ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item leftSection={<IconPlayerStop size={14} />} onClick={cancel} disabled={!runningHere && !waitingHere}>Cancel</Menu.Item>
+              <Menu.Item leftSection={<IconDownload size={14} />} onClick={exportCsv} disabled={!result || result.rows.length === 0}>Export CSV</Menu.Item>
+              <Menu.Divider />
+              <Box px="sm" py={6}><Group gap={6}><Text size={FS.micro} c="dimmed">Show up to</Text>{rowLimit}</Group></Box>
+            </Menu.Dropdown>
+          </Menu>
+        </>
+      ) : (
+        <>
+          <Button size="xs" variant="default" leftSection={<IconStar size={14} />} onClick={() => setSaving(true)} disabled={!sql.trim()}>
+            {dirty ? 'Save changes' : 'Save'}
+          </Button>
+          <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={cancel}
+            disabled={!runningHere && !waitingHere}>
+            Cancel
+          </Button>
+          <Group gap={4} wrap="nowrap">
+            <Text size={FS.micro} c="dimmed">Show up to</Text>
+            {rowLimit}
+          </Group>
+          {busyElsewhere && (
+            <Group gap={6} wrap="nowrap">
+              <Loader size={12} />
+              <Text size={FS.micro} c="var(--color-brand)">{runningName} is running</Text>
+            </Group>
+          )}
+          <Button size="xs" variant="subtle" ml="auto" leftSection={<IconDownload size={14} />} onClick={exportCsv}
+            disabled={!result || result.rows.length === 0}>
+            Export CSV
+          </Button>
+        </>
+      )}
+    </Group>
+  )
+
+  const grip = (
+    <Box role="separator" aria-orientation="horizontal" aria-label="Resize the editor" tabIndex={0}
+      onPointerDown={onGripDown} onPointerMove={onGripMove} onPointerUp={onGripUp} onPointerCancel={onGripUp}
+      onDoubleClick={() => { setEditorH(defaultH); saveEditorHeight(null) }} onKeyDown={onGripKey}
+      title="Drag to resize · double-click to reset"
+      style={{ height: narrow ? 16 : 9, flexShrink: 0, cursor: 'row-resize', touchAction: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: dragging ? 'var(--mantine-color-azure-light)' : 'var(--color-void)', borderBottom: '1px solid var(--color-line)' }}>
+      <Box w={36} h={3} style={{ borderRadius: 2, background: dragging ? 'var(--color-brand)' : 'var(--mantine-color-dimmed)', opacity: dragging ? 1 : 0.6 }} />
+    </Box>
+  )
+
+  const resultTabs = plan && (
+    <Group gap="md" px={narrow ? 'sm' : 'md'} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
+      {(['results', 'plan', 'raw'] as const).map((v) => (
+        <UnstyledButton key={v} onClick={() => setShown((s) => ({ ...s, [tab.key]: v }))} py={8}
+          style={{ borderBottom: resultView === v ? '2px solid var(--color-brand)' : '2px solid transparent', marginBottom: -1 }}>
+          <Text size={FS.meta} fw={resultView === v ? 600 : 400} c={resultView === v ? undefined : 'dimmed'}>
+            {v === 'results' ? 'Results' : v === 'plan' ? 'Plan' : 'Raw'}
+          </Text>
+        </UnstyledButton>
+      ))}
+      <Text size={FS.micro} c="dimmed" ml="auto" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {plan.running ? 'Asking for the plan…' : planSummary(plan)}
+      </Text>
+    </Group>
+  )
 
   return (
     <Box style={{ display: 'flex', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
@@ -457,33 +850,46 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         </Box>
       )}
 
-      <Box style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <Group gap="xs" px="md" py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
+      <Box ref={area} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <Group gap="xs" px={narrow ? 'sm' : 'md'} py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
           {narrow && (
             <ActionIcon variant="subtle" onClick={tree.open} aria-label="Open the object tree">
               <IconMenu2 size={18} />
             </ActionIcon>
           )}
-          <IconDatabase size={16} color="var(--color-brand)" />
-          <Text fw={650} size={FS.body}>{database.dbname}</Text>
-          {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace">{database.hostname}{ready?.version ? ` · Postgres ${ready.version.split(' ')[0]}` : ''}{ready?.via === 'pgbouncer' ? ' · via PgBouncer' : ''}</Text>}
-          <Badge variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[database.label]} radius="sm">
-            {database.label}
+          {!narrow && <IconDatabase size={16} color="var(--color-brand)" />}
+          <Text fw={650} size={FS.body} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{database.dbname}</Text>
+          {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace" style={{ whiteSpace: 'nowrap' }}>{database.hostname}{ready?.version ? ` · Postgres ${ready.version.split(' ')[0]}` : ''}{ready?.via === 'pgbouncer' ? ' · via PgBouncer' : ''}</Text>}
+          <Badge variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[database.label]} radius="sm" style={{ flexShrink: 0 }}>
+            {narrow ? database.label.slice(0, 4) : database.label}
           </Badge>
-          <Group gap={6} ml="auto" wrap="nowrap">
-            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">
-              You can: {level ? level.toUpperCase() : '…'}
-            </Badge>
-            {(access.approvable || onAskForAccess) && level === 'read' && (
-              <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
-                {narrow ? 'Ask' : 'Ask for write access'}
-              </Button>
-            )}
-            <Badge variant="light" color="rose" radius="sm" leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
-              {status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'}
-            </Badge>
-          </Group>
+          <SegmentedControl size="xs" ml={narrow ? 'auto' : 'sm'} value={view} onChange={(v) => { setView(v as 'query' | 'diagram'); setPanel('query') }}
+            data={[{ label: 'Query', value: 'query' }, { label: 'Diagram', value: 'diagram' }]} aria-label="View" />
+          {!narrow && (
+            <Group gap={6} ml="auto" wrap="nowrap">
+              <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">
+                You can: {level ? level.toUpperCase() : '…'}
+              </Badge>
+              {(access.approvable || onAskForAccess) && level === 'read' && (
+                <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
+                  Ask for write access
+                </Button>
+              )}
+              <Badge variant="light" color="rose" radius="sm" leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
+                {status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'}
+              </Badge>
+            </Group>
+          )}
         </Group>
+        {narrow && (
+          <Group gap={6} px="sm" py={6} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
+            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">You can: {level ? level.toUpperCase() : '…'}</Badge>
+            {(access.approvable || onAskForAccess) && level === 'read' && (
+              <Button size="compact-xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>Ask</Button>
+            )}
+            <Badge variant="light" color="rose" radius="sm" ml="auto">{status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'}</Badge>
+          </Group>
+        )}
 
         {fatal && (
           <Box px="md" py={SP.cozy} style={{ background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
@@ -491,60 +897,54 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           </Box>
         )}
 
-        {panel === 'activity' && <ActivityPanel {...adminProps} />}
-        {panel === 'roles' && <RolesPanel {...adminProps} />}
-        {panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
-        {panel === 'replication' && <ReplicationPanel {...adminProps} />}
-        {panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(orgAdmin)} />}
-        {panel === 'query' && <>
-        <Box style={{ borderBottom: '1px solid var(--color-line)' }}>
+        {view === 'diagram' && (
+          <Box style={{ flex: 1, minHeight: narrow ? 0 : 0 }}>
+            {schemaNames === null ? <Loader size={14} m="md" /> : (
+              <SchemaDiagram databaseId={database.id} schemas={schemaNames} collect={collect} narrow={narrow}
+                onQuery={(text, name) => { const k = openTab({ sql: text, name, named: true }); setView('query'); if (k) run(text, k) }} />
+            )}
+          </Box>
+        )}
+        {view === 'query' && panel === 'activity' && <ActivityPanel {...adminProps} />}
+        {view === 'query' && panel === 'roles' && <RolesPanel {...adminProps} />}
+        {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
+        {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} />}
+        {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(orgAdmin)} />}
+        {view === 'query' && panel === 'query' && <>
+        {tabStrip}
+        <Box style={{ flexShrink: 0 }}>
           <Textarea
             ref={editorRef}
             value={sql}
             {...completion.editorProps}
             onChange={(e) => { completion.onTyped(); setSql(e.currentTarget.value) }}
             onKeyDown={onKey}
-            placeholder="SELECT … (⌘/Ctrl+Enter runs; select part of it to run only that; Ctrl+Space suggests)"
-            autosize
-            minRows={narrow ? 4 : 7}
-            maxRows={16}
+            placeholder={narrow ? 'SELECT …' : 'SELECT … (⌘/Ctrl+Enter runs; select part of it to run only that; Ctrl+Space suggests; Ctrl+S saves)'}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
             aria-label="SQL"
-            styles={{ input: { fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: '21px', border: 0, borderRadius: 0 } }}
+            styles={{ input: { fontFamily: 'var(--font-mono)', fontSize: narrow ? 12 : 13, lineHeight: '21px', border: 0, borderRadius: 0,
+              height: editorH, minHeight: 80, resize: 'none' } }}
           />
           {completion.popup}
         </Box>
-        <Group gap="xs" px="md" py={SP.cozy} wrap="wrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-          <Button size="xs" leftSection={<IconPlayerPlay size={14} />} onClick={runSelectionOrAll}
-            disabled={status !== 'ready' || running !== null || !sql.trim()}>
-            Run
-          </Button>
-          <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={cancel}
-            disabled={running === null}>
-            Cancel
-          </Button>
-          <Group gap={4} wrap="nowrap">
-            <Text size={FS.micro} c="dimmed">Show up to</Text>
-            <select value={maxRows} onChange={(e) => setMaxRows(Number(e.currentTarget.value))}
-              style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--color-line)', background: 'var(--color-surface)', color: 'inherit' }}
-              aria-label="Row limit">
-              {[100, 1000, 10000, 100000].map((n) => <option key={n} value={n}>{n.toLocaleString()} rows</option>)}
-            </select>
-          </Group>
-          {running !== null && <Loader size={14} />}
-          <Button size="xs" variant="subtle" ml="auto" leftSection={<IconDownload size={14} />} onClick={exportCsv}
-            disabled={!result || result.rows.length === 0}>
-            Export CSV
-          </Button>
-        </Group>
+        {grip}
+        {toolbar}
 
         <Box style={{ flex: 1, minHeight: narrow ? 320 : 0, display: 'flex', flexDirection: 'column' }}>
-          <Results result={result} narrow={narrow} />
+          {resultTabs}
+          {plan && resultView !== 'results'
+            ? <ExplainView run={plan} raw={resultView === 'raw'} narrow={narrow} />
+            : <Results result={result} narrow={narrow} />}
         </Box>
         </>}
       </Box>
+      {saving && (
+        <SaveQueryDialog opened={saving} onClose={() => setSaving(false)} databaseId={database.id} databaseName={database.dbname}
+          initial={{ id: tab.savedId, name: tab.name, sql: tab.sql, shared: false }}
+          onSaved={(q) => patchTab(tab.key, (t) => ({ ...t, name: q.name, named: true, savedId: q.id, savedSql: q.sql }))} />
+      )}
     </Box>
   )
 }
@@ -654,7 +1054,7 @@ const td: React.CSSProperties = {
 
 /* ── Left bar ───────────────────────────────────────────────────────────── */
 
-function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPanel }: {
+function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPanel, onOpenSaved, orgAdmin }: {
   database: Database
   level: DBLevel | ''
   schema: (kind: string, schemaName?: string, object?: string) => Promise<Obj[]>
@@ -663,6 +1063,8 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
   history: { sql: string; at: number; ok: boolean }[]
   panel: Panel
   onPanel: (p: Panel) => void
+  onOpenSaved: (q: SavedQuery) => void
+  orgAdmin: boolean
 }) {
   const [schemas, setSchemas] = useState<Obj[] | null>(null)
   useEffect(() => { void schema('schemas').then(setSchemas) }, [schema])
@@ -685,9 +1087,11 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
       <Tabs value={tab} onChange={setTab} variant="pills" radius="sm">
         <Tabs.List grow>
           <Tabs.Tab value="objects" fz={FS.meta}>Objects</Tabs.Tab>
+          <Tabs.Tab value="saved" fz={FS.meta}>Saved</Tabs.Tab>
           <Tabs.Tab value="history" fz={FS.meta}>History</Tabs.Tab>
         </Tabs.List>
       </Tabs>
+      {tab === 'saved' && <SavedQueriesList databaseId={database.id} onOpen={onOpenSaved} admin={orgAdmin} />}
       {tab === 'objects' && (
         <Box>
           <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={4} py={4} style={{ letterSpacing: '.06em' }}>Schemas</Text>

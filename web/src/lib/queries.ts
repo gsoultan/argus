@@ -37,6 +37,10 @@ import {
   cancelRestore as liveCancelRestore,
   undoRestore as liveUndoRestore,
   setBackupSchedule as liveSetBackupSchedule,
+  savedQueries as liveSavedQueries,
+  saveQuery as liveSaveQuery,
+  updateSavedQuery as liveUpdateSavedQuery,
+  deleteSavedQuery as liveDeleteSavedQuery,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -533,6 +537,27 @@ export const dbqk = {
   databases: ['databases'] as const,
   database: (id: string) => ['database', id] as const,
   dbAssignments: (id: string) => ['database', id, 'assignments'] as const,
+}
+
+export const savedQueriesQuery = (dbId: string) =>
+  queryOptions({ queryKey: [...dbqk.database(dbId), 'saved-queries'] as const, queryFn: () => liveSavedQueries(dbId), enabled: isConfigured() })
+
+export function useSaveQuery(dbId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (q: { id?: string; name: string; sql: string; shared: boolean }) =>
+      q.id ? liveUpdateSavedQuery(dbId, q.id, { name: q.name, sql: q.sql, shared: q.shared })
+        : liveSaveQuery(dbId, { name: q.name, sql: q.sql, shared: q.shared }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...dbqk.database(dbId), 'saved-queries'] }),
+  })
+}
+
+export function useDeleteSavedQuery(dbId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => liveDeleteSavedQuery(dbId, id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...dbqk.database(dbId), 'saved-queries'] }),
+  })
 }
 
 export const databasesQuery = () =>

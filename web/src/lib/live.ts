@@ -1443,6 +1443,66 @@ export async function databasePoolerSetup(id: string): Promise<DBPoolerSetup> {
   return get(`/api/v1/databases/${encodeURIComponent(id)}/pooler-setup`)
 }
 
+/** One database, Redis db or vhost the agent found on a server. */
+export interface DiscoveredDB {
+  name: string
+  owner?: string
+  bytes?: number
+  keys?: number
+  /** This server already has an entry by this name. */
+  added?: boolean
+}
+
+/** What the agent found; state says why the list is empty when it is. */
+export interface DiscoverAnswer {
+  state: 'ok' | 'offline' | 'unsupported' | 'failed'
+  error?: string
+  version?: string
+  databases: DiscoveredDB[]
+  configured?: number
+  truncated?: boolean
+}
+
+export async function discoverDatabases(assetId: string, q: {
+  engine: DBEngine; port?: number; host?: string; configPath?: string
+}): Promise<DiscoverAnswer> {
+  const p = new URLSearchParams({ engine: q.engine })
+  if (q.port) p.set('port', String(q.port))
+  if (q.host) p.set('host', q.host)
+  if (q.configPath) p.set('configPath', q.configPath)
+  return get<DiscoverAnswer>(`/api/v1/assets/${encodeURIComponent(assetId)}/databases/discover?${p}`)
+}
+
+/** A query someone kept on a database; text only. */
+export interface SavedQuery {
+  id: string
+  owner: string
+  name: string
+  sql: string
+  shared: boolean
+  mine: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export async function savedQueries(dbId: string): Promise<SavedQuery[]> {
+  const r = await get<{ queries: SavedQuery[] }>(`/api/v1/databases/${encodeURIComponent(dbId)}/saved-queries`)
+  return r.queries ?? []
+}
+
+export async function saveQuery(dbId: string, q: { name: string; sql: string; shared: boolean }): Promise<SavedQuery> {
+  return post<SavedQuery>(`/api/v1/databases/${encodeURIComponent(dbId)}/saved-queries`, q)
+}
+
+export async function updateSavedQuery(dbId: string, id: string,
+  q: { name?: string; sql?: string; shared?: boolean }): Promise<SavedQuery> {
+  return send<SavedQuery>('PUT', `/api/v1/databases/${encodeURIComponent(dbId)}/saved-queries/${encodeURIComponent(id)}`, q)
+}
+
+export async function deleteSavedQuery(dbId: string, id: string): Promise<void> {
+  await send('DELETE', `/api/v1/databases/${encodeURIComponent(dbId)}/saved-queries/${encodeURIComponent(id)}`)
+}
+
 export async function deleteDatabase(id: string): Promise<void> {
   await send('DELETE', `/api/v1/databases/${encodeURIComponent(id)}`)
 }

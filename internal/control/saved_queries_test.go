@@ -71,7 +71,7 @@ func TestSavedQueriesStayWithTheirDatabaseAndAuthor(t *testing.T) {
 	}
 
 	// An admin may take a shared query down; it is in the audit log.
-	if w := do(t, h, http.MethodDelete, base+"/"+q.ID, "admin-token", ""); w.Code != http.StatusNoContent {
+	if w := do(t, h, http.MethodDelete, base+"/"+q.ID, "admin-token", ""); w.Code != http.StatusOK {
 		t.Fatalf("admin remove: %d %s", w.Code, w.Body)
 	}
 	if _, l := list("ana"); len(l) != 0 {
