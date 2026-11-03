@@ -29,6 +29,14 @@ export function describeTunnel(t: AgentTunnel | undefined): {
       detail: 'Over QUIC, the fast path.',
     }
   }
+  if (t.transport === 'websocket') {
+    return {
+      label: `Connected over WebSocket${rtt}`,
+      color: 'teal',
+      detail:
+        'Through a proxy that carries web traffic only, such as a Cloudflare Tunnel. As fast as the HTTPS fallback; QUIC is not available through it.',
+    }
+  }
   return {
     label: `Connected over HTTPS${rtt}`,
     color: 'amber',

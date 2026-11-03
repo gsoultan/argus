@@ -2,6 +2,7 @@ package control
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -202,5 +203,28 @@ func TestTheInstallScriptFindsTheNewestRelease(t *testing.T) {
 	want := "curl -fsSLO https://github.com/gsoultan/argus/releases/download/v2.0.0/argus-agent_2.0.0_linux_amd64.deb"
 	if !strings.Contains(log, want) {
 		t.Errorf("the script did not fetch the newest release\nwant %q\ngot:\n%s", want, log)
+	}
+}
+
+// pin=off: the console found a public certificate in front (a Cloudflare
+// Tunnel), so the agent must enrol with ordinary verification. A pin of this
+// process's key would make it refuse the proxy's.
+func TestPinOffLeavesThePinOutOfTheScript(t *testing.T) {
+	a := pinAPI("", nil)
+	run := func(extra string) string {
+		q := url.Values{"token": {goodToken}, "version": {"1.4.0"}, "url": {"https://argus.example.com"}}
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/install/agent.sh?"+q.Encode()+extra, nil)
+		w := httptest.NewRecorder()
+		a.getInstallScript(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+	if body := run(""); !strings.Contains(body, "PIN='"+ownPin+"'") {
+		t.Error("without pin=off the script lost its pin")
+	}
+	if body := run("&pin=off"); !strings.Contains(body, "PIN=''") {
+		t.Error("pin=off still wrote a pin into the script")
 	}
 }

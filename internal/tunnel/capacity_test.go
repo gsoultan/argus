@@ -52,7 +52,7 @@ func TestCapacityOfOneTunnel(t *testing.T) {
 	fmt.Printf("\n%-5s %-6s %12s %12s %10s %10s %14s\n",
 		"rtt", "trans", "1 stream", "8 streams", "echo p50", "echo p99", "echo p99 bulk")
 	for _, rtt := range []time.Duration{0, 20 * time.Millisecond, 80 * time.Millisecond} {
-		for _, tr := range []Transport{TransportUpgrade, TransportQUIC} {
+		for _, tr := range []Transport{TransportUpgrade, TransportWebSocket, TransportQUIC} {
 			ctl, _ := capacityPair(t, tr, rtt)
 			size := int64(bulkBytes)
 			if rtt > 0 {
@@ -186,6 +186,12 @@ func capacityPair(t *testing.T, tr Transport, rtt time.Duration) (ctl, agent Ses
 	t.Helper()
 	got := make(chan Session, 1)
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if IsWebSocketUpgrade(r) {
+			if s, err := AcceptWebSocket(w, r); err == nil {
+				got <- s
+			}
+			return
+		}
 		conn, buf, err := http.NewResponseController(w).Hijack()
 		if err != nil {
 			return
@@ -212,6 +218,15 @@ func capacityPair(t *testing.T, tr Transport, rtt time.Duration) (ctl, agent Ses
 		front := delayTCP(t, srv.Listener.Addr().String(), rtt/2)
 		o.ControlURL = "https://" + front
 		a, _, err := DialUpgrade(ctx, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent = a
+		ctl = <-got
+	case TransportWebSocket:
+		front := delayTCP(t, srv.Listener.Addr().String(), rtt/2)
+		o.ControlURL = "https://" + front
+		a, err := DialWebSocket(ctx, o)
 		if err != nil {
 			t.Fatal(err)
 		}

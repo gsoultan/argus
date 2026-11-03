@@ -288,8 +288,9 @@ func (a *API) handleTunnelUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "this control plane does not accept agent tunnels")
 		return
 	}
-	if !strings.EqualFold(r.Header.Get("Upgrade"), tunnel.UpgradeToken) {
-		writeErr(w, http.StatusBadRequest, "expected Upgrade: "+tunnel.UpgradeToken)
+	ws := tunnel.IsWebSocketUpgrade(r)
+	if !ws && !strings.EqualFold(r.Header.Get("Upgrade"), tunnel.UpgradeToken) {
+		writeErr(w, http.StatusBadRequest, "expected Upgrade: "+tunnel.UpgradeToken+" or websocket")
 		return
 	}
 	id, host, ok := a.credentialFor(r.Context(), bearer(r))
@@ -301,6 +302,21 @@ func (a *API) handleTunnelUpgrade(w http.ResponseWriter, r *http.Request) {
 	if claimed := r.Header.Get("Argus-Hostname"); claimed != "" && !strings.EqualFold(claimed, host) {
 		writeErr(w, http.StatusForbidden,
 			"this agent is enrolled as "+host+" and may only connect as that host")
+		return
+	}
+
+	if ws {
+		// Through a proxy that forwards WebSockets only; see
+		// tunnel/transport_ws.go. No QUIC port: the proxy will not carry it.
+		if k := a.Tunnels.grantKeyPublic(r.Context()); k != "" {
+			w.Header().Set(tunnel.GrantKeyHeader, k)
+		}
+		sess, err := tunnel.AcceptWebSocket(w, r)
+		if err != nil {
+			a.log.Warn("tunnel: WebSocket handshake failed", "host", host, "error", err)
+			return
+		}
+		a.Tunnels.admit(r.Context(), id, host, sess)
 		return
 	}
 

@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/http"
@@ -24,8 +25,11 @@ such a proxy anyway: its tunnel and its reports need this process directly.
 
 So before handing out a pin, the control plane connects to that address the
 way a server would and looks at the key it is shown. The same key: the pin is
-right. Another key: the command would fail, and the console says what to set
-instead of showing it. No answer at all (a control plane that cannot reach its
+right. Another key from a publicly trusted certificate (Cloudflare's): no pin
+is needed, curl and the agent verify it the ordinary way, and agents connect
+through it over a WebSocket (see tunnel/transport_ws.go). Another key that
+nothing public vouches for: the command would fail, and the console says what
+to set instead of showing it. No answer at all (a control plane that cannot reach its
 own public name, which is common behind NAT) says nothing either way, and the
 pin is handed out as before.
 
@@ -37,12 +41,22 @@ but it should not be a way to ask this host to dial anywhere.
 // pinProbeTimeout bounds the probe. Minting a token waits for it.
 const pinProbeTimeout = 4 * time.Second
 
-// probeServerPin connects to hostport and returns the pin of the key the
-// server there presents. It verifies nothing: it only reports what it saw.
-func probeServerPin(ctx context.Context, hostport string) (string, error) {
+// PinProbeResult is what a probe saw at an address.
+type PinProbeResult struct {
+	// Pin is of the key the server presented.
+	Pin string
+	// Public says the system trust store accepts the certificate for the
+	// address's name, as curl and the agent would without a pin.
+	Public bool
+}
+
+// probeServerPin connects to hostport and reports the key the server there
+// presents and whether a public CA vouches for it. It trusts nothing: it only
+// reports what it saw.
+func probeServerPin(ctx context.Context, hostport string) (PinProbeResult, error) {
 	host, _, err := net.SplitHostPort(hostport)
 	if err != nil {
-		return "", err
+		return PinProbeResult{}, err
 	}
 	d := tls.Dialer{Config: &tls.Config{
 		ServerName: host,
@@ -53,14 +67,19 @@ func probeServerPin(ctx context.Context, hostport string) (string, error) {
 	}}
 	conn, err := d.DialContext(ctx, "tcp", hostport)
 	if err != nil {
-		return "", err
+		return PinProbeResult{}, err
 	}
 	defer conn.Close()
 	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
 	if len(certs) == 0 {
-		return "", errors.New("no certificate presented")
+		return PinProbeResult{}, errors.New("no certificate presented")
 	}
-	return tlsconfig.Pin(certs[0]), nil
+	inter := x509.NewCertPool()
+	for _, c := range certs[1:] {
+		inter.AddCert(c)
+	}
+	_, verr := certs[0].Verify(x509.VerifyOptions{Intermediates: inter, DNSName: host})
+	return PinProbeResult{Pin: tlsconfig.Pin(certs[0]), Public: verr == nil}, nil
 }
 
 // enrolAddress is where an install command made from r reaches this control
@@ -114,14 +133,21 @@ func (a *API) enrolPin(r *http.Request) (pin, address, problem string) {
 			"address", address, "error", err)
 		return own, address, ""
 	}
-	if seen == own {
+	if seen.Pin == own {
 		return own, address, ""
 	}
+	if seen.Public {
+		// A proxy in front with a public certificate. Ordinary verification
+		// is the check there, and agents get through it over a WebSocket.
+		a.log.Info("the enrollment address presents a public certificate; no pin needed",
+			"address", address)
+		return "", address, ""
+	}
 	a.log.Warn("the enrollment address presents another certificate; not handing out a pin",
-		"address", address, "presented", seen, "own", own)
-	return "", address, address + " answers with a different certificate from this control " +
-		"plane's own, so something in front of it, such as a Cloudflare Tunnel or a proxy, " +
-		"ends TLS there. Servers cannot enrol or connect through that. In Settings, under " +
-		"Addresses, set \"Address servers use\" to an address your servers reach this " +
-		"control plane on directly (port 8080, TCP and UDP), then add the server again."
+		"address", address, "presented", seen.Pin, "own", own)
+	return "", address, address + " answers with a certificate that is neither this control " +
+		"plane's own nor one a public authority vouches for, so something in front of it ends " +
+		"TLS there and servers cannot trust it. Give that proxy a publicly trusted certificate, " +
+		"or in Settings, under Addresses, set \"Address servers use\" to an address your " +
+		"servers reach this control plane on directly, then add the server again."
 }

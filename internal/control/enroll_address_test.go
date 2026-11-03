@@ -22,7 +22,7 @@ cannot be reached from here.
 
 const ownPin = "sha256:" + "11111111111111111111111111111111" + "11111111111111111111111111111111"
 
-func pinAPI(fleetURL string, probe func(context.Context, string) (string, error)) *API {
+func pinAPI(fleetURL string, probe func(context.Context, string) (PinProbeResult, error)) *API {
 	return &API{
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Enroll:   EnrollTrust{Pin: func() (string, error) { return ownPin, nil }},
@@ -33,9 +33,9 @@ func pinAPI(fleetURL string, probe func(context.Context, string) (string, error)
 
 func TestThePinIsHandedOutWhenTheAddressPresentsThisKey(t *testing.T) {
 	var dialed string
-	a := pinAPI("https://argus-internal.example.com:8080", func(_ context.Context, hp string) (string, error) {
+	a := pinAPI("https://argus-internal.example.com:8080", func(_ context.Context, hp string) (PinProbeResult, error) {
 		dialed = hp
-		return ownPin, nil
+		return PinProbeResult{Pin: ownPin}, nil
 	})
 	r := httptest.NewRequest("POST", "https://argus.example.com/api/v1/agents/enroll-tokens", nil)
 	pin, _, problem := a.enrolPin(r)
@@ -49,9 +49,9 @@ func TestThePinIsHandedOutWhenTheAddressPresentsThisKey(t *testing.T) {
 
 func TestAProxyInFrontMeansNoPinAndAReason(t *testing.T) {
 	var dialed string
-	a := pinAPI("", func(_ context.Context, hp string) (string, error) {
+	a := pinAPI("", func(_ context.Context, hp string) (PinProbeResult, error) {
 		dialed = hp
-		return "sha256:" + strings.Repeat("ab", 32), nil // Cloudflare's key
+		return PinProbeResult{Pin: "sha256:" + strings.Repeat("ab", 32)}, nil // a proxy's own key
 	})
 	r := httptest.NewRequest("POST", "https://argus.example.com/api/v1/agents/enroll-tokens", nil)
 	pin, address, problem := a.enrolPin(r)
@@ -66,9 +66,21 @@ func TestAProxyInFrontMeansNoPinAndAReason(t *testing.T) {
 	}
 }
 
+// Cloudflare in front: its certificate is not ours, and a public CA signed
+// it. Ordinary verification is the check, so no pin and no complaint.
+func TestAPublicCertificateInFrontMeansNoPinAndNoProblem(t *testing.T) {
+	a := pinAPI("", func(context.Context, string) (PinProbeResult, error) {
+		return PinProbeResult{Pin: "sha256:" + strings.Repeat("cd", 32), Public: true}, nil
+	})
+	r := httptest.NewRequest("POST", "https://argus.example.com/api/v1/agents/enroll-tokens", nil)
+	if pin, _, problem := a.enrolPin(r); pin != "" || problem != "" {
+		t.Fatalf("pin %q problem %q, want neither", pin, problem)
+	}
+}
+
 func TestAnUnreachableAddressKeepsThePin(t *testing.T) {
-	a := pinAPI("", func(context.Context, string) (string, error) {
-		return "", errors.New("connection refused")
+	a := pinAPI("", func(context.Context, string) (PinProbeResult, error) {
+		return PinProbeResult{}, errors.New("connection refused")
 	})
 	r := httptest.NewRequest("POST", "https://argus.example.com/api/v1/agents/enroll-tokens", nil)
 	if pin, _, problem := a.enrolPin(r); pin != ownPin || problem != "" {
@@ -77,9 +89,9 @@ func TestAnUnreachableAddressKeepsThePin(t *testing.T) {
 }
 
 func TestNoPinOfOurOwnMeansNoProbe(t *testing.T) {
-	a := pinAPI("", func(context.Context, string) (string, error) {
+	a := pinAPI("", func(context.Context, string) (PinProbeResult, error) {
 		t.Fatal("probed with nothing to compare")
-		return "", nil
+		return PinProbeResult{}, nil
 	})
 	a.Enroll.Pin = nil // behind a TLS proxy
 	r := httptest.NewRequest("POST", "https://argus.example.com/api/v1/agents/enroll-tokens", nil)
@@ -97,7 +109,10 @@ func TestTheProbeReadsThePresentedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := tlsconfig.Pin(srv.Certificate()); got != want {
-		t.Fatalf("probe saw %s, server's key is %s", got, want)
+	if want := tlsconfig.Pin(srv.Certificate()); got.Pin != want {
+		t.Fatalf("probe saw %s, server's key is %s", got.Pin, want)
+	}
+	if got.Public {
+		t.Fatal("httptest's own certificate was reported as publicly trusted")
 	}
 }

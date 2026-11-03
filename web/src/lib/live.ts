@@ -805,6 +805,10 @@ export async function removeAssetTeamAssignment(id: string, teamId: string): Pro
 export function installOneLiner(t: EnrollToken, version: string): string {
   const base = enrolBase(t)
   const q = new URLSearchParams({ token: t.token, version, url: base })
+  // No pin: the address has a public certificate (a Cloudflare Tunnel, say),
+  // so curl and the agent verify it the ordinary way. The script is told too,
+  // or it would hand the agent the control plane's own pin.
+  if (!t.curlPin) q.set('pin', 'off')
   const pin = t.curlPin ? `-k --pinnedpubkey '${t.curlPin}' ` : ''
   return `curl -fsSL ${pin}'${base}/api/v1/install/agent.sh?${q.toString()}' | sudo sh`
 }
@@ -902,7 +906,7 @@ export async function createEnrollToken(hostname: string): Promise<EnrollToken> 
 /** An agent's outbound connection to the control plane, as of its last ping. */
 export interface AgentTunnel {
   connected: boolean
-  transport?: 'quic' | 'tcp'
+  transport?: 'quic' | 'tcp' | 'websocket'
   replica?: string
   connectedAt?: string
   seenAt?: string

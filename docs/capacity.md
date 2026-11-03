@@ -84,7 +84,7 @@ cannot pin a host's memory.
 
 ## What one tunnel carries
 
-Both ends are the real ones (`DialUpgrade`, `DialQUIC`, and the configurations
+Both ends are the real ones (`DialUpgrade`, `DialWebSocket`, `DialQUIC`, and the configurations
 the agent and control plane use). Between them is a proxy that holds every
 byte for half the round trip in each direction and does nothing else: no loss
 and no bandwidth cap, so what limits a stream is the transport's own window.
@@ -99,6 +99,22 @@ frame each way, alone and then while a bulk stream runs on the same tunnel.
 | 20 ms | QUIC | 29–38 MB/s | 24–36 MB/s | 21.0 ms | 22.4 ms | 25–26 ms |
 | 80 ms | HTTPS | 6.1 MB/s | 46 MB/s | 81.2 ms | 83–85 ms | 83–192 ms |
 | 80 ms | QUIC | 15–16 MB/s | 27–37 MB/s | 81.8 ms | 83 ms | 85 ms |
+
+WebSocket, the transport an agent uses through a Cloudflare Tunnel, measured
+in one run beside the HTTPS fallback it wraps:
+
+| round trip | transport | 1 stream | 8 streams | echo p50 | echo p99 | echo p99 under bulk |
+|---|---|---:|---:|---:|---:|---:|
+| loopback | HTTPS | 525 MB/s | 801 MB/s | 0.09 ms | 0.43 ms | 1.4 ms |
+| loopback | WebSocket | 329 MB/s | 488 MB/s | 0.12 ms | 0.67 ms | 1.8 ms |
+| 20 ms | HTTPS | 23.2 MB/s | 172 MB/s | 20.7 ms | 21.4 ms | 22.4 ms |
+| 20 ms | WebSocket | 22.7 MB/s | 172 MB/s | 20.8 ms | 21.3 ms | 23.0 ms |
+| 80 ms | HTTPS | 6.1 MB/s | 46 MB/s | 80.9 ms | 82.6 ms | 84.2 ms |
+| 80 ms | WebSocket | 6.1 MB/s | 44 MB/s | 81.0 ms | 84.2 ms | 83.2 ms |
+
+At any real round trip the framing costs nothing measurable: the window, not
+the WebSocket, is what limits a stream. Only on loopback, where the CPU is the
+limit, does masking and framing show.
 
 Ranges are across three runs where they differed. A keystroke costs the round
 trip and almost nothing else, on both transports, even with another stream
