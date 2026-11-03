@@ -1261,6 +1261,11 @@ export const live = {
   orFallback,
 
   stats: () => get<FleetStats>('/api/v1/stats'),
+  /**
+   * The newest few audit entries, for Home's "Today". One page, never the
+   * whole log: this is a glance, not the evidence the Audit page verifies.
+   */
+  recentAudit: (limit: number) => get<AuditEvent[]>(`/api/v1/audit?limit=${limit}`),
   assets: () => get<Asset[]>('/api/v1/assets'),
   loginAccounts,
   requestAccounts,

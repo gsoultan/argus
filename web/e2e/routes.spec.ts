@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test'
 import { watchErrors } from './helpers'
 
-const ROUTES: Array<[string, string]> = [
-  ['/', 'Servers'],
+// Home's heading greets the person by the time of day.
+const HOME = /^Good (morning|afternoon|evening)/
+
+const ROUTES: Array<[string, string | RegExp]> = [
+  ['/', HOME],
   ['/sessions', 'Activity'],
   ['/assets', 'Servers'],
   ['/assets/add', 'Add server'],
@@ -23,7 +26,7 @@ for (const [path, heading] of ROUTES) {
   test(`${path} renders with no errors`, async ({ page }) => {
     const errs = watchErrors(page)
     await page.goto(path)
-    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: heading, exact: typeof heading === 'string' })).toBeVisible()
     // Give lazy chunks and workers a moment to settle before judging.
     await page.waitForLoadState('networkidle')
     await errs.assertClean()

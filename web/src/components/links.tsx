@@ -1,5 +1,5 @@
 import { forwardRef } from 'react'
-import { Button, type ButtonProps } from '@mantine/core'
+import { Anchor, Button, type AnchorProps, type ButtonProps } from '@mantine/core'
 import { createLink, type LinkComponent } from '@tanstack/react-router'
 
 /**
@@ -26,4 +26,21 @@ const CreatedButtonLink = createLink(ButtonAnchor)
 
 export const ButtonLink: LinkComponent<typeof ButtonAnchor> = (props) => (
   <CreatedButtonLink preload="intent" {...props} />
+)
+
+interface TextAnchorProps extends Omit<AnchorProps, 'component'> {
+  'aria-label'?: string
+  children?: React.ReactNode
+}
+
+const TextAnchor = forwardRef<HTMLAnchorElement, TextAnchorProps>((props, ref) => (
+  <Anchor component="a" ref={ref} {...props} />
+))
+TextAnchor.displayName = 'TextAnchor'
+
+const CreatedAnchorLink = createLink(TextAnchor)
+
+/** Mantine `Anchor` through `createLink`, for the same reasons as `ButtonLink`. */
+export const AnchorLink: LinkComponent<typeof TextAnchor> = (props) => (
+  <CreatedAnchorLink preload="intent" {...props} />
 )

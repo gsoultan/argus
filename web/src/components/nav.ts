@@ -1,5 +1,5 @@
 import {
-  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconInfoCircle, IconServer2, IconSettings,
+  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconHome, IconInfoCircle, IconServer2, IconSettings,
   IconUsersGroup,
   type IconProps,
 } from '@tabler/icons-react'
@@ -10,8 +10,10 @@ import type { UserRole } from '~/types/domain'
 /**
  * The console's menu, in one place.
  *
- * Five words across the top, and nothing else:
+ * Six words across the top, and nothing else:
  *
+ * - **Home**: where the console opens. What is waiting on you, then the fleet
+ *   at a glance for whoever sees all of it, or your own servers otherwise.
  * - **Servers**: every server you can open, with Connect on each. An admin
  *   also adds and manages them here.
  * - **Databases**: every database you can open, in a query workspace. Listed
@@ -48,6 +50,12 @@ export interface NavCounts {
 }
 
 export const NAV_ITEMS: NavItem[] = [
+  {
+    to: '/',
+    label: 'Home',
+    icon: IconHome,
+    blurb: 'What is waiting on you, and what is happening now',
+  },
   {
     to: '/assets',
     label: 'Servers',

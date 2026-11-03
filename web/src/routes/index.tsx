@@ -1,12 +1,10 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
+import { Home } from '~/components/Home'
 
 /**
- * Servers is the first page for everyone. What used to be the Overview's
- * findings lives where it is acted on: waiting servers on Servers, held logins
- * on Approvals, live sessions on Activity.
+ * Home: where the console opens. What needs the signed-in person, then the
+ * fleet for whoever sees all of it, or their own servers for everyone else.
  */
 export const Route = createFileRoute('/')({
-  beforeLoad: () => {
-    throw redirect({ to: '/assets', replace: true })
-  },
+  component: Home,
 })

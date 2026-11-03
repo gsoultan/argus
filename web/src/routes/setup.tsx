@@ -24,7 +24,7 @@ function SetupDone() {
           accounts, and every other setting, are under Settings.
         </Text>
         <ButtonLink size="xs" variant="light" to="/">
-          Back to overview
+          Back to Home
         </ButtonLink>
       </Box>
     </Box>

@@ -40,7 +40,7 @@ test('signing in renders the console rather than an error boundary', async ({ pa
 
   await expect(page.getByText('Dev Admin')).toBeVisible()
   await expect(page.getByText(/could not be rendered/i)).toBeHidden()
-  await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Dev$/ })).toBeVisible()
 
   // And the console does not warn about data it did not fall back to. The
   // banner belongs to a control plane that stopped answering; a banner shown
@@ -99,7 +99,7 @@ test.describe('the data-source badge', () => {
   test.use({ serviceWorkers: 'block' })
 
   test('does not claim a connection before one has answered', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/assets')
     await signIn(page)
     await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
 
@@ -138,7 +138,7 @@ test.describe('the data-source badge', () => {
   test('says the control plane is not answering rather than serving its fallback silently', async ({
     page,
   }) => {
-    await page.goto('/')
+    await page.goto('/assets')
     await signIn(page)
     await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
 
@@ -406,7 +406,7 @@ test('the password field is as wide as the email field, and its eye works from t
 
 test.describe('organizations', () => {
   test('the header names the organization and switching shows only its servers', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/assets')
     await signIn(page)
     await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
     await expect(page.getByText('open-absent-1').first()).toBeVisible()
@@ -422,6 +422,8 @@ test.describe('organizations', () => {
 
     // The whole console starts over in the chosen organization.
     await expect(page.getByRole('button', { name: /^Organization: Acme Logistics/ })).toBeVisible()
+    // It starts over on Home; the servers are one click away.
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Servers' }).click()
     await expect(page.getByText('acme-web-1').first()).toBeVisible()
     await expect(page.getByText('open-absent-1')).toHaveCount(0)
   })

@@ -12,7 +12,11 @@ import { assets, sessions } from '~/lib/seed'
  * missing provider, a loader that rejects — is one the unit tests could not see.
  */
 
-const ROUTES: Array<[path: string, heading: string]> = [
+// Home's heading greets the person by the time of day.
+const HOME = /^Good (morning|afternoon|evening)/
+
+const ROUTES: Array<[path: string, heading: string | RegExp]> = [
+  ['/', HOME],
   ['/assets', 'Servers'],
   ['/assets/add', 'Add server'],
   ['/approvals', 'Approvals'],
@@ -24,7 +28,6 @@ const ROUTES: Array<[path: string, heading: string]> = [
   ['/connect', 'Connect'],
   ['/about', 'About Argus'],
   // Old addresses, kept so a bookmark lands somewhere sensible.
-  ['/', 'Servers'],
   ['/mine', 'Servers'],
   ['/coverage', 'Servers'],
   ['/requests', 'Approvals'],
