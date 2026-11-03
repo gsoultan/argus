@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from 'react'
+import { useRef, useState, type ComponentType } from 'react'
 import {
   Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput, Radio,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
@@ -416,101 +416,134 @@ function Alerts({ s, edit }: CardProps) {
   const t = s.telegram
   const f = s.fcm
   const [channel, setChannel] = useState('email')
+  const channels = useRef<HTMLDivElement>(null)
   const label = (name: string, on: boolean) => (on ? `${name} · on` : name)
+  // "Set up" from the sign-in card: open the channel, turn it on so its
+  // fields show, and bring them into view with the first one focused. Only
+  // picking the tab did nothing when that tab was already the open one, and
+  // the fields stayed hidden behind the switch.
+  const setUp = (name: string) => {
+    setChannel(name)
+    if (name === 'email' && !e.enabled) edit({ email: { ...e, enabled: true, port: e.port || 587 } })
+    if (name === 'telegram' && !t.enabled) edit({ telegram: { ...t, enabled: true } })
+    requestAnimationFrame(() => {
+      const el = channels.current
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      el.querySelector<HTMLInputElement>('[data-first-field] input, input[data-first-field]')?.focus({ preventScroll: true })
+    })
+  }
+  const need = (on: boolean, missing: boolean, what: string) => (on && missing ? what : undefined)
+  const emailToMissing = e.to.length === 0
+  const tokenMissing = !t.botTokenSet && !t.botToken
   return (
     <Stack gap="sm">
-      <SignInAlerts s={s} edit={edit} onSetUp={setChannel} />
-      <SectionCard title="Alert channels" icon={IconBell} iconColor="amber"
-        description="Where alerts go. Every session opened is announced here, including logins that went around Argus; sign-ins too, as set above. Push notifications carry session alerts only.">
-        <SegmentedControl size="xs" mb="sm" value={channel} onChange={setChannel}
-          data={[
-            { value: 'email', label: label('Email', e.enabled) },
-            { value: 'telegram', label: label('Telegram', t.enabled) },
-            { value: 'push', label: label('Push notification', f.enabled) },
-          ]} />
-        {channel === 'email' && (
-          <Stack gap="xs">
-            <Switch size="xs" label="Send email" checked={e.enabled}
-              onChange={(ev) => edit({ email: { ...e, enabled: ev.currentTarget.checked } })} />
-            {e.enabled && (
-              <Grid gap="xs">
-                <Grid.Col span={{ base: 12, sm: 8 }}>
-                  <TextInput size="xs" label="SMTP server" value={e.host}
-                    onChange={(ev) => edit({ email: { ...e, host: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <NumberInput size="xs" label="Port" description="465 is TLS; others STARTTLS" min={1} max={65535}
-                    value={e.port || 587} onChange={(v) => edit({ email: { ...e, port: Number(v) || 0 } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TextInput size="xs" label="Username" value={e.username} autoComplete="off"
-                    onChange={(ev) => edit({ email: { ...e, username: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <SecretInput label="Password" set={e.passwordSet} value={e.password}
-                    onChange={(v) => edit({ email: { ...e, password: v } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TextInput size="xs" label="From" value={e.from}
-                    onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TagsInput size="xs" label="To" value={e.to} onChange={(v) => edit({ email: { ...e, to: v } })} />
-                </Grid.Col>
-              </Grid>
-            )}
-          </Stack>
-        )}
-        {channel === 'telegram' && (
-          <Stack gap="xs">
-            <Switch size="xs" label="Send to Telegram" checked={t.enabled}
-              onChange={(ev) => edit({ telegram: { ...t, enabled: ev.currentTarget.checked } })} />
-            {t.enabled && (
-              <Grid gap="xs">
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <SecretInput label="Bot token" description="From @BotFather" set={t.botTokenSet} value={t.botToken}
-                    onChange={(v) => edit({ telegram: { ...t, botToken: v } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 6 }}>
-                  <TagsInput size="xs" label="Chat ids" description="Add the bot to a group first"
-                    value={t.chatIds} onChange={(v) => edit({ telegram: { ...t, chatIds: v } })} />
-                </Grid.Col>
-              </Grid>
-            )}
-          </Stack>
-        )}
-        {channel === 'push' && (
-          <Stack gap="xs">
-            <Switch size="xs" label="Send through Firebase Cloud Messaging" checked={f.enabled}
-              onChange={(ev) => edit({ fcm: { ...f, enabled: ev.currentTarget.checked } })} />
-            {f.enabled && (
-              <Grid gap="xs">
-                <Grid.Col span={12}>
-                  <Textarea size="xs" label="Service account key (JSON)"
-                    description={f.credentialsSet && f.credentials === undefined
-                      ? 'A key is configured. Paste a new one to replace it.'
-                      : 'Firebase console, Project settings, Service accounts.'}
-                    autosize minRows={2} maxRows={4} value={f.credentials ?? ''}
-                    styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 11 } }}
-                    onChange={(ev) => edit({ fcm: { ...f, credentials: ev.currentTarget.value || undefined } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <TextInput size="xs" label="Topic" value={f.topic}
-                    onChange={(ev) => edit({ fcm: { ...f, topic: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <TextInput size="xs" label="Project id" description="Optional" value={f.projectId}
-                    onChange={(ev) => edit({ fcm: { ...f, projectId: ev.currentTarget.value } })} />
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <TagsInput size="xs" label="Device tokens" description="Optional"
-                    value={f.tokens} onChange={(v) => edit({ fcm: { ...f, tokens: v } })} />
-                </Grid.Col>
-              </Grid>
-            )}
-          </Stack>
-        )}
-      </SectionCard>
+      <SignInAlerts s={s} edit={edit} onSetUp={setUp} />
+      <div ref={channels} style={{ scrollMarginTop: 72 }}>
+        <SectionCard title="Alert channels" icon={IconBell} iconColor="amber"
+          description="Where alerts go. Every session opened is announced here, including logins that went around Argus; sign-ins too, as set above. Push notifications carry session alerts only.">
+          <SegmentedControl size="xs" mb="sm" value={channel} onChange={setChannel}
+            data={[
+              { value: 'email', label: label('Email', e.enabled) },
+              { value: 'telegram', label: label('Telegram', t.enabled) },
+              { value: 'push', label: label('Push notification', f.enabled) },
+            ]} />
+          {channel === 'email' && (
+            <Stack gap="xs">
+              <Switch size="xs" label="Send email" checked={e.enabled}
+                onChange={(ev) => edit({ email: { ...e, enabled: ev.currentTarget.checked, port: e.port || 587 } })} />
+              {!e.enabled && (
+                <Text size={FS.meta} c="dimmed">Turn this on to enter your mail server, then save.</Text>
+              )}
+              {e.enabled && (
+                <Grid gap="xs">
+                  <Grid.Col span={{ base: 12, sm: 8 }}>
+                    <TextInput size="xs" label="SMTP server" placeholder="smtp.example.com" data-first-field
+                      error={need(e.enabled, !e.host.trim(), 'Required')} value={e.host}
+                      onChange={(ev) => edit({ email: { ...e, host: ev.currentTarget.value } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 4 }}>
+                    <NumberInput size="xs" label="Port" description="465 is TLS; others STARTTLS" min={1} max={65535}
+                      value={e.port || 587} onChange={(v) => edit({ email: { ...e, port: Number(v) || 0 } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <TextInput size="xs" label="Username" value={e.username} autoComplete="off"
+                      onChange={(ev) => edit({ email: { ...e, username: ev.currentTarget.value } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <SecretInput label="Password" set={e.passwordSet} value={e.password}
+                      onChange={(v) => edit({ email: { ...e, password: v } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <TextInput size="xs" label="From" placeholder="argus@example.com"
+                      error={need(e.enabled, !e.from.trim(), 'Required')} value={e.from}
+                      onChange={(ev) => edit({ email: { ...e, from: ev.currentTarget.value } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <TagsInput size="xs" label="To" description="Press Enter after each address" value={e.to}
+                      error={need(e.enabled, emailToMissing, 'Add at least one address')}
+                      onChange={(v) => edit({ email: { ...e, to: v } })} />
+                  </Grid.Col>
+                </Grid>
+              )}
+            </Stack>
+          )}
+          {channel === 'telegram' && (
+            <Stack gap="xs">
+              <Switch size="xs" label="Send to Telegram" checked={t.enabled}
+                onChange={(ev) => edit({ telegram: { ...t, enabled: ev.currentTarget.checked } })} />
+              {!t.enabled && (
+                <Text size={FS.meta} c="dimmed">Turn this on to add a bot token and chats, then save.</Text>
+              )}
+              {t.enabled && (
+                <Grid gap="xs">
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <SecretInput label="Bot token" description="From @BotFather" set={t.botTokenSet} value={t.botToken} first
+                      error={need(t.enabled, tokenMissing, 'Required')}
+                      onChange={(v) => edit({ telegram: { ...t, botToken: v } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 6 }}>
+                    <TagsInput size="xs" label="Chat ids" description="Add the bot to a group first. Press Enter after each id."
+                      error={need(t.enabled, t.chatIds.length === 0, 'Add at least one chat')}
+                      value={t.chatIds} onChange={(v) => edit({ telegram: { ...t, chatIds: v } })} />
+                  </Grid.Col>
+                </Grid>
+              )}
+            </Stack>
+          )}
+          {channel === 'push' && (
+            <Stack gap="xs">
+              <Switch size="xs" label="Send through Firebase Cloud Messaging" checked={f.enabled}
+                onChange={(ev) => edit({ fcm: { ...f, enabled: ev.currentTarget.checked } })} />
+              {f.enabled && (
+                <Grid gap="xs">
+                  <Grid.Col span={12}>
+                    <Textarea size="xs" label="Service account key (JSON)"
+                      description={f.credentialsSet && f.credentials === undefined
+                        ? 'A key is configured. Paste a new one to replace it.'
+                        : 'Firebase console, Project settings, Service accounts.'}
+                      autosize minRows={2} maxRows={4} value={f.credentials ?? ''}
+                      styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 11 } }}
+                      onChange={(ev) => edit({ fcm: { ...f, credentials: ev.currentTarget.value || undefined } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 4 }}>
+                    <TextInput size="xs" label="Topic" value={f.topic}
+                      onChange={(ev) => edit({ fcm: { ...f, topic: ev.currentTarget.value } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 4 }}>
+                    <TextInput size="xs" label="Project id" description="Optional" value={f.projectId}
+                      onChange={(ev) => edit({ fcm: { ...f, projectId: ev.currentTarget.value } })} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, sm: 4 }}>
+                    <TagsInput size="xs" label="Device tokens" description="Optional"
+                      value={f.tokens} onChange={(v) => edit({ fcm: { ...f, tokens: v } })} />
+                  </Grid.Col>
+                </Grid>
+              )}
+            </Stack>
+          )}
+        </SectionCard>
+      </div>
     </Stack>
   )
 }
@@ -585,15 +618,19 @@ function ChannelRow({ name, on, detail, onSetUp }: {
 }
 
 /** A write-only secret: empty keeps the configured one. */
-function SecretInput({ label, description, set, value, onChange }: {
+function SecretInput({ label, description, set, value, onChange, error, first }: {
   label: string
   description?: string
   set: boolean
   value?: string
   onChange: (v: string | undefined) => void
+  error?: string
+  /** Marks the field "Set up" focuses. */
+  first?: boolean
 }) {
   return (
     <PasswordInput size="xs" label={label} description={description} autoComplete="new-password"
+      error={error} {...(first ? { 'data-first-field': true } : {})}
       placeholder={set ? 'Set. Type to replace it.' : 'Not set'}
       value={value ?? ''} onChange={(e) => onChange(e.currentTarget.value || undefined)} />
   )

@@ -222,6 +222,24 @@ const STATS = {
 }
 
 /**
+ * The control plane's own settings, as a fresh install serves them: no alert
+ * channel set up yet. Enough for the Alerts section to render.
+ */
+const SETTINGS = {
+  configFile: '/etc/argus/control.yaml', consoleUrl: `http://localhost:${PORT}`, fleetUrl: '',
+  listen: ':8443', consoleListen: '', quicListen: '', behindTlsProxy: false,
+  allowedOrigins: [], trustedProxies: [], loginPerMinute: 10, failuresPerHour: 20,
+  ticketsPerMinute: 30, sessionTtl: '8h', ticketTtl: '1m', agentStaleAfter: '2m', logLevel: 'info',
+  database: { host: 'db', port: 5432, name: 'argus', user: 'argus', sslMode: 'disable', passwordSet: true },
+  storage: { enabled: false, endpoint: '', bucket: '', region: '', useSsl: true, accessKey: '', secretKeySet: false },
+  email: { enabled: false, host: '', port: 0, username: '', passwordSet: false, from: '', to: [] },
+  telegram: { enabled: false, botTokenSet: false, chatIds: [] },
+  fcm: { enabled: false, credentialsSet: false, projectId: '', topic: '', tokens: [] },
+  tls: { enabled: false, managed: false, canIssue: false, mutualTls: false },
+  signInAlerts: { admins: true, person: true, when: 'new_device' },
+}
+
+/**
  * @param {ServerResponse} res
  * @param {number} code
  * @param {unknown} body
@@ -280,6 +298,7 @@ const server = createServer(async (req, res) => {
   if (path.startsWith('/api/')) {
     if (!signedIn(req)) return json(res, 401, { error: 'unauthorized' })
     if (path === '/api/v1/stats') return json(res, 200, STATS)
+    if (path === '/api/v1/settings' && req.method === 'GET') return json(res, 200, SETTINGS)
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
     // A window of a larger log, which is what a real control plane serves: the
