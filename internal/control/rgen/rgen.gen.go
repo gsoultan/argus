@@ -13,6 +13,8 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
+	"github.com/gsoultan/argus/internal/control/rgen/consolealert"
+	"github.com/gsoultan/argus/internal/control/rgen/consolealertread"
 	"github.com/gsoultan/argus/internal/control/rgen/database"
 	"github.com/gsoultan/argus/internal/control/rgen/databaseassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackup"
@@ -35,27 +37,30 @@ var FlushOrder = map[string]int{
 	"agents":                    1,
 	"assets":                    2,
 	"audit_events":              3,
-	"databases":                 4,
-	"direct_login_requests":     5,
-	"gateway_policy":            6,
-	"host_key_pins":             7,
-	"redeemed_tickets":          8,
-	"revoked_sessions":          9,
-	"schema_migrations":         10,
-	"sessions":                  11,
-	"sign_in_devices":           12,
-	"teams":                     13,
-	"users":                     14,
-	"access_requests":           15,
-	"agent_credentials":         16,
-	"asset_assignments":         17,
-	"asset_team_assignments":    18,
-	"database_assignments":      19,
-	"database_backup_schedules": 20,
-	"database_backups":          21,
-	"database_restores":         22,
-	"recovery_codes":            23,
-	"team_members":              24,
+	"console_alert_prefs":       4,
+	"console_alerts":            5,
+	"databases":                 6,
+	"direct_login_requests":     7,
+	"gateway_policy":            8,
+	"host_key_pins":             9,
+	"redeemed_tickets":          10,
+	"revoked_sessions":          11,
+	"schema_migrations":         12,
+	"sessions":                  13,
+	"sign_in_devices":           14,
+	"teams":                     15,
+	"users":                     16,
+	"access_requests":           17,
+	"agent_credentials":         18,
+	"asset_assignments":         19,
+	"asset_team_assignments":    20,
+	"console_alert_reads":       21,
+	"database_assignments":      22,
+	"database_backup_schedules": 23,
+	"database_backups":          24,
+	"database_restores":         25,
+	"recovery_codes":            26,
+	"team_members":              27,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -658,6 +663,123 @@ func (p AssetTeamAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Ex
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "asset_team_assignments", "teams")
 		}
 		out[i].Team = targets[j]
+	}
+	return out, nil
+}
+
+// ConsoleAlertReadWithSeqRow is console_alert_reads with its Seq loaded.
+type ConsoleAlertReadWithSeqRow struct {
+	consolealertread.Row
+	Seq consolealert.Row
+}
+
+type ConsoleAlertReadWithSeqQuery struct {
+	q consolealertread.Query
+}
+
+// ConsoleAlertReadWithSeq starts the plan.
+func ConsoleAlertReadWithSeq() ConsoleAlertReadWithSeqQuery {
+	return ConsoleAlertReadWithSeqQuery{q: consolealertread.New()}
+}
+
+func (p ConsoleAlertReadWithSeqQuery) Where(ps ...consolealertread.Pred) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p ConsoleAlertReadWithSeqQuery) WhereIf(cond bool, pr consolealertread.Pred) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p ConsoleAlertReadWithSeqQuery) Any(ps ...consolealertread.Pred) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p ConsoleAlertReadWithSeqQuery) Not(pr consolealertread.Pred) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p ConsoleAlertReadWithSeqQuery) NotAny(ps ...consolealertread.Pred) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p ConsoleAlertReadWithSeqQuery) Order(ts ...consolealertread.Sort) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p ConsoleAlertReadWithSeqQuery) Limit(n int64) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p ConsoleAlertReadWithSeqQuery) Offset(n int64) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p ConsoleAlertReadWithSeqQuery) After(r ConsoleAlertReadWithSeqRow) ConsoleAlertReadWithSeqQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p ConsoleAlertReadWithSeqQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p ConsoleAlertReadWithSeqQuery) All(ctx context.Context, ex runtime.Executor) ([]ConsoleAlertReadWithSeqRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]ConsoleAlertReadWithSeqRow, len(parents))
+	seen := make(map[int64]bool, len(parents))
+	ids := make([]int64, 0, len(parents))
+	for i, r := range parents {
+		out[i] = ConsoleAlertReadWithSeqRow{Row: r}
+		key := r.Seq
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := consolealert.New().Unordered().
+		Where(consolealert.Seq.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[int64]int, len(targets))
+	for i := range targets {
+		by[targets[i].Seq] = i
+	}
+	for i := range out {
+		key := out[i].Row.Seq
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "console_alert_reads", "console_alerts")
+		}
+		out[i].Seq = targets[j]
 	}
 	return out, nil
 }

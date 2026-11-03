@@ -63,8 +63,12 @@ const BUDGET_KB = {
    * 276.9 kB when the page header learned to put its actions under the title
    * on a phone and to carry a tab row: 0.9 kB of shared code, since every
    * route renders that header.
+   * 282.1 kB with the alerts bell in the header (277.1 before): 4.6 kB of
+   * JS for the bell, its count and the pop-ups, and 0.5 kB of CSS, most of
+   * it the notifications stylesheet every toast had been missing. The list,
+   * the settings, the stream and the fixture load only when needed.
    */
-  overview: 278,
+  overview: 283,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -78,8 +82,9 @@ const BUDGET_KB = {
    * 383.2 kB with PasswordInput's stylesheet, the same 0.3 kB as the overview.
    * 384.1 kB with the phone-friendly page header, the same 0.9 kB as the
    * overview.
+   * 389.6 kB with the alerts bell, the same shared 5 kB as the overview.
    */
-  sessionDetail: 385,
+  sessionDetail: 390,
 }
 
 /**

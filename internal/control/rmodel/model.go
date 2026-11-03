@@ -313,6 +313,75 @@ func (m *AuditEvent) Schema(t *storm.Table) {
 	t.Index(&m.Severity).Named("audit_severity_idx")
 }
 
+// ConsoleAlert is table console_alerts: an alert under the bell in the
+// console header (migration 037).
+type ConsoleAlert struct {
+	Seq       int64
+	At        time.Time
+	Kind      string
+	Severity  string
+	Audience  string
+	Recipient string
+	Actor     string
+	Title     string
+	Detail    string
+	Link      string
+}
+
+func (m *ConsoleAlert) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Seq)
+	t.Col(&m.Seq).Serial()
+	t.Col(&m.At).Default("now()")
+	t.Col(&m.Severity).Default("'info'::text")
+	t.Col(&m.Recipient).Default("''::text")
+	t.Col(&m.Actor).Default("''::text")
+	t.Col(&m.Detail).Default("''::text")
+	t.Col(&m.Link).Default("''::text")
+	t.CheckNamed("console_alerts_kind_check",
+		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text])")
+	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
+	t.CheckNamed("console_alerts_audience_check", "audience = ANY (ARRAY['deciders'::text, 'admins'::text, 'person'::text])")
+	t.CheckNamed("console_alerts_link_check", "(link = ''::text) OR (link ~~ '/%'::text)")
+	t.CheckNamed("console_alerts_check", "(audience <> 'person'::text) OR (recipient <> ''::text)")
+	t.Index(&m.At).Named("console_alerts_at")
+	t.Index(&m.Recipient, &m.Seq).Where("audience = 'person'::text").Named("console_alerts_recipient")
+}
+
+// ConsoleAlertPref is table console_alert_prefs: one person's choices for
+// their bell, and how far they have read.
+type ConsoleAlertPref struct {
+	Email          string
+	ReadSeq        int64
+	Muted          []string
+	NewDevicesOnly bool
+	Popup          bool
+	Sound          bool
+	UpdatedAt      time.Time
+}
+
+func (m *ConsoleAlertPref) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Email)
+	t.Col(&m.ReadSeq).Default("0")
+	t.Col(&m.Muted).Default("'{}'::text[]")
+	t.Col(&m.NewDevicesOnly).Default("false")
+	t.Col(&m.Popup).Default("true")
+	t.Col(&m.Sound).Default("false")
+	t.Col(&m.UpdatedAt).Default("now()")
+}
+
+// ConsoleAlertRead is table console_alert_reads: an alert read on its own.
+type ConsoleAlertRead struct {
+	Email string
+	Seq   ConsoleAlert
+}
+
+func (m *ConsoleAlertRead) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Email, &m.Seq)
+	t.Col(&m.Seq).Named("seq").ConstraintName("console_alert_reads_seq_fkey")
+	t.Col(&m.Seq).OnDelete(storm.Cascade)
+	t.Index(&m.Seq).Named("console_alert_reads_seq")
+}
+
 // DirectLoginRequest is table direct_login_requests: a direct SSH login held
 // for approval.
 type DirectLoginRequest struct {
@@ -897,6 +966,9 @@ func All() []any {
 		&SchemaMigration{},
 		&Session{},
 		&SignInDevice{},
+		&ConsoleAlert{},
+		&ConsoleAlertPref{},
+		&ConsoleAlertRead{},
 		&Team{},
 		&TeamMember{},
 		&User{},

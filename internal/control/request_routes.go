@@ -93,6 +93,7 @@ func (a *API) postRequest(w http.ResponseWriter, r *http.Request) {
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
+	a.alertRequestWaiting(r.Context(), created)
 
 	writeJSON(w, http.StatusOK, created)
 }
@@ -178,6 +179,7 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 		a.log.Error("audit append failed", "error", aerr)
 	}
 
+	a.alertRequestDecided(r.Context(), out, in.Decision, sess.Email, in.Note)
 	a.log.Info("access request decided",
 		"decision", in.Decision, "by", sess.Email,
 		"requester", out.RequesterEmail, "principal", out.Principal)

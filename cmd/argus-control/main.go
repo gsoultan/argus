@@ -608,6 +608,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		if _, serr := store.SweepTickets(ctx); serr != nil {
 			log.Error("ticket sweep failed", "error", serr)
 		}
+		if _, serr := store.SweepConsoleAlerts(ctx); serr != nil {
+			log.Error("console alert sweep failed", "error", serr)
+		}
 		if expired, eerr := store.ExpireGrants(ctx); eerr != nil {
 			log.Error("grant expiry sweep failed", "error", eerr)
 		} else if expired > 0 {
@@ -663,6 +666,11 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		listeners = append(listeners,
 			listener{"fleet", newServer(cfg.Listen, api.FleetHandler())},
 			listener{"console", newServer(cfg.ConsoleListen, api.ConsoleHandler())})
+	}
+	// The bell's event streams never end on their own, and Shutdown waits
+	// for every handler: end them as it starts.
+	for _, l := range listeners {
+		l.srv.RegisterOnShutdown(api.StopAlertStreams)
 	}
 
 	if cfg.TLS != nil {

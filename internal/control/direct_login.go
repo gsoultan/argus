@@ -431,6 +431,7 @@ func (a *API) postDirectLogin(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		a.log.Error("audit append failed", "error", err)
 	}
+	a.alertDirectLoginWaiting(r.Context(), d)
 	a.log.Warn("direct login waiting for approval",
 		"id", d.ID, "hostname", d.Hostname, "principal", d.Principal, "client", d.ClientAddr)
 	writeJSON(w, http.StatusOK, map[string]any{

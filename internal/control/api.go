@@ -131,6 +131,9 @@ type API struct {
 
 	// live is every session this replica relays; see live_sessions.go.
 	live liveRegistry
+	// alertHub is the console alert streams open on this replica; see
+	// console_alerts.go.
+	alertHub alertHub
 
 	// setup is the first-run page's one-time token; see setup.go.
 	setup setupGate
@@ -150,8 +153,10 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &API{store: store, log: log, UserTokens: map[string]string{},
+	a := &API{store: store, log: log, UserTokens: map[string]string{},
 		startedAt: time.Now()}
+	a.alertHub.store, a.alertHub.logErr = store, log.Error
+	return a
 }
 
 // Handler returns the router.
@@ -330,6 +335,12 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/sessions/{id}/rdp-replay", a.user(a.getRDPReplay))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording/link", a.user(a.presignRecording))
 	mux.HandleFunc("GET /api/v1/policy", a.user(a.getPolicy))
+	// The bell in the console header; see console_alert_routes.go.
+	mux.HandleFunc("GET /api/v1/alerts", a.getConsoleAlerts)
+	mux.HandleFunc("GET /api/v1/alerts/stream", a.getConsoleAlertStream)
+	mux.HandleFunc("POST /api/v1/alerts/read", a.postConsoleAlertsRead)
+	mux.HandleFunc("GET /api/v1/alerts/preferences", a.getAlertPrefs)
+	mux.HandleFunc("PUT /api/v1/alerts/preferences", a.putAlertPrefs)
 	mux.HandleFunc("POST /api/v1/policy", a.postPolicy)
 
 	// The console itself, for every GET no route above claims.
@@ -654,6 +665,14 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	// Alert channels are the platform's configuration, so only the default
 	// organization's sessions are announced on them: another organization's
 	// activity must not be mailed to the platform's recipients.
+	// The bell is the organization's own, so every organization's sessions
+	// are announced there.
+	if created {
+		a.alertSessionStarted(r.Context(), notify.SessionStarted{
+			ID: in.ID, UserEmail: in.UserEmail, Host: in.AssetHostname, Principal: in.Principal,
+			Protocol: in.Protocol, Origin: in.Origin, ClientIP: in.ClientIP, StartedAt: in.StartedAt,
+		})
+	}
 	if created && tenantIDOf(r.Context()) == DefaultTenantID {
 		a.Alerts.SessionStarted(notify.SessionStarted{
 			ID:        in.ID,

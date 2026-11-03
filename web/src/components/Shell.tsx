@@ -45,6 +45,7 @@ import {
   isActive, navFor, type NavCounts, type NavItem,
 } from '~/components/nav'
 import { LogoMark } from '~/components/Logo'
+import { AlertBell } from '~/components/AlertBell'
 import {
   argusVersion, controlPlaneHost, isConfigured, isLive, logout, signOutEverywhere, switchOrganization,
   whoami, type Identity,
@@ -277,6 +278,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 </ActionIcon>
               </Tooltip>
             )}
+
+            {me && <AlertBell />}
 
             <Menu position="bottom-end" width={240} withArrow>
               <Menu.Target>

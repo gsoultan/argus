@@ -195,6 +195,49 @@ func _assertAuditEventShape(m m0.AuditEvent) {
 	}
 }
 
+// _assertConsoleAlertShape fails to compile if m0.ConsoleAlert gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertConsoleAlertShape(m m0.ConsoleAlert) {
+	type shape m0.ConsoleAlert
+	_ = shape{
+		m.Seq,
+		m.At,
+		m.Kind,
+		m.Severity,
+		m.Audience,
+		m.Recipient,
+		m.Actor,
+		m.Title,
+		m.Detail,
+		m.Link,
+	}
+}
+
+// _assertConsoleAlertPrefShape fails to compile if m0.ConsoleAlertPref gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertConsoleAlertPrefShape(m m0.ConsoleAlertPref) {
+	type shape m0.ConsoleAlertPref
+	_ = shape{
+		m.Email,
+		m.ReadSeq,
+		m.Muted,
+		m.NewDevicesOnly,
+		m.Popup,
+		m.Sound,
+		m.UpdatedAt,
+	}
+}
+
+// _assertConsoleAlertReadShape fails to compile if m0.ConsoleAlertRead gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertConsoleAlertReadShape(m m0.ConsoleAlertRead) {
+	type shape m0.ConsoleAlertRead
+	_ = shape{
+		m.Email,
+		m.Seq,
+	}
+}
+
 // _assertDatabaseShape fails to compile if m0.Database gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertDatabaseShape(m m0.Database) {

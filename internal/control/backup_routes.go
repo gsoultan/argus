@@ -391,6 +391,7 @@ func (a *API) postRestore(w http.ResponseWriter, r *http.Request, email string, 
 		a.auditDB(r.Context(), "db.restore_requested", "notice", email, db.Hostname,
 			fmt.Sprintf("Asked to replace %s from backup %s (taken %s): %s. Waiting for an approver (request %s).",
 				db.Name, b.ID, b.StartedAt.UTC().Format(time.RFC3339), in.Reason, req.ID))
+		a.alertRequestWaiting(r.Context(), req)
 		row, _ = a.store.Restore(r.Context(), row.ID)
 		writeJSON(w, http.StatusAccepted, row)
 	default:

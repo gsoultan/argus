@@ -55,10 +55,14 @@
 @import '@mantine/core/styles/List.layer.css';
 @import '@mantine/core/styles/Menu.layer.css';
 @import '@mantine/core/styles/Modal.layer.css';
+@import '@mantine/core/styles/Drawer.layer.css';
 @import '@mantine/core/styles/Pill.layer.css';
 @import '@mantine/core/styles/PillsInput.layer.css';
 @import '@mantine/core/styles/NavLink.layer.css';
 @import '@mantine/core/styles/Notification.layer.css';
+/* The toasts' container: without it every notification renders below the
+   page, off screen. */
+@import '@mantine/notifications/styles.layer.css';
 @import '@mantine/core/styles/Progress.layer.css';
 @import '@mantine/core/styles/PasswordInput.layer.css';
 @import '@mantine/core/styles/RadioCard.layer.css';

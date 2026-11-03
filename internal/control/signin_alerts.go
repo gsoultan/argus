@@ -81,12 +81,20 @@ func (a *API) announceSignIn(r *http.Request, sess auth.Session, how string) {
 		isNew = true
 	}
 
+	method := signInMethod(how)
+	// The bell is told of every sign-in; each administrator chooses whether
+	// to see only new devices. Not rate limited like mail: a row costs
+	// nothing, and the sign-in itself had to succeed.
+	a.alertSignIn(ctx, notify.SignIn{
+		Email: sess.Email, Name: sess.Name, Role: sess.Role,
+		ClientIP: ip, Device: device, Method: method, NewDevice: isNew,
+	})
+
 	n := a.SignInAlerts
 	p := a.SignInPolicy
 	if n == nil || (!p.Admins && !p.Person) {
 		return
 	}
-	method := signInMethod(how)
 	important := isNew || method == notify.MethodRecoveryCode
 	if !important && !p.Every {
 		return
@@ -343,6 +351,7 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		a.log.Error("audit append failed", "error", err)
 	}
+	a.alertSecurity(ctx, "", rep.Account+" says a sign-in was not them", detail)
 	a.log.Warn("a sign-in was reported as not the account holder",
 		"email", rep.Account, "client", rep.ClientIP, "reporter", a.clientAddr(r), "signed_out", signedOut)
 
