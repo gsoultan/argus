@@ -13,7 +13,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ The refusals first: a ticket opens only the host and account it was issued
 for, the agent refuses a grant the control plane did not sign or has already
 spent, and a session that cannot be recorded never starts. Then that it works:
 the shell runs as the account, the person it was for is who the recording and
-the audit chain name, and closing the browser hangs the shell up.
+the audit chain name, closing the terminal on purpose hangs the shell up, and\na dropped connection does not: the same person can come back to it.
 
 The shell runs as whoever runs the test, so this needs no root.
 */
@@ -314,7 +313,97 @@ func TestABrowserTerminalOpensThroughTheTunnelAndIsRecorded(t *testing.T) {
 	}
 }
 
-func TestClosingTheBrowserHangsTheShellUp(t *testing.T) {
+// untilReady reads c to its ready message, then types input.
+func untilReady(t *testing.T, c *websocket.Conn, input ...string) terminalMessage {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for {
+		typ, data, err := c.Read(ctx)
+		if err != nil {
+			t.Fatalf("no ready: %v", err)
+		}
+		if typ != websocket.MessageText {
+			continue
+		}
+		var m terminalMessage
+		if json.Unmarshal(data, &m) != nil {
+			continue
+		}
+		switch m.Type {
+		case "ready":
+			for _, in := range input {
+				typeInto(t, c, in)
+			}
+			return m
+		case "error", "gone":
+			t.Fatalf("%s before ready: %s", m.Type, m.Data)
+		}
+	}
+}
+
+func typeInto(t *testing.T, c *websocket.Conn, in string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	b, _ := json.Marshal(terminalMessage{Type: "input", Data: in})
+	if err := c.Write(ctx, websocket.MessageText, b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// readOutput reads c until its output holds want, and returns all it read.
+func readOutput(t *testing.T, c *websocket.Conn, want string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var out strings.Builder
+	for !strings.Contains(out.String(), want) {
+		typ, data, err := c.Read(ctx)
+		if err != nil {
+			t.Fatalf("waiting for %q: %v; had %q", want, err, out.String())
+		}
+		if typ == websocket.MessageBinary {
+			out.Write(data)
+		}
+	}
+	return out.String()
+}
+
+func (e *tunnelEnv) resumeTerminal(t *testing.T, signer *auth.Signer, email, host, principal, session string) *websocket.Conn {
+	t.Helper()
+	ticket, _ := signer.IssueTicket(email, host, principal, time.Minute)
+	u, _ := url.Parse(e.terminalURL(host, principal, ticket))
+	q := u.Query()
+	q.Set("resume", session)
+	u.RawQuery = q.Encode()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
+		HTTPClient: e.srv.Client(),
+		HTTPHeader: http.Header{"Origin": {e.srv.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.CloseNow() })
+	return c
+}
+
+func sealed(t *testing.T, th *terminalHost, within time.Duration) bool {
+	t.Helper()
+	select {
+	case rec := <-th.sessions:
+		if rec.ChainHead == "" {
+			t.Error("the recording was not sealed")
+		}
+		return true
+	case <-time.After(within):
+		return false
+	}
+}
+
+func TestClosingTheTerminalOnPurposeHangsTheShellUp(t *testing.T) {
 	e := newTunnelEnv(t)
 	signer := e.withTerminal(t)
 	host := unique("term-hangup")
@@ -326,34 +415,171 @@ func TestClosingTheBrowserHangsTheShellUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer c.CloseNow()
 	// Ready, then a shell that would otherwise run for five minutes.
-	var once sync.Once
+	untilReady(t, c, "sleep 300\n")
+	time.Sleep(300 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	b, _ := json.Marshal(terminalMessage{Type: "hangup"})
+	if err := c.Write(ctx, websocket.MessageText, b); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close(websocket.StatusNormalClosure, "")
+
+	if !sealed(t, th, 10*time.Second) {
+		t.Fatal("the shell outlived a terminal closed on purpose")
+	}
+}
+
+func TestADroppedBrowserIsHungUpOnlyAfterTheReattachWindow(t *testing.T) {
+	e := newTunnelEnv(t)
+	e.api.TerminalReattachWindow = 2 * time.Second
+	signer := e.withTerminal(t)
+	host := unique("term-window")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	th := e.runTerminalAgent(t, cred, host, t.TempDir())
+
+	ticket, _ := signer.IssueTicket("ana@example.com", host, me(t), time.Minute)
+	c, _, err := e.openTerminal(t, host, me(t), ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	untilReady(t, c, "sleep 300\n")
+	time.Sleep(300 * time.Millisecond)
+	_ = c.CloseNow() // the network went, not the person
+
+	if sealed(t, th, time.Second) {
+		t.Fatal("a dropped connection hung the shell up at once")
+	}
+	if !sealed(t, th, 10*time.Second) {
+		t.Fatal("nobody came back, and the shell was never hung up")
+	}
+}
+
+func TestADroppedBrowserComesBackToTheSameShell(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("term-resume")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	th := e.runTerminalAgent(t, cred, host, t.TempDir())
+
+	ticket, _ := signer.IssueTicket("ana@example.com", host, me(t), time.Minute)
+	c, _, err := e.openTerminal(t, host, me(t), ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := untilReady(t, c, "X=kept-$((6*7)); echo before-$X\n")
+	readOutput(t, c, "before-kept-42")
+	_ = c.CloseNow()
+	// Output while nobody is looking still reaches the backlog.
+	time.Sleep(200 * time.Millisecond)
+
+	// Someone else, with a ticket of their own for the same host and
+	// account, cannot take it by knowing its id.
+	other := e.resumeTerminal(t, signer, "eve@example.com", host, me(t), ready.Session)
+	if m := firstMessage(t, other); m.Type != "gone" {
+		t.Fatalf("another person's reattach got %+v", m)
+	}
+
+	back := e.resumeTerminal(t, signer, "ana@example.com", host, me(t), ready.Session)
+	again := untilReady(t, back)
+	if again.Session != ready.Session || !again.Resumed {
+		t.Fatalf("reattached as %+v, want session %s resumed", again, ready.Session)
+	}
+	// The screen it missed, then the same shell, with its variable.
+	readOutput(t, back, "before-kept-42")
+	typeInto(t, back, "echo after-$X\n")
+	readOutput(t, back, "after-kept-42")
+	typeInto(t, back, "exit 4\n")
+	run := readTerminal(t, back, 10*time.Second)
+	if run.closed.ExitCode != 4 || run.closed.Session != ready.Session {
+		t.Errorf("closed as %+v", run.closed)
+	}
+	if !sealed(t, th, 5*time.Second) {
+		t.Fatal("the agent sealed no recording")
+	}
+
+	events, err := e.store.AuditEvents(context.Background(), 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ev := range events {
+		if ev.Action == "terminal.reattached" && ev.Target == host &&
+			ev.ActorEmail == "ana@example.com" && strings.Contains(ev.Detail, ready.Session) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no terminal.reattached entry naming the person and the session")
+	}
+}
+
+func TestASecondWindowTakesTheSessionOver(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("term-moved")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	e.runTerminalAgent(t, cred, host, t.TempDir())
+
+	ticket, _ := signer.IssueTicket("ana@example.com", host, me(t), time.Minute)
+	first, _, err := e.openTerminal(t, host, me(t), ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.CloseNow()
+	ready := untilReady(t, first)
+
+	second := e.resumeTerminal(t, signer, "ana@example.com", host, me(t), ready.Session)
+	untilReady(t, second)
+
+	// The first is told why, so it does not try to come back.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	moved := false
+	for !moved {
+		typ, data, err := first.Read(ctx)
+		if err != nil {
+			t.Fatalf("the first window was not told it was replaced: %v", err)
+		}
+		var m terminalMessage
+		if typ == websocket.MessageText && json.Unmarshal(data, &m) == nil && m.Type == "moved" {
+			moved = true
+		}
+	}
+	typeInto(t, second, "exit 0\n")
+	if run := readTerminal(t, second, 10*time.Second); run.closed.Session != ready.Session {
+		t.Errorf("the second window did not hold the session: %+v", run)
+	}
+}
+
+func TestReattachingAnEndedSessionSaysSo(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("term-gone")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	e.runTerminalAgent(t, cred, host, t.TempDir())
+
+	c := e.resumeTerminal(t, signer, "ana@example.com", host, me(t), "no-such-session")
+	if m := firstMessage(t, c); m.Type != "gone" {
+		t.Fatalf("got %+v", m)
+	}
+}
+
+func firstMessage(t *testing.T, c *websocket.Conn) terminalMessage {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for {
-		_, data, err := c.Read(ctx)
+		typ, data, err := c.Read(ctx)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("no message: %v", err)
 		}
 		var m terminalMessage
-		if json.Unmarshal(data, &m) == nil && m.Type == "ready" {
-			once.Do(func() {
-				b, _ := json.Marshal(terminalMessage{Type: "input", Data: "sleep 300\n"})
-				_ = c.Write(ctx, websocket.MessageText, b)
-			})
-			break
+		if typ == websocket.MessageText && json.Unmarshal(data, &m) == nil {
+			return m
 		}
-	}
-	time.Sleep(300 * time.Millisecond)
-	_ = c.CloseNow()
-
-	select {
-	case rec := <-th.sessions:
-		if rec.ChainHead == "" {
-			t.Error("the recording was not sealed")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the shell outlived the browser")
 	}
 }
 

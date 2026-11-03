@@ -86,6 +86,10 @@ type API struct {
 	// SessionTTL and TicketTTL default sensibly; see sessionTTL/ticketTTL.
 	SessionTTL time.Duration
 	TicketTTL  time.Duration
+	// TerminalReattachWindow is how long a browser terminal's shell keeps
+	// running after its connection drops, for the same person to come back
+	// to. Zero means five minutes; see terminal.go.
+	TerminalReattachWindow time.Duration
 
 	// AgentKeepRecordings is how long an agent keeps its copy of a recording
 	// once it has been stored here, sent on every heartbeat reply. Zero sends

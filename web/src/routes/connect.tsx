@@ -181,10 +181,10 @@ function Connect() {
           title={`${session.principal} on ${session.target.split('.')[0] ?? session.target}`}
           status={
             <Badge
-              color={state === 'live' ? 'teal' : state === 'error' ? 'rose' : 'slate'}
+              color={state === 'live' ? 'teal' : state === 'error' ? 'rose' : state === 'reconnecting' || state === 'lost' ? 'amber' : 'slate'}
               variant="light"
             >
-              {{ connecting: 'Connecting', live: 'Recording', closed: 'Ended', error: 'Failed' }[state]}
+              {{ connecting: 'Connecting', live: 'Recording', reconnecting: 'Reconnecting', lost: 'Connection lost', closed: 'Ended', error: 'Failed' }[state]}
             </Badge>
           }
           description={
@@ -210,6 +210,33 @@ function Connect() {
             </Button>
           }
         />
+        {state === 'lost' && (
+          <Alert
+            color="amber"
+            radius={0}
+            icon={<IconPlugConnectedX size={18} />}
+            title="Connection lost"
+          >
+            <Group justify="space-between" wrap="wrap" gap="sm">
+              <Text size={FS.body}>
+                {detail ?? 'The connection to the server dropped.'} What ran until then was recorded.
+              </Text>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  onClick={() => {
+                    heldTicket.current = null
+                    setState('connecting')
+                    setSession(null)
+                  }}
+                >
+                  Connect again
+                </Button>
+                <ButtonLink size="xs" variant="default" to="/assets">Back to servers</ButtonLink>
+              </Group>
+            </Group>
+          </Alert>
+        )}
         {state === 'closed' && (
           <Alert
             color="teal"

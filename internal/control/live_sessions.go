@@ -51,6 +51,9 @@ type liveSession struct {
 	terminate func(by, reason string) bool
 	// refresh asks a desktop to repaint for a viewer arriving late.
 	refresh func()
+	// term is set on a browser terminal, which its owner can come back to
+	// after their connection drops; see termSession.
+	term *termSession
 }
 
 func (s *liveSession) size() (int, int) {
