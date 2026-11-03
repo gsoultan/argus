@@ -671,7 +671,7 @@ func (s *Store) Assets(ctx context.Context) ([]Asset, error) {
 // nil from an agent too old to say.
 func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	activeSessions int, posture any, execTracing bool, execReason string,
-	appliedConsoleOnly *bool, appliedDirectSSH *string) error {
+	appliedConsoleOnly *bool, appliedDirectSSH *string, usage *HostUsage) error {
 
 	var postureJSON []byte
 	if posture != nil {
@@ -680,6 +680,25 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 			return err
 		}
 		postureJSON = b
+	}
+
+	// Usage rides about one beat a minute; on the others it is nil and the
+	// row keeps what it holds. Its time is the agent's sample time, never
+	// later than now: a heartbeat replayed from the spool after an outage
+	// must not present an hour-old sample as current.
+	var usageJSON []byte
+	var usageAt *time.Time
+	if u := usage.bounded(); u != nil {
+		b, err := json.Marshal(u)
+		if err != nil {
+			return err
+		}
+		usageJSON = b
+		at := u.At
+		if at.IsZero() || at.After(time.Now()) {
+			at = time.Now()
+		}
+		usageAt = &at
 	}
 
 	tx, err := s.db(ctx).Begin(ctx)
@@ -721,8 +740,8 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	// the unchanged document is not written again.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO agents (hostname, version, last_seen_at, active_sessions, posture,
-		                    exec_tracing, exec_reason, updated_at, matched_asset)
-		VALUES ($1,$2,now(),$3,$4,$5,$6,now(),$7)
+		                    exec_tracing, exec_reason, updated_at, matched_asset, usage, usage_at)
+		VALUES ($1,$2,now(),$3,$4,$5,$6,now(),$7,$8::jsonb,$9)
 		ON CONFLICT (hostname) DO UPDATE SET
 			version         = EXCLUDED.version,
 			last_seen_at    = now(),
@@ -735,8 +754,19 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 			exec_tracing    = EXCLUDED.exec_tracing,
 			exec_reason     = EXCLUDED.exec_reason,
 			updated_at      = now(),
-			matched_asset   = EXCLUDED.matched_asset`,
-		hostname, version, activeSessions, postureJSON, execTracing, execReason, matched); err != nil {
+			matched_asset   = EXCLUDED.matched_asset,
+			usage           = CASE
+			                    WHEN EXCLUDED.usage IS NULL
+			                      OR (agents.usage_at IS NOT NULL AND EXCLUDED.usage_at <= agents.usage_at)
+			                    THEN agents.usage ELSE EXCLUDED.usage
+			                  END,
+			usage_at        = CASE
+			                    WHEN EXCLUDED.usage IS NULL
+			                      OR (agents.usage_at IS NOT NULL AND EXCLUDED.usage_at <= agents.usage_at)
+			                    THEN agents.usage_at ELSE EXCLUDED.usage_at
+			                  END`,
+		hostname, version, activeSessions, postureJSON, execTracing, execReason, matched,
+		usageJSON, usageAt); err != nil {
 		return err
 	}
 

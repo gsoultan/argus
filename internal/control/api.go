@@ -339,6 +339,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/assets/{id}/server-logins", a.postServerLogin)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/server-logins/{name}", a.deleteServerLogin)
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
+	mux.HandleFunc("GET /api/v1/assets/{id}/system", a.getSystem)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
 	mux.HandleFunc("GET /api/v1/assets/{id}/team-assignments", a.getTeamAssignments)
@@ -789,6 +790,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Update is what the agent says about updating itself. Absent from
 		// an agent too old to update from the console.
 		Update *AgentUpdateStatus `json:"update"`
+		// Usage is how busy the host is, on about one beat a minute.
+		// Absent from an agent older than system details.
+		Usage *HostUsage `json:"usage"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -806,7 +810,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
 		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.ConsoleOnly,
-		in.DirectSSH)
+		in.DirectSSH, in.Usage)
 	// The direct SSH mode rides the reply. console_only is what an agent
 	// older than the setting understands, and it is on unless the mode is
 	// "allow": such an agent cannot hold a login for approval, so under

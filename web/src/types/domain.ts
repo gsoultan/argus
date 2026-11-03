@@ -359,6 +359,53 @@ export interface ServerApplications {
   sources: string[]
 }
 
+/** What kind of machine a server is, from its agent's host facts. */
+export interface ServerSystemFacts {
+  kernel: string
+  arch: string
+  cpuModel: string
+  /** Logical processors. */
+  cpus: number
+  memoryBytes: number
+  /** '' when the agent could not tell, which is not the same as physical. */
+  machine: 'physical' | 'virtual' | 'container' | ''
+  hypervisor: string
+  bootedAt: ISOTime | null
+  timeZone: string
+  utcOffsetSeconds: number
+}
+
+export interface ServerDisk {
+  mount: string
+  fs: string
+  total: number
+  used: number
+  /** What a normal writer can still use; less than total − used by the root reserve. */
+  avail: number
+}
+
+/** How busy a server was at usageAt. */
+export interface ServerUsage {
+  load: [number, number, number]
+  /** Percent of processor time not idle; null on an agent's first sample. */
+  cpuBusy: number | null
+  memTotal: number
+  memAvailable: number
+  swapTotal: number
+  swapFree: number
+  disks: ServerDisk[]
+}
+
+/** A server's System card. */
+export interface ServerSystem {
+  /** False when no agent has sent system details: too old, or none. */
+  reported: boolean
+  os: string
+  system: ServerSystemFacts | null
+  usage: ServerUsage | null
+  usageAt: ISOTime | null
+}
+
 /**
  * One person's access to one asset.
  *

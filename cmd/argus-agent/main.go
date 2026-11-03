@@ -485,6 +485,12 @@ func runDaemon(args []string) int {
 	// One heartbeat at a time: an update reports a change at once, between
 	// the regular ones, and two in flight would apply replies out of order.
 	var beating sync.Mutex
+	// Usage rides about one heartbeat a minute: often enough for the
+	// server page to be current, and half the writes of every beat.
+	var (
+		usage     agent.UsageSampler
+		usageSent time.Time
+	)
 	heartbeat := func() {
 		beating.Lock()
 		defer beating.Unlock()
@@ -509,6 +515,12 @@ func runDaemon(args []string) int {
 				"sshd_auth":      p.SSHDAuth,
 			}
 		}
+		var usageReport any
+		if time.Since(usageSent) >= 55*time.Second {
+			if u, ok := usage.Sample(); ok {
+				usageReport, usageSent = u, time.Now()
+			}
+		}
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
@@ -522,6 +534,7 @@ func runDaemon(args []string) int {
 			// can tell "none" from "not yet".
 			"personal_accounts": personalStates,
 			"update":            updater.Status(),
+			"usage":             usageReport,
 		})
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
@@ -644,6 +657,7 @@ func runDaemon(args []string) int {
 	go loop(10*time.Minute, stop, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
 		apps := agent.DiscoverApps(ctx)
+		sys := agent.DiscoverSystem()
 		writeJSON(*stateDir+"/facts.json", f, log)
 		writeJSON(*stateDir+"/applications.json", apps, log)
 
@@ -656,11 +670,12 @@ func runDaemon(args []string) int {
 			"ssh_ports":    f.SSHPorts,
 			"accounts":     f.Accounts,
 			"applications": apps,
+			"system":       sys,
 		}
 		// Compared without the scan time, which differs every run.
 		probe := apps
 		probe.CheckedAt = time.Time{}
-		fingerprint, _ := json.Marshal([]any{f, probe})
+		fingerprint, _ := json.Marshal([]any{f, probe, sys})
 		if bytes.Equal(fingerprint, lastFacts) && time.Since(lastSent) < time.Hour {
 			return
 		}
