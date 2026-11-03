@@ -52,6 +52,7 @@ import {
 } from '~/components/nav'
 import { LogoMark } from '~/components/Logo'
 import { AlertBell } from '~/components/AlertBell'
+import { ColorSchemeMenu } from '~/components/ColorSchemeMenu'
 import {
   argusVersion, controlPlaneHost, isConfigured, isLive, logout, signOutEverywhere, switchOrganization,
   whoami, type Identity,
@@ -298,6 +299,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               </Tooltip>
             )}
 
+            <ColorSchemeMenu />
+
             {me && <AlertBell />}
 
             <Menu position="bottom-end" width={240} withArrow>
@@ -464,7 +467,7 @@ function TopNavLink({ item, pathname, counts }: { item: NavItem; pathname: strin
 function SourceDot({ source }: { source: DataSource }) {
   const dot = {
     live: 'var(--color-verified)',
-    connecting: 'var(--mantine-color-slate-4)',
+    connecting: 'var(--color-ink-muted)',
     fixture: 'var(--color-pending)',
     unreachable: 'var(--color-denied)',
   }[source]

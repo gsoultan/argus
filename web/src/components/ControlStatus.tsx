@@ -12,7 +12,7 @@ import { Mono, absTime, relTime } from '~/components/primitives'
 import { Meter, bytes } from '~/components/server/SystemCard'
 import { ErrorState } from '~/components/ErrorState'
 import { controlStatus, type ControlStatus as Status, type StatusProblem } from '~/lib/live'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 
 /**
  * How argus-control itself is doing: the machine it runs on, its database,
@@ -133,7 +133,7 @@ function Header({ st, stale }: { st: Status; stale?: boolean }) {
             {st.machine.os && <> · {st.machine.os}, {st.machine.cores} cores{mem}</>}
           </Text>
         </Box>
-        <Text size={FS.meta} c={stale ? 'amber.7' : 'dimmed'}>
+        <Text size={FS.meta} c={stale ? INK.pending : 'dimmed'}>
           {stale ? `Not answering; last report ${relTime(st.checkedAt)}` : `Checked ${relTime(st.checkedAt)}`}
         </Text>
       </Group>
@@ -311,7 +311,7 @@ function Check({ state, name, detail, action }: {
       </Box>
       {action && (
         <UnstyledButton onClick={action.go} style={{ flexShrink: 0 }}>
-          <Text size={FS.meta} c="azure.6" fw={500}>{action.label} ›</Text>
+          <Text size={FS.meta} c={INK.brand} fw={500}>{action.label} ›</Text>
         </UnstyledButton>
       )}
     </Group>

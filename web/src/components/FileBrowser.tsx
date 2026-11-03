@@ -7,7 +7,7 @@ import {
   IconArrowUp, IconDownload, IconFile, IconFolder, IconRefresh, IconUpload, IconX,
 } from '@tabler/icons-react'
 import { downloadBlob } from '~/lib/download'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 
 /**
  * File transfer in the browser: the console's scp.
@@ -354,7 +354,7 @@ export function FileBrowser({ endpoint, getTicket, target, principal, onStateCha
         </Alert>
       )}
       {notice && (
-        <Text size={FS.meta} c="teal.4">{notice}</Text>
+        <Text size={FS.meta} c={INK.verified}>{notice}</Text>
       )}
       {!live && (
         <Alert color={state === 'error' ? 'rose' : 'slate'} title="File transfer closed">

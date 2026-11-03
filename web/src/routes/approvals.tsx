@@ -12,7 +12,7 @@ import {
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, RequestStateBadge, absTime, relTime } from '~/components/primitives'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import { notifyError, notifyWarn } from '~/lib/notify'
 import {
   assetsQuery, directLoginsQuery, meQuery, requestsQuery, useCreateRequest, useDecideDirectLogin,
@@ -361,7 +361,7 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
           {r.expiresAt && r.state === 'approved' && (
             <Group gap={SP.tight} justify="flex-end" mt={SP.tight}>
               <IconClockHour4 size={11} style={{ color: 'var(--color-pending)' }} />
-              <Text size={FS.micro} c="amber.4">expires {relTime(r.expiresAt)}</Text>
+              <Text size={FS.micro} c={INK.pending}>expires {relTime(r.expiresAt)}</Text>
             </Group>
           )}
         </Box>

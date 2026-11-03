@@ -15,7 +15,7 @@ import { Mono } from '~/components/primitives'
 import { meQuery, policyQuery, useSavePolicy } from '~/lib/queries'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { isConfigured } from '~/lib/live'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import type { DirectSsh, GatewayPolicy, PolicyKey } from '~/types/domain'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
 import { guard } from '~/lib/guard'
@@ -387,7 +387,7 @@ function Settings() {
               }
             >
               <Text size="xs" span>Direct SSH logins — </Text>
-              <Text size="xs" span fw={600} c={directLoosens ? 'rose.4' : 'teal.4'}>
+              <Text size="xs" span fw={600} c={directLoosens ? INK.denied : INK.verified}>
                 {directSshLabel(saved.directSsh)} → {directSshLabel(draft.directSsh)}
               </Text>
             </List.Item>
@@ -409,7 +409,7 @@ function Settings() {
                 }
               >
                 <Text size="xs" span>{f.label} — </Text>
-                <Text size="xs" span fw={600} c={f.riskOn === on ? 'rose.4' : 'teal.4'}>
+                <Text size="xs" span fw={600} c={f.riskOn === on ? INK.denied : INK.verified}>
                   {on ? 'enabled' : 'disabled'}
                 </Text>
               </List.Item>

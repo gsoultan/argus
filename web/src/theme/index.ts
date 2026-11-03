@@ -1,9 +1,19 @@
-import { createTheme, type MantineColorsTuple, rem } from '@mantine/core'
+import { createTheme, type CSSVariablesResolver, type MantineColorsTuple, rem } from '@mantine/core'
 
 /**
- * Argus is light: a pale grey page, white cards, one blue for everything you
- * can press. The terminal and the remote desktop stay dark, because they are
- * the server's screen, not the console's.
+ * Argus has two schemes, light and dark, and follows the operating system until
+ * the person picks one (the sun/moon menu in the header; see ColorSchemeMenu).
+ * Light is a pale grey page, white cards, one blue for everything you can
+ * press; dark is the same layout on graphite. The terminal and the remote
+ * desktop stay dark in both, because they are the server's screen, not the
+ * console's.
+ *
+ * Text colours are never written as a fixed shade (`c="amber.4"`). A shade
+ * that reads on one background is unreadable on the other: the command
+ * timeline drew commands in `slate.2`, a near-white left over from when the
+ * console was dark, and on the light scheme they were 1.2:1 against the card.
+ * Use `INK` below, which resolves per scheme and is checked against WCAG AA
+ * (4.5:1) on every surface it can sit on.
  *
  * Two colour systems, and keeping them apart is the whole design:
  *
@@ -38,7 +48,21 @@ import { createTheme, type MantineColorsTuple, rem } from '@mantine/core'
  */
 const slate: MantineColorsTuple = [
   '#f6f7f9', '#eef0f3', '#e4e7ec', '#d0d5dd', '#98a2b3',
-  '#667085', '#475467', '#344054', '#1d2939', '#101828',
+  // 5 is secondary text on the light scheme. It was #667085, which is 4.97:1 on
+  // a card but 4.5:1 on the page and 4.4:1 on an inset panel -- under AA in the
+  // two places a timestamp most often sits. #5d6679 is 5.2:1 on all three.
+  '#5d6679', '#475467', '#344054', '#1d2939', '#101828',
+]
+
+/**
+ * The dark scheme's neutral, the same graphite as `slate` run the other way.
+ * Mantine reads `dark` by index: 0 is body text, 2 secondary text, 4 borders,
+ * 6 inputs, 7 the page. Secondary text (#98a2b3) is 6.1:1 on the lightest
+ * surface it sits on.
+ */
+const dark: MantineColorsTuple = [
+  '#e4e7ec', '#c3c9d3', '#98a2b3', '#8a94a6', '#343b48',
+  '#2a303b', '#1e232c', '#161a21', '#0f1218', '#0a0c10',
 ]
 
 /**
@@ -74,6 +98,91 @@ const sky: MantineColorsTuple = [
 ]
 
 /**
+ * Text in a colour, per scheme. Every value is AA (4.5:1) or better on the
+ * page, a card and an inset panel in its own scheme:
+ *
+ * | ink      | light            | dark             |
+ * | :------- | :--------------- | :--------------- |
+ * | brand    | azure.6  4.7–5.2 | azure.4  6.2–7.4 |
+ * | verified | teal.7   4.9–5.4 | teal.4   8.2–9.8 |
+ * | pending  | amber.7  4.9–5.4 | amber.4  8.6–10  |
+ * | denied   | rose.7   6.0–6.6 | rose.4   5.7–6.7 |
+ * | live     | sky.7    5.3–5.9 | sky.4    7.5–8.9 |
+ *
+ * The stock shades these replace (teal.6, amber.6, sky.6 in light; anything
+ * from 0 to 4 written for the old dark console) ran from 3.2:1 down to 1.2:1.
+ * They are Mantine's own `--mantine-color-<name>-text` variables, re-pointed
+ * by `cssVariablesResolver` below, so `variant="subtle"` buttons and anchors
+ * pick up the same values.
+ */
+/** localStorage key for the chosen scheme. public/color-scheme.js reads it too. */
+export const COLOR_SCHEME_KEY = 'argus-color-scheme'
+
+export const INK = {
+  brand: 'var(--mantine-color-azure-text)',
+  verified: 'var(--mantine-color-teal-text)',
+  pending: 'var(--mantine-color-amber-text)',
+  denied: 'var(--mantine-color-rose-text)',
+  live: 'var(--mantine-color-sky-text)',
+} as const
+
+const SEMANTIC = ['teal', 'amber', 'rose', 'sky'] as const
+
+/** `rgba()` of a palette shade, for the translucent dark-scheme tints. */
+const tint = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16)
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+}
+
+/**
+ * The dark scheme's `variant="light"` (every badge, icon tile and avatar).
+ * Mantine's default is shade 9 darkened by half -- near-black, so on graphite
+ * a badge read as a hole in the card rather than a tag on it. A translucent
+ * shade 6 keeps the hue visible, and shade 2 text on it is 7:1 or better.
+ */
+const darkLight = (name: string, ramp: MantineColorsTuple) => ({
+  [`--mantine-color-${name}-light`]: tint(ramp[6], 0.16),
+  [`--mantine-color-${name}-light-hover`]: tint(ramp[6], 0.24),
+  [`--mantine-color-${name}-light-color`]: `var(--mantine-color-${name}-2)`,
+})
+
+/**
+ * Scheme-dependent variables Mantine derives from the palette, set to values
+ * that were measured rather than inherited. See INK, and `dark` above.
+ */
+export const cssVariablesResolver: CSSVariablesResolver = () => ({
+  variables: {},
+  light: {
+    '--mantine-color-dimmed': 'var(--mantine-color-slate-5)',
+    '--mantine-color-placeholder': 'var(--mantine-color-slate-5)',
+    '--mantine-color-default-border': 'var(--mantine-color-slate-3)',
+    '--mantine-color-default-hover': 'var(--mantine-color-slate-0)',
+    '--mantine-color-disabled': 'var(--mantine-color-slate-1)',
+    '--mantine-color-disabled-color': 'var(--mantine-color-slate-5)',
+    '--mantine-color-disabled-border': 'var(--mantine-color-slate-2)',
+    '--mantine-color-error': 'var(--mantine-color-rose-7)',
+    '--mantine-color-anchor': 'var(--mantine-color-azure-6)',
+    '--mantine-color-azure-text': 'var(--mantine-color-azure-6)',
+    ...Object.fromEntries(SEMANTIC.map((c) => [`--mantine-color-${c}-text`, `var(--mantine-color-${c}-7)`])),
+  },
+  dark: {
+    '--mantine-color-text': 'var(--mantine-color-dark-0)',
+    '--mantine-color-dimmed': 'var(--mantine-color-dark-2)',
+    '--mantine-color-placeholder': 'var(--mantine-color-dark-3)',
+    '--mantine-color-error': 'var(--mantine-color-rose-4)',
+    '--mantine-color-anchor': 'var(--mantine-color-azure-4)',
+    '--mantine-color-azure-text': 'var(--mantine-color-azure-4)',
+    ...Object.fromEntries(SEMANTIC.map((c) => [`--mantine-color-${c}-text`, `var(--mantine-color-${c}-4)`])),
+    ...darkLight('azure', azure),
+    ...darkLight('teal', teal),
+    ...darkLight('amber', amber),
+    ...darkLight('rose', rose),
+    ...darkLight('sky', sky),
+    ...darkLight('slate', slate),
+  },
+})
+
+/**
  * The type scale, including the steps below Mantine's `xs`.
  *
  * Argus is a dense console and a large share of its text is secondary: field
@@ -83,8 +192,15 @@ const sky: MantineColorsTuple = [
  * Naming the steps makes it one decision instead of thirty-six.
  */
 export const FS = {
-  /** Dense secondary text: field labels, timestamps, card hints. */
-  micro: rem(10),
+  /**
+   * Dense secondary text: field labels, timestamps, card hints.
+   *
+   * 11, not 10. At 10px Plex's x-height is under 5px, and this step carries
+   * most of the console's secondary text in a colour that is already one step
+   * dimmer than body copy; the two together made labels the hardest thing on
+   * the screen to read. 218 call sites, one decision.
+   */
+  micro: rem(11),
   /** Hash digests and other glyph-compared strings. */
   digest: rem(11),
   /** Table cells and inline metadata. Mantine's `xs`, named for intent. */
@@ -128,7 +244,7 @@ export const theme = createTheme({
   // 6 in both schemes: white on azure.6 is 5.0:1, where a lighter shade would
   // leave button labels short of AA.
   primaryShade: { light: 6, dark: 6 },
-  colors: { slate, azure, teal, amber, rose, sky },
+  colors: { slate, dark, azure, teal, amber, rose, sky },
   black: '#101828',
 
   // IBM Plex Sans, from @fontsource-variable/ibm-plex-sans. An engineering face
@@ -241,15 +357,17 @@ export const theme = createTheme({
         verticalSpacing: SP.cozy,
         horizontalSpacing: 'md',
         highlightOnHover: true,
-        stripedColor: 'rgba(16, 24, 40, 0.018)',
-        highlightOnHoverColor: 'rgba(37, 99, 235, 0.04)',
+        // Translucent, so the same value works on a white card and a graphite
+        // one: a faint wash of the text colour, and of the brand on hover.
+        stripedColor: 'color-mix(in srgb, var(--mantine-color-text) 2.5%, transparent)',
+        highlightOnHoverColor: 'color-mix(in srgb, var(--mantine-color-azure-5) 7%, transparent)',
       },
       styles: {
         // Sentence case. Uppercase headers on every table made each list read
         // as shouting, and are slower to scan than the words they spell.
         th: {
           fontSize: FS.meta,
-          color: 'var(--mantine-color-slate-5)',
+          color: 'var(--mantine-color-dimmed)',
           fontWeight: 500,
           whiteSpace: 'nowrap',
         },

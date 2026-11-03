@@ -12,7 +12,7 @@ import type {
   AgentState, AssetHealth, BypassPosture, CredentialMode, HostKeyState,
   RecordingFidelity, RequestState, RiskFlag, Session, SessionOrigin, SessionState,
 } from '~/types/domain'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import { rem } from '@mantine/core'
 import { EPOCH } from '~/lib/seed'
 import { isConfigured } from '~/lib/live'
@@ -501,7 +501,7 @@ export function Digest({ value, chars = 12 }: { value: string; chars?: number })
     <CopyButton value={value} timeout={1200}>
       {({ copied, copy }) => (
         <Tooltip label={copied ? 'Copied' : value} multiline maw={420}>
-          <UnstyledButton onClick={copy} className="argus-digest" c={copied ? 'azure.3' : 'dimmed'}>
+          <UnstyledButton onClick={copy} className="argus-digest" c={copied ? INK.brand : 'dimmed'}>
             <Group gap={4} wrap="nowrap">
               <span>{short}</span>
               {copied ? <IconCheck size={11} /> : <IconCopy size={11} opacity={0.5} />}
@@ -527,7 +527,7 @@ export function Target({ principal, hostname }: { principal: string; hostname: s
     // narrow column while `ops@db-03` did not, and no two rows in the table
     // were the same height.
     <Text component="span" display="inline-block" ff="monospace" size="xs" style={{ whiteSpace: 'nowrap' }}>
-      <Text span c="azure.3" inherit fw={500}>{principal}</Text>
+      <Text span c={INK.brand} inherit fw={500}>{principal}</Text>
       <Text span c="dimmed" inherit>@</Text>
       {hostname.split('.')[0]}
     </Text>
@@ -644,7 +644,7 @@ export function Stat({
           {value === undefined ? (
             <Skeleton height={rem(27)} width={64} radius="sm" mt={6} />
           ) : (
-            <Text size={FS.figure} fw={600} lh={1.15} mt={6} c={warn ? 'amber.4' : undefined}>
+            <Text size={FS.figure} fw={600} lh={1.15} mt={6} c={warn ? INK.pending : undefined}>
               {value}
             </Text>
           )}

@@ -3,7 +3,7 @@ import {
   ActionIcon, Badge, Box, Button, Group, Loader, ScrollArea, Switch, Table, Text, Tooltip,
 } from '@mantine/core'
 import { IconArrowLeft, IconLock, IconRefresh } from '@tabler/icons-react'
-import { FS, SP } from '~/theme'
+import { FS, INK, SP } from '~/theme'
 import type { DBLevel } from '~/types/domain'
 
 /*
@@ -242,7 +242,7 @@ export function ActivityPanel({ collect, level, narrow, onBack }: AdminPanelProp
                     <Table.Td>{r[0]}{me && <Badge size="xs" variant="light" ml={4}>you</Badge>}</Table.Td>
                     <Table.Td>{r[1]}</Table.Td>
                     {!narrow && <Table.Td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${r[2]} from ${r[3]}`}>{r[2]}</Table.Td>}
-                    <Table.Td style={{ whiteSpace: 'nowrap', color: r[4]?.startsWith('idle in transaction') ? 'var(--mantine-color-amber-7)' : undefined }}>{r[4]}</Table.Td>
+                    <Table.Td style={{ whiteSpace: 'nowrap', color: r[4]?.startsWith('idle in transaction') ? INK.pending : undefined }}>{r[4]}</Table.Td>
                     {!narrow && <Table.Td style={{ whiteSpace: 'nowrap' }}>{r[5]}</Table.Td>}
                     <Table.Td style={{ whiteSpace: 'nowrap' }} title={r[7] ? `in a transaction for ${r[7]}` : undefined}>{r[6]}{r[7] && !r[6] ? <span style={{ color: 'var(--mantine-color-dimmed)' }}>tx {r[7]}</span> : ''}</Table.Td>
                     <Table.Td style={{ whiteSpace: 'nowrap', fontWeight: blockedBy ? 600 : undefined }}>{blockedBy}</Table.Td>

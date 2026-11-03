@@ -8,7 +8,7 @@ import { EmptyState, TableSkeleton, Toolbar } from '~/components/page'
 import {
   ArtefactPending, FidelityBadge, Mono, SessionDuration, SessionStateBadge, absTime, relTime, rowNav,
 } from '~/components/primitives'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import type { Asset, Session } from '~/types/domain'
 
 type Filter = 'all' | 'live' | 'brokered' | 'direct'
@@ -103,7 +103,7 @@ export function SessionsTab({ asset, sessions }: { asset: Asset; sessions: Sessi
                           <SessionStateBadge state={s.state} silent={s.silent} lastReportedAt={s.lastReportedAt} endInferred={s.endInferred} />
                         </Table.Td>
                         <Table.Td><Text size={FS.meta}>{s.userEmail.split('@')[0]}</Text></Table.Td>
-                        <Table.Td><Mono c="azure.3">{s.principal}</Mono></Table.Td>
+                        <Table.Td><Mono c={INK.brand}>{s.principal}</Mono></Table.Td>
                         <Table.Td>
                           <Text size={FS.meta} c="dimmed" title={absTime(s.startedAt)}>{relTime(s.startedAt)}</Text>
                         </Table.Td>
@@ -135,7 +135,7 @@ export function SessionsTab({ asset, sessions }: { asset: Asset; sessions: Sessi
                     <Group gap={SP.snug} wrap="nowrap">
                       <Text size={FS.body} fw={600} truncate>{s.userEmail.split('@')[0]}</Text>
                       <Text size={FS.micro} c="dimmed">as</Text>
-                      <Mono c="azure.3">{s.principal}</Mono>
+                      <Mono c={INK.brand}>{s.principal}</Mono>
                     </Group>
                     <Group gap={SP.tight} mt={2} wrap="nowrap">
                       <Text size={FS.meta} c="dimmed" title={absTime(s.startedAt)}>{relTime(s.startedAt)} ·</Text>

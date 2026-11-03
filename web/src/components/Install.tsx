@@ -11,7 +11,7 @@ import {
   checkInstallDatabase, install, waitForControlPlane, type DatabaseCheck, type DatabaseInput,
   type InstallResult, type SetupStatus,
 } from '~/lib/live'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import { ErrorNote } from '~/components/SignIn'
 import { generatePassword } from '~/lib/password'
 
@@ -188,7 +188,7 @@ export function Install({ status }: { status: SetupStatus }) {
               Test connection
             </Button>
             {dbCheck && (
-              <Text size="xs" c="teal.4">
+              <Text size="xs" c={INK.verified}>
                 <IconCircleCheck size={13} style={{ verticalAlign: -2 }} /> Connected to PostgreSQL{' '}
                 {dbCheck.version.split(' ')[0]}.
               </Text>
@@ -312,7 +312,7 @@ export function Install({ status }: { status: SetupStatus }) {
               )}
             </Group>
             {generated && (
-              <Text size="xs" c="amber.4" mt={6}>
+              <Text size="xs" c={INK.pending} mt={6}>
                 Save this password in your password manager before you continue. It is not shown again.
               </Text>
             )}
@@ -366,7 +366,7 @@ export function TokenStep({ tokenFile, token, setToken, onError }: {
       <Alert color="sky" variant="light" icon={<IconShieldLock size={16} />} p="xs">
         <Text size="xs">Read it on the host:</Text>
         <Group gap={6} mt={4} wrap="nowrap">
-          <Text size={FS.digest} ff="monospace" c="slate.7" style={{ wordBreak: 'break-all' }}>
+          <Text size={FS.digest} ff="monospace" c="var(--color-ink-soft)" style={{ wordBreak: 'break-all' }}>
             {command}
           </Text>
           <CopyButton value={command} timeout={1200}>

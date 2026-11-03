@@ -13,7 +13,7 @@ import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
 import { databaseQuery, meQuery, useRequestDatabaseAccess } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { engineOf } from '~/lib/engines'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import type { DBLevel } from '~/types/domain'
 
 /**
@@ -93,10 +93,10 @@ function DatabasePage() {
     <Box>
       <Group px="md" py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
         <Text size={FS.micro} c="dimmed">
-          <Link to="/databases" style={{ color: 'var(--color-brand)' }}>Databases</Link> / {engineOf(database.engine).label} · {database.dbname}
+          <Link to="/databases" style={{ color: INK.brand }}>Databases</Link> / {engineOf(database.engine).label} · {database.dbname}
         </Text>
         {admin && (
-          <Link to="/databases/$dbId/settings" params={{ dbId }} style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-brand)' }}>
+          <Link to="/databases/$dbId/settings" params={{ dbId }} style={{ marginLeft: 'auto', fontSize: 11, color: INK.brand }}>
             Who can connect &amp; settings
           </Link>
         )}

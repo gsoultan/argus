@@ -18,7 +18,7 @@ import {
   backupCatalogQuery, databaseBackupsQuery, useCancelBackup, useCancelRestore, useDeleteBackup, usePinBackup, useRestoreBackup,
   useSetBackupSchedule, useStartBackup, useUndoRestore,
 } from '~/lib/queries'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import type { BackupDestination, BackupSchedule, BackupsView, DBLevel, Database, DatabaseBackup, DatabaseRestore } from '~/types/domain'
 
 /*
@@ -224,7 +224,7 @@ function ScheduleLine({ s, database, admin, storage }: { s: BackupSchedule; data
       )}
       {admin && (
         <Link to="/databases/$dbId/settings" params={{ dbId: database.id }} search={{ tab: 'backups' }}
-          style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-brand)' }}>
+          style={{ marginLeft: 'auto', fontSize: 12, color: INK.brand }}>
           Change in Settings
         </Link>
       )}

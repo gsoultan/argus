@@ -45,14 +45,67 @@
 
 :root {
   color-scheme: light;
+  /* Text that is not body copy, in an order of loudness. `--color-ink` is body,
+     `--color-ink-soft` sidebar items and secondary labels you still act on,
+     `--color-ink-muted` hints and timestamps (Mantine's `dimmed`). All three
+     are AA on every surface in their scheme. */
+  --color-ink: var(--mantine-color-text);
+  --color-ink-soft: var(--mantine-color-slate-7);
+  --color-ink-muted: var(--mantine-color-dimmed);
+  /* Selected and active rows: a brand tint, and the text on it. */
+  --color-brand-wash: var(--mantine-color-azure-0);
+  --color-brand-edge: var(--mantine-color-azure-2);
+  --color-brand-ink: var(--mantine-color-azure-7);
+  --color-scrollbar-hover: #d0d5dd;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-lift: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.05);
 }
 
-/* Mantine derives `c="dimmed"` from dark-2, which in this palette is a near-white
-   used for primary text — so "dimmed" was barely dimmer than normal body copy.
-   Pinned to the step that was actually designed for secondary text: 5.5:1 on
-   --color-surface, comfortably past AA at the small sizes this console uses it. */
-:root {
-  --mantine-color-dimmed: var(--mantine-color-slate-5);
+/* ---------------------------------------------------------------------------
+   Dark. The same four elevations on graphite, lightest on top, so a card
+   still reads as raised off the page without a shadow doing the work. The
+   brand and the four semantic colours step up to their 4 shade: the 6 shades
+   that carry the light scheme are 3.4:1 or worse on graphite.
+
+   Mantine puts `data-mantine-color-scheme` on <html>; public/color-scheme.js
+   sets it before first paint.
+   --------------------------------------------------------------------------- */
+:root[data-mantine-color-scheme='dark'] {
+  color-scheme: dark;
+
+  --color-void: #0f1218;
+  --color-surface: #161a21;
+  --color-raised: #1e232c;
+  --color-line: #2a303b;
+
+  --color-brand: #3b82f6;
+  --color-brand-bright: #60a5fa;
+
+  --color-verified: #32d583;
+  --color-pending: #fdb022;
+  --color-denied: #f97066;
+  --color-live: #36bffa;
+
+  /* One step darker than the page, so a command block still reads as the
+     server's screen rather than as another card. */
+  --color-screen: #0a0c10;
+
+  --color-ink-soft: var(--mantine-color-dark-1);
+  --color-brand-wash: rgba(59, 130, 246, 0.14);
+  --color-brand-edge: rgba(96, 165, 250, 0.35);
+  --color-brand-ink: var(--mantine-color-azure-3);
+  --color-scrollbar-hover: #3a4250;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-lift: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* Numbers line up in columns: timestamps, counts, durations, sizes. Plex's
+   proportional figures made a column of "11:41" and "10:07" ragged. */
+body {
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 html,
@@ -87,7 +140,7 @@ body {
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #d0d5dd; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-scrollbar-hover); }
 
 /* Table row striping and hover live in the theme, as `stripedColor` and
    `highlightOnHoverColor` props. They were declared here as CSS variables and
@@ -146,10 +199,10 @@ body {
   margin-inline-end: 12px;
 }
 .argus-navlink:not([data-active]) {
-  color: var(--mantine-color-slate-6);
+  color: var(--color-ink-soft);
 }
 .argus-navlink:not([data-active]) .mantine-NavLink-section[data-position='left'] {
-  color: var(--mantine-color-slate-5);
+  color: var(--color-ink-muted);
 }
 .argus-navlink:not([data-active]):hover {
   background: var(--color-raised);
@@ -184,7 +237,8 @@ button.argus-navsection:hover {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--mantine-color-slate-4);
+  /* Was slate.4, 2.6:1: the section names were the faintest text on screen. */
+  color: var(--color-ink-muted);
 }
 
 /* The Overview's server picker: the one place the console raises its voice.
@@ -192,9 +246,9 @@ button.argus-navsection:hover {
    here" without competing with the warnings below it. */
 .argus-hero {
   background:
-    radial-gradient(120% 140% at 100% 0%, rgba(37, 99, 235, 0.08), transparent 55%),
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--color-brand) 10%, transparent), transparent 55%),
     var(--color-surface) !important;
-  border-color: rgba(37, 99, 235, 0.25) !important;
+  border-color: color-mix(in srgb, var(--color-brand) 30%, transparent) !important;
 }
 
 /* One finding per row. The tone shows in the icon and a 2px edge, not in a
@@ -215,9 +269,9 @@ button.argus-navsection:hover {
   place-items: center;
   font-size: 13px;
   font-weight: 600;
-  color: var(--mantine-color-azure-7);
-  background: var(--mantine-color-azure-0);
-  border: 1px solid var(--mantine-color-azure-2);
+  color: var(--color-brand-ink);
+  background: var(--color-brand-wash);
+  border: 1px solid var(--color-brand-edge);
 }
 .argus-step-rule {
   flex: 1;
@@ -237,8 +291,8 @@ button.argus-navsection:hover {
   animation: argus-pulse 1.8s ease-out infinite;
 }
 @keyframes argus-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(0, 134, 201, 0.45); }
-  100% { box-shadow: 0 0 0 10px rgba(0, 134, 201, 0); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-live) 45%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
 }
 
 /* Commands people copy into a terminal on the server. Selecting the text by
@@ -312,8 +366,8 @@ button.argus-navsection:hover {
   position: relative;
 }
 .argus-server:has(.argus-stretch):hover {
-  border-color: var(--mantine-color-azure-3);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.05);
+  border-color: var(--color-brand-edge);
+  box-shadow: var(--shadow-lift);
 }
 .argus-stretch::after {
   content: '';
@@ -338,18 +392,18 @@ button.argus-navsection:hover {
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--mantine-color-slate-6);
+  color: var(--color-ink-soft);
   text-decoration: none;
   white-space: nowrap;
   transition: background-color 120ms ease, color 120ms ease;
 }
 .argus-topnav:hover {
   background: var(--color-raised);
-  color: var(--mantine-color-slate-9);
+  color: var(--color-ink);
 }
 .argus-topnav[data-active] {
-  background: var(--mantine-color-azure-0);
-  color: var(--mantine-color-azure-7);
+  background: var(--color-brand-wash);
+  color: var(--color-brand-ink);
   font-weight: 600;
 }
 
@@ -358,7 +412,7 @@ button.argus-navsection:hover {
   background: var(--color-surface);
   border: 1px solid var(--color-line);
   border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  box-shadow: var(--shadow-card);
 }
 
 /* Step dots at the top of Add server. */
@@ -371,7 +425,7 @@ button.argus-navsection:hover {
   font-size: 13px;
   font-weight: 600;
   border: 1.5px solid var(--color-line);
-  color: var(--mantine-color-slate-5);
+  color: var(--color-ink-muted);
   background: var(--color-surface);
 }
 .argus-stepper-dot[data-state='current'] {
@@ -398,11 +452,11 @@ button.argus-navsection:hover {
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 .argus-pick:hover {
-  border-color: var(--mantine-color-azure-3);
+  border-color: var(--color-brand-edge);
 }
 .argus-pick[data-checked] {
   border-color: var(--color-brand);
-  background: var(--mantine-color-azure-0);
+  background: var(--color-brand-wash);
 }
 
 /* Signing in: Argus on the left, the form on the right. See AuthLayout. */

@@ -15,7 +15,7 @@ import { now, relTime } from '~/components/primitives'
 import { assetsQuery, meQuery, requestsQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
 import type { Asset } from '~/types/domain'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 
 type Show = 'all' | 'online' | 'offline'
 type Kind = 'all' | 'linux' | 'windows'
@@ -148,7 +148,7 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
                   to="/assets/$assetId"
                   params={{ assetId: a.id }}
                   className="argus-above"
-                  style={{ color: 'var(--mantine-color-azure-7)' }}
+                  style={{ color: INK.brand }}
                 >
                   Add a login account
                 </Link>
@@ -193,7 +193,7 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
               params={{ assetId: a.id }}
               className="argus-above"
               aria-label={`Manage ${name}`}
-              style={{ color: 'var(--mantine-color-azure-7)', fontSize: 13, fontWeight: 500, textDecoration: 'none' }}
+              style={{ color: INK.brand, fontSize: 13, fontWeight: 500, textDecoration: 'none' }}
             >
               Who can connect, settings
             </Link>
@@ -271,7 +271,7 @@ export function GrantCard({
           </Box>
         </Group>
         <Group justify="space-between" align="center" mt="auto" wrap="nowrap" gap="sm">
-          <Text size={FS.micro} c="amber.7">
+          <Text size={FS.micro} c={INK.pending}>
             {expiresAt ? `Access ends ${relTime(expiresAt)}` : 'Approved'}
           </Text>
           <ButtonLink

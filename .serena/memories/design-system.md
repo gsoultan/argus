@@ -29,12 +29,45 @@ match.
 
 ### Contrast floors that were chosen, not inherited
 
+(See "Light and dark" below for the per-scheme text colours; the notes here
+predate it.)
+
 - `primaryShade` is **6 in both schemes**. White on azure.6 is 5.2:1; the
   lighter shade Mantine picks by default in dark mode left button labels at
   4.0:1.
 - `--mantine-color-dimmed` is pinned to `slate.4` in `app.css`. Mantine derives
   dimmed from `dark-2`, which in this palette is a near-white used for primary
   text, so "dimmed" was barely dimmer than body copy.
+
+## Light and dark (2026-11)
+
+The console has both schemes. `defaultColorScheme="auto"` follows the OS; the
+sun/moon menu in the header (`ColorSchemeMenu`) picks Light, Dark or Match
+system, kept in localStorage under `argus-color-scheme` (`COLOR_SCHEME_KEY`).
+`public/color-scheme.js` reads the same key and sets
+`data-mantine-color-scheme` before first paint -- a file, not inline, because
+the console's CSP forbids inline script. It is precached.
+
+**Never write a text colour as a fixed shade** (`c="amber.4"`, `c="slate.2"`).
+The command timeline drew commands in `slate.2`, left over from when the console
+was dark-only, and on light they were 1.2:1 -- unreadable. Use `INK` from the
+theme (brand / verified / pending / denied / live), which points at Mantine's
+`--mantine-color-<c>-text`, re-pointed per scheme by `cssVariablesResolver`
+(light: shade 7, azure 6; dark: shade 4). `src/theme/__tests__/contrast.test.ts`
+checks every ink on page, card and inset panel in both schemes at 4.5:1, and
+`e2e/theme.spec.ts` measures the rendered command timeline. Surfaces fixed to the
+server's own screen (terminal, RDP, replay) stay dark and may use fixed light
+shades.
+
+Dark surfaces are overridden under `:root[data-mantine-color-scheme='dark']` in
+`app.tokens.css`; `--color-ink-soft`, `--color-brand-wash/edge/ink` and
+`--shadow-card/lift` are the scheme-aware tokens for our own classes. The
+`dark` ramp in the theme is Mantine's (0 text, 2 dimmed, 4 border, 6 input,
+7 body). Dark `variant="light"` is a translucent shade 6 with shade 2 text, not
+Mantine's near-black darkened shade 9.
+
+`slate.5` is #5d6679 (was #667085, under AA on the page and inset panels).
+`FS.micro` is 11px (was 10). Body text uses tabular numerals.
 
 ## Surfaces
 
@@ -49,7 +82,7 @@ the four semantic vars.
 because a dense console is mostly secondary text and those were once 36 inline
 `size="10px"` literals plus one-off 9, 11, 19, 27, 28 and 42px values.
 
-`micro` (10) labels, timestamps, hints · `digest` (11) hashes · `meta` (12)
+`micro` (11, was 10) labels, timestamps, hints · `digest` (11) hashes · `meta` (12)
 table cells and inline metadata · `body` (13) running prose · `figure` (27) stat
 numerals · `title` (19) page headers · `display` (42) the 404 numeral.
 

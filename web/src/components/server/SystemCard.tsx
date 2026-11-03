@@ -3,7 +3,7 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 import { Mono, absTime, now as clockNow, relTime } from '~/components/primitives'
 import type { ServerTab } from '~/components/server/tabs'
 import { live } from '~/lib/live'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import type { Asset, ServerDisk, ServerInterface, ServerSystem, ServerSystemFacts, ServerUsage } from '~/types/domain'
 
 /**
@@ -126,7 +126,7 @@ export function SystemCardBody({ asset, data, onTab, now }: {
     <Card padding={0} data-quiet={quiet || undefined}>
       <Header
         when={at ? (
-          <Text size={FS.meta} c={quiet ? 'amber.5' : 'dimmed'} title={absTime(at)}>
+          <Text size={FS.meta} c={quiet ? INK.pending : 'dimmed'} title={absTime(at)}>
             {quiet ? relTime(at) : `Reported by the agent ${relTime(at)}`}
           </Text>
         ) : undefined}
