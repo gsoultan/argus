@@ -109,3 +109,25 @@ func TestKeepZeroNeverDeletes(t *testing.T) {
 		t.Fatal("not compressed")
 	}
 }
+
+// The console can shorten how long shipped recordings stay while the agent
+// runs; the next tidy goes by the new value.
+func TestSetKeepAppliesToTheNextTidy(t *testing.T) {
+	state := t.TempDir()
+	rec := filepath.Join(state, "a.cast")
+	_ = os.WriteFile(rec, []byte("[0.1,\"o\",\"x\"]\n"), 0o600)
+	u := NewUploads(state, &fakeSender{}, nil)
+	if u.Keep != 7*24*time.Hour {
+		t.Fatalf("default keep = %v, want 7 days", u.Keep)
+	}
+	u.Queue(SessionRecord{ID: "a", Path: rec, ChainHead: "h"})
+	u.Pass(context.Background())
+	later := time.Now().Add(3 * 24 * time.Hour)
+	if _, rm := u.Tidy(later); rm != 0 {
+		t.Fatal("removed before the default keep")
+	}
+	u.SetKeep(48 * time.Hour)
+	if _, rm := u.Tidy(later); rm != 1 {
+		t.Fatal("not removed after keep was shortened")
+	}
+}

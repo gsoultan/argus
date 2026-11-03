@@ -36,8 +36,10 @@ disk that fills on every host at once. So once shipped (Tidy):
   - after CompressAfter (an hour) it is gzipped in place, <id>.cast.gz.
     Terminal recordings shrink five times or more; `gzip -dc` gives back
     the exact bytes, which still verify against the same chain head.
-  - after Keep (90 days by default, --keep-shipped) it is deleted. Zero
-    keeps it for ever.
+  - after Keep (7 days by default; the console's Settings, or --keep-shipped
+    on the host, which wins) it is deleted. Zero keeps it for ever. It was
+    90 days, and a host recording desktops kept three months of video that
+    the control plane already held.
 
 A recording that was never shipped, is still queued, or was refused is never
 compressed or deleted: until the control plane holds a verified copy, the
@@ -57,7 +59,8 @@ type Uploads struct {
 	kick chan struct{}
 
 	// Keep is how long a shipped recording stays on the host; zero keeps it
-	// for ever. CompressAfter is when it is gzipped; zero means an hour.
+	// for ever. Set it before Run, or with SetKeep once Run has started.
+	// CompressAfter is when it is gzipped; zero means an hour.
 	Keep          time.Duration
 	CompressAfter time.Duration
 
@@ -66,8 +69,20 @@ type Uploads struct {
 	lastTidy time.Time
 }
 
-// DefaultKeepShipped is how long a shipped recording stays on the host.
-const DefaultKeepShipped = 90 * 24 * time.Hour
+// DefaultKeepShipped is how long a shipped recording stays on the host when
+// neither the console nor the host's own flag says otherwise. The control
+// plane holds the verified copy; this one is a convenience.
+const DefaultKeepShipped = 7 * 24 * time.Hour
+
+// SetKeep changes Keep while Run is going, for a value the console sent.
+func (u *Uploads) SetKeep(d time.Duration) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	u.Keep = d
+	u.mu.Unlock()
+}
 
 // shippedMarker remembers a recording the control plane has stored.
 type shippedMarker struct {
@@ -230,6 +245,9 @@ func (u *Uploads) Tidy(now time.Time) (compressed, removed int) {
 	if err != nil {
 		return 0, 0
 	}
+	u.mu.Lock()
+	keep := u.Keep
+	u.mu.Unlock()
 	after := u.CompressAfter
 	if after <= 0 {
 		after = time.Hour
@@ -246,7 +264,7 @@ func (u *Uploads) Tidy(now time.Time) (compressed, removed int) {
 			continue
 		}
 		age := now.Sub(m.ShippedAt)
-		if u.Keep > 0 && age >= u.Keep {
+		if keep > 0 && age >= keep {
 			_ = os.Remove(m.Path)
 			_ = os.Remove(m.Path + ".gz")
 			_ = os.Remove(marker)
@@ -268,7 +286,7 @@ func (u *Uploads) Tidy(now time.Time) (compressed, removed int) {
 	}
 	if compressed+removed > 0 {
 		u.log.Info("tidied shipped recordings on this host",
-			"compressed", compressed, "removed", removed, "keep", u.Keep.String())
+			"compressed", compressed, "removed", removed, "keep", keep.String())
 	}
 	return compressed, removed
 }

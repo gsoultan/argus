@@ -1113,6 +1113,8 @@ export interface ControlSettings {
   ticketTtl: string
   agentStaleAfter: string
   logLevel: string
+  /** How long servers keep their own copy of a stored recording: 0 is the default (7), -1 for ever. */
+  agentKeepRecordingsDays: number
   database: {
     host: string; port: number; name: string; user: string; sslMode: string
     passwordSet: boolean; password?: string; raw?: boolean

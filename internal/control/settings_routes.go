@@ -51,6 +51,9 @@ type Settings struct {
 	TicketTTL       string `json:"ticketTtl"`
 	AgentStaleAfter string `json:"agentStaleAfter"`
 	LogLevel        string `json:"logLevel"`
+	// AgentKeepRecordingsDays is how long servers keep their own copy of a
+	// recording once it is stored here: 0 is the default (7), -1 for ever.
+	AgentKeepRecordingsDays int `json:"agentKeepRecordingsDays"`
 
 	Database DatabaseSettings `json:"database"`
 	Storage  StorageSettings  `json:"storage"`

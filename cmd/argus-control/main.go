@@ -33,6 +33,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/control"
+	"github.com/gsoultan/argus/internal/logquiet"
 	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/storage"
 	"github.com/gsoultan/argus/internal/tlsconfig"
@@ -59,6 +60,11 @@ type config struct {
 	// AgentStaleAfter is how long an agent may be silent before the fleet is
 	// told. Short on purpose: silence is how a killed agent looks.
 	AgentStaleAfter time.Duration `yaml:"agent_stale_after,omitempty"`
+	// AgentKeepRecordingsDays is how long each server keeps its own copy of
+	// a recording once this control plane has verified and stored it. Zero
+	// leaves it to the agent (7 days); -1 keeps it for ever. Never applies
+	// to a recording the control plane does not have.
+	AgentKeepRecordingsDays int `yaml:"agent_keep_recordings_days,omitempty"`
 	// AgentReleasesURL is where agents download a new version from when the
 	// console updates them: <url>/v<version>/<package>, with checksums.txt
 	// beside it. Empty is the project's GitHub releases; set it to a mirror
@@ -374,9 +380,11 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		return err
 	}
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: parseLevel(cfg.LogLevel),
-	}))
+	// A line that repeats is written once every few minutes with a count,
+	// not on every retry: see internal/logquiet.
+	log := slog.New(logquiet.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logquiet.ParseLevel(cfg.LogLevel),
+	}), 0))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -483,6 +491,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			return err
 		}
 	}
+	api.AgentKeepRecordings = agentKeepRecordings(cfg.AgentKeepRecordingsDays)
 	api.Alerts = alerts
 	signIns, err := signInNotifier(cfg.Alerts, cfg.ConsoleURL, log)
 	if err != nil {
@@ -1056,16 +1065,16 @@ func writeSetupToken(path, token string) error {
 	return f.Close()
 }
 
-func parseLevel(s string) slog.Level {
-	switch s {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
+// agentKeepRecordings turns the configured days into what the API sends
+// agents: zero for the agent's own default, negative for ever.
+func agentKeepRecordings(days int) time.Duration {
+	switch {
+	case days < 0:
+		return -1
+	case days == 0:
+		return 0
 	default:
-		return slog.LevelInfo
+		return time.Duration(days) * 24 * time.Hour
 	}
 }
 

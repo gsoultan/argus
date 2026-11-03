@@ -87,6 +87,11 @@ type API struct {
 	SessionTTL time.Duration
 	TicketTTL  time.Duration
 
+	// AgentKeepRecordings is how long an agent keeps its copy of a recording
+	// once it has been stored here, sent on every heartbeat reply. Zero sends
+	// nothing and the agent keeps its own default; negative is for ever.
+	AgentKeepRecordings time.Duration
+
 	// Alerts tells administrators when a session starts. Nil sends nothing.
 	Alerts *notify.Dispatcher
 	// SignInAlerts tells administrators and the person when someone signs
@@ -833,6 +838,12 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// was asked to be. An agent that reads them takes direct_ssh_default for
 	// every account it is not given.
 	reply := map[string]any{"status": "ok", "console_only": true}
+	switch k := a.AgentKeepRecordings; {
+	case k < 0:
+		reply["keep_recordings_hours"] = 0
+	case k > 0:
+		reply["keep_recordings_hours"] = int(k / time.Hour)
+	}
 	if d, merr := a.store.DirectSSHSettingFor(r.Context(), in.Hostname); merr == nil {
 		strictest := d.Strictest()
 		reply["direct_ssh"] = strictest
