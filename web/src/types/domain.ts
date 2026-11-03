@@ -81,8 +81,26 @@ export interface ServerAccount {
 export interface PersonalAccountState {
   name: string
   owner?: string
-  state: 'ready' | 'locked' | 'taken' | 'failed'
+  state: 'ready' | 'locked' | 'taken' | 'failed' | 'deleted'
   detail?: string
+}
+
+/** The owner the agent reports for a login account an admin made from the console. */
+export const SHARED_LOGIN_OWNER = 'shared login'
+
+/**
+ * A login account an admin made on a server from the console. `state` is
+ * what Argus asked for; `agent` is what the server's agent last said it did.
+ */
+export interface ServerLogin {
+  name: string
+  state: 'active' | 'locked' | 'delete' | 'deleted'
+  createdBy: string
+  createdAt: ISOTime
+  changedBy: string
+  changedAt: ISOTime
+  agent: '' | PersonalAccountState['state']
+  agentDetail?: string
 }
 
 /**

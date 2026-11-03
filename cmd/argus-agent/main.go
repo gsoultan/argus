@@ -34,6 +34,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -356,6 +357,12 @@ func runDaemon(args []string) int {
 		provisioner.Outside = agent.SystemdOutside(exe)
 	}
 	var personalStates []agent.PersonalAccountState
+	// The login accounts an admin made here from the console. Kept between
+	// heartbeats, so a reply that leaves them out locks nothing.
+	var serverLogins struct {
+		Keep   []string `json:"keep"`
+		Delete []string `json:"delete"`
+	}
 	if b, err := os.ReadFile(personalFile); err == nil {
 		var list []agent.PersonalAccount
 		if err := json.Unmarshal(b, &list); err == nil {
@@ -545,7 +552,20 @@ func runDaemon(args []string) int {
 						log.Error("personal accounts: cannot persist the list", "error", err)
 					}
 				}
-				personalStates = provisioner.Reconcile(ctx, list)
+				if len(reply.ServerLogins) > 0 && string(reply.ServerLogins) != "null" {
+					if err := json.Unmarshal(reply.ServerLogins, &serverLogins); err != nil {
+						log.Error("server logins: cannot read the list", "error", err)
+					}
+				}
+				// Shared logins are made and locked like personal accounts,
+				// but are nobody's own: they go to the provisioner and not
+				// to the collector, so no direct login is a person's because
+				// it used one.
+				want := slices.Clone(list)
+				for _, name := range serverLogins.Keep {
+					want = append(want, agent.PersonalAccount{Name: name, Owner: agent.SharedLoginOwner})
+				}
+				personalStates = provisioner.ReconcileDeleting(ctx, want, serverLogins.Delete)
 			}
 		}
 		if ok && reply.Uninstall {

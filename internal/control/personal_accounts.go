@@ -486,7 +486,7 @@ func capStates(in []PersonalAccountState) []PersonalAccountState {
 	out := make([]PersonalAccountState, 0, len(in))
 	for _, s := range in {
 		switch s.State {
-		case "ready", "locked", "taken", "failed":
+		case "ready", "locked", "taken", "failed", "deleted":
 		default:
 			continue
 		}

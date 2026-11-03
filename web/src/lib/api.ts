@@ -45,7 +45,7 @@ import type { AuditPage } from '~/lib/live'
 import { isElevatedAccount } from '~/lib/roles'
 import type {
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
-  ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost,
+  ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost, ServerLogin,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, TemporaryPasswordOutcome, User,
 } from '~/types/domain'
@@ -100,6 +100,28 @@ const db = {
   teamAssignments: new Map<string, TeamAssignment[]>(),
   /** The fixture's signed-in person's own server account. */
   serverAccount: { loginName: currentUser.email.split('@')[0]!, sshKey: '', sshFingerprint: '', directSsh: true } as ServerAccount,
+}
+
+/** assetId -> login accounts made from the console, in the fixture. */
+const demoServerLogins = new Map<string, ServerLogin[]>()
+
+/**
+ * The fixture's console-made logins: a ready one and a locked one on every
+ * server with an agent, so the section has something to show.
+ */
+function demoLogins(id: string): ServerLogin[] {
+  const have = demoServerLogins.get(id)
+  if (have) return have
+  const a = db.assets.find((x) => x.id === id)
+  if (!a || a.agentState === 'absent') return []
+  const at = new Date(EPOCH - 9 * 86_400_000).toISOString()
+  const seed: ServerLogin[] = [
+    { name: 'releases', state: 'active', createdBy: 'dewi.p@northwind.id', createdAt: at, changedBy: 'dewi.p@northwind.id', changedAt: at, agent: 'ready' },
+    { name: 'contractor', state: 'locked', createdBy: 'dewi.p@northwind.id', createdAt: at, changedBy: 'dewi.p@northwind.id', changedAt: new Date(EPOCH - 2 * 86_400_000).toISOString(), agent: 'locked' },
+  ]
+  if (!a.principals.includes('releases')) a.principals = [...a.principals, 'releases']
+  demoServerLogins.set(id, seed)
+  return seed
 }
 
 /** The fixture's teams with their servers filled in from the assignment map. */
@@ -450,6 +472,44 @@ export const api = {
         passwords: true, keys: true, exposeAuthInfo: true,
       }
     })
+  },
+
+  /** Login accounts an admin made on this server from the console. */
+  async serverLogins(id: string): Promise<ServerLogin[]> {
+    return live.orFallback(() => live.serverLogins(id), async () => {
+      await latency(90)
+      return demoLogins(id)
+    })
+  },
+
+  async createServerLogin(id: string, name: string): Promise<ServerLogin[]> {
+    if (isConfigured()) return live.createServerLogin(id, name)
+    await latency(300)
+    const a = db.assets.find((x) => x.id === id)
+    if (!a) throw new Error('asset not found')
+    if (!/^[a-z_][a-z0-9._-]{0,31}$/.test(name)) throw new Error('a server account name is 1 to 32 characters: lowercase letters, digits, dot, underscore and hyphen, starting with a letter or underscore')
+    const list = demoLogins(id)
+    const had = list.find((l) => l.name === name)
+    if (!had && a.principals.includes(name)) throw new Error(`${a.hostname} already lists "${name}" as a login account; Argus makes only new accounts`)
+    const now = new Date().toISOString()
+    const next: ServerLogin = { name, state: 'active', createdBy: had?.createdBy ?? currentUser.email, createdAt: had?.createdAt ?? now, changedBy: currentUser.email, changedAt: now, agent: '' }
+    demoServerLogins.set(id, [...list.filter((l) => l.name !== name), next])
+    if (!a.principals.includes(name)) a.principals = [...a.principals, name]
+    return demoLogins(id)
+  },
+
+  async removeServerLogin(id: string, name: string, forGood: boolean): Promise<ServerLogin[]> {
+    if (isConfigured()) return live.removeServerLogin(id, name, forGood)
+    await latency(300)
+    const a = db.assets.find((x) => x.id === id)
+    if (!a) throw new Error('asset not found')
+    const now = new Date().toISOString()
+    demoServerLogins.set(id, demoLogins(id).map((l) => l.name !== name ? l : {
+      ...l, state: forGood ? 'deleted' as const : 'locked' as const, agent: forGood ? 'deleted' as const : 'locked' as const,
+      changedBy: currentUser.email, changedAt: now,
+    }))
+    a.principals = a.principals.filter((p) => p !== name)
+    return demoLogins(id)
   },
 
   /**

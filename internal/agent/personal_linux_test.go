@@ -275,7 +275,7 @@ func TestAPassOutsideTheSandboxIsTheSamePass(t *testing.T) {
 			// What RunPersonalApply does, with the fake host's commands.
 			helper := h.provisioner()
 			helper.Passwd, helper.Sudoers, helper.state = req.Passwd, req.Sudoers, req.State
-			states := helper.reconcile(ctx, req.Want)
+			states := helper.reconcile(ctx, req.Want, req.Delete)
 			b, _ := json.Marshal(personalReply{States: states, State: helper.state})
 			return b, []byte("level=WARN msg=\"personal account created\"\n"), nil
 		},
@@ -332,5 +332,35 @@ func TestRunPersonalApplyAnswersOnStdout(t *testing.T) {
 	}
 	if stateOf(reply.States, "deploy") != "taken" {
 		t.Errorf("states %+v, want deploy taken", reply.States)
+	}
+}
+
+// Deleting for good is asked for by name, and still only ever reaches an
+// account this agent made and nobody wants. Anything else in the list is
+// left alone, said out loud.
+func TestProvisionerDeletesOnlyItsOwnUnwantedAccounts(t *testing.T) {
+	h := newFakeHost(t)
+	h.write(
+		"root:x:0:0:root:/root:/bin/bash",
+		h.line("deploy", commentFor("shared login")),
+		h.line("keep", commentFor("shared login")),
+		h.line("ubuntu", "Ubuntu"),
+	)
+	p := h.provisioner()
+	states := p.ReconcileDeleting(context.Background(),
+		[]PersonalAccount{{Name: "keep", Owner: "shared login"}},
+		[]string{"deploy", "keep", "ubuntu", "gone"})
+
+	if got := stateOf(states, "deploy"); got != "deleted" || !h.ranAny("userdel --remove deploy") {
+		t.Errorf("deploy: %q, ran %v", got, h.ran)
+	}
+	if got := stateOf(states, "keep"); got != "ready" || h.ranAny("userdel --remove keep") {
+		t.Errorf("a wanted account was deleted: %q, ran %v", got, h.ran)
+	}
+	if got := stateOf(states, "ubuntu"); got != "taken" || h.ranAny("userdel --remove ubuntu") {
+		t.Errorf("an account Argus did not make was deleted: %q, ran %v", got, h.ran)
+	}
+	if got := stateOf(states, "gone"); got != "deleted" || h.ranAny("userdel --remove gone") {
+		t.Errorf("an absent account: %q, ran %v", got, h.ran)
 	}
 }

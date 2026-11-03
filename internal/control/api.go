@@ -334,6 +334,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
 	mux.HandleFunc("GET /api/v1/assets/{id}/login-accounts", a.getLoginAccounts)
+	mux.HandleFunc("GET /api/v1/assets/{id}/server-logins", a.getServerLogins)
+	mux.HandleFunc("POST /api/v1/assets/{id}/server-logins", a.postServerLogin)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}/server-logins/{name}", a.deleteServerLogin)
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
@@ -839,14 +842,23 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !errors.Is(err, ErrAgentUnmatched) {
 		if list, perr := a.store.PersonalAccountsFor(r.Context(), in.Hostname); perr == nil {
 			reply["personal_accounts"] = list
+			// Login accounts an admin made here from the console. Sent only
+			// beside the personal list it is checked against, so a failed
+			// read of either leaves the agent with what it has.
+			if logins, lerr := a.store.ServerLoginsFor(r.Context(), in.Hostname, list); lerr == nil {
+				reply["server_logins"] = logins
+			} else {
+				a.log.Error("heartbeat: cannot read server logins", "error", lerr)
+			}
 		} else {
 			a.log.Error("heartbeat: cannot read personal accounts", "error", perr)
 		}
 		if in.PersonalAccounts != nil {
-			if perr := a.store.RecordPersonalAccountStates(r.Context(), in.Hostname,
-				capStates(*in.PersonalAccounts)); perr != nil {
+			states := capStates(*in.PersonalAccounts)
+			if perr := a.store.RecordPersonalAccountStates(r.Context(), in.Hostname, states); perr != nil {
 				a.log.Error("heartbeat: cannot keep personal account states", "error", perr)
 			}
+			a.recordServerLoginsDeleted(r, in.Hostname, states)
 		}
 	}
 	// The server was removed from Argus: the agent takes itself off it, sshd

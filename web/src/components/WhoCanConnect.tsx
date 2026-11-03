@@ -15,6 +15,7 @@ import {
 } from '~/lib/queries'
 import { isElevatedAccount } from '~/lib/roles'
 import { FS, SP } from '~/theme'
+import { SHARED_LOGIN_OWNER } from '~/types/domain'
 import type { Asset, AssetAssignment, PersonOwnSetting, TeamAssignment, TeamDirectSsh } from '~/types/domain'
 
 /**
@@ -129,7 +130,10 @@ type Editing = { kind: 'team'; g: TeamAssignment } | { kind: 'person'; g: AssetA
  * is given, since that is where it is fixed.
  */
 function AccountProblems({ asset }: { asset: Asset }) {
-  const bad = (asset.agentPersonalAccounts ?? []).filter((s) => s.state === 'taken' || s.state === 'failed')
+  // Login accounts an admin made from the console report alongside personal
+  // ones, and are shown with their own state under Login accounts.
+  const bad = (asset.agentPersonalAccounts ?? []).filter((s) =>
+    s.owner !== SHARED_LOGIN_OWNER && (s.state === 'taken' || s.state === 'failed'))
   if (bad.length === 0) return null
   return (
     <Alert color="amber" icon={<IconAlertTriangle size={16} />} title="Some personal accounts are not ready">

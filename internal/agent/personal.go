@@ -46,6 +46,10 @@ type PersonalAccountState struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// SharedLoginOwner is the owner of a login account an admin made from the
+// console rather than one person's own.
+const SharedLoginOwner = "shared login"
+
 // personalMarker starts the comment field of every account this agent made.
 const personalMarker = "argus-managed"
 
@@ -157,13 +161,20 @@ func commentFor(owner string) string {
 
 // Reconcile makes the accounts match want and says what each one is now.
 func (p *Provisioner) Reconcile(ctx context.Context, want []PersonalAccount) []PersonalAccountState {
-	if p.Outside != nil && personalSupported {
-		return p.reconcileOutside(ctx, want)
-	}
-	return p.reconcile(ctx, want)
+	return p.ReconcileDeleting(ctx, want, nil)
 }
 
-func (p *Provisioner) reconcile(ctx context.Context, want []PersonalAccount) []PersonalAccountState {
+// ReconcileDeleting is Reconcile, except that each name in del that this
+// agent made and nobody wants is deleted with its home rather than locked.
+// Any other name in it is left alone.
+func (p *Provisioner) ReconcileDeleting(ctx context.Context, want []PersonalAccount, del []string) []PersonalAccountState {
+	if p.Outside != nil && personalSupported {
+		return p.reconcileOutside(ctx, want, del)
+	}
+	return p.reconcile(ctx, want, del)
+}
+
+func (p *Provisioner) reconcile(ctx context.Context, want []PersonalAccount, del []string) []PersonalAccountState {
 	if p.state == nil {
 		p.state = map[string]string{}
 	}
@@ -199,7 +210,14 @@ func (p *Provisioner) reconcile(ctx context.Context, want []PersonalAccount) []P
 		states = append(states, st)
 	}
 
-	// Every account this agent made and nobody wants any more is locked.
+	// Every account this agent made and nobody wants any more is locked,
+	// unless it was asked to delete it for good.
+	deleting := map[string]bool{}
+	for _, name := range del {
+		if !wanted[name] {
+			deleting[name] = true
+		}
+	}
 	var gone []string
 	for name, e := range existing {
 		if e.ours() && !wanted[name] {
@@ -208,7 +226,28 @@ func (p *Provisioner) reconcile(ctx context.Context, want []PersonalAccount) []P
 	}
 	sort.Strings(gone)
 	for _, name := range gone {
+		if deleting[name] {
+			states = append(states, p.remove(ctx, existing[name]))
+			delete(deleting, name)
+			continue
+		}
 		states = append(states, p.lock(ctx, existing[name]))
+	}
+	// Asked to delete and not on the server at all: it is gone, which is what
+	// was asked. A name held by an account this agent did not make is not.
+	var absent []string
+	for name := range deleting {
+		absent = append(absent, name)
+	}
+	sort.Strings(absent)
+	for _, name := range absent {
+		if _, ok := existing[name]; ok {
+			states = append(states, PersonalAccountState{Name: name, State: "taken",
+				Detail: "the server has an account with this name that Argus did not create; it was not deleted"})
+			continue
+		}
+		delete(p.state, name)
+		states = append(states, PersonalAccountState{Name: name, State: "deleted"})
 	}
 
 	if err := writeSudoers(ctx, p, sudo); err != nil {
@@ -293,6 +332,28 @@ func (p *Provisioner) lock(ctx context.Context, e passwdEntry) PersonalAccountSt
 	_, _ = p.Run(ctx, "pkill", "-KILL", "-u", e.name)
 	p.Log.Warn("personal account locked", "account", e.name)
 	p.state[e.name] = "locked"
+	return st
+}
+
+// remove deletes an account this agent made, with its home and mail spool,
+// after stopping whatever still runs as it. Only ever called for an account
+// it made (e.ours()) that nobody wants, and that the control plane asked to
+// delete for good.
+func (p *Provisioner) remove(ctx context.Context, e passwdEntry) PersonalAccountState {
+	st := PersonalAccountState{Name: e.name, Owner: strings.TrimSpace(strings.TrimPrefix(e.comment, personalMarker)),
+		State: "deleted"}
+	if e.name == "root" || !e.ours() {
+		st.State, st.Detail = "failed", "refused: not an account Argus made"
+		return st
+	}
+	// Exit status 1 is "nothing was running", which is what is hoped for.
+	_, _ = p.Run(ctx, "pkill", "-KILL", "-u", e.name)
+	if out, err := p.Run(ctx, "userdel", "--remove", e.name); err != nil {
+		st.State, st.Detail = "failed", "could not delete: "+firstLine(out, err)
+		return st
+	}
+	p.Log.Warn("account deleted with its home", "account", e.name)
+	delete(p.state, e.name)
 	return st
 }
 

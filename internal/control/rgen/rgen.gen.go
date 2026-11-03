@@ -21,6 +21,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackupschedule"
 	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
+	"github.com/gsoultan/argus/internal/control/rgen/serverlogin"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
 	"github.com/gsoultan/argus/internal/control/rgen/team"
 	"github.com/gsoultan/argus/internal/control/rgen/teammember"
@@ -46,21 +47,22 @@ var FlushOrder = map[string]int{
 	"redeemed_tickets":          10,
 	"revoked_sessions":          11,
 	"schema_migrations":         12,
-	"sessions":                  13,
-	"sign_in_devices":           14,
-	"teams":                     15,
-	"users":                     16,
-	"access_requests":           17,
-	"agent_credentials":         18,
-	"asset_assignments":         19,
-	"asset_team_assignments":    20,
-	"console_alert_reads":       21,
-	"database_assignments":      22,
-	"database_backup_schedules": 23,
-	"database_backups":          24,
-	"database_restores":         25,
-	"recovery_codes":            26,
-	"team_members":              27,
+	"server_logins":             13,
+	"sessions":                  14,
+	"sign_in_devices":           15,
+	"teams":                     16,
+	"users":                     17,
+	"access_requests":           18,
+	"agent_credentials":         19,
+	"asset_assignments":         20,
+	"asset_team_assignments":    21,
+	"console_alert_reads":       22,
+	"database_assignments":      23,
+	"database_backup_schedules": 24,
+	"database_backups":          25,
+	"database_restores":         26,
+	"recovery_codes":            27,
+	"team_members":              28,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -1972,6 +1974,123 @@ func (p RecoveryCodeWithUserQuery) All(ctx context.Context, ex runtime.Executor)
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "recovery_codes", "users")
 		}
 		out[i].User = targets[j]
+	}
+	return out, nil
+}
+
+// ServerLoginWithAssetRow is server_logins with its Asset loaded.
+type ServerLoginWithAssetRow struct {
+	serverlogin.Row
+	Asset asset.Row
+}
+
+type ServerLoginWithAssetQuery struct {
+	q serverlogin.Query
+}
+
+// ServerLoginWithAsset starts the plan.
+func ServerLoginWithAsset() ServerLoginWithAssetQuery {
+	return ServerLoginWithAssetQuery{q: serverlogin.New()}
+}
+
+func (p ServerLoginWithAssetQuery) Where(ps ...serverlogin.Pred) ServerLoginWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p ServerLoginWithAssetQuery) WhereIf(cond bool, pr serverlogin.Pred) ServerLoginWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p ServerLoginWithAssetQuery) Any(ps ...serverlogin.Pred) ServerLoginWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p ServerLoginWithAssetQuery) Not(pr serverlogin.Pred) ServerLoginWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p ServerLoginWithAssetQuery) NotAny(ps ...serverlogin.Pred) ServerLoginWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p ServerLoginWithAssetQuery) Order(ts ...serverlogin.Sort) ServerLoginWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p ServerLoginWithAssetQuery) Limit(n int64) ServerLoginWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p ServerLoginWithAssetQuery) Offset(n int64) ServerLoginWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p ServerLoginWithAssetQuery) After(r ServerLoginWithAssetRow) ServerLoginWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p ServerLoginWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p ServerLoginWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]ServerLoginWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]ServerLoginWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = ServerLoginWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "server_logins", "assets")
+		}
+		out[i].Asset = targets[j]
 	}
 	return out, nil
 }

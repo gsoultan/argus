@@ -5,10 +5,12 @@ import { IconAlertTriangle } from '@tabler/icons-react'
 import { Mono, relTime } from '~/components/primitives'
 import { LoginAccounts, SettingsSection, SettingsSections } from '~/components/server/layout'
 import { WhoCanConnect } from '~/components/WhoCanConnect'
+import { ServerLogins } from '~/components/server/ServerLogins'
+import { seesWholeFleet } from '~/lib/roles'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
 import { run } from '~/lib/notify'
 import {
-  loginAccountsQuery, policyQuery, useSetAssetDirectSsh, useSetAssetDirectSshAccount,
+  loginAccountsQuery, meQuery, policyQuery, useSetAssetDirectSsh, useSetAssetDirectSshAccount,
 } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 import type { Asset, DirectSsh, ServerLoginAccount, ServerLoginAccounts } from '~/types/domain'
@@ -19,6 +21,7 @@ import type { Asset, DirectSsh, ServerLoginAccount, ServerLoginAccounts } from '
  * not come through Argus at all.
  */
 export function AccessTab({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
+  const { data: me } = useQuery(meQuery())
   return (
     <SettingsSections>
       <SettingsSection
@@ -33,14 +36,17 @@ export function AccessTab({ asset, canEdit }: { asset: Asset; canEdit: boolean }
         title="Login accounts"
         description="Accounts on the server that sessions through Argus log in as."
       >
-        <LoginAccounts
-          asset={asset}
-          empty={
-            <Text size={FS.meta} c="dimmed">
-              None yet.{canEdit && ' Press Edit and add the account you log in with.'}
-            </Text>
-          }
-        />
+        <Stack gap="md">
+          <LoginAccounts
+            asset={asset}
+            empty={
+              <Text size={FS.meta} c="dimmed">
+                None yet.{canEdit && ' Add one below, or press Edit to list an account the server already has.'}
+              </Text>
+            }
+          />
+          {seesWholeFleet(me?.role) && <ServerLogins asset={asset} canEdit={canEdit} />}
+        </Stack>
       </SettingsSection>
       <SettingsSection
         title="Logins that don't go through Argus"

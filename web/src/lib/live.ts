@@ -11,6 +11,7 @@ import type {
   DirectSsh,
   ServerLoginAccounts,
   RequestableHost,
+  ServerLogin,
   ServerApplications,
   Coverage,
   DiscoveredHost,
@@ -844,6 +845,23 @@ export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Pro
   return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh`, { mode: mode ?? '' })
 }
 
+/** Login accounts an admin made on a server from the console. */
+export async function serverLogins(id: string): Promise<ServerLogin[]> {
+  return get<ServerLogin[]>(`/api/v1/assets/${encodeURIComponent(id)}/server-logins`)
+}
+
+/** Has the server's agent make a login account, or unlock one it made. */
+export async function createServerLogin(id: string, name: string): Promise<ServerLogin[]> {
+  return send<ServerLogin[]>('POST', `/api/v1/assets/${encodeURIComponent(id)}/server-logins`, { name })
+}
+
+/** Locks a login account; with forGood, deletes a locked one and its home. */
+export async function removeServerLogin(id: string, name: string, forGood: boolean): Promise<ServerLogin[]> {
+  const q = forGood ? `?forGood=true&confirm=${encodeURIComponent(name)}` : ''
+  return send<ServerLogin[]>(
+    'DELETE', `/api/v1/assets/${encodeURIComponent(id)}/server-logins/${encodeURIComponent(name)}${q}`)
+}
+
 /** The accounts a person can ask for on each server, from its Login accounts list and agent. */
 export async function requestAccounts(hostnames: string[]): Promise<RequestableHost[]> {
   if (hostnames.length === 0) return []
@@ -1224,6 +1242,9 @@ export const live = {
   assets: () => get<Asset[]>('/api/v1/assets'),
   loginAccounts,
   requestAccounts,
+  serverLogins,
+  createServerLogin,
+  removeServerLogin,
   applications,
 
   /**
