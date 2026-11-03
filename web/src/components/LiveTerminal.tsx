@@ -19,7 +19,36 @@ import '@xterm/xterm/css/xterm.css'
  * an on-call engineer on a borrowed machine.
  */
 
-export type TerminalState = 'connecting' | 'live' | 'closed' | 'error'
+/**
+ * `reconnecting`: the connection dropped and the terminal is getting back to
+ * the same shell, which the server keeps running meanwhile. `lost`: it could
+ * not, and the shell has ended or will; nobody ended it on purpose.
+ */
+export type TerminalState = 'connecting' | 'live' | 'reconnecting' | 'lost' | 'closed' | 'error'
+
+/** How soon to try again after each failed reconnect. */
+const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000]
+/**
+ * How long to keep trying: a little under the five minutes the control plane
+ * keeps a shell whose browser has gone, so the last try can still find it.
+ */
+const RECONNECT_FOR_MS = 290_000
+
+/**
+ * Closes the terminal on purpose: the server hangs the shell up now instead
+ * of keeping it for a reconnect.
+ */
+function hangup(ws: WebSocket | null) {
+  if (!ws) return
+  if (ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify({ type: 'hangup' }))
+    } catch {
+      // Closing anyway.
+    }
+  }
+  ws.close()
+}
 
 export interface LiveTerminalProps {
   /** The WebSocket endpoint as an http(s) URL; see terminalEndpoint. */
@@ -41,7 +70,9 @@ export interface LiveTerminalProps {
 }
 
 interface ServerMessage {
-  type: 'output' | 'ready' | 'error' | 'closed'
+  type: 'output' | 'ready' | 'error' | 'closed' | 'gone' | 'moved'
+  /** On ready: this is the shell that was already running, reattached. */
+  resumed?: boolean
   data?: string
   session?: string
   chain_head?: string
@@ -114,11 +145,42 @@ export function LiveTerminal({
     termRef.current = term
     fitRef.current = fit
 
-    void (async () => {
-      const ticket = await getTicket()
+    // The session this terminal is showing, once the server has said which.
+    // A dropped connection comes back to it rather than opening a new shell.
+    let session: string | undefined
+    // Set when the server has said the session is over, or is someone
+    // else's now: nothing to come back to.
+    let final = false
+    let lostAt = 0
+    let attempt = 0
+    let retry: ReturnType<typeof setTimeout> | undefined
+    let dialing = false
+
+    const lose = (why: string) => {
+      final = true
+      setStatus('lost', why)
+      term.writeln(`\r\n\x1b[2m${why}\x1b[0m`)
+    }
+
+    const connect = async (resume?: string) => {
+      dialing = true
+      let ticket: string | null
+      try {
+        ticket = await getTicket()
+      } catch {
+        // Offline: the console itself is out of reach. Try again later
+        // while reconnecting; a first connect has nothing to retry.
+        dialing = false
+        if (disposed) return
+        if (resume) scheduleReconnect()
+        else setStatus('error', 'could not reach the console')
+        return
+      }
+      dialing = false
       if (disposed) return
       if (!ticket) {
-        setStatus('error', 'could not obtain authorisation for this session')
+        if (resume) lose('could not get authorisation to reconnect')
+        else setStatus('error', 'could not obtain authorisation for this session')
         return
       }
 
@@ -131,6 +193,7 @@ export function LiveTerminal({
       // single-use and expires in about a minute — a session cookie in this
       // position would be a serious leak.
       url.searchParams.set('ticket', ticket)
+      if (resume) url.searchParams.set('resume', resume)
 
       ws = new WebSocket(url.toString())
       // Output arrives as binary frames from the control plane: written to
@@ -139,60 +202,127 @@ export function LiveTerminal({
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
       attach(ws)
-    })()
-
-    function attach(ws: WebSocket) {
-    ws.onopen = () => term.writeln('\x1b[2mconnecting…\x1b[0m')
-
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(ev.data))
-        return
-      }
-      let msg: ServerMessage
-      try {
-        msg = JSON.parse(ev.data as string) as ServerMessage
-      } catch {
-        return
-      }
-      switch (msg.type) {
-        case 'ready':
-          term.clear()
-          setStatus('live')
-          if (msg.session) {
-            setSessionId(msg.session)
-            onSession?.(msg.session)
-          }
-          // Send the real size now the shell exists, so the remote side is not
-          // stuck on the 80x24 default.
-          queueMicrotask(() => {
-            fit.fit()
-            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-          })
-          break
-        case 'output':
-          if (msg.data) term.write(msg.data)
-          break
-        case 'error':
-          setStatus('error', msg.data)
-          term.writeln(`\r\n\x1b[31margus: ${msg.data ?? 'connection refused'}\x1b[0m`)
-          break
-        case 'closed':
-          setStatus('closed', `exit ${msg.exit_code ?? 0}`)
-          term.writeln(`\r\n\x1b[2msession ended (exit ${msg.exit_code ?? 0})\x1b[0m`)
-          break
-      }
     }
 
-    ws.onerror = () => setStatus('error', 'connection failed')
-    // A socket close after an error must not overwrite the error, or the user
-    // is told the session "closed" when it was actually refused.
-    ws.onclose = () => {
-      if (stateRef.current === 'live' || stateRef.current === 'connecting') {
-        setStatus('closed')
+    /**
+     * The connection went, but nobody ended the session: Wi-Fi changed, the
+     * laptop slept, the phone put the tab away. The server keeps the shell
+     * for a few minutes, so try to get back to it — promptly at first, then
+     * less often, and at once when the page is visible or online again.
+     */
+    const reconnect = () => {
+      if (disposed || final || !session || dialing) return
+      if (retry) clearTimeout(retry)
+      retry = undefined
+      if (Date.now() - lostAt > RECONNECT_FOR_MS) {
+        lose('the connection was lost and could not be restored in time; the session was ended on the server')
+        return
       }
+      void connect(session)
     }
+    const scheduleReconnect = () => {
+      if (stateRef.current !== 'reconnecting') {
+        lostAt = Date.now()
+        attempt = 0
+        setStatus('reconnecting', 'connection lost')
+        term.writeln('\r\n\x1b[2mconnection lost — reconnecting…\x1b[0m')
+      }
+      const delay = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)]
+      attempt++
+      retry = setTimeout(reconnect, delay)
+    }
+    const onBack = () => {
+      if (stateRef.current === 'reconnecting' && document.visibilityState === 'visible') reconnect()
+    }
+    // Leaving the page is closing the terminal on purpose: say so, so the
+    // shell is hung up now rather than kept for a return that is not coming.
+    const onLeave = () => hangup(ws)
+    window.addEventListener('online', onBack)
+    document.addEventListener('visibilitychange', onBack)
+    window.addEventListener('pagehide', onLeave)
 
+    void connect()
+
+    function attach(sock: WebSocket) {
+      const current = () => !disposed && wsRef.current === sock
+      sock.onopen = () => {
+        if (!session) term.writeln('\x1b[2mconnecting…\x1b[0m')
+      }
+
+      sock.onmessage = (ev) => {
+        if (!current()) return
+        if (ev.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(ev.data))
+          return
+        }
+        let msg: ServerMessage
+        try {
+          msg = JSON.parse(ev.data as string) as ServerMessage
+        } catch {
+          return
+        }
+        switch (msg.type) {
+          case 'ready':
+            // Back on the same shell: the server sends the recent screen next,
+            // so start from a clean one rather than draw it twice.
+            if (msg.resumed) term.reset()
+            else term.clear()
+            attempt = 0
+            setStatus('live')
+            if (msg.session && msg.session !== session) {
+              session = msg.session
+              setSessionId(msg.session)
+              onSession?.(msg.session)
+            }
+            // Send the real size now the shell exists, so the remote side is not
+            // stuck on the 80x24 default — and, on a reattach, so a full-screen
+            // program redraws for this window.
+            queueMicrotask(() => {
+              fit.fit()
+              if (sock.readyState === WebSocket.OPEN) {
+                sock.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+              }
+            })
+            break
+          case 'output':
+            if (msg.data) term.write(msg.data)
+            break
+          case 'error':
+            final = true
+            setStatus('error', msg.data)
+            term.writeln(`\r\n\x1b[31margus: ${msg.data ?? 'connection refused'}\x1b[0m`)
+            break
+          case 'gone':
+            lose(msg.data ? `could not reconnect: ${msg.data}` : 'could not reconnect: the session has ended')
+            break
+          case 'moved':
+            lose(msg.data ?? 'this session was opened in another window')
+            break
+          case 'closed':
+            final = true
+            setStatus('closed', `exit ${msg.exit_code ?? 0}`)
+            term.writeln(`\r\n\x1b[2msession ended (exit ${msg.exit_code ?? 0})\x1b[0m`)
+            break
+        }
+      }
+
+      // Before the session exists, a failed socket is a failed connect. After,
+      // it is a dropped connection, and onclose tries to get back.
+      sock.onerror = () => {
+        if (current() && !session) setStatus('error', 'connection failed')
+      }
+      sock.onclose = () => {
+        if (!current()) return
+        if (session && !final) {
+          scheduleReconnect()
+          return
+        }
+        // A socket close after an error must not overwrite the error, or the
+        // user is told the session "closed" when it was actually refused.
+        if (stateRef.current === 'live' || stateRef.current === 'connecting') {
+          setStatus('closed')
+        }
+      }
     }
 
     const onData = term.onData((data) => {
@@ -217,9 +347,13 @@ export function LiveTerminal({
 
     return () => {
       disposed = true
+      if (retry) clearTimeout(retry)
+      window.removeEventListener('online', onBack)
+      document.removeEventListener('visibilitychange', onBack)
+      window.removeEventListener('pagehide', onLeave)
       observer.disconnect()
       onData.dispose()
-      ws?.close()
+      hangup(ws)
       term.dispose()
       termRef.current = null
       wsRef.current = null

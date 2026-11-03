@@ -129,6 +129,21 @@ func (h *Hub) Broadcast(frame []byte) {
 	}
 }
 
+// Backlog returns a copy of the recent frames, the same ones Subscribe hands
+// a late viewer, without subscribing.
+//
+// For the person whose session it is coming back after their connection
+// dropped: they get the screenful they lost and then the live output from
+// wherever the caller attaches them, which a subscription would not order
+// against the caller's own delivery.
+func (h *Hub) Backlog() [][]byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([][]byte, len(h.backlog))
+	copy(out, h.backlog)
+	return out
+}
+
 // Close ends every subscription. Safe to call more than once.
 func (h *Hub) Close() {
 	h.mu.Lock()
