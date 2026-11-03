@@ -23,5 +23,6 @@
 @import 'tailwindcss/utilities.css' layer(utilities);
 
 @import '@mantine/core/styles.layer.css';
+@import '@mantine/notifications/styles.layer.css';
 
 @import './app.tokens.css';

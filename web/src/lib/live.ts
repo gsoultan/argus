@@ -1532,3 +1532,62 @@ export async function setOrganizationDisabled(id: string, disabled: boolean): Pr
   return post<Organization>(
     `/api/v1/platform/organizations/${encodeURIComponent(id)}/${disabled ? 'disable' : 'enable'}`, {})
 }
+
+/* ── Console alerts (the bell) ──────────────────────────────────────────── */
+
+export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server'
+
+/** One alert under the bell, as GET /api/v1/alerts returns it. */
+export interface ConsoleAlert {
+  seq: number
+  at: string
+  kind: AlertKind
+  severity: 'info' | 'warning' | 'critical'
+  title: string
+  detail: string
+  /** A console path, or empty. */
+  link: string
+  read: boolean
+}
+
+export interface AlertPage {
+  alerts: ConsoleAlert[]
+  /** Unread alerts, counted up to 100. */
+  unread: number
+  more: boolean
+}
+
+/** What one person chose for their bell. Saved on their account. */
+export interface AlertPrefs {
+  muted: AlertKind[]
+  newDevicesOnly: boolean
+  popup: boolean
+  sound: boolean
+}
+
+/** The server-sent events stream behind the bell. */
+export function alertStreamURL(): string {
+  // EventSource sends no headers, so the development token, when there is
+  // one, rides in the query, where the control plane also looks for it.
+  return `${BASE}/api/v1/alerts/stream${TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : ''}`
+}
+
+export async function consoleAlerts(unread: boolean, before?: number): Promise<AlertPage> {
+  const q = new URLSearchParams()
+  if (unread) q.set('unread', '1')
+  if (before) q.set('before', String(before))
+  const qs = q.toString()
+  return get<AlertPage>(`/api/v1/alerts${qs ? `?${qs}` : ''}`)
+}
+
+export async function markAlertsRead(input: { seqs?: number[]; upTo?: number }): Promise<void> {
+  await post<{ ok: boolean }>('/api/v1/alerts/read', input)
+}
+
+export async function alertPrefs(): Promise<AlertPrefs> {
+  return get<AlertPrefs>('/api/v1/alerts/preferences')
+}
+
+export async function saveAlertPrefs(p: AlertPrefs): Promise<AlertPrefs> {
+  return send<AlertPrefs>('PUT', '/api/v1/alerts/preferences', p)
+}

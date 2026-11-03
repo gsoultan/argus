@@ -71,7 +71,7 @@ func (a *API) postConsoleAlertsRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.alertHub.touched(tenantIDOf(r.Context()), sess.Email)
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (a *API) getAlertPrefs(w http.ResponseWriter, r *http.Request) {

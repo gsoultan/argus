@@ -301,7 +301,7 @@ func TestTheStreamCarriesOnlyWhatTheReaderMaySee(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if res.StatusCode != http.StatusNoContent {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("mark read = %d", res.StatusCode)
 	}
 	if ev, _ := next(t, events); ev.name != "read" {
