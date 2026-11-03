@@ -2,8 +2,8 @@ import {
   Badge, Box, Card, CopyButton, Group, Skeleton, Text, ThemeIcon, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import {
-  IconAlertTriangle, IconCertificate, IconCheck, IconChevronRight, IconClockQuestion,
-  IconCloudOff,
+  IconAlertTriangle, IconArchive, IconCertificate, IconCheck, IconChevronRight,
+  IconClockQuestion, IconCloudOff,
   IconCopy, IconDoorExit, IconKey, IconLock, IconPlayerRecordFilled,
   IconPlugConnected, IconPlugConnectedX, IconRouteAltLeft, IconShieldCheck,
   IconShieldOff,
@@ -151,6 +151,30 @@ export function SessionDuration({
  * Nothing is said about an active session. Its recording is still being written
  * and has no business being in storage yet.
  */
+/**
+ * A recording the control plane has moved to its archive: recompressed at the
+ * strongest setting, verified, and stored under archive/. It replays exactly
+ * as before; this says only why the first frame may take a moment longer.
+ */
+export function isArchivedRecording(key: string | undefined | null): boolean {
+  return !!key && /(^|\/)archive\//.test(key)
+}
+
+export function RecordingArchived({ session }: { session: Pick<Session, 'recordingKey'> }) {
+  if (!isArchivedRecording(session.recordingKey)) return null
+  return (
+    <Tooltip
+      label="Archived: recompressed and moved to the archive once it passed the archive age in Settings. It replays as before, and its chain is checked on every replay."
+      multiline
+      maw={320}
+    >
+      <ThemeIcon variant="light" color="gray" size={18} radius="sm" aria-label="Recording archived">
+        <IconArchive size={12} />
+      </ThemeIcon>
+    </Tooltip>
+  )
+}
+
 export function ArtefactPending({ session }: { session: Pick<Session, 'state' | 'recordingKey'> }) {
   if (session.state === 'active' || session.recordingKey) return null
   return (

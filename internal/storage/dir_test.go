@@ -61,3 +61,34 @@ func TestADirectoryRefusesAKeyOutsideIt(t *testing.T) {
 		}
 	}
 }
+
+// A compressed recording's key keeps its format and its compression, and an
+// organization's archive is inside its own prefix.
+func TestKeysOfCompressedAndArchivedRecordings(t *testing.T) {
+	at := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	for path, want := range map[string]string{
+		"/tmp/argus-recording-1.cast.zst":     ".cast.zst",
+		"/tmp/argus-recording-1.argusrdp.zst": ".argusrdp.zst",
+		"/tmp/argus-recording-1.argusrdp":     ".argusrdp",
+		"/tmp/argus-recording-1":              ".cast",
+	} {
+		if got := extOf(path); got != want {
+			t.Errorf("extOf(%s) = %s, want %s", path, got, want)
+		}
+	}
+	d := &Dir{root: t.TempDir()}
+	def, org := ForTenant(d, ""), ForTenant(d, "acme")
+	if k := def.ArchiveKey(at, "s1", ".cast.zst"); k != "archive/2026/11/03/s1.cast.zst" || !def.Owns(k) || !IsArchived(k) {
+		t.Errorf("default archive key %s", k)
+	}
+	k := org.ArchiveKey(at, "s1", ".cast.zst")
+	if k != "tenants/acme/archive/2026/11/03/s1.cast.zst" || !org.Owns(k) || def.Owns(k) || !IsArchived(k) {
+		t.Errorf("organization archive key %s", k)
+	}
+	if IsArchived("2026/11/03/s1.cast.zst") || IsArchived("tenants/acme/2026/11/03/s1.cast") {
+		t.Error("a hot key reads as archived")
+	}
+	if _, err := def.PutArchive(context.Background(), "x", k, "s1", "h", at, PutOptions{}); err == nil {
+		t.Error("the default organization archived into another's prefix")
+	}
+}

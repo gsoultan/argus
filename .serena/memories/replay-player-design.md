@@ -109,3 +109,43 @@ alone would put the marker on every live row.
 The fixture gives most sessions a key and two of them none, the same way it
 carries two silent sessions -- a demo fleet where every recording were
 unretrievable would say nothing useful.
+
+## Recordings at rest are zstd (2026-11)
+
+Prompted by 8 GB of recordings in a week. Desktop recordings are the bulk: a
+synthetic 5-minute 1080p session through the real screen encoder is 587 MB
+plain, because every changed 64x64 tile is RLE at 24 bpp, base64'd inside
+JSON, twenty times a second. The bucket stored every recording exactly as
+shipped, uncompressed; only the host's own copy was gzipped, after an hour.
+
+Now (`internal/recorder/compress.go`):
+
+- Written plain while live (a killed agent still leaves a replayable
+  prefix), compressed at seal by `Uploads.Pass` (zstd "better", 32 MB
+  window), read back to the same sha256 before the plain file goes.
+- Shipped compressed only to a control plane whose heartbeat reply carries
+  `recording_encodings: ["zstd"]`; to an older one the agent streams it
+  decompressed. An old control plane would verify zstd bytes as lines, fail,
+  and refuse the evidence permanently -- that is why it is negotiated.
+- The control plane compresses anything that arrives plain before storing.
+  Keys are `<date>/<id>.cast.zst` / `.argusrdp.zst`.
+- **The chain covers lines, not file bytes.** `recorder.Verify` reads through
+  zstd and gzip itself, so every verifier (upload, replay, backup drill,
+  argus-verify) works unchanged. Readers call `recorder.Open`.
+- Archive (`internal/control/recording_archive.go`): past the archive age
+  (default 30 days), recompress at zstd best / 128 MB window, verify *the new
+  copy*, store under `archive/`, conditional UPDATE of the key (two replicas
+  cannot both act), then delete the old object and audit
+  `recording.archived`. A stored copy that fails verification is never
+  archived; it is audited once as `recording.unarchivable`.
+- Only instant-retrieval storage classes are allowed for the archive.
+
+Measured: desktop 18.6x hot, 28.9x archived (gzip was 4.1x); terminal ~5x.
+The base64 framing still costs about 2x after compression (the same desktop
+as length-prefixed binary compresses to 9.6 MB); hex does not help. Removing
+it means a binary recording format, which touches the line-based chain, the
+live tap and replay -- left for its own change.
+
+Replay still buffers the decompressed recording up to 256 MB in memory, so a
+desktop recording longer than a few minutes is cut off and then reported as
+failing verification. Compression does not change that bound.

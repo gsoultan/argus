@@ -64,6 +64,8 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 		LogLevel:       c.LogLevel,
 
 		AgentKeepRecordingsDays: c.AgentKeepRecordingsDays,
+		Archive: &control.RecordingArchiveSettings{AfterDays: c.RecordingsArchiveAfterDays,
+			StorageClass: c.RecordingsArchiveStorageClass},
 	}
 	lastApplyMu.Lock()
 	s.ApplyError = lastApplyError
@@ -289,6 +291,17 @@ func (b *settingsBackend) apply(ctx context.Context, c *config, in control.Setti
 			"0 for the default or -1 for ever"))
 	}
 	c.AgentKeepRecordingsDays = in.AgentKeepRecordingsDays
+	if ar := in.Archive; ar != nil {
+		if ar.AfterDays < -1 || ar.AfterDays > 3650 {
+			return control.BadInput(fmt.Errorf("recordings are archived after 1 to 3650 days, " +
+				"0 for the default or -1 for never"))
+		}
+		if !control.ValidArchiveStorageClass(ar.StorageClass) {
+			return control.BadInput(fmt.Errorf("storage class %q cannot be replayed from at once; use one of %s",
+				ar.StorageClass, strings.Join(control.ArchiveStorageClasses[1:], ", ")))
+		}
+		c.RecordingsArchiveAfterDays, c.RecordingsArchiveStorageClass = ar.AfterDays, ar.StorageClass
+	}
 	switch in.LogLevel {
 	case "", "debug", "info", "warn", "error":
 		c.LogLevel = in.LogLevel

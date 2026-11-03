@@ -29,9 +29,18 @@ type Verification struct {
 // runs the identical computation in a Web Worker, so a recording verified here
 // verifies there too.
 //
+// A compressed recording (zstd, or the gzip older agents left on hosts) is
+// read through: the chain covers the lines, not the file, so a compressed
+// copy verifies to the same head as the plain one.
+//
 // Passing an empty expectedHead computes the head without comparing.
 func Verify(r io.Reader, expectedHead string) (Verification, error) {
-	sc := bufio.NewScanner(r)
+	rc, err := Open(r)
+	if err != nil {
+		return Verification{}, err
+	}
+	defer rc.Close()
+	sc := bufio.NewScanner(rc)
 	// Terminal output arrives in bursts; a single line can carry a screenful of
 	// a `find /` or a base64 blob. The default 64 KB token limit is too small.
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)

@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -96,6 +97,15 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An agent that knows the control plane reads zstd ships the file it
+	// compressed when the session was sealed; an older one ships it plain.
+	// Either is verified the same way, through the compression.
+	body := bufio.NewReaderSize(http.MaxBytesReader(w, r.Body, MaxRecordingUpload), 64<<10)
+	magic, _ := body.Peek(4)
+	shippedCompressed := recorder.Compressed(magic)
+	if shippedCompressed {
+		ext += recorder.CompressedExt
+	}
 	tmp, err := os.CreateTemp("", "argus-recording-*"+ext)
 	if err != nil {
 		a.fail(w, "spool recording", err)
@@ -103,7 +113,7 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
-	n, err := io.Copy(tmp, http.MaxBytesReader(w, r.Body, MaxRecordingUpload))
+	n, err := io.Copy(tmp, body)
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
@@ -143,11 +153,26 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmp.Close()
 
+	// Stored compressed whatever arrived. A plain recording is compressed
+	// here, and the copy read back before the plain one goes; the chain
+	// head it verifies to is the one just checked.
+	spooled, stored := tmp.Name(), n
+	if !shippedCompressed {
+		if spooled, err = recorder.CompressFile(tmp.Name(), recorder.Hot); err != nil {
+			a.fail(w, "compress recording", err)
+			return
+		}
+		defer os.Remove(spooled)
+		if fi, err := os.Stat(spooled); err == nil {
+			stored = fi.Size()
+		}
+	}
+
 	store := a.storeRecording
 	if store == nil {
 		store = a.recordingsFor(r.Context()).Upload
 	}
-	key, err := store(r.Context(), tmp.Name(), id, head, sess.StartedAt)
+	key, err := store(r.Context(), spooled, id, head, sess.StartedAt)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotConfigured) {
 			writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
@@ -163,7 +188,8 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.uploads.ok(time.Now())
-	a.log.Info("recording shipped by agent", "session", id, "host", host, "key", key, "bytes", n)
+	a.log.Info("recording shipped by agent", "session", id, "host", host, "key", key,
+		"bytes_received", n, "bytes_stored", stored, "arrived_compressed", shippedCompressed)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stored", "key": key})
 }
 

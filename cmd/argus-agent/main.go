@@ -572,6 +572,9 @@ func runDaemon(args []string) int {
 		})
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
+		if ok {
+			rep.SetShipZstd(reply.AcceptsZstd())
+		}
 		if ok && !keepPinned && reply.KeepRecordingsHours != nil && *reply.KeepRecordingsHours >= 0 {
 			uploads.SetKeep(time.Duration(*reply.KeepRecordingsHours) * time.Hour)
 		}

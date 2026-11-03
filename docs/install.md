@@ -232,17 +232,49 @@ restart it; until then those agents refuse sessions and say why in their log.
 
 ### Disk use on each server
 
-Every recording is written on the server first and stays there untouched
-until the control plane has verified its hash chain and stored it. After
-that the server's copy is a second copy: an hour after it ships it is gzipped
-in place (`<id>.cast.gz`, typically a fifth of the size or less; `gzip -dc` gives back
-the exact bytes, which `argus-verify` checks against the same chain head), and
-after 7 days it is deleted. Change how long for the whole fleet in the
+Every recording is written on the server plainly while the session runs, so
+a killed agent still leaves a replayable prefix. When the session ends it is
+compressed with zstd (`<id>.cast.zst`, `<id>.argusrdp.zst`): the compressed
+copy is read back to the same bytes before the plain one is removed, and the
+hash chain covers the recording's lines rather than the file, so it verifies
+to the same chain head (`argus-verify` reads `.zst` and `.gz` files
+directly; `zstd -dc` gives back the exact recording). It ships compressed and
+the control plane stores it compressed; a recording from an older agent that
+arrives plain is compressed by the control plane before it is stored.
+
+Measured: a 1080p desktop session shrinks about 18 times, a terminal session
+about 5 times. gzip, which older agents used on their own copies, managed 4
+and 3.
+
+Once the control plane holds a verified copy, the server's copy is a second
+copy and is deleted after 7 days. Change how long for the whole fleet in the
 console, under Settings → Recordings → "Keep on servers for"; servers pick it
 up on their next heartbeat. `--keep-shipped` on one daemon's command line
 (`--keep-shipped=8760h` for a year, `--keep-shipped=0` for ever) overrides the
 console on that server. A recording the control plane does not have -- still
-queued, or refused -- is never compressed or deleted.
+queued, or refused -- is never deleted.
+
+### Recording archive
+
+The bucket (or the control plane's recordings directory) keeps recordings
+for ever. Once one is older than the archive age -- 30 days unless changed
+under Settings → Recordings → "Archive recordings older than", or
+`recordings_archive_after_days` in `control.yaml` (`-1` never archives) --
+the control plane recompresses it at zstd's strongest setting with a 128 MB
+window, verifies the new copy against the session's chain head, stores it
+under `archive/` and only then moves the session to it and deletes the old
+object. A desktop recording comes out about 30 times smaller than it was
+recorded. Each move is an audit entry (`recording.archived`); a stored
+recording that no longer verifies is never archived and is reported as
+`recording.unarchivable` instead.
+
+An archived recording replays from the console like any other, and is
+verified on every replay. With a bucket, `recordings_archive_storage_class`
+(Settings → "Archive storage class") puts archived objects in a cheaper class.
+Only classes that read back at once are accepted -- `STANDARD_IA`,
+`ONEZONE_IA`, `INTELLIGENT_TIERING`, `GLACIER_IR` -- because a recording in
+Glacier Flexible Retrieval or Deep Archive could not be replayed without a
+restore that takes hours.
 
 ### Log volume
 

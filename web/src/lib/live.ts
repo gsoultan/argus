@@ -1115,6 +1115,13 @@ export interface ControlSettings {
   logLevel: string
   /** How long servers keep their own copy of a stored recording: 0 is the default (7), -1 for ever. */
   agentKeepRecordingsDays: number
+  /**
+   * When stored recordings are recompressed and moved to the archive, where
+   * they still replay. Absent from a control plane older than the archive.
+   * afterDays: 0 is the default (30), -1 never. storageClass: '' is the
+   * bucket's default.
+   */
+  archive?: { afterDays: number; storageClass: string }
   database: {
     host: string; port: number; name: string; user: string; sslMode: string
     passwordSet: boolean; password?: string; raw?: boolean

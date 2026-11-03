@@ -131,8 +131,11 @@ step "6. Verifying every backed-up recording"
 # The list goes to a file rather than an array: this script has to run under
 # the bash 3.2 that ships with macOS, which has no mapfile.
 RECORDING_LIST=$(mktemp)
+# Stored recordings are compressed (.cast.zst, .argusrdp.zst); argus-verify
+# reads through it, and the chain head is the same as the plain file's.
 find "$WORK/recordings" -type f \
-  \( -name '*.cast' -o -name '*.argusrdp' \) 2>/dev/null | sort > "$RECORDING_LIST"
+  \( -name '*.cast' -o -name '*.argusrdp' -o -name '*.cast.zst' -o -name '*.argusrdp.zst' \) \
+  2>/dev/null | sort > "$RECORDING_LIST"
 n=$(wc -l < "$RECORDING_LIST" | tr -d ' ')
 if (( n == 0 )); then
   warn "No recordings were backed up — this drill did NOT exercise recording recovery"
@@ -179,7 +182,7 @@ else
     path = $0
     k = split(path, parts, "/")
     id = parts[k]
-    sub(/\.(cast|argusrdp)$/, "", id)
+    sub(/\.(cast|argusrdp)(\.zst)?$/, "", id)
     gsub(/-/, "", id)
     print id, path
   }' "$RECORDING_LIST" | LC_ALL=C sort -t"$(printf '\t')" -k1,1 > "$PAIRS"

@@ -167,3 +167,29 @@ func TestSettingsRefuseAnImpossibleKeep(t *testing.T) {
 		}
 	}
 }
+
+// Archive days become the archive age: the default for zero, never for -1.
+func TestArchiveAfter(t *testing.T) {
+	for days, want := range map[int]time.Duration{0: control.DefaultArchiveAfter, -1: 0, 3: 72 * time.Hour} {
+		if got := archiveAfter(days); got != want {
+			t.Errorf("archiveAfter(%d) = %v, want %v", days, got, want)
+		}
+	}
+}
+
+// An archive the console could not replay from is refused, and so is an
+// impossible age; a console older than the archive keeps what is set.
+func TestSettingsRefuseAnArchiveThatCannotBeReplayed(t *testing.T) {
+	b := &settingsBackend{loc: configLocation{Managed: filepath.Join(t.TempDir(), "control.yaml")}}
+	for _, ar := range []control.RecordingArchiveSettings{
+		{AfterDays: 30, StorageClass: "DEEP_ARCHIVE"},
+		{AfterDays: 30, StorageClass: "GLACIER"},
+		{AfterDays: -2},
+		{AfterDays: 4000},
+	} {
+		err := b.apply(context.Background(), &config{}, control.Settings{Archive: &ar}, nil)
+		if err == nil || !strings.Contains(err.Error(), "archive") && !strings.Contains(err.Error(), "replayed") {
+			t.Errorf("%+v: err = %v, want a refusal", ar, err)
+		}
+	}
+}

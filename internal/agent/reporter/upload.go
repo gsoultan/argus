@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/gsoultan/argus/internal/recorder"
 )
 
 // UploadError is a recording the control plane would not take, with its
@@ -54,16 +56,34 @@ func (c *Client) UploadRecording(ctx context.Context, id, chainHead, path string
 	if err != nil {
 		return err
 	}
+	var body io.Reader = f
+	size := info.Size()
+	compressed := strings.HasSuffix(path, recorder.CompressedExt)
+	if compressed && !c.shipZstd.Load() {
+		// Kept compressed on this host, sent plain to a control plane that
+		// has not said it reads zstd. The length is unknown, so it is sent
+		// chunked.
+		plain, err := recorder.Open(f)
+		if err != nil {
+			return err
+		}
+		defer plain.Close()
+		body, size, compressed = plain, -1, false
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		c.baseURL+"/api/v1/report/recording/"+url.PathEscape(id), f)
+		c.baseURL+"/api/v1/report/recording/"+url.PathEscape(id), body)
 	if err != nil {
 		return err
 	}
-	req.ContentLength = info.Size()
+	req.ContentLength = size
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("X-Argus-Chain-Head", chainHead)
-	req.Header.Set("X-Argus-Format", strings.TrimPrefix(extOf(path), "."))
+	req.Header.Set("X-Argus-Format",
+		strings.TrimPrefix(extOf(strings.TrimSuffix(path, recorder.CompressedExt)), "."))
+	if compressed {
+		req.Header.Set("X-Argus-Encoding", "zstd")
+	}
 
 	hc := *c.http
 	hc.Timeout = 0
@@ -84,6 +104,10 @@ func (c *Client) UploadRecording(ctx context.Context, id, chainHead, path string
 	}
 	return nil
 }
+
+// SetShipZstd records whether the control plane reads zstd recordings, from
+// its heartbeat reply.
+func (c *Client) SetShipZstd(ok bool) { c.shipZstd.Store(ok) }
 
 func extOf(path string) string {
 	if i := strings.LastIndexByte(path, '.'); i >= 0 && !strings.ContainsAny(path[i:], `/\`) {

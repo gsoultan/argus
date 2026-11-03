@@ -9,15 +9,18 @@ import (
 	"testing"
 
 	"github.com/gsoultan/argus/internal/agent/reporter"
+	"github.com/gsoultan/argus/internal/recorder"
 )
 
 type fakeSender struct {
-	err  error
-	sent []string
+	err   error
+	sent  []string
+	paths []string
 }
 
-func (f *fakeSender) UploadRecording(_ context.Context, id, _, _ string) error {
+func (f *fakeSender) UploadRecording(_ context.Context, id, _, path string) error {
 	f.sent = append(f.sent, id)
+	f.paths = append(f.paths, path)
 	return f.err
 }
 
@@ -51,12 +54,13 @@ func TestARecordingStaysQueuedUntilTheControlPlaneHasIt(t *testing.T) {
 	if len(send.sent) != 3 {
 		t.Errorf("sent %v; the unsealed recording was queued", send.sent)
 	}
-	if _, err := os.Stat(rec); err != nil {
+	// Compressed before it was shipped, and kept.
+	if _, err := os.Stat(rec + recorder.CompressedExt); err != nil {
 		t.Error("the host's copy went with the upload")
 	}
 
 	send.err = &reporter.UploadError{Status: http.StatusUnprocessableEntity, Message: "does not verify"}
-	u.Queue(SessionRecord{ID: "s1", Path: rec, ChainHead: "abc"})
+	u.Queue(SessionRecord{ID: "s1", Path: rec + recorder.CompressedExt, ChainHead: "abc"})
 	u.Pass(context.Background())
 	u.Pass(context.Background())
 	if len(send.sent) != 4 {

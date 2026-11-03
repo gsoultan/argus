@@ -43,7 +43,7 @@ const StatementWatch = lazy(() =>
   import('~/components/StatementWatch').then((m) => ({ default: m.StatementWatch })),
 )
 import {
-  ArtefactPending, Digest, Field, FidelityBadge, Mono, RiskFlags, SessionDuration,
+  ArtefactPending, Digest, Field, FidelityBadge, Mono, RecordingArchived, RiskFlags, SessionDuration,
   SessionStateBadge, absTime, bytes, relTime,
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
@@ -532,6 +532,7 @@ function SessionDetail() {
                     <Group gap={SP.snug} wrap="nowrap">
                       <FidelityBadge fidelity={session.fidelity} />
                       <ArtefactPending session={session} />
+                      <RecordingArchived session={session} />
                     </Group>
                   </Field>
                   <Field label="Risk flags"><RiskFlags flags={session.riskFlags} /></Field>

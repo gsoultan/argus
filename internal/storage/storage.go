@@ -125,6 +125,12 @@ func (c *Client) Upload(ctx context.Context, path, sessionID, chainHead string,
 // UploadKey is Upload at a key the caller chose; see Scoped.
 func (c *Client) UploadKey(ctx context.Context, path, key, sessionID, chainHead string,
 	startedAt time.Time) (string, error) {
+	return c.UploadKeyWith(ctx, path, key, sessionID, chainHead, startedAt, PutOptions{})
+}
+
+// UploadKeyWith is UploadKey with options, for the archive.
+func (c *Client) UploadKeyWith(ctx context.Context, path, key, sessionID, chainHead string,
+	startedAt time.Time, opt PutOptions) (string, error) {
 
 	if c == nil {
 		return "", ErrNotConfigured
@@ -142,7 +148,8 @@ func (c *Client) UploadKey(ctx context.Context, path, key, sessionID, chainHead 
 	}
 
 	_, err = c.mc.PutObject(ctx, c.bucket, key, f, info.Size(), minio.PutObjectOptions{
-		ContentType: "application/x-asciicast",
+		ContentType:  contentType(key),
+		StorageClass: opt.StorageClass,
 		UserMetadata: map[string]string{
 			"argus-session":    sessionID,
 			"argus-chain-head": chainHead,
@@ -164,11 +171,47 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 }
 
 // extOf is the extension a recording has on disk, .cast when it has none.
+// A compressed recording keeps both: .cast.zst, .argusrdp.zst. The format
+// and the compression are separate facts, and a key that dropped either
+// would name an object nothing could open as what it is.
 func extOf(path string) string {
+	if strings.HasSuffix(path, compressedExt) {
+		return extOf(strings.TrimSuffix(path, compressedExt)) + compressedExt
+	}
 	if ext := filepath.Ext(path); ext != "" {
 		return ext
 	}
 	return ".cast"
+}
+
+// compressedExt is recorder.CompressedExt, repeated rather than imported:
+// this package moves bytes and knows nothing of what they are.
+const compressedExt = ".zst"
+
+// ArchivePrefix is where a recording goes once it is archived, inside its
+// organization's prefix: archive/2026/11/03/<id>.cast.zst.
+const ArchivePrefix = "archive/"
+
+// IsArchived reports whether key names an archived recording.
+func IsArchived(key string) bool {
+	return strings.HasPrefix(key, ArchivePrefix) || strings.Contains(key, "/"+ArchivePrefix)
+}
+
+// contentType is what a recording at key is, for whoever reads the bucket
+// without Argus.
+func contentType(key string) string {
+	if strings.HasSuffix(key, compressedExt) {
+		return "application/zstd"
+	}
+	return "application/x-asciicast"
+}
+
+// PutOptions are how an object is stored beyond its bytes.
+type PutOptions struct {
+	// StorageClass is the bucket's storage class for the object, such as
+	// STANDARD_IA or GLACIER_IR. Empty is the bucket's default. A directory
+	// has no classes and ignores it.
+	StorageClass string
 }
 
 // Get opens a recording for reading.
