@@ -84,15 +84,15 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
  * Postgres databases, a Redis's logical dbs, RabbitMQ's vhosts -- and the
  * admin ticks what to add; typing the name is the fallback whenever the
  * agent cannot list (offline, too old, wrong port), and the form says why.
- * `initialPort` and `initialPoolerPort` come from what the agent found
+ * `initialEngine`, `initialPort` and `initialPoolerPort` come from what the agent found
  * running, when it is opened from there.
  */
-export function AddDatabase({ asset, opened, onClose, initialPort, initialPoolerPort }: {
-  asset: Asset; opened: boolean; onClose: () => void; initialPort?: number; initialPoolerPort?: number
+export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort }: {
+  asset: Asset; opened: boolean; onClose: () => void; initialEngine?: DBEngine; initialPort?: number; initialPoolerPort?: number
 }) {
   const create = useCreateDatabase()
   const narrow = useMediaQuery('(max-width: 48em)')
-  const [engine, setEngine] = useState<DBEngine>('postgres')
+  const [engine, setEngine] = useState<DBEngine>(initialEngine ?? 'postgres')
   const info = ENGINES[engine]
   const [typed, setTyped] = useState('')
   const [manual, setManual] = useState(false)
