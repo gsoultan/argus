@@ -317,6 +317,7 @@ func (a *API) postDatabaseRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditDB(r.Context(), "db.requested", "notice", sess.Email, req.AssetHostnames[0],
 		"Asked for "+in.Level+" on a database for "+itoa(in.DurationMinutes)+" minutes: "+in.Justification)
+	a.alertRequestWaiting(r.Context(), req)
 	writeJSON(w, http.StatusCreated, req)
 }
 

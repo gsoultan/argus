@@ -280,6 +280,7 @@ func (a *API) postResetMFA(w http.ResponseWriter, r *http.Request) {
 		a.log.Error("audit append failed", "error", err)
 	}
 	a.Alerts.SecurityEvent("Argus: second factor of "+email+" was reset", detail)
+	a.alertSecurity(r.Context(), sess.Email, "Second factor of "+email+" was reset", detail)
 	writeJSON(w, http.StatusOK, map[string]string{"email": email})
 }
 

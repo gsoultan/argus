@@ -305,6 +305,8 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
+	a.alertServer(r.Context(), "", in.Hostname+" joined Argus",
+		"Its agent enrolled with a token made by "+enr.TokenCreatedBy+".")
 	a.log.Info("agent enrolled", "hostname", in.Hostname, "credential", enr.CredentialID)
 
 	out := map[string]any{
@@ -404,6 +406,9 @@ func (a *API) postDeregister(w http.ResponseWriter, r *http.Request) {
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
+	a.raiseAlert(r.Context(), ConsoleAlert{Kind: AlertServer, Severity: "warning", Audience: AudienceAdmins,
+		Title: "The agent on " + hostname + " was uninstalled", Link: "/assets",
+		Detail: "Sessions on " + hostname + " are no longer opened from the console or recorded."})
 	a.log.Warn("agent uninstalled itself", "hostname", hostname, "credential", id)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "hostname": hostname, "state": "revoked"})
 }

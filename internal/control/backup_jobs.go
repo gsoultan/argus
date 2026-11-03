@@ -608,6 +608,10 @@ func (a *API) BackupSweep(ctx context.Context) {
 				_ = a.store.RecordBackupOutcome(ctx, db.ID, by, "missed", why)
 				a.auditDB(ctx, "db.backup_missed", "warn", by, db.Hostname,
 					fmt.Sprintf("The scheduled backup of %s was missed: %s (%d in a row).", db.Name, why, misses))
+				if misses == backupMissAlertAt {
+					a.alertSecurity(ctx, "", "Backups of "+db.Name+" on "+db.Hostname+" are being missed",
+						fmt.Sprintf("%d scheduled backups in a row did not run: %s.", misses, why))
+				}
 				if misses == backupMissAlertAt && a.Alerts != nil {
 					a.Alerts.SecurityEvent("Backups of "+db.Name+" on "+db.Hostname+" are being missed",
 						fmt.Sprintf("%d scheduled backups in a row did not run: %s.", misses, why))

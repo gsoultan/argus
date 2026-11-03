@@ -296,6 +296,7 @@ func (a *API) recordAccountFailure(r *http.Request, email string, code bool) {
 	a.log.Warn("account throttled after repeated failures", "email", key, "what", what)
 	a.auditAuth(r, "auth.account_throttled", "critical", key, detail)
 	a.Alerts.SecurityEvent("Argus: sign-in attempts against "+key+" are being refused", detail)
+	a.alertSecurity(r.Context(), "", "Sign-in attempts against "+key+" are being refused", detail)
 }
 
 // clearAccountFailures forgets an account's failures after a full sign-in.
