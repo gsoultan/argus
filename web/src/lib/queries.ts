@@ -67,6 +67,35 @@ export const assetQuery = (id: string) =>
 export const loginAccountsQuery = (id: string) =>
   queryOptions({ queryKey: ['asset', id, 'login-accounts'] as const, queryFn: () => api.loginAccounts(id) })
 
+/** Login accounts an admin made on a server from the console. */
+export const serverLoginsQuery = (id: string) =>
+  queryOptions({ queryKey: ['asset', id, 'server-logins'] as const, queryFn: () => api.serverLogins(id) })
+
+/** Makes, locks or deletes a console-made login; the server's lists follow. */
+export function useServerLoginAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; name: string; action: 'create' | 'lock' | 'delete' }) =>
+      v.action === 'create'
+        ? api.createServerLogin(v.id, v.name)
+        : api.removeServerLogin(v.id, v.name, v.action === 'delete'),
+    onSuccess: (list, v) => {
+      qc.setQueryData(['asset', v.id, 'server-logins'], list)
+      void qc.invalidateQueries({ queryKey: qk.asset(v.id) })
+      void qc.invalidateQueries({ queryKey: ['assets'] })
+      void qc.invalidateQueries({ queryKey: ['asset', v.id, 'login-accounts'] })
+    },
+  })
+}
+
+/** The accounts a person can ask for on the servers they picked. */
+export const requestAccountsQuery = (hostnames: string[]) =>
+  queryOptions({
+    queryKey: ['request-accounts', [...hostnames].sort()] as const,
+    queryFn: () => api.requestAccounts(hostnames),
+    enabled: hostnames.length > 0,
+  })
+
 /** What runs on a server, from its agent's last report. */
 export const applicationsQuery = (id: string) =>
   queryOptions({ queryKey: ['asset', id, 'applications'] as const, queryFn: () => api.applications(id) })

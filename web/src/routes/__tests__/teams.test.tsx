@@ -53,6 +53,8 @@ describe('asking for access from a server you cannot open', () => {
     await renderRoute('/approvals?ask=pay-01.prod.northwind.id&as=root')
     const dialog = await screen.findByRole('dialog', { name: /ask for access/i })
     expect(within(dialog).getByText('pay-01.prod.northwind.id')).toBeInTheDocument()
-    expect(within(dialog).getByRole('radio', { name: /root/ })).toBeChecked()
+    // Not in this fleet, so its accounts are not known here: the account asked
+    // for is carried into the field to type in, not swapped for a fixed list.
+    expect(await within(dialog).findByRole('textbox', { name: /log in as/i })).toHaveValue('root')
   })
 })

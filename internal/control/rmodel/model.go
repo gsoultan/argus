@@ -256,6 +256,31 @@ func (m *AssetAssignment) Schema(t *storm.Table) {
 		"(personal_accounts IS TRUE) OR ((NOT sudo) AND (direct_ssh = 'off'::text))")
 }
 
+// ServerLogin is table server_logins: a login account an administrator made
+// on a server from the console (migration 039).
+type ServerLogin struct {
+	Asset     Asset
+	Name      string
+	State     string
+	CreatedBy string
+	CreatedAt time.Time
+	ChangedBy string
+	ChangedAt time.Time
+}
+
+func (m *ServerLogin) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Asset, &m.Name)
+	t.Col(&m.Asset).ConstraintName("server_logins_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Asset).NoIndex()
+	t.Col(&m.State).Default("'active'::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.ChangedAt).Default("now()")
+	t.CheckNamed("server_logins_name_check", "name ~ '^[a-z_][a-z0-9._-]{0,31}$'::text")
+	t.CheckNamed("server_logins_state_check",
+		"state = ANY (ARRAY['active'::text, 'locked'::text, 'delete'::text, 'deleted'::text])")
+}
+
 // AssetTeamAssignment is table asset_team_assignments: which team may reach
 // which host, as whom.
 type AssetTeamAssignment struct {
@@ -974,6 +999,7 @@ func All() []any {
 		&RevokedSession{},
 		&SchemaMigration{},
 		&Session{},
+		&ServerLogin{},
 		&SignInDevice{},
 		&ConsoleAlert{},
 		&ConsoleAlertPref{},

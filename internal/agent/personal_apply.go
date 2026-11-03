@@ -28,6 +28,7 @@ the states back on stdout. The pass is the same code either way.
 // personalRequest is what the daemon hands the helper.
 type personalRequest struct {
 	Want    []PersonalAccount `json:"want"`
+	Delete  []string          `json:"delete,omitempty"`
 	Passwd  string            `json:"passwd,omitempty"`
 	Sudoers string            `json:"sudoers,omitempty"`
 	State   map[string]string `json:"state,omitempty"`
@@ -39,7 +40,7 @@ type personalReply struct {
 	State  map[string]string      `json:"state,omitempty"`
 }
 
-func (p *Provisioner) reconcileOutside(ctx context.Context, want []PersonalAccount) []PersonalAccountState {
+func (p *Provisioner) reconcileOutside(ctx context.Context, want []PersonalAccount, del []string) []PersonalAccountState {
 	failAll := func(detail string) []PersonalAccountState {
 		out := make([]PersonalAccountState, 0, len(want))
 		for _, a := range want {
@@ -47,7 +48,7 @@ func (p *Provisioner) reconcileOutside(ctx context.Context, want []PersonalAccou
 		}
 		return out
 	}
-	req, err := json.Marshal(personalRequest{Want: want, Passwd: p.Passwd, Sudoers: p.Sudoers, State: p.state})
+	req, err := json.Marshal(personalRequest{Want: want, Delete: del, Passwd: p.Passwd, Sudoers: p.Sudoers, State: p.state})
 	if err != nil {
 		return failAll("the agent could not write the account list: " + err.Error())
 	}
@@ -90,7 +91,7 @@ func RunPersonalApply(stdin io.Reader, stdout, stderr io.Writer) int {
 		Log:   slog.New(slog.NewTextHandler(stderr, nil)),
 		state: req.State,
 	}
-	states := p.reconcile(context.Background(), req.Want)
+	states := p.reconcile(context.Background(), req.Want, req.Delete)
 	if err := json.NewEncoder(stdout).Encode(personalReply{States: states, State: p.state}); err != nil {
 		fmt.Fprintln(stderr, "personal-apply: cannot write the reply:", err)
 		return 1

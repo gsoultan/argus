@@ -62,6 +62,23 @@ func (a *API) postRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An approval for an account the server does not have is a grant nobody
+	// can use. Refused here, because the form is not the boundary.
+	if len(in.AssetHostnames) > maxRequestHosts {
+		writeErr(w, http.StatusBadRequest,
+			"ask for at most "+strconv.Itoa(maxRequestHosts)+" servers at once")
+		return
+	}
+	hosts, err := a.store.RequestableAccounts(r.Context(), dedupe(in.AssetHostnames))
+	if err != nil {
+		a.fail(w, "request accounts", err)
+		return
+	}
+	if why := unrequestable(hosts, in.Principal); why != "" {
+		writeErr(w, http.StatusBadRequest, why)
+		return
+	}
+
 	created, err := a.store.CreateRequest(r.Context(), AccessRequest{
 		RequesterEmail:  sess.Email,
 		AssetHostnames:  in.AssetHostnames,

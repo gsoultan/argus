@@ -462,6 +462,21 @@ func _assertSchemaMigrationShape(m m0.SchemaMigration) {
 	}
 }
 
+// _assertServerLoginShape fails to compile if m0.ServerLogin gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertServerLoginShape(m m0.ServerLogin) {
+	type shape m0.ServerLogin
+	_ = shape{
+		m.Asset,
+		m.Name,
+		m.State,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.ChangedBy,
+		m.ChangedAt,
+	}
+}
+
 // _assertSessionShape fails to compile if m0.Session gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertSessionShape(m m0.Session) {
