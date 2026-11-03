@@ -28,6 +28,12 @@ func (a *API) dbLevelOf(ctx context.Context, email, role, dbID string) (string, 
 // withDatabase loads the database and the caller's level, refusing below
 // min. The handler gets both.
 func (a *API) withDatabase(min string, next func(w http.ResponseWriter, r *http.Request, email string, db Database, level string)) http.HandlerFunc {
+	return a.withPostgres("backups", min, next)
+}
+
+// withPostgres is withDatabase for a feature named what, which only a
+// Postgres database has.
+func (a *API) withPostgres(what, min string, next func(w http.ResponseWriter, r *http.Request, email string, db Database, level string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := a.authenticate(r)
 		if !ok {
@@ -40,7 +46,7 @@ func (a *API) withDatabase(min string, next func(w http.ResponseWriter, r *http.
 			return
 		}
 		if db.Engine != tunnel.EnginePostgres {
-			writeErr(w, http.StatusBadRequest, "backups are for Postgres databases; "+db.Name+" is "+engineName(db.Engine))
+			writeErr(w, http.StatusBadRequest, what+" are for Postgres databases; "+db.Name+" is "+engineName(db.Engine))
 			return
 		}
 		level := tunnel.LevelDBA

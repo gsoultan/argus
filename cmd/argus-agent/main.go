@@ -295,6 +295,12 @@ func runDaemon(args []string) int {
 			Dir:      filepath.Join(*stateDir, "backups"),
 			Log:      log,
 		})
+		// What databases are on this server, for the console's add form;
+		// reads names only, see internal/agent/discover.go.
+		services[agent.DiscoverDBService] = agent.DiscoverDatabases(agent.DiscoverDBConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Log:      log,
+		})
 		// Remote Desktop, to this host's own listener, on Windows: the agent is
 		// the RDP client and records the session before it is shown.
 		if runtime.GOOS == "windows" {

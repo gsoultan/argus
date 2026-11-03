@@ -10,7 +10,7 @@ import { absTime, relTime } from '~/components/primitives'
 import { isConfigured } from '~/lib/live'
 import { applicationsQuery, databasesOnAssetQuery } from '~/lib/queries'
 import { FS, SP } from '~/theme'
-import type { Asset, Database, ServerApp, ServerAppListen } from '~/types/domain'
+import type { Asset, DBEngine, Database, ServerApp, ServerAppListen } from '~/types/domain'
 
 /**
  * What runs on a server, as its agent found it: databases, brokers, web
@@ -25,7 +25,7 @@ import type { Asset, Database, ServerApp, ServerAppListen } from '~/types/domain
 export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   const { data } = useQuery(applicationsQuery(asset.id))
   const { data: dbs } = useQuery(databasesOnAssetQuery(asset.id))
-  const [adding, setAdding] = useState<{ port: number; poolerPort?: number } | null>(null)
+  const [adding, setAdding] = useState<{ engine: DBEngine; port?: number; poolerPort?: number } | null>(null)
   const phone = useMediaQuery('(max-width: 48em)') ?? false
 
   if (asset.protocol === 'rdp') return null
@@ -33,9 +33,9 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
   const listeners = data?.listeners ?? []
   const containers = data?.containers ?? []
   const services = data?.services ?? []
-  // A Postgres already in Argus says so by name, matched on its port: the
-  // agent reports ports, and a database in Argus is kept by port too.
-  const added = new Map((dbs?.databases ?? []).filter((d) => d.engine === 'postgres').map((d) => [d.port, d]))
+  // A database already in Argus says so by name, matched on engine and port:
+  // the agent reports ports, and a database in Argus is kept by port too.
+  const addedOf = (engine: DBEngine) => new Map((dbs?.databases ?? []).filter((d) => d.engine === engine).map((d) => [d.port, d]))
   const pooler = apps.find((a) => a.kind === 'pgbouncer' && !a.container && a.listen.length > 0)
 
   return (
@@ -91,9 +91,10 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
                         </Table.Td>
                         {!phone && <Table.Td><Listens listen={a.listen} /></Table.Td>}
                         <Table.Td ta="right">
-                          {canEdit && isConfigured() && a.kind === 'postgres' && a.running && (
-                            <AddPostgres app={a} added={added}
-                              onAdd={(port) => setAdding({ port, poolerPort: pooler?.listen[0]?.port })} />
+                          {canEdit && isConfigured() && a.running && isEngine(a.kind) && (
+                            <AddFound app={a} engine={a.kind} added={addedOf(a.kind)}
+                              onAdd={(port) => setAdding({ engine: a.kind as DBEngine, port,
+                                poolerPort: a.kind === 'postgres' ? pooler?.listen[0]?.port : undefined })} />
                           )}
                         </Table.Td>
                       </Table.Tr>
@@ -159,7 +160,7 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
         </Tabs>
       )}
       {adding && (
-        <AddDatabase asset={asset} opened onClose={() => setAdding(null)}
+        <AddDatabase asset={asset} opened onClose={() => setAdding(null)} initialEngine={adding.engine}
           initialPort={adding.port} initialPoolerPort={adding.poolerPort} />
       )}
     </SectionCard>
@@ -209,36 +210,56 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
   )
 }
 
+const ENGINE_KINDS: readonly string[] = ['postgres', 'redis', 'rabbitmq']
+function isEngine(kind: string): kind is DBEngine {
+  return ENGINE_KINDS.includes(kind)
+}
+
 /**
- * Adds a Postgres the agent found as a database. A containerised one is not
- * offered: Argus opens a database as the host's postgres account over its
- * local socket, which a container does not share.
+ * Adds a Postgres, Redis or RabbitMQ the agent found. A containerised one is
+ * not offered: Argus opens it as the host's own admin over a local socket or
+ * the server's own tools, which a container does not share.
+ *
+ * Which port the form starts from: Postgres and Redis each one they listen
+ * on. RabbitMQ is reached through its management API, so 15672 when it
+ * listens there and otherwise the form's default; its AMQP port is not it.
+ * A Redis is one entry per server, so one already in Argus is not offered again.
  */
-function AddPostgres({ app, added, onAdd }: { app: ServerApp; added: Map<number, Database>; onAdd: (port: number) => void }) {
+function AddFound({ app, engine, added, onAdd }: {
+  app: ServerApp; engine: DBEngine; added: Map<number, Database>; onAdd: (port?: number) => void
+}) {
+  const what = engine === 'postgres' ? 'postgres account' : engine === 'redis' ? 'Redis admin' : 'rabbitmqctl'
   if (app.container) {
     return (
-      <Tooltip multiline w={260} label="Argus opens a database as this server's postgres account over its local socket. A Postgres inside a container has neither, so it cannot be added from here yet.">
+      <Tooltip multiline w={260} label={`Argus opens this through the server's own ${what}. Inside a container that is not reachable, so it cannot be added from here yet.`}>
         <Text size={FS.micro} c="dimmed">in a container</Text>
       </Tooltip>
     )
   }
-  const ports = [...new Set(app.listen.map((l) => l.port))].sort((a, b) => a - b)
-  if (ports.length === 0) ports.push(5432)
+  const listening = [...new Set(app.listen.map((l) => l.port))].sort((a, b) => a - b)
+  const ports: (number | undefined)[] = engine === 'rabbitmq'
+    ? [listening.includes(15672) ? 15672 : undefined]
+    : listening.length ? listening : [undefined]
+  const inArgus = (p: number | undefined) =>
+    engine === 'redis' || engine === 'rabbitmq' ? [...added.values()][0] : added.get(p ?? 5432)
   return (
     <Stack gap={4} align="flex-end">
       {ports.map((p) => {
-        const db = added.get(p)
+        const db = inArgus(p)
+        const again = engine !== 'redis' && db
         return (
-          <Group key={p} gap={SP.tight} justify="flex-end" wrap="wrap">
+          <Group key={p ?? 'default'} gap={SP.tight} justify="flex-end" wrap="wrap">
             {db && (
               <ButtonLink to="/databases/$dbId" params={{ dbId: db.id }} size="compact-xs" variant="light" color="teal">
-                In Argus as {db.dbname}
+                In Argus{engine === 'redis' ? '' : ` as ${db.dbname}`}
               </ButtonLink>
             )}
-            <Button size="compact-xs" variant={db ? 'subtle' : 'default'}
-              leftSection={<IconDatabasePlus size={12} />} onClick={() => onAdd(p)}>
-              {db ? 'Add another' : 'Add as database'}{ports.length > 1 ? ` · ${p}` : ''}
-            </Button>
+            {(!db || again) && (
+              <Button size="compact-xs" variant={db ? 'subtle' : 'default'}
+                leftSection={<IconDatabasePlus size={12} />} onClick={() => onAdd(p)}>
+                {db ? 'Add another' : engine === 'rabbitmq' ? 'Add a vhost' : 'Add as database'}{ports.length > 1 && p ? ` · ${p}` : ''}
+              </Button>
+            )}
           </Group>
         )
       })}

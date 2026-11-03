@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,7 +45,7 @@ A role Argus did not create is never touched: it is reported as taken.
 
 // PGAdminRequest is one provisioning operation.
 type PGAdminRequest struct {
-	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases
+	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases, discover-databases
 	// Database to connect to and grant in. The replace operations connect
 	// to the maintenance database and act on Target, since a database
 	// cannot be renamed from inside itself.
@@ -91,6 +92,9 @@ type PGAdminResult struct {
 	Data   json.RawMessage `json:"data,omitempty"`
 	// Databases is what list-databases found.
 	Databases []string `json:"databases,omitempty"`
+	// Found is what discover-databases found, with owners and sizes.
+	Found     []tunnel.Discovered `json:"found,omitempty"`
+	Truncated bool                `json:"truncated,omitempty"`
 }
 
 // pgAdminRunner performs provisioning; the production one runs the helper as
@@ -149,6 +153,8 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 	switch req.Op {
 	case "prepare-replace", "rollback-replace", "drop-database", "list-databases":
 		return pgReplaceOp(ctx, conn, req)
+	case "discover-databases":
+		return pgDiscover(ctx, conn)
 	}
 	if !tunnel.ValidPersonalRole(req.Role) {
 		return PGAdminResult{Error: "not a role name Argus will manage: " + req.Role}
@@ -508,4 +514,30 @@ func pgReplaceOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) P
 		return PGAdminResult{OK: true, Version: version}
 	}
 	return PGAdminResult{Error: "unknown operation " + req.Op}
+}
+
+// pgDiscover lists the databases on the server for the add form: every one
+// a session could connect to, with its owner and size. Templates and
+// databases that refuse connections are left out; so is nothing else, since
+// an admin may well want the maintenance database. It reads the catalog and
+// changes nothing.
+func pgDiscover(ctx context.Context, conn *pgconn.PgConn) PGAdminResult {
+	version := conn.ParameterStatus("server_version")
+	res := conn.ExecParams(ctx, `SELECT datname, pg_get_userbyid(datdba),
+			CASE WHEN has_database_privilege(oid, 'CONNECT') THEN pg_database_size(oid) ELSE 0 END
+		FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY 1 LIMIT $1`,
+		[][]byte{[]byte(strconv.Itoa(tunnel.MaxDiscovered + 1))}, nil, nil, nil).Read()
+	if res.Err != nil {
+		return PGAdminResult{Error: res.Err.Error(), Version: version}
+	}
+	out := PGAdminResult{OK: true, Version: version}
+	for i, r := range res.Rows {
+		if i == tunnel.MaxDiscovered {
+			out.Truncated = true
+			break
+		}
+		n, _ := strconv.ParseInt(string(r[2]), 10, 64)
+		out.Found = append(out.Found, tunnel.Discovered{Name: string(r[0]), Owner: string(r[1]), Bytes: n})
+	}
+	return out
 }

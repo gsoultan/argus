@@ -61,6 +61,8 @@ type Grant struct {
 	DB *GrantDB `json:"db,omitempty"`
 	// Backup is the job a backup grant allows; nil for every other service.
 	Backup *GrantBackup `json:"backup,omitempty"`
+	// Discover is what a discover grant may list; nil for every other service.
+	Discover *GrantDiscover `json:"discover,omitempty"`
 }
 
 // ForService reports whether g may open svc.

@@ -161,3 +161,28 @@ left-bar entries, *Extensions* and *Replication*, in
 - Dropping a subscription whose publisher is gone needs
   `SET (slot_name = NONE)` first or `DROP` fails trying to reach it;
   `PublisherGone` does that and the form says the slot is then theirs.
+
+## Finding databases, query tabs, saved queries, plans, diagram
+
+- **Listing what a server has.** The agent's `dbdiscover` tunnel service
+  (`internal/agent/dbdiscover.go`, grant field `Discover`) lists Postgres
+  databases (pg-admin op `discover-databases`, owner and size), a Redis's
+  logical dbs with key counts, or a RabbitMQ's vhosts (`rabbitmqctl
+  list_vhosts`). It reads names only and never opens a workspace. The control
+  plane serves it to admins at `GET /api/v1/assets/{id}/databases/discover`
+  and marks entries already added; an agent too old to know the service is
+  answered `state: "unsupported"` and the add form falls back to typing a
+  name. Redis is one entry per server, so its picker is single-select.
+- **Query tabs** (`web/src/lib/workspaceTabs.ts`): up to 10 per database,
+  text kept in localStorage per database, results never stored. The session
+  runs one statement at a time, so other tabs queue ("Run after X"). Ctrl+T
+  and Ctrl+W cannot be taken from a browser; Ctrl+Enter runs, Ctrl+S saves.
+- **Saved queries**: migration 043, `internal/control/saved_queries.go`.
+  Private or shared with everyone who can open the same database; author
+  edits, author or admin removes; audited `db.query_saved`/`db.query_removed`.
+- **Explain** (`web/src/lib/explainPlan.ts`): asked in TEXT format, one line
+  per row, so no cell reaches the 64KB cell limit. ANALYZE of a statement that
+  may write runs inside BEGIN/ROLLBACK; inside the person's own open
+  transaction (tracked by `txAfter`) it is refused instead.
+- **Diagram** (`web/src/lib/erd.ts`, `SchemaDiagram.tsx`): three catalog
+  statements run as the person's role, so it shows only what they may see.

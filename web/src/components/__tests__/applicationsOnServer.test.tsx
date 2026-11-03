@@ -18,6 +18,7 @@ vi.mock('~/lib/live', async (orig) => ({
   ...(await orig<typeof import('~/lib/live')>()),
   isConfigured: () => true,
   databasesOnAsset: async () => ({ databases: [], access: {} }),
+  discoverDatabases: async () => ({ state: 'unsupported', databases: [] }),
 }))
 
 const app = (over: Partial<ServerApp>): ServerApp => ({
@@ -62,6 +63,26 @@ describe('ApplicationsOnServer', () => {
     fireEvent.click(buttons[0]!)
     expect(((await screen.findByLabelText('Port')) as HTMLInputElement).value).toBe('5433')
     expect((screen.getByLabelText('PgBouncer port') as HTMLInputElement).value).toBe('6432')
+  })
+
+  it('offers a Redis and a RabbitMQ too, opening the form on their engine', async () => {
+    vi.spyOn(api, 'applications').mockResolvedValue({
+      ...report,
+      applications: [
+        app({ kind: 'redis', name: 'Redis', unit: 'redis-server', listen: [{ address: '127.0.0.1', port: 6380, localOnly: true }] }),
+        app({ kind: 'rabbitmq', name: 'RabbitMQ', unit: 'rabbitmq-server', listen: [
+          { address: '0.0.0.0', port: 5672, localOnly: false }, { address: '0.0.0.0', port: 15672, localOnly: false }] }),
+      ],
+    })
+    renderCard(true)
+    fireEvent.click(await screen.findByRole('button', { name: /Add as database/ }))
+    expect((screen.getByRole('radio', { name: 'Redis' }) as HTMLInputElement).checked).toBe(true)
+    expect(((await screen.findByLabelText('Port')) as HTMLInputElement).value).toBe('6380')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add a vhost/ }))
+    expect((screen.getByRole('radio', { name: 'RabbitMQ' }) as HTMLInputElement).checked).toBe(true)
+    expect(((await screen.findByLabelText('Management port')) as HTMLInputElement).value).toBe('15672')
   })
 
   it('offers nothing to someone who cannot add databases', async () => {
