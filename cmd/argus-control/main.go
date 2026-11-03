@@ -63,7 +63,16 @@ type config struct {
 	// console updates them: <url>/v<version>/<package>, with checksums.txt
 	// beside it. Empty is the project's GitHub releases; set it to a mirror
 	// for servers that cannot reach GitHub.
-	AgentReleasesURL string          `yaml:"agent_releases_url,omitempty"`
+	AgentReleasesURL string `yaml:"agent_releases_url,omitempty"`
+	// AgentReleaseCheck is whether the console asks every few hours for the
+	// newest release, to offer agents a version newer than its own. On
+	// unless set to false.
+	AgentReleaseCheck *bool `yaml:"agent_release_check,omitempty"`
+	// AgentReleasesAPI is where that list of releases is read, in the shape
+	// GitHub's releases API answers. Empty is the project's GitHub releases,
+	// and is not asked when agent_releases_url names a mirror: set this as
+	// well for the mirror's own list.
+	AgentReleasesAPI string          `yaml:"agent_releases_api,omitempty"`
 	Storage          *storage.Config `yaml:"storage,omitempty"`
 	// RecordingsDir is where recordings agents ship are kept when there is
 	// no object storage. Empty means /var/lib/argus-control/recordings when
@@ -503,6 +512,11 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			"admins", api.SignInPolicy.Admins, "person", api.SignInPolicy.Person, "every", api.SignInPolicy.Every)
 	}
 	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
+	if (cfg.AgentReleaseCheck == nil || *cfg.AgentReleaseCheck) &&
+		(cfg.AgentReleasesURL == "" || cfg.AgentReleasesAPI != "") {
+		api.Releases = &control.ReleaseWatcher{API: cfg.AgentReleasesAPI, Log: log}
+		go api.Releases.Run(ctx)
+	}
 	if cfg.Console != nil {
 		api.FleetURL = cfg.Console.FleetURL
 	}

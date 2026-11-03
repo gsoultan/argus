@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { IconCheck, IconCircleDashed, IconRefresh } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Field, relTime } from '~/components/primitives'
-import { isConfigured, type AgentUpdateStatus, type AgentUpdateView } from '~/lib/live'
+import { isConfigured, versionBefore, type AgentUpdateStatus, type AgentUpdateView } from '~/lib/live'
 import { run } from '~/lib/notify'
 import { agentUpdateQuery, useCancelAgentUpdate, useRequestAgentUpdate } from '~/lib/queries'
 import { FS, SP } from '~/theme'
@@ -48,7 +48,7 @@ export function AgentUpdateCard({ asset, canEdit, bare = false }: {
 
   const st = v.status
   const live = v.request !== null
-  const current = v.latest !== '' && v.agentVersion === v.latest
+  const current = v.latest !== '' && v.agentVersion !== '' && !versionBefore(v.agentVersion, v.latest)
   const pickedUp = live && st?.id === v.request?.id
   const offer = canEdit && !live && st?.supported === true && !current
 
@@ -229,6 +229,12 @@ function AskUpdate({ view, assetId, onClose }: { view: AgentUpdateView; assetId:
           in during it waits a moment instead of being refused. If the new version does not come back and
           reconnect to Argus within 90 seconds, the agent goes back to {view.agentVersion || 'the version it runs'} on its own.
         </Text>
+        {view.consoleVersion && ok && versionBefore(view.consoleVersion, version) && (
+          <Text size={FS.body} c="dimmed" lh={1.5}>
+            {version} is newer than this console ({view.consoleVersion}). Update the control plane to{' '}
+            {version} as well, so the console and its agents run the same release.
+          </Text>
+        )}
         {!view.latest && (
           <TextInput label="Version" description="This control plane was built from source, so name the release to install."
             placeholder="1.2.3" value={version} onChange={(e) => setVersion(e.currentTarget.value.trim())}

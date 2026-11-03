@@ -5,6 +5,7 @@ import { IconClipboardCheck, IconHourglassHigh, IconPlus } from '@tabler/icons-r
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { ServerCards } from '~/components/myservers'
+import { AgentFleetCard } from '~/components/AgentFleet'
 import { relTime } from '~/components/primitives'
 import { assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
@@ -64,6 +65,7 @@ function Servers() {
       />
       <PageBody>
         {admin && <WaitingServers />}
+        {whole && me?.role !== 'operator' && <AgentFleetCard canEdit={me?.role === 'admin' || me?.role === 'owner'} />}
         <ServerCards />
       </PageBody>
     </Box>

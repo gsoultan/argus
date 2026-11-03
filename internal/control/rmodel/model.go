@@ -470,6 +470,9 @@ type GatewayPolicy struct {
 	UpdatedAt                 time.Time
 	UpdatedBy                 string
 	DirectSsh                 string
+	// AgentAutoUpdate is whether the console updates agents on its own
+	// when a newer version is offered.
+	AgentAutoUpdate bool
 }
 
 func (m *GatewayPolicy) Schema(t *storm.Table) {
@@ -488,6 +491,7 @@ func (m *GatewayPolicy) Schema(t *storm.Table) {
 	t.Col(&m.DirectSsh).Default("'refuse'::text")
 	t.CheckNamed("gateway_policy_direct_ssh_check",
 		"direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
+	t.Col(&m.AgentAutoUpdate).Default("false")
 }
 
 // HostKeyPin is table host_key_pins.

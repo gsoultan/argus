@@ -80,9 +80,12 @@ type AgentUpdateView struct {
 	AgentVersion   string     `json:"agentVersion"`
 	AgentLastSeen  *time.Time `json:"agentLastSeenAt"`
 	ActiveSessions int        `json:"activeSessions"`
-	// Latest is this control plane's own version when it is a release:
-	// the version an agent is offered. "" for a build from source.
+	// Latest is the version an agent is offered: the newest agent release
+	// the console found, or its own version when that is newer. "" for a
+	// build from source that found no release.
 	Latest string `json:"latest"`
+	// ConsoleVersion is this control plane's own release, "" from source.
+	ConsoleVersion string `json:"consoleVersion"`
 	// Status is the agent's own account of updating; nil from an agent too
 	// old to update itself.
 	Status  *AgentUpdateStatus  `json:"status"`
@@ -103,7 +106,7 @@ func (s *Store) AgentUpdateView(ctx context.Context, hostname string) (AgentUpda
 		reqBy             *string
 		enrolled          bool
 	)
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT g.version, g.last_seen_at, g.active_sessions, g.update_status,
 		       c.update_id, c.update_version, c.update_now, c.update_requested_at,
 		       c.update_requested_by, c.id IS NOT NULL
@@ -153,7 +156,7 @@ var ErrNoLiveAgent = errors.New("this server has no enrolled agent")
 func (s *Store) RequestAgentUpdate(ctx context.Context, hostname, version string, now bool,
 	by string) (AgentUpdateRequest, error) {
 	var r AgentUpdateRequest
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		UPDATE agent_credentials SET
 		       update_id = CASE WHEN update_id IS NOT NULL AND update_version = $2
 		                        THEN update_id ELSE gen_random_uuid()::text END,
@@ -175,7 +178,7 @@ func (s *Store) RequestAgentUpdate(ctx context.Context, hostname, version string
 // CancelAgentUpdate takes back hostname's update request. The agent stops
 // if it has not begun restarting. Reports whether there was one.
 func (s *Store) CancelAgentUpdate(ctx context.Context, hostname string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE agent_credentials SET update_id = NULL, update_version = NULL,
 		       update_now = false, update_requested_at = NULL, update_requested_by = NULL
 		 WHERE lower(hostname) = lower($1) AND revoked_at IS NULL AND update_id IS NOT NULL`,
@@ -187,7 +190,7 @@ func (s *Store) CancelAgentUpdate(ctx context.Context, hostname string) (bool, e
 // when there is none.
 func (s *Store) agentUpdateFor(ctx context.Context, hostname string) (*AgentUpdateRequest, error) {
 	var r AgentUpdateRequest
-	err := s.pool.QueryRow(ctx, `
+	err := s.db(ctx).QueryRow(ctx, `
 		SELECT update_id, update_version, update_now
 		  FROM agent_credentials
 		 WHERE lower(hostname) = lower($1) AND revoked_at IS NULL AND update_id IS NOT NULL`,
@@ -210,7 +213,7 @@ func (s *Store) recordAgentUpdate(ctx context.Context, hostname string,
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.pool.Exec(ctx,
+	if _, err := s.db(ctx).Exec(ctx,
 		`UPDATE agents SET update_status = $2 WHERE lower(hostname) = lower($1)`,
 		hostname, b); err != nil {
 		return nil, err
@@ -219,7 +222,7 @@ func (s *Store) recordAgentUpdate(ctx context.Context, hostname string,
 		return nil, nil
 	}
 	var r AgentUpdateRequest
-	err = s.pool.QueryRow(ctx, `
+	err = s.db(ctx).QueryRow(ctx, `
 		WITH old AS (
 			SELECT id, update_id, update_version, update_now, update_requested_at,
 			       update_requested_by
@@ -250,10 +253,23 @@ func (a *API) agentUpdateView(r *http.Request, hostname string) (AgentUpdateView
 	if err != nil {
 		return v, err
 	}
-	if reAgentVer.MatchString(strings.TrimPrefix(a.Version, "v")) {
-		v.Latest = strings.TrimPrefix(a.Version, "v")
-	}
+	v.Latest, v.ConsoleVersion, _ = a.agentTarget()
 	return v, nil
+}
+
+// agentTarget is the version agents are offered, this control plane's own
+// release ("" from source), and the newest release found, if any. The newer
+// of the two is offered.
+func (a *API) agentTarget() (offer, own string, newest *AgentRelease) {
+	if v := strings.TrimPrefix(a.Version, "v"); reAgentVer.MatchString(v) {
+		own = v
+	}
+	offer = own
+	newest, _, _ = a.Releases.Latest()
+	if newest != nil && (offer == "" || versionLess(offer, newest.Version)) {
+		offer = newest.Version
+	}
+	return offer, own, newest
 }
 
 func (a *API) getAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +320,7 @@ func (a *API) postAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	version := strings.TrimPrefix(strings.TrimSpace(in.Version), "v")
 	if version == "" {
-		version = strings.TrimPrefix(a.Version, "v")
+		version, _, _ = a.agentTarget()
 	}
 	if !reAgentVer.MatchString(version) {
 		writeErr(w, http.StatusBadRequest, "name the release to install, like 1.2.3; this control "+
@@ -395,7 +411,8 @@ func (a *API) deleteAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 
 // heartbeatUpdate keeps what an agent said about updating, audits an
 // outcome, and returns the request to send back, if any.
-func (a *API) heartbeatUpdate(ctx context.Context, hostname string, st *AgentUpdateStatus) any {
+func (a *API) heartbeatUpdate(ctx context.Context, hostname, version string,
+	st *AgentUpdateStatus) any {
 	if st != nil {
 		done, err := a.store.recordAgentUpdate(ctx, hostname, *st)
 		if err != nil {
@@ -408,6 +425,9 @@ func (a *API) heartbeatUpdate(ctx context.Context, hostname string, st *AgentUpd
 	if err != nil {
 		a.log.Error("heartbeat: cannot read whether the agent should update", "error", err)
 		return nil
+	}
+	if req == nil {
+		req = a.autoUpdate(ctx, hostname, version, st)
 	}
 	if req == nil {
 		return nil

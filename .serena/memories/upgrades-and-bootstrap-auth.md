@@ -122,3 +122,27 @@ Traps found in the drill: the helper must date what it writes to
 `update.json` -- undated, the new agent took it for a lost helper and wrote
 "failed" over the helper's own result. And the new agent must watch the file
 (`Updater.Watch`), or "done" reaches the console only at the next heartbeat.
+
+### Newest release, Update all, automatic updates
+
+`internal/control/agent_releases.go` (`ReleaseWatcher`) reads GitHub's release
+list every 6h and keeps the highest release tagged `v<version>` that carries
+`checksums.txt` and `argus-agent_<v>_linux_*`. A tag without the `v` (the agent
+downloads from `<url>/v<version>/`) or a release whose build left no files is
+skipped. `API.agentTarget()` offers the newer of that and the control plane's
+own version. A mirror (`agent_releases_url`) is checked only when
+`agent_releases_api` names its own list. `agent_release_check: false` turns the
+check off.
+
+`internal/control/agent_fleet.go`: `GET/POST /api/v1/agents/updates`,
+`PUT /api/v1/agents/updates/automatic`. The switch is
+`gateway_policy.agent_auto_update` (migration 041). With it on,
+`heartbeatUpdate` asks an agent that is behind (`autoUpdate`, requested by
+"automatic updates"). It never retries a target whose last status here is
+`rolled_back`, `failed` or `cancelled`; that state is `held`, and naming the
+host in the POST retries it. Console: `web/src/components/AgentFleet.tsx` on
+Servers.
+
+Store queries in `agent_update.go` used `s.pool` (the default organization)
+until this change. They must use `s.db(ctx)`, like every per-organization
+query.
