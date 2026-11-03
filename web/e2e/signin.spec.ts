@@ -403,3 +403,36 @@ test('the password field is as wide as the email field, and its eye works from t
   await page.keyboard.press('Space')
   await expect(password).toHaveAttribute('type', 'password')
 })
+
+test.describe('organizations', () => {
+  test('the header names the organization and switching shows only its servers', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
+    await expect(page.getByText('open-absent-1').first()).toBeVisible()
+
+    // Always on screen, not only once there is something to switch to: a
+    // feature that hides until it is configured is one nobody finds.
+    const menu = page.getByRole('button', { name: /^Organization: Northwind/ })
+    await expect(menu).toBeVisible()
+    await menu.click()
+    await expect(page.getByRole('menuitem', { name: /Acme Logistics/ })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: /Manage organizations/ })).toBeVisible()
+    await page.getByRole('menuitem', { name: /Acme Logistics/ }).click()
+
+    // The whole console starts over in the chosen organization.
+    await expect(page.getByRole('button', { name: /^Organization: Acme Logistics/ })).toBeVisible()
+    await expect(page.getByText('acme-web-1').first()).toBeVisible()
+    await expect(page.getByText('open-absent-1')).toHaveCount(0)
+  })
+
+  test('an admin of the main organization finds Organizations in settings', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page)
+    await page.getByRole('button', { name: /^Organization: Northwind/ }).click()
+    await page.getByRole('menuitem', { name: /Manage organizations/ }).click()
+    await expect(page).toHaveURL(/section=organizations/)
+    await expect(page.getByRole('button', { name: /New organization/ })).toBeVisible()
+    await expect(page.getByRole('table').getByText('Acme Logistics')).toBeVisible()
+  })
+})

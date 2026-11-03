@@ -244,6 +244,22 @@ async function readBody(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString() || '{}') } catch { return {} }
 }
 
+/**
+ * Two organizations, so the organization menu has something to switch
+ * between. Which one a browser is in rides in a cookie of its own, as the real
+ * control plane carries it inside the session cookie's claim.
+ */
+const ORGS = [
+  { id: 'default', slug: 'default', name: 'Northwind', default: true, role: 'admin', home: true },
+  { id: 'acme0000000a', slug: 'acme', name: 'Acme Logistics', default: false, role: 'owner', home: false },
+]
+/** @param {IncomingMessage} req */
+const orgOf = (req) => {
+  const m = /(?:^|;\s*)argus_org=([a-z0-9-]+)/.exec(req.headers.cookie ?? '')
+  return ORGS.find((o) => o.slug === m?.[1]) ?? /** @type {typeof ORGS[number]} */ (ORGS[0])
+}
+const ACME_ASSETS = () => [asset({ hostname: 'acme-web-1', agentState: 'healthy', bypassPosture: 'enforced' })]
+
 /** @param {IncomingMessage} req */
 const signedIn = (req) => (req.headers.cookie ?? '').includes(`argus_session=${SESSION}`)
 
@@ -268,17 +284,46 @@ const server = createServer(async (req, res) => {
       { 'set-cookie': 'argus_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax' })
   }
   if (path === '/auth/me') {
+    const org = orgOf(req)
     return signedIn(req)
       ? json(res, 200, {
           authenticated: true, email: 'dev@northwind.id',
-          displayName: 'Dev Admin', role: 'admin', mfaEnrolled: false,
+          displayName: 'Dev Admin', role: org.role, mfaEnrolled: false,
+          org: { id: org.id, slug: org.slug, name: org.name, default: org.default },
+          orgs: ORGS, multiOrg: true, platformOwner: org.default,
         })
       : json(res, 401, {
           authenticated: false, passwordEnabled: true, accountsExist: true,
         })
   }
+  if (path === '/auth/switch' && req.method === 'POST') {
+    if (!signedIn(req)) return json(res, 401, { error: 'unauthorized' })
+    const body = await readBody(req)
+    const to = ORGS.find((o) => o.slug === body.org)
+    if (!to) return json(res, 404, { error: 'you are not a member of that organization' })
+    return json(res, 200, { authenticated: true, email: 'dev@northwind.id', role: to.role },
+      { 'set-cookie': `argus_org=${to.slug}; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax` })
+  }
   if (path.startsWith('/api/')) {
     if (!signedIn(req)) return json(res, 401, { error: 'unauthorized' })
+    if (orgOf(req).slug !== 'default') {
+      // Everything an organization holds is its own: one server, nothing else.
+      if (path === '/api/v1/assets') return json(res, 200, ACME_ASSETS())
+      if (path === '/api/v1/stats' || path === '/api/v1/coverage') {
+        // Fall through to the shared shapes; the counts are not under test.
+      } else if (path.startsWith('/api/v1/platform/')) {
+        return json(res, 404, { error: 'not found' })
+      } else {
+        return json(res, 200, [])
+      }
+    }
+    if (path === '/api/v1/platform/organizations') {
+      return json(res, 200, ORGS.map((o) => ({
+        id: o.id, slug: o.slug, name: o.name, default: o.default,
+        createdAt: ago(60 * 24 * 30), createdBy: o.default ? 'system' : 'dev@northwind.id',
+        counts: o.default ? { servers: ASSETS.length, people: 4 } : { servers: 1, people: 2 },
+      })))
+    }
     if (path === '/api/v1/stats') return json(res, 200, STATS)
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
