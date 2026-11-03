@@ -133,6 +133,10 @@ type HeartbeatReply struct {
 	// decodes it. Absent when nothing is asked, and from a control plane
 	// older than updates.
 	Update json.RawMessage `json:"update"`
+	// KeepRecordingsHours is how long the console wants this host to keep a
+	// recording once the control plane has stored it; 0 is for ever. Nil from
+	// a control plane older than the setting: the agent keeps its own default.
+	KeepRecordingsHours *int `json:"keep_recordings_hours"`
 }
 
 // HeartbeatWithReply reports like Heartbeat and returns the control plane's

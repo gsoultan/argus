@@ -37,6 +37,7 @@ const module = "github.com/gsoultan/argus/"
 // verifies -- not when it is merely convenient to put it in one place.
 var shared = []string{
 	module + "internal/hashchain",
+	module + "internal/logquiet",
 	module + "internal/rdp",
 	module + "internal/rdp/pixels",
 	module + "internal/recorder",

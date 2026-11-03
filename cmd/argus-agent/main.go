@@ -43,6 +43,7 @@ import (
 	"github.com/gsoultan/argus/internal/agent"
 	"github.com/gsoultan/argus/internal/agent/execlog"
 	"github.com/gsoultan/argus/internal/agent/reporter"
+	"github.com/gsoultan/argus/internal/logquiet"
 	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -137,10 +138,19 @@ func runDaemon(args []string) int {
 	keepShipped := fs.Duration("keep-shipped", agent.DefaultKeepShipped,
 		"how long to keep a recording on this host once the control plane has verified and "+
 			"stored it (compressed after an hour); 0 keeps it for ever. Never applies to one "+
-			"the control plane does not have")
+			"the control plane does not have. Unset, the console's Settings decide")
+	logLevel := fs.String("log-level", envOr("ARGUS_LOG_LEVEL", "info"),
+		"debug, info, warn or error; ARGUS_LOG_LEVEL in agent.env sets it too")
 	_ = fs.Parse(args)
+	// Given on the command line, the host's own choice beats the console's.
+	keepPinned := false
+	fs.Visit(func(f *flag.Flag) { keepPinned = keepPinned || f.Name == "keep-shipped" })
 
-	log := slog.New(slog.NewTextHandler(logOutput, nil))
+	// A line that repeats -- the control plane unreachable, a tunnel a proxy
+	// keeps dropping -- is written once every few minutes with a count, not
+	// on every retry: see internal/logquiet.
+	log := slog.New(logquiet.New(slog.NewTextHandler(logOutput,
+		&slog.HandlerOptions{Level: logquiet.ParseLevel(*logLevel)}), 0))
 
 	// Before anything is written there: on Windows a new directory is
 	// readable by every local user until it is locked down.
@@ -538,6 +548,9 @@ func runDaemon(args []string) int {
 		})
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
+		if ok && !keepPinned && reply.KeepRecordingsHours != nil && *reply.KeepRecordingsHours >= 0 {
+			uploads.SetKeep(time.Duration(*reply.KeepRecordingsHours) * time.Hour)
+		}
 		if ok {
 			var req *agent.UpdateRequest
 			if len(reply.Update) > 0 && string(reply.Update) != "null" {
@@ -1192,4 +1205,12 @@ func saveDirectSSHState(path string, st directSSHState) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// envOr is the environment variable's value, or def when it is unset or empty.
+func envOr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
 }

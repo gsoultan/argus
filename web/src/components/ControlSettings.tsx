@@ -42,7 +42,7 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'security', label: 'Account security', icon: IconShieldLock, keys: ['security'] },
   { id: 'database', label: 'Database', icon: IconDatabase, keys: ['database'] },
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
-  { id: 'storage', label: 'Object storage', icon: IconCloudUpload, keys: ['storage'] },
+  { id: 'storage', label: 'Recordings', icon: IconCloudUpload, keys: ['storage', 'agentKeepRecordingsDays'] },
   { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts'] },
 ]
 
@@ -369,10 +369,36 @@ function Certificate({ s, edit }: CardProps) {
   )
 }
 
+/** What servers keep of a recording the control plane already stores. 0 is the agent's default. */
+const KEEP_ON_SERVERS = [
+  { value: '1', label: '1 day' },
+  { value: '3', label: '3 days' },
+  { value: '0', label: '7 days (default)' },
+  { value: '14', label: '14 days' },
+  { value: '30', label: '30 days' },
+  { value: '90', label: '90 days' },
+  { value: '-1', label: 'For ever' },
+]
+
 function Storage({ s, edit }: CardProps) {
   const st = s.storage
   const set = (patch: Partial<Settings['storage']>) => edit({ storage: { ...st, ...patch } })
+  const keep = String(s.agentKeepRecordingsDays ?? 0)
+  const keepOptions = KEEP_ON_SERVERS.some((o) => o.value === keep)
+    ? KEEP_ON_SERVERS
+    : [...KEEP_ON_SERVERS, { value: keep, label: `${keep} days` }]
   return (
+    <>
+    <SectionCard title="Copies on servers" icon={IconCloudUpload}
+      description="Each server keeps its own copy of a recording after this control plane has verified and stored it, compressed after an hour. A recording this control plane does not hold is never removed from a server.">
+      <Grid gap="xs">
+        <Grid.Col span={{ base: 12, sm: 6 }}>
+          <Select size="xs" label="Keep on servers for" allowDeselect={false}
+            data={keepOptions} value={keep}
+            onChange={(v) => edit({ agentKeepRecordingsDays: Number(v ?? '0') })} />
+        </Grid.Col>
+      </Grid>
+    </SectionCard>
     <SectionCard title="Object storage" icon={IconCloudUpload}
       description="An S3-compatible bucket recordings are copied to, so the evidence is not only on this host. Without one, recordings are kept on this host's disk. Give Argus a key that can write and not delete.">
       <Stack gap="xs">
@@ -406,6 +432,7 @@ function Storage({ s, edit }: CardProps) {
         )}
       </Stack>
     </SectionCard>
+    </>
   )
 }
 

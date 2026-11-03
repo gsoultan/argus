@@ -142,7 +142,7 @@ left; each fits on one screen:
 | Sign-in and limits | sign-in and ticket lifetimes, how long an agent may be silent, rate limits, trusted proxies, log level |
 | Database | where PostgreSQL is, with a connection test |
 | Certificate | what is served, upload a replacement, download the CA |
-| Object storage | the S3-compatible bucket recordings are copied to |
+| Recordings | how long servers keep their copy of a stored recording (7 days by default), and the S3-compatible bucket recordings are copied to |
 | Alerts | sign-in alerts (who is told when someone signs in), and the email, Telegram and Firebase push channels session alerts go to |
 | People | add accounts, disable and enable them |
 Secrets are write-only: the page says whether one is set, never what it is.
@@ -237,10 +237,24 @@ until the control plane has verified its hash chain and stored it. After
 that the server's copy is a second copy: an hour after it ships it is gzipped
 in place (`<id>.cast.gz`, typically a fifth of the size or less; `gzip -dc` gives back
 the exact bytes, which `argus-verify` checks against the same chain head), and
-after 90 days it is deleted. Change how long with `--keep-shipped` on the
-daemon's command line (`--keep-shipped=8760h` for a year), or keep them for
-ever with `--keep-shipped=0`. A recording the control plane does not have --
-still queued, or refused -- is never compressed or deleted.
+after 7 days it is deleted. Change how long for the whole fleet in the
+console, under Settings → Recordings → "Keep on servers for"; servers pick it
+up on their next heartbeat. `--keep-shipped` on one daemon's command line
+(`--keep-shipped=8760h` for a year, `--keep-shipped=0` for ever) overrides the
+console on that server. A recording the control plane does not have -- still
+queued, or refused -- is never compressed or deleted.
+
+### Log volume
+
+Both services log to the systemd journal. A line that repeats -- an agent
+that cannot reach the control plane, a heartbeat from a host the inventory
+does not know -- is written the first time and then held back for ten
+minutes; the next one after that carries `repeated=N` for the lines in
+between. The control plane's level is under Settings → Sign-in and limits →
+Log level. An agent's is `ARGUS_LOG_LEVEL=warn` in `/etc/argus/agent.env`, or
+`--log-level` on its command line. The journal itself is capped by journald,
+which by default may use up to 10% of the filesystem (at most 4 GB); set
+`SystemMaxUse=` in `/etc/systemd/journald.conf` for less.
 
 `sessions.jsonl` starts a new file at 16 MB and keeps the previous one as
 `sessions.jsonl.1`. The report spool is capped at 64 MB. On Windows the

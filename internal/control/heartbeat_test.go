@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 /*
@@ -103,5 +104,34 @@ func TestExecTracingForAnUnknownHost(t *testing.T) {
 	}
 	if why == "" {
 		t.Error("no reason given for an unknown host; a refusal has to say why")
+	}
+}
+
+// How long servers keep a stored recording rides every heartbeat reply, so
+// a change in Settings reaches the fleet without touching a host. Zero sends
+// nothing (an older agent, or the default); negative is "for ever", sent as 0.
+func TestHeartbeatTellsTheAgentHowLongToKeepRecordings(t *testing.T) {
+	s := testStore(t)
+	for _, c := range []struct {
+		keep time.Duration
+		want any
+	}{
+		{0, nil},
+		{3 * 24 * time.Hour, float64(72)},
+		{-1, float64(0)},
+	} {
+		a := NewAPI(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		a.AgentKeepRecordings = c.keep
+		w := postHeartbeatJSON(t, a, `{"hostname": "`+unique("agent-keep")+`", "version": "dev"}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		var reply map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil {
+			t.Fatal(err)
+		}
+		if got := reply["keep_recordings_hours"]; got != c.want {
+			t.Errorf("keep %v: keep_recordings_hours = %v, want %v", c.keep, got, c.want)
+		}
 	}
 }

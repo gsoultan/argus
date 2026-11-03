@@ -62,6 +62,8 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 		AllowedOrigins: nonNil(c.AllowedOrigins),
 		TrustedProxies: []string{},
 		LogLevel:       c.LogLevel,
+
+		AgentKeepRecordingsDays: c.AgentKeepRecordingsDays,
 	}
 	lastApplyMu.Lock()
 	s.ApplyError = lastApplyError
@@ -282,6 +284,11 @@ func (b *settingsBackend) apply(ctx context.Context, c *config, in control.Setti
 			return control.BadInput(err)
 		}
 	}
+	if in.AgentKeepRecordingsDays < -1 || in.AgentKeepRecordingsDays > 3650 {
+		return control.BadInput(fmt.Errorf("servers keep recordings for 1 to 3650 days, " +
+			"0 for the default or -1 for ever"))
+	}
+	c.AgentKeepRecordingsDays = in.AgentKeepRecordingsDays
 	switch in.LogLevel {
 	case "", "debug", "info", "warn", "error":
 		c.LogLevel = in.LogLevel

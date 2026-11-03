@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gsoultan/argus/internal/control"
 )
 
 // The package installs a control.yaml of comments only, so a fresh install
@@ -141,5 +144,26 @@ func TestWrittenConfigLoads(t *testing.T) {
 	raw, _ := os.ReadFile(path)
 	if want := "${file:"; !strings.Contains(string(raw), want) || strings.Contains(string(raw), "tok-123") {
 		t.Errorf("the file must hold the reference, not the secret:\n%s", raw)
+	}
+}
+
+// Days from Settings become what the heartbeat sends: nothing for the default,
+// a negative value for ever.
+func TestAgentKeepRecordings(t *testing.T) {
+	for days, want := range map[int]time.Duration{0: 0, -1: -1, 3: 72 * time.Hour} {
+		if got := agentKeepRecordings(days); got != want {
+			t.Errorf("agentKeepRecordings(%d) = %v, want %v", days, got, want)
+		}
+	}
+}
+
+// A value outside what Settings offers is refused before anything is written.
+func TestSettingsRefuseAnImpossibleKeep(t *testing.T) {
+	b := &settingsBackend{loc: configLocation{Managed: filepath.Join(t.TempDir(), "control.yaml")}}
+	for _, days := range []int{-2, 4000} {
+		err := b.apply(context.Background(), &config{}, control.Settings{AgentKeepRecordingsDays: days}, nil)
+		if err == nil || !strings.Contains(err.Error(), "keep recordings") {
+			t.Errorf("days %d: err = %v, want a refusal", days, err)
+		}
 	}
 }
