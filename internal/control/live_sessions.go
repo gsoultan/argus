@@ -216,9 +216,11 @@ func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
 	case subject.State != "active":
 		closedWatch(ctx, conn, "the session ended")
 		return
-	case subject.Protocol == "rdp":
-		// A desktop's frames are relayed, not recorded as a screen: only
-		// the replica relaying it can show it.
+	case subject.Protocol == "rdp" || subject.Kind == "database":
+		// A desktop's frames are relayed, not recorded as a screen, and a
+		// database session's statements reach viewers from the relay: the
+		// agent's watch service knows terminals only. Only the replica
+		// relaying either can show it.
 		refuseWatch(ctx, conn, notRelayedHere)
 		return
 	case a.Tunnels == nil || a.Tunnels.GrantKey == nil:

@@ -366,3 +366,21 @@ func TestWatchingASessionWhoseAgentIsGoneSaysWhy(t *testing.T) {
 		t.Errorf("terminate: %d %q", resp.StatusCode, body.Error)
 	}
 }
+
+// A database session another replica relays is not sent to the agent's watch
+// service, which knows terminals only; it is told plainly where it runs.
+func TestWatchingADatabaseSessionRelayedElsewhereSaysSo(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	id := fmt.Sprintf("%032x", time.Now().UnixNano())
+	if _, err := e.store.RecordSession(context.Background(), Session{ID: id,
+		UserEmail: "ana@example.com", AssetHostname: unique("db"), Principal: "ana_sari", Protocol: "postgres",
+		Origin: "console", State: "active", StartedAt: time.Now().UTC(), Kind: "database",
+		Fidelity: "statement", RiskFlags: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	watch, _ := signer.IssueSessionScopedTicket("aud@example.com", auth.ScopeShadow, id, time.Minute)
+	if why := e.watchRefusal(t, id, watch); why != notRelayedHere {
+		t.Errorf("refusal = %q", why)
+	}
+}
