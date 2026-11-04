@@ -345,6 +345,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)
+	mux.HandleFunc("POST /api/v1/assets/{id}/agent/restart", a.postAssetAgentRestart)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/restart", a.deleteAssetAgentUpdate)
 	mux.HandleFunc("GET /api/v1/agents/updates", a.getAgentFleet)
 	mux.HandleFunc("POST /api/v1/agents/updates", a.postAgentFleetUpdate)
 	mux.HandleFunc("PUT /api/v1/agents/updates/automatic", a.putAgentAutoUpdate)

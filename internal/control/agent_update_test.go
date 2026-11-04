@@ -203,3 +203,113 @@ func TestAgentUpdateCanBeTakenBack(t *testing.T) {
 		t.Errorf("cancelling nothing: %d", w.Code)
 	}
 }
+
+// A restart rides the heartbeat as an update does, marked as a restart on
+// the version the agent runs, and is audited as a restart when it finishes.
+func TestAgentRestartRidesTheHeartbeatAndIsAuditedAsARestart(t *testing.T) {
+	s, h, _ := updateAPI(t)
+	asset, cred := enrolledAsset(t, s, h)
+	path := "/api/v1/assets/" + asset.ID + "/agent/restart"
+	beatWith(t, h, cred, asset.Hostname, "1.1.0", `{"supported":true,"restartable":true}`)
+
+	w := do(t, h, http.MethodPost, path, "admin-token", `{}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("request: %d %s", w.Code, w.Body)
+	}
+	var req AgentUpdateRequest
+	_ = json.Unmarshal(w.Body.Bytes(), &req)
+	if !req.Restart || req.Version != "1.1.0" || req.ID == "" || req.Now {
+		t.Fatalf("a restart is on the running version, when idle: %+v", req)
+	}
+	if e := lastAuditOn(t, s, asset.Hostname); e.Action != "agent.restart_requested" ||
+		!strings.Contains(e.Detail, "(1.1.0) to restart, once nothing is open") {
+		t.Errorf("audit = %s: %s", e.Action, e.Detail)
+	}
+
+	r := beatWith(t, h, cred, asset.Hostname, "1.1.0", `{"supported":true,"restartable":true}`)
+	u, _ := r["update"].(map[string]any)
+	if u["id"] != req.ID || u["restart"] != true || u["version"] != "1.1.0" {
+		t.Fatalf("the heartbeat reply should carry the restart: %v", r)
+	}
+
+	// Asking again keeps the request and only adds urgency.
+	w = do(t, h, http.MethodPost, path, "admin-token", `{"now":true}`)
+	var again AgentUpdateRequest
+	_ = json.Unmarshal(w.Body.Bytes(), &again)
+	if again.ID != req.ID || !again.Now || !again.Restart {
+		t.Errorf("asking now should keep the restart and add urgency: %+v", again)
+	}
+
+	// The fleet does not count a restart as an update.
+	w = do(t, h, http.MethodGet, "/api/v1/agents/updates", "admin-token", "")
+	var fleet AgentFleetView
+	_ = json.Unmarshal(w.Body.Bytes(), &fleet)
+	if w.Code != http.StatusOK || len(fleet.Servers) != 1 || fleet.Updating != 0 {
+		t.Errorf("a restart counted as an update on the fleet: %+v", fleet)
+	}
+
+	done := `{"supported":true,"restartable":true,"restart":true,"id":"` + req.ID +
+		`","state":"done","from":"1.1.0","target":"1.1.0","message":"restarted; back in 2s"}`
+	if r := beatWith(t, h, cred, asset.Hostname, "1.1.0", done); r["update"] != nil {
+		t.Fatalf("a finished restart was asked for again: %v", r)
+	}
+	if e := lastAuditOn(t, s, asset.Hostname); e.Action != "agent.restarted" ||
+		!strings.Contains(e.Detail, "to restart: restarted; back in 2s") {
+		t.Errorf("audit = %s: %s", e.Action, e.Detail)
+	}
+}
+
+// A restart is refused when the agent cannot do it, and while an update is
+// already asked; an update replaces a restart still waiting.
+func TestAgentRestartIsRefusedWhenItCannotHappen(t *testing.T) {
+	s, h, _ := updateAPI(t)
+	asset, cred := enrolledAsset(t, s, h)
+	path := "/api/v1/assets/" + asset.ID + "/agent/restart"
+
+	beatWith(t, h, cred, asset.Hostname, "1.0.0", `{"supported":true}`) // older than restarts
+	w := do(t, h, http.MethodPost, path, "admin-token", `{}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "too old to restart") {
+		t.Errorf("old agent: %d %s", w.Code, w.Body)
+	}
+
+	beatWith(t, h, cred, asset.Hostname, "1.0.0",
+		`{"supported":true,"restart_reason":"this server does not run systemd"}`)
+	w = do(t, h, http.MethodPost, path, "admin-token", `{}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "does not run systemd") {
+		t.Errorf("unsupported: %d %s", w.Code, w.Body)
+	}
+
+	beatWith(t, h, cred, asset.Hostname, "1.0.0", `{"supported":true,"restartable":true}`)
+	if w := do(t, h, http.MethodPost, path, "operator-token", `{}`); w.Code != http.StatusForbidden {
+		t.Errorf("an operator restarted an agent: %d %s", w.Code, w.Body)
+	}
+
+	do(t, h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/agent/update", "admin-token", `{}`)
+	w = do(t, h, http.MethodPost, path, "admin-token", `{}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "already asked") {
+		t.Errorf("restart over an update: %d %s", w.Code, w.Body)
+	}
+	do(t, h, http.MethodDelete, "/api/v1/assets/"+asset.ID+"/agent/update", "admin-token", "")
+
+	// A restart waiting, then an update: the update replaces it.
+	do(t, h, http.MethodPost, path, "admin-token", `{}`)
+	w = do(t, h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/agent/update", "admin-token", `{}`)
+	var up AgentUpdateRequest
+	_ = json.Unmarshal(w.Body.Bytes(), &up)
+	if w.Code != http.StatusAccepted || up.Restart || up.Version != "1.1.0" {
+		t.Errorf("an update should replace a waiting restart: %d %+v", w.Code, up)
+	}
+
+	// Taking back a restart is audited as one.
+	do(t, h, http.MethodDelete, "/api/v1/assets/"+asset.ID+"/agent/update", "admin-token", "")
+	do(t, h, http.MethodPost, path, "admin-token", `{}`)
+	if w := do(t, h, http.MethodDelete, path, "admin-token", ""); w.Code != http.StatusOK {
+		t.Fatalf("cancel: %d %s", w.Code, w.Body)
+	}
+	if e := lastAuditOn(t, s, asset.Hostname); e.Action != "agent.restart_cancelled" {
+		t.Errorf("audit = %s", e.Action)
+	}
+	if r := beatWith(t, h, cred, asset.Hostname, "1.0.0", `{"supported":true,"restartable":true}`); r["update"] != nil {
+		t.Errorf("a cancelled restart was still asked for: %v", r)
+	}
+}

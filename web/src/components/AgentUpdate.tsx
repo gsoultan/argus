@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { Alert, Badge, Button, Card, Group, Loader, Modal, Stack, Text, TextInput, ThemeIcon } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconCheck, IconCircleDashed, IconRefresh } from '@tabler/icons-react'
+import { IconCheck, IconCircleDashed, IconPower, IconRefresh } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Field, relTime } from '~/components/primitives'
 import { isConfigured, versionBefore, type AgentUpdateStatus, type AgentUpdateView } from '~/lib/live'
 import { run } from '~/lib/notify'
-import { agentUpdateQuery, useCancelAgentUpdate, useRequestAgentUpdate } from '~/lib/queries'
+import { agentUpdateQuery, useCancelAgentUpdate, useRequestAgentRestart, useRequestAgentUpdate } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
 
@@ -23,6 +23,10 @@ const RELEASE = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/
  * of seconds with new logins waiting rather than refused, and goes back to
  * the old version on its own if the new one does not reconnect. The card says
  * which of those steps it is on, from what the agent itself reports.
+ *
+ * Restarting works the same way on the version the agent already runs: it
+ * waits for the server to be free (or not, if asked), holds new logins for
+ * the few seconds it takes, and says whether the agent came back.
  */
 export function AgentUpdateCard({ asset, canEdit, bare = false }: {
   asset: Asset
@@ -32,8 +36,10 @@ export function AgentUpdateCard({ asset, canEdit, bare = false }: {
 }) {
   const { data: v } = useQuery(agentUpdateQuery(asset.id))
   const [asking, ask] = useDisclosure(false)
+  const [askingRestart, askRestart] = useDisclosure(false)
   const cancel = useCancelAgentUpdate(asset.id)
   const request = useRequestAgentUpdate(asset.id)
+  const restart = useRequestAgentRestart(asset.id)
   if (bare && isConfigured() && v && !v.enrolled) {
     return (
       <Card padding="md">
@@ -51,6 +57,9 @@ export function AgentUpdateCard({ asset, canEdit, bare = false }: {
   const current = v.latest !== '' && v.agentVersion !== '' && !versionBefore(v.agentVersion, v.latest)
   const pickedUp = live && st?.id === v.request?.id
   const offer = canEdit && !live && st?.supported === true && !current
+  const restarting = live && v.request?.restart === true
+  const offerRestart = canEdit && !live && st?.restartable === true
+  const what = restarting ? 'Restart' : 'Update'
 
   const body = (
     <>
@@ -76,42 +85,57 @@ export function AgentUpdateCard({ asset, canEdit, bare = false }: {
         {st && !st.supported && (
           <Text size={FS.body} c="dimmed" lh={1.5}>Updating from the console is not available here: {st.reason}.</Text>
         )}
+        {st && !st.restartable && st.restart_reason && st.restart_reason !== st.reason && (
+          <Text size={FS.body} c="dimmed" lh={1.5}>Restarting from the console is not available here: {st.restart_reason}.</Text>
+        )}
 
         {live && <UpdateSteps view={v} status={pickedUp ? st : null} />}
         {!live && st?.state && st.id && stillTrue(st, v.agentVersion) && <LastUpdate status={st} />}
 
         {canEdit && live && (
           <Group gap={SP.cozy}>
-            {pickedUp && st?.state === 'waiting' && !v.request?.now && (
-              <Button size="compact-xs" color="rose" variant="light" loading={request.isPending}
-                onClick={() => void run(() => request.mutateAsync({ version: v.request?.version, now: true }), {
-                  failure: 'Update not changed',
-                  success: ['Updating now', `The agent ends the ${st.sessions ?? 0} open session(s) and restarts on ${v.request?.version}.`],
-                })}>
-                Update now, ending {st.sessions ?? 0} session(s)
+            {pickedUp && st?.state === 'waiting' && !v.request?.now && !!st.sessions && (
+              <Button size="compact-xs" color="rose" variant="light" loading={request.isPending || restart.isPending}
+                onClick={() => void (restarting
+                  ? run(() => restart.mutateAsync({ now: true }), {
+                    failure: 'Restart not changed',
+                    success: ['Restarting now', `The agent ends the ${st.sessions ?? 0} open session(s) and restarts.`],
+                  })
+                  : run(() => request.mutateAsync({ version: v.request?.version, now: true }), {
+                    failure: 'Update not changed',
+                    success: ['Updating now', `The agent ends the ${st.sessions ?? 0} open session(s) and restarts on ${v.request?.version}.`],
+                  }))}>
+                {what} now, ending {st.sessions ?? 0} session(s)
               </Button>
             )}
             {(!pickedUp || st?.state === 'downloading' || st?.state === 'waiting') && (
               <Button size="compact-xs" variant="default" loading={cancel.isPending}
-                onClick={() => void run(() => cancel.mutateAsync(), {
-                  failure: 'Update not taken back',
-                  success: ['Update taken back', 'The agent stays on the version it runs.'],
-                })}>
+                onClick={() => void run(() => cancel.mutateAsync(), restarting
+                  ? { failure: 'Restart not taken back', success: ['Restart taken back', 'The agent keeps running as it is.'] }
+                  : { failure: 'Update not taken back', success: ['Update taken back', 'The agent stays on the version it runs.'] })}>
                 Take back
               </Button>
             )}
           </Group>
         )}
 
-        {offer && (
-          <Group>
-            <Button size="compact-sm" leftSection={<IconRefresh size={14} />} onClick={ask.open}>
-              {v.latest ? `Update to ${v.latest}` : 'Update agent'}
-            </Button>
+        {(offer || offerRestart) && (
+          <Group gap={SP.cozy}>
+            {offer && (
+              <Button size="compact-sm" leftSection={<IconRefresh size={14} />} onClick={ask.open}>
+                {v.latest ? `Update to ${v.latest}` : 'Update agent'}
+              </Button>
+            )}
+            {offerRestart && (
+              <Button size="compact-sm" variant="default" leftSection={<IconPower size={14} />} onClick={askRestart.open}>
+                Restart agent
+              </Button>
+            )}
           </Group>
         )}
       </Stack>
       {asking && <AskUpdate view={v} onClose={ask.close} assetId={asset.id} />}
+      {askingRestart && <AskRestart view={v} onClose={askRestart.close} assetId={asset.id} />}
     </>
   )
 
@@ -142,15 +166,22 @@ const STEPS: { key: string; label: string }[] = [
   { key: 'done', label: 'Check the new version is back and reconnected, or go back to the old one' },
 ]
 
-/** The update's steps, with the one the agent last reported. */
+const RESTART_STEPS: { key: string; label: string }[] = [
+  { key: 'waiting', label: 'Wait until nobody is connected to this server' },
+  { key: 'restarting', label: 'Restart; logins in the meantime wait a moment instead of being refused' },
+  { key: 'done', label: 'Check the agent is back and reconnected' },
+]
+
+/** The update's or restart's steps, with the one the agent last reported. */
 function UpdateSteps({ view, status }: { view: AgentUpdateView; status: AgentUpdateStatus | null }) {
   const req = view.request
   if (!req) return null
-  const at = status ? STEPS.findIndex((s) => s.key === status.state) : -1
+  const steps = req.restart ? RESTART_STEPS : STEPS
+  const at = status ? steps.findIndex((s) => s.key === status.state) : -1
   return (
     <Stack gap={SP.snug}>
       <Text size={FS.body} fw={600}>
-        Updating to {req.version}{req.now ? ', now' : ''}
+        {req.restart ? 'Restarting the agent' : `Updating to ${req.version}`}{req.now ? ', now' : ''}
         <Text span size={FS.micro} c="dimmed" fw={400}> · asked by {req.requestedBy} {relTime(req.requestedAt)}</Text>
       </Text>
       {!status && (
@@ -158,7 +189,7 @@ function UpdateSteps({ view, status }: { view: AgentUpdateView; status: AgentUpd
           Asked. The agent picks this up at its next check-in, within 30 seconds.
         </Text>
       )}
-      {STEPS.map((s, i) => {
+      {steps.map((s, i) => {
         const done = at > i
         const now = at === i
         return (
@@ -185,17 +216,25 @@ function UpdateSteps({ view, status }: { view: AgentUpdateView; status: AgentUpd
  * hand.
  */
 function stillTrue(st: AgentUpdateStatus, running: string) {
+  if (st.restart) return st.from === running
   return st.state === 'done' ? st.target === running : st.from === running
 }
 
 /** How the last update went, as the agent reported it. */
 function LastUpdate({ status }: { status: AgentUpdateStatus }) {
-  const tone = {
-    done: ['teal', 'Updated'],
-    rolled_back: ['amber', 'Update went back'],
-    failed: ['rose', 'Update failed'],
-    cancelled: ['slate', 'Update taken back'],
-  }[status.state as 'done' | 'rolled_back' | 'failed' | 'cancelled']
+  const tone = (status.restart
+    ? {
+      done: ['teal', 'Restarted'],
+      rolled_back: ['amber', 'Restart failed'],
+      failed: ['rose', 'Restart failed'],
+      cancelled: ['slate', 'Restart taken back'],
+    }
+    : {
+      done: ['teal', 'Updated'],
+      rolled_back: ['amber', 'Update went back'],
+      failed: ['rose', 'Update failed'],
+      cancelled: ['slate', 'Update taken back'],
+    })[status.state as 'done' | 'rolled_back' | 'failed' | 'cancelled']
   if (!tone) return null
   return (
     <Alert color={tone[0]} title={tone[1]} p="xs">
@@ -258,6 +297,51 @@ function AskUpdate({ view, assetId, onClose }: { view: AgentUpdateView; assetId:
           )}
           <Button disabled={!ok} loading={request.isPending} onClick={() => void go(false)}>
             {open > 0 ? 'Update when nobody is connected' : 'Update'}
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  )
+}
+
+function AskRestart({ view, assetId, onClose }: { view: AgentUpdateView; assetId: string; onClose: () => void }) {
+  const restart = useRequestAgentRestart(assetId)
+  const open = view.activeSessions
+  const go = (now: boolean) =>
+    run(() => restart.mutateAsync({ now }), {
+      failure: 'Restart not started',
+      success: now
+        ? ['Restarting now', `The agent on ${view.hostname} restarts at its next check-in.`]
+        : ['Restart asked', `The agent restarts once nobody is connected to ${view.hostname}.`],
+    }).then((done) => done && onClose())
+
+  return (
+    <Modal opened onClose={onClose} title={`Restart the agent on ${view.hostname}`} size="lg">
+      <Stack gap="sm">
+        <Text size={FS.body} lh={1.5}>
+          The agent restarts on the version it runs ({view.agentVersion || 'unknown'}). It waits until nobody
+          is connected to this server first, and the restart takes a few seconds; anyone who logs in during
+          it waits a moment instead of being refused. If the agent is not back and reconnected to Argus
+          within 90 seconds, this card says so.
+        </Text>
+        {open > 0 && (
+          <Alert color="amber" p="xs">
+            <Text size={FS.body} lh={1.5}>
+              {open} session(s) are open on this server now. Waiting lets them finish. Restarting now closes
+              sessions opened from the console; SSH logins stay connected, and their recording carries on
+              under the restarted agent.
+            </Text>
+          </Alert>
+        )}
+        <Group justify="flex-end" gap={SP.cozy}>
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          {open > 0 && (
+            <Button color="rose" variant="light" loading={restart.isPending} onClick={() => void go(true)}>
+              Restart now, ending {open}
+            </Button>
+          )}
+          <Button loading={restart.isPending} onClick={() => void go(false)}>
+            {open > 0 ? 'Restart when nobody is connected' : 'Restart'}
           </Button>
         </Group>
       </Stack>

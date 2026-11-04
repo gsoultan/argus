@@ -123,6 +123,22 @@ Traps found in the drill: the helper must date what it writes to
 "failed" over the helper's own result. And the new agent must watch the file
 (`Updater.Watch`), or "done" reaches the console only at the next heartbeat.
 
+### Restarting an agent from the console
+
+A restart is an update request with `agent_credentials.update_restart` set
+(migration 044) and `update_version` = the version the agent runs; the
+heartbeat reply carries `restart: true`. The agent (`Updater.Handle` with
+`req.Restart`) skips the download, waits and holds like an update, and hands
+the helper a plan with `restart: true`, which runs `Applier.applyRestart`:
+`systemctl restart`, then the same `ready.json` check. Nothing to go back to,
+so not ready in 90s is `failed`. The agent advertises `restartable` /
+`restart_reason` on its update status; an agent without either is too old,
+and the console says to update it once. A restart is refused while an update
+waits (the update restarts it anyway); an update replaces a waiting restart
+(`requestAgent` keeps the id only for the same kind and version). The fleet
+does not count a restart as `updating`. Audit: `agent.restart_requested`,
+`agent.restarted`, `agent.restart_failed`, `agent.restart_cancelled`.
+
 ### Newest release, Update all, automatic updates
 
 `internal/control/agent_releases.go` (`ReleaseWatcher`) reads GitHub's release
