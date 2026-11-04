@@ -83,6 +83,44 @@ describe('SystemCard', () => {
     expect(screen.queryByRole('button', { name: 'Update agent' })).toBeNull()
   })
 
+  it('lists each interface\'s addresses and says which are public', () => {
+    show(linux(), report({
+      network: [
+        { name: 'eth0', mac: '52:54:00:ab:cd:ef', addresses: [
+          { address: '203.0.113.10', prefix: 24, family: 'ipv4', public: true },
+          { address: '2001:db8::10', prefix: 64, family: 'ipv6', public: true },
+        ] },
+        { name: 'docker0', mac: '', addresses: [{ address: '172.17.0.1', prefix: 16, family: 'ipv4', public: false }] },
+      ],
+    }))
+    const eth0 = screen.getByTestId('iface-eth0')
+    expect(eth0.textContent).toContain('52:54:00:ab:cd:ef')
+    expect(eth0.textContent).toContain('203.0.113.10/24public')
+    expect(eth0.textContent).toContain('2001:db8::10/64public')
+    expect(screen.getByTestId('iface-docker0').textContent).toContain('172.17.0.1/16private')
+    expect(screen.queryByText(/No interface on this server holds a public address/)).toBeNull()
+  })
+
+  it('does not let a server behind NAT read as having no public address', () => {
+    show(linux(), report({
+      network: [{ name: 'ens5', mac: '', addresses: [{ address: '10.0.1.5', prefix: 20, family: 'ipv4', public: false }] }],
+    }))
+    expect(screen.getByText(/No interface on this server holds a public address/)).toBeTruthy()
+  })
+
+  it('shows an older agent\'s flat list, and nothing when no addresses came', () => {
+    show(linux(), report({
+      reported: false, system: null, usage: null, usageAt: null,
+      network: [{ name: '', mac: '', addresses: [{ address: '10.0.0.5', prefix: -1, family: 'ipv4', public: false }] }],
+    }))
+    expect(screen.getByTestId('iface-addresses').textContent).toBe('Addresses10.0.0.5private')
+  })
+
+  it('has no network section when nothing was reported', () => {
+    show(linux(), report({ network: undefined }))
+    expect(screen.queryByTestId('system-network')).toBeNull()
+  })
+
   it('counts a disk the way df does, root reserve excluded', () => {
     expect(diskFull({ mount: '/', fs: 'ext4', total: 100, used: 90, avail: 5 })).toBe(95)
     expect(diskTone(89)).toBeUndefined()
