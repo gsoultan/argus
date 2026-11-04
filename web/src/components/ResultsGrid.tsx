@@ -3,7 +3,7 @@ import {
   ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, Stack, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import {
-  IconArrowBackUp, IconArrowDown, IconArrowUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconEyeOff,
+  IconArrowBackUp, IconArrowDown, IconArrowUp, IconChartBar, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconEyeOff,
   IconFilter, IconLink, IconPencil, IconPlus, IconSortAscending, IconSortDescending, IconTrash, IconWand, IconX,
 } from '@tabler/icons-react'
 import { FS, INK } from '~/theme'
@@ -21,6 +21,8 @@ import { ArrayEditor, JsonEditor } from '~/components/JsonEditor'
 
 // The JSON viewer loads when a row with JSON is first opened.
 const JsonView = lazy(() => import('~/components/JsonView').then((m) => ({ default: m.JsonView })))
+// Summarize and chart loads when it is first opened.
+const ResultSummary = lazy(() => import('~/components/ResultSummary').then((m) => ({ default: m.ResultSummary })))
 
 /*
 The query tab's results: a windowed grid of the rows the statement sent,
@@ -265,6 +267,8 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
   const [editing, setEditing] = useState<{ row: number; col: number } | null>(null)
   const [open, setOpen] = useState<Open | null>(null)
   const [reviewing, setReviewing] = useState(false)
+  // The grid, or the result summarized as a chart.
+  const [mode, setMode] = useState<'grid' | 'summary'>('grid')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   useEffect(() => {
@@ -287,6 +291,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
     setEditing(null)
     setOpen(null)
     setSaveError(null)
+    setMode('grid')
   }, [rid])
   const setView = useCallback((f: (v: ViewState) => ViewState) => {
     setViewState(f)
@@ -517,10 +522,16 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
             )}
           </Group>
         )}
+        {!result.error && result.rows.length > 0 && result.done && (
+          <Button size="compact-xs" variant={mode === 'summary' ? 'light' : 'subtle'} ml="auto" leftSection={<IconChartBar size={12} />}
+            aria-pressed={mode === 'summary'} onClick={() => setMode((m) => (m === 'grid' ? 'summary' : 'grid'))}>
+            {mode === 'summary' ? 'Back to rows' : 'Summarize'}
+          </Button>
+        )}
         {!result.error && result.rows.length > 0 && (
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <Button size="compact-xs" variant="subtle" ml="auto" rightSection={<IconChevronDown size={12} />} leftSection={<IconCopy size={12} />}>
+              <Button size="compact-xs" variant="subtle" rightSection={<IconChevronDown size={12} />} leftSection={<IconCopy size={12} />}>
                 Copy as
               </Button>
             </Menu.Target>
@@ -573,10 +584,17 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
           </Box>
         </Box>
       ) : (
+        <>
+        {mode === 'summary' && (
+          <Suspense fallback={null}>
+            <ResultSummary cols={cols} rows={result.rows} sql={result.sql} truncated={Boolean(result.done?.truncated)}
+              onRunSQL={onAddToQuery ? (text) => onAddToQuery(text, {}) : undefined} />
+          </Suspense>
+        )}
         <div
           ref={viewport}
           onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-          style={{ flex: 1, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12, position: 'relative' }}
+          style={{ flex: 1, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12, position: 'relative', display: mode === 'summary' ? 'none' : undefined }}
         >
           <table style={{ borderCollapse: 'collapse', minWidth: '100%' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--color-raised)' }}>
@@ -689,6 +707,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
             <Text size={FS.meta} c="dimmed" p="md">No loaded row matches the filters.</Text>
           )}
         </div>
+        </>
       )}
       {live && changeCount > 0 && (
         <ChangesBar changedRows={changes.size} newRows={added.length} busy={Boolean(edit?.busy)} saving={saving} error={saveError} narrow={narrow}
