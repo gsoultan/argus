@@ -157,3 +157,35 @@ describe('falling back to the fixture', () => {
     await expect(live.orFallback(live.assets, fixture)).resolves.toEqual(['fixture'])
   })
 })
+
+describe('writes that answer with no body', () => {
+  it('treats a 204 from removing a database assignment as success', async () => {
+    const { removeDBAssignment } = await loadLive()
+    // Safari's res.json() on an empty body throws "The string did not match
+    // the expected pattern", which the console showed as "Not removed" for a
+    // removal that had already happened.
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(removeDBAssignment('db 1', 'team/a')).resolves.toBeUndefined()
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(String(url)).toContain('/api/v1/databases/db%201/assignments/team%2Fa')
+    expect(init.method).toBe('DELETE')
+  })
+
+  it('still reports the server message when a removal is refused', async () => {
+    const { removeDBAssignment } = await loadLive()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(404, { error: 'no such assignment' })))
+
+    await expect(removeDBAssignment('db1', 'x')).rejects.toThrow('no such assignment')
+  })
+
+  it('reports the status when a refusal has no JSON body', async () => {
+    const { deleteDatabase } = await loadLive()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response('<html>bad gateway</html>', { status: 502 }),
+    ))
+
+    await expect(deleteDatabase('db1')).rejects.toThrow('request failed (502)')
+  })
+})

@@ -458,9 +458,28 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     },
     body: JSON.stringify(body),
   })
-  const parsed = (await res.json()) as T & { error?: string }
-  if (!res.ok) throw new Error(parsed.error ?? `request failed (${res.status})`)
-  return parsed
+  return readReply<T>(res)
+}
+
+/**
+ * Reads a write's answer. A DELETE answers 204 with no body, and res.json()
+ * on an empty body throws -- in Safari as "The string did not match the
+ * expected pattern" -- so a removal that worked was reported as a failure.
+ * An empty or non-JSON body is read as nothing, and a refusal still carries
+ * the server's own message when it sent one.
+ */
+async function readReply<T>(res: Response): Promise<T> {
+  const text = res.status === 204 ? '' : await res.text()
+  let parsed: (T & { error?: string }) | undefined
+  if (text.trim() !== '') {
+    try {
+      parsed = JSON.parse(text) as T & { error?: string }
+    } catch {
+      parsed = undefined
+    }
+  }
+  if (!res.ok) throw new Error(parsed?.error ?? `request failed (${res.status})`)
+  return parsed as T
 }
 
 export async function createRequest(input: {
@@ -738,9 +757,7 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
-  const parsed = (await res.json()) as T & { error?: string }
-  if (!res.ok) throw new Error(parsed.error ?? `request failed (${res.status})`)
-  return parsed
+  return readReply<T>(res)
 }
 
 /* ── Teams ──────────────────────────────────────────────────────────────── */
