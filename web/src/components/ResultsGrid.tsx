@@ -4,7 +4,7 @@ import {
 } from '@mantine/core'
 import {
   IconArrowBackUp, IconArrowDown, IconArrowUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconEyeOff,
-  IconFilter, IconLink, IconSortAscending, IconSortDescending, IconWand, IconX,
+  IconFilter, IconLink, IconPencil, IconPlus, IconSortAscending, IconSortDescending, IconTrash, IconWand, IconX,
 } from '@tabler/icons-react'
 import { FS, INK } from '~/theme'
 import { notifyOk, notifyWarn } from '~/lib/notify'
@@ -13,6 +13,9 @@ import {
   type Cell, type Col, type CopyFormat, type Filter, type ViewState,
 } from '~/lib/resultView'
 import type { Collected } from '~/components/DatabaseAdmin'
+import { editable, editorKind, insertStmt, updateStmt, type Stmt, type TableColumn } from '~/lib/rowEdit'
+import { CellInput, ChangesBar, ReviewDialog, RowForm, useEditTarget, type EditSupport, type FormField } from '~/components/RowEdits'
+import { ArrayEditor, JsonEditor } from '~/components/JsonEditor'
 
 /*
 The query tab's results: a windowed grid of the rows the statement sent,
@@ -23,6 +26,11 @@ opens the row it points at, read with the person's role.
 Sorting and filtering work on the loaded rows only, and say so; "Add to the
 query" writes the same thing as SQL around the statement, in a new tab, for
 the database to do over every row.
+
+When every column came from one table and its primary key is among them,
+the rows can be changed in place (see rowEdit): double-click a cell, or open
+a row and Edit it; Add a row opens an empty one. Nothing is sent until Save,
+and Review SQL shows exactly what Save sends.
 */
 
 export interface GridResult {
@@ -179,7 +187,8 @@ function ColumnMenu({ col, index, rows, view, setView, children }: {
 }
 
 type Panel =
-  | { kind: 'row'; at: number }
+  | { kind: 'row'; at: number; editing?: boolean }
+  | { kind: 'new'; index: number }
   | { kind: 'linked'; title: string; cols: Col[]; row: Cell[] | null; loading: boolean; error?: string; back: Panel }
 
 function Fields({ cols, row, fks, onFollow }: { cols: Col[]; row: Cell[]; fks: Record<number, ForeignKey>; onFollow?: (i: number) => void }) {
@@ -219,18 +228,35 @@ function Fields({ cols, row, fks, onFollow }: { cols: Col[]; row: Cell[]; fks: R
   )
 }
 
-export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
+/** A row's changed cells, by result column. */
+type Changes = Map<number, Map<number, Cell>>
+
+/** Where a JSON or array editor is open: a loaded row, or a new one. */
+type Open = { row: number; attnum: number } | { added: number; attnum: number }
+
+export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRows }: {
   result: GridResult | null
   narrow: boolean
   collect?: GridCollect
   /** Opens the statement with the grid's sort and filters as SQL. */
   onAddToQuery?: (sql: string, params: Record<string, string>) => void
+  /** Editing rows in place, when the session may write. */
+  edit?: EditSupport
+  /** The rows after a save, with what Postgres returned in place. */
+  onRows?: (rows: Cell[][]) => void
 }) {
   const viewport = useRef<HTMLDivElement | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [height, setHeight] = useState(400)
   const [view, setViewState] = useState<ViewState>(emptyView)
   const [panel, setPanel] = useState<Panel | null>(null)
+  const [changes, setChanges] = useState<Changes>(() => new Map())
+  const [added, setAdded] = useState<Map<number, Cell>[]>([])
+  const [editing, setEditing] = useState<{ row: number; col: number } | null>(null)
+  const [open, setOpen] = useState<Open | null>(null)
+  const [reviewing, setReviewing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   useEffect(() => {
     const el = viewport.current
     if (!el) return
@@ -246,6 +272,11 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
     if (viewport.current) viewport.current.scrollTop = 0
     setViewState(emptyView())
     setPanel(null)
+    setChanges(new Map())
+    setAdded([])
+    setEditing(null)
+    setOpen(null)
+    setSaveError(null)
   }, [rid])
   const setView = useCallback((f: (v: ViewState) => ViewState) => {
     setViewState(f)
@@ -259,6 +290,9 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
     // Rows grow while the statement streams; their count is the change.
     [result, result?.rows.length, cols, view]) // eslint-disable-line react-hooks/exhaustive-deps
   const shownCols = useMemo(() => cols.map((_, i) => i).filter((i) => !view.hidden.includes(i)), [cols, view.hidden])
+  const canEdit = Boolean(edit?.allowed && result?.done && !result.error)
+  const target = useEditTarget(cols, canEdit ? collect : undefined, canEdit ? rid : 0)
+  const ed = useMemo(() => editable(cols, target), [cols, target])
 
   const follow = useCallback((row: Cell[], i: number, fkMap: Record<number, ForeignKey>, back: Panel) => {
     const fk = fkMap[i]
@@ -299,11 +333,136 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
 
   // Windowed rows: only what is visible plus a margin is in the DOM.
   const total = order.length
-  const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10)
-  const last = Math.min(total, Math.ceil((scrollTop + height) / ROW_H) + 10)
+  // New rows sit above the loaded ones, so the window starts below them.
+  const top = Math.max(0, scrollTop - added.length * ROW_H)
+  const first = Math.max(0, Math.floor(top / ROW_H) - 10)
+  const last = Math.min(total, Math.ceil((top + height) / ROW_H) + 10)
   const slice = order.slice(first, last)
 
-  const panelRow = panel?.kind === 'row' ? result.rows[order[panel.at] ?? -1] : undefined
+  const panelIndex = panel?.kind === 'row' ? order[panel.at] : undefined
+  const panelRow = panelIndex !== undefined ? result.rows[panelIndex] : undefined
+
+  // Editing. `live` is the editable table, when there is one.
+  const live = canEdit && ed.ok ? ed : null
+  const tcol = (j: number): TableColumn | undefined => live?.target.columns.find((c) => c.attnum === cols[j]!.attnum)
+  const colOf = (attnum: number) => cols.findIndex((c) => c.attnum === attnum)
+  const cut = edit?.cut
+  const lockReason = (ri: number, j: number): string | undefined => {
+    if (!live) return 'read only'
+    if (live.pkCols.includes(j)) return 'primary key'
+    if (tcol(j)?.generated) return 'generated'
+    if (cut?.has(`${ri}:${j}`)) return 'too long to edit here'
+    if (live.pkCols.some((p) => cut?.has(`${ri}:${p}`))) return 'its key is too long'
+    return undefined
+  }
+  const valueAt = (ri: number, j: number): Cell => {
+    const m = changes.get(ri)
+    return m?.has(j) ? m.get(j)! : (result.rows[ri]?.[j] ?? null)
+  }
+  const setCell = (ri: number, j: number, v: Cell) => {
+    setSaveError(null)
+    setChanges((prev) => {
+      const n = new Map(prev)
+      const m = new Map(n.get(ri) ?? [])
+      if (v === (result.rows[ri]?.[j] ?? null)) m.delete(j)
+      else m.set(j, v)
+      if (m.size) n.set(ri, m)
+      else n.delete(ri)
+      return n
+    })
+  }
+  const setAddedValue = (k: number, attnum: number, v: Cell | undefined) => {
+    setSaveError(null)
+    setAdded((a) => a.map((m, i) => {
+      if (i !== k) return m
+      const n = new Map(m)
+      if (v === undefined) n.delete(attnum)
+      else n.set(attnum, v)
+      return n
+    }))
+  }
+  const addRow = () => {
+    if (!live) return
+    // A column Postgres cannot fill in starts as a value to give.
+    const m = new Map<number, Cell>()
+    for (const c of live.target.columns) if (c.notNull && !c.hasDefault && !c.generated) m.set(c.attnum, '')
+    setAdded((a) => [...a, m])
+    setPanel({ kind: 'new', index: added.length })
+  }
+  const startEdit = (ri: number, j: number) => {
+    if (!live || lockReason(ri, j)) return
+    const c = tcol(j)
+    const kind = editorKind(c?.type ?? cols[j]!.type, c?.enumValues)
+    if (kind === 'json' || kind === 'array') setOpen({ row: ri, attnum: cols[j]!.attnum! })
+    else setEditing({ row: ri, col: j })
+  }
+  const pending = (): { list: Stmt[]; rows: (number | null)[] } => {
+    const list: Stmt[] = []
+    const rows: (number | null)[] = []
+    if (!live) return { list, rows }
+    for (const ri of [...changes.keys()].sort((a, b) => a - b)) {
+      list.push(updateStmt(live.target, cols, live.pkCols, result.rows[ri]!, changes.get(ri)!))
+      rows.push(ri)
+    }
+    for (const a of added) { list.push(insertStmt(live.target, a)); rows.push(null) }
+    return { list, rows }
+  }
+  /** A returned row in the result's own column order. */
+  const asResultRow = (c: Collected): Cell[] | null => {
+    const src = c.rows[0]
+    if (!src) return null
+    return cols.map((col) => {
+      const k = c.cols.findIndex((x) => (x.attnum && x.attnum === col.attnum) || x.name === col.name)
+      return k < 0 ? null : (src[k] ?? null)
+    })
+  }
+  const save = async () => {
+    if (!edit || !live || saving) return
+    const { list, rows } = pending()
+    if (list.length === 0) return
+    setSaving(true)
+    setSaveError(null)
+    const r = await edit.save(list)
+    setSaving(false)
+    if (!r.ok) {
+      setSaveError(`Nothing was saved. ${list[r.at]?.label ?? 'The save'}: ${r.error}`)
+      return
+    }
+    const next = result.rows.slice()
+    r.returned.forEach((c, k) => {
+      const row = asResultRow(c)
+      const ri = rows[k]
+      if (!row) return
+      if (ri === null || ri === undefined) next.push(row)
+      else next[ri] = row
+    })
+    setChanges(new Map())
+    setAdded([])
+    setReviewing(false)
+    setPanel(null)
+    onRows?.(next)
+    notifyOk('Saved', `${list.length} ${list.length === 1 ? 'change' : 'changes'} to ${live.target.table}`)
+  }
+  const changeCount = changes.size + added.length
+  const rowFields = (ri: number): FormField[] => cols.flatMap((_, j) => {
+    const col = tcol(j)
+    if (!col) return []
+    return [{ col, value: valueAt(ri, j), original: result.rows[ri]?.[j] ?? null, locked: lockReason(ri, j) }]
+  })
+  const newFields = (k: number): FormField[] => (live?.target.columns ?? []).map((col) => {
+    const m = added[k]
+    return { col, value: m?.get(col.attnum) ?? null, unset: !m?.has(col.attnum), locked: col.generated ? 'generated' : undefined }
+  })
+  const openValue: Cell = open
+    ? 'row' in open ? valueAt(open.row, colOf(open.attnum)) : (added[open.added]?.get(open.attnum) ?? null)
+    : null
+  const openCol = open ? live?.target.columns.find((c) => c.attnum === open.attnum) : undefined
+  const applyOpen = (v: Cell) => {
+    if (!open) return
+    if ('row' in open) setCell(open.row, colOf(open.attnum), v)
+    else setAddedValue(open.added, open.attnum, v)
+    setOpen(null)
+  }
 
   return (
     <>
@@ -359,6 +518,21 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
           </Menu>
         )}
       </Group>
+      {canEdit && cols.length > 0 && (live || ed.ok === false && ed.reason !== 'Reading the table…') && (
+        <Group gap="sm" px="md" py={4} wrap="nowrap" aria-label="Editing" style={{ borderBottom: '1px solid var(--color-line)' }}>
+          {live
+            ? <>
+                <IconPencil size={12} color="var(--mantine-color-azure-text)" />
+                <Text size={FS.micro} style={{ flex: 1 }} truncate>
+                  <Text span fw={600} size={FS.micro}>Editable</Text> · {live.target.table} ·{' '}
+                  {narrow ? 'tap a row number, then Edit' : 'double-click a cell to change it'}
+                  {edit?.inTransaction ? ' · saves go into your open transaction' : ''}
+                </Text>
+                <Button size="compact-xs" variant="light" leftSection={<IconPlus size={12} />} onClick={addRow}>Add a row</Button>
+              </>
+            : <Text size={FS.micro} c="dimmed" truncate>Read only here: {ed.ok ? '' : ed.reason}</Text>}
+        </Group>
+      )}
       {result.error ? (
         <Box p="md">
           <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
@@ -406,6 +580,27 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
               </tr>
             </thead>
             <tbody>
+              {live && added.map((m, k) => (
+                <tr key={`new${k}`} style={{ height: ROW_H, background: 'var(--mantine-color-teal-light)' }}>
+                  <td style={{ ...td, padding: 0 }}>
+                    <UnstyledButton onClick={() => setPanel({ kind: 'new', index: k })} aria-label={`Open new row ${k + 1}`}
+                      style={{ display: 'block', width: '100%', padding: '0 12px', textAlign: 'right', color: INK.verified, fontSize: 12, fontFamily: 'inherit', fontWeight: 600 }}>
+                      new
+                    </UnstyledButton>
+                  </td>
+                  {shownCols.map((j) => {
+                    const a = cols[j]!.attnum!
+                    const has = m.has(a)
+                    const v = m.get(a) ?? null
+                    return (
+                      <td key={j} style={{ ...td, color: !has || v === null ? 'var(--mantine-color-dimmed)' : undefined, fontStyle: !has || v === null ? 'italic' : undefined }}
+                        onDoubleClick={() => setPanel({ kind: 'new', index: k })}>
+                        {!has ? 'default' : v === null ? 'null' : v}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
               {first > 0 && <tr><td style={{ height: first * ROW_H, padding: 0 }} colSpan={shownCols.length + 1} /></tr>}
               {slice.map((ri, k) => {
                 const row = result.rows[ri]!
@@ -419,13 +614,34 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
                       </UnstyledButton>
                     </td>
                     {shownCols.map((j) => {
-                      const cell = row[j] ?? null
+                      const changed = changes.get(ri)?.has(j) ?? false
+                      const cell = changed ? valueAt(ri, j) : (row[j] ?? null)
                       const c = cols[j]!
                       const fk = fks[j]
+                      if (editing?.row === ri && editing.col === j) {
+                        const tc = tcol(j)
+                        return (
+                          <td key={j} style={{ ...td, padding: '0 2px', overflow: 'visible' }}>
+                            <CellInput kind={editorKind(tc?.type ?? c.type, tc?.enumValues)} col={tc} value={cell}
+                              onCommit={(v) => { setCell(ri, j, v); setEditing(null) }} onCancel={() => setEditing(null)} />
+                          </td>
+                        )
+                      }
                       return (
                         <td key={j} style={{ ...td, color: cell === null ? 'var(--mantine-color-dimmed)' : undefined, fontStyle: cell === null ? 'italic' : undefined,
-                          textAlign: isNumeric(c) ? 'right' : undefined }} title={cell ?? 'NULL'}>
+                          textAlign: isNumeric(c) ? 'right' : undefined, background: changed ? 'var(--mantine-color-amber-light)' : undefined,
+                          cursor: live && !lockReason(ri, j) ? 'cell' : undefined }}
+                          title={changed ? `${cell ?? 'NULL'}\nwas ${row[j] ?? 'NULL'}` : (cell ?? 'NULL')}
+                          onDoubleClick={live ? () => startEdit(ri, j) : undefined}>
                           {cell === null ? 'null'
+                            : fk && live ? (
+                              <Group gap={4} wrap="nowrap" component="span" style={{ display: 'inline-flex' }}>
+                                <span>{cell}</span>
+                                <ActionIcon size="xs" variant="subtle" onClick={() => follow(row, j, fks, { kind: 'row', at })} aria-label={`Open ${fk.table} row ${cell}`}>
+                                  <IconLink size={11} />
+                                </ActionIcon>
+                              </Group>
+                            )
                             : fk ? (
                               <UnstyledButton onClick={() => follow(row, j, fks, { kind: 'row', at })}
                                 style={{ fontFamily: 'inherit', fontSize: 'inherit', color: INK.brand, textDecoration: 'underline dotted' }}
@@ -449,10 +665,24 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
           )}
         </div>
       )}
+      {live && changeCount > 0 && (
+        <ChangesBar changedRows={changes.size} newRows={added.length} busy={Boolean(edit?.busy)} saving={saving} error={saveError} narrow={narrow}
+          onDiscard={() => { setChanges(new Map()); setAdded([]); setSaveError(null); if (panel?.kind === 'new') setPanel(null) }}
+          onReview={() => setReviewing(true)} onSave={() => void save()} />
+      )}
+      {live && reviewing && (
+        <ReviewDialog opened stmts={pending().list} inTransaction={Boolean(edit?.inTransaction)} busy={Boolean(edit?.busy)} saving={saving}
+          onClose={() => setReviewing(false)} onSave={() => void save()} />
+      )}
+      {open && openCol && (editorKind(openCol.type, openCol.enumValues) === 'array'
+        ? <ArrayEditor key={JSON.stringify(open)} opened column={openCol.name} type={openCol.type} value={openValue} onApply={applyOpen} onClose={() => setOpen(null)} />
+        : <JsonEditor key={JSON.stringify(open)} opened column={openCol.name} type={openCol.type} value={openValue} onApply={applyOpen} onClose={() => setOpen(null)} />)}
 
       <Drawer opened={panel !== null} onClose={() => setPanel(null)} position={narrow ? 'bottom' : 'right'} size={narrow ? '85%' : 460}
         withinPortal title={
-          panel?.kind === 'linked'
+          panel?.kind === 'new'
+            ? <Text size={FS.body} fw={600} truncate>New row in {live?.target.table}</Text>
+            : panel?.kind === 'linked'
             ? <Group gap={6} wrap="nowrap">
                 <ActionIcon variant="subtle" size="sm" aria-label="Back" onClick={() => setPanel(panel.back)}><IconArrowBackUp size={14} /></ActionIcon>
                 <Text size={FS.body} fw={600} truncate>{panel.title}</Text>
@@ -461,26 +691,54 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery }: {
               ? <Group gap={6} wrap="nowrap">
                   <Text size={FS.body} fw={600}>Row {(order[panel.at] ?? 0) + 1}</Text>
                   <Text size={FS.micro} c="dimmed">{panel.at + 1} of {order.length.toLocaleString()}</Text>
-                  <ActionIcon variant="subtle" size="sm" aria-label="Previous row" disabled={panel.at === 0} onClick={() => setPanel({ kind: 'row', at: panel.at - 1 })}>
+                  <ActionIcon variant="subtle" size="sm" aria-label="Previous row" disabled={panel.at === 0} onClick={() => setPanel({ kind: 'row', at: panel.at - 1, editing: panel.editing })}>
                     <IconChevronLeft size={14} />
                   </ActionIcon>
-                  <ActionIcon variant="subtle" size="sm" aria-label="Next row" disabled={panel.at >= order.length - 1} onClick={() => setPanel({ kind: 'row', at: panel.at + 1 })}>
+                  <ActionIcon variant="subtle" size="sm" aria-label="Next row" disabled={panel.at >= order.length - 1} onClick={() => setPanel({ kind: 'row', at: panel.at + 1, editing: panel.editing })}>
                     <IconChevronRight size={14} />
                   </ActionIcon>
                 </Group>
               : null
         }
         scrollAreaComponent={ScrollArea.Autosize}>
-        {panel?.kind === 'row' && panelRow && (
+        {panel?.kind === 'row' && panelRow && panelIndex !== undefined && (
           <>
-            <Group justify="flex-end" mb="sm">
+            <Group justify="flex-end" mb="sm" gap="xs">
+              {live && (
+                <Button size="compact-xs" variant={panel.editing ? 'filled' : 'light'} leftSection={<IconPencil size={12} />}
+                  onClick={() => setPanel({ ...panel, editing: !panel.editing })} aria-pressed={Boolean(panel.editing)}>
+                  {panel.editing ? 'Done editing' : 'Edit'}
+                </Button>
+              )}
               <Button size="compact-xs" variant="default" leftSection={<IconCopy size={12} />}
                 onClick={() => void copyText(copyAs('json', cols, [panelRow]).replace(/^\[\n|\n\]$/g, ''), 'the row as JSON')}>
                 Copy as JSON
               </Button>
             </Group>
-            <Fields cols={cols} row={panelRow} fks={fks} onFollow={(i) => follow(panelRow, i, fks, panel)} />
+            {live && panel.editing
+              ? <RowForm fields={rowFields(panelIndex)}
+                  onChange={(a, v) => setCell(panelIndex, colOf(a), v)}
+                  onOpen={(a) => setOpen({ row: panelIndex, attnum: a })} />
+              : <Fields cols={cols} row={panelRow} fks={fks} onFollow={(i) => follow(panelRow, i, fks, panel)} />}
           </>
+        )}
+        {panel?.kind === 'new' && live && added[panel.index] && (
+          <Stack gap="md">
+            <Text size={FS.micro} c="dimmed">
+              A column left to Postgres gets its default, or NULL. Nothing is sent until you Save.
+            </Text>
+            <RowForm fields={newFields(panel.index)}
+              onChange={(a, v) => setAddedValue(panel.index, a, v)}
+              onUnset={(a) => setAddedValue(panel.index, a, undefined)}
+              onOpen={(a) => setOpen({ added: panel.index, attnum: a })} />
+            <Group justify="space-between">
+              <Button size="xs" variant="subtle" color="rose" leftSection={<IconTrash size={12} />}
+                onClick={() => { setAdded((a) => a.filter((_, i) => i !== panel.index)); setPanel(null) }}>
+                Remove this new row
+              </Button>
+              <Button size="xs" onClick={() => setPanel(null)}>Done</Button>
+            </Group>
+          </Stack>
         )}
         {panel?.kind === 'linked' && (
           panel.loading ? <Group gap="xs"><Loader size="xs" /><Text size={FS.meta} c="dimmed">Reading the linked row…</Text></Group>

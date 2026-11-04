@@ -12,6 +12,8 @@ import {
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { ResultsGrid } from '~/components/ResultsGrid'
+import type { SaveResult } from '~/components/RowEdits'
+import type { Stmt } from '~/lib/rowEdit'
 import { QueryParams } from '~/components/QueryParams'
 import { SqlEditor, pgErrorOffset, type EditorError, type SqlEditorHandle } from '~/components/SqlEditor'
 import { bindParams, originalOffset, paramNames, type Bound } from '~/lib/sqlParams'
@@ -105,6 +107,8 @@ interface Result {
   sql: string
   cols: Col[]
   rows: Cell[][]
+  /** Cells the agent cut at its size limit, as `row:col`: shown, not editable. */
+  cut?: Set<string>
   done?: PGAnswer
   error?: PGAnswer
   startedAt: number
@@ -146,11 +150,12 @@ function batchId(buf: ArrayBuffer): number {
 }
 
 /** Decodes one row batch: id, then cells as uvarint(len*2+cut+1) + bytes; 0 is NULL. */
-function decodeBatch(buf: ArrayBuffer, ncols: number, dec: TextDecoder): { id: number; rows: Cell[][] } {
+function decodeBatch(buf: ArrayBuffer, ncols: number, dec: TextDecoder): { id: number; rows: Cell[][]; cut: [number, number][] } {
   const b = new Uint8Array(buf)
   const id = batchId(buf)
   let p = 4
   const rows: Cell[][] = []
+  const cuts: [number, number][] = []
   while (p < b.length) {
     const row: Cell[] = new Array(ncols)
     for (let i = 0; i < ncols; i++) {
@@ -168,12 +173,13 @@ function decodeBatch(buf: ArrayBuffer, ncols: number, dec: TextDecoder): { id: n
       }
       const len = Math.floor((v - 1) / 2)
       const cut = (v - 1) % 2 === 1
+      if (cut) cuts.push([rows.length, i])
       row[i] = dec.decode(b.subarray(p, p + len)) + (cut ? ' …' : '')
       p += len
     }
     rows.push(row)
   }
-  return { id, rows }
+  return { id, rows, cut: cuts }
 }
 
 const KIND_ICON: Record<string, typeof IconTable> = {
@@ -301,9 +307,13 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           }
           const e = live.current.get(bid)
           if (!e) return
-          const { rows } = decodeBatch(ev.data, e.r.cols.length, dec)
+          const { rows, cut } = decodeBatch(ev.data, e.r.cols.length, dec)
           // Append in place and publish a new object once per batch, so React
           // re-renders per batch rather than per row.
+          if (cut.length) {
+            e.r.cut ??= new Set()
+            for (const [ri, ci] of cut) e.r.cut.add(`${e.r.rows.length + ri}:${ci}`)
+          }
           e.r.rows.push(...rows)
           setResults((prev) => ({ ...prev, [e.tab]: { ...e.r } }))
           return
@@ -661,6 +671,52 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       }
       done({ plan: parsePlan(r.rows.map((x) => x[0] ?? '')), rolledBack: wrap })
     })()
+  }, [collectWithId, finished])
+
+  // saveEdits sends the grid's row edits as one transaction: each statement
+  // must touch exactly one row (an UPDATE keyed on the primary key, which
+  // matches nothing once someone else changed the row), or all of it is
+  // rolled back. Inside the person's own transaction it uses a savepoint, so
+  // a failed save leaves their transaction as it was. The session runs one
+  // statement at a time, so this holds it the way a run does.
+  const saveEdits = useCallback(async (stmts: Stmt[]): Promise<SaveResult> => {
+    if (runningRef.current) return { ok: false, at: 0, error: 'another statement is running; wait for it to finish.' }
+    const key = activeRef.current
+    runningRef.current = { id: -1, tab: key }
+    setRunning(runningRef.current)
+    const track = (id: number) => {
+      runningRef.current = { id, tab: key }
+      setRunning(runningRef.current)
+    }
+    const inTx = txOpen.current
+    const mark = 'argus_row_edit'
+    const note = (sql: string, ok: boolean) => setHistory((h) => [{ sql, at: Date.now(), ok }, ...h].slice(0, 100))
+    try {
+      const b = await collectWithId(inTx ? `SAVEPOINT ${mark}` : 'BEGIN', 1, track)
+      if (b.error) return { ok: false, at: 0, error: b.error.error ?? 'could not start a transaction' }
+      const returned = []
+      for (let i = 0; i < stmts.length; i++) {
+        const s = stmts[i]!
+        const r = await collectWithId(s.sql, 2, track, s.params)
+        note(s.sql, !r.error && r.rows.length === 1)
+        if (r.error || r.rows.length !== 1) {
+          await collectWithId(inTx ? `ROLLBACK TO SAVEPOINT ${mark}` : 'ROLLBACK', 1, track)
+          if (inTx) await collectWithId(`RELEASE SAVEPOINT ${mark}`, 1, track)
+          const error = r.error
+            ? `${r.error.error ?? 'Postgres refused it'}${r.error.code ? ` (${r.error.code})` : ''}`
+            : r.rows.length === 0
+              ? 'the row is gone, or someone changed it since you read it. Run the query again to see it as it is now.'
+              : 'it matched more than one row.'
+          return { ok: false, at: i, error }
+        }
+        returned.push(r)
+      }
+      const c = await collectWithId(inTx ? `RELEASE SAVEPOINT ${mark}` : 'COMMIT', 1, track)
+      if (c.error) return { ok: false, at: stmts.length - 1, error: c.error.error ?? 'the commit failed' }
+      return { ok: true, returned }
+    } finally {
+      finished()
+    }
   }, [collectWithId, finished])
 
   startRef.current = (j: Job) => (j.kind === 'run' ? startRun(j) : j.kind === 'script' ? startScript(j) : startExplain(j))
@@ -1214,7 +1270,12 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
               {script && <ScriptSteps script={script} shownId={result?.id} narrow={narrow}
                 onPick={(r) => setResults((prev) => ({ ...prev, [tab.key]: { ...r } }))} />}
               <ResultsGrid result={result} narrow={narrow} collect={collect}
-                onAddToQuery={(text, params) => { const k = openTab({ sql: text, params }); if (k) setView('query') }} />
+                onAddToQuery={(text, params) => { const k = openTab({ sql: text, params }); if (k) setView('query') }}
+                edit={level && level !== 'read' ? { allowed: true, busy: running !== null, inTransaction: txOpen.current, cut: result?.cut, save: saveEdits } : undefined}
+                onRows={(rows) => setResults((prev) => {
+                  const r = prev[tab.key]
+                  return r ? { ...prev, [tab.key]: { ...r, rows } } : prev
+                })} />
             </>}
         </Box>
         </>}
