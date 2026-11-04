@@ -72,8 +72,15 @@ func TestBackupScheduleRoundTrip(t *testing.T) {
 	if m, err := s.AdvanceBackupSchedule(ctx, saved, true); err != nil || m != 1 {
 		t.Fatalf("a miss should count: %d, %v", m, err)
 	}
-	if m, err := s.AdvanceBackupSchedule(ctx, saved, false); err != nil || m != 0 {
-		t.Fatalf("a run should clear misses: %d, %v", m, err)
+	// A run that starts leaves the count to how it ends.
+	if m, err := s.AdvanceBackupSchedule(ctx, saved, false); err != nil || m != 1 {
+		t.Fatalf("a run that started changed the count: %d, %v", m, err)
+	}
+	if m, err := s.CountScheduledOutcome(ctx, db.ID, false); err != nil || m != 2 {
+		t.Fatalf("a scheduled run that failed should count like a miss: %d, %v", m, err)
+	}
+	if m, err := s.CountScheduledOutcome(ctx, db.ID, true); err != nil || m != 0 {
+		t.Fatalf("a scheduled run that produced a backup should clear the count: %d, %v", m, err)
 	}
 	off, err := s.SetBackupSchedule(ctx, BackupSchedule{DatabaseID: db.ID, Enabled: false, Every: "daily",
 		Destination: "server", KeepLast: 1}, admin)

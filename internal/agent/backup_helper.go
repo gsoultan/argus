@@ -26,7 +26,8 @@ peer authentication. It takes one request (base64 JSON in its one argument:
 no secrets, nothing a `ps` would mind) and does exactly one of:
 
 	dump      pg_dump of the database to stdout, --verbose progress on stderr
-	restore   createdb + pg_restore of the plain archive on stdin
+	restore   createdb + pg_restore of the plain archive on stdin; with
+	          Existing, pg_restore alone into a test copy already made
 	catalog   the versions of the tools, on stdout as JSON
 	toc       pg_restore --list of the archive on stdin: proves it is readable
 
@@ -47,6 +48,12 @@ type PGBackupRequest struct {
 	User string `json:"user,omitempty"`
 	// Compression is pg_dump's -Z: 0..9 with gzip.
 	Compression int `json:"compression,omitempty"`
+	// Existing restores into a database already made (a test copy, which
+	// create-test made with no connections allowed) instead of creating it.
+	Existing bool `json:"existing,omitempty"`
+	// Low runs the tool at low CPU and I/O priority where nice and ionice
+	// are installed: a test restore should not slow the server's real work.
+	Low bool `json:"low,omitempty"`
 }
 
 // EncodePGBackupRequest and DecodePGBackupRequest carry it on the command line.
@@ -134,19 +141,29 @@ func RunPGBackup(ctx context.Context, req PGBackupRequest, stdin io.Reader, stdo
 		if !tunnel.ValidDBName.MatchString(req.Database) {
 			return errors.New("not a database name Argus will create")
 		}
-		createdb, err := pgTool("createdb")
-		if err != nil {
-			return err
-		}
-		if err := runTool(ctx, createdb, append([]string{"--template=template0", req.Database}, conn...),
-			nil, stdout, stderr); err != nil {
-			return fmt.Errorf("createdb %s: %w", req.Database, err)
+		if req.Existing {
+			// Only ever a test copy: anything else must not already exist.
+			if !tunnel.ValidTestDB.MatchString(req.Database) {
+				return errors.New("only a test copy is restored into an existing database")
+			}
+		} else {
+			createdb, err := pgTool("createdb")
+			if err != nil {
+				return err
+			}
+			if err := runTool(ctx, createdb, append([]string{"--template=template0", req.Database}, conn...),
+				nil, stdout, stderr); err != nil {
+				return fmt.Errorf("createdb %s: %w", req.Database, err)
+			}
 		}
 		bin, err := pgTool("pg_restore")
 		if err != nil {
 			return err
 		}
 		args := append([]string{"--format=custom", "--no-owner", "--verbose", "--dbname=" + req.Database}, conn...)
+		if req.Low {
+			bin, args = lowPriority(bin, args)
+		}
 		return runTool(ctx, bin, args, stdin, stdout, stderr)
 	}
 	return errors.New("unknown operation " + req.Op)
@@ -157,6 +174,20 @@ func runTool(ctx context.Context, bin string, args []string, stdin io.Reader, st
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.Env = append(os.Environ(), "PGCONNECT_TIMEOUT=15", "PGOPTIONS=-c lock_timeout=10s -c statement_timeout=0")
 	return cmd.Run()
+}
+
+// lowPriority wraps a command in nice and ionice when they are installed,
+// and leaves it as it is when they are not.
+func lowPriority(bin string, args []string) (string, []string) {
+	if ionice, err := exec.LookPath("ionice"); err == nil {
+		args = append([]string{"-c3", bin}, args...)
+		bin = ionice
+	}
+	if nice, err := exec.LookPath("nice"); err == nil {
+		args = append([]string{"-n", "10", bin}, args...)
+		bin = nice
+	}
+	return bin, args
 }
 
 // pgTool finds a Postgres client tool: on PATH, else the newest of the

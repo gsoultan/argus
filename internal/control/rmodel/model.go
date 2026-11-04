@@ -379,7 +379,7 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.Col(&m.Detail).Default("''::text")
 	t.Col(&m.Link).Default("''::text")
 	t.CheckNamed("console_alerts_kind_check",
-		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text])")
+		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text])")
 	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
 	t.CheckNamed("console_alerts_audience_check", "audience = ANY (ARRAY['deciders'::text, 'admins'::text, 'person'::text])")
 	t.CheckNamed("console_alerts_link_check", "(link = ''::text) OR (link ~~ '/%'::text)")
@@ -788,6 +788,14 @@ type DatabaseBackupSchedule struct {
 	Misses      int32
 	UpdatedBy   string
 	UpdatedAt   time.Time
+	// The test restore schedule and checks (migration 044).
+	TestEvery     string
+	TestHour      int32
+	TestMinute    int32
+	TestWeekday   int32
+	TestNextAt    *time.Time
+	TestChecks    storm.JSON
+	TestOverdueAt *time.Time
 }
 
 func (m *DatabaseBackupSchedule) Schema(t *storm.Table) {
@@ -815,6 +823,67 @@ func (m *DatabaseBackupSchedule) Schema(t *storm.Table) {
 	t.CheckNamed("database_backup_schedules_keep_days_check", "(keep_days >= 0) AND (keep_days <= 3650)")
 	t.CheckNamed("database_backup_schedules_keep_last_check", "(keep_last >= 1) AND (keep_last <= 1000)")
 	t.CheckNamed("database_backup_schedules_weekday_check", "(weekday >= 0) AND (weekday <= 6)")
+	t.Col(&m.TestEvery).Default("'off'::text")
+	t.Col(&m.TestHour).Default("4")
+	t.Col(&m.TestMinute).Default("0")
+	t.Col(&m.TestWeekday).Default("0")
+	t.Col(&m.TestChecks).Default("'[]'::jsonb")
+	t.CheckNamed("database_backup_schedules_test_every_check",
+		"test_every = ANY (ARRAY['off'::text, 'after'::text, 'daily'::text, 'weekly'::text])")
+	t.CheckNamed("database_backup_schedules_test_hour_check", "(test_hour >= 0) AND (test_hour <= 23)")
+	t.CheckNamed("database_backup_schedules_test_minute_check", "(test_minute >= 0) AND (test_minute <= 59)")
+	t.CheckNamed("database_backup_schedules_test_weekday_check", "(test_weekday >= 0) AND (test_weekday <= 6)")
+}
+
+// DatabaseBackupTest is table database_backup_tests: one test restore of a
+// backup into a throwaway database, and its report (migration 044).
+type DatabaseBackupTest struct {
+	ID             [16]byte
+	Backup         DatabaseBackup
+	Database       Database
+	StartedBy      string
+	State          string
+	Stage          string
+	Detail         string
+	Error          string
+	ScratchName    string
+	ScratchDropped bool
+	RestoreMs      int64
+	Tables         int32
+	TotalRows      int64
+	Bytes          int64
+	Report         storm.JSON
+	StartedAt      time.Time
+	FinishedAt     *time.Time
+	ReportedAt     time.Time
+}
+
+func (m *DatabaseBackupTest) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Backup).ConstraintName("database_backup_tests_backup_id_fkey")
+	t.Col(&m.Backup).OnDelete(storm.Cascade)
+	t.Col(&m.Backup).NoIndex()
+	t.Col(&m.Database).ConstraintName("database_backup_tests_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.State).Default("'running'::text")
+	t.Col(&m.Stage).Default("''::text")
+	t.Col(&m.Detail).Default("''::text")
+	t.Col(&m.Error).Default("''::text")
+	t.Col(&m.ScratchName).Default("''::text")
+	t.Col(&m.ScratchDropped).Default("false")
+	t.Col(&m.RestoreMs).Default("0")
+	t.Col(&m.Tables).Default("0")
+	t.Col(&m.TotalRows).Default("0")
+	t.Col(&m.Bytes).Default("0")
+	t.Col(&m.Report).Default("'{}'::jsonb")
+	t.Col(&m.StartedAt).Default("now()")
+	t.Col(&m.ReportedAt).Default("now()")
+	t.CheckNamed("database_backup_tests_state_check",
+		"state = ANY (ARRAY['running'::text, 'passed'::text, 'warned'::text, 'failed'::text, 'skipped'::text])")
+	t.Index(&m.Database, storm.Desc(&m.StartedAt)).Named("database_backup_tests_db_idx")
+	t.Index(&m.Backup).Named("database_backup_tests_backup_idx")
+	t.Index(&m.Database).Unique().Where("state = 'running'::text").Named("database_backup_tests_one_running")
 }
 
 // DatabaseBackup is table database_backups: one backup, running or kept, with
@@ -1007,6 +1076,7 @@ func All() []any {
 		&DatabaseAssignment{},
 		&DatabaseBackup{},
 		&DatabaseBackupSchedule{},
+		&DatabaseBackupTest{},
 		&DatabaseRestore{},
 		&DirectLoginRequest{},
 		&GatewayPolicy{},

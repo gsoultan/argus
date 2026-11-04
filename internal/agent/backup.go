@@ -83,7 +83,7 @@ func Backup(cfg BackupConfig) TunnelService {
 	if cfg.Tool == nil {
 		cfg.Tool = helperTool(cfg)
 	}
-	busy := &roleUse{}
+	busy := &serverJobs{}
 	return func(ctx context.Context, call *Call) {
 		if call.GrantKeyErr != nil {
 			call.Refuse(call.GrantKeyErr.Error())
@@ -106,14 +106,22 @@ func Backup(cfg BackupConfig) TunnelService {
 			return
 		}
 		b := *g.Backup
-		// One job per database at a time, whatever the control plane asks.
-		if b.Job == tunnel.BackupJobDump || b.Job == tunnel.BackupJobRestore {
-			if busy.add(b.DatabaseID, 1) > 1 {
-				busy.add(b.DatabaseID, -1)
-				call.Refuse("another backup or restore of this database is still running on this server")
+		// One job per database at a time, whatever the control plane asks;
+		// and a test restore, which copies a whole database, runs alone on
+		// the server.
+		switch b.Job {
+		case tunnel.BackupJobDump, tunnel.BackupJobRestore:
+			if !busy.take(b.DatabaseID) {
+				call.Refuse("another backup, restore or test restore is still running on this server")
 				return
 			}
-			defer busy.add(b.DatabaseID, -1)
+			defer busy.give(b.DatabaseID)
+		case tunnel.BackupJobTest:
+			if !busy.takeAlone(b.DatabaseID) {
+				call.Refuse("another backup, restore or test restore is still running on this server; a test restore runs alone")
+				return
+			}
+			defer busy.give(b.DatabaseID)
 		}
 		if err := call.Accept(b.BackupID); err != nil {
 			return
@@ -256,6 +264,12 @@ func (j *backupJob) run(ctx context.Context) tunnel.BackupResult {
 		return j.dump(ctx)
 	case tunnel.BackupJobRestore:
 		return j.restore(ctx, data)
+	case tunnel.BackupJobTest:
+		return j.testRestore(ctx, data)
+	case tunnel.BackupJobChecks:
+		return j.runChecks(ctx)
+	case tunnel.BackupJobDropTest:
+		return j.dropTest(ctx, j.b.Kept)
 	}
 	return j.fail("start", errors.New("unknown job"))
 }
@@ -491,25 +505,10 @@ func (j *backupJob) restore(ctx context.Context, data <-chan []byte) tunnel.Back
 	defer zero(key)
 	r := j.b.Restore
 
-	// Where the ciphertext is: on this disk, or streamed into a scratch
-	// file first so its hash can be checked before a byte is restored.
-	path := j.localPath(j.b.BackupID)
-	if r.Source == "stream" {
-		if err := os.MkdirAll(filepath.Dir(path), backupDirMode); err != nil {
-			return j.fail("start", err)
-		}
-		path = filepath.Join(filepath.Dir(path), "restore-"+filepath.Base(j.b.BackupID)+".part")
-		defer os.Remove(path)
-		j.progress("receiving", "", 0)
-		if err := j.receive(ctx, path, data); err != nil {
-			return j.fail("receiving", err)
-		}
-	}
-	j.progress("verifying", "", -1)
-	if sum, err := fileSHA256(path); err != nil {
-		return j.fail("verifying", fmt.Errorf("the backup is not on this server: %w", err))
-	} else if sum != j.b.SHA256 {
-		return j.fail("verifying", errors.New("the backup's hash is not what the control plane recorded; it was altered or replaced, so it will not be restored"))
+	path, cleanup, res := j.archive(ctx, r.Source, data)
+	defer cleanup()
+	if res != nil {
+		return *res
 	}
 
 	target := r.NewName
@@ -553,6 +552,37 @@ func (j *backupJob) restore(ctx context.Context, data <-chan []byte) tunnel.Back
 			fmt.Errorf("pg_restore failed%s: %s", errLines.where(), lastLine(strings.TrimSpace(errLines.last)))))
 	}
 	return tunnel.BackupResult{OK: true, Warnings: errLines.warnings, RenamedTo: renamed, Bytes: counting.n}
+}
+
+// archive finds the ciphertext a restore or test reads: on this disk, or
+// streamed into a scratch file first so its hash can be checked before a
+// byte is restored. A non-nil result is the failure.
+func (j *backupJob) archive(ctx context.Context, source string, data <-chan []byte) (string, func(), *tunnel.BackupResult) {
+	path := j.localPath(j.b.BackupID)
+	cleanup := func() {}
+	fail := func(stage string, err error) (string, func(), *tunnel.BackupResult) {
+		r := j.fail(stage, err)
+		return "", cleanup, &r
+	}
+	if source == "stream" {
+		if err := os.MkdirAll(filepath.Dir(path), backupDirMode); err != nil {
+			return fail("start", err)
+		}
+		path = filepath.Join(filepath.Dir(path), "restore-"+filepath.Base(j.b.BackupID)+".part")
+		p := path
+		cleanup = func() { _ = os.Remove(p) }
+		j.progress("receiving", "", 0)
+		if err := j.receive(ctx, path, data); err != nil {
+			return fail("receiving", err)
+		}
+	}
+	j.progress("verifying", "", -1)
+	if sum, err := fileSHA256(path); err != nil {
+		return fail("verifying", fmt.Errorf("the backup is not on this server: %w", err))
+	} else if sum != j.b.SHA256 {
+		return fail("verifying", errors.New("the backup's hash is not what the control plane recorded; it was altered or replaced, so it will not be restored"))
+	}
+	return path, cleanup, nil
 }
 
 // rollback puts a replaced database back after a failed restore.

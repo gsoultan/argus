@@ -6,7 +6,7 @@ import {
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconArrowLeft, IconHourglass, IconLogin2, IconServer, IconSettings,
+  IconAlertTriangle, IconArrowLeft, IconDatabase, IconHourglass, IconLogin2, IconServer, IconSettings,
   IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import {
@@ -27,6 +27,7 @@ const KIND_ICON: Record<AlertKind, typeof IconHourglass> = {
   session: IconTerminal2,
   security: IconAlertTriangle,
   server: IconServer,
+  backup: IconDatabase,
 }
 
 const TONE: Record<ConsoleAlert['severity'], string> = { info: 'slate', warning: 'amber', critical: 'rose' }

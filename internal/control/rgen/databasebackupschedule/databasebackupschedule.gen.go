@@ -20,19 +20,26 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	DatabaseID  [16]byte
-	Enabled     bool
-	Every       string
-	AtHour      int32
-	AtMinute    int32
-	Weekday     int32
-	Destination string
-	KeepLast    int32
-	KeepDays    int32
-	NextRunAt   runtime.Null[time.Time]
-	Misses      int32
-	UpdatedBy   string
-	UpdatedAt   time.Time
+	DatabaseID    [16]byte
+	Enabled       bool
+	Every         string
+	AtHour        int32
+	AtMinute      int32
+	Weekday       int32
+	Destination   string
+	KeepLast      int32
+	KeepDays      int32
+	NextRunAt     runtime.Null[time.Time]
+	Misses        int32
+	UpdatedBy     string
+	UpdatedAt     time.Time
+	TestEvery     string
+	TestHour      int32
+	TestMinute    int32
+	TestWeekday   int32
+	TestNextAt    runtime.Null[time.Time]
+	TestChecks    runtime.JSON
+	TestOverdueAt runtime.Null[time.Time]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -71,7 +78,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 13
+const nCols = 20
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -81,12 +88,13 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs                 [6]string
-	nums                 [6]int64
-	raws                 [4][16]byte
-	tims                 [4]time.Time
-	bools                [4]bool
-	ns, nn, nr, ntm, nbo uint8
+	strs                      [6]string
+	nums                      [6]int64
+	raws                      [4][16]byte
+	tims                      [4]time.Time
+	bools                     [4]bool
+	jsns                      [2]runtime.JSON
+	ns, nn, nr, ntm, nbo, njs uint8
 
 	anyRaw          [3][][16]byte
 	anyStr          [3][]string
@@ -277,6 +285,48 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.UpdatedAt
 		q.ntm++
+	case 13:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.TestEvery
+		q.ns++
+	case 14:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.TestHour)
+		q.nn++
+	case 15:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.TestMinute)
+		q.nn++
+	case 16:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.TestWeekday)
+		q.nn++
+	case 17:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.TestNextAt.V
+		q.ntm++
+	case 19:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.TestOverdueAt.V
+		q.ntm++
 	}
 }
 
@@ -429,6 +479,7 @@ type Pred struct {
 	raw    [16]byte
 	tim    time.Time
 	bol    bool
+	jsn    runtime.JSON
 	anyRaw [][16]byte
 	anyStr []string
 	anyI32 []int32
@@ -445,19 +496,26 @@ func b2i(b bool) int64 {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	DatabaseID  = UUIDCol{0}
-	Enabled     = BoolCol{1}
-	Every       = TextCol{2}
-	AtHour      = Int32Col{3}
-	AtMinute    = Int32Col{4}
-	Weekday     = Int32Col{5}
-	Destination = TextCol{6}
-	KeepLast    = Int32Col{7}
-	KeepDays    = Int32Col{8}
-	NextRunAt   = NullTimeCol{9}
-	Misses      = Int32Col{10}
-	UpdatedBy   = TextCol{11}
-	UpdatedAt   = TimeCol{12}
+	DatabaseID    = UUIDCol{0}
+	Enabled       = BoolCol{1}
+	Every         = TextCol{2}
+	AtHour        = Int32Col{3}
+	AtMinute      = Int32Col{4}
+	Weekday       = Int32Col{5}
+	Destination   = TextCol{6}
+	KeepLast      = Int32Col{7}
+	KeepDays      = Int32Col{8}
+	NextRunAt     = NullTimeCol{9}
+	Misses        = Int32Col{10}
+	UpdatedBy     = TextCol{11}
+	UpdatedAt     = TimeCol{12}
+	TestEvery     = TextCol{13}
+	TestHour      = Int32Col{14}
+	TestMinute    = Int32Col{15}
+	TestWeekday   = Int32Col{16}
+	TestNextAt    = NullTimeCol{17}
+	TestChecks    = JSONCol{18}
+	TestOverdueAt = NullTimeCol{19}
 )
 
 // UUIDCol addresses a uuid column.
@@ -588,6 +646,25 @@ func (h TimeCol) Gt(v time.Time) Pred    { return Pred{col: h.c, op: opGt, tim: 
 func (h TimeCol) Gte(v time.Time) Pred   { return Pred{col: h.c, op: opGte, tim: v} }
 func (h TimeCol) Lt(v time.Time) Pred    { return Pred{col: h.c, op: opLt, tim: v} }
 func (h TimeCol) Lte(v time.Time) Pred   { return Pred{col: h.c, op: opLte, tim: v} }
+
+// JSONCol addresses a jsonb column.
+type JSONCol struct{ c uint8 }
+
+func (h JSONCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h JSONCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h JSONCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h JSONCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h JSONCol) Contains(v runtime.JSON) Pred { return Pred{col: h.c, op: opJSONContains, jsn: v} }
+func (h JSONCol) ContainedBy(v runtime.JSON) Pred {
+	return Pred{col: h.c, op: opJSONContainedBy, jsn: v}
+}
+func (h JSONCol) HasAnyKey(v ...string) Pred  { return Pred{col: h.c, op: opHasAnyKey, anyStr: v} }
+func (h JSONCol) HasAllKeys(v ...string) Pred { return Pred{col: h.c, op: opHasAllKeys, anyStr: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -800,6 +877,41 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 13:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 14:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 15:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 16:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 18:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -900,114 +1012,218 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 13:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 14:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 15:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 16:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 17:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 18:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 19:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) DatabaseIDEq(v [16]byte) Query       { return q.Where(DatabaseID.Eq(v)) }
-func (q Query) DatabaseIDNotEq(v [16]byte) Query    { return q.Where(DatabaseID.NotEq(v)) }
-func (q Query) DatabaseIDIn(v ...[16]byte) Query    { return q.Where(DatabaseID.In(v...)) }
-func (q Query) DatabaseIDNotIn(v ...[16]byte) Query { return q.Where(DatabaseID.NotIn(v...)) }
-func (q Query) EnabledEq(v bool) Query              { return q.Where(Enabled.Eq(v)) }
-func (q Query) EnabledNotEq(v bool) Query           { return q.Where(Enabled.NotEq(v)) }
-func (q Query) EveryEq(v string) Query              { return q.Where(Every.Eq(v)) }
-func (q Query) EveryNotEq(v string) Query           { return q.Where(Every.NotEq(v)) }
-func (q Query) EveryGt(v string) Query              { return q.Where(Every.Gt(v)) }
-func (q Query) EveryGte(v string) Query             { return q.Where(Every.Gte(v)) }
-func (q Query) EveryLt(v string) Query              { return q.Where(Every.Lt(v)) }
-func (q Query) EveryLte(v string) Query             { return q.Where(Every.Lte(v)) }
-func (q Query) EveryEqLower(v string) Query         { return q.Where(Every.EqLower(v)) }
-func (q Query) EveryLike(v string) Query            { return q.Where(Every.Like(v)) }
-func (q Query) EveryILike(v string) Query           { return q.Where(Every.ILike(v)) }
-func (q Query) EveryIn(v ...string) Query           { return q.Where(Every.In(v...)) }
-func (q Query) EveryNotIn(v ...string) Query        { return q.Where(Every.NotIn(v...)) }
-func (q Query) AtHourEq(v int32) Query              { return q.Where(AtHour.Eq(v)) }
-func (q Query) AtHourNotEq(v int32) Query           { return q.Where(AtHour.NotEq(v)) }
-func (q Query) AtHourGt(v int32) Query              { return q.Where(AtHour.Gt(v)) }
-func (q Query) AtHourGte(v int32) Query             { return q.Where(AtHour.Gte(v)) }
-func (q Query) AtHourLt(v int32) Query              { return q.Where(AtHour.Lt(v)) }
-func (q Query) AtHourLte(v int32) Query             { return q.Where(AtHour.Lte(v)) }
-func (q Query) AtHourIn(v ...int32) Query           { return q.Where(AtHour.In(v...)) }
-func (q Query) AtHourNotIn(v ...int32) Query        { return q.Where(AtHour.NotIn(v...)) }
-func (q Query) AtMinuteEq(v int32) Query            { return q.Where(AtMinute.Eq(v)) }
-func (q Query) AtMinuteNotEq(v int32) Query         { return q.Where(AtMinute.NotEq(v)) }
-func (q Query) AtMinuteGt(v int32) Query            { return q.Where(AtMinute.Gt(v)) }
-func (q Query) AtMinuteGte(v int32) Query           { return q.Where(AtMinute.Gte(v)) }
-func (q Query) AtMinuteLt(v int32) Query            { return q.Where(AtMinute.Lt(v)) }
-func (q Query) AtMinuteLte(v int32) Query           { return q.Where(AtMinute.Lte(v)) }
-func (q Query) AtMinuteIn(v ...int32) Query         { return q.Where(AtMinute.In(v...)) }
-func (q Query) AtMinuteNotIn(v ...int32) Query      { return q.Where(AtMinute.NotIn(v...)) }
-func (q Query) WeekdayEq(v int32) Query             { return q.Where(Weekday.Eq(v)) }
-func (q Query) WeekdayNotEq(v int32) Query          { return q.Where(Weekday.NotEq(v)) }
-func (q Query) WeekdayGt(v int32) Query             { return q.Where(Weekday.Gt(v)) }
-func (q Query) WeekdayGte(v int32) Query            { return q.Where(Weekday.Gte(v)) }
-func (q Query) WeekdayLt(v int32) Query             { return q.Where(Weekday.Lt(v)) }
-func (q Query) WeekdayLte(v int32) Query            { return q.Where(Weekday.Lte(v)) }
-func (q Query) WeekdayIn(v ...int32) Query          { return q.Where(Weekday.In(v...)) }
-func (q Query) WeekdayNotIn(v ...int32) Query       { return q.Where(Weekday.NotIn(v...)) }
-func (q Query) DestinationEq(v string) Query        { return q.Where(Destination.Eq(v)) }
-func (q Query) DestinationNotEq(v string) Query     { return q.Where(Destination.NotEq(v)) }
-func (q Query) DestinationGt(v string) Query        { return q.Where(Destination.Gt(v)) }
-func (q Query) DestinationGte(v string) Query       { return q.Where(Destination.Gte(v)) }
-func (q Query) DestinationLt(v string) Query        { return q.Where(Destination.Lt(v)) }
-func (q Query) DestinationLte(v string) Query       { return q.Where(Destination.Lte(v)) }
-func (q Query) DestinationEqLower(v string) Query   { return q.Where(Destination.EqLower(v)) }
-func (q Query) DestinationLike(v string) Query      { return q.Where(Destination.Like(v)) }
-func (q Query) DestinationILike(v string) Query     { return q.Where(Destination.ILike(v)) }
-func (q Query) DestinationIn(v ...string) Query     { return q.Where(Destination.In(v...)) }
-func (q Query) DestinationNotIn(v ...string) Query  { return q.Where(Destination.NotIn(v...)) }
-func (q Query) KeepLastEq(v int32) Query            { return q.Where(KeepLast.Eq(v)) }
-func (q Query) KeepLastNotEq(v int32) Query         { return q.Where(KeepLast.NotEq(v)) }
-func (q Query) KeepLastGt(v int32) Query            { return q.Where(KeepLast.Gt(v)) }
-func (q Query) KeepLastGte(v int32) Query           { return q.Where(KeepLast.Gte(v)) }
-func (q Query) KeepLastLt(v int32) Query            { return q.Where(KeepLast.Lt(v)) }
-func (q Query) KeepLastLte(v int32) Query           { return q.Where(KeepLast.Lte(v)) }
-func (q Query) KeepLastIn(v ...int32) Query         { return q.Where(KeepLast.In(v...)) }
-func (q Query) KeepLastNotIn(v ...int32) Query      { return q.Where(KeepLast.NotIn(v...)) }
-func (q Query) KeepDaysEq(v int32) Query            { return q.Where(KeepDays.Eq(v)) }
-func (q Query) KeepDaysNotEq(v int32) Query         { return q.Where(KeepDays.NotEq(v)) }
-func (q Query) KeepDaysGt(v int32) Query            { return q.Where(KeepDays.Gt(v)) }
-func (q Query) KeepDaysGte(v int32) Query           { return q.Where(KeepDays.Gte(v)) }
-func (q Query) KeepDaysLt(v int32) Query            { return q.Where(KeepDays.Lt(v)) }
-func (q Query) KeepDaysLte(v int32) Query           { return q.Where(KeepDays.Lte(v)) }
-func (q Query) KeepDaysIn(v ...int32) Query         { return q.Where(KeepDays.In(v...)) }
-func (q Query) KeepDaysNotIn(v ...int32) Query      { return q.Where(KeepDays.NotIn(v...)) }
-func (q Query) NextRunAtEq(v time.Time) Query       { return q.Where(NextRunAt.Eq(v)) }
-func (q Query) NextRunAtNotEq(v time.Time) Query    { return q.Where(NextRunAt.NotEq(v)) }
-func (q Query) NextRunAtGt(v time.Time) Query       { return q.Where(NextRunAt.Gt(v)) }
-func (q Query) NextRunAtGte(v time.Time) Query      { return q.Where(NextRunAt.Gte(v)) }
-func (q Query) NextRunAtLt(v time.Time) Query       { return q.Where(NextRunAt.Lt(v)) }
-func (q Query) NextRunAtLte(v time.Time) Query      { return q.Where(NextRunAt.Lte(v)) }
-func (q Query) NextRunAtIsNull() Query              { return q.Where(NextRunAt.IsNull()) }
-func (q Query) NextRunAtIsNotNull() Query           { return q.Where(NextRunAt.IsNotNull()) }
-func (q Query) MissesEq(v int32) Query              { return q.Where(Misses.Eq(v)) }
-func (q Query) MissesNotEq(v int32) Query           { return q.Where(Misses.NotEq(v)) }
-func (q Query) MissesGt(v int32) Query              { return q.Where(Misses.Gt(v)) }
-func (q Query) MissesGte(v int32) Query             { return q.Where(Misses.Gte(v)) }
-func (q Query) MissesLt(v int32) Query              { return q.Where(Misses.Lt(v)) }
-func (q Query) MissesLte(v int32) Query             { return q.Where(Misses.Lte(v)) }
-func (q Query) MissesIn(v ...int32) Query           { return q.Where(Misses.In(v...)) }
-func (q Query) MissesNotIn(v ...int32) Query        { return q.Where(Misses.NotIn(v...)) }
-func (q Query) UpdatedByEq(v string) Query          { return q.Where(UpdatedBy.Eq(v)) }
-func (q Query) UpdatedByNotEq(v string) Query       { return q.Where(UpdatedBy.NotEq(v)) }
-func (q Query) UpdatedByGt(v string) Query          { return q.Where(UpdatedBy.Gt(v)) }
-func (q Query) UpdatedByGte(v string) Query         { return q.Where(UpdatedBy.Gte(v)) }
-func (q Query) UpdatedByLt(v string) Query          { return q.Where(UpdatedBy.Lt(v)) }
-func (q Query) UpdatedByLte(v string) Query         { return q.Where(UpdatedBy.Lte(v)) }
-func (q Query) UpdatedByEqLower(v string) Query     { return q.Where(UpdatedBy.EqLower(v)) }
-func (q Query) UpdatedByLike(v string) Query        { return q.Where(UpdatedBy.Like(v)) }
-func (q Query) UpdatedByILike(v string) Query       { return q.Where(UpdatedBy.ILike(v)) }
-func (q Query) UpdatedByIn(v ...string) Query       { return q.Where(UpdatedBy.In(v...)) }
-func (q Query) UpdatedByNotIn(v ...string) Query    { return q.Where(UpdatedBy.NotIn(v...)) }
-func (q Query) UpdatedAtEq(v time.Time) Query       { return q.Where(UpdatedAt.Eq(v)) }
-func (q Query) UpdatedAtNotEq(v time.Time) Query    { return q.Where(UpdatedAt.NotEq(v)) }
-func (q Query) UpdatedAtGt(v time.Time) Query       { return q.Where(UpdatedAt.Gt(v)) }
-func (q Query) UpdatedAtGte(v time.Time) Query      { return q.Where(UpdatedAt.Gte(v)) }
-func (q Query) UpdatedAtLt(v time.Time) Query       { return q.Where(UpdatedAt.Lt(v)) }
-func (q Query) UpdatedAtLte(v time.Time) Query      { return q.Where(UpdatedAt.Lte(v)) }
+func (q Query) DatabaseIDEq(v [16]byte) Query              { return q.Where(DatabaseID.Eq(v)) }
+func (q Query) DatabaseIDNotEq(v [16]byte) Query           { return q.Where(DatabaseID.NotEq(v)) }
+func (q Query) DatabaseIDIn(v ...[16]byte) Query           { return q.Where(DatabaseID.In(v...)) }
+func (q Query) DatabaseIDNotIn(v ...[16]byte) Query        { return q.Where(DatabaseID.NotIn(v...)) }
+func (q Query) EnabledEq(v bool) Query                     { return q.Where(Enabled.Eq(v)) }
+func (q Query) EnabledNotEq(v bool) Query                  { return q.Where(Enabled.NotEq(v)) }
+func (q Query) EveryEq(v string) Query                     { return q.Where(Every.Eq(v)) }
+func (q Query) EveryNotEq(v string) Query                  { return q.Where(Every.NotEq(v)) }
+func (q Query) EveryGt(v string) Query                     { return q.Where(Every.Gt(v)) }
+func (q Query) EveryGte(v string) Query                    { return q.Where(Every.Gte(v)) }
+func (q Query) EveryLt(v string) Query                     { return q.Where(Every.Lt(v)) }
+func (q Query) EveryLte(v string) Query                    { return q.Where(Every.Lte(v)) }
+func (q Query) EveryEqLower(v string) Query                { return q.Where(Every.EqLower(v)) }
+func (q Query) EveryLike(v string) Query                   { return q.Where(Every.Like(v)) }
+func (q Query) EveryILike(v string) Query                  { return q.Where(Every.ILike(v)) }
+func (q Query) EveryIn(v ...string) Query                  { return q.Where(Every.In(v...)) }
+func (q Query) EveryNotIn(v ...string) Query               { return q.Where(Every.NotIn(v...)) }
+func (q Query) AtHourEq(v int32) Query                     { return q.Where(AtHour.Eq(v)) }
+func (q Query) AtHourNotEq(v int32) Query                  { return q.Where(AtHour.NotEq(v)) }
+func (q Query) AtHourGt(v int32) Query                     { return q.Where(AtHour.Gt(v)) }
+func (q Query) AtHourGte(v int32) Query                    { return q.Where(AtHour.Gte(v)) }
+func (q Query) AtHourLt(v int32) Query                     { return q.Where(AtHour.Lt(v)) }
+func (q Query) AtHourLte(v int32) Query                    { return q.Where(AtHour.Lte(v)) }
+func (q Query) AtHourIn(v ...int32) Query                  { return q.Where(AtHour.In(v...)) }
+func (q Query) AtHourNotIn(v ...int32) Query               { return q.Where(AtHour.NotIn(v...)) }
+func (q Query) AtMinuteEq(v int32) Query                   { return q.Where(AtMinute.Eq(v)) }
+func (q Query) AtMinuteNotEq(v int32) Query                { return q.Where(AtMinute.NotEq(v)) }
+func (q Query) AtMinuteGt(v int32) Query                   { return q.Where(AtMinute.Gt(v)) }
+func (q Query) AtMinuteGte(v int32) Query                  { return q.Where(AtMinute.Gte(v)) }
+func (q Query) AtMinuteLt(v int32) Query                   { return q.Where(AtMinute.Lt(v)) }
+func (q Query) AtMinuteLte(v int32) Query                  { return q.Where(AtMinute.Lte(v)) }
+func (q Query) AtMinuteIn(v ...int32) Query                { return q.Where(AtMinute.In(v...)) }
+func (q Query) AtMinuteNotIn(v ...int32) Query             { return q.Where(AtMinute.NotIn(v...)) }
+func (q Query) WeekdayEq(v int32) Query                    { return q.Where(Weekday.Eq(v)) }
+func (q Query) WeekdayNotEq(v int32) Query                 { return q.Where(Weekday.NotEq(v)) }
+func (q Query) WeekdayGt(v int32) Query                    { return q.Where(Weekday.Gt(v)) }
+func (q Query) WeekdayGte(v int32) Query                   { return q.Where(Weekday.Gte(v)) }
+func (q Query) WeekdayLt(v int32) Query                    { return q.Where(Weekday.Lt(v)) }
+func (q Query) WeekdayLte(v int32) Query                   { return q.Where(Weekday.Lte(v)) }
+func (q Query) WeekdayIn(v ...int32) Query                 { return q.Where(Weekday.In(v...)) }
+func (q Query) WeekdayNotIn(v ...int32) Query              { return q.Where(Weekday.NotIn(v...)) }
+func (q Query) DestinationEq(v string) Query               { return q.Where(Destination.Eq(v)) }
+func (q Query) DestinationNotEq(v string) Query            { return q.Where(Destination.NotEq(v)) }
+func (q Query) DestinationGt(v string) Query               { return q.Where(Destination.Gt(v)) }
+func (q Query) DestinationGte(v string) Query              { return q.Where(Destination.Gte(v)) }
+func (q Query) DestinationLt(v string) Query               { return q.Where(Destination.Lt(v)) }
+func (q Query) DestinationLte(v string) Query              { return q.Where(Destination.Lte(v)) }
+func (q Query) DestinationEqLower(v string) Query          { return q.Where(Destination.EqLower(v)) }
+func (q Query) DestinationLike(v string) Query             { return q.Where(Destination.Like(v)) }
+func (q Query) DestinationILike(v string) Query            { return q.Where(Destination.ILike(v)) }
+func (q Query) DestinationIn(v ...string) Query            { return q.Where(Destination.In(v...)) }
+func (q Query) DestinationNotIn(v ...string) Query         { return q.Where(Destination.NotIn(v...)) }
+func (q Query) KeepLastEq(v int32) Query                   { return q.Where(KeepLast.Eq(v)) }
+func (q Query) KeepLastNotEq(v int32) Query                { return q.Where(KeepLast.NotEq(v)) }
+func (q Query) KeepLastGt(v int32) Query                   { return q.Where(KeepLast.Gt(v)) }
+func (q Query) KeepLastGte(v int32) Query                  { return q.Where(KeepLast.Gte(v)) }
+func (q Query) KeepLastLt(v int32) Query                   { return q.Where(KeepLast.Lt(v)) }
+func (q Query) KeepLastLte(v int32) Query                  { return q.Where(KeepLast.Lte(v)) }
+func (q Query) KeepLastIn(v ...int32) Query                { return q.Where(KeepLast.In(v...)) }
+func (q Query) KeepLastNotIn(v ...int32) Query             { return q.Where(KeepLast.NotIn(v...)) }
+func (q Query) KeepDaysEq(v int32) Query                   { return q.Where(KeepDays.Eq(v)) }
+func (q Query) KeepDaysNotEq(v int32) Query                { return q.Where(KeepDays.NotEq(v)) }
+func (q Query) KeepDaysGt(v int32) Query                   { return q.Where(KeepDays.Gt(v)) }
+func (q Query) KeepDaysGte(v int32) Query                  { return q.Where(KeepDays.Gte(v)) }
+func (q Query) KeepDaysLt(v int32) Query                   { return q.Where(KeepDays.Lt(v)) }
+func (q Query) KeepDaysLte(v int32) Query                  { return q.Where(KeepDays.Lte(v)) }
+func (q Query) KeepDaysIn(v ...int32) Query                { return q.Where(KeepDays.In(v...)) }
+func (q Query) KeepDaysNotIn(v ...int32) Query             { return q.Where(KeepDays.NotIn(v...)) }
+func (q Query) NextRunAtEq(v time.Time) Query              { return q.Where(NextRunAt.Eq(v)) }
+func (q Query) NextRunAtNotEq(v time.Time) Query           { return q.Where(NextRunAt.NotEq(v)) }
+func (q Query) NextRunAtGt(v time.Time) Query              { return q.Where(NextRunAt.Gt(v)) }
+func (q Query) NextRunAtGte(v time.Time) Query             { return q.Where(NextRunAt.Gte(v)) }
+func (q Query) NextRunAtLt(v time.Time) Query              { return q.Where(NextRunAt.Lt(v)) }
+func (q Query) NextRunAtLte(v time.Time) Query             { return q.Where(NextRunAt.Lte(v)) }
+func (q Query) NextRunAtIsNull() Query                     { return q.Where(NextRunAt.IsNull()) }
+func (q Query) NextRunAtIsNotNull() Query                  { return q.Where(NextRunAt.IsNotNull()) }
+func (q Query) MissesEq(v int32) Query                     { return q.Where(Misses.Eq(v)) }
+func (q Query) MissesNotEq(v int32) Query                  { return q.Where(Misses.NotEq(v)) }
+func (q Query) MissesGt(v int32) Query                     { return q.Where(Misses.Gt(v)) }
+func (q Query) MissesGte(v int32) Query                    { return q.Where(Misses.Gte(v)) }
+func (q Query) MissesLt(v int32) Query                     { return q.Where(Misses.Lt(v)) }
+func (q Query) MissesLte(v int32) Query                    { return q.Where(Misses.Lte(v)) }
+func (q Query) MissesIn(v ...int32) Query                  { return q.Where(Misses.In(v...)) }
+func (q Query) MissesNotIn(v ...int32) Query               { return q.Where(Misses.NotIn(v...)) }
+func (q Query) UpdatedByEq(v string) Query                 { return q.Where(UpdatedBy.Eq(v)) }
+func (q Query) UpdatedByNotEq(v string) Query              { return q.Where(UpdatedBy.NotEq(v)) }
+func (q Query) UpdatedByGt(v string) Query                 { return q.Where(UpdatedBy.Gt(v)) }
+func (q Query) UpdatedByGte(v string) Query                { return q.Where(UpdatedBy.Gte(v)) }
+func (q Query) UpdatedByLt(v string) Query                 { return q.Where(UpdatedBy.Lt(v)) }
+func (q Query) UpdatedByLte(v string) Query                { return q.Where(UpdatedBy.Lte(v)) }
+func (q Query) UpdatedByEqLower(v string) Query            { return q.Where(UpdatedBy.EqLower(v)) }
+func (q Query) UpdatedByLike(v string) Query               { return q.Where(UpdatedBy.Like(v)) }
+func (q Query) UpdatedByILike(v string) Query              { return q.Where(UpdatedBy.ILike(v)) }
+func (q Query) UpdatedByIn(v ...string) Query              { return q.Where(UpdatedBy.In(v...)) }
+func (q Query) UpdatedByNotIn(v ...string) Query           { return q.Where(UpdatedBy.NotIn(v...)) }
+func (q Query) UpdatedAtEq(v time.Time) Query              { return q.Where(UpdatedAt.Eq(v)) }
+func (q Query) UpdatedAtNotEq(v time.Time) Query           { return q.Where(UpdatedAt.NotEq(v)) }
+func (q Query) UpdatedAtGt(v time.Time) Query              { return q.Where(UpdatedAt.Gt(v)) }
+func (q Query) UpdatedAtGte(v time.Time) Query             { return q.Where(UpdatedAt.Gte(v)) }
+func (q Query) UpdatedAtLt(v time.Time) Query              { return q.Where(UpdatedAt.Lt(v)) }
+func (q Query) UpdatedAtLte(v time.Time) Query             { return q.Where(UpdatedAt.Lte(v)) }
+func (q Query) TestEveryEq(v string) Query                 { return q.Where(TestEvery.Eq(v)) }
+func (q Query) TestEveryNotEq(v string) Query              { return q.Where(TestEvery.NotEq(v)) }
+func (q Query) TestEveryGt(v string) Query                 { return q.Where(TestEvery.Gt(v)) }
+func (q Query) TestEveryGte(v string) Query                { return q.Where(TestEvery.Gte(v)) }
+func (q Query) TestEveryLt(v string) Query                 { return q.Where(TestEvery.Lt(v)) }
+func (q Query) TestEveryLte(v string) Query                { return q.Where(TestEvery.Lte(v)) }
+func (q Query) TestEveryEqLower(v string) Query            { return q.Where(TestEvery.EqLower(v)) }
+func (q Query) TestEveryLike(v string) Query               { return q.Where(TestEvery.Like(v)) }
+func (q Query) TestEveryILike(v string) Query              { return q.Where(TestEvery.ILike(v)) }
+func (q Query) TestEveryIn(v ...string) Query              { return q.Where(TestEvery.In(v...)) }
+func (q Query) TestEveryNotIn(v ...string) Query           { return q.Where(TestEvery.NotIn(v...)) }
+func (q Query) TestHourEq(v int32) Query                   { return q.Where(TestHour.Eq(v)) }
+func (q Query) TestHourNotEq(v int32) Query                { return q.Where(TestHour.NotEq(v)) }
+func (q Query) TestHourGt(v int32) Query                   { return q.Where(TestHour.Gt(v)) }
+func (q Query) TestHourGte(v int32) Query                  { return q.Where(TestHour.Gte(v)) }
+func (q Query) TestHourLt(v int32) Query                   { return q.Where(TestHour.Lt(v)) }
+func (q Query) TestHourLte(v int32) Query                  { return q.Where(TestHour.Lte(v)) }
+func (q Query) TestHourIn(v ...int32) Query                { return q.Where(TestHour.In(v...)) }
+func (q Query) TestHourNotIn(v ...int32) Query             { return q.Where(TestHour.NotIn(v...)) }
+func (q Query) TestMinuteEq(v int32) Query                 { return q.Where(TestMinute.Eq(v)) }
+func (q Query) TestMinuteNotEq(v int32) Query              { return q.Where(TestMinute.NotEq(v)) }
+func (q Query) TestMinuteGt(v int32) Query                 { return q.Where(TestMinute.Gt(v)) }
+func (q Query) TestMinuteGte(v int32) Query                { return q.Where(TestMinute.Gte(v)) }
+func (q Query) TestMinuteLt(v int32) Query                 { return q.Where(TestMinute.Lt(v)) }
+func (q Query) TestMinuteLte(v int32) Query                { return q.Where(TestMinute.Lte(v)) }
+func (q Query) TestMinuteIn(v ...int32) Query              { return q.Where(TestMinute.In(v...)) }
+func (q Query) TestMinuteNotIn(v ...int32) Query           { return q.Where(TestMinute.NotIn(v...)) }
+func (q Query) TestWeekdayEq(v int32) Query                { return q.Where(TestWeekday.Eq(v)) }
+func (q Query) TestWeekdayNotEq(v int32) Query             { return q.Where(TestWeekday.NotEq(v)) }
+func (q Query) TestWeekdayGt(v int32) Query                { return q.Where(TestWeekday.Gt(v)) }
+func (q Query) TestWeekdayGte(v int32) Query               { return q.Where(TestWeekday.Gte(v)) }
+func (q Query) TestWeekdayLt(v int32) Query                { return q.Where(TestWeekday.Lt(v)) }
+func (q Query) TestWeekdayLte(v int32) Query               { return q.Where(TestWeekday.Lte(v)) }
+func (q Query) TestWeekdayIn(v ...int32) Query             { return q.Where(TestWeekday.In(v...)) }
+func (q Query) TestWeekdayNotIn(v ...int32) Query          { return q.Where(TestWeekday.NotIn(v...)) }
+func (q Query) TestNextAtEq(v time.Time) Query             { return q.Where(TestNextAt.Eq(v)) }
+func (q Query) TestNextAtNotEq(v time.Time) Query          { return q.Where(TestNextAt.NotEq(v)) }
+func (q Query) TestNextAtGt(v time.Time) Query             { return q.Where(TestNextAt.Gt(v)) }
+func (q Query) TestNextAtGte(v time.Time) Query            { return q.Where(TestNextAt.Gte(v)) }
+func (q Query) TestNextAtLt(v time.Time) Query             { return q.Where(TestNextAt.Lt(v)) }
+func (q Query) TestNextAtLte(v time.Time) Query            { return q.Where(TestNextAt.Lte(v)) }
+func (q Query) TestNextAtIsNull() Query                    { return q.Where(TestNextAt.IsNull()) }
+func (q Query) TestNextAtIsNotNull() Query                 { return q.Where(TestNextAt.IsNotNull()) }
+func (q Query) TestChecksContains(v runtime.JSON) Query    { return q.Where(TestChecks.Contains(v)) }
+func (q Query) TestChecksContainedBy(v runtime.JSON) Query { return q.Where(TestChecks.ContainedBy(v)) }
+func (q Query) TestChecksHasAnyKey(v ...string) Query      { return q.Where(TestChecks.HasAnyKey(v...)) }
+func (q Query) TestChecksHasAllKeys(v ...string) Query     { return q.Where(TestChecks.HasAllKeys(v...)) }
+func (q Query) TestOverdueAtEq(v time.Time) Query          { return q.Where(TestOverdueAt.Eq(v)) }
+func (q Query) TestOverdueAtNotEq(v time.Time) Query       { return q.Where(TestOverdueAt.NotEq(v)) }
+func (q Query) TestOverdueAtGt(v time.Time) Query          { return q.Where(TestOverdueAt.Gt(v)) }
+func (q Query) TestOverdueAtGte(v time.Time) Query         { return q.Where(TestOverdueAt.Gte(v)) }
+func (q Query) TestOverdueAtLt(v time.Time) Query          { return q.Where(TestOverdueAt.Lt(v)) }
+func (q Query) TestOverdueAtLte(v time.Time) Query         { return q.Where(TestOverdueAt.Lte(v)) }
+func (q Query) TestOverdueAtIsNull() Query                 { return q.Where(TestOverdueAt.IsNull()) }
+func (q Query) TestOverdueAtIsNotNull() Query              { return q.Where(TestOverdueAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "database_id", "enabled", "every", "at_hour", "at_minute", "weekday", "destination", "keep_last", "keep_days", "next_run_at", "misses", "updated_by", "updated_at" FROM "database_backup_schedules"`
+const selectPrefix = `SELECT "database_id", "enabled", "every", "at_hour", "at_minute", "weekday", "destination", "keep_last", "keep_days", "next_run_at", "misses", "updated_by", "updated_at", "test_every", "test_hour", "test_minute", "test_weekday", "test_next_at", "test_checks", "test_overdue_at" FROM "database_backup_schedules"`
 const countPrefix = `SELECT count(*) FROM "database_backup_schedules"`
 const existsPrefix = `SELECT 1 FROM "database_backup_schedules"`
 const existsSuffix = ` LIMIT 1`
@@ -1122,6 +1338,48 @@ var orderTable = [nCols][4]string{
 		"\"updated_at\" ASC NULLS FIRST",
 		"\"updated_at\" DESC NULLS LAST",
 	},
+	{ // test_every
+		"\"test_every\"",
+		"\"test_every\" DESC",
+		"\"test_every\" ASC NULLS FIRST",
+		"\"test_every\" DESC NULLS LAST",
+	},
+	{ // test_hour
+		"\"test_hour\"",
+		"\"test_hour\" DESC",
+		"\"test_hour\" ASC NULLS FIRST",
+		"\"test_hour\" DESC NULLS LAST",
+	},
+	{ // test_minute
+		"\"test_minute\"",
+		"\"test_minute\" DESC",
+		"\"test_minute\" ASC NULLS FIRST",
+		"\"test_minute\" DESC NULLS LAST",
+	},
+	{ // test_weekday
+		"\"test_weekday\"",
+		"\"test_weekday\" DESC",
+		"\"test_weekday\" ASC NULLS FIRST",
+		"\"test_weekday\" DESC NULLS LAST",
+	},
+	{ // test_next_at
+		"\"test_next_at\"",
+		"\"test_next_at\" DESC",
+		"\"test_next_at\" ASC NULLS FIRST",
+		"\"test_next_at\" DESC NULLS LAST",
+	},
+	{ // test_checks
+		"\"test_checks\"",
+		"\"test_checks\" DESC",
+		"\"test_checks\" ASC NULLS FIRST",
+		"\"test_checks\" DESC NULLS LAST",
+	},
+	{ // test_overdue_at
+		"\"test_overdue_at\"",
+		"\"test_overdue_at\" DESC",
+		"\"test_overdue_at\" ASC NULLS FIRST",
+		"\"test_overdue_at\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1140,6 +1398,13 @@ var identTable = [nCols]string{
 	"\"misses\"",
 	"\"updated_by\"",
 	"\"updated_at\"",
+	"\"test_every\"",
+	"\"test_hour\"",
+	"\"test_minute\"",
+	"\"test_weekday\"",
+	"\"test_next_at\"",
+	"\"test_checks\"",
+	"\"test_overdue_at\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1172,7 +1437,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [13][28]runtime.Frag{
+var fragTable = [20][28]runtime.Frag{
 	{ // database_id
 		{}, // opNone
 		{A: "\"database_id\" = $", B: ""},
@@ -1563,6 +1828,216 @@ var fragTable = [13][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // test_every
+		{}, // opNone
+		{A: "\"test_every\" = $", B: ""},
+		{A: "\"test_every\" <> $", B: ""},
+		{A: "\"test_every\" > $", B: ""},
+		{A: "\"test_every\" >= $", B: ""},
+		{A: "\"test_every\" < $", B: ""},
+		{A: "\"test_every\" <= $", B: ""},
+		{A: "lower(\"test_every\") = lower($", B: ")"},
+		{A: "\"test_every\" LIKE $", B: ""},
+		{A: "\"test_every\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"test_every\" = ANY($", B: ")"},
+		{A: "\"test_every\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // test_hour
+		{}, // opNone
+		{A: "\"test_hour\" = $", B: ""},
+		{A: "\"test_hour\" <> $", B: ""},
+		{A: "\"test_hour\" > $", B: ""},
+		{A: "\"test_hour\" >= $", B: ""},
+		{A: "\"test_hour\" < $", B: ""},
+		{A: "\"test_hour\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"test_hour\" = ANY($", B: ")"},
+		{A: "\"test_hour\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // test_minute
+		{}, // opNone
+		{A: "\"test_minute\" = $", B: ""},
+		{A: "\"test_minute\" <> $", B: ""},
+		{A: "\"test_minute\" > $", B: ""},
+		{A: "\"test_minute\" >= $", B: ""},
+		{A: "\"test_minute\" < $", B: ""},
+		{A: "\"test_minute\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"test_minute\" = ANY($", B: ")"},
+		{A: "\"test_minute\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // test_weekday
+		{}, // opNone
+		{A: "\"test_weekday\" = $", B: ""},
+		{A: "\"test_weekday\" <> $", B: ""},
+		{A: "\"test_weekday\" > $", B: ""},
+		{A: "\"test_weekday\" >= $", B: ""},
+		{A: "\"test_weekday\" < $", B: ""},
+		{A: "\"test_weekday\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"test_weekday\" = ANY($", B: ")"},
+		{A: "\"test_weekday\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // test_next_at
+		{}, // opNone
+		{A: "\"test_next_at\" = $", B: ""},
+		{A: "\"test_next_at\" <> $", B: ""},
+		{A: "\"test_next_at\" > $", B: ""},
+		{A: "\"test_next_at\" >= $", B: ""},
+		{A: "\"test_next_at\" < $", B: ""},
+		{A: "\"test_next_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"test_next_at\" IS NULL", B: ""},
+		{A: "\"test_next_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // test_checks
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"test_checks\" @> $", B: ""},
+		{A: "\"test_checks\" <@ $", B: ""},
+		{A: "\"test_checks\" ?| $", B: ""},
+		{A: "\"test_checks\" ?& $", B: ""},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // test_overdue_at
+		{}, // opNone
+		{A: "\"test_overdue_at\" = $", B: ""},
+		{A: "\"test_overdue_at\" <> $", B: ""},
+		{A: "\"test_overdue_at\" > $", B: ""},
+		{A: "\"test_overdue_at\" >= $", B: ""},
+		{A: "\"test_overdue_at\" < $", B: ""},
+		{A: "\"test_overdue_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"test_overdue_at\" IS NULL", B: ""},
+		{A: "\"test_overdue_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1732,6 +2207,13 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Misses = runtime.Int4(rv[10])
 	r.UpdatedBy = sl.Str(rv[11])
 	r.UpdatedAt = runtime.Timestamptz(rv[12])
+	r.TestEvery = sl.Str(rv[13])
+	r.TestHour = runtime.Int4(rv[14])
+	r.TestMinute = runtime.Int4(rv[15])
+	r.TestWeekday = runtime.Int4(rv[16])
+	r.TestNextAt = runtime.Nullable(rv[17], runtime.Timestamptz)
+	r.TestChecks = runtime.JSON(runtime.JSONB(rv[18], sl))
+	r.TestOverdueAt = runtime.Nullable(rv[19], runtime.Timestamptz)
 	return nil
 }
 
@@ -1742,6 +2224,7 @@ type binder struct {
 	raws   [4][16]byte
 	tims   [4]time.Time
 	bools  [4]bool
+	jsns   [2]runtime.JSON
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	anyI32 [3][]int32
@@ -1786,7 +2269,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nn, nr, ntm, nbo, nar, nas, nai32 uint8
+	var ns, nn, nr, ntm, nbo, njs, nar, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1839,6 +2322,26 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyI32[nai32])
 				nai32++
 			case 11:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 13:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 14:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 15:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 16:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 18:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1895,6 +2398,34 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.strs[ns])
 			ns++
 		case 12:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 13:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 14:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 15:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 16:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 17:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 18:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 19:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
@@ -2035,7 +2566,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "database_backup_schedules" ("database_id", "enabled", "every", "at_hour", "at_minute", "weekday", "destination", "keep_last", "keep_days", "next_run_at", "misses", "updated_by", "updated_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING "database_id", "enabled", "every", "at_hour", "at_minute", "weekday", "destination", "keep_last", "keep_days", "next_run_at", "misses", "updated_by", "updated_at"`
+const insertSQL = `INSERT INTO "database_backup_schedules" ("database_id", "enabled", "every", "at_hour", "at_minute", "weekday", "destination", "keep_last", "keep_days", "next_run_at", "misses", "updated_by", "updated_at", "test_every", "test_hour", "test_minute", "test_weekday", "test_next_at", "test_checks", "test_overdue_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING "database_id", "enabled", "every", "at_hour", "at_minute", "weekday", "destination", "keep_last", "keep_days", "next_run_at", "misses", "updated_by", "updated_at", "test_every", "test_hour", "test_minute", "test_weekday", "test_next_at", "test_checks", "test_overdue_at"`
 
 const updatePrefix = `UPDATE "database_backup_schedules" SET `
 const deletePrefix = `DELETE FROM "database_backup_schedules"`
@@ -2043,36 +2574,50 @@ const deletePrefix = `DELETE FROM "database_backup_schedules"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dEnabled     uint64 = 1 << 0
-	dEvery       uint64 = 1 << 1
-	dAtHour      uint64 = 1 << 2
-	dAtMinute    uint64 = 1 << 3
-	dWeekday     uint64 = 1 << 4
-	dDestination uint64 = 1 << 5
-	dKeepLast    uint64 = 1 << 6
-	dKeepDays    uint64 = 1 << 7
-	dNextRunAt   uint64 = 1 << 8
-	dMisses      uint64 = 1 << 9
-	dUpdatedBy   uint64 = 1 << 10
-	dUpdatedAt   uint64 = 1 << 11
+	dEnabled       uint64 = 1 << 0
+	dEvery         uint64 = 1 << 1
+	dAtHour        uint64 = 1 << 2
+	dAtMinute      uint64 = 1 << 3
+	dWeekday       uint64 = 1 << 4
+	dDestination   uint64 = 1 << 5
+	dKeepLast      uint64 = 1 << 6
+	dKeepDays      uint64 = 1 << 7
+	dNextRunAt     uint64 = 1 << 8
+	dMisses        uint64 = 1 << 9
+	dUpdatedBy     uint64 = 1 << 10
+	dUpdatedAt     uint64 = 1 << 11
+	dTestEvery     uint64 = 1 << 12
+	dTestHour      uint64 = 1 << 13
+	dTestMinute    uint64 = 1 << 14
+	dTestWeekday   uint64 = 1 << 15
+	dTestNextAt    uint64 = 1 << 16
+	dTestChecks    uint64 = 1 << 17
+	dTestOverdueAt uint64 = 1 << 18
 )
 
-const nUpdatable = 12
+const nUpdatable = 19
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"enabled\" = $", B: ""},     // enabled
-	{A: "\"every\" = $", B: ""},       // every
-	{A: "\"at_hour\" = $", B: ""},     // at_hour
-	{A: "\"at_minute\" = $", B: ""},   // at_minute
-	{A: "\"weekday\" = $", B: ""},     // weekday
-	{A: "\"destination\" = $", B: ""}, // destination
-	{A: "\"keep_last\" = $", B: ""},   // keep_last
-	{A: "\"keep_days\" = $", B: ""},   // keep_days
-	{A: "\"next_run_at\" = $", B: ""}, // next_run_at
-	{A: "\"misses\" = $", B: ""},      // misses
-	{A: "\"updated_by\" = $", B: ""},  // updated_by
-	{A: "\"updated_at\" = $", B: ""},  // updated_at
+	{A: "\"enabled\" = $", B: ""},         // enabled
+	{A: "\"every\" = $", B: ""},           // every
+	{A: "\"at_hour\" = $", B: ""},         // at_hour
+	{A: "\"at_minute\" = $", B: ""},       // at_minute
+	{A: "\"weekday\" = $", B: ""},         // weekday
+	{A: "\"destination\" = $", B: ""},     // destination
+	{A: "\"keep_last\" = $", B: ""},       // keep_last
+	{A: "\"keep_days\" = $", B: ""},       // keep_days
+	{A: "\"next_run_at\" = $", B: ""},     // next_run_at
+	{A: "\"misses\" = $", B: ""},          // misses
+	{A: "\"updated_by\" = $", B: ""},      // updated_by
+	{A: "\"updated_at\" = $", B: ""},      // updated_at
+	{A: "\"test_every\" = $", B: ""},      // test_every
+	{A: "\"test_hour\" = $", B: ""},       // test_hour
+	{A: "\"test_minute\" = $", B: ""},     // test_minute
+	{A: "\"test_weekday\" = $", B: ""},    // test_weekday
+	{A: "\"test_next_at\" = $", B: ""},    // test_next_at
+	{A: "\"test_checks\" = $", B: ""},     // test_checks
+	{A: "\"test_overdue_at\" = $", B: ""}, // test_overdue_at
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2091,6 +2636,13 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"misses\" = \"misses\" + 1", B: ""},       // misses = its own value plus one
 	{},                                   // updated_by has no server-side form
 	{A: "\"updated_at\" = now()", B: ""}, // updated_at = the database's clock
+	{},                                   // test_every has no server-side form
+	{A: "\"test_hour\" = \"test_hour\" + 1", B: ""},       // test_hour = its own value plus one
+	{A: "\"test_minute\" = \"test_minute\" + 1", B: ""},   // test_minute = its own value plus one
+	{A: "\"test_weekday\" = \"test_weekday\" + 1", B: ""}, // test_weekday = its own value plus one
+	{A: "\"test_next_at\" = now()", B: ""},                // test_next_at = the database's clock
+	{},                                                    // test_checks has no server-side form
+	{A: "\"test_overdue_at\" = now()", B: ""},             // test_overdue_at = the database's clock
 }
 
 // pkFrags addresses one row.
@@ -2102,22 +2654,29 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iDatabaseID  uint64 = 1 << 0
-	iEnabled     uint64 = 1 << 1
-	iEvery       uint64 = 1 << 2
-	iAtHour      uint64 = 1 << 3
-	iAtMinute    uint64 = 1 << 4
-	iWeekday     uint64 = 1 << 5
-	iDestination uint64 = 1 << 6
-	iKeepLast    uint64 = 1 << 7
-	iKeepDays    uint64 = 1 << 8
-	iNextRunAt   uint64 = 1 << 9
-	iMisses      uint64 = 1 << 10
-	iUpdatedBy   uint64 = 1 << 11
-	iUpdatedAt   uint64 = 1 << 12
+	iDatabaseID    uint64 = 1 << 0
+	iEnabled       uint64 = 1 << 1
+	iEvery         uint64 = 1 << 2
+	iAtHour        uint64 = 1 << 3
+	iAtMinute      uint64 = 1 << 4
+	iWeekday       uint64 = 1 << 5
+	iDestination   uint64 = 1 << 6
+	iKeepLast      uint64 = 1 << 7
+	iKeepDays      uint64 = 1 << 8
+	iNextRunAt     uint64 = 1 << 9
+	iMisses        uint64 = 1 << 10
+	iUpdatedBy     uint64 = 1 << 11
+	iUpdatedAt     uint64 = 1 << 12
+	iTestEvery     uint64 = 1 << 13
+	iTestHour      uint64 = 1 << 14
+	iTestMinute    uint64 = 1 << 15
+	iTestWeekday   uint64 = 1 << 16
+	iTestNextAt    uint64 = 1 << 17
+	iTestChecks    uint64 = 1 << 18
+	iTestOverdueAt uint64 = 1 << 19
 )
 
-const nInsertable = 13
+const nInsertable = 20
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2134,6 +2693,13 @@ var insCols = [nInsertable]string{
 	"\"misses\"",
 	"\"updated_by\"",
 	"\"updated_at\"",
+	"\"test_every\"",
+	"\"test_hour\"",
+	"\"test_minute\"",
+	"\"test_weekday\"",
+	"\"test_next_at\"",
+	"\"test_checks\"",
+	"\"test_overdue_at\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2142,7 +2708,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"database_backup_schedules\""
-const insReturning = " RETURNING \"database_id\", \"enabled\", \"every\", \"at_hour\", \"at_minute\", \"weekday\", \"destination\", \"keep_last\", \"keep_days\", \"next_run_at\", \"misses\", \"updated_by\", \"updated_at\""
+const insReturning = " RETURNING \"database_id\", \"enabled\", \"every\", \"at_hour\", \"at_minute\", \"weekday\", \"destination\", \"keep_last\", \"keep_days\", \"next_run_at\", \"misses\", \"updated_by\", \"updated_at\", \"test_every\", \"test_hour\", \"test_minute\", \"test_weekday\", \"test_next_at\", \"test_checks\", \"test_overdue_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2161,7 +2727,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"database_id\", \"enabled\", \"every\", \"at_hour\", \"at_minute\", \"weekday\", \"destination\", \"keep_last\", \"keep_days\", \"next_run_at\", \"misses\", \"updated_by\", \"updated_at\""
+const updReturning = " RETURNING \"database_id\", \"enabled\", \"every\", \"at_hour\", \"at_minute\", \"weekday\", \"destination\", \"keep_last\", \"keep_days\", \"next_run_at\", \"misses\", \"updated_by\", \"updated_at\", \"test_every\", \"test_hour\", \"test_minute\", \"test_weekday\", \"test_next_at\", \"test_checks\", \"test_overdue_at\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2371,6 +2937,116 @@ func (m *Mut) SetUpdatedAtNow() {
 	m.dirty &^= dUpdatedAt
 }
 
+func (m *Mut) SetTestEvery(v string) {
+	m.row.TestEvery = v
+	m.dirty |= dTestEvery
+	m.expr &^= dTestEvery
+}
+
+func (m *Mut) SetTestHour(v int32) {
+	m.row.TestHour = v
+	m.dirty |= dTestHour
+	m.expr &^= dTestHour
+}
+
+// IncTestHour adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncTestHour() {
+	m.expr |= dTestHour
+	m.dirty &^= dTestHour
+}
+
+func (m *Mut) SetTestMinute(v int32) {
+	m.row.TestMinute = v
+	m.dirty |= dTestMinute
+	m.expr &^= dTestMinute
+}
+
+// IncTestMinute adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncTestMinute() {
+	m.expr |= dTestMinute
+	m.dirty &^= dTestMinute
+}
+
+func (m *Mut) SetTestWeekday(v int32) {
+	m.row.TestWeekday = v
+	m.dirty |= dTestWeekday
+	m.expr &^= dTestWeekday
+}
+
+// IncTestWeekday adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncTestWeekday() {
+	m.expr |= dTestWeekday
+	m.dirty &^= dTestWeekday
+}
+
+func (m *Mut) SetTestNextAt(v time.Time) {
+	m.row.TestNextAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dTestNextAt
+	m.expr &^= dTestNextAt
+}
+
+// SetTestNextAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetTestNextAtNow() {
+	m.expr |= dTestNextAt
+	m.dirty &^= dTestNextAt
+}
+
+// SetTestNextAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTestNextAtNull() {
+	m.row.TestNextAt = runtime.Null[time.Time]{}
+	m.dirty |= dTestNextAt
+	m.expr &^= dTestNextAt
+}
+
+func (m *Mut) SetTestChecks(v runtime.JSON) {
+	m.row.TestChecks = v
+	m.dirty |= dTestChecks
+	m.expr &^= dTestChecks
+}
+
+func (m *Mut) SetTestOverdueAt(v time.Time) {
+	m.row.TestOverdueAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dTestOverdueAt
+	m.expr &^= dTestOverdueAt
+}
+
+// SetTestOverdueAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetTestOverdueAtNow() {
+	m.expr |= dTestOverdueAt
+	m.dirty &^= dTestOverdueAt
+}
+
+// SetTestOverdueAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTestOverdueAtNull() {
+	m.row.TestOverdueAt = runtime.Null[time.Time]{}
+	m.dirty |= dTestOverdueAt
+	m.expr &^= dTestOverdueAt
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2568,6 +3244,103 @@ func (n *Ins) SetUpdatedAt(v time.Time) {
 	n.set |= iUpdatedAt
 }
 
+func (n *Ins) SetTestEvery(v string) {
+	n.row.TestEvery = v
+	n.set |= iTestEvery
+}
+
+func (n *Ins) SetTestHour(v int32) {
+	n.row.TestHour = v
+	n.set |= iTestHour
+	n.add &^= iTestHour
+}
+
+// AddTestHourOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"test_hour" = "database_backup_schedules"."test_hour" + EXCLUDED."test_hour"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetTestHour.
+func (n *Ins) AddTestHourOnConflict(v int32) {
+	n.row.TestHour = v
+	n.set |= iTestHour
+	n.add |= iTestHour
+}
+
+func (n *Ins) SetTestMinute(v int32) {
+	n.row.TestMinute = v
+	n.set |= iTestMinute
+	n.add &^= iTestMinute
+}
+
+// AddTestMinuteOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"test_minute" = "database_backup_schedules"."test_minute" + EXCLUDED."test_minute"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetTestMinute.
+func (n *Ins) AddTestMinuteOnConflict(v int32) {
+	n.row.TestMinute = v
+	n.set |= iTestMinute
+	n.add |= iTestMinute
+}
+
+func (n *Ins) SetTestWeekday(v int32) {
+	n.row.TestWeekday = v
+	n.set |= iTestWeekday
+	n.add &^= iTestWeekday
+}
+
+// AddTestWeekdayOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"test_weekday" = "database_backup_schedules"."test_weekday" + EXCLUDED."test_weekday"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetTestWeekday.
+func (n *Ins) AddTestWeekdayOnConflict(v int32) {
+	n.row.TestWeekday = v
+	n.set |= iTestWeekday
+	n.add |= iTestWeekday
+}
+
+func (n *Ins) SetTestNextAt(v time.Time) {
+	n.row.TestNextAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iTestNextAt
+}
+
+// SetTestNextAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTestNextAtNull() {
+	n.row.TestNextAt = runtime.Null[time.Time]{}
+	n.set |= iTestNextAt
+}
+
+func (n *Ins) SetTestChecks(v runtime.JSON) {
+	n.row.TestChecks = v
+	n.set |= iTestChecks
+}
+
+func (n *Ins) SetTestOverdueAt(v time.Time) {
+	n.row.TestOverdueAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iTestOverdueAt
+}
+
+// SetTestOverdueAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTestOverdueAtNull() {
+	n.row.TestOverdueAt = runtime.Null[time.Time]{}
+	n.set |= iTestOverdueAt
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2617,7 +3390,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 12)
+	set := make([]string, 0, 19)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2655,6 +3428,27 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<12) != 0 {
 			set = append(set, "updated_at")
+		}
+		if mask&(1<<13) != 0 {
+			set = append(set, "test_every")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "test_hour")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "test_minute")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "test_weekday")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "test_next_at")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "test_checks")
+		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "test_overdue_at")
 		}
 	}
 	return set
@@ -2725,23 +3519,36 @@ func assignAdded(c string, add uint64) (string, bool) {
 		return "\"keep_days\" = \"database_backup_schedules\".\"keep_days\" + EXCLUDED.\"keep_days\"", add&iKeepDays != 0
 	case "misses":
 		return "\"misses\" = \"database_backup_schedules\".\"misses\" + EXCLUDED.\"misses\"", add&iMisses != 0
+	case "test_hour":
+		return "\"test_hour\" = \"database_backup_schedules\".\"test_hour\" + EXCLUDED.\"test_hour\"", add&iTestHour != 0
+	case "test_minute":
+		return "\"test_minute\" = \"database_backup_schedules\".\"test_minute\" + EXCLUDED.\"test_minute\"", add&iTestMinute != 0
+	case "test_weekday":
+		return "\"test_weekday\" = \"database_backup_schedules\".\"test_weekday\" + EXCLUDED.\"test_weekday\"", add&iTestWeekday != 0
 	}
 	return "", false
 }
 
 var assignFor = map[string]string{
-	"enabled":     "\"enabled\" = EXCLUDED.\"enabled\"",
-	"every":       "\"every\" = EXCLUDED.\"every\"",
-	"at_hour":     "\"at_hour\" = EXCLUDED.\"at_hour\"",
-	"at_minute":   "\"at_minute\" = EXCLUDED.\"at_minute\"",
-	"weekday":     "\"weekday\" = EXCLUDED.\"weekday\"",
-	"destination": "\"destination\" = EXCLUDED.\"destination\"",
-	"keep_last":   "\"keep_last\" = EXCLUDED.\"keep_last\"",
-	"keep_days":   "\"keep_days\" = EXCLUDED.\"keep_days\"",
-	"next_run_at": "\"next_run_at\" = EXCLUDED.\"next_run_at\"",
-	"misses":      "\"misses\" = EXCLUDED.\"misses\"",
-	"updated_by":  "\"updated_by\" = EXCLUDED.\"updated_by\"",
-	"updated_at":  "\"updated_at\" = EXCLUDED.\"updated_at\"",
+	"enabled":         "\"enabled\" = EXCLUDED.\"enabled\"",
+	"every":           "\"every\" = EXCLUDED.\"every\"",
+	"at_hour":         "\"at_hour\" = EXCLUDED.\"at_hour\"",
+	"at_minute":       "\"at_minute\" = EXCLUDED.\"at_minute\"",
+	"weekday":         "\"weekday\" = EXCLUDED.\"weekday\"",
+	"destination":     "\"destination\" = EXCLUDED.\"destination\"",
+	"keep_last":       "\"keep_last\" = EXCLUDED.\"keep_last\"",
+	"keep_days":       "\"keep_days\" = EXCLUDED.\"keep_days\"",
+	"next_run_at":     "\"next_run_at\" = EXCLUDED.\"next_run_at\"",
+	"misses":          "\"misses\" = EXCLUDED.\"misses\"",
+	"updated_by":      "\"updated_by\" = EXCLUDED.\"updated_by\"",
+	"updated_at":      "\"updated_at\" = EXCLUDED.\"updated_at\"",
+	"test_every":      "\"test_every\" = EXCLUDED.\"test_every\"",
+	"test_hour":       "\"test_hour\" = EXCLUDED.\"test_hour\"",
+	"test_minute":     "\"test_minute\" = EXCLUDED.\"test_minute\"",
+	"test_weekday":    "\"test_weekday\" = EXCLUDED.\"test_weekday\"",
+	"test_next_at":    "\"test_next_at\" = EXCLUDED.\"test_next_at\"",
+	"test_checks":     "\"test_checks\" = EXCLUDED.\"test_checks\"",
+	"test_overdue_at": "\"test_overdue_at\" = EXCLUDED.\"test_overdue_at\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2818,6 +3625,20 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.UpdatedBy)
 		case 12:
 			args = append(args, n.row.UpdatedAt)
+		case 13:
+			args = append(args, n.row.TestEvery)
+		case 14:
+			args = append(args, n.row.TestHour)
+		case 15:
+			args = append(args, n.row.TestMinute)
+		case 16:
+			args = append(args, n.row.TestWeekday)
+		case 17:
+			args = append(args, n.row.TestNextAt.Arg())
+		case 18:
+			args = append(args, n.row.TestChecks)
+		case 19:
+			args = append(args, n.row.TestOverdueAt.Arg())
 		}
 	}
 	var out Row
@@ -2855,7 +3676,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 13)
+	args := make([]any, 0, 20)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.Enabled)
 	args = append(args, r.Every)
@@ -2869,6 +3690,13 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.Misses)
 	args = append(args, r.UpdatedBy)
 	args = append(args, r.UpdatedAt)
+	args = append(args, r.TestEvery)
+	args = append(args, r.TestHour)
+	args = append(args, r.TestMinute)
+	args = append(args, r.TestWeekday)
+	args = append(args, r.TestNextAt.Arg())
+	args = append(args, r.TestChecks)
+	args = append(args, r.TestOverdueAt.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2908,13 +3736,20 @@ var copyCols = []string{
 	"misses",
 	"updated_by",
 	"updated_at",
+	"test_every",
+	"test_hour",
+	"test_minute",
+	"test_weekday",
+	"test_next_at",
+	"test_checks",
+	"test_overdue_at",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [13]any
+	buf  [20]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2945,6 +3780,13 @@ func (s *rowSource) Values() []any {
 	s.buf[10] = &r.Misses
 	s.buf[11] = &r.UpdatedBy
 	s.buf[12] = &r.UpdatedAt
+	s.buf[13] = &r.TestEvery
+	s.buf[14] = &r.TestHour
+	s.buf[15] = &r.TestMinute
+	s.buf[16] = &r.TestWeekday
+	s.buf[17] = r.TestNextAt.Ptr()
+	s.buf[18] = &r.TestChecks
+	s.buf[19] = r.TestOverdueAt.Ptr()
 	return s.buf[:]
 }
 
@@ -2988,8 +3830,15 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 10
 	mask |= 1 << 11
 	mask |= 1 << 12
+	mask |= 1 << 13
+	mask |= 1 << 14
+	mask |= 1 << 15
+	mask |= 1 << 16
+	mask |= 1 << 17
+	mask |= 1 << 18
+	mask |= 1 << 19
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 13)
+	args := make([]any, 0, 20)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.Enabled)
 	args = append(args, r.Every)
@@ -3003,6 +3852,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.Misses)
 	args = append(args, r.UpdatedBy)
 	args = append(args, r.UpdatedAt)
+	args = append(args, r.TestEvery)
+	args = append(args, r.TestHour)
+	args = append(args, r.TestMinute)
+	args = append(args, r.TestWeekday)
+	args = append(args, r.TestNextAt.Arg())
+	args = append(args, r.TestChecks)
+	args = append(args, r.TestOverdueAt.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3062,6 +3918,20 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.UpdatedBy)
 		case 12:
 			args = append(args, n.row.UpdatedAt)
+		case 13:
+			args = append(args, n.row.TestEvery)
+		case 14:
+			args = append(args, n.row.TestHour)
+		case 15:
+			args = append(args, n.row.TestMinute)
+		case 16:
+			args = append(args, n.row.TestWeekday)
+		case 17:
+			args = append(args, n.row.TestNextAt.Arg())
+		case 18:
+			args = append(args, n.row.TestChecks)
+		case 19:
+			args = append(args, n.row.TestOverdueAt.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3141,6 +4011,20 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.UpdatedBy)
 		case 11:
 			args = append(args, m.row.UpdatedAt)
+		case 12:
+			args = append(args, m.row.TestEvery)
+		case 13:
+			args = append(args, m.row.TestHour)
+		case 14:
+			args = append(args, m.row.TestMinute)
+		case 15:
+			args = append(args, m.row.TestWeekday)
+		case 16:
+			args = append(args, m.row.TestNextAt.Arg())
+		case 17:
+			args = append(args, m.row.TestChecks)
+		case 18:
+			args = append(args, m.row.TestOverdueAt.Arg())
 		}
 	}
 	args = append(args, m.row.DatabaseID)
@@ -3247,6 +4131,20 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.UpdatedBy)
 		case 11:
 			args = append(args, m.row.UpdatedAt)
+		case 12:
+			args = append(args, m.row.TestEvery)
+		case 13:
+			args = append(args, m.row.TestHour)
+		case 14:
+			args = append(args, m.row.TestMinute)
+		case 15:
+			args = append(args, m.row.TestWeekday)
+		case 16:
+			args = append(args, m.row.TestNextAt.Arg())
+		case 17:
+			args = append(args, m.row.TestChecks)
+		case 18:
+			args = append(args, m.row.TestOverdueAt.Arg())
 		}
 	}
 	args = append(args, m.row.DatabaseID)
@@ -3419,6 +4317,20 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.UpdatedBy)
 		case 11:
 			args = append(args, m.row.UpdatedAt)
+		case 12:
+			args = append(args, m.row.TestEvery)
+		case 13:
+			args = append(args, m.row.TestHour)
+		case 14:
+			args = append(args, m.row.TestMinute)
+		case 15:
+			args = append(args, m.row.TestWeekday)
+		case 16:
+			args = append(args, m.row.TestNextAt.Arg())
+		case 17:
+			args = append(args, m.row.TestChecks)
+		case 18:
+			args = append(args, m.row.TestOverdueAt.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

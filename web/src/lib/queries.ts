@@ -38,6 +38,10 @@ import {
   cancelRestore as liveCancelRestore,
   undoRestore as liveUndoRestore,
   setBackupSchedule as liveSetBackupSchedule,
+  testBackup as liveTestBackup,
+  backupTest as liveBackupTest,
+  cancelBackupTest as liveCancelBackupTest,
+  tryBackupChecks as liveTryBackupChecks,
   savedQueries as liveSavedQueries,
   saveQuery as liveSaveQuery,
   updateSavedQuery as liveUpdateSavedQuery,
@@ -721,9 +725,10 @@ export function useSetAgentAutoUpdate() {
 export const backupqk = {
   backups: (id: string) => ['database', id, 'backups'] as const,
   catalog: (id: string) => ['database', id, 'backups', 'catalog'] as const,
+  test: (id: string, testId: string) => ['database', id, 'backups', 'test', testId] as const,
 }
 
-/** Polled every 2 s while a backup or restore runs, otherwise every 30 s. */
+/** Polled every 2 s while a backup, restore or test restore runs, otherwise every 30 s. */
 export const databaseBackupsQuery = (id: string) =>
   queryOptions({
     queryKey: backupqk.backups(id),
@@ -731,9 +736,18 @@ export const databaseBackupsQuery = (id: string) =>
     enabled: isConfigured(),
     refetchInterval: (q) => {
       const v = q.state.data as BackupsView | undefined
-      const busy = Boolean(v?.running) || (v?.restores ?? []).some((r) => r.state === 'running')
+      const busy = Boolean(v?.running) || Boolean(v?.testing) || (v?.restores ?? []).some((r) => r.state === 'running')
       return busy ? 2_000 : 30_000
     },
+  })
+
+/** One test restore with its report; polled while it runs. */
+export const backupTestQuery = (id: string, testId: string) =>
+  queryOptions({
+    queryKey: backupqk.test(id, testId),
+    queryFn: () => liveBackupTest(id, testId),
+    enabled: isConfigured() && Boolean(testId),
+    refetchInterval: (q) => ((q.state.data as { state?: string } | undefined)?.state === 'running' ? 2_000 : false),
   })
 
 export const backupCatalogQuery = (id: string) =>
@@ -767,6 +781,12 @@ export const useCancelRestore = () =>
   useBackupMutation((v: { id: string; restoreId: string }) => liveCancelRestore(v.id, v.restoreId), (v) => v.id)
 export const useUndoRestore = () =>
   useBackupMutation((v: { id: string; restoreId: string; confirm: string }) => liveUndoRestore(v.id, v.restoreId, v.confirm), (v) => v.id)
+export const useTestBackup = () =>
+  useBackupMutation((v: { id: string; backupId: string }) => liveTestBackup(v.id, v.backupId), (v) => v.id)
+export const useCancelBackupTest = () =>
+  useBackupMutation((v: { id: string; testId: string }) => liveCancelBackupTest(v.id, v.testId), (v) => v.id)
+export const useTryBackupChecks = () =>
+  useMutation({ mutationFn: (v: { id: string; checks: Parameters<typeof liveTryBackupChecks>[1] }) => liveTryBackupChecks(v.id, v.checks) })
 export const useSetBackupSchedule = () =>
   useBackupMutation((v: { id: string } & Parameters<typeof liveSetBackupSchedule>[1]) =>
     liveSetBackupSchedule(v.id, v), (v) => v.id)

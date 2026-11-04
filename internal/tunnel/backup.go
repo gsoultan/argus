@@ -61,7 +61,101 @@ const (
 	// BackupJobUndo puts that copy back in place of the restored database.
 	BackupJobDrop = "drop"
 	BackupJobUndo = "undo"
+	// BackupJobTest restores a backup into a throwaway database, checks it,
+	// times it and drops it. BackupJobChecks runs a test's custom checks
+	// against the live database, read only, so a typo shows when an admin
+	// saves it rather than at the next test. BackupJobDropTest drops a
+	// throwaway database a test left behind.
+	BackupJobTest     = "test"
+	BackupJobChecks   = "checks"
+	BackupJobDropTest = "drop-test"
 )
+
+// TestDBPrefix begins the name of every throwaway database a test restore
+// makes. Argus never adds, lists or restores into a database by that name,
+// and the agent drops nothing as a test copy that lacks it.
+const TestDBPrefix = "argus_test_"
+
+// ValidTestDB is a throwaway database name: the prefix and eight hex digits.
+var ValidTestDB = regexp.MustCompile(`^argus_test_[0-9a-f]{8}$`)
+
+// Test check limits: a handful of single statements, each short enough to
+// read in the console.
+const (
+	MaxTestChecks   = 20
+	MaxTestCheckSQL = 2000
+)
+
+// TestCheck is one check an admin wrote: a name and one SELECT that must
+// return true, or a number above zero.
+type TestCheck struct {
+	Name string `json:"name"`
+	SQL  string `json:"sql"`
+}
+
+// GrantTest is how a test restore runs.
+type GrantTest struct {
+	// Scratch is the throwaway database, ValidTestDB.
+	Scratch string `json:"scratch"`
+	// Source is local or stream, as for a restore.
+	Source string `json:"source"`
+}
+
+// TableRows is one table's exact row count in a test copy; Rows is -1 when
+// the count did not finish in time.
+type TableRows struct {
+	Name string `json:"name"`
+	Rows int64  `json:"rows"`
+}
+
+// CheckResult is how one check came out: OK, the value it returned (true,
+// false, or a number; never rows), or why it could not run.
+type CheckResult struct {
+	Name  string `json:"name"`
+	OK    bool   `json:"ok"`
+	Value string `json:"value,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// TestData is what the agent read from a restored copy.
+type TestData struct {
+	Tables         []TableRows   `json:"tables"`
+	TablesTotal    int           `json:"tablesTotal"`
+	InvalidIndexes int           `json:"invalidIndexes"`
+	Indexes        int           `json:"indexes"`
+	Bytes          int64         `json:"bytes"`
+	Checks         []CheckResult `json:"checks,omitempty"`
+}
+
+// BackupTestResult is a test restore's outcome, in numbers; the control
+// plane decides pass, warn or fail from it and the previous pass.
+type BackupTestResult struct {
+	Scratch string `json:"scratch"`
+	// NeedBytes and FreeBytes are the room check: free space where
+	// Postgres keeps its data, and what the copy needs.
+	NeedBytes int64 `json:"needBytes"`
+	FreeBytes int64 `json:"freeBytes"`
+	// SourceBytes is the live database's size.
+	SourceBytes int64 `json:"sourceBytes"`
+	// Expected is every table the archive has data for.
+	Expected  []string `json:"expected,omitempty"`
+	RestoreMS int64    `json:"restoreMs"`
+	// Warnings are pg_restore's ignored errors.
+	Warnings int       `json:"warnings"`
+	Data     *TestData `json:"data,omitempty"`
+	// Dropped says the throwaway database is gone.
+	Dropped bool `json:"dropped"`
+	// Steps are how long each step took, for the report.
+	Steps []TestStep `json:"steps,omitempty"`
+}
+
+// TestStep is one step of a test restore.
+type TestStep struct {
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+	MS     int64  `json:"ms"`
+}
 
 // KeptMarker is in every name a replaced database is renamed to, so a drop
 // or an undo can refuse anything else.
@@ -108,8 +202,13 @@ type GrantBackup struct {
 	Restore *GrantRestore `json:"restore,omitempty"`
 	// Prune lists the backup ids whose local files should go.
 	Prune []string `json:"prune,omitempty"`
-	// Kept is the renamed copy a drop or undo job acts on.
+	// Kept is the renamed copy a drop or undo job acts on, or the
+	// throwaway database a drop-test job removes.
 	Kept string `json:"kept,omitempty"`
+	// Test is how a test restore runs; Checks are its custom checks, also
+	// what a checks job runs against the live database.
+	Test   *GrantTest  `json:"test,omitempty"`
+	Checks []TestCheck `json:"checks,omitempty"`
 	// MinFreeBytes refuses a dump that would leave less than this free.
 	MinFreeBytes int64 `json:"minFreeBytes,omitempty"`
 	// Reason is why, shown in the agent's log and the archive header.
@@ -176,6 +275,9 @@ type BackupResult struct {
 	Catalog *BackupCatalog `json:"catalog,omitempty"`
 	// For a prune: what was removed.
 	Pruned []string `json:"pruned,omitempty"`
+	// For a test restore, or a checks job (Checks only).
+	Test   *BackupTestResult `json:"test,omitempty"`
+	Checks []CheckResult     `json:"checks,omitempty"`
 }
 
 // BackupCatalog is what a server can do.
@@ -207,7 +309,8 @@ func (b *GrantBackup) Validate() error {
 		return errors.New("it is not for a backup")
 	}
 	switch b.Job {
-	case BackupJobDump, BackupJobRestore, BackupJobCatalog, BackupJobPrune, BackupJobDrop, BackupJobUndo:
+	case BackupJobDump, BackupJobRestore, BackupJobCatalog, BackupJobPrune, BackupJobDrop, BackupJobUndo,
+		BackupJobTest, BackupJobChecks, BackupJobDropTest:
 	default:
 		return fmt.Errorf("unknown backup job %q", b.Job)
 	}
@@ -248,6 +351,9 @@ func (b *GrantBackup) Validate() error {
 			if !ValidDBName.MatchString(b.Restore.NewName) {
 				return fmt.Errorf("not a database name Argus will create: %q", b.Restore.NewName)
 			}
+			if strings.HasPrefix(b.Restore.NewName, TestDBPrefix) {
+				return errors.New(TestDBPrefix + " names are kept for test restores")
+			}
 			if b.Restore.NewName == b.Name {
 				return errors.New("a restore into a new database cannot use the existing name")
 			}
@@ -267,6 +373,33 @@ func (b *GrantBackup) Validate() error {
 		if len(b.DataKey) == 0 || len(b.SHA256) != 64 {
 			return errors.New("the grant does not carry the key and hash of the backup")
 		}
+	case BackupJobTest:
+		if !ValidBackupID.MatchString(b.BackupID) {
+			return errors.New("the grant does not name the backup it tests")
+		}
+		if b.Test == nil || !ValidTestDB.MatchString(b.Test.Scratch) {
+			return errors.New("a test restore goes into a throwaway database named " + TestDBPrefix + "<8 hex digits>")
+		}
+		if b.Test.Source != "local" && b.Test.Source != "stream" {
+			return fmt.Errorf("unknown restore source %q", b.Test.Source)
+		}
+		if len(b.DataKey) == 0 || len(b.SHA256) != 64 {
+			return errors.New("the grant does not carry the key and hash of the backup")
+		}
+		if err := ValidateTestChecks(b.Checks); err != nil {
+			return err
+		}
+	case BackupJobChecks:
+		if len(b.Checks) == 0 {
+			return errors.New("there are no checks to run")
+		}
+		if err := ValidateTestChecks(b.Checks); err != nil {
+			return err
+		}
+	case BackupJobDropTest:
+		if !ValidTestDB.MatchString(b.Kept) {
+			return errors.New("not a test copy Argus made: " + b.Kept)
+		}
 	case BackupJobDrop, BackupJobUndo:
 		if !ValidDBName.MatchString(b.Kept) || !strings.Contains(b.Kept, KeptMarker) {
 			return errors.New("not a copy Argus kept: " + b.Kept)
@@ -277,6 +410,61 @@ func (b *GrantBackup) Validate() error {
 				return fmt.Errorf("not a backup id: %q", id)
 			}
 		}
+	}
+	return nil
+}
+
+// ValidateTestChecks says whether checks are ones Argus will run: a few,
+// named, each one statement that reads. The transaction they run in is read
+// only as well; this is so a mistake is refused with a reason, not so the
+// read-only transaction is the only guard.
+func ValidateTestChecks(checks []TestCheck) error {
+	if len(checks) > MaxTestChecks {
+		return fmt.Errorf("at most %d checks", MaxTestChecks)
+	}
+	seen := map[string]bool{}
+	for _, c := range checks {
+		name := strings.TrimSpace(c.Name)
+		if name == "" || len(name) > 80 {
+			return errors.New("each check needs a name of up to 80 characters")
+		}
+		if seen[strings.ToLower(name)] {
+			return fmt.Errorf("two checks are named %q", name)
+		}
+		seen[strings.ToLower(name)] = true
+		if err := ReadOnlyCheckSQL(c.SQL); err != nil {
+			return fmt.Errorf("check %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// ReadOnlyCheckSQL accepts one SELECT or WITH statement, with at most a
+// trailing semicolon, and no data-changing keyword at the top of a WITH.
+func ReadOnlyCheckSQL(sql string) error {
+	s := strings.TrimSpace(sql)
+	s = strings.TrimSpace(strings.TrimSuffix(s, ";"))
+	if s == "" {
+		return errors.New("the query is empty")
+	}
+	if len(s) > MaxTestCheckSQL {
+		return fmt.Errorf("keep the query under %d characters", MaxTestCheckSQL)
+	}
+	// The query builder's classifier, so a check and a session statement
+	// are read the same way: comments, quoted names and dollar-quoted bodies
+	// are not mistaken for SQL.
+	toks := lexSQL(s)
+	for i, t := range toks {
+		if t.punct == ';' && t.depth == 0 && i < len(toks)-1 {
+			return errors.New("one statement only")
+		}
+	}
+	c := ClassifySQL(s)
+	if c.Writes {
+		return errors.New("a check only reads; it cannot change data")
+	}
+	if c.Verb != "select" {
+		return errors.New("a check is one SELECT (or WITH … SELECT) that returns true, or a number above zero")
 	}
 	return nil
 }

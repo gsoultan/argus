@@ -25,7 +25,7 @@ import type {
   ServerAccount,
   TemporaryPasswordOutcome,
   User,
-  BackupCatalog, BackupDestination, BackupSchedule, BackupsView, DatabaseBackup, DatabaseRestore,
+  BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseRestore, TestCheck,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
 } from '~/types/domain'
 
@@ -1762,8 +1762,28 @@ export async function backupSchedule(id: string): Promise<BackupSchedule> {
 }
 
 export async function setBackupSchedule(id: string, input: Pick<BackupSchedule,
-  'enabled' | 'every' | 'atHour' | 'atMinute' | 'weekday' | 'destination' | 'keepLast' | 'keepDays'>): Promise<BackupSchedule> {
+  'enabled' | 'every' | 'atHour' | 'atMinute' | 'weekday' | 'destination' | 'keepLast' | 'keepDays'>
+  & Partial<Pick<BackupSchedule, 'testEvery' | 'testHour' | 'testMinute' | 'testWeekday' | 'testChecks'>>): Promise<BackupSchedule> {
   return send<BackupSchedule>('PUT', `${dbPath(id)}/backup-schedule`, input)
+}
+
+/** Test-restores a backup now: into a throwaway copy on the same server, checked and dropped. */
+export async function testBackup(id: string, backupId: string): Promise<BackupTest | { state: 'starting' }> {
+  return post(`${dbPath(id)}/backups/${encodeURIComponent(backupId)}/test`, {})
+}
+
+/** One test restore with its full report, rows by table included. */
+export async function backupTest(id: string, testId: string): Promise<BackupTest> {
+  return get(`${dbPath(id)}/backup-tests/${encodeURIComponent(testId)}`)
+}
+
+export async function cancelBackupTest(id: string, testId: string): Promise<void> {
+  await post(`${dbPath(id)}/backup-tests/${encodeURIComponent(testId)}/cancel`, {})
+}
+
+/** Runs checks against the live database, read only, so a typo shows before they are saved. */
+export async function tryBackupChecks(id: string, checks: TestCheck[]): Promise<{ checks: CheckResult[] }> {
+  return post(`${dbPath(id)}/backup-checks`, { checks })
 }
 
 /* ── Organizations ──────────────────────────────────────────────────────── */
@@ -1868,7 +1888,7 @@ export async function controlStatus(): Promise<ControlStatus> {
 
 /* ── Console alerts (the bell) ──────────────────────────────────────────── */
 
-export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server'
+export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server' | 'backup'
 
 /** One alert under the bell, as GET /api/v1/alerts returns it. */
 export interface ConsoleAlert {
