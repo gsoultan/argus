@@ -85,8 +85,13 @@ const BUDGET_KB = {
    * numbers, sessions by hour, the fleet map and the recording ring, Home's
    * own chunk plus its stylesheet. Server status helpers moved to
    * lib/reach.ts so the fleet map does not pull in the server cards.
+   * 291.9 kB once the database page's SQL editor loaded its formatter
+   * lazily (290.8 before): no editor code reaches this page, but a second chunk
+   * needing the bundler's module helpers moves them into a small shared
+   * chunk, fetched as one more file. Loading the formatter eagerly instead
+   * would cost every database page 75 kB gzipped.
    */
-  overview: 292,
+  overview: 293,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
