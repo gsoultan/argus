@@ -39,6 +39,9 @@ import {
 import { notifyWarn } from '~/lib/notify'
 import type { SavedQuery } from '~/lib/live'
 import { NEEDS_APPROVAL, useStatementApproval } from '~/components/StatementApproval'
+import { GenerateContext, NewTableButton, ObjectGenMenu, TableDesigner, type GenAction, type GenContext } from '~/components/SqlGenerate'
+import { DESIGN_SQL, blankColumn, ddlQuery, parseDesign, qualify, tableTemplate, type Design } from '~/lib/sqlGen'
+import { TARGET_BY_NAME_SQL, parseTarget } from '~/lib/rowEdit'
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -1007,8 +1010,46 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }, [view, schemaNames, schema])
 
   const level = ready?.level ?? access.level
+
+  // The tree's generators: what they write opens in a new tab, to be read and
+  // run there. The catalogue is read as the person's role, like anything else.
+  const [designer, setDesigner] = useState<Design | null>(null)
+  const genAct = useCallback(async (a: GenAction) => {
+    if (narrow) tree.close()
+    const show = (text: string, name: string) => {
+      if (openTab({ sql: text, name })) { setPanel('query'); setView('query') }
+    }
+    if (a.what === 'new-table') {
+      setDesigner({ schema: a.schema, name: 'new_table', columns: [{ ...blankColumn(1), name: 'id', type: 'bigint', default: 'GENERATED ALWAYS AS IDENTITY', pk: true, notNull: true }] })
+      return
+    }
+    const q = qualify(a.schema, a.name)
+    if (a.what === 'ddl') {
+      const dq = ddlQuery(a.kind, a.schema, a.name)
+      if (!dq) return
+      const r = await collect(dq.sql, 1, dq.params)
+      if (r.error || !r.rows[0]?.[0]) {
+        notifyWarn('No DDL', r.error?.error ?? `Postgres has nothing to show for ${q}.`)
+        return
+      }
+      show(r.rows[0][0], `${a.name} DDL`)
+      return
+    }
+    if (a.what === 'design') {
+      const r = await collect(DESIGN_SQL, 2000, [q])
+      if (r.error) { notifyWarn('Cannot read the table', r.error.error ?? 'Postgres refused it'); return }
+      setDesigner(parseDesign(a.schema, a.name, r.rows))
+      return
+    }
+    const r = await collect(TARGET_BY_NAME_SQL, 2000, [q])
+    const t = r.error ? null : parseTarget(0, r.rows)
+    if (!t) { notifyWarn('Cannot read the table', r.error?.error ?? `${q} has no columns you may see.`); return }
+    show(tableTemplate(t, a.what), `${a.what} ${a.name}`)
+  }, [collect, openTab, narrow, tree])
+  const gen: GenContext = useMemo(() => ({ act: (a) => void genAct(a), canWrite: Boolean(level) && level !== 'read' }), [genAct, level])
+
   const bar = (
-    <LeftBar
+    <GenerateContext.Provider value={gen}><LeftBar
       database={database}
       level={level}
       schema={schema}
@@ -1019,7 +1060,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       onPanel={(p) => { setPanel(p); setView('query'); if (narrow) tree.close() }}
       onOpenSaved={openSaved}
       orgAdmin={Boolean(orgAdmin)}
-    />
+    /></GenerateContext.Provider>
   )
   const adminProps = {
     collect, admin, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
@@ -1326,6 +1367,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         </>}
       </Box>
       {approvalDialog}
+      {designer && <TableDesigner start={designer} narrow={narrow} onClose={() => setDesigner(null)}
+        onOpen={(text, name) => { setDesigner(null); if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />}
       <WriteCheckDialog state={writeCheck} label={database.label} step={gateStep} databaseId={database.id} canBackup={level === 'owner' || level === 'dba'}
         onClose={() => { setWriteCheck(null); answerGate({ go: false }) }}
         onBackups={() => { setWriteCheck(null); answerGate({ go: false }); setView('query'); setPanel('backups') }}
@@ -1532,11 +1575,14 @@ function SchemaNode({ s, schema, onPick, onRun }: {
 
   return (
     <Box>
-      <UnstyledButton onClick={() => setOpen((o) => !o)} px={4} py={3} style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6 }}>
-        {open ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
-        <Text size={FS.body}>{s.name}</Text>
-        {s.count ? <Text size={FS.micro} c="dimmed" ml="auto">{s.count}</Text> : null}
-      </UnstyledButton>
+      <Group gap={2} wrap="nowrap">
+        <UnstyledButton onClick={() => setOpen((o) => !o)} px={4} py={3} style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, borderRadius: 6 }}>
+          {open ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+          <Text size={FS.body}>{s.name}</Text>
+          {s.count ? <Text size={FS.micro} c="dimmed" ml="auto">{s.count}</Text> : null}
+        </UnstyledButton>
+        <NewTableButton schema={s.name} />
+      </Group>
       {open && (
         <Box pl="md">
           {objs === null && <Loader size={12} ml="sm" />}
@@ -1623,6 +1669,7 @@ function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
             </ActionIcon>
           </Tooltip>
         )}
+        <ObjectGenMenu kind={o.kind} schema={schemaName} name={o.name} />
       </Group>
       {open && (
         <Box pl="lg">

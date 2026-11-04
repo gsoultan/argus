@@ -14,6 +14,7 @@ import {
 } from '~/lib/resultView'
 import type { Collected } from '~/components/DatabaseAdmin'
 import { editable, editorKind, insertStmt, updateStmt, type Stmt, type TableColumn } from '~/lib/rowEdit'
+import { rowStatements } from '~/lib/sqlGen'
 import { CellInput, ChangesBar, ReviewDialog, RowForm, useEditTarget, type EditSupport, type FormField } from '~/components/RowEdits'
 import { ArrayEditor, JsonEditor } from '~/components/JsonEditor'
 
@@ -330,6 +331,13 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
     const text = copyAs(fmt, vc, visibleRows(), table)
     void copyText(text, `${order.length.toLocaleString()} rows as ${fmt === 'insert' ? 'INSERT statements' : fmt.toUpperCase()}`)
   }
+  // Statements for the rows shown, written against the table they came from,
+  // keyed on its primary key: to keep, or to run somewhere else.
+  const doStatements = (kind: 'update' | 'delete' | 'upsert') => {
+    if (!ed.ok) return
+    const text = rowStatements(ed.target, cols, order.map((i) => result.rows[i]!), kind)
+    void copyText(text, `${order.length.toLocaleString()} rows as ${kind === 'upsert' ? 'upsert' : kind.toUpperCase()} statements`)
+  }
 
   // Windowed rows: only what is visible plus a margin is in the DOM.
   const total = order.length
@@ -514,6 +522,13 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
               <Menu.Item onClick={() => doCopy('json')}>JSON</Menu.Item>
               <Menu.Item onClick={() => doCopy('markdown')}>Markdown table</Menu.Item>
               <Menu.Item onClick={() => doCopy('insert')}>INSERT statements</Menu.Item>
+              {ed.ok && (
+                <>
+                  <Menu.Item onClick={() => doStatements('update')}>UPDATE statements, by primary key</Menu.Item>
+                  <Menu.Item onClick={() => doStatements('delete')}>DELETE statements, by primary key</Menu.Item>
+                  <Menu.Item onClick={() => doStatements('upsert')}>Upsert statements (INSERT … ON CONFLICT)</Menu.Item>
+                </>
+              )}
             </Menu.Dropdown>
           </Menu>
         )}
@@ -714,6 +729,20 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                 onClick={() => void copyText(copyAs('json', cols, [panelRow]).replace(/^\[\n|\n\]$/g, ''), 'the row as JSON')}>
                 Copy as JSON
               </Button>
+              {ed.ok && (
+                <Menu position="bottom-end" withinPortal>
+                  <Menu.Target>
+                    <Button size="compact-xs" variant="default" rightSection={<IconChevronDown size={12} />}>Copy as SQL</Button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {(['insert', 'update', 'delete', 'upsert'] as const).map((k) => (
+                      <Menu.Item key={k} onClick={() => void copyText(rowStatements(ed.target, cols, [panelRow], k), `the row as ${k === 'upsert' ? 'an upsert' : k.toUpperCase()}`)}>
+                        {k === 'upsert' ? 'Upsert' : k.toUpperCase()}
+                      </Menu.Item>
+                    ))}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
             </Group>
             {live && panel.editing
               ? <RowForm fields={rowFields(panelIndex)}

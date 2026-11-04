@@ -40,13 +40,13 @@ describe('editable', () => {
 
   it('reads the table description', () => {
     const t = parseTarget(42, [
-      ['public.orders', '1', 'id', 'integer', 'true', 'true', 'false', null, '1'],
+      ['public.orders', '1', 'id', 'integer', 'true', 'true', 'false', null, '1', 'a'],
       ['public.orders', '2', 'mood', 'mood', 'false', 'false', 'false', '["sad","ok","happy"]', '1'],
     ])
     expect(t).toEqual({
       table: 'public.orders', oid: 42, pk: [1], columns: [
-        { attnum: 1, name: 'id', type: 'integer', notNull: true, hasDefault: true, generated: false, enumValues: undefined },
-        { attnum: 2, name: 'mood', type: 'mood', notNull: false, hasDefault: false, generated: false, enumValues: ['sad', 'ok', 'happy'] },
+        { attnum: 1, name: 'id', type: 'integer', notNull: true, hasDefault: true, generated: false, identity: 'a', enumValues: undefined },
+        { attnum: 2, name: 'mood', type: 'mood', notNull: false, hasDefault: false, generated: false, identity: '', enumValues: ['sad', 'ok', 'happy'] },
       ],
     })
   })

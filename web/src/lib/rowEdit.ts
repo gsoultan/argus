@@ -24,6 +24,8 @@ export interface TableColumn {
   /** Postgres fills it in: a default, an identity, or a generated column. */
   hasDefault: boolean
   generated: boolean
+  /** 'a' for GENERATED ALWAYS AS IDENTITY, 'd' for BY DEFAULT, '' for none. */
+  identity?: string
   /** The labels of an enum type, in order. */
   enumValues?: string[]
 }
@@ -72,10 +74,14 @@ export const TARGET_SQL = `SELECT c.oid::regclass::text, a.attnum::text, a.attna
   format_type(a.atttypid, a.atttypmod), a.attnotnull::text,
   (a.atthasdef OR a.attidentity <> '')::text, (a.attgenerated <> '')::text,
   (SELECT array_to_json(array_agg(e.enumlabel ORDER BY e.enumsortorder))::text FROM pg_enum e WHERE e.enumtypid = a.atttypid),
-  (SELECT array_to_string(i.indkey, ' ') FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary)
+  (SELECT array_to_string(i.indkey, ' ') FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary),
+  a.attidentity::text
 FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid
 WHERE c.oid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum`
+
+/** TARGET_SQL for a table named schema.name in $1. */
+export const TARGET_BY_NAME_SQL = TARGET_SQL.replace('c.oid = $1::oid', 'c.oid = $1::regclass')
 
 /** The rows of TARGET_SQL as an EditTarget. */
 export function parseTarget(oid: number, rows: Cell[][]): EditTarget | null {
@@ -86,7 +92,7 @@ export function parseTarget(oid: number, rows: Cell[][]): EditTarget | null {
     if (r[7]) { try { enumValues = JSON.parse(r[7]) as string[] } catch { /* none */ } }
     return {
       attnum: Number(r[1]), name: r[2] ?? '', type: r[3] ?? 'text', notNull: r[4] === 'true',
-      hasDefault: r[5] === 'true', generated: r[6] === 'true', enumValues,
+      hasDefault: r[5] === 'true', generated: r[6] === 'true', identity: r[9] ?? '', enumValues,
     }
   })
   const pk = (first[8] ?? '').split(' ').filter(Boolean).map(Number)
