@@ -465,6 +465,18 @@ agent_releases_api: "https://mirror.internal/argus/releases.json"
 An agent older than this needs one upgrade by hand; after that it updates from
 the console. macOS and Windows agents are upgraded by hand.
 
+**Restarting an agent, from the console** (Linux servers with systemd): the
+same card offers **Restart agent**, which restarts it on the version it runs.
+It waits until nobody is connected unless you choose **Restart now**, holds
+SSH logins that arrive during the restart instead of refusing them, and
+reports **Restarted** once the agent takes SSH logins and reconnects to Argus.
+An agent that is not back within 90 seconds is reported as failed, with the
+command to look at it. An update already restarts the agent, so a restart
+cannot be asked while an update is waiting, and an update replaces a restart
+that has not begun. The audit log records `agent.restart_requested`, then
+`agent.restarted`, `agent.restart_failed` or `agent.restart_cancelled`. An
+agent older than this release is restarted by updating it once.
+
 **By hand:** install the new package over the old one. An enrolled agent is
 restarted on the new version about 10 seconds after the package finishes, and
 enabled if an older package had disabled it. A console session to that server

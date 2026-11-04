@@ -19,6 +19,10 @@ func (otherUpdates) check() string {
 	return "updating the agent from the console works on Linux servers for now; on " +
 		runtime.GOOS + ", install the new version by hand"
 }
+func (otherUpdates) restartCheck() string {
+	return "restarting the agent from the console works on Linux servers for now; on " +
+		runtime.GOOS + ", restart its service by hand"
+}
 func (otherUpdates) format() string         { return "" }
 func (otherUpdates) fileName(string) string { return "" }
 func (otherUpdates) launch(context.Context, string) error {

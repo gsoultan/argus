@@ -1593,6 +1593,11 @@ export const postgresEndpoint = `${BASE}/api/v1/postgres`
 export interface AgentUpdateStatus {
   supported: boolean
   reason?: string
+  /** Whether the agent can be restarted from the console; absent from an agent older than restarts. */
+  restartable?: boolean
+  restart_reason?: string
+  /** The status is about a restart rather than an update. */
+  restart?: boolean
   id?: string
   from?: string
   target?: string
@@ -1617,7 +1622,8 @@ export interface AgentUpdateView {
   consoleVersion: string
   /** Null from an agent too old to update itself from the console. */
   status: AgentUpdateStatus | null
-  request: { id: string; version: string; now: boolean; requestedAt: string; requestedBy: string } | null
+  /** restart: a restart on the version the agent runs, rather than an update to version. */
+  request: { id: string; version: string; now: boolean; restart?: boolean; requestedAt: string; requestedBy: string } | null
 }
 
 export async function agentUpdate(assetId: string): Promise<AgentUpdateView> {
@@ -1626,6 +1632,10 @@ export async function agentUpdate(assetId: string): Promise<AgentUpdateView> {
 
 export async function requestAgentUpdate(assetId: string, body: { version?: string; now?: boolean }): Promise<unknown> {
   return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/agent/update`, body)
+}
+
+export async function requestAgentRestart(assetId: string, body: { now?: boolean }): Promise<unknown> {
+  return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/agent/restart`, body)
 }
 
 export async function cancelAgentUpdate(assetId: string): Promise<unknown> {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,13 +20,15 @@ import (
 // fakeUpdates stands in for the host: it names files, and records the plan
 // it was asked to launch instead of restarting anything.
 type fakeUpdates struct {
-	reason   string
-	mu       sync.Mutex
-	launched []string
+	reason        string
+	restartReason string
+	mu            sync.Mutex
+	launched      []string
 }
 
-func (f *fakeUpdates) check() string  { return f.reason }
-func (f *fakeUpdates) format() string { return "deb" }
+func (f *fakeUpdates) check() string        { return f.reason }
+func (f *fakeUpdates) restartCheck() string { return f.restartReason }
+func (f *fakeUpdates) format() string       { return "deb" }
 func (f *fakeUpdates) fileName(v string) string {
 	return "argus-agent_" + v + "_linux_amd64.deb"
 }
@@ -237,5 +240,80 @@ func TestAnUpdateCanBeTakenBackAndSaysWhyNot(t *testing.T) {
 	u.Handle(context.Background(), &UpdateRequest{ID: "r3", Version: "1.1.0", URL: srv.URL})
 	if s := u.Status(); s.State != UpdateFailed || s.Message != plat.reason {
 		t.Errorf("status = %+v", s)
+	}
+}
+
+// A restart downloads nothing: it waits for the server to be free, holds new
+// sessions, and hands the helper a plan that installs nothing.
+func TestARestartWaitsThenRestartsWithoutAPackage(t *testing.T) {
+	var busy atomic.Int64
+	busy.Store(1)
+	plat := &fakeUpdates{}
+	u := testUpdater(t, plat, &busy)
+	var held atomic.Bool
+	u.Hold = func(on bool) { held.Store(on) }
+
+	if s := u.Status(); !s.Restartable || s.RestartReason != "" {
+		t.Fatalf("a host that can restart should say so: %+v", s)
+	}
+	u.Handle(context.Background(), &UpdateRequest{ID: "r1", Version: "1.0.0", Restart: true})
+	// Waiting at once, with nothing to download; the count of what it
+	// waits for follows a moment later.
+	s := waitState(t, u, UpdateWaiting)
+	for deadline := time.Now().Add(5 * time.Second); s.Sessions == 0 && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		s = u.Status()
+	}
+	if !s.Restart || !strings.Contains(s.Message, "1 open session(s) to end before restarting") {
+		t.Errorf("waiting status = %+v", s)
+	}
+	time.Sleep(3 * busyPoll / 2)
+	if plat.count() != 0 || held.Load() {
+		t.Fatal("the agent restarted, or held new sessions, while one was open")
+	}
+
+	busy.Store(0)
+	s = waitState(t, u, UpdateRestarting)
+	waitLaunched(t, plat, 1)
+	if !s.Restart || s.Target != "1.0.0" || s.Message != "restarting" {
+		t.Errorf("restarting status = %+v", s)
+	}
+	if !held.Load() {
+		t.Error("new sessions were not held for the restart")
+	}
+	if _, err := os.Stat(u.Marker); err != nil {
+		t.Error("no marker telling logins to wait for the restart")
+	}
+	if !u.Restarting() {
+		t.Error("the agent's shutdown would not know it is a restart, and would drain for nothing")
+	}
+	b, err := os.ReadFile(plat.launched[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan UpdatePlan
+	if err := json.Unmarshal(b, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Restart || plan.Package != "" || plan.Rollback != "" || plan.Target != "1.0.0" {
+		t.Errorf("a restart's plan should install nothing: %+v", plan)
+	}
+}
+
+// A host that cannot restart says why, and a restart asked of it fails at
+// once rather than waiting.
+func TestARestartSaysWhyNot(t *testing.T) {
+	var busy atomic.Int64
+	plat := &fakeUpdates{restartReason: "this server does not run systemd"}
+	u := testUpdater(t, plat, &busy)
+	if s := u.Status(); s.Restartable || s.RestartReason != plat.restartReason {
+		t.Errorf("status = %+v", s)
+	}
+	u.Handle(context.Background(), &UpdateRequest{ID: "r1", Version: "1.0.0", Restart: true})
+	if s := u.Status(); s.State != UpdateFailed || s.Message != plat.restartReason || !s.Restart {
+		t.Errorf("status = %+v", s)
+	}
+	if plat.count() != 0 {
+		t.Error("a host that cannot restart launched the helper")
 	}
 }

@@ -50,6 +50,12 @@ drops nothing it does not have to:
 
 The state lives in update.json in the state directory, so it survives the
 restart in the middle of it: the new agent reads what the helper wrote.
+
+A restart asked from the console is the same request with Restart set and
+nothing to download: it waits and holds logins the same way, and the helper
+has systemd restart the unit and waits for this version to come back and
+reconnect. There is nothing to go back to, so one that does not come back
+is reported as failed.
 */
 
 // Update states, as the console reads them.
@@ -74,6 +80,8 @@ type UpdateRequest struct {
 	URL string `json:"url"`
 	// Now means do not wait for open sessions to end.
 	Now bool `json:"now"`
+	// Restart asks for a restart on the running version, not an update.
+	Restart bool `json:"restart,omitempty"`
 }
 
 // UpdateStatus is what the agent says about updating itself, on every
@@ -83,6 +91,12 @@ type UpdateStatus struct {
 	// Reason says why not.
 	Supported bool   `json:"supported"`
 	Reason    string `json:"reason,omitempty"`
+	// Restartable is whether this agent can be restarted from the console;
+	// RestartReason says why not.
+	Restartable   bool   `json:"restartable,omitempty"`
+	RestartReason string `json:"restart_reason,omitempty"`
+	// Restart marks a status about a restart rather than an update.
+	Restart bool `json:"restart,omitempty"`
 
 	ID      string `json:"id,omitempty"`
 	From    string `json:"from,omitempty"`
@@ -130,6 +144,8 @@ type UpdatePlan struct {
 	// NeedTunnel is whether the new agent must reconnect to the control
 	// plane before it counts as working.
 	NeedTunnel bool `json:"need_tunnel"`
+	// Restart is a restart on From: nothing to install or go back to.
+	Restart bool `json:"restart,omitempty"`
 }
 
 // AgentReady is what a running agent writes once it is serving: the helper
@@ -178,6 +194,9 @@ type updatePlatform interface {
 	// check says why this host cannot update its agent from the console,
 	// or "" when it can.
 	check() string
+	// restartCheck says why this host cannot restart its agent from the
+	// console, or "" when it can. A restart needs no package.
+	restartCheck() string
 	// format is the package manager the agent was installed with.
 	format() string
 	// fileName is the release file holding version for this host.
@@ -262,6 +281,11 @@ func (u *Updater) Status() UpdateStatus {
 	} else {
 		s.Supported, s.Reason = true, ""
 	}
+	if reason := u.platform.restartCheck(); reason != "" {
+		s.Restartable, s.RestartReason = false, reason
+	} else {
+		s.Restartable, s.RestartReason = true, ""
+	}
 	return s
 }
 
@@ -294,6 +318,22 @@ func (u *Updater) Handle(ctx context.Context, req *UpdateRequest) {
 	if u.running != "" {
 		// A newer request replaces one still waiting.
 		u.cancel()
+	}
+
+	if req.Restart {
+		base := UpdateStatus{ID: req.ID, From: u.Version, Target: u.Version, Restart: true,
+			At: time.Now().UTC()}
+		if reason := u.platform.restartCheck(); reason != "" {
+			base.State, base.Message = UpdateFailed, reason
+			u.setLocked(base)
+			return
+		}
+		base.State, base.Message = UpdateWaiting, "getting ready to restart"
+		u.setLocked(base)
+		rctx, cancel := context.WithCancel(ctx)
+		u.running, u.now, u.cancel = req.ID, req.Now, cancel
+		go u.run(rctx, *req)
+		return
 	}
 
 	base := UpdateStatus{ID: req.ID, From: u.Version, Target: req.Version, At: time.Now().UTC()}
@@ -338,7 +378,10 @@ func (u *Updater) setLocked(s UpdateStatus) {
 }
 
 func (u *Updater) run(ctx context.Context, req UpdateRequest) {
-	st := UpdateStatus{ID: req.ID, From: u.Version, Target: req.Version}
+	st := UpdateStatus{ID: req.ID, From: u.Version, Target: req.Version, Restart: req.Restart}
+	if req.Restart {
+		st.Target = u.Version
+	}
 	finish := func(state, msg string) {
 		st.State, st.Message, st.Sessions = state, msg, 0
 		u.mu.Lock()
@@ -352,7 +395,11 @@ func (u *Updater) run(ctx context.Context, req UpdateRequest) {
 		}
 	}
 
-	plan, err := u.prepare(ctx, req)
+	prepare := u.prepare
+	if req.Restart {
+		prepare = u.prepareRestart
+	}
+	plan, err := prepare(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
 			finish(UpdateCancelled, "taken back in the console before it started")
@@ -387,6 +434,9 @@ func (u *Updater) run(ctx context.Context, req UpdateRequest) {
 	}
 	st.State, st.Sessions = UpdateRestarting, 0
 	st.Message = "restarting on " + req.Version
+	if req.Restart {
+		st.Message = "restarting"
+	}
 	if open > 0 {
 		st.Message += fmt.Sprintf("; ending %d open session(s) as asked", open)
 	}
@@ -415,6 +465,10 @@ func (u *Updater) run(ctx context.Context, req UpdateRequest) {
 		u.setLocked(st)
 		u.mu.Unlock()
 		u.Log.Error("update: " + st.Message)
+		return
+	}
+	if req.Restart {
+		u.Log.Warn("restart: restarting as asked from the console", "version", u.Version)
 		return
 	}
 	u.Log.Warn("update: restarting on the new version", "from", u.Version, "to", req.Version)
@@ -482,6 +536,9 @@ func (u *Updater) waitIdle(ctx context.Context, st *UpdateStatus) error {
 		if st.State != UpdateWaiting || st.Sessions != n {
 			st.State, st.Sessions = UpdateWaiting, n
 			st.Message = fmt.Sprintf("downloaded %s; waiting for %d open session(s) to end", st.Target, n)
+			if st.Restart {
+				st.Message = fmt.Sprintf("waiting for %d open session(s) to end before restarting", n)
+			}
 			u.set(*st)
 		}
 		t := time.NewTimer(busyPoll)
@@ -532,6 +589,21 @@ func (u *Updater) prepare(ctx context.Context, req UpdateRequest) (UpdatePlan, e
 		return UpdatePlan{}, fmt.Errorf("cannot keep a copy of the running agent: %w", err)
 	}
 	return plan, ctx.Err()
+}
+
+// prepareRestart is the plan for a restart: nothing to download, and
+// nothing to go back to.
+func (u *Updater) prepareRestart(ctx context.Context, req UpdateRequest) (UpdatePlan, error) {
+	dir := filepath.Join(u.StateDir, updateDir)
+	_ = os.RemoveAll(dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return UpdatePlan{}, fmt.Errorf("cannot make %s: %w", dir, err)
+	}
+	return UpdatePlan{
+		ID: req.ID, From: u.Version, Target: u.Version, Restart: true,
+		Executable: u.Executable, Unit: u.Unit, StateDir: u.StateDir, Marker: u.Marker,
+		NeedTunnel: u.NeedTunnel,
+	}, ctx.Err()
 }
 
 // fetchVerified downloads version's file for this host into dir and checks
@@ -713,6 +785,7 @@ func ReadUpdateStatus(stateDir string) (UpdateStatus, bool) {
 // WriteUpdateStatus replaces update.json in stateDir.
 func WriteUpdateStatus(stateDir string, s UpdateStatus) error {
 	s.Supported, s.Reason = false, ""
+	s.Restartable, s.RestartReason = false, ""
 	return writeFileAtomic(filepath.Join(stateDir, updateStateFile), mustJSON(s), 0o600)
 }
 

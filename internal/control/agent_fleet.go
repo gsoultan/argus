@@ -77,7 +77,7 @@ func (s *Store) AgentFleet(ctx context.Context) ([]AgentFleetRow, error) {
 		SELECT a.id, a.hostname, COALESCE(g.version, ''), g.last_seen_at,
 		       COALESCE(g.active_sessions, 0), g.update_status,
 		       c.update_id, c.update_version, c.update_now, c.update_requested_at,
-		       c.update_requested_by
+		       c.update_requested_by, c.update_restart
 		  FROM assets a
 		  JOIN agent_credentials c ON lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
 		  LEFT JOIN agents g ON lower(g.hostname) = lower(a.hostname)
@@ -90,15 +90,15 @@ func (s *Store) AgentFleet(ctx context.Context) ([]AgentFleetRow, error) {
 	var out []AgentFleetRow
 	for rows.Next() {
 		var (
-			f                 AgentFleetRow
-			status            []byte
-			reqID, reqVersion *string
-			reqNow            *bool
-			reqAt             *time.Time
-			reqBy             *string
+			f                  AgentFleetRow
+			status             []byte
+			reqID, reqVersion  *string
+			reqNow, reqRestart *bool
+			reqAt              *time.Time
+			reqBy              *string
 		)
 		if err := rows.Scan(&f.AssetID, &f.Hostname, &f.AgentVersion, &f.AgentLastSeen,
-			&f.ActiveSessions, &status, &reqID, &reqVersion, &reqNow, &reqAt, &reqBy); err != nil {
+			&f.ActiveSessions, &status, &reqID, &reqVersion, &reqNow, &reqAt, &reqBy, &reqRestart); err != nil {
 			return nil, err
 		}
 		if len(status) > 0 {
@@ -117,6 +117,9 @@ func (s *Store) AgentFleet(ctx context.Context) ([]AgentFleetRow, error) {
 			}
 			if reqBy != nil {
 				f.Request.RequestedBy = *reqBy
+			}
+			if reqRestart != nil {
+				f.Request.Restart = *reqRestart
 			}
 		}
 		out = append(out, f)
@@ -143,7 +146,8 @@ func (s *Store) SetAgentAutoUpdate(ctx context.Context, on bool, by string) (boo
 
 // classifyAgent sets a row's state against the offered version.
 func classifyAgent(f *AgentFleetRow, latest string) {
-	f.State, f.Why = agentState(f.AgentVersion, latest, f.Status, f.Request != nil)
+	// A restart is not an update: the row says where the version stands.
+	f.State, f.Why = agentState(f.AgentVersion, latest, f.Status, f.Request != nil && !f.Request.Restart)
 }
 
 func agentState(running, latest string, st *AgentUpdateStatus, asked bool) (string, string) {

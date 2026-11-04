@@ -47,6 +47,19 @@ func (p *linuxUpdates) check() string {
 	return ""
 }
 
+// restartCheck needs what the helper needs to restart the unit: root, to
+// start it, and systemd, to restart it. No package is involved.
+func (p *linuxUpdates) restartCheck() string {
+	switch {
+	case os.Geteuid() != 0:
+		return "the agent is not running as root, so it cannot restart itself"
+	case !systemdRunning():
+		return "this server does not run systemd, which restarting the agent needs; " +
+			"restart it by hand"
+	}
+	return ""
+}
+
 // format is the package manager that owns argus-agent here.
 func (p *linuxUpdates) format() string {
 	checks := []struct {
@@ -165,6 +178,9 @@ func (a *Applier) Apply() string {
 		a.Log = slog.Default()
 	}
 	p := a.Plan
+	if p.Restart {
+		return a.applyRestart()
+	}
 	status := UpdateStatus{ID: p.ID, From: p.From, Target: p.Target, State: UpdateRestarting,
 		Message: "installing " + p.Target}
 	a.write(status)
@@ -208,6 +224,35 @@ func (a *Applier) Apply() string {
 	status.Message = reason + "; went back to " + p.From
 	a.finish(status)
 	return UpdateRolledBack
+}
+
+// applyRestart restarts the agent on the version it runs and checks it came
+// back. There is nothing to go back to, so one that does not come back is a
+// failure, with the way in to look.
+func (a *Applier) applyRestart() string {
+	p := a.Plan
+	status := UpdateStatus{ID: p.ID, From: p.From, Target: p.Target, Restart: true,
+		State: UpdateRestarting, Message: "restarting"}
+	a.write(status)
+
+	started := time.Now()
+	err := a.restart()
+	if err == nil {
+		err = a.awaitReady(p.Target, started)
+	} else {
+		err = fmt.Errorf("would not restart: %w", err)
+	}
+	if err != nil {
+		status.State = UpdateFailed
+		status.Message = "the agent " + err.Error() + ". Log in with a break-glass account and " +
+			"run: sudo systemctl status argus-agent"
+		a.finish(status)
+		return UpdateFailed
+	}
+	status.State = UpdateDone
+	status.Message = fmt.Sprintf("restarted; back in %s", time.Since(started).Round(time.Second))
+	a.finish(status)
+	return UpdateDone
 }
 
 func (a *Applier) run(name string, args ...string) error {

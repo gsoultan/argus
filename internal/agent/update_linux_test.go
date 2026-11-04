@@ -115,3 +115,56 @@ func TestAnUpdateThatKeepsCrashingGoesBackSoon(t *testing.T) {
 		t.Errorf("status = %+v", s)
 	}
 }
+
+// A restart installs nothing and is done once the agent is back and
+// reconnected.
+func TestARestartThatComesBackIsDone(t *testing.T) {
+	dir := t.TempDir()
+	plan := UpdatePlan{ID: "r1", From: "1.0.0", Target: "1.0.0", Restart: true, StateDir: dir,
+		Unit: "argus-agent", Marker: dir + "/run/updating", NeedTunnel: true}
+	var ran []string
+	a := &Applier{Plan: plan, ReadyWait: 2 * time.Second, Run: func(name string, args ...string) error {
+		ran = append(ran, name+" "+strings.Join(args, " "))
+		if name == "systemctl" && args[0] == "restart" {
+			WriteReady(dir, "1.0.0", true, true)
+		}
+		return nil
+	}}
+	if got := a.Apply(); got != UpdateDone {
+		t.Fatalf("Apply = %s; ran %v", got, ran)
+	}
+	for _, r := range ran {
+		if strings.HasPrefix(r, "dpkg") || strings.HasPrefix(r, "rpm") || strings.HasPrefix(r, "apk") {
+			t.Errorf("a restart installed something: %v", ran)
+		}
+	}
+	if !strings.Contains(strings.Join(ran, "\n"), "systemctl restart argus-agent") {
+		t.Errorf("ran %v", ran)
+	}
+	s, _ := ReadUpdateStatus(dir)
+	if s.State != UpdateDone || !s.Restart || !strings.HasPrefix(s.Message, "restarted; back in") {
+		t.Errorf("status = %+v", s)
+	}
+}
+
+// A restart that does not reconnect has nothing to go back to: it fails and
+// says how to look.
+func TestARestartThatDoesNotReconnectFails(t *testing.T) {
+	dir := t.TempDir()
+	plan := UpdatePlan{ID: "r1", From: "1.0.0", Target: "1.0.0", Restart: true, StateDir: dir,
+		Unit: "argus-agent", NeedTunnel: true}
+	a := &Applier{Plan: plan, ReadyWait: 700 * time.Millisecond, Run: func(name string, args ...string) error {
+		if name == "systemctl" && args[0] == "restart" {
+			WriteReady(dir, "1.0.0", true, false)
+		}
+		return nil
+	}}
+	if got := a.Apply(); got != UpdateFailed {
+		t.Fatalf("Apply = %s", got)
+	}
+	s, _ := ReadUpdateStatus(dir)
+	if !strings.Contains(s.Message, "did not reconnect to Argus") ||
+		!strings.Contains(s.Message, "systemctl status argus-agent") {
+		t.Errorf("status = %+v", s)
+	}
+}

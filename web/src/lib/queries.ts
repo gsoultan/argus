@@ -24,6 +24,7 @@ import {
   agentUpdate as liveAgentUpdate,
   requestAgentUpdate as liveRequestAgentUpdate,
   cancelAgentUpdate as liveCancelAgentUpdate,
+  requestAgentRestart as liveRequestAgentRestart,
   agentFleet as liveAgentFleet,
   updateAgentFleet as liveUpdateAgentFleet,
   setAgentAutoUpdate as liveSetAgentAutoUpdate,
@@ -668,6 +669,14 @@ export function useRequestAgentUpdate(assetId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: { version?: string; now?: boolean }) => liveRequestAgentUpdate(assetId, body),
+    onSettled: () => void qc.invalidateQueries({ queryKey: agentUpdateKey(assetId) }),
+  })
+}
+
+export function useRequestAgentRestart(assetId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { now?: boolean }) => liveRequestAgentRestart(assetId, body),
     onSettled: () => void qc.invalidateQueries({ queryKey: agentUpdateKey(assetId) }),
   })
 }

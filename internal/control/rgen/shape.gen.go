@@ -87,6 +87,7 @@ func _assertAgentCredentialShape(m m0.AgentCredential) {
 		m.UpdateID,
 		m.UpdateVersion,
 		m.UpdateNow,
+		m.UpdateRestart,
 		m.UpdateRequestedAt,
 		m.UpdateRequestedBy,
 		m.FirstConnectedAt,
