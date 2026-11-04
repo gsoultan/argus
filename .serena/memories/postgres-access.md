@@ -207,3 +207,35 @@ left-bar entries, *Extensions* and *Replication*, in
   transaction (tracked by `txAfter`) it is refused instead.
 - **Diagram** (`web/src/lib/erd.ts`, `SchemaDiagram.tsx`): three catalog
   statements run as the person's role, so it shows only what they may see.
+
+## Check before it runs, and the guard (2026-11)
+
+`internal/tunnel/sqlclass.go` reads a statement's shape (`ClassifySQL`: verb,
+DROP object, targets, top-level WHERE, CASCADE, a data-changing CTE) from its
+words, skipping comments, literals and dollar quotes. It is **not access
+control**: enforcement stays Postgres grants. `GuardSQL` uses it to stop
+accidents in the agent's `run`, before Postgres sees the statement:
+
+- UPDATE/DELETE with no top-level WHERE → `AR001`; TRUNCATE and DROP TABLE /
+  SCHEMA / VIEW / MATERIALIZED VIEW → `AR002`; DROP DATABASE → `AR003`, never
+  runs from a session. The first two run when `PGRequest.Confirm` equals the
+  phrase `<db>/<targets>` the refusal carries (`PGAnswer.Guard`). The phrase
+  is a pause for the person, not a secret.
+- A refused statement is recorded as a `stmt` line plus an `error` line with
+  the guard code, so the replay shows the attempt.
+- Known gaps, by design (it says nothing when unsure): a DELETE inside a
+  WITH, `WHERE true`, DROP of other object kinds, ALTER TABLE … DROP COLUMN.
+
+Op `check` (`internal/agent/postgres_check.go`) runs an INSERT/UPDATE/DELETE/
+MERGE as the person's role inside BEGIN…ROLLBACK (or a savepoint inside their
+own transaction; refused in a failed one), and answers the tag's count plus
+every table touched (cascades, triggers) from `pg_stat_xact_user_tables`
+before/after. Recorded as a `check` line and a `done` line tagged
+`ROLLED BACK …`. Sequences still advance; the console says so.
+
+The console mirrors the classifier in `web/src/lib/sqlClass.ts`; both test
+against `internal/tunnel/testdata/sqlclass.json`. `WriteCheck.tsx` is the
+dialog: the count before UPDATE/DELETE/MERGE/INSERT…SELECT, and the guard's
+reason, size and `pg_depend` dependents before a DROP/TRUNCATE. An agent
+without `check` answers "unknown operation"; the console then runs as before
+and the agent's guard (if any) still applies.

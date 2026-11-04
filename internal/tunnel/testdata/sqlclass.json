@@ -1,0 +1,306 @@
+[
+  {
+    "sql": "SELECT * FROM orders",
+    "want": {
+      "verb": "select"
+    }
+  },
+  {
+    "sql": "select 1;",
+    "want": {
+      "verb": "select"
+    }
+  },
+  {
+    "sql": "  -- comment only",
+    "want": {
+      "verb": ""
+    }
+  },
+  {
+    "sql": "INSERT INTO orders (id) VALUES (1)",
+    "want": {
+      "verb": "insert",
+      "writes": true
+    }
+  },
+  {
+    "sql": "UPDATE orders SET status = 'x' WHERE id = 1",
+    "want": {
+      "verb": "update",
+      "targets": [
+        "orders"
+      ],
+      "hasWhere": true,
+      "writes": true
+    }
+  },
+  {
+    "sql": "update ONLY public.orders o set status = 'x'",
+    "want": {
+      "verb": "update",
+      "targets": [
+        "public.orders"
+      ],
+      "writes": true
+    }
+  },
+  {
+    "sql": "UPDATE orders SET status = (SELECT s FROM t WHERE t.id = 1)",
+    "want": {
+      "verb": "update",
+      "targets": [
+        "orders"
+      ],
+      "writes": true
+    }
+  },
+  {
+    "sql": "UPDATE \"Orders\" SET a = 1 WHERE a = 2",
+    "want": {
+      "verb": "update",
+      "targets": [
+        "Orders"
+      ],
+      "hasWhere": true,
+      "writes": true
+    }
+  },
+  {
+    "sql": "DELETE FROM orders WHERE id = 48199;",
+    "want": {
+      "verb": "delete",
+      "targets": [
+        "orders"
+      ],
+      "hasWhere": true,
+      "writes": true
+    }
+  },
+  {
+    "sql": "delete from public.orders",
+    "want": {
+      "verb": "delete",
+      "targets": [
+        "public.orders"
+      ],
+      "writes": true
+    }
+  },
+  {
+    "sql": "DELETE FROM orders USING refunds r WHERE r.order_id = orders.id",
+    "want": {
+      "verb": "delete",
+      "targets": [
+        "orders"
+      ],
+      "hasWhere": true,
+      "writes": true
+    }
+  },
+  {
+    "sql": "DELETE FROM orders -- WHERE id = 1",
+    "want": {
+      "verb": "delete",
+      "targets": [
+        "orders"
+      ],
+      "writes": true
+    }
+  },
+  {
+    "sql": "DELETE FROM orders /* where */ ",
+    "want": {
+      "verb": "delete",
+      "targets": [
+        "orders"
+      ],
+      "writes": true
+    }
+  },
+  {
+    "sql": "DELETE FROM orders WHERE note = 'no where here'",
+    "want": {
+      "verb": "delete",
+      "targets": [
+        "orders"
+      ],
+      "hasWhere": true,
+      "writes": true
+    }
+  },
+  {
+    "sql": "TRUNCATE orders",
+    "want": {
+      "verb": "truncate",
+      "targets": [
+        "orders"
+      ],
+      "writes": true
+    }
+  },
+  {
+    "sql": "truncate table only orders, public.refunds restart identity cascade",
+    "want": {
+      "verb": "truncate",
+      "targets": [
+        "orders",
+        "public.refunds"
+      ],
+      "writes": true,
+      "cascade": true
+    }
+  },
+  {
+    "sql": "DROP TABLE orders CASCADE;",
+    "want": {
+      "verb": "drop",
+      "object": "table",
+      "targets": [
+        "orders"
+      ],
+      "cascade": true
+    }
+  },
+  {
+    "sql": "drop table if exists public.orders, refunds",
+    "want": {
+      "verb": "drop",
+      "object": "table",
+      "targets": [
+        "public.orders",
+        "refunds"
+      ]
+    }
+  },
+  {
+    "sql": "DROP SCHEMA billing RESTRICT",
+    "want": {
+      "verb": "drop",
+      "object": "schema",
+      "targets": [
+        "billing"
+      ]
+    }
+  },
+  {
+    "sql": "DROP MATERIALIZED VIEW IF EXISTS stats",
+    "want": {
+      "verb": "drop",
+      "object": "materialized view",
+      "targets": [
+        "stats"
+      ]
+    }
+  },
+  {
+    "sql": "DROP VIEW unshipped_orders_v",
+    "want": {
+      "verb": "drop",
+      "object": "view",
+      "targets": [
+        "unshipped_orders_v"
+      ]
+    }
+  },
+  {
+    "sql": "DROP DATABASE orders WITH (FORCE)",
+    "want": {
+      "verb": "drop",
+      "object": "database",
+      "targets": [
+        "orders"
+      ]
+    }
+  },
+  {
+    "sql": "DROP INDEX CONCURRENTLY orders_status_idx",
+    "want": {
+      "verb": "drop",
+      "object": "index",
+      "targets": [
+        "orders_status_idx"
+      ]
+    }
+  },
+  {
+    "sql": "WITH x AS (SELECT 1) DELETE FROM orders WHERE id IN (SELECT * FROM x)",
+    "want": {
+      "verb": "delete",
+      "targets": [
+        "orders"
+      ],
+      "hasWhere": true,
+      "writes": true
+    }
+  },
+  {
+    "sql": "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM x) SELECT * FROM x",
+    "want": {
+      "verb": "select"
+    }
+  },
+  {
+    "sql": "WITH gone AS (DELETE FROM orders RETURNING id) SELECT count(*) FROM gone",
+    "want": {
+      "verb": "select",
+      "writes": true
+    }
+  },
+  {
+    "sql": "WITH a AS MATERIALIZED (SELECT 1), b AS (UPDATE t SET x = 1 RETURNING *) SELECT * FROM a, b",
+    "want": {
+      "verb": "select",
+      "writes": true
+    }
+  },
+  {
+    "sql": "SELECT $$DELETE FROM orders$$, $tag$ drop table t $tag$",
+    "want": {
+      "verb": "select"
+    }
+  },
+  {
+    "sql": "SELECT E'it\\'s; DROP TABLE t'",
+    "want": {
+      "verb": "select"
+    }
+  },
+  {
+    "sql": "/* nested /* DROP TABLE t */ still comment */ SELECT 1",
+    "want": {
+      "verb": "select"
+    }
+  },
+  {
+    "sql": "MERGE INTO orders o USING src s ON o.id = s.id WHEN MATCHED THEN DELETE",
+    "want": {
+      "verb": "merge",
+      "writes": true
+    }
+  },
+  {
+    "sql": "BEGIN",
+    "want": {
+      "verb": "begin"
+    }
+  },
+  {
+    "sql": "ALTER TABLE orders DROP COLUMN note",
+    "want": {
+      "verb": "alter"
+    }
+  },
+  {
+    "sql": "CREATE TABLE t (id int)",
+    "want": {
+      "verb": "create"
+    }
+  },
+  {
+    "sql": "SELECT 1; DELETE FROM orders",
+    "want": {
+      "verb": "select"
+    }
+  }
+]

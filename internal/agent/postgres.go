@@ -559,6 +559,16 @@ func (s *pgSession) serve(ctx context.Context, st tunnel.Stream) {
 					reason = err.Error()
 					return
 				}
+			case "check":
+				if !limiter.allow(time.Now()) {
+					_ = s.send(tunnel.PGAnswer{ID: req.ID, Type: "error",
+						Error: "too many statements in a minute; wait a moment"})
+					continue
+				}
+				if err := s.check(ctx, req); err != nil {
+					reason = err.Error()
+					return
+				}
 			case "schema":
 				if err := s.schema(ctx, req); err != nil {
 					reason = err.Error()
@@ -638,6 +648,19 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: tunnel.ErrRecordTooLong.Error()})
 	case !utf8.ValidString(sql) || strings.IndexByte(sql, 0) >= 0:
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "the statement is not valid text"})
+	}
+	// Stopped before it is recorded as run: an UPDATE or DELETE of every
+	// row, a DROP or TRUNCATE nobody confirmed. The attempt and the reason
+	// are recorded, so the replay shows what was asked and why it did not
+	// happen.
+	if g := tunnel.GuardSQL(tunnel.ClassifySQL(sql), s.db.Name, req.Confirm); g != nil {
+		if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql}); err != nil {
+			return fmt.Errorf("the recording failed: %w", err)
+		}
+		if err := s.record(tunnel.PGRecord{Kind: "error", Request: req.ID, Code: g.Code, Error: g.Reason}); err != nil {
+			return err
+		}
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: g.Code, Error: g.Reason, Guard: g})
 	}
 	maxRows := req.MaxRows
 	if maxRows <= 0 {

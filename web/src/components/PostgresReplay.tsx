@@ -22,7 +22,7 @@ password in it was redacted before it was recorded.
 interface Line {
   seq: number
   t: string
-  kind: 'open' | 'stmt' | 'admin' | 'done' | 'error' | 'cancel' | 'close'
+  kind: 'open' | 'stmt' | 'check' | 'admin' | 'done' | 'error' | 'cancel' | 'close'
   sql?: string
   req?: number
   tag?: string
@@ -49,6 +49,8 @@ interface Statement {
   cancelled?: boolean
   /** Ran through the helper as the server's postgres account. */
   admin?: boolean
+  /** Run inside a transaction that was rolled back: counted, not kept. */
+  check?: boolean
 }
 
 export function parseRecording(text: string): { open?: Line; close?: Line; statements: Statement[] } {
@@ -72,8 +74,9 @@ export function parseRecording(text: string): { open?: Line; close?: Line; state
         close = l
         break
       case 'stmt':
+      case 'check':
       case 'admin': {
-        const s: Statement = { seq: l.seq, t: l.t, sql: l.sql ?? '', admin: l.kind === 'admin' || undefined }
+        const s: Statement = { seq: l.seq, t: l.t, sql: l.sql ?? '', admin: l.kind === 'admin' || undefined, check: l.kind === 'check' || undefined }
         statements.push(s)
         if (l.req) byReq.set(l.req, s)
         break
@@ -172,6 +175,7 @@ export function PostgresReplay({ text, verified, error, live }: {
                   <StatementText sql={s.sql} />
                   <Group gap={6} mt={4} wrap="wrap">
                     {s.admin && <Badge size="xs" variant="outline" color="amber">as the server’s postgres account</Badge>}
+                    {s.check && <Badge size="xs" variant="outline" color="slate">checked, rolled back</Badge>}
                     {s.error ? (
                       <Badge size="xs" variant="light" color="rose">
                         {s.code === '42501' ? 'refused by access' : `error ${s.code ?? ''}`}
