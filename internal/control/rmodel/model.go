@@ -379,7 +379,7 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.Col(&m.Detail).Default("''::text")
 	t.Col(&m.Link).Default("''::text")
 	t.CheckNamed("console_alerts_kind_check",
-		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text])")
+		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text])")
 	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
 	t.CheckNamed("console_alerts_audience_check", "audience = ANY (ARRAY['deciders'::text, 'admins'::text, 'person'::text])")
 	t.CheckNamed("console_alerts_link_check", "(link = ''::text) OR (link ~~ '/%'::text)")
@@ -1077,6 +1077,7 @@ func All() []any {
 		&DatabaseBackup{},
 		&DatabaseBackupSchedule{},
 		&DatabaseBackupTest{},
+		&DatabaseChange{},
 		&DatabaseRestore{},
 		&DatabaseStatement{},
 		&DatabaseStatementItem{},
@@ -1166,4 +1167,35 @@ func (m *DatabaseStatementItem) Schema(t *storm.Table) {
 	t.Col(&m.Params).Default("'[]'::jsonb")
 	t.CheckNamed("database_statement_items_seq_check", "(seq >= 0)")
 	t.CheckNamed("database_statement_items_sql_check", "((length(sql) >= 1) AND (length(sql) <= 100000))")
+}
+
+// DatabaseChange is table database_changes: one committed statement that
+// changed data, for the Data changes log (migration 047).
+type DatabaseChange struct {
+	Seq        int64
+	At         time.Time
+	Database   Database
+	SessionID  string
+	ActorEmail string
+	Verb       string
+	Objects    []string
+	Rows       int64
+	Tag        string
+	Sql        string
+	ApprovalID string
+}
+
+func (m *DatabaseChange) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Seq)
+	t.Col(&m.Seq).Serial()
+	t.Col(&m.At).Default("now()")
+	t.Col(&m.Database).ConstraintName("database_changes_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.Objects).Default("'{}'::text[]")
+	t.Col(&m.Rows).Default("'-1'::integer")
+	t.Col(&m.Tag).Default("''::text")
+	t.Col(&m.ApprovalID).Default("''::text")
+	t.Index(&m.Database, &m.Seq).Named("database_changes_database")
+	t.Index(&m.At).Named("database_changes_at")
 }

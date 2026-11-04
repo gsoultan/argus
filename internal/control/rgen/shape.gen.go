@@ -368,6 +368,25 @@ func _assertDatabaseBackupTestShape(m m0.DatabaseBackupTest) {
 	}
 }
 
+// _assertDatabaseChangeShape fails to compile if m0.DatabaseChange gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseChangeShape(m m0.DatabaseChange) {
+	type shape m0.DatabaseChange
+	_ = shape{
+		m.Seq,
+		m.At,
+		m.Database,
+		m.SessionID,
+		m.ActorEmail,
+		m.Verb,
+		m.Objects,
+		m.Rows,
+		m.Tag,
+		m.Sql,
+		m.ApprovalID,
+	}
+}
+
 // _assertDatabaseRestoreShape fails to compile if m0.DatabaseRestore gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertDatabaseRestoreShape(m m0.DatabaseRestore) {

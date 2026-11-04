@@ -685,6 +685,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		if _, serr := store.SweepConsoleAlerts(ctx); serr != nil {
 			log.Error("console alert sweep failed", "error", serr)
 		}
+		if _, serr := store.SweepDataChanges(ctx); serr != nil {
+			log.Error("data change sweep failed", "error", serr)
+		}
 		if expired, eerr := store.ExpireGrants(ctx); eerr != nil {
 			log.Error("grant expiry sweep failed", "error", eerr)
 		} else if expired > 0 {

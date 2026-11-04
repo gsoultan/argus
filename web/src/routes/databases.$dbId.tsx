@@ -26,6 +26,8 @@ import type { DBLevel } from '~/types/domain'
  */
 export const Route = createFileRoute('/databases/$dbId')({
   component: DatabasePage,
+  // ?panel=changes opens a panel, as a data change alert links to it.
+  validateSearch: (s: Record<string, unknown>): { panel?: string } => (typeof s.panel === 'string' ? { panel: s.panel } : {}),
   loader: ({ context, params }) =>
     Promise.all([
       context.queryClient.ensureQueryData(meQuery()).catch(() => undefined),
@@ -35,6 +37,7 @@ export const Route = createFileRoute('/databases/$dbId')({
 
 function DatabasePage() {
   const { dbId } = Route.useParams()
+  const { panel } = Route.useSearch()
   const { data: me } = useQuery(meQuery())
   const { data, error } = useQuery(databaseQuery(dbId))
   const [asking, ask] = useDisclosure(false)
@@ -117,6 +120,7 @@ function DatabasePage() {
           endpoint={postgresEndpoint}
           onAskForAccess={access.approvable ? ask.open : undefined}
           orgAdmin={admin}
+          initialPanel={panel}
         />
       )}
       {access.approvable && (

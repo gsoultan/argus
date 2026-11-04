@@ -7,7 +7,7 @@ import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
-  IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease, IconTrash,
+  IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
 } from '@tabler/icons-react'
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
@@ -40,6 +40,7 @@ import { notifyWarn } from '~/lib/notify'
 import type { SavedQuery } from '~/lib/live'
 import { NEEDS_APPROVAL, useStatementApproval } from '~/components/StatementApproval'
 import { ImportData, type ImportRun } from '~/components/ImportData'
+import { ChangesPanel } from '~/components/DatabaseChanges'
 import type { EditTarget } from '~/lib/rowEdit'
 import { GenerateContext, NewTableButton, ObjectGenMenu, TableDesigner, type GenAction, type GenContext } from '~/components/SqlGenerate'
 import { DESIGN_SQL, blankColumn, ddlQuery, parseDesign, qualify, tableTemplate, type Design } from '~/lib/sqlGen'
@@ -72,6 +73,8 @@ export interface WorkspaceProps {
   onAskForAccess?: () => void
   /** The person is an organization admin: the backups panel links them to Settings. */
   orgAdmin?: boolean
+  /** A panel to open on, from a link: changes, trash or backups. */
+  initialPanel?: string
 }
 
 type Col = { name: string; type: string; table?: number; attnum?: number }
@@ -109,7 +112,7 @@ interface PGAnswer {
   trash?: TrashItem[]
 }
 
-type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups' | 'trash'
+type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups' | 'trash' | 'changes'
 
 interface Result {
   id: number
@@ -206,7 +209,7 @@ type Job =
 
 const DEFAULT_H = { wide: 170, narrow: 110 }
 
-export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, orgAdmin }: WorkspaceProps) {
+export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, orgAdmin, initialPanel }: WorkspaceProps) {
   const narrow = useMediaQuery('(max-width: 48em)')
   const [treeOpen, tree] = useDisclosure(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -223,7 +226,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>('query')
+  const [panel, setPanel] = useState<Panel>(initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' ? initialPanel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
 
   // Tabs: each its own editor text, row limit, result and plan. Text is
@@ -1373,6 +1376,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} />}
         {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} onBack={() => setPanel('query')} />}
+        {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} onBack={() => setPanel('query')} />}
         {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(orgAdmin)} />}
         {view === 'query' && panel === 'query' && <>
         {tabStrip}
@@ -1584,6 +1588,13 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
                 style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'trash' ? 'var(--color-raised)' : undefined }}
                 aria-pressed={panel === 'trash'}>
                 <IconTrash size={13} /><Text size={FS.meta}>Trash</Text>
+              </UnstyledButton>
+            </Tooltip>
+            <Tooltip label="Who inserted, updated or deleted what, from the console" withArrow>
+              <UnstyledButton onClick={() => onPanel(panel === 'changes' ? 'query' : 'changes')} px={4} py={4}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'changes' ? 'var(--color-raised)' : undefined }}
+                aria-pressed={panel === 'changes'}>
+                <IconHistory size={13} /><Text size={FS.meta}>Data changes</Text>
               </UnstyledButton>
             </Tooltip>
           </Box>
