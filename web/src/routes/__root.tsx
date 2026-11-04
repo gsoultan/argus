@@ -51,7 +51,7 @@ function NotFound() {
         <Text size={FS.display} fw={700} c="slate.7" lh={1}>404</Text>
         <Text size="sm" c="dimmed" mt="xs" mb="md">No such page.</Text>
         <ButtonLink size="xs" variant="light" to="/">
-          Back to overview
+          Back to Home
         </ButtonLink>
       </Box>
     </Box>

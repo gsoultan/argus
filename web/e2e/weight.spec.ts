@@ -71,6 +71,11 @@ const BUDGET_KB = {
    * for the query that asks whether there are agents to show, its two
    * mutations and the API calls, which share the eager queries module. The
    * card itself is lazy and loads only for a fleet with enrolled agents.
+   * 284.3 kB once `/` became Home rather than a redirect to Servers (284.0
+   * before, same build). Home's operator half and its argus-control card are
+   * chunks of their own, and nothing below the header is drawn until the
+   * console knows who is signed in, so an admin's first visit does not fetch
+   * the server cards it never shows.
    */
   overview: 285,
   /**
@@ -89,8 +94,11 @@ const BUDGET_KB = {
    * 389.6 kB with the alerts bell, the same shared 5 kB as the overview.
    * 390.0 kB with temporary passwords: the shell's gate for a password that
    * must be replaced and its "Change my password" item; the form is lazy.
+   * 392.2 kB with Home (390.8 before, same build): its menu item and icon, the
+   * link-typed Anchor every route can use, and the recent-audit and status
+   * queries in the shared queries module.
    */
-  sessionDetail: 392,
+  sessionDetail: 393,
 }
 
 /**

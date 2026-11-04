@@ -42,6 +42,7 @@ enforces all of it and CI runs it by name.
 | [console-alerts](console-alerts.md) | The bell in the header: who sees which alert, the SSE stream, per-person settings |
 | [multi-tenant](multi-tenant.md) | Organizations sharing one control plane: schema per organization, `scope`, per-organization keys, what is still platform-wide |
 | [control-status](control-status.md) | Settings › Status: argus-control's own health, where each number comes from, what counts as a problem |
+| [home-page](home-page.md) | Home at `/`: what each role sees, where each card's numbers come from |
 
 ## Standing rules for this repo
 

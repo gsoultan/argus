@@ -190,10 +190,10 @@ describe('the menu follows the role', () => {
 
   // Asked for in so many words: an ordinary user's console is their servers,
   // the databases they were given, and what they did on them.
-  it('shows a member Servers, Databases and My activity', async () => {
+  it('shows a member Home, Servers, Databases and My activity', async () => {
     signedInAs('operator')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Servers', 'Databases', 'My activity'])
+    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'My activity'])
     expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument()
   })
 
@@ -201,13 +201,13 @@ describe('the menu follows the role', () => {
   it('adds Approvals for an approver', async () => {
     signedInAs('approver')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Servers', 'Databases', 'Approvals', 'My activity'])
+    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'Approvals', 'My activity'])
   })
 
-  it('shows an administrator the six', async () => {
+  it('shows an administrator the seven', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Servers', 'Databases', 'Approvals', 'Teams', 'Activity', 'Settings'])
+    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'Approvals', 'Teams', 'Activity', 'Settings'])
   })
 
   it.each([
@@ -219,7 +219,7 @@ describe('the menu follows the role', () => {
     expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
   })
 
-  it.each(['/', '/mine', '/coverage', '/requests'] as const)('keeps the old address %s working', async (path) => {
+  it.each(['/mine', '/coverage', '/requests'] as const)('keeps the old address %s working', async (path) => {
     signedInAs('admin')
     await renderRoute(path)
     expect(await screen.findByRole('heading', { name: /Servers|Approvals/ })).toBeInTheDocument()

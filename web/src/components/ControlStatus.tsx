@@ -25,7 +25,8 @@ import { FS, SP } from '~/theme'
  * how to show it. Which things are problems is decided there too, so the pill,
  * the tiles and the checks cannot disagree with each other.
  */
-export const statusKey = ['platform', 'status'] as const
+export { statusKey } from '~/lib/queries'
+import { statusKey } from '~/lib/queries'
 
 export function ControlStatusSection({ onOpen }: { onOpen: (section: string) => void }) {
   const { data, error, isPending, refetch } = useQuery({

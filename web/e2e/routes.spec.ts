@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test'
 import { watchErrors } from './helpers'
 
-const ROUTES: Array<[string, string]> = [
-  ['/', 'Servers'],
+// Home's heading greets the person by the time of day.
+const HOME = /^Good (morning|afternoon|evening)/
+
+const ROUTES: Array<[string, string | RegExp]> = [
+  ['/', HOME],
   ['/sessions', 'Activity'],
   ['/assets', 'Servers'],
   ['/assets/add', 'Add server'],
@@ -23,7 +26,7 @@ for (const [path, heading] of ROUTES) {
   test(`${path} renders with no errors`, async ({ page }) => {
     const errs = watchErrors(page)
     await page.goto(path)
-    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: heading, exact: typeof heading === 'string' })).toBeVisible()
     // Give lazy chunks and workers a moment to settle before judging.
     await page.waitForLoadState('networkidle')
     await errs.assertClean()
@@ -33,7 +36,13 @@ for (const [path, heading] of ROUTES) {
 test('the designed fonts actually load', async ({ page }) => {
   // The theme named Inter for months while nothing loaded it. This is the
   // check that would have noticed.
-  await page.goto('/')
+  //
+  // On Servers, which sets text in both families. WebKit's fonts.load()
+  // resolves without fetching a face nothing on the page uses yet, and Home
+  // can draw before it has anything monospaced to show; this was `/` while
+  // `/` redirected to Servers.
+  await page.goto('/assets')
+  await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
   // Force both families to be used, then wait for the loads they trigger.
   await page.evaluate(async () => {
     await Promise.all([

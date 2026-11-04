@@ -44,6 +44,7 @@ import {
 import type { AuditPage } from '~/lib/live'
 import { isElevatedAccount } from '~/lib/roles'
 import type {
+  AuditEvent,
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
   ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost, ServerLogin,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
@@ -399,6 +400,16 @@ export const api = {
     return live.orFallback(live.stats, async () => {
       await latency(90)
       return computeStats()
+    })
+  },
+
+  async recentAudit(limit: number): Promise<AuditEvent[]> {
+    return live.orFallback(() => live.recentAudit(limit), async () => {
+      await latency(80)
+      return buildAuditSkeleton()
+        .map((e) => ({ ...e, hash: '', prevHash: '' }))
+        .sort((a, b) => b.seq - a.seq)
+        .slice(0, limit)
     })
   },
 

@@ -50,7 +50,7 @@ export function ErrorState({
               boundary should discard the state that produced the error, and a
               client-side transition would carry it along. */}
           <Button size="xs" variant="subtle" color="slate" component="a" href="/">
-            Back to overview
+            Back to Home
           </Button>
         </Group>
       </Stack>

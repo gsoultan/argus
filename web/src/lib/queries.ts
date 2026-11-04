@@ -41,6 +41,7 @@ import {
   saveQuery as liveSaveQuery,
   updateSavedQuery as liveUpdateSavedQuery,
   deleteSavedQuery as liveDeleteSavedQuery,
+  controlStatus,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -127,6 +128,15 @@ export const directLoginsQuery = () =>
 
 export const policyQuery = () =>
   queryOptions({ queryKey: ['policy'], queryFn: api.policy })
+
+/** The newest audit entries, for Home. Polled: it is the page's "what just happened". */
+/** argus-control's own health (Settings › Status, and Home's summary of it). */
+export const statusKey = ['platform', 'status'] as const
+export const controlStatusQuery = () =>
+  queryOptions({ queryKey: statusKey, queryFn: controlStatus, refetchInterval: 60_000 })
+
+export const recentAuditQuery = (limit = 6) =>
+  queryOptions({ queryKey: ['audit', 'recent', limit] as const, queryFn: () => api.recentAudit(limit), refetchInterval: 30_000 })
 
 export const auditQuery = () =>
   queryOptions({ queryKey: qk.audit, queryFn: api.auditSkeleton, staleTime: 5 * 60_000 })

@@ -233,7 +233,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               size="sm"
               aria-label={opened ? 'Close navigation' : 'Open navigation'}
             />
-            <Link to="/assets" style={{ textDecoration: 'none', color: 'inherit' }} aria-label="Argus home">
+            <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }} aria-label="Argus home">
               <Group gap={SP.cozy} wrap="nowrap">
                 <LogoMark size={28} />
                 <Text fw={700} size="md" visibleFrom="xs">Argus</Text>
