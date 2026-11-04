@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { itemLabel, summary } from '~/lib/jsonSummary'
+import { itemLabel, summary, type J } from '~/lib/jsonSummary'
 
 describe('JSON summaries', () => {
   it('names a list of objects by their items', () => {
-    const rules = [{ desc: 'Approval for staff', name: 'IMPC_Staff' }, { name: 'IMPC_Intern' }, { id: 7 }, { title: 'Fourth' }]
+    const rules: J[] = [{ desc: 'Approval for staff', name: 'IMPC_Staff' }, { name: 'IMPC_Intern' }, { id: 7 }, { title: 'Fourth' }]
     expect(itemLabel(rules[0]!)).toBe('IMPC_Staff')
     expect(summary(rules)).toBe('4 items: IMPC_Staff, IMPC_Intern, 7, …')
   })
