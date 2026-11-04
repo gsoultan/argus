@@ -1078,6 +1078,8 @@ func All() []any {
 		&DatabaseBackupSchedule{},
 		&DatabaseBackupTest{},
 		&DatabaseRestore{},
+		&DatabaseStatement{},
+		&DatabaseStatementItem{},
 		&DirectLoginRequest{},
 		&GatewayPolicy{},
 		&HostKeyPin{},
@@ -1119,4 +1121,49 @@ func (m *SavedQuery) Schema(t *storm.Table) {
 	t.CheckNamed("saved_queries_sql_check", "(length(sql) >= 1) AND (length(sql) <= 100000)")
 	t.Index(&m.Database, &m.Owner).Named("saved_queries_database_owner")
 	t.Index(&m.Database).Where("shared").Named("saved_queries_database_shared")
+}
+
+// DatabaseStatement is table database_statements: what an approval for a
+// statement on a production database is for (migration 046).
+type DatabaseStatement struct {
+	ID             [16]byte
+	Request        AccessRequest
+	Database       Database
+	RequesterEmail string
+	Summary        storm.JSON
+	CreatedAt      time.Time
+}
+
+func (m *DatabaseStatement) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Request).ConstraintName("database_statements_request_id_fkey")
+	t.Col(&m.Request).OnDelete(storm.Cascade)
+	t.Col(&m.Request).NoIndex()
+	t.Index(&m.Request).Unique().Named("database_statements_request_key")
+	t.Col(&m.Database).ConstraintName("database_statements_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.Summary).Default("'{}'::jsonb")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Index(&m.Database, &m.RequesterEmail).Named("database_statements_requester")
+}
+
+// DatabaseStatementItem is table database_statement_items: one statement of
+// an approval, run at most once (migration 046).
+type DatabaseStatementItem struct {
+	Statement DatabaseStatement
+	Seq       int32
+	Sql       string
+	Params    storm.JSON
+	Digest    string
+	UsedAt    *time.Time
+}
+
+func (m *DatabaseStatementItem) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Statement, &m.Seq)
+	t.Col(&m.Statement).ConstraintName("database_statement_items_statement_id_fkey")
+	t.Col(&m.Statement).OnDelete(storm.Cascade)
+	t.Col(&m.Params).Default("'[]'::jsonb")
+	t.CheckNamed("database_statement_items_seq_check", "(seq >= 0)")
+	t.CheckNamed("database_statement_items_sql_check", "((length(sql) >= 1) AND (length(sql) <= 100000))")
 }

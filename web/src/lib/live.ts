@@ -27,6 +27,7 @@ import type {
   User,
   BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseRestore, TestCheck,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
+  StatementAsk, StatementItem,
 } from '~/types/domain'
 
 /**
@@ -1530,6 +1531,16 @@ export async function updateSavedQuery(dbId: string, id: string,
 
 export async function deleteSavedQuery(dbId: string, id: string): Promise<void> {
   await send('DELETE', `/api/v1/databases/${encodeURIComponent(dbId)}/saved-queries/${encodeURIComponent(id)}`)
+}
+
+/** Asks for approval to run statements on a production database. */
+export async function askStatements(dbId: string, ask: { items: StatementItem[]; summary?: Record<string, unknown>; justification: string }): Promise<StatementAsk> {
+  return post<StatementAsk>(`/api/v1/databases/${encodeURIComponent(dbId)}/statements`, ask)
+}
+
+/** How an ask to run statements stands. */
+export async function statementAsk(dbId: string, requestId: string): Promise<StatementAsk> {
+  return get<StatementAsk>(`/api/v1/databases/${encodeURIComponent(dbId)}/statements/${encodeURIComponent(requestId)}`)
 }
 
 export async function deleteDatabase(id: string): Promise<void> {

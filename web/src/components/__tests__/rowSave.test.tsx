@@ -13,6 +13,9 @@ import { TARGET_SQL } from '~/lib/rowEdit'
  * and guarded like any other.
  */
 
+const live = vi.hoisted(() => ({ askStatements: vi.fn(), statementAsk: vi.fn() }))
+vi.mock('~/lib/live', async (orig) => ({ ...(await orig<typeof import('~/lib/live')>()), ...live }))
+
 class FakeSocket {
   static last: FakeSocket | null = null
   static OPEN = 1
@@ -156,6 +159,30 @@ describe('Saving row edits', () => {
     expect(await screen.findByText(/Nothing was saved\..*someone changed it since you read it/)).toBeInTheDocument()
     await new Promise((r) => setTimeout(r, 30))
     expect(runs(ws).some((r) => r.sql === 'COMMIT')).toBe(false)
+  })
+
+  it('on production, asks for approval for the whole save and sends it again under it', async () => {
+    live.askStatements.mockResolvedValue({ requestId: 'r1', databaseId: 'd1', databaseName: 'orders', items: [], state: 'pending' })
+    live.statementAsk.mockResolvedValue({ requestId: 'r1', state: 'approved', decidedBy: 'budi', items: [] })
+    const ws = await open()
+    const n = await changeNote(ws)
+    await next(ws, n + 1, { type: 'done', tag: 'BEGIN' })
+    await next(ws, n + 2, { type: 'error', code: 'AR007', error: 'orders is production: a statement that changes it runs once someone else approves it' })
+    expect((await next(ws, n + 3, { type: 'done', tag: 'ROLLBACK' })).sql).toBe('ROLLBACK')
+    fireEvent.change(await screen.findByLabelText(/Why/), { target: { value: 'fixing the note on order 1 for support' } })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask for approval' }))
+    await waitFor(() => expect(live.askStatements).toHaveBeenCalled())
+    const asked = live.askStatements.mock.calls[0]![1] as { items: { sql: string; params: unknown[] }[] }
+    expect(asked.items).toHaveLength(1)
+    expect(asked.items[0]!.params).toEqual(['changed', '1', 'first'])
+    await act(async () => { await vi.advanceTimersByTimeAsync(3100) })
+    vi.useRealTimers()
+    await next(ws, n + 4, { type: 'done', tag: 'BEGIN' })
+    const upd = await next(ws, n + 5, { type: 'done', tag: 'UPDATE 1' }, [['1', 'changed']])
+    expect(upd.approval).toBe('r1')
+    expect((await next(ws, n + 6, { type: 'done', tag: 'COMMIT' })).sql).toBe('COMMIT')
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Unsaved changes' })).toBeNull())
   })
 
   it('offers no editing to read access', async () => {

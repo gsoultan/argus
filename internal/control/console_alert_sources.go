@@ -17,6 +17,8 @@ func describeAsk(principal string, hosts []string) string {
 	switch {
 	case principal == "db:restore":
 		return "a restore of a database on " + on
+	case principal == statementPrincipal:
+		return "approval to run a statement on a production database on " + on
 	case strings.HasPrefix(principal, "db:"):
 		return strings.TrimPrefix(principal, "db:") + " access to a database on " + on
 	default:

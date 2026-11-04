@@ -33,8 +33,36 @@ func loadSQLClassCases(t *testing.T) []sqlClassCase {
 func TestClassifySQL(t *testing.T) {
 	for _, tc := range loadSQLClassCases(t) {
 		got := ClassifySQL(tc.SQL)
+		// The shared cases are what the console sees; the agent's own
+		// fields are tested below.
+		got.Names, got.Alias, got.Returning, got.IfExists = nil, "", false, false
 		if !reflect.DeepEqual(got, tc.Want) {
 			t.Errorf("%q\n got  %+v\n want %+v", tc.SQL, got, tc.Want)
+		}
+	}
+}
+
+// What the agent needs to say a statement again: each name in parts, a
+// DELETE's alias, whether it returns rows already, DROP … IF EXISTS.
+func TestClassifySQLNames(t *testing.T) {
+	cases := []struct {
+		sql       string
+		names     [][]string
+		alias     string
+		returning bool
+		ifExists  bool
+	}{
+		{"DELETE FROM public.orders o WHERE o.id = 1", [][]string{{"public", "orders"}}, "o", false, false},
+		{"DELETE FROM ONLY \"My Orders\" AS m WHERE true", [][]string{{"My Orders"}}, "m", false, false},
+		{"DELETE FROM orders WHERE id = 1 RETURNING id", [][]string{{"orders"}}, "", true, false},
+		{"DELETE FROM orders USING refunds r WHERE r.order_id = orders.id", [][]string{{"orders"}}, "", false, false},
+		{"DROP TABLE IF EXISTS a, \"S\".\"b.c\" CASCADE", [][]string{{"a"}, {"S", "b.c"}}, "", false, true},
+		{"TRUNCATE ONLY a, b", [][]string{{"a"}, {"b"}}, "", false, false},
+	}
+	for _, tc := range cases {
+		c := ClassifySQL(tc.sql)
+		if !reflect.DeepEqual(c.Names, tc.names) || c.Alias != tc.alias || c.Returning != tc.returning || c.IfExists != tc.ifExists {
+			t.Errorf("%q: names %q alias %q returning %v if exists %v", tc.sql, c.Names, c.Alias, c.Returning, c.IfExists)
 		}
 	}
 }

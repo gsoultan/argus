@@ -693,6 +693,29 @@ export interface AccessRequest {
   breakGlass: boolean
   /** Set when the request stands for restoring a database in place. */
   restoreId?: string
+  /** Set when the request is to run statements on a production database. */
+  statement?: StatementAsk
+}
+
+/** One statement of an ask to run statements on production. */
+export interface StatementItem {
+  sql: string
+  params?: (string | null)[]
+  used?: boolean
+}
+
+/** What a request to run statements on a production database is for. */
+export interface StatementAsk {
+  requestId: string
+  databaseId: string
+  databaseName: string
+  items: StatementItem[]
+  summary?: Record<string, unknown>
+  /** pending, approved, denied or expired. */
+  state: string
+  expiresAt?: string
+  decidedBy?: string | null
+  note?: string | null
 }
 
 /* ── Audit ───────────────────────────────────────────────────────────────── */

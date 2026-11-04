@@ -149,6 +149,10 @@ type PGRequest struct {
 	// Confirm is the phrase the person typed to let a guarded statement run
 	// (see GuardSQL), for run.
 	Confirm string `json:"confirm,omitempty"`
+	// Approval is the approved request a statement runs under, for run on a
+	// database whose writes need one. The control plane checks it before the
+	// request reaches the agent; the agent records it with the statement.
+	Approval string `json:"approval,omitempty"`
 }
 
 /*
@@ -324,6 +328,23 @@ type PGAnswer struct {
 	Guard *PGGuard `json:"guard,omitempty"`
 	// Check answers check.
 	Check *PGCheck `json:"check,omitempty"`
+	// Trash is what a DELETE, DROP or TRUNCATE put in the database's trash
+	// instead of losing it, on done.
+	Trash []PGTrashItem `json:"trash,omitempty"`
+}
+
+// PGTrashItem is one thing in a database's trash (the argus_trash schema):
+// rows a DELETE removed, a dropped table or schema, or a table's rows from
+// before it was emptied. It can be put back until it expires.
+type PGTrashItem struct {
+	ID int64 `json:"id"`
+	// Kind is rows, table, schema or empty.
+	Kind string `json:"kind"`
+	// Source is what it was: schema.table, or the schema.
+	Source string `json:"source"`
+	Rows   int64  `json:"rows,omitempty"`
+	// Expires is when it is removed for good, RFC 3339.
+	Expires string `json:"expires"`
 }
 
 // PGCheck is what a statement would do, learned by running it and rolling
@@ -366,6 +387,12 @@ type PGRecord struct {
 	SQL string `json:"sql,omitempty"`
 	// Params are the values the statement ran with, on stmt and check.
 	Params []*string `json:"params,omitempty"`
+	// Ran is what Argus ran in the statement's place, on stmt, when it did:
+	// a DELETE that keeps a copy of the rows, a DROP or TRUNCATE that moves
+	// what it would remove into the trash.
+	Ran string `json:"ran,omitempty"`
+	// Approval is the approved request the statement ran under, on stmt.
+	Approval string `json:"approval,omitempty"`
 	// Request ties stmt, done and error together.
 	Request uint32 `json:"req,omitempty"`
 	Tag     string `json:"tag,omitempty"`
