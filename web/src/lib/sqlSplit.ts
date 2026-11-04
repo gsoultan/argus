@@ -20,6 +20,8 @@ export interface Statement {
   sql: string
   /** 1-based line of the statement's first character in the script. */
   line: number
+  /** Offset of that character in the script, as a JS string index (UTF-16). */
+  from: number
 }
 
 const identStart = /[A-Za-z_\u0080-￿]/
@@ -44,7 +46,7 @@ export function splitSQL(script: string): Statement[] {
   const end = (p: number) => {
     if (start >= 0) {
       const sql = s.slice(start, p).trim()
-      if (sql) out.push({ sql, line: lineAt(start) })
+      if (sql) out.push({ sql, line: lineAt(start), from: start })
     }
     start = -1
     depth = 0

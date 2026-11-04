@@ -6,7 +6,7 @@ import { splitSQL } from '../sqlSplit'
 // Postgres (internal/agent/postgres_script_test.go).
 const dir = `${process.cwd()}/../internal/agent/testdata`
 const script = readFileSync(`${dir}/script.sql`, 'utf8')
-const want = JSON.parse(readFileSync(`${dir}/script.statements.json`, 'utf8')) as { sql: string; line: number }[]
+const want = JSON.parse(readFileSync(`${dir}/script.statements.json`, 'utf8')) as { sql: string; line: number; from: number }[]
 
 const sqls = (s: string) => splitSQL(s).map((x) => x.sql)
 
@@ -16,6 +16,7 @@ describe('splitSQL', () => {
     expect(want).toHaveLength(12)
     expect(want[0]!.sql).toBe('BEGIN')
     expect(want.at(-1)!.sql).toBe('ROLLBACK')
+    for (const w of want) expect(script.slice(w.from, w.from + w.sql.length)).toBe(w.sql)
   })
 
   it('leaves one statement alone', () => {
@@ -57,5 +58,12 @@ END`
 
   it('says on which line each statement starts', () => {
     expect(splitSQL('SELECT 1;\n\n-- c\nSELECT\n 2;').map((x) => x.line)).toEqual([1, 4])
+  })
+
+  it('gives each statement its offset as a string index, past astral characters too', () => {
+    const s = "SELECT '😀';\n  SELECT 2"
+    const got = splitSQL(s)
+    expect(got.map((x) => x.from)).toEqual([0, s.indexOf('SELECT 2')])
+    expect(s.slice(got[1]!.from)).toBe('SELECT 2')
   })
 })
