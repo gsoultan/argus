@@ -123,4 +123,50 @@ describe('Generators in the schema tree', () => {
     expect(screen.queryByText('Design table…')).toBeNull()
     expect(screen.queryByRole('button', { name: 'New table in public' })).toBeNull()
   })
+
+  it('imports a CSV file into a table in one transaction', async () => {
+    const ws = await open()
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate for orders' }))
+    fireEvent.click(await screen.findByText('Import from CSV or Excel…'))
+    await answerRows(ws, TARGET_BY_NAME_SQL, [
+      ['public.orders', '1', 'id', 'integer', 'true', 'false', 'false', null, '1', ''],
+      ['public.orders', '2', 'note', 'text', 'false', 'false', 'false', null, '1', ''],
+    ], 10)
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: 'Excel template' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'CSV template' })).toBeInTheDocument()
+    const input = dialog.ownerDocument.querySelector('input[type=file]') as HTMLInputElement
+    const file = new File(['id,note\n1,first\n2,"second, with a comma"\n'], 'orders.csv', { type: 'text/csv' })
+    fireEvent.change(input, { target: { files: [file] } })
+    expect(await within(dialog).findByText('2 rows')).toBeInTheDocument()
+    expect(within(dialog).getByText('second, with a comma')).toBeInTheDocument()
+    const before = ws.sent.filter((r) => r.op === 'run').length
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import 2 rows' }))
+    const nth = async (n: number, ans: Record<string, unknown>) => {
+      await waitFor(() => expect(ws.sent.filter((r) => r.op === 'run').length).toBeGreaterThanOrEqual(before + n))
+      const r = ws.sent.filter((x) => x.op === 'run')[before + n - 1]!
+      ws.answer({ id: r.id, ...ans })
+      return r
+    }
+    expect((await nth(1, { type: 'done', tag: 'BEGIN' })).sql).toBe('BEGIN')
+    const ins = await nth(2, { type: 'done', tag: 'INSERT 0 2' })
+    expect(ins.sql).toBe('INSERT INTO public.orders (id, note)\nVALUES (CAST($1 AS integer), CAST($2 AS text)),\n       (CAST($3 AS integer), CAST($4 AS text))')
+    expect(ins.params).toEqual(['1', 'first', '2', 'second, with a comma'])
+    expect((await nth(3, { type: 'done', tag: 'COMMIT' })).sql).toBe('COMMIT')
+    expect(await within(dialog).findByText(/Imported: 2 rows went into public.orders/)).toBeInTheDocument()
+  })
+
+  it('will not import a file with problems, and says where they are', async () => {
+    const ws = await open()
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate for orders' }))
+    fireEvent.click(await screen.findByText('Import from CSV or Excel…'))
+    await answerRows(ws, TARGET_BY_NAME_SQL, [
+      ['public.orders', '1', 'id', 'integer', 'true', 'false', 'false', null, '1', ''],
+    ], 10)
+    const dialog = await screen.findByRole('dialog')
+    const input = dialog.ownerDocument.querySelector('input[type=file]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['id\nseven\n'], 'x.csv')] } })
+    expect(await within(dialog).findByText('Row 2, id: must be a whole number')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /^Import/ })).toBeDisabled()
+  })
 })

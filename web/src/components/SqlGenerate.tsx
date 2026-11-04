@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, useState } from 'react'
 import {
   ActionIcon, Alert, Autocomplete, Box, Button, Checkbox, Code, Group, Menu, Modal, ScrollArea, Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
-import { IconCode, IconDots, IconPlus, IconTableOptions, IconX } from '@tabler/icons-react'
+import { IconCode, IconDots, IconFileImport, IconPlus, IconTableOptions, IconX } from '@tabler/icons-react'
 import { FS } from '~/theme'
 import {
   COMMON_TYPES, DML_LABEL, alterTable, blankColumn, createTable, designProblems, type Design, type DesignColumn, type DmlKind,
@@ -16,7 +16,7 @@ the tab; nothing here runs anything.
 */
 
 export type GenAction =
-  | { what: 'ddl' | DmlKind | 'design'; kind: string; schema: string; name: string }
+  | { what: 'ddl' | DmlKind | 'design' | 'import'; kind: string; schema: string; name: string }
   | { what: 'new-table'; schema: string }
 
 export interface GenContext {
@@ -49,6 +49,7 @@ export function ObjectGenMenu({ kind, schema, name }: { kind: string; schema: st
           <>
             <Menu.Divider />
             <Menu.Item leftSection={<IconTableOptions size={13} />} onClick={() => go('design')}>Design table…</Menu.Item>
+            <Menu.Item leftSection={<IconFileImport size={13} />} onClick={() => go('import')}>Import from CSV or Excel…</Menu.Item>
           </>
         )}
       </Menu.Dropdown>

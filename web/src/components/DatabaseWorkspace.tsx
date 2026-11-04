@@ -39,6 +39,8 @@ import {
 import { notifyWarn } from '~/lib/notify'
 import type { SavedQuery } from '~/lib/live'
 import { NEEDS_APPROVAL, useStatementApproval } from '~/components/StatementApproval'
+import { ImportData, type ImportRun } from '~/components/ImportData'
+import type { EditTarget } from '~/lib/rowEdit'
 import { GenerateContext, NewTableButton, ObjectGenMenu, TableDesigner, type GenAction, type GenContext } from '~/components/SqlGenerate'
 import { DESIGN_SQL, blankColumn, ddlQuery, parseDesign, qualify, tableTemplate, type Design } from '~/lib/sqlGen'
 import { TARGET_BY_NAME_SQL, parseTarget } from '~/lib/rowEdit'
@@ -428,6 +430,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       pending.current.delete(id)
       collectors.current.delete(id)
       if (a.type !== 'done') c.error = { error: a.error, code: a.code }
+      else c.tag = a.tag
       resolve(c)
     })
     if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined, approval })) {
@@ -763,6 +766,53 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     }
   }, [collectWithId, finished, askApproval])
 
+  // runImport sends an import's INSERT statements in one transaction (a
+  // savepoint inside the person's own), and rolls all of it back at the first
+  // that fails. On production the whole import is asked for at once.
+  const runImport: ImportRun = useCallback(async (stmts, progress) => {
+    if (runningRef.current) return { ok: false, at: 0, error: 'another statement is running; wait for it to finish.' }
+    const key = activeRef.current
+    runningRef.current = { id: -1, tab: key }
+    setRunning(runningRef.current)
+    const track = (id: number) => { runningRef.current = { id, tab: key }; setRunning(runningRef.current) }
+    const inTx = txOpen.current
+    const mark = 'argus_import'
+    const undo = async () => {
+      await collectWithId(inTx ? `ROLLBACK TO SAVEPOINT ${mark}` : 'ROLLBACK', 1, track)
+      if (inTx) await collectWithId(`RELEASE SAVEPOINT ${mark}`, 1, track)
+    }
+    const attempt = async (approval?: string): Promise<{ ok: true; rows: number } | { ok: false; at: number; error: string; approve?: string }> => {
+      const b = await collectWithId(inTx ? `SAVEPOINT ${mark}` : 'BEGIN', 1, track)
+      if (b.error) return { ok: false, at: 0, error: b.error.error ?? 'could not start a transaction' }
+      let rows = 0
+      for (let i = 0; i < stmts.length; i++) {
+        const s = stmts[i]!
+        const r = await collectWithId(s.sql, 1, track, s.params, approval)
+        setHistory((h) => [{ sql: s.sql.length > 2000 ? `${s.sql.slice(0, 2000)}…` : s.sql, at: Date.now(), ok: !r.error }, ...h].slice(0, 100))
+        if (r.error) {
+          await undo()
+          return { ok: false, at: i, error: `${r.error.error ?? 'Postgres refused it'}${r.error.code ? ` (${r.error.code})` : ''}`,
+            approve: r.error.code === NEEDS_APPROVAL && !approval && i === 0 ? r.error.error ?? '' : undefined }
+        }
+        rows += Number(/^INSERT \d+ (\d+)/.exec(r.tag ?? '')?.[1] ?? 0)
+        progress(s.last - 1)
+      }
+      const c = await collectWithId(inTx ? `RELEASE SAVEPOINT ${mark}` : 'COMMIT', 1, track)
+      if (c.error) return { ok: false, at: stmts.length - 1, error: c.error.error ?? 'the commit failed' }
+      return { ok: true, rows }
+    }
+    try {
+      const first = await attempt()
+      if (first.ok || first.approve === undefined) return first
+      const id = await askApproval(stmts.map((s) => ({ sql: s.sql, params: s.params })),
+        { why: first.approve, summary: { import: true, rows: stmts.reduce((n, s) => n + (s.last - s.first + 1), 0) } })
+      if (!id) return { ok: false, at: 0, error: 'it needs approval on production, and none was given' }
+      return await attempt(id)
+    } finally {
+      finished()
+    }
+  }, [collectWithId, finished, askApproval])
+
   startRef.current = (j: Job) => (j.kind === 'run' ? startRun(j) : j.kind === 'script' ? startScript(j) : startExplain(j))
   const enqueue = useCallback((j: Job) => {
     if (runningRef.current) {
@@ -1014,6 +1064,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // The tree's generators: what they write opens in a new tab, to be read and
   // run there. The catalogue is read as the person's role, like anything else.
   const [designer, setDesigner] = useState<Design | null>(null)
+  const [importing, setImporting] = useState<EditTarget | null>(null)
   const genAct = useCallback(async (a: GenAction) => {
     if (narrow) tree.close()
     const show = (text: string, name: string) => {
@@ -1044,6 +1095,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     const r = await collect(TARGET_BY_NAME_SQL, 2000, [q])
     const t = r.error ? null : parseTarget(0, r.rows)
     if (!t) { notifyWarn('Cannot read the table', r.error?.error ?? `${q} has no columns you may see.`); return }
+    if (a.what === 'import') { setImporting(t); return }
     show(tableTemplate(t, a.what), `${a.what} ${a.name}`)
   }, [collect, openTab, narrow, tree])
   const gen: GenContext = useMemo(() => ({ act: (a) => void genAct(a), canWrite: Boolean(level) && level !== 'read' }), [genAct, level])
@@ -1367,6 +1419,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         </>}
       </Box>
       {approvalDialog}
+      {importing && <ImportData target={importing} narrow={Boolean(narrow)} onClose={() => setImporting(null)} run={runImport} />}
       {designer && <TableDesigner start={designer} narrow={narrow} onClose={() => setDesigner(null)}
         onOpen={(text, name) => { setDesigner(null); if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />}
       <WriteCheckDialog state={writeCheck} label={database.label} step={gateStep} databaseId={database.id} canBackup={level === 'owner' || level === 'dba'}

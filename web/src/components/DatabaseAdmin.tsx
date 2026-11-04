@@ -21,6 +21,8 @@ export interface Collected {
   cols: { name: string; type: string; table?: number; attnum?: number }[]
   rows: Cell[][]
   error?: { error?: string; code?: string }
+  /** Postgres's command tag, when it finished: "INSERT 0 500". */
+  tag?: string
 }
 export type Collect = (sql: string, maxRows?: number, params?: (string | null)[]) => Promise<Collected>
 
