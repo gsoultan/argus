@@ -849,7 +849,7 @@ func (s *pgSession) sendCols(id uint32, fds []pgconn.FieldDescription) error {
 		if !ok {
 			t = "oid " + strconv.FormatUint(uint64(fd.DataTypeOID), 10)
 		}
-		cols[i] = tunnel.PGColumn{Name: fd.Name, Type: t}
+		cols[i] = tunnel.PGColumn{Name: fd.Name, Type: t, Table: fd.TableOID, Attnum: fd.TableAttributeNumber}
 	}
 	return s.send(tunnel.PGAnswer{ID: id, Type: "cols", Cols: cols})
 }

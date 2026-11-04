@@ -163,10 +163,14 @@ func TestPostgresRunWithParams(t *testing.T) {
 	h := openPG(t, tunnel.LevelOwner, nil)
 	s := func(v string) *string { return &v }
 
-	_, rows, final := h.do(tunnel.PGRequest{ID: 1, Op: "run", SQL: "SELECT v, $2::text IS NULL FROM argus_t_p WHERE id = $1",
+	cols, rows, final := h.do(tunnel.PGRequest{ID: 1, Op: "run", SQL: "SELECT v, $2::text IS NULL FROM argus_t_p WHERE id = $1",
 		Params: []*string{s("2"), nil}})
 	if final.Type != "done" || len(rows) != 1 || *rows[0][0] != "b" || *rows[0][1] != "t" {
 		t.Fatalf("select with params: %+v %v", final, rows)
+	}
+	// A table column says where it came from; an expression does not.
+	if len(cols) != 2 || cols[0].Table == 0 || cols[0].Attnum != 2 || cols[1].Table != 0 {
+		t.Fatalf("column origins: %+v", cols)
 	}
 	_, _, final = h.do(tunnel.PGRequest{ID: 2, Op: "run", SQL: "UPDATE argus_t_p SET v = $1 WHERE id = $2",
 		Params: []*string{s("x'; DROP TABLE argus_t_p; --"), s("1")}})

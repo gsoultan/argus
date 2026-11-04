@@ -11,6 +11,7 @@ import {
 } from '@tabler/icons-react'
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
+import { ResultsGrid } from '~/components/ResultsGrid'
 import { QueryParams } from '~/components/QueryParams'
 import { SqlEditor, pgErrorOffset, type EditorError, type SqlEditorHandle } from '~/components/SqlEditor'
 import { bindParams, originalOffset, paramNames, type Bound } from '~/lib/sqlParams'
@@ -64,7 +65,7 @@ export interface WorkspaceProps {
   orgAdmin?: boolean
 }
 
-type Col = { name: string; type: string }
+type Col = { name: string; type: string; table?: number; attnum?: number }
 type Cell = string | null
 type Obj = { name: string; kind: string; detail?: string; count?: number; schema?: string }
 
@@ -416,7 +417,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       resolve({ cols: [], rows: [], error: { error: 'the session ended' } })
     }
   }), [send])
-  const collect: Collect = useCallback((text, max) => collectWithId(text, max), [collectWithId])
+  const collect: Collect = useCallback((text, max, params) => collectWithId(text, max, undefined, params), [collectWithId])
 
   // openGuard shows why the agent stopped a statement, and for a DROP or
   // TRUNCATE what it would take with it, read as the person's role.
@@ -1212,7 +1213,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             : <>
               {script && <ScriptSteps script={script} shownId={result?.id} narrow={narrow}
                 onPick={(r) => setResults((prev) => ({ ...prev, [tab.key]: { ...r } }))} />}
-              <Results result={result} narrow={narrow} />
+              <ResultsGrid result={result} narrow={narrow} collect={collect}
+                onAddToQuery={(text, params) => { const k = openTab({ sql: text, params }); if (k) setView('query') }} />
             </>}
         </Box>
         </>}
@@ -1235,98 +1237,6 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
 }
 
 /* ── Results ────────────────────────────────────────────────────────────── */
-
-const ROW_H = 28
-
-function Results({ result, narrow }: { result: Result | null; narrow: boolean }) {
-  const viewport = useRef<HTMLDivElement | null>(null)
-  const [scrollTop, setScrollTop] = useState(0)
-  const [height, setHeight] = useState(400)
-  useEffect(() => {
-    const el = viewport.current
-    if (!el) return
-    const ro = new ResizeObserver(() => setHeight(el.clientHeight))
-    ro.observe(el)
-    setHeight(el.clientHeight)
-    return () => ro.disconnect()
-  }, [])
-  useEffect(() => { setScrollTop(0); if (viewport.current) viewport.current.scrollTop = 0 }, [result?.id])
-
-  if (!result) {
-    return (
-      <Text size={FS.meta} c="dimmed" p="md">
-        Results appear here. Pick a table on the left to start.
-      </Text>
-    )
-  }
-  const summary = result.error
-    ? null
-    : result.done
-      ? `${result.done.tag ?? ''}${result.done.truncated ? ' · stopped at the row limit' : ''} · ${result.done.ms ?? 0} ms`
-      : `${result.rows.length.toLocaleString()} rows so far…`
-
-  // Windowed rows: only what is visible plus a margin is in the DOM.
-  const total = result.rows.length
-  const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10)
-  const last = Math.min(total, Math.ceil((scrollTop + height) / ROW_H) + 10)
-  const slice = result.rows.slice(first, last)
-
-  return (
-    <>
-      <Group gap="md" px="md" py={6} style={{ borderBottom: '1px solid var(--color-line)' }} wrap="nowrap">
-        <Text size={FS.meta} fw={600}>{result.error ? 'Message' : 'Results'}</Text>
-        {summary && <Text size={FS.meta} c="dimmed" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary}</Text>}
-      </Group>
-      {result.error ? (
-        <Box p="md">
-          <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
-            <Text size={FS.body} fw={600}>
-              {result.error.guard ? 'Argus stopped this before it ran' : 'Postgres refused this'}: {result.error.error}
-              {result.error.code && <Text span size={FS.micro} ff="monospace" ml={6}>({result.error.code})</Text>}
-            </Text>
-            {result.error.hint && <Text size={FS.meta} mt={4}>{result.error.hint}</Text>}
-            {result.error.code === '42501' && (
-              <Text size={FS.meta} mt={4}>
-                Your access to this database does not allow that. Nothing was changed. Use <b>Ask for write access</b> above if you need it.
-              </Text>
-            )}
-          </Box>
-        </Box>
-      ) : (
-        <div
-          ref={viewport}
-          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-          style={{ flex: 1, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12, position: 'relative' }}
-        >
-          <table style={{ borderCollapse: 'collapse', minWidth: '100%' }}>
-            <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--color-raised)' }}>
-              <tr>
-                <th style={th}>#</th>
-                {result.cols.map((c, i) => (
-                  <th key={i} style={th}>{c.name} <span style={{ fontWeight: 400, color: 'var(--mantine-color-dimmed)' }}>{narrow ? '' : c.type}</span></th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {first > 0 && <tr><td style={{ height: first * ROW_H, padding: 0 }} colSpan={result.cols.length + 1} /></tr>}
-              {slice.map((row, i) => (
-                <tr key={first + i} style={{ height: ROW_H }}>
-                  <td style={{ ...td, color: 'var(--mantine-color-dimmed)', background: 'var(--color-void)', textAlign: 'right' }}>{first + i + 1}</td>
-                  {row.map((cell, j) => (
-                    <td key={j} style={{ ...td, color: cell === null ? 'var(--mantine-color-dimmed)' : undefined, fontStyle: cell === null ? 'italic' : undefined }} title={cell ?? 'NULL'}>
-                      {cell === null ? 'null' : cell.length > 200 ? cell.slice(0, 200) + '…' : cell}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-              {last < total && <tr><td style={{ height: (total - last) * ROW_H, padding: 0 }} colSpan={result.cols.length + 1} /></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </>
-  )
-}
 
 /**
  * A script's statements in a row: each one's place, what Postgres said, and
@@ -1380,15 +1290,6 @@ function ScriptSteps({ script, shownId, narrow, onPick }: {
       </ScrollArea>
     </Box>
   )
-}
-
-const th: React.CSSProperties = {
-  textAlign: 'left', padding: '6px 12px', borderRight: '1px solid var(--color-line)',
-  borderBottom: '1px solid var(--color-line)', whiteSpace: 'nowrap', fontWeight: 600,
-}
-const td: React.CSSProperties = {
-  padding: '0 12px', borderRight: '1px solid var(--color-line)', borderBottom: '1px solid var(--color-line)',
-  whiteSpace: 'nowrap', maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis',
 }
 
 /* ── Left bar ───────────────────────────────────────────────────────────── */

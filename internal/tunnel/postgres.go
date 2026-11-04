@@ -258,6 +258,12 @@ func (o *PGAdminOp) Redacted() PGAdminOp {
 type PGColumn struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
+	// Table and Attnum are where a column came from when it is a plain
+	// table column (pg_class oid and attribute number), as Postgres reports
+	// them; both are absent for an expression. The console uses them to find
+	// foreign keys and primary keys for what a query returned.
+	Table  uint32 `json:"table,omitempty"`
+	Attnum uint16 `json:"attnum,omitempty"`
 }
 
 // PGObject is one item in the object tree.
