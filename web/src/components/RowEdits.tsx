@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Text, TextInput, Textarea, Tooltip,
 } from '@mantine/core'
 import { IconArrowBackUp, IconBraces, IconLock } from '@tabler/icons-react'
 import { FS, INK } from '~/theme'
-import { editorKind, parseTarget, sourceTable, TARGET_SQL, type EditTarget, type EditorKind, type Stmt, type TableColumn } from '~/lib/rowEdit'
+import { editorKind, parseTarget, TARGET_SQL, type EditTarget, type JsonKeySource, type EditorKind, type Stmt, type TableColumn } from '~/lib/rowEdit'
 import type { Cell, Col } from '~/lib/resultView'
 import type { Collected } from '~/components/DatabaseAdmin'
 
@@ -34,21 +34,38 @@ export interface EditSupport {
 
 type GridCollect = (sql: string, maxRows?: number, params?: (string | null)[]) => Promise<Collected>
 
-/** The table every column of the result came from, read once per result. */
-export function useEditTarget(cols: Col[], collect: GridCollect | undefined, key: number): EditTarget | null {
-  const [target, setTarget] = useState<EditTarget | null>(null)
-  const src = sourceTable(cols)
-  const oid = 'oid' in src ? src.oid : 0
+/**
+ * Every table a result's columns came from, and the tables a builder's
+ * JSON key columns name, read once per result. `named` maps those names to
+ * their oids.
+ */
+export function useEditTargets(cols: Col[], hints: Record<string, JsonKeySource>, collect: GridCollect | undefined, key: number): { targets: Map<number, EditTarget>; named: Map<string, number> } {
+  const [state, setState] = useState<{ targets: Map<number, EditTarget>; named: Map<string, number> }>(() => ({ targets: new Map(), named: new Map() }))
+  const oids = [...new Set(cols.map((c) => c.table).filter((t): t is number => Boolean(t)))].sort((a, b) => a - b).join(',')
+  const names = [...new Set(Object.values(hints).map((h) => h.table))].sort().join('\n')
   useEffect(() => {
-    setTarget(null)
-    if (!collect || !oid) return
+    setState({ targets: new Map(), named: new Map() })
+    if (!collect || (!oids && !names)) return
     let live = true
-    void collect(TARGET_SQL, 2000, [String(oid)]).then((r) => {
-      if (live && !r.error) setTarget(parseTarget(oid, r.rows))
-    })
+    void (async () => {
+      const named = new Map<string, number>()
+      for (const n of names ? names.split('\n') : []) {
+        const r = await collect('SELECT to_regclass($1)::oid::text', 1, [n])
+        const o = Number(r.rows[0]?.[0] ?? 0)
+        if (o) named.set(n, o)
+      }
+      const all = [...new Set([...(oids ? oids.split(',').map(Number) : []), ...named.values()])]
+      const targets = new Map<number, EditTarget>()
+      for (const o of all) {
+        const r = await collect(TARGET_SQL, 2000, [String(o)])
+        const t = r.error ? null : parseTarget(o, r.rows)
+        if (t) targets.set(o, t)
+      }
+      if (live) setState({ targets, named })
+    })()
     return () => { live = false }
-  }, [key, oid]) // eslint-disable-line react-hooks/exhaustive-deps
-  return target
+  }, [key, oids, names]) // eslint-disable-line react-hooks/exhaustive-deps
+  return state
 }
 
 const BOOL_LABEL: Record<string, string> = { t: 'true', f: 'false' }
@@ -185,6 +202,12 @@ function FieldInput({ col, kind, value, unset, locked, onChange, onUnset, onOpen
 export interface FormField {
   col: TableColumn
   value: Cell
+  /** What the form calls the field back with; the column's attnum when left out. */
+  id?: number
+  /** The table the field belongs to, as a heading, when a result has more than one. */
+  group?: string
+  /** Kept under "More columns" until opened. */
+  more?: boolean
   /** A new row's column left to Postgres. */
   unset?: boolean
   original?: Cell
@@ -194,43 +217,72 @@ export interface FormField {
 /** A row as a form: every field, its type, and an editor that fits it. */
 export function RowForm({ fields, onChange, onUnset, onOpen }: {
   fields: FormField[]
-  onChange: (attnum: number, v: Cell) => void
-  onUnset?: (attnum: number) => void
-  onOpen: (attnum: number) => void
+  onChange: (id: number, v: Cell) => void
+  onUnset?: (id: number) => void
+  onOpen: (id: number) => void
 }) {
+  const [showMore, setShowMore] = useState(false)
+  const more = fields.filter((f) => f.more).length
+  const shown = showMore ? fields : fields.filter((f) => !f.more)
+  // Fields of one table stay together, under its name, in the order given.
+  const groups = useMemo(() => {
+    const out: { name: string | undefined; fields: FormField[] }[] = []
+    for (const f of shown) {
+      const g = out.find((x) => x.name === f.group)
+      if (g) g.fields.push(f)
+      else out.push({ name: f.group, fields: [f] })
+    }
+    return out
+  }, [shown])
+  const field = (f: FormField) => {
+    const id = f.id ?? f.col.attnum
+    const changed = f.original !== undefined && f.value !== f.original
+    const kind = editorKind(f.col.type, f.col.enumValues)
+    return (
+      <Box key={id} p={changed ? 6 : 0} style={changed ? { borderRadius: 6, background: 'var(--mantine-color-amber-light)' } : undefined}>
+        <Group gap={6} wrap="nowrap" mb={4}>
+          <Text size={FS.meta} fw={600} ff="var(--font-mono)">{f.col.name}</Text>
+          <Text size={FS.micro} c="dimmed">{f.col.type}</Text>
+          {f.col.notNull && !f.col.hasDefault && !f.locked && <Badge size="xs" variant="light" color="amber" tt="none">required</Badge>}
+          {changed && (
+            <Button size="compact-xs" variant="subtle" ml="auto" leftSection={<IconArrowBackUp size={12} />}
+              onClick={() => onChange(id, f.original ?? null)} aria-label={`Undo ${f.col.name}`}>
+              Undo
+            </Button>
+          )}
+        </Group>
+        <FieldInput col={f.col} kind={kind} value={f.value} unset={f.unset} locked={f.locked}
+          onChange={(v) => onChange(id, v)} onOpen={() => onOpen(id)}
+          onUnset={onUnset && !f.unset && (!f.col.notNull || f.col.hasDefault) ? () => onUnset(id) : undefined} />
+        {changed && <Text size={FS.micro} c="dimmed" mt={2} ff="var(--font-mono)" truncate>was {f.original ?? 'NULL'}</Text>}
+      </Box>
+    )
+  }
   return (
     <Stack gap="sm">
-      {fields.map((f) => {
-        const changed = f.original !== undefined && f.value !== f.original
-        const kind = editorKind(f.col.type, f.col.enumValues)
-        return (
-          <Box key={f.col.attnum} p={changed ? 6 : 0} style={changed ? { borderRadius: 6, background: 'var(--mantine-color-amber-light)' } : undefined}>
-            <Group gap={6} wrap="nowrap" mb={4}>
-              <Text size={FS.meta} fw={600} ff="var(--font-mono)">{f.col.name}</Text>
-              <Text size={FS.micro} c="dimmed">{f.col.type}</Text>
-              {f.col.notNull && !f.col.hasDefault && !f.locked && <Badge size="xs" variant="light" color="amber" tt="none">required</Badge>}
-              {changed && (
-                <Button size="compact-xs" variant="subtle" ml="auto" leftSection={<IconArrowBackUp size={12} />}
-                  onClick={() => onChange(f.col.attnum, f.original ?? null)} aria-label={`Undo ${f.col.name}`}>
-                  Undo
-                </Button>
-              )}
-            </Group>
-            <FieldInput col={f.col} kind={kind} value={f.value} unset={f.unset} locked={f.locked}
-              onChange={(v) => onChange(f.col.attnum, v)} onOpen={() => onOpen(f.col.attnum)}
-              onUnset={onUnset && !f.unset && (!f.col.notNull || f.col.hasDefault) ? () => onUnset(f.col.attnum) : undefined} />
-            {changed && <Text size={FS.micro} c="dimmed" mt={2} ff="var(--font-mono)" truncate>was {f.original ?? 'NULL'}</Text>}
-          </Box>
+      {groups.map((g) => (g.name
+        ? (
+          <Stack key={g.name} gap="sm" role="group" aria-label={g.name}>
+            <Text size={FS.micro} fw={650} tt="uppercase" c="dimmed" ff="var(--font-mono)" pt={4}
+              style={{ borderBottom: '1px solid var(--color-line)', letterSpacing: '0.04em' }}>{g.name}</Text>
+            {g.fields.map(field)}
+          </Stack>
         )
-      })}
+        : g.fields.map(field)))}
+      {more > 0 && (
+        <Button size="compact-xs" variant="subtle" onClick={() => setShowMore((v) => !v)} aria-expanded={showMore} style={{ alignSelf: 'flex-start' }}>
+          {showMore ? 'Fewer columns' : `More columns (${more})`}
+        </Button>
+      )}
     </Stack>
   )
 }
 
 /** The bar under the grid while there are changes to save. */
-export function ChangesBar({ changedRows, newRows, busy, saving, error, onDiscard, onReview, onSave, narrow }: {
+export function ChangesBar({ changedRows, newRows, deletedRows = 0, busy, saving, error, onDiscard, onReview, onSave, narrow }: {
   changedRows: number
   newRows: number
+  deletedRows?: number
   busy: boolean
   saving: boolean
   error: string | null
@@ -242,6 +294,7 @@ export function ChangesBar({ changedRows, newRows, busy, saving, error, onDiscar
   const parts = [
     changedRows ? `${changedRows} ${changedRows === 1 ? 'row' : 'rows'} changed` : '',
     newRows ? `${newRows} new ${newRows === 1 ? 'row' : 'rows'}` : '',
+    deletedRows ? `${deletedRows} ${deletedRows === 1 ? 'row' : 'rows'} to delete` : '',
   ].filter(Boolean)
   return (
     <Box px="md" py={6} role="region" aria-label="Unsaved changes"

@@ -1,10 +1,40 @@
 import { describe, expect, it } from 'vitest'
-import { buildSQL, paramFor, parseFks, refSQL, type BQuery, type ForeignKeyRef } from '~/lib/queryBuilder'
+import { addedKeys, buildSQL, jsonKeySources, paramFor, parseFks, refSQL, type BQuery, type ForeignKeyRef } from '~/lib/queryBuilder'
 
 const orders = { schema: 'public', name: 'orders' }
 const customers = { schema: 'public', name: 'customers' }
 const fk: ForeignKeyRef = { name: 'orders_customer_fk', from: orders, fromCols: ['customer_id'], to: customers, toCols: ['id'] }
 const base = (over: Partial<BQuery> = {}): BQuery => ({ base: orders, joins: [], columns: [], measures: [], filters: [], sort: [], limit: 100, ...over })
+
+describe('Keep rows editable', () => {
+  const join = { on: 't0', fk, forward: true, kind: 'inner' as const, alias: 't1' }
+  const pks = { 'public.orders': ['id'], 'public.customers': ['id'] }
+
+  it("adds each shown table's key and says where a JSON key came from", () => {
+    const q = base({ editable: true, joins: [join], columns: [{ alias: 't0', column: 'meta', key: 'tier' }, { alias: 't1', column: 'name' }], limit: 0 })
+    expect(addedKeys(q, pks)).toEqual([{ alias: 't0', column: 'id' }, { alias: 't1', column: 'id' }])
+    expect(buildSQL(q, pks)).toBe([
+      'SELECT /* argus:json {"meta_tier":["public.orders","meta",["tier"]]} */',
+      `       t0.meta->>'tier' AS meta_tier,`,
+      '       t1.name AS name,',
+      '       t0.id AS id,',
+      '       t1.id AS id',
+      'FROM public.orders t0',
+      'JOIN public.customers t1 ON t1.id = t0.customer_id;',
+    ].join('\n'))
+  })
+
+  it('adds nothing to a summary, when off, or when the key is picked', () => {
+    const cols = [{ alias: 't0', column: 'id' }, { alias: 't0', column: 'meta', key: 'tier' }]
+    expect(addedKeys(base({ editable: true, columns: cols }), pks)).toEqual([])
+    expect(addedKeys(base({ editable: false, columns: [{ alias: 't0', column: 'status' }] }), pks)).toEqual([])
+    const summary = base({ editable: true, columns: cols.slice(1), measures: [{ fn: 'count' }] })
+    expect(addedKeys(summary, pks)).toEqual([])
+    expect(jsonKeySources(summary)).toEqual({})
+    // A table only joined through, with nothing of it shown, is not edited.
+    expect(addedKeys(base({ editable: true, joins: [join], columns: [{ alias: 't0', column: 'status' }] }), pks)).toEqual([{ alias: 't0', column: 'id' }])
+  })
+})
 
 describe('query builder SQL', () => {
   it('reads every column with nothing picked', () => {

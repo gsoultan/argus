@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActionIcon, Alert, Box, Button, Checkbox, Code, Divider, Group, Menu, Modal, MultiSelect, NumberInput, ScrollArea, Select, Stack, Switch, Text,
 } from '@mantine/core'
-import { IconPlus, IconX } from '@tabler/icons-react'
+import { IconKey, IconPlus, IconX } from '@tabler/icons-react'
 import { FS } from '~/theme'
 import type { Collect } from '~/components/DatabaseAdmin'
 import {
-  COLUMNS_SQL, FKS_SQL, TABLES_SQL, buildSQL, isJSON, jsonKeysSQL, nextAlias, paramFor, parseFks, refLabel, tableName,
+  COLUMNS_SQL, FKS_SQL, TABLES_SQL, addedKeys, buildSQL, isJSON, jsonKeysSQL, nextAlias, paramFor, parseFks, refLabel, tableName,
   type Aggregate, type BColumn, type BQuery, type BRef, type BTable, type FilterOp, type ForeignKeyRef,
 } from '~/lib/queryBuilder'
 
@@ -56,11 +56,11 @@ export function QueryBuilder({ collect, start, narrow, onClose, onOpen }: {
     if (info[tkey(t)]) return
     const [c, f] = await Promise.all([collect(COLUMNS_SQL, 2000, [tableName(t)]), collect(FKS_SQL, 500, [tableName(t)])])
     if (c.error) { setError(c.error.error ?? 'Postgres refused it'); return }
-    setInfo((m) => ({ ...m, [tkey(t)]: { columns: c.rows.map((x) => ({ name: x[0] ?? '', type: x[1] ?? '' })), fks: f.error ? [] : parseFks(f.rows), keys: {} } }))
+    setInfo((m) => ({ ...m, [tkey(t)]: { columns: c.rows.map((x) => ({ name: x[0] ?? '', type: x[1] ?? '', pk: x[2] === 'true' })), fks: f.error ? [] : parseFks(f.rows), keys: {} } }))
   }, [collect, info])
 
   const pickBase = useCallback((t: BTable) => {
-    setQ({ base: t, joins: [], columns: [], measures: [], filters: [], sort: [], limit: 100 })
+    setQ({ base: t, joins: [], columns: [], measures: [], filters: [], sort: [], limit: 100, editable: true })
     void load(t)
   }, [load])
   useEffect(() => { if (start) pickBase(start) }, [start]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -86,7 +86,11 @@ export function QueryBuilder({ collect, start, narrow, onClose, onOpen }: {
   }), [aliases, info])
 
   const set = (f: (q: BQuery) => BQuery) => setQ((x) => (x ? f(x) : x))
-  const sql = q ? buildSQL(q) : ''
+  // Primary keys of the tables read so far, for Keep rows editable.
+  const pks = useMemo(() => Object.fromEntries(Object.entries(info).map(([k, ti]) => [k, ti.columns.filter((c) => c.pk).map((c) => c.name)])), [info])
+  const sql = q ? buildSQL(q, pks) : ''
+  const keys = q ? addedKeys(q, pks) : []
+  const summarized = Boolean(q && q.measures.length > 0)
   const outputs = q ? [...q.columns.map(refLabel), ...q.measures.map((m) => `${m.fn}${m.ref ? ` of ${refLabel(m.ref)}` : ''}`)] : []
 
   return (
@@ -158,6 +162,22 @@ export function QueryBuilder({ collect, start, narrow, onClose, onOpen }: {
                 </Box>
               )
             })}
+
+            <Box>
+              <Switch size="xs" label="Keep rows editable" checked={Boolean(q.editable) && !summarized} disabled={summarized}
+                onChange={(e) => { const editable = e.currentTarget.checked; set((x) => ({ ...x, editable })) }}
+                description={summarized
+                  ? 'A summary (counts and totals) cannot be edited.'
+                  : q.editable
+                    ? 'Changes in the results save back to each table. A JSON key saves into its document.'
+                    : 'The results are read only unless they show each table\'s primary key.'} />
+              {keys.length > 0 && (
+                <Group gap={4} mt={4} aria-label="Key columns added">
+                  <IconKey size={12} color="var(--mantine-color-dimmed)" />
+                  <Text size={FS.micro} c="dimmed">Adds {keys.map((k) => (aliases.length > 1 ? `${k.alias}.${k.column}` : k.column)).join(', ')} to name each row.</Text>
+                </Group>
+              )}
+            </Box>
 
             <Divider label="Only rows where" labelPosition="left" />
             {q.filters.map((f, i) => (

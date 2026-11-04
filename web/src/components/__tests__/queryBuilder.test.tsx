@@ -47,6 +47,19 @@ describe('Build a query', () => {
   })
 })
 
+describe('Keep rows editable', () => {
+  it('is on for a new query and off for a summary, which cannot be edited', async () => {
+    renderWithProviders(<QueryBuilder collect={catalogue()} start={{ schema: 'public', name: 'orders' }} narrow={false} onClose={vi.fn()} onOpen={vi.fn()} />)
+    await screen.findByLabelText('The query')
+    const sw = screen.getByRole('switch')
+    expect(sw).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Add a count or total' }))
+    expect(sw).not.toBeChecked()
+    expect(sw).toBeDisabled()
+    expect(screen.getByText('A summary (counts and totals) cannot be edited.')).toBeInTheDocument()
+  })
+})
+
 describe('Summarize', () => {
   const cols = [{ name: 'status', type: 'text' }, { name: 'total', type: 'numeric' }, { name: 'meta', type: 'jsonb' }]
   const rows = [['paid', '10', '{"tier":"gold"}'], ['paid', '4', '{"tier":"silver"}'], ['open', '1', '{"tier":"gold"}']]

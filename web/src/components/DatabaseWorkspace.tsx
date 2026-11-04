@@ -449,7 +449,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       pending.current.delete(id)
       collectors.current.delete(id)
       if (a.type !== 'done') c.error = { error: a.error, code: a.code }
-      else c.tag = a.tag
+      else { c.tag = a.tag; if (a.trash?.length) c.trashed = true }
       resolve(c)
     })
     if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined, approval, whole: true })) {
@@ -756,13 +756,16 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       for (let i = 0; i < stmts.length; i++) {
         const s = stmts[i]!
         const r = await collectWithId(s.sql, 2, track, s.params, approval)
-        note(s.sql, !r.error && r.rows.length === 1)
-        if (r.error || r.rows.length !== 1) {
+        // A DELETE has no RETURNING, so the trash can keep the row: its tag
+        // says how many rows it removed.
+        const one = !r.error && (s.deletes ? r.tag === 'DELETE 1' : r.rows.length === 1)
+        note(s.sql, one)
+        if (!one) {
           await collectWithId(inTx ? `ROLLBACK TO SAVEPOINT ${mark}` : 'ROLLBACK', 1, track)
           if (inTx) await collectWithId(`RELEASE SAVEPOINT ${mark}`, 1, track)
           const error = r.error
             ? `${r.error.error ?? 'Postgres refused it'}${r.error.code ? ` (${r.error.code})` : ''}`
-            : r.rows.length === 0
+            : r.rows.length === 0 || s.deletes
               ? 'the row is gone, or someone changed it since you read it. Run the query again to see it as it is now.'
               : 'it matched more than one row.'
           return { ok: false, at: i, error, approve: r.error?.code === NEEDS_APPROVAL && !approval && i === 0 ? r.error.error ?? '' : undefined }

@@ -11,10 +11,16 @@ a value, and those only as parameters.
 */
 
 import { ident, literal } from '~/lib/resultView'
+import { jsonKeyComment, type JsonKeySource } from '~/lib/rowEdit'
 
 export interface BTable { schema: string; name: string }
 
-export interface BColumn { name: string; type: string }
+export interface BColumn {
+  name: string
+  type: string
+  /** Part of the table's primary key. */
+  pk?: boolean
+}
 
 /** A foreign key between two tables, from the catalogue. */
 export interface ForeignKeyRef {
@@ -63,6 +69,12 @@ export interface BQuery {
   /** Index into the output: columns, then measures. */
   sort: BSort[]
   limit: number
+  /**
+   * Keep rows editable: each table's primary key is added when it is not
+   * picked, and JSON key columns say where they came from, so the results
+   * grid can write a change back. A summary cannot be edited.
+   */
+  editable?: boolean
 }
 
 export const tableName = (t: BTable) => `${ident(t.schema)}.${ident(t.name)}`
@@ -114,17 +126,59 @@ function filterSQL(f: BFilter): string {
   }
 }
 
-/** The SELECT the builder describes. */
-export function buildSQL(q: BQuery): string {
+/** Each alias of a query and its table: t0 for the base, then the joins. */
+export function queryAliases(q: BQuery): { alias: string; table: BTable }[] {
+  return [{ alias: 't0', table: q.base }, ...q.joins.map((j) => ({ alias: j.alias, table: j.forward ? j.fk.to : j.fk.from }))]
+}
+
+/**
+ * The key columns a query adds to keep its rows editable, for tables whose
+ * primary key is known (`pks`, by schema.name) and not already picked. Only
+ * tables with a column shown count: a table only joined through is not
+ * edited. Nothing is added to a summary, or when every column is shown.
+ */
+export function addedKeys(q: BQuery, pks: Record<string, string[]>): BRef[] {
+  if (!q.editable || q.measures.length > 0 || q.columns.length === 0) return []
+  const out: BRef[] = []
+  for (const { alias, table } of queryAliases(q)) {
+    if (!q.columns.some((c) => c.alias === alias)) continue
+    for (const k of pks[`${table.schema}.${table.name}`] ?? []) {
+      if (!q.columns.some((c) => c.alias === alias && c.column === k && !c.key)) out.push({ alias, column: k })
+    }
+  }
+  return out
+}
+
+/**
+ * Where each JSON key column came from, by output name, for the comment
+ * that lets the results grid write a change back into its document.
+ */
+export function jsonKeySources(q: BQuery): Record<string, JsonKeySource> {
+  if (!q.editable || q.measures.length > 0) return {}
+  const tables = new Map(queryAliases(q).map((a) => [a.alias, a.table]))
+  const o: Record<string, JsonKeySource> = {}
+  for (const r of q.columns) {
+    const t = tables.get(r.alias)
+    if (r.key && t) o[refLabel(r)] = { table: tableName(t), column: r.column, path: r.key.split('.').filter(Boolean) }
+  }
+  return o
+}
+
+/** The SELECT the builder describes. `pks` are known primary keys, by schema.name. */
+export function buildSQL(q: BQuery, pks: Record<string, string[]> = {}): string {
   const out: string[] = []
   const grouped = q.measures.length > 0
-  const cols = q.columns.map((r) => {
+  const shown = [...q.columns, ...addedKeys(q, pks)]
+  const cols = shown.map((r) => {
     const e = refSQL(r)
     const label = refLabel(r)
     return r.key || label !== r.column || q.joins.length ? `${e} AS ${ident(label)}` : e
   })
   const all = [...cols, ...q.measures.map((m) => `${measureSQL(m)} AS ${ident(measureLabel(m))}`)]
-  out.push(`SELECT ${all.length ? all.join(',\n       ') : `t0.*`}`)
+  // The note goes after SELECT: a script's leading comments are left out
+  // of the statement the grid is shown.
+  const note = jsonKeyComment(jsonKeySources(q))
+  out.push(`SELECT ${note ? `${note}\n       ` : ''}${all.length ? all.join(',\n       ') : `t0.*`}`)
   out.push(`FROM ${tableName(q.base)} t0`)
   for (const j of q.joins) out.push(joinSQL(j))
   if (q.filters.length) out.push(`WHERE ${q.filters.map(filterSQL).join('\n  AND ')}`)
@@ -163,7 +217,8 @@ ORDER BY n.nspname = 'public' DESC, 1, 2
 LIMIT 2000`
 
 /** A table's columns. $1 is schema.name. */
-export const COLUMNS_SQL = `SELECT a.attname::text, format_type(a.atttypid, a.atttypmod)
+export const COLUMNS_SQL = `SELECT a.attname::text, format_type(a.atttypid, a.atttypmod),
+  EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey))::text
 FROM pg_attribute a WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum`
 
