@@ -252,3 +252,27 @@ func TestRecordedTextFits(t *testing.T) {
 		t.Fatal("a statement that encodes past a frame must not fit")
 	}
 }
+
+func TestPartAnswersFitAFrameAndRejoin(t *testing.T) {
+	// Control characters escape to six bytes each in JSON; runes stay whole.
+	value := []byte(strings.Repeat("\x01é\"", 200_000))
+	kept := 1000
+	var rest strings.Builder
+	parts := PartAnswers(3, 5, 2, value, kept)
+	for i, b := range parts {
+		if len(b) > MaxFrame {
+			t.Fatalf("part %d is %d bytes", i, len(b))
+		}
+		var a PGAnswer
+		if err := json.Unmarshal(b, &a); err != nil || a.Type != "part" || a.Part.Row != 5 || a.Part.Col != 2 {
+			t.Fatalf("part %d: %v %+v", i, err, a)
+		}
+		if a.Part.Last != (i == len(parts)-1) {
+			t.Fatalf("only the last part says so (part %d)", i)
+		}
+		rest.WriteString(a.Part.Text)
+	}
+	if string(value[:kept])+rest.String() != string(value) {
+		t.Fatal("the parts must rejoin to the value")
+	}
+}

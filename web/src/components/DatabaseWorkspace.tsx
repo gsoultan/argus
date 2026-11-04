@@ -82,8 +82,10 @@ type Cell = string | null
 type Obj = { name: string; kind: string; detail?: string; count?: number; schema?: string }
 
 interface PGAnswer {
+  /** The next piece of a value a row batch cut, for a run sent with whole. */
+  part?: { row: number; col: number; text: string; last?: boolean }
   id: number
-  type: 'ready' | 'cols' | 'done' | 'error' | 'schema' | 'closed' | 'admin' | 'check'
+  type: 'ready' | 'cols' | 'done' | 'error' | 'schema' | 'closed' | 'admin' | 'check' | 'part'
   cols?: Col[]
   tag?: string
   rows?: number
@@ -345,6 +347,16 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         }
         const a = m.ans
         if (!a) return
+        if (a.type === 'part' && a.part) {
+          // The rest of a long value, after the batch that cut it.
+          const e = live.current.get(a.id)
+          const row = e?.r.rows[a.part.row]
+          if (!e || !row) return
+          row[a.part.col] = (row[a.part.col] ?? '') + a.part.text
+          if (a.part.last) e.r.cut?.delete(`${a.part.row}:${a.part.col}`)
+          setResults((prev) => ({ ...prev, [e.tab]: { ...e.r } }))
+          return
+        }
         if (a.type === 'ready') {
           setReady(a)
           return
@@ -436,7 +448,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       else c.tag = a.tag
       resolve(c)
     })
-    if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined, approval })) {
+    if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined, approval, whole: true })) {
       pending.current.delete(id)
       collectors.current.delete(id)
       resolve({ cols: [], rows: [], error: { error: 'the session ended' } })
@@ -536,7 +548,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
         resolve({ r, a })
       })
-      if (!send({ id, op: 'run', sql: b.sql, maxRows, confirm, approval, params: b.params.length ? b.params : undefined })) {
+      if (!send({ id, op: 'run', sql: b.sql, maxRows, confirm, approval, params: b.params.length ? b.params : undefined, whole: true })) {
         pending.current.delete(id)
         live.current.delete(id)
         const a: PGAnswer = { id, type: 'closed', error: 'the session ended' }

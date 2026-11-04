@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, Stack, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
@@ -7,6 +7,7 @@ import {
   IconFilter, IconLink, IconPencil, IconPlus, IconSortAscending, IconSortDescending, IconTrash, IconWand, IconX,
 } from '@tabler/icons-react'
 import { FS, INK } from '~/theme'
+import { itemLabel, summary, type J } from '~/lib/jsonSummary'
 import { notifyOk, notifyWarn } from '~/lib/notify'
 import {
   addToQuery, columnStats, copyAs, emptyView, isJSONType, isNumeric, pretty, singleTable, viewRows,
@@ -17,6 +18,9 @@ import { editable, editorKind, insertStmt, updateStmt, type Stmt, type TableColu
 import { rowStatements } from '~/lib/sqlGen'
 import { CellInput, ChangesBar, ReviewDialog, RowForm, useEditTarget, type EditSupport, type FormField } from '~/components/RowEdits'
 import { ArrayEditor, JsonEditor } from '~/components/JsonEditor'
+
+// The JSON viewer loads when a row with JSON is first opened.
+const JsonView = lazy(() => import('~/components/JsonView').then((m) => ({ default: m.JsonView })))
 
 /*
 The query tab's results: a windowed grid of the rows the statement sent,
@@ -90,28 +94,20 @@ function useForeignKeys(cols: Col[], collect: GridCollect | undefined, key: numb
   return fks
 }
 
-/** A short preview of a JSON value for one grid cell. */
+/** A short, readable preview of a JSON value for one grid cell. */
 function jsonPreview(v: string): ReactNode {
-  let j: unknown
-  try { j = JSON.parse(v) } catch { return v }
+  let j: J
+  try { j = JSON.parse(v) as J } catch { return v }
   if (Array.isArray(j)) {
+    const names = j.map(itemLabel).filter((x): x is string => x !== null)
     return (
-      <Group gap={4} wrap="nowrap" component="span">
-        <Text span size={FS.micro} c="dimmed">[{j.length}]</Text>
-        {j.slice(0, 4).map((x, i) => (
-          <Badge key={i} size="xs" variant="light" color="gray" radius="sm" tt="none" style={{ fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
-            {typeof x === 'object' && x !== null ? (Array.isArray(x) ? `[${x.length}]` : '{…}') : String(x).slice(0, 24)}
-          </Badge>
-        ))}
-        {j.length > 4 && <Text span size={FS.micro} c="dimmed">…</Text>}
-      </Group>
+      <span>
+        <Text span size={FS.micro} c="dimmed" mr={4}>{j.length} {j.length === 1 ? 'item' : 'items'}</Text>
+        {names.length ? names.slice(0, 4).join(', ') + (j.length > 4 ? ', …' : '') : summary(j, 120)}
+      </span>
     )
   }
-  if (j && typeof j === 'object') {
-    const keys = Object.keys(j)
-    return <span>{'{'}{keys.slice(0, 3).join(', ')}{keys.length > 3 ? ', …' : ''}{'}'}</span>
-  }
-  return v
+  return summary(j, 160)
 }
 
 function filterLabel(c: Col, f: Filter): string {
@@ -195,7 +191,7 @@ type Panel =
   | { kind: 'linked'; title: string; cols: Col[]; row: Cell[] | null; loading: boolean; error?: string; back: Panel }
 
 /** What the console says about a value the agent cut at its size limit. */
-const CUT_NOTE = 'Longer than the console shows a value (192 KB): this is its first part. Read the rest in pieces with substring() in SQL.'
+const CUT_NOTE = 'The console loaded only the first part of this value (a value over 16 MB, or past 64 MB in one result). Read the rest in pieces with substring() in SQL.'
 
 function Fields({ cols, row, fks, onFollow, cut }: { cols: Col[]; row: Cell[]; fks: Record<number, ForeignKey>; onFollow?: (i: number) => void; cut?: (i: number) => boolean }) {
   return (
@@ -205,7 +201,7 @@ function Fields({ cols, row, fks, onFollow, cut }: { cols: Col[]; row: Cell[]; f
         const p = pretty(c, v)
         const fk = fks[i]
         return (
-          <Box key={i}>
+          <Box key={i} style={{ minWidth: 0 }}>
             <Group gap={6} wrap="nowrap">
               <Text size={FS.meta} fw={600} ff="var(--font-mono)">{c.name}</Text>
               <Text size={FS.micro} c="dimmed">{c.type}</Text>
@@ -222,12 +218,18 @@ function Fields({ cols, row, fks, onFollow, cut }: { cols: Col[]; row: Cell[]; f
                 </ActionIcon>
               </Tooltip>
             </Group>
-            <Box component="pre" m={0} mt={2} p={6}
+            {p.json && v !== null && !cut?.(i) ? (
+              <Box mt={2} p={6} style={{ borderRadius: 6, background: 'var(--color-raised)' }}>
+                <Suspense fallback={<Text size={FS.micro} c="dimmed">{summary(JSON.parse(v) as J, 120)}</Text>}>
+                  <JsonView raw={v} column={c.name} />
+                </Suspense>
+              </Box>
+            ) : <Box component="pre" m={0} mt={2} p={6}
               style={{ fontFamily: 'var(--font-mono)', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', borderRadius: 6,
                 background: 'var(--color-raised)', color: v === null ? 'var(--mantine-color-dimmed)' : undefined, fontStyle: v === null ? 'italic' : undefined,
                 maxHeight: p.json ? 320 : undefined, overflow: 'auto' }}>
               {p.text}
-            </Box>
+            </Box>}
             {cut?.(i) && <Text size={FS.micro} c={INK.pending} mt={2}>{CUT_NOTE}</Text>}
           </Box>
         )

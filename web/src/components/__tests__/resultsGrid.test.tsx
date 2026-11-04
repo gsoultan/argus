@@ -55,11 +55,14 @@ describe('Results grid', () => {
       { f_customer_id: '7' })
   })
 
-  it('shows every field of a row, JSON pretty-printed, and steps through rows', async () => {
+  it('shows every field of a row, JSON as a tree or laid-out text, and steps through rows', async () => {
     setup()
     fireEvent.click(screen.getByRole('button', { name: 'Open row 1' }))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('Row 1')).toBeInTheDocument()
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Open tags' }))
+    expect(within(dialog).getByText('b')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByText('Text'))
     expect(dialog.textContent).toContain('"tags": [\n    "a",')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Next row' }))
     await waitFor(() => expect(within(dialog).getByText('Row 2')).toBeInTheDocument())
@@ -103,6 +106,6 @@ describe('Results grid', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open row 1' }))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('cut')).toBeInTheDocument()
-    expect(within(dialog).getByText(/Longer than the console shows a value \(192 KB\)/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/loaded only the first part of this value/)).toBeInTheDocument()
   })
 })

@@ -201,3 +201,39 @@ func TestPostgresRunWithParams(t *testing.T) {
 	h.close()
 	superExec(t, dsn, "DROP TABLE IF EXISTS argus_t_p")
 }
+
+func TestPostgresSendsALongValueWhole(t *testing.T) {
+	dsn, _, _, _ := pgTest(t)
+	// About 1 MB of jsonb full of quotes and backslashes, which JSON escaping
+	// makes longer, and a 300 KB text: both past what one row batch carries.
+	superExec(t, dsn,
+		"DROP TABLE IF EXISTS argus_t_long",
+		"CREATE TABLE argus_t_long (id int PRIMARY KEY, doc jsonb, note text)",
+		`INSERT INTO argus_t_long SELECT 1, (SELECT jsonb_agg(jsonb_build_object('name', 'rule "' || g || '" \\ é', 'then', jsonb_build_array('JobRequisition.SetAction(\"SUBMIT\")'))) FROM generate_series(1, 12000) g), repeat('ünï', 100000)`,
+		"INSERT INTO argus_t_long VALUES (2, '{}', 'short')")
+	h := openPG(t, tunnel.LevelOwner, nil)
+	want := superQuery(t, dsn, "SELECT doc::text, note FROM argus_t_long ORDER BY id")
+
+	_, rows, final := h.do(tunnel.PGRequest{ID: 1, Op: "run", SQL: "SELECT doc, note FROM argus_t_long ORDER BY id", Whole: true})
+	if final.Type != "done" || len(rows) != 2 {
+		t.Fatalf("run: %+v, %d rows", final, len(rows))
+	}
+	if len(want[0][0]) < 2*tunnel.MaxRowCell {
+		t.Fatalf("the test value is only %d bytes", len(want[0][0]))
+	}
+	if *rows[0][0] != want[0][0] || *rows[0][1] != want[0][1] || *rows[1][1] != "short" {
+		t.Fatalf("the long values must arrive whole: %d of %d and %d of %d bytes", len(*rows[0][0]), len(want[0][0]), len(*rows[0][1]), len(want[0][1]))
+	}
+	if h.parts == 0 {
+		t.Fatal("the rest should have come as parts")
+	}
+
+	// Without Whole, as an older console asks, the value stays cut.
+	h.parts = 0
+	_, rows, _ = h.do(tunnel.PGRequest{ID: 2, Op: "run", SQL: "SELECT doc FROM argus_t_long WHERE id = 1"})
+	if len(*rows[0][0]) > tunnel.MaxRowCell || h.parts != 0 {
+		t.Fatalf("no parts unless asked: %d bytes, %d parts", len(*rows[0][0]), h.parts)
+	}
+	h.close()
+	superExec(t, dsn, "DROP TABLE IF EXISTS argus_t_long")
+}
