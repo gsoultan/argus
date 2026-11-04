@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Alert, Badge, Box, Button, Card, Checkbox, Code, Group, Modal, MultiSelect,
   SegmentedControl, Stack, Text, TextInput, Textarea, Tooltip,
@@ -20,6 +20,9 @@ import {
 } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { LoginAsPicker } from '~/components/LoginAsPicker'
+import { ChangeReview, ChangesTable } from '~/components/ChangeReview'
+import { ImpactText } from '~/components/ChangeImpact'
+import { impactOf } from '~/lib/changeApproval'
 import type { AccessRequest, DirectLogin, StatementAsk } from '~/types/domain'
 
 /**
@@ -34,9 +37,11 @@ export const Route = createFileRoute('/approvals')({
   component: Approvals,
   // `ask` opens the request form for one server, from a server someone could
   // not open; `as` is the account they wanted.
-  validateSearch: (s: Record<string, unknown>): { ask?: string; as?: string } => ({
+  // `req` opens one change request for review, from the bell or a banner.
+  validateSearch: (s: Record<string, unknown>): { ask?: string; as?: string; req?: string } => ({
     ...(typeof s.ask === 'string' && s.ask ? { ask: s.ask } : {}),
     ...(typeof s.as === 'string' && s.as ? { as: s.as } : {}),
+    ...(typeof s.req === 'string' && s.req ? { req: s.req } : {}),
   }),
   loader: ({ context }) => context.queryClient.ensureQueryData(requestsQuery()),
 })
@@ -79,15 +84,26 @@ function Approvals() {
   // Whoever can decide requests is sent the whole queue; everyone else is sent
   // their own (the control plane narrows it), so the page talks to each.
   const decides = canSee(me?.role, 'approvers')
+  // An editor of a database whose editors approve each other's changes is
+  // sent those too, marked asEditor; they decide those and nothing else.
+  const mine = me?.email.toLowerCase()
+  const editing = !decides && (requests ?? []).some((r) => r.asEditor)
+  const changes = (requests ?? []).filter((r) => r.statement && r.state === 'pending')
+  const [reviewId, setReviewId] = useState<string | null>(search.req ?? null)
+  useEffect(() => { if (search.req) setReviewId(search.req) }, [search.req])
+  const review = reviewId ? (requests ?? []).find((r) => r.id === reviewId) ?? null : null
+  const mayDecide = (r: AccessRequest) => (decides || !!r.asEditor) && r.requesterEmail.toLowerCase() !== mine
 
   return (
     <Box>
       <PageHeader
-        title={decides ? 'Approvals' : 'My requests'}
+        title={decides || editing ? 'Approvals' : 'My requests'}
         description={
           decides
             ? 'People waiting on you. Logins straight to a server come first, because someone is at a terminal.'
-            : 'Access you asked for. An approver decides, and it ends by itself when the time is up.'
+            : editing
+              ? 'Changes on databases you edit, and your own requests. Session requests are for admins and approvers.'
+              : 'Access you asked for. An approver decides, and it ends by itself when the time is up.'
         }
         actions={
           <Button variant={decides ? 'default' : 'filled'} leftSection={<IconPlus size={14} />} onClick={newModal.open}>
@@ -125,6 +141,10 @@ function Approvals() {
           />
         )}
 
+        {tab === 'pending' && (decides || editing) && (
+          <ChangesTable reqs={changes} mine={me?.email} onOpen={(r) => setReviewId(r.id)} />
+        )}
+
         {decides && (
           <Group gap={SP.cozy}>
             <IconClipboardCheck size={16} />
@@ -142,7 +162,8 @@ function Approvals() {
                 request={r}
                 // The control plane refuses a decision from anyone else, and
                 // refuses anyone deciding their own, so neither gets the buttons.
-                canDecide={decides && r.requesterEmail.toLowerCase() !== me?.email.toLowerCase()}
+                canDecide={mayDecide(r)}
+                onReview={() => setReviewId(r.id)}
               />
             ))}
           </div>
@@ -178,6 +199,7 @@ function Approvals() {
       </PageBody>
 
       <NewRequestModal opened={newOpen} onClose={newModal.close} host={search.ask} account={search.as} />
+      {review && <ChangeReview request={review} canDecide={mayDecide(review)} onClose={() => setReviewId(null)} />}
     </Box>
   )
 }
@@ -300,7 +322,7 @@ function StatementList({ ask }: { ask: StatementAsk }) {
   )
 }
 
-function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDecide: boolean }) {
+function RequestCard({ request: r, canDecide, onReview }: { request: AccessRequest; canDecide: boolean; onReview: () => void }) {
   const decide = useDecideRequest()
   const [note, setNote] = useState('')
   const [expanded, setExpanded] = useState(false)
@@ -370,7 +392,7 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
             ) : r.statement ? (
               <Tooltip label="Each statement runs once, exactly as shown, from this person's session, within the hour.">
                 <Badge size="xs" variant="filled" color="amber" leftSection={<IconAlertTriangle size={10} />}>
-                  {r.statement.items.length === 1 ? 'statement' : `${r.statement.items.length} statements`} on production
+                  {r.statement.items.length === 1 ? 'statement' : `${r.statement.items.length} statements`} on {r.statement.databaseLabel ?? 'a database'}
                 </Badge>
               </Tooltip>
             ) : r.principal.startsWith('db:') ? (
@@ -390,6 +412,13 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
               </Badge>
             )}
           </Group>
+          {r.statement && (
+            <Group gap={6} mt={6}>
+              <ImpactText impact={impactOf(r.statement.summary)} fallback="Not counted" />
+              {r.asEditor && <Text size={FS.micro} c="dimmed">· you can approve as an editor of {r.statement.databaseName}</Text>}
+              <Button size="compact-xs" variant="light" onClick={onReview}>Review</Button>
+            </Group>
+          )}
           {r.statement && <StatementList ask={r.statement} />}
         </Box>
 
@@ -415,7 +444,7 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
 
       {pending && !canDecide && (
         <Box pt="xs" style={{ borderTop: '1px solid var(--color-line)' }}>
-          <Text size={FS.micro} c="dimmed">Waiting for an approver.</Text>
+          <Text size={FS.micro} c="dimmed">{r.statement ? 'Waiting for someone else to decide. Never you.' : 'Waiting for an approver.'}</Text>
         </Box>
       )}
 

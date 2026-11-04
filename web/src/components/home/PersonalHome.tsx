@@ -2,7 +2,10 @@ import {
   Badge, Box, Card, Group, SimpleGrid, Skeleton, Text,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { IconActivityHeartbeat, IconClipboardCheck, IconDatabase, IconServer2 } from '@tabler/icons-react'
+import { IconActivityHeartbeat, IconClipboardCheck, IconDatabase, IconServer2, IconShieldCheck } from '@tabler/icons-react'
+import { EnvBadge } from '~/components/ChangeImpact'
+import { useChangesToReview } from '~/components/ChangesWaiting'
+import { writesNeedApproval } from '~/lib/changeApproval'
 import { AnchorLink, ButtonLink } from '~/components/links'
 import { EmptyState, SectionCard } from '~/components/page'
 import { Mono, duration, relTime } from '~/components/primitives'
@@ -19,12 +22,23 @@ import type { AccessRequest, User } from '~/types/domain'
  */
 /* ── Someone's own servers, for everyone else ──────────────────────────── */
 
+const levelWord = (l: string | undefined) => ({ read: 'Read', write: 'Write', owner: 'Owner', dba: 'DBA' } as Record<string, string>)[l ?? ''] ?? 'No access'
+
+
 const SERVERS_SHOWN = 6
 
 export default function PersonalHome({ me }: { me: User | undefined }) {
   const { data: assets, isPending } = useQuery(assetsQuery({}))
   const { data: dbList } = useQuery(databasesQuery())
   const dbs = dbList?.databases
+  // Other people's changes this person may decide, by database.
+  const { reqs: toReview } = useChangesToReview()
+  const waitingOn = (id: string) => toReview.filter((r) => r.statement?.databaseId === id).length
+  const editsWithApproval = (id: string) => {
+    const d = dbs?.find((x) => x.id === id)
+    const level = dbList?.access[id]?.level
+    return !!d && writesNeedApproval(d) && d.policy?.writeApprovers === 'editors' && !!level && level !== 'read'
+  }
   const shown = (assets ?? []).slice(0, SERVERS_SHOWN)
 
   return (
@@ -57,7 +71,14 @@ export default function PersonalHome({ me }: { me: User | undefined }) {
 
       {dbs && dbs.length > 0 && (
         <Box>
-          <Label>Your databases</Label>
+          <Group justify="space-between" align="center">
+            <Label>Your databases</Label>
+            {toReview.length > 0 && (
+              <ButtonLink to="/approvals" size="compact-xs" variant="light" color="amber" leftSection={<IconShieldCheck size={12} />}>
+                {toReview.length === 1 ? '1 change to review' : `${toReview.length} changes to review`}
+              </ButtonLink>
+            )}
+          </Group>
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="sm">
             {dbs.slice(0, SERVERS_SHOWN).map((d) => (
               <Card key={d.id} padding="md">
@@ -67,9 +88,15 @@ export default function PersonalHome({ me }: { me: User | undefined }) {
                       <IconDatabase size={16} />
                       <Text fw={600} size="sm" truncate>{d.dbname}</Text>
                     </Group>
-                    <Text size={FS.meta} c="dimmed" truncate>
-                      {engineName(d.engine)} on {d.hostname}{d.label === 'production' ? ' · production' : ''}
-                    </Text>
+                    <Group gap={6} wrap="nowrap" mt={2}>
+                      <EnvBadge label={d.label} size="xs" />
+                      <Text size={FS.meta} c="dimmed" lineClamp={2}>
+                        {levelWord(dbList?.access[d.id]?.level)}{editsWithApproval(d.id) ? " · you approve teammates' changes" : ` · ${engineName(d.engine)} on ${d.hostname}`}
+                      </Text>
+                    </Group>
+                    {waitingOn(d.id) > 0 && (
+                      <AnchorLink to="/approvals" size={FS.meta} fw={650}>{waitingOn(d.id)} waiting for you</AnchorLink>
+                    )}
                   </Box>
                   <ButtonLink to="/databases/$dbId" params={{ dbId: d.id }} size="compact-sm" style={{ flexShrink: 0 }}>
                     Open

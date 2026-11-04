@@ -1,5 +1,5 @@
 import {
-  ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, CopyButton, Group, Modal, NumberInput, SegmentedControl, Select,
+  ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, CopyButton, Group, NumberInput, SegmentedControl,
   Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -7,6 +7,9 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconCheck, IconCopy, IconInfoCircle, IconPlus, IconTrash, IconUser, IconUsersGroup } from '@tabler/icons-react'
 import { useState } from 'react'
+import { ApprovalBadge, EnvBadge } from '~/components/ChangeImpact'
+import { ApprovalsCard, GiveAccess } from '~/components/DatabaseApprovals'
+import { writesNeedApproval } from '~/lib/changeApproval'
 import { BackupSettings } from '~/components/DatabaseBackups'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -14,7 +17,7 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import { isConfigured } from '~/lib/live'
 import {
   databasePoolerSetupQuery, databaseQuery, dbAssignmentsQuery, meQuery, teamsQuery, useDeleteDatabase, useRemoveDBAssignment,
-  useSetDBAssignment, useUpdateDatabase, usersQuery,
+  useUpdateDatabase, usersQuery,
 } from '~/lib/queries'
 import { guard } from '~/lib/guard'
 import { FS } from '~/theme'
@@ -24,11 +27,13 @@ import type { DBLabel, DBLevel, DBPolicy, Database } from '~/types/domain'
 /**
  * Who can connect to one database, and its safety settings. Admin only.
  *
- * Levels are plain words; Argus turns them into Postgres roles. The default
- * when giving Write or above on a production database is "needs approval
- * each time", which is the one security step most people ever meet.
+ * Levels are plain words; Argus turns them into Postgres roles. Giving access
+ * says in plain words what the person will be able to do and what waits;
+ * whether changes wait is the database's own switch, under Safety, and
+ * session approval is a stricter option on each grant.
  */
 type Tab = 'who' | 'safety' | 'connection' | 'backups'
+type NumKey = 'statementTimeoutS' | 'idleTxTimeoutS' | 'maxRows' | 'idleTimeoutS' | 'maxSessionS' | 'keysLimit'
 
 export const Route = createFileRoute('/databases/$dbId_/settings')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
@@ -104,7 +109,7 @@ function DatabaseSettings() {
       <PageHeader
         title={title}
         crumbs={[{ label: 'Databases', to: '/databases' }]}
-        status={<Badge variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[db.label]} radius="sm">{db.label}</Badge>}
+        status={<Group gap={6}><EnvBadge label={db.label} />{writesNeedApproval(db) && <ApprovalBadge />}</Group>}
         description={db.engine === 'postgres'
           ? `On ${db.hostname}. Who can open this database, its safety settings, and how it is backed up.`
           : `${info.label} on ${db.hostname}. Who can open it and what they can do; each person gets their own ${info.label} user for the length of their session.`}
@@ -129,7 +134,7 @@ function DatabaseSettings() {
                   <Table verticalSpacing="xs">
                     <Table.Thead><Table.Tr>
                       <Table.Th></Table.Th><Table.Th>Team or person</Table.Th><Table.Th>Access</Table.Th>
-                      <Table.Th>Approval</Table.Th><Table.Th></Table.Th>
+                      <Table.Th>Session</Table.Th><Table.Th></Table.Th>
                     </Table.Tr></Table.Thead>
                     <Table.Tbody>
                       {assignments?.map((g) => (
@@ -142,7 +147,7 @@ function DatabaseSettings() {
                           <Table.Td><Badge variant="light" color={g.level === 'read' ? 'slate' : 'azure'} radius="sm">{g.level}</Badge></Table.Td>
                           <Table.Td>
                             {g.needsApproval
-                              ? <Badge variant="light" color="amber" radius="sm">Needs approval each time</Badge>
+                              ? <Badge variant="light" color="amber" radius="sm">Needs approval to open a session</Badge>
                               : <Text size={FS.meta} c="dimmed">Opens straight away</Text>}
                           </Table.Td>
                           <Table.Td ta="right">
@@ -174,7 +179,7 @@ function DatabaseSettings() {
             </Stack>
           )}
 
-          {tab === 'safety' && <Safety db={db} />}
+          {tab === 'safety' && <Safety db={db} assignments={assignments ?? []} onAccess={() => setTab('who')} />}
           {tab === 'connection' && (db.engine === 'postgres' ? <Connection db={db} /> : <StoreConnection db={db} />)}
           {tab === 'backups' && db.engine === 'postgres' && <BackupSettings db={db} />}
 
@@ -184,7 +189,7 @@ function DatabaseSettings() {
             <Button color="rose" variant="light" onClick={() => void onDelete()} loading={del.isPending}>Remove {title}</Button>
           </SectionCard>
         </Stack>
-        <GiveAccess dbId={dbId} db={db} levels={LEVELS} opened={adding} onClose={add.close}
+        <GiveAccess dbId={dbId} db={db} levels={LEVELS} opened={adding} onClose={add.close} onSafety={() => setTab('safety')}
           teams={(teams ?? []).map((t) => ({ value: t.id, label: t.name }))}
           people={(users ?? []).map((u) => ({ value: u.email, label: `${u.displayName} · ${u.email}` }))} />
       </PageBody>
@@ -326,57 +331,7 @@ function StoreConnection({ db }: { db: Database }) {
   )
 }
 
-function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, people }: {
-  dbId: string; db: Database; levels: { value: DBLevel; label: string; blurb: string }[]; opened: boolean; onClose: () => void
-  teams: { value: string; label: string }[]; people: { value: string; label: string }[]
-}) {
-  const [kind, setKind] = useState<'team' | 'person'>('team')
-  const [who, setWho] = useState<string | null>(null)
-  const [level, setLevel] = useState<DBLevel>('read')
-  const [touched, setTouched] = useState(false)
-  const [approval, setApproval] = useState(false)
-  const set = useSetDBAssignment()
-  // Production defaults to approval for write and above, unless the admin
-  // decided otherwise for this row.
-  const effectiveApproval = touched ? approval : db.label === 'production' && level !== 'read'
-  const submit = async () => {
-    if (!who) return
-    try {
-      await set.mutateAsync({ id: dbId, level, needsApproval: effectiveApproval,
-        ...(kind === 'team' ? { teamId: who } : { userEmail: who }) })
-      notifyOk('Access given', `${level[0]!.toUpperCase() + level.slice(1)} on ${db.dbname}${effectiveApproval ? ', with approval each time' : ''}.`)
-      onClose()
-      setWho(null); setTouched(false); setLevel('read')
-    } catch (err) {
-      notifyError('Not given', err)
-    }
-  }
-  return (
-    <Modal opened={opened} onClose={onClose} title={`Give access to ${db.dbname}`} centered>
-      <Stack gap="sm">
-        <SegmentedControl value={kind} onChange={(v) => { setKind(v as 'team' | 'person'); setWho(null) }}
-          data={[{ label: 'A team', value: 'team' }, { label: 'A person', value: 'person' }]} />
-        <Select label={kind === 'team' ? 'Team' : 'Person'} data={kind === 'team' ? teams : people} value={who}
-          onChange={setWho} searchable placeholder={kind === 'team' ? 'Pick a team' : 'Pick a person'} />
-        <Box>
-          <Text size={FS.micro} c="dimmed" mb={4}>Access</Text>
-          <SegmentedControl value={level} onChange={(v) => setLevel(v as DBLevel)}
-            data={LEVELS.map((l) => ({ label: l.label, value: l.value }))} />
-          <Text size={FS.micro} c="dimmed" mt={4}>{LEVELS.find((l) => l.value === level)?.blurb}</Text>
-        </Box>
-        <Checkbox label="Needs approval each time" checked={effectiveApproval}
-          onChange={(e) => { setTouched(true); setApproval(e.currentTarget.checked) }}
-          description="Every session at this level waits for an approver first, and lasts as long as they allow." />
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => void submit()} loading={set.isPending} disabled={!who}>Give access</Button>
-        </Group>
-      </Stack>
-    </Modal>
-  )
-}
-
-function Safety({ db }: { db: Database }) {
+function Safety({ db, assignments, onAccess }: { db: Database; assignments: { needsApproval: boolean }[]; onAccess: () => void }) {
   const update = useUpdateDatabase()
   const [label, setLabel] = useState<DBLabel>(db.label)
   const [policy, setPolicy] = useState<DBPolicy>(db.policy ?? {})
@@ -389,7 +344,7 @@ function Safety({ db }: { db: Database }) {
       notifyError('Not saved', err)
     }
   }
-  const num = (k: keyof DBPolicy, label: string, hint: string, def: number, unit: string) => (
+  const num = (k: NumKey, label: string, hint: string, def: number, unit: string) => (
     <Group justify="space-between" wrap="nowrap" key={k}>
       <Box><Text size={FS.body} fw={600}>{label}</Text><Text size={FS.micro} c="dimmed">{hint}</Text></Box>
       <NumberInput w={140} value={policy[k] || ''} placeholder={`${def.toLocaleString()} ${unit}`} min={0} suffix={` ${unit}`}
@@ -402,10 +357,15 @@ function Safety({ db }: { db: Database }) {
         Every value has a safe default. A new database is safe the moment it is added; change these only if this
         one needs something different.
       </Alert>
-      <SectionCard title="Label" description="Production defaults to approval for Write and above when you give access.">
+      <SectionCard title="Label" description={db.engine === 'postgres'
+        ? 'Production starts with changes needing approval, and with session approval for Write and above when you give access.'
+        : 'Production starts with session approval for Write and above when you give access.'}>
         <SegmentedControl value={label} onChange={(v) => setLabel(v as DBLabel)}
           data={[{ label: 'Production', value: 'production' }, { label: 'Staging', value: 'staging' }, { label: 'Development', value: 'development' }]} />
       </SectionCard>
+      {db.engine === 'postgres' && (
+        <ApprovalsCard db={db} policy={policy} label={label} setPolicy={setPolicy} assignments={assignments} onAccess={onAccess} />
+      )}
       <SectionCard title="Limits">
         {db.engine === 'postgres' ? (
           <Stack gap="sm">

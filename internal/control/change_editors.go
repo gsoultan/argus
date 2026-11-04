@@ -188,9 +188,34 @@ func (a *API) decidesAsEditor(ctx context.Context, email, id string) (Database, 
 	return db, isEditor(acc.Level), nil
 }
 
+// changeLink is where a change request is reviewed.
+func changeLink(id string) string { return "/approvals?req=" + id }
+
+// changeSize is "18 rows" from an ask's summary, or "" when it was not counted.
+func changeSize(summary json.RawMessage) string {
+	var s struct {
+		Rows *int64 `json:"rows"`
+	}
+	if json.Unmarshal(summary, &s) != nil || s.Rows == nil {
+		return ""
+	}
+	if *s.Rows == 1 {
+		return "1 row"
+	}
+	return fmt.Sprintf("%d rows", *s.Rows)
+}
+
+// envName is a label as the console shows it.
+func envName(label string) string {
+	if label == "" {
+		return ""
+	}
+	return strings.ToUpper(label[:1]) + label[1:]
+}
+
 // alertEditorsWaiting tells db's editors, other than the asker, that a change
 // waits for one of them. Deciders are told as for every request.
-func (a *API) alertEditorsWaiting(ctx context.Context, db Database, req AccessRequest) {
+func (a *API) alertEditorsWaiting(ctx context.Context, db Database, req AccessRequest, summary json.RawMessage) {
 	if !db.EditorsApprove() {
 		return
 	}
@@ -198,6 +223,16 @@ func (a *API) alertEditorsWaiting(ctx context.Context, db Database, req AccessRe
 	if err != nil {
 		a.log.Error("could not list a database's editors", "database", db.ID, "error", err)
 		return
+	}
+	others := 0
+	for _, e := range editors {
+		if !strings.EqualFold(e, req.RequesterEmail) {
+			others++
+		}
+	}
+	about := envName(db.Label)
+	if size := changeSize(summary); size != "" {
+		about += " · " + size
 	}
 	for _, e := range editors {
 		if strings.EqualFold(e, req.RequesterEmail) {
@@ -207,12 +242,16 @@ func (a *API) alertEditorsWaiting(ctx context.Context, db Database, req AccessRe
 		if u, err := a.store.UserRole(ctx, e); err == nil && decidesRequests(u) {
 			continue
 		}
+		also := "Admins and approvers can decide too."
+		if others > 1 {
+			also = fmt.Sprintf("Admins and %d other editors can decide too.", others-1)
+		}
 		a.raiseAlert(ctx, ConsoleAlert{
 			Kind: AlertApproval, Severity: "warning", Audience: AudiencePerson, Recipient: e,
 			Actor:  req.RequesterEmail,
-			Title:  req.RequesterEmail + " asks you to review a change on " + db.Name,
-			Detail: req.Justification + " You can approve it as an editor of " + db.Name + ".",
-			Link:   "/approvals",
+			Title:  req.RequesterEmail + " asks you to approve a change on " + db.Name,
+			Detail: about + ", as an editor of " + db.Name + ". " + also + " " + req.Justification,
+			Link:   changeLink(req.ID),
 		})
 	}
 }
@@ -267,7 +306,7 @@ type ChangeApproval struct {
 	Default bool `json:"default"`
 	// Approvers is "approvers" or "editors".
 	Approvers string `json:"approvers"`
-	// Editors are who may change it now, when Approvers is "editors".
+	// Editors are who may change it now: who would decide with "editors".
 	Editors []string `json:"editors"`
 }
 
@@ -275,14 +314,12 @@ type ChangeApproval struct {
 func (a *API) getChangeApproval(w http.ResponseWriter, r *http.Request, _ string, db Database, _ string) {
 	out := ChangeApproval{Needed: db.WritesNeedApproval(), Default: db.Label == "production",
 		Approvers: db.ChangeApprovers(), Editors: []string{}}
-	if out.Approvers == ApproversEditors {
-		editors, err := a.store.DatabaseEditors(r.Context(), db.ID)
-		if err != nil {
-			a.fail(w, "approval", err)
-			return
-		}
-		out.Editors = editors
+	editors, err := a.store.DatabaseEditors(r.Context(), db.ID)
+	if err != nil {
+		a.fail(w, "approval", err)
+		return
 	}
+	out.Editors = editors
 	writeJSON(w, http.StatusOK, out)
 }
 

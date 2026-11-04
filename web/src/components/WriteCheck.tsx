@@ -1,3 +1,4 @@
+import type { ImpactPreview } from '~/lib/changeApproval'
 import { useEffect, useRef, useState } from 'react'
 import { Badge, Box, Button, Group, Loader, Modal, Stack, Text, TextInput } from '@mantine/core'
 import { IconAlertTriangle, IconArchive, IconCheck, IconTrash, IconX } from '@tabler/icons-react'
@@ -37,7 +38,7 @@ export function goesToTrash(g: PGGuard): boolean {
 }
 
 export interface PGCheckTable { name: string; inserted?: number; updated?: number; deleted?: number; estimate?: number }
-export interface PGCheck { class: SQLClass; rows: number; tag?: string; tables?: PGCheckTable[]; guard?: PGGuard }
+export interface PGCheck { class: SQLClass; rows: number; tag?: string; tables?: PGCheckTable[]; guard?: PGGuard; preview?: ImpactPreview }
 
 /** What a DROP or TRUNCATE would take with it, read as the person's role. */
 export interface DropFacts { rows?: number; bytes?: number; dependents: string[]; tables?: number; error?: string }

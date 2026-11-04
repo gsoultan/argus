@@ -56,15 +56,17 @@ type StatementItem struct {
 // StatementAsk is what a db:statement request is for, for the approver's
 // card and the asker's wait.
 type StatementAsk struct {
-	RequestID    string          `json:"requestId"`
-	DatabaseID   string          `json:"databaseId"`
-	DatabaseName string          `json:"databaseName"`
-	Items        []StatementItem `json:"items"`
-	Summary      json.RawMessage `json:"summary,omitempty"`
-	State        string          `json:"state"`
-	ExpiresAt    *time.Time      `json:"expiresAt,omitempty"`
-	DecidedBy    *string         `json:"decidedBy,omitempty"`
-	Note         *string         `json:"note,omitempty"`
+	RequestID    string `json:"requestId"`
+	DatabaseID   string `json:"databaseId"`
+	DatabaseName string `json:"databaseName"`
+	// DatabaseLabel is its environment: production, staging or development.
+	DatabaseLabel string          `json:"databaseLabel,omitempty"`
+	Items         []StatementItem `json:"items"`
+	Summary       json.RawMessage `json:"summary,omitempty"`
+	State         string          `json:"state"`
+	ExpiresAt     *time.Time      `json:"expiresAt,omitempty"`
+	DecidedBy     *string         `json:"decidedBy,omitempty"`
+	Note          *string         `json:"note,omitempty"`
 }
 
 var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -156,7 +158,7 @@ func (s *Store) StatementAsks(ctx context.Context, ids []string) (map[string]*St
 		return out, nil
 	}
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT r.id::text, s.database_id::text, coalesce(d.dbname, ''), s.summary::text, r.state,
+		SELECT r.id::text, s.database_id::text, coalesce(d.dbname, ''), coalesce(d.label, ''), s.summary::text, r.state,
 		       r.expires_at, r.decided_by_email, r.decision_note,
 		       i.sql, i.params::text, i.row_cap, i.used_at IS NOT NULL
 		FROM access_requests r
@@ -173,7 +175,7 @@ func (s *Store) StatementAsks(ctx context.Context, ids []string) (map[string]*St
 		var a StatementAsk
 		var summary, params string
 		var it StatementItem
-		if err := rows.Scan(&a.RequestID, &a.DatabaseID, &a.DatabaseName, &summary, &a.State,
+		if err := rows.Scan(&a.RequestID, &a.DatabaseID, &a.DatabaseName, &a.DatabaseLabel, &summary, &a.State,
 			&a.ExpiresAt, &a.DecidedBy, &a.Note, &it.SQL, &params, &it.Rows, &it.Used); err != nil {
 			return nil, err
 		}
@@ -288,7 +290,7 @@ func (a *API) postStatementAsk(w http.ResponseWriter, r *http.Request, email str
 		fmt.Sprintf("Asked to run %s on %s (%s): %s. Waiting for an approver (request %s).",
 			what, db.Name, db.Label, req.Justification, req.ID))
 	a.alertRequestWaiting(r.Context(), req)
-	a.alertEditorsWaiting(r.Context(), db, req)
+	a.alertEditorsWaiting(r.Context(), db, req, in.Summary)
 	asks, err := a.store.StatementAsks(r.Context(), []string{req.ID})
 	if err != nil || asks[req.ID] == nil {
 		a.fail(w, "statement approval", err)

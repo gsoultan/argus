@@ -1,4 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { meQuery } from '~/lib/queries'
 import {
   ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, SegmentedControl, Stack, Tabs, Text,
   TextInput, Tooltip, UnstyledButton,
@@ -39,7 +41,10 @@ import {
 } from '~/lib/workspaceTabs'
 import { notifyWarn } from '~/lib/notify'
 import type { SavedQuery } from '~/lib/live'
-import { NEEDS_APPROVAL, useStatementApproval } from '~/components/StatementApproval'
+import { NEEDS_APPROVAL, useStatementApproval, type CheckStatement } from '~/components/StatementApproval'
+import { ApprovalBadge, EnvBadge } from '~/components/ChangeImpact'
+import { ChangesWaitingBanner } from '~/components/ChangesWaiting'
+import { writesNeedApproval, type CheckLike } from '~/lib/changeApproval'
 import { ImportData, type ImportRun } from '~/components/ImportData'
 import { ChangesPanel } from '~/components/DatabaseChanges'
 import type { EditTarget } from '~/lib/rowEdit'
@@ -431,7 +436,22 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       }
     }), [send])
 
-  const { ask: askApproval, dialog: approvalDialog } = useStatementApproval(database.id, database.dbname)
+  // Before an ask, each statement is run once and rolled back, with the
+  // first rows it changes, so the approver sees what it does.
+  const checkForApproval: CheckStatement = useCallback((sql, params) => new Promise<CheckLike | null>((resolve) => {
+    const id = nextId.current++
+    pending.current.set(id, (a) => {
+      pending.current.delete(id)
+      resolve(a.type === 'check' && a.check ? { rows: a.check.rows, tables: a.check.tables, preview: a.check.preview ?? null } : null)
+    })
+    if (!send({ id, op: 'check', sql, params: params?.length ? params : undefined, preview: true })) {
+      pending.current.delete(id)
+      resolve(null)
+    }
+  }), [send])
+  const { data: me } = useQuery(meQuery())
+  const { ask: askApproval, dialog: approvalDialog } = useStatementApproval(database.id, database.dbname,
+    { label: database.label, me: me?.email, check: checkForApproval })
 
   // collect runs one statement for a panel and resolves with everything it
   // returned. Recorded like any other statement; it is one. onId hears the
@@ -1349,9 +1369,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           {!narrow && <IconDatabase size={16} color="var(--color-brand)" />}
           <Text fw={650} size={FS.body} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{database.dbname}</Text>
           {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace" style={{ whiteSpace: 'nowrap' }}>{database.hostname}{ready?.version ? ` · Postgres ${ready.version.split(' ')[0]}` : ''}{ready?.via === 'pgbouncer' ? ' · via PgBouncer' : ''}</Text>}
-          <Badge variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[database.label]} radius="sm" style={{ flexShrink: 0 }}>
-            {narrow ? database.label.slice(0, 4) : database.label}
-          </Badge>
+          <Box style={{ flexShrink: 0 }}><EnvBadge label={database.label} /></Box>
+          {!narrow && writesNeedApproval(database) && <Box style={{ flexShrink: 0 }}><ApprovalBadge /></Box>}
           <SegmentedControl size="xs" ml={narrow ? 'auto' : 'sm'} value={view} onChange={(v) => { setView(v as 'query' | 'diagram'); setPanel('query') }}
             data={[{ label: 'Query', value: 'query' }, { label: 'Diagram', value: 'diagram' }]} aria-label="View" />
           {!narrow && (
@@ -1380,6 +1399,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           </Group>
         )}
 
+        {writesNeedApproval(database) && <ChangesWaitingBanner database={database} me={me?.email} />}
         {fatal && (
           <Box px="md" py={SP.cozy} style={{ background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
             <Text size={FS.meta}>{fatal}</Text>

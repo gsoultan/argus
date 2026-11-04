@@ -13,6 +13,7 @@ import {
   databases as liveDatabases,
   databasesOnAsset as liveDatabasesOnAsset,
   database as liveDatabase,
+  changeApproval as liveChangeApproval,
   databasePoolerSetup as liveDatabasePoolerSetup,
   dbAssignments as liveDBAssignments,
   createDatabase as liveCreateDatabase,
@@ -585,6 +586,10 @@ export const databaseQuery = (id: string) =>
   queryOptions({ queryKey: dbqk.database(id), queryFn: () => liveDatabase(id), enabled: isConfigured() })
 export const databasePoolerSetupQuery = (id: string) =>
   queryOptions({ queryKey: [...dbqk.database(id), 'pooler-setup'] as const, queryFn: () => liveDatabasePoolerSetup(id), enabled: isConfigured() })
+
+/** Whether a database's changes wait for approval, and who decides them. */
+export const changeApprovalQuery = (id: string) =>
+  queryOptions({ queryKey: [...dbqk.database(id), 'approval'] as const, queryFn: () => liveChangeApproval(id), enabled: isConfigured() })
 
 export const dbAssignmentsQuery = (id: string) =>
   queryOptions({ queryKey: dbqk.dbAssignments(id), queryFn: () => liveDBAssignments(id), enabled: isConfigured() })

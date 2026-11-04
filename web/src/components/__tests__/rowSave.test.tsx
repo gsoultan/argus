@@ -170,12 +170,21 @@ describe('Saving row edits', () => {
     await next(ws, n + 2, { type: 'error', code: 'AR007', error: 'orders is production: a statement that changes it runs once someone else approves it' })
     expect((await next(ws, n + 3, { type: 'done', tag: 'ROLLBACK' })).sql).toBe('ROLLBACK')
     fireEvent.change(await screen.findByLabelText(/Why/), { target: { value: 'fixing the note on order 1 for support' } })
+    // Before asking, the save is run once and rolled back, so the ask says
+    // what it changes.
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'check' && r.preview === true)).toBe(true))
+    const chk = ws.sent.find((r) => r.op === 'check')!
+    ws.answer({ id: chk.id, type: 'check', rows: 1, check: { class: { verb: 'update' }, rows: 1,
+      tables: [{ name: 'public.orders', updated: 1 }], preview: { change: 'update', columns: ['id', 'note'], rows: [['1', 'changed']] } } })
+    expect(await screen.findByText(/row updated in orders/)).toBeInTheDocument()
     vi.useFakeTimers({ shouldAdvanceTime: true })
     fireEvent.click(screen.getByRole('button', { name: 'Ask for approval' }))
     await waitFor(() => expect(live.askStatements).toHaveBeenCalled())
-    const asked = live.askStatements.mock.calls[0]![1] as { items: { sql: string; params: unknown[] }[] }
+    const asked = live.askStatements.mock.calls[0]![1] as { items: { sql: string; params: unknown[]; rows?: number }[]; summary: Record<string, unknown> }
     expect(asked.items).toHaveLength(1)
     expect(asked.items[0]!.params).toEqual(['changed', '1', 'first'])
+    expect(asked.items[0]!.rows).toBe(1)
+    expect(asked.summary).toMatchObject({ rows: 1, checked: true, tables: [{ name: 'public.orders', updated: 1 }] })
     await act(async () => { await vi.advanceTimersByTimeAsync(3100) })
     vi.useRealTimers()
     await next(ws, n + 4, { type: 'done', tag: 'BEGIN' })

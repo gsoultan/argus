@@ -27,7 +27,7 @@ import type {
   User,
   BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseRestore, TestCheck,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
-  StatementAsk, StatementItem,
+  StatementAsk, StatementItem, ChangeApproval,
 } from '~/types/domain'
 
 /**
@@ -1559,6 +1559,11 @@ export async function dataChanges(dbId: string, before?: number): Promise<DataCh
 /** Asks for approval to run statements on a production database. */
 export async function askStatements(dbId: string, ask: { items: StatementItem[]; summary?: Record<string, unknown>; justification: string }): Promise<StatementAsk> {
   return post<StatementAsk>(`/api/v1/databases/${encodeURIComponent(dbId)}/statements`, ask)
+}
+
+/** How a database's changes are approved: whether they wait, and who decides. */
+export async function changeApproval(dbId: string): Promise<ChangeApproval> {
+  return get<ChangeApproval>(`/api/v1/databases/${encodeURIComponent(dbId)}/approval`)
 }
 
 /** How an ask to run statements stands. */
