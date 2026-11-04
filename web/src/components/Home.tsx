@@ -8,9 +8,10 @@ import { AnchorLink, ButtonLink } from '~/components/links'
 import {
   IconActivityHeartbeat, IconCircleCheck, IconClipboardCheck, IconServerBolt, type IconProps,
 } from '@tabler/icons-react'
-import { PageBody, PageHeader, SectionCard, EmptyState } from '~/components/page'
-import { Mono, Stat, duration, now, relTime } from '~/components/primitives'
+import { PageBody, SectionCard, EmptyState } from '~/components/page'
+import { Mono, duration, now, relTime } from '~/components/primitives'
 import { isStatus, Label } from '~/components/home/parts'
+import { BandStat, CommandBand, FleetMap, RecordingRing, SessionsByHour, perHour } from '~/components/home/Command'
 import { isConfigured } from '~/lib/live'
 import {
   controlStatusQuery, coverageQuery, directLoginsQuery, meQuery, recentAuditQuery,
@@ -44,15 +45,24 @@ export function Home() {
   const whole = seesWholeFleet(me?.role)
   const approves = canSee(me?.role, 'approvers')
 
+  const addServer = canSee(me?.role, 'admin')
+
   return (
     <>
-      <PageHeader
+      {/* The whole fleet gets the dark band with its five numbers; everyone
+          else, and the moment before we know who this is, the plain header. */}
+      <CommandBand
+        plain={!me || !whole}
         title={greeting(me)}
-        description={subtitle(me)}
-        actions={canSee(me?.role, 'admin') ? (
-          <ButtonLink to="/assets/add" variant="default" size="sm">Add server</ButtonLink>
+        subtitle={subtitle(me)}
+        actions={addServer ? (
+          <ButtonLink to="/assets/add" size="sm" {...(whole ? { className: 'argus-band-btn' } : { variant: 'default' })}>
+            Add server
+          </ButtonLink>
         ) : undefined}
-      />
+      >
+        {me && whole ? <FleetBand /> : undefined}
+      </CommandBand>
       <PageBody>
         <Stack gap="lg">
           {me && approves && <NeedsYou me={me} />}
@@ -150,7 +160,7 @@ function NeedsYou({ me }: { me: User | undefined }) {
   return (
     <Box>
       <Label>Needs you</Label>
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="sm" data-testid="needs-you">
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 4 }} spacing="sm" data-testid="needs-you">
         {needs.map((n) => <NeedCard key={n.key} need={n} />)}
       </SimpleGrid>
     </Box>
@@ -176,57 +186,75 @@ function NeedCard({ need: n }: { need: Need }) {
 
 /* ── The fleet, for whoever sees all of it ─────────────────────────────── */
 
-function FleetHome({ me }: { me: User | undefined }) {
+/** The fleet in five numbers, on the band. */
+function FleetBand() {
   const navigate = useNavigate()
   const { data: stats } = useQuery(statsQuery())
-  const platform = Boolean(me?.platformOwner) && isConfigured()
-
+  const { data: sessions } = useQuery(sessionsQuery())
   const online = stats ? stats.assetsTotal - stats.assetsUnreachable : undefined
+  const watched = stats ? stats.assetsTotal - stats.agentsStale : undefined
   return (
     <>
-      <Box>
-        <Label>Fleet</Label>
-        <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm">
-          <Stat
-            label="Servers online"
-            value={stats ? `${online} of ${stats.assetsTotal}` : undefined}
-            sub={stats ? (stats.assetsUnreachable > 0 ? `${stats.assetsUnreachable} not reachable` : 'Every server answers') : undefined}
-            tone={stats && stats.assetsUnreachable > 0 ? 'warn' : 'ok'}
-            onClick={() => void navigate({ to: '/assets' })}
-          />
-          <Stat
-            label="Live sessions"
-            value={stats?.sessionsActive}
-            sub={stats ? (stats.sessionsSilent > 0 ? `${stats.sessionsSilent} gone silent` : 'Every one reporting') : undefined}
-            tone={stats && stats.sessionsSilent > 0 ? 'warn' : 'ok'}
-            onClick={() => void navigate({ to: '/activity' })}
-          />
-          <Stat
-            label="Sessions, last 24 h"
-            value={stats?.sessionsToday}
-            sub={stats ? (stats.sessionsDirectToday > 0 ? `${stats.sessionsDirectToday} straight to a server` : 'All through the console') : undefined}
-            tone={stats && stats.sessionsDirectToday > 0 ? 'warn' : 'ok'}
-          />
-          <Stat
-            label="Agents not reporting"
-            value={stats?.agentsStale}
-            sub={stats ? (stats.assetsUnmonitored > 0 ? `${stats.assetsUnmonitored} unmonitored if bypassed` : 'Every server is watched') : undefined}
-            tone={stats && stats.agentsStale > 0 ? 'warn' : 'ok'}
-            onClick={() => void navigate({ to: '/settings', search: { section: 'hosts' } })}
-          />
-        </SimpleGrid>
-      </Box>
-
-      <Box>
-        <Label>Now</Label>
-        <SimpleGrid cols={{ base: 1, md: platform ? 2 : 1 }} spacing="sm">
-          <LiveNow />
-          {platform && <Suspense fallback={<Skeleton h={240} radius="md" />}><ControlCard /></Suspense>}
-        </SimpleGrid>
-      </Box>
-
-      <Today />
+      <BandStat
+        label="Servers online"
+        value={stats ? `${online} of ${stats.assetsTotal}` : undefined}
+        sub={stats ? (stats.assetsUnreachable > 0 ? `${stats.assetsUnreachable} not reachable` : 'Every server answers') : undefined}
+        warn={!!stats && stats.assetsUnreachable > 0}
+        meter={stats && stats.assetsTotal ? (online ?? 0) / stats.assetsTotal : undefined}
+        onClick={() => void navigate({ to: '/assets' })}
+      />
+      <BandStat
+        label="Live sessions"
+        value={stats?.sessionsActive}
+        sub={stats ? (stats.sessionsSilent > 0 ? `${stats.sessionsSilent} gone silent` : 'Every one reporting') : undefined}
+        warn={!!stats && stats.sessionsSilent > 0}
+        onClick={() => void navigate({ to: '/activity' })}
+      />
+      <BandStat
+        label="Sessions, last 24 h"
+        value={stats?.sessionsToday}
+        sub="Each column is one hour"
+        spark={sessions ? perHour(sessions).all : undefined}
+      />
+      <BandStat
+        label="Straight to a server"
+        value={stats?.sessionsDirectToday}
+        sub={stats ? (stats.sessionsDirectToday > 0 ? 'Skipped Argus in the last 24 h' : 'All through the console') : undefined}
+        warn={!!stats && stats.sessionsDirectToday > 0}
+        onClick={() => void navigate({ to: '/activity' })}
+      />
+      <BandStat
+        label="Agents not reporting"
+        value={stats?.agentsStale}
+        sub={stats ? (stats.assetsUnmonitored > 0 ? `${stats.assetsUnmonitored} unmonitored if bypassed` : 'Every server is watched') : undefined}
+        warn={!!stats && stats.agentsStale > 0}
+        meter={stats && stats.assetsTotal ? (watched ?? 0) / stats.assetsTotal : undefined}
+        onClick={() => void navigate({ to: '/settings', search: { section: 'hosts' } })}
+      />
     </>
+  )
+}
+
+/**
+ * The fleet, for whoever sees all of it: a bento of what is live, how the day
+ * went by hour, every server at a glance, how sessions were recorded, and the
+ * audit log. Twelve columns from 75em; one below 62em.
+ */
+function FleetHome({ me }: { me: User | undefined }) {
+  const platform = Boolean(me?.platformOwner) && isConfigured()
+  return (
+    <Box className="argus-bento">
+      <Box className="argus-bento-5"><LiveNow /></Box>
+      <Box className="argus-bento-7"><SessionsByHour /></Box>
+      <Box className="argus-bento-5"><FleetMap /></Box>
+      <Box className="argus-bento-3"><RecordingRing /></Box>
+      <Box className="argus-bento-4"><Today /></Box>
+      {platform && (
+        <Box className="argus-bento-12">
+          <Suspense fallback={<Skeleton h={240} radius="md" />}><ControlCard /></Suspense>
+        </Box>
+      )}
+    </Box>
   )
 }
 

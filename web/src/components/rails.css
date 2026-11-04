@@ -1,0 +1,147 @@
+/* Loaded with the component that uses it, so only the routes that draw it
+   pay for it. Tokens come from app.tokens.css. */
+
+/* ---------------------------------------------------------------------------
+   Rails: filters on the left of a data page from 88em, a summary on the
+   right from 112em (a 1792px screen; below that the table needs the room).
+   The rails run to the edges so they read as panels of the frame, not as
+   cards on the page.
+   --------------------------------------------------------------------------- */
+.argus-rails-facets,
+.argus-rails-insight {
+  display: none;
+}
+@media (min-width: 88em) {
+  .argus-rails[data-facets] {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    align-items: start;
+  }
+  .argus-rails-facets {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    position: sticky;
+    top: var(--app-shell-header-offset, 60px);
+    max-height: calc(100dvh - var(--app-shell-header-offset, 60px));
+    overflow-y: auto;
+    padding: 20px 16px;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-line);
+    min-height: calc(100dvh - var(--app-shell-header-offset, 60px));
+  }
+  /* Where the rail filters, the toolbar's own copies of the same controls
+     step aside. */
+  .argus-rails[data-facets] .argus-rails-dup {
+    display: none;
+  }
+}
+@media (min-width: 112em) {
+  .argus-rails[data-facets][data-insight] {
+    grid-template-columns: 220px minmax(0, 1fr) 272px;
+  }
+  .argus-rails-insight {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: sticky;
+    top: var(--app-shell-header-offset, 60px);
+    max-height: calc(100dvh - var(--app-shell-header-offset, 60px));
+    overflow-y: auto;
+    padding: 20px 16px;
+    border-left: 1px solid var(--color-line);
+    min-height: calc(100dvh - var(--app-shell-header-offset, 60px));
+  }
+}
+.argus-rails-main {
+  min-width: 0;
+}
+.argus-facet {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  color: var(--color-ink);
+}
+.argus-facet:hover {
+  background: var(--color-raised);
+}
+.argus-facet-box {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1.5px solid var(--mantine-color-default-border);
+}
+.argus-facet[data-active] {
+  background: var(--color-brand-wash);
+  color: var(--color-brand-ink);
+  font-weight: 600;
+}
+.argus-facet[data-active] .argus-facet-box {
+  border-color: var(--color-brand);
+  background: var(--color-brand);
+  box-shadow: inset 0 0 0 2px var(--color-surface);
+}
+.argus-insight {
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+}
+.argus-insight[data-tone='warn'] {
+  border-color: var(--mantine-color-rose-2);
+  background: var(--mantine-color-rose-0);
+}
+:root[data-mantine-color-scheme='dark'] .argus-insight[data-tone='warn'] {
+  border-color: rgba(249, 112, 102, 0.35);
+  background: rgba(249, 112, 102, 0.08);
+}
+.argus-rank {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 28px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  border-radius: 4px;
+}
+.argus-rank[type='button']:hover .argus-rank-label {
+  color: var(--color-brand);
+  text-decoration: underline;
+}
+.argus-rank-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--color-raised);
+  overflow: hidden;
+}
+.argus-rank-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--mantine-color-azure-3);
+}
+.argus-daybars {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 72px;
+}
+.argus-daybar {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.argus-daybar i {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--mantine-color-azure-2);
+}
+:root[data-mantine-color-scheme='dark'] .argus-daybar i {
+  background: rgba(96, 165, 250, 0.35);
+}
+.argus-daybar[data-now] i {
+  background: var(--color-brand);
+}

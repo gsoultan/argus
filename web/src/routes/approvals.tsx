@@ -131,45 +131,50 @@ function Approvals() {
             <Text fw={600} size="sm">Access asked for</Text>
           </Group>
         )}
-        <Stack gap="sm">
-          {requests?.map((r) => (
-            <RequestCard
-              key={r.id}
-              request={r}
-              // The control plane refuses a decision from anyone else, and
-              // refuses anyone deciding their own, so neither gets the buttons.
-              canDecide={decides && r.requesterEmail.toLowerCase() !== me?.email.toLowerCase()}
-            />
-          ))}
-          {requests?.length === 0 && (
-            <Card>
-              <EmptyState
-                icon={IconClipboardCheck}
-                title={
-                  !decides
-                    ? tab === 'pending' ? 'None of your requests are waiting.' : 'You have not asked for access yet.'
-                    : tab === 'pending' ? 'Nothing waiting for a decision.' : 'No requests yet.'
-                }
-                description={
-                  !decides
-                    ? 'Press Ask for access to ask for a server or an account you do not have. An approver will decide.'
-                    : tab === 'pending'
-                      ? 'Every request has been decided. Approved grants expire on their own when their window closes.'
-                      : 'Nobody has asked for privileged access. Requests filed here are what the audit log records a decision against.'
-                }
-                action={
-                  <Button
-                    variant="light"
-                    leftSection={<IconPlus size={14} />}
-                    onClick={newModal.open}
-                  >
-                    Ask for access
-                  </Button>
-                }
+        {/* Requests tile across a wide screen rather than stretching one
+            card to 1900px, which put Approve a whole screen away from the
+            name it approves. */}
+        {requests && requests.length > 0 && (
+          <div className="argus-cardgrid" data-size="wide">
+            {requests.map((r) => (
+              <RequestCard
+                key={r.id}
+                request={r}
+                // The control plane refuses a decision from anyone else, and
+                // refuses anyone deciding their own, so neither gets the buttons.
+                canDecide={decides && r.requesterEmail.toLowerCase() !== me?.email.toLowerCase()}
               />
-            </Card>
-          )}
-        </Stack>
+            ))}
+          </div>
+        )}
+        {requests?.length === 0 && (
+          <Card>
+            <EmptyState
+              icon={IconClipboardCheck}
+              title={
+                !decides
+                  ? tab === 'pending' ? 'None of your requests are waiting.' : 'You have not asked for access yet.'
+                  : tab === 'pending' ? 'Nothing waiting for a decision.' : 'No requests yet.'
+              }
+              description={
+                !decides
+                  ? 'Press Ask for access to ask for a server or an account you do not have. An approver will decide.'
+                  : tab === 'pending'
+                    ? 'Every request has been decided. Approved grants expire on their own when their window closes.'
+                    : 'Nobody has asked for privileged access. Requests filed here are what the audit log records a decision against.'
+              }
+              action={
+                <Button
+                  variant="light"
+                  leftSection={<IconPlus size={14} />}
+                  onClick={newModal.open}
+                >
+                  Ask for access
+                </Button>
+              }
+            />
+          </Card>
+        )}
       </PageBody>
 
       <NewRequestModal opened={newOpen} onClose={newModal.close} host={search.ask} account={search.as} />

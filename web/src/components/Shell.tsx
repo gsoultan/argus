@@ -427,7 +427,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
       <AppShell.Main>
         {source === 'unreachable' && <FallbackBanner />}
-        <Box maw={1200} mx="auto">
+        {/* Full width: the page owns its own gutters (PageHeader, PageBody)
+            and a workspace runs edge to edge. A centred 1200px column left a
+            third of a wide screen empty while tables truncated. */}
+        <Box className="argus-main">
           {children}
         </Box>
       </AppShell.Main>

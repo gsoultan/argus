@@ -4,7 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { IconInfoCircle } from '@tabler/icons-react'
 import { useCallback, useState } from 'react'
+import { DatabaseList } from '~/components/DatabaseList'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
+import { SplitView } from '~/components/SplitView'
 import { RabbitWorkspace } from '~/components/RabbitWorkspace'
 import { RedisWorkspace } from '~/components/RedisWorkspace'
 import { PageBody, PageHeader } from '~/components/page'
@@ -90,8 +92,8 @@ function DatabasePage() {
   }
 
   return (
-    <Box>
-      <Group px="md" py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
+    <SplitView storageKey="databases" label="databases" list={<DatabaseList currentId={dbId} />}>
+      <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
         <Text size={FS.micro} c="dimmed">
           <Link to="/databases" style={{ color: INK.brand }}>Databases</Link> / {engineOf(database.engine).label} · {database.dbname}
         </Text>
@@ -120,7 +122,7 @@ function DatabasePage() {
       {access.approvable && (
         <AskModal dbId={dbId} opened={asking} onClose={ask.close} top={access.approvable} />
       )}
-    </Box>
+    </SplitView>
   )
 }
 

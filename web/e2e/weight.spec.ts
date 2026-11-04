@@ -80,8 +80,13 @@ const BUDGET_KB = {
    * shared stylesheet, the per-scheme colour resolver and the theme menu in
    * the header with its three icons. All of it renders before the first
    * screen, so none of it can be lazy.
+   * 290.8 kB with the full-width redesign (287.0 before, same build): Home
+   * for the whole fleet became a command centre -- the band with its five
+   * numbers, sessions by hour, the fleet map and the recording ring, Home's
+   * own chunk plus its stylesheet. Server status helpers moved to
+   * lib/reach.ts so the fleet map does not pull in the server cards.
    */
-  overview: 288,
+  overview: 292,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -119,8 +124,12 @@ const BUDGET_KB = {
  * 32.1 kB on a session detail once PasswordInput's stylesheet joined the list.
  * It had been missing, which left every password field's input at the
  * browser's default width. Still 7 kB under the concatenated one.
+ *
+ * 33.2 kB on Home with the full-width redesign: its command-centre stylesheet
+ * loads with Home. The filter rails' and split views' styles load with their
+ * own routes and are not paid here.
  */
-const CSS_BUDGET_KB = 33
+const CSS_BUDGET_KB = 33.5
 
 /**
  * The two self-hosted variable fonts, latin subsets.

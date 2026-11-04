@@ -263,7 +263,7 @@ function Settings() {
             )}
           </Box>
 
-          <Stack gap="sm" style={{ flex: 1, minWidth: 0 }} maw={960}>
+          <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
             <Select
               hiddenFrom="md"
               aria-label="Settings section"

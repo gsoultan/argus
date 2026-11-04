@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Badge, Box, CloseButton, Group, SegmentedControl, Select, Table, Text, TextInput, Tooltip,
+  Badge, CloseButton, Group, SegmentedControl, Select, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -13,7 +13,9 @@ import {
 } from '~/components/primitives'
 import { FS, SP } from '~/theme'
 import { meQuery, sessionsQuery } from '~/lib/queries'
-import type { Session } from '~/types/domain'
+import type { RecordingFidelity, Session, SessionProtocol } from '~/types/domain'
+import { Rails } from '~/components/Rails'
+import { SessionFacets, SessionInsight } from '~/components/activity/SessionRails'
 import { ActivityTabs } from '~/components/ActivityTabs'
 
 const FILTERS = ['all', 'active', 'silent', 'direct', 'flagged'] as const
@@ -113,8 +115,16 @@ function Sessions() {
     [sessions],
   )
 
-  const rows = useMemo(() => {
+  // Two more ways to narrow, offered only by the filter rail on a wide
+  // screen. Page state rather than address state: they refine a view rather
+  // than name a place someone would link to.
+  const [fidelity, setFidelity] = useState<RecordingFidelity | null>(null)
+  const [protocol, setProtocol] = useState<SessionProtocol | null>(null)
+
+  const matched = useMemo(() => {
     let out: Session[] = scoped ?? []
+    if (fidelity) out = out.filter((s) => s.fidelity === fidelity)
+    if (protocol) out = out.filter((s) => s.protocol === protocol)
     if (filter === 'active') out = out.filter((s) => s.state === 'active' && !s.silent)
     if (filter === 'silent') out = out.filter((s) => s.state === 'active' && s.silent)
     if (filter === 'direct') out = out.filter((s) => s.origin === 'direct')
@@ -127,18 +137,40 @@ function Sessions() {
           .includes(needle),
       )
     }
-    return out.slice(0, LIMIT)
-  }, [scoped, filter, search])
+    return out
+  }, [scoped, filter, search, fidelity, protocol])
+  const rows = useMemo(() => matched.slice(0, LIMIT), [matched])
 
   const activeCount = scoped?.filter((s) => s.state === 'active' && !s.silent).length ?? 0
   const silentCount = scoped?.filter((s) => s.state === 'active' && s.silent).length ?? 0
   const flaggedCount = scoped?.filter((s) => s.riskFlags.length > 0).length ?? 0
   const directCount = scoped?.filter((s) => s.origin === 'direct').length ?? 0
   const filtered =
-    filter !== 'all' || since === '24h' || Boolean(host) || search.trim().length > 0
+    filter !== 'all' || since === '24h' || Boolean(host) || search.trim().length > 0 ||
+    fidelity !== null || protocol !== null
+
+  const facets = (
+    <SessionFacets
+      sessions={scoped ?? []}
+      filter={filter}
+      onFilter={(f) => setSearchParams({ show: f })}
+      since={since}
+      onSince={(v) => setSearchParams({ since: v })}
+      host={host}
+      onHost={(h) => setSearchParams({ host: h })}
+      fidelity={fidelity}
+      onFidelity={setFidelity}
+      protocol={protocol}
+      onProtocol={setProtocol}
+    />
+  )
 
   return (
-    <Box>
+    <Rails
+      facets={facets}
+      insight={sessions && <SessionInsight sessions={matched} onHost={(h) => setSearchParams({ host: h })}
+        onPerson={(p) => setSearch(p)} />}
+    >
       <PageHeader
         title={wholeFleet ? 'Activity' : 'My activity'}
         description={
@@ -167,6 +199,7 @@ function Sessions() {
         >
           <Select
             w={240}
+            className="argus-rails-dup"
             aria-label="Server"
             placeholder="All servers"
             searchable
@@ -206,6 +239,7 @@ function Sessions() {
             </Badge>
           )}
           <SegmentedControl
+            className="argus-rails-dup"
             value={filter}
             onChange={(v) => setSearchParams({ show: v as Filter })}
             // No parenthetical until there is something to put in it: "Live (0)"
@@ -224,7 +258,7 @@ function Sessions() {
         </Toolbar>
 
         <DataTable
-          minWidth={1000}
+          minWidth={900}
           loading={sessions === undefined}
           isEmpty={rows.length === 0}
           columns={[
@@ -315,6 +349,6 @@ function Sessions() {
           ))}
         </DataTable>
       </PageBody>
-    </Box>
+    </Rails>
   )
 }
