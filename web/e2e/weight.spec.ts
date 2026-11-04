@@ -90,8 +90,13 @@ const BUDGET_KB = {
    * needing the bundler's module helpers moves them into a small shared
    * chunk, fetched as one more file. Loading the formatter eagerly instead
    * would cost every database page 75 kB gzipped.
+   * 293.2 kB with approval of changes per database (292.9 before, same build):
+   * the query and the API call that say whether a database's changes wait and
+   * who decides them, which share the eager queries and live modules. The
+   * Safety card, the review, the banners and the impact views are all in
+   * route or lazy chunks.
    */
-  overview: 293,
+  overview: 294,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
