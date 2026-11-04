@@ -481,6 +481,13 @@ func (s *pgSession) send(a tunnel.PGAnswer) error {
 	return tunnel.WriteFrame(s.stream, tunnel.FramePGAnswer, b)
 }
 
+// sendAnswerFrame sends an answer already encoded, which fits a frame.
+func (s *pgSession) sendAnswerFrame(b []byte) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	return tunnel.WriteFrame(s.stream, tunnel.FramePGAnswer, b)
+}
+
 func (s *pgSession) sendRows(p []byte) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
@@ -729,6 +736,8 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 		truncated bool
 		colsSent  bool
 		sendErr   error
+		// whole is what this statement has sent in parts so far.
+		whole int
 	)
 	flush := func() {
 		if enc.Rows() == 0 || sendErr != nil {
@@ -750,7 +759,29 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 			truncated = true
 			break
 		}
-		enc.Add(rr.Values())
+		vals := rr.Values()
+		if !enc.Fits(vals) {
+			flush()
+		}
+		kept := enc.Add(vals)
+		if req.Whole && kept != nil && sendErr == nil {
+			// The rest of each cut value follows its row: the batch goes
+			// first so the browser has the cell to add the parts to.
+			flush()
+			for col, k := range kept {
+				v := vals[col]
+				if len(v) > tunnel.MaxWholeValue || whole+len(v)-k > tunnel.MaxWholeResult {
+					continue // stays cut, and marked so
+				}
+				whole += len(v) - k
+				h.Write(v[k:])
+				for _, b := range tunnel.PartAnswers(req.ID, rows, col, v, k) {
+					if sendErr == nil {
+						sendErr = s.sendAnswerFrame(b)
+					}
+				}
+			}
+		}
 		rows++
 		if enc.Full() {
 			flush()

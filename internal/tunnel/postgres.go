@@ -32,7 +32,7 @@ another, each cell an unsigned varint and its bytes:
 
 	0          NULL
 	n > 0      (n-1)>>1 bytes of text follow; (n-1)&1 says the value was cut
-	           at MaxCell
+	           at MaxRowCell, or shorter so that its row fits one frame
 
 The browser knows how many cells a row has from the "cols" answer. Values are
 Postgres's own text format, so the agent decodes nothing and the browser shows
@@ -57,6 +57,11 @@ const (
 	// larger one is cut and marked, and a person who needs it whole can
 	// select a substring of it.
 	MaxCell = 64 << 10
+	// MaxRowCell is the longest Postgres value a row batch carries whole:
+	// a jsonb document or a long text is worth reading in full, and one row
+	// still fits one frame. A row whose values together would not fit has
+	// its longest values cut to share what does.
+	MaxRowCell = 192 << 10
 	// RowBatchBytes is the size a batch is flushed at.
 	RowBatchBytes = 128 << 10
 	// RowBatchRows is the most rows in one batch, so the first screen of a
@@ -153,6 +158,9 @@ type PGRequest struct {
 	// database whose writes need one. The control plane checks it before the
 	// request reaches the agent; the agent records it with the statement.
 	Approval string `json:"approval,omitempty"`
+	// Whole asks for the rest of every value a row batch had to cut, as
+	// "part" answers after the batch, up to MaxWholeValue a value, for run.
+	Whole bool `json:"whole,omitempty"`
 }
 
 /*
@@ -289,7 +297,7 @@ type PGObject struct {
 // PGAnswer is the agent's reply to a request, or news about the session.
 type PGAnswer struct {
 	ID uint32 `json:"id"`
-	// Type is ready, cols, done, error, schema, admin or check.
+	// Type is ready, cols, done, error, schema, admin, check or part.
 	Type string     `json:"type"`
 	Cols []PGColumn `json:"cols,omitempty"`
 	// Tag is Postgres's command tag: "SELECT 214", "UPDATE 1".
@@ -328,6 +336,9 @@ type PGAnswer struct {
 	Guard *PGGuard `json:"guard,omitempty"`
 	// Check answers check.
 	Check *PGCheck `json:"check,omitempty"`
+	// Part is a piece of a value a row batch cut, for a run that asked for
+	// Whole: appended to the cell in order, the value is whole at Last.
+	Part *PGPart `json:"part,omitempty"`
 	// Trash is what a DELETE, DROP or TRUNCATE put in the database's trash
 	// instead of losing it, on done.
 	Trash []PGTrashItem `json:"trash,omitempty"`
@@ -593,6 +604,54 @@ func LocalPGHost(host string) bool {
 	return strings.HasPrefix(host, "/") && !strings.Contains(host, "..")
 }
 
+// PGPart is the next piece of one cut value: Row counts the statement's
+// rows from 0, Col its columns from 0.
+type PGPart struct {
+	Row  int64  `json:"row"`
+	Col  int    `json:"col"`
+	Text string `json:"text"`
+	Last bool   `json:"last,omitempty"`
+}
+
+const (
+	// MaxWholeValue is the longest value a run asking for Whole receives in
+	// full. A longer one stays cut.
+	MaxWholeValue = 16 << 20
+	// MaxWholeResult bounds what one statement sends in parts, all values
+	// together, so a result of many long documents cannot fill the browser.
+	MaxWholeResult = 64 << 20
+	// PartChunk is the most text one part carries: escaped as JSON it still
+	// fits a frame (PartAnswers halves a piece that would not).
+	PartChunk = 96 << 10
+)
+
+// PartAnswers splits the rest of a value, from the byte at kept, into part
+// answers for request id, each fitting one frame. Pieces end on a UTF-8
+// boundary.
+func PartAnswers(id uint32, row int64, col int, value []byte, kept int) [][]byte {
+	var out [][]byte
+	for at := kept; at < len(value); {
+		n := min(PartChunk, len(value)-at)
+		for {
+			piece := value[at : at+n]
+			if at+n < len(value) {
+				piece = trimUTF8(piece)
+			}
+			if len(piece) == 0 { // a lone rune longer than the chunk: never with n >= 4
+				piece = value[at : at+min(4, len(value)-at)]
+			}
+			b, _ := json.Marshal(PGAnswer{ID: id, Type: "part", Part: &PGPart{Row: row, Col: col, Text: string(piece), Last: at+len(piece) == len(value)}})
+			if len(b) <= MaxFrame || n <= 1024 {
+				out = append(out, b)
+				at += len(piece)
+				break
+			}
+			n /= 2
+		}
+	}
+	return out
+}
+
 // RowEncoder builds row batches. The zero value is not ready; use
 // NewRowEncoder. It reuses its buffer between batches.
 type RowEncoder struct {
@@ -603,28 +662,80 @@ type RowEncoder struct {
 
 // NewRowEncoder starts batches for request id.
 func NewRowEncoder(id uint32) *RowEncoder {
-	e := &RowEncoder{buf: make([]byte, 4, RowBatchBytes+MaxCell+64)}
+	e := &RowEncoder{buf: make([]byte, 4, MaxFrame)}
 	binary.BigEndian.PutUint32(e.buf, id)
 	return e
 }
 
-// Add appends one row. A nil cell is NULL.
-func (e *RowEncoder) Add(cells [][]byte) {
+// rowBudget is what one row's values may take: a frame, less the id and a
+// varint for every cell.
+func rowBudget(n int) int { return MaxFrame - 4 - n*binary.MaxVarintLen64 }
+
+// cellLimit is the longest any one value of the row may be: MaxRowCell, or
+// less when the row's values together would not fit a frame. Then the
+// longest are cut to the same length, and the short ones stay whole.
+func cellLimit(cells [][]byte) int {
+	budget := rowBudget(len(cells))
+	total := func(limit int) int {
+		t := 0
+		for _, c := range cells {
+			t += min(len(c), limit)
+		}
+		return t
+	}
+	if total(MaxRowCell) <= budget {
+		return MaxRowCell
+	}
+	lo, hi := 0, MaxRowCell
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if total(mid) <= budget {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
+}
+
+// Fits reports whether a row can join the batch without the batch growing
+// past one frame. A batch with no rows takes any row: Add cuts it to fit.
+func (e *RowEncoder) Fits(cells [][]byte) bool {
+	if e.rows == 0 {
+		return true
+	}
+	limit := cellLimit(cells)
+	n := len(e.buf)
 	for _, c := range cells {
+		n += binary.MaxVarintLen64 + min(len(c), limit)
+	}
+	return n <= MaxFrame
+}
+
+// Add appends one row. A nil cell is NULL. It returns, for each cell it
+// cut, how many bytes it kept (indexed by column), or nil when it cut none.
+func (e *RowEncoder) Add(cells [][]byte) (kept map[int]int) {
+	limit := cellLimit(cells)
+	for i, c := range cells {
 		if c == nil {
 			e.buf = append(e.buf, 0)
 			continue
 		}
 		cut := uint64(0)
-		if len(c) > MaxCell {
-			c = trimUTF8(c[:MaxCell])
+		if len(c) > limit {
+			c = trimUTF8(c[:limit])
 			cut = 1
+			if kept == nil {
+				kept = map[int]int{}
+			}
+			kept[i] = len(c)
 		}
 		n := binary.PutUvarint(e.tmp[:], (uint64(len(c))<<1|cut)+1)
 		e.buf = append(e.buf, e.tmp[:n]...)
 		e.buf = append(e.buf, c...)
 	}
 	e.rows++
+	return kept
 }
 
 // Full reports whether the batch should be sent now.

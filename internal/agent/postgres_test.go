@@ -55,6 +55,8 @@ type pgHarness struct {
 	dir    string
 	done   chan struct{}
 	ready  tunnel.PGAnswer
+	// parts counts the "part" answers do has folded into its rows.
+	parts int
 	// close ends the session as the browser leaving would, and waits for
 	// the agent side to finish locking the role.
 	close func()
@@ -169,6 +171,14 @@ func (h *pgHarness) do(req tunnel.PGRequest) (cols []tunnel.PGColumn, rows [][]*
 			}
 			if a.Type == "cols" {
 				cols = a.Cols
+				continue
+			}
+			if a.Type == "part" {
+				// The rest of a cut value, after its row's batch.
+				c := rows[a.Part.Row][a.Part.Col]
+				v := *c + a.Part.Text
+				rows[a.Part.Row][a.Part.Col] = &v
+				h.parts++
 				continue
 			}
 			return cols, rows, a

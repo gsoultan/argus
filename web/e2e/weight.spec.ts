@@ -113,8 +113,10 @@ const BUDGET_KB = {
    * queries in the shared queries module.
    * 394.8 kB with light and dark themes, the same shared weight as the
    * overview.
+   * 397.0x kB with the cut marker on long values: the shared results grid's
+   * badge and note.
    */
-  sessionDetail: 397,
+  sessionDetail: 398,
 }
 
 /**

@@ -55,11 +55,14 @@ describe('Results grid', () => {
       { f_customer_id: '7' })
   })
 
-  it('shows every field of a row, JSON pretty-printed, and steps through rows', async () => {
+  it('shows every field of a row, JSON as a tree or laid-out text, and steps through rows', async () => {
     setup()
     fireEvent.click(screen.getByRole('button', { name: 'Open row 1' }))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('Row 1')).toBeInTheDocument()
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Open tags' }))
+    expect(within(dialog).getByText('b')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByText('Text'))
     expect(dialog.textContent).toContain('"tags": [\n    "a",')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Next row' }))
     await waitFor(() => expect(within(dialog).getByText('Row 2')).toBeInTheDocument())
@@ -95,5 +98,14 @@ describe('Results grid', () => {
     expect(collect).toHaveBeenLastCalledWith('SELECT * FROM public.customers WHERE id = $1 LIMIT 1', 1, ['7'])
     fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }))
     await waitFor(() => expect(within(dialog).getByText('Row 1')).toBeInTheDocument())
+  })
+
+  it('marks a value the agent cut at its size limit, in the grid and the row panel', async () => {
+    renderWithProviders(<ResultsGrid result={{ ...result, cut: new Set(['0:2']) }} narrow={false} />)
+    expect(screen.getAllByText('cut')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Open row 1' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('cut')).toBeInTheDocument()
+    expect(within(dialog).getByText(/loaded only the first part of this value/)).toBeInTheDocument()
   })
 })

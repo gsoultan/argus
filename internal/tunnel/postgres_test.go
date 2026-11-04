@@ -14,7 +14,7 @@ import (
 
 func TestRowEncoderRoundTrip(t *testing.T) {
 	e := NewRowEncoder(7)
-	long := bytes.Repeat([]byte("é"), MaxCell) // two bytes each, so the cut lands mid-rune
+	long := bytes.Repeat([]byte("é"), MaxRowCell) // two bytes each, so the cut lands mid-rune
 	e.Add([][]byte{[]byte("1"), nil, []byte("")})
 	e.Add([][]byte{[]byte("ünïcødé"), []byte("x"), long})
 	id, rows, err := DecodeRows(e.Batch(), 3)
@@ -28,12 +28,52 @@ func TestRowEncoderRoundTrip(t *testing.T) {
 		t.Fatalf("row 0: NULL and empty must stay apart: %v", rows[0])
 	}
 	cut := *rows[1][2]
-	if len(cut) > MaxCell || !utf8.ValidString(cut) {
-		t.Fatalf("a cut value must stay within MaxCell and be valid text: %d bytes", len(cut))
+	if len(cut) > MaxRowCell || !utf8.ValidString(cut) {
+		t.Fatalf("a cut value must stay within MaxRowCell and be valid text: %d bytes", len(cut))
 	}
 	e.Reset()
 	if e.Rows() != 0 || len(e.Batch()) != 4 {
 		t.Fatal("reset must keep only the id")
+	}
+}
+
+func TestRowEncoderKeepsALongJSONWhole(t *testing.T) {
+	// A 65,633-byte jsonb array of approval rules was cut at the old 64 KiB.
+	doc := []byte(`[` + strings.Repeat(`{"name":"rule","then":["x"]},`, 2400) + `{}]`)
+	e := NewRowEncoder(1)
+	e.Add([][]byte{[]byte("1"), doc})
+	_, rows, err := DecodeRows(e.Batch(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *rows[0][1] != string(doc) || !json.Valid([]byte(*rows[0][1])) {
+		t.Fatalf("a %d-byte value must arrive whole", len(doc))
+	}
+}
+
+func TestRowEncoderKeepsEachBatchInOneFrame(t *testing.T) {
+	big := bytes.Repeat([]byte("a"), MaxRowCell)
+	row := [][]byte{[]byte("short"), big, big, big}
+	e := NewRowEncoder(1)
+	e.Add(row)
+	if len(e.Batch()) > MaxFrame {
+		t.Fatalf("one row of %d bytes made a %d-byte batch", 3*MaxRowCell, len(e.Batch()))
+	}
+	_, rows, err := DecodeRows(e.Batch(), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *rows[0][0] != "short" || len(*rows[0][1]) != len(*rows[0][3]) || len(*rows[0][1]) >= MaxRowCell {
+		t.Fatal("a row too big for a frame cuts its longest values evenly and keeps the short ones whole")
+	}
+	if e.Fits(row) {
+		t.Fatal("a second such row must go in the next batch")
+	}
+	for e.Fits([][]byte{[]byte("x")}) {
+		e.Add([][]byte{[]byte("x")})
+		if len(e.Batch()) > MaxFrame {
+			t.Fatal("batch past one frame")
+		}
 	}
 }
 
@@ -210,5 +250,29 @@ func TestRecordedTextFits(t *testing.T) {
 	escaped := strings.Repeat("<", MaxSQL/4) // <: six bytes each
 	if len(escaped) > MaxSQL || RecordedTextFits(escaped) {
 		t.Fatal("a statement that encodes past a frame must not fit")
+	}
+}
+
+func TestPartAnswersFitAFrameAndRejoin(t *testing.T) {
+	// Control characters escape to six bytes each in JSON; runes stay whole.
+	value := []byte(strings.Repeat("\x01é\"", 200_000))
+	kept := 1000
+	var rest strings.Builder
+	parts := PartAnswers(3, 5, 2, value, kept)
+	for i, b := range parts {
+		if len(b) > MaxFrame {
+			t.Fatalf("part %d is %d bytes", i, len(b))
+		}
+		var a PGAnswer
+		if err := json.Unmarshal(b, &a); err != nil || a.Type != "part" || a.Part.Row != 5 || a.Part.Col != 2 {
+			t.Fatalf("part %d: %v %+v", i, err, a)
+		}
+		if a.Part.Last != (i == len(parts)-1) {
+			t.Fatalf("only the last part says so (part %d)", i)
+		}
+		rest.WriteString(a.Part.Text)
+	}
+	if string(value[:kept])+rest.String() != string(value) {
+		t.Fatal("the parts must rejoin to the value")
 	}
 }
