@@ -576,3 +576,47 @@ func TestPostgresLongStatementIsRecordedWhole(t *testing.T) {
 		t.Fatalf("the server's copy: %+v %v", v, err)
 	}
 }
+
+// A catalogue past one frame used to end the session the moment the
+// workspace opened: the editor asks for "completion" first, and an answer
+// over MaxFrame failed to write, which closed the stream.
+func TestPostgresLargeCatalogueArrivesInParts(t *testing.T) {
+	dsn, _, _, _ := pgTest(t)
+	superExec(t, dsn,
+		"DROP SCHEMA IF EXISTS argus_t_big CASCADE",
+		"CREATE SCHEMA argus_t_big",
+		"GRANT USAGE ON SCHEMA argus_t_big TO PUBLIC",
+		`DO $$ BEGIN FOR i IN 1..4000 LOOP
+		   EXECUTE format('CREATE FUNCTION argus_t_big.f_with_a_fairly_long_name_%s(a integer, b text, c timestamptz, d jsonb) RETURNS int LANGUAGE sql AS ''SELECT 1''', i);
+		 END LOOP; END $$`,
+		"DROP ROLE IF EXISTS ana_sari")
+	t.Cleanup(func() { superExec(t, dsn, "DROP SCHEMA IF EXISTS argus_t_big CASCADE") })
+	h := openPG(t, tunnel.LevelRead, nil)
+
+	h.send(tunnel.PGRequest{ID: 1, Op: "schema", Kind: "completion"})
+	var objs []tunnel.PGObject
+	parts := 0
+	for {
+		a := h.answer()
+		if a.ID != 1 || a.Type != "schema" {
+			t.Fatalf("completion: %+v", a)
+		}
+		parts++
+		objs = append(objs, a.Objects...)
+		if !a.More {
+			break
+		}
+	}
+	fns := 0
+	for _, o := range objs {
+		if o.Schema == "argus_t_big" && o.Kind == "function" {
+			fns++
+		}
+	}
+	if fns != 4000 || parts < 2 {
+		t.Fatalf("got %d functions in %d parts", fns, parts)
+	}
+	if _, _, final := h.run(2, "SELECT 1", 0); final.Type != "done" {
+		t.Fatalf("the session did not go on: %+v", final)
+	}
+}

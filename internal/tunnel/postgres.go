@@ -253,6 +253,9 @@ type PGAnswer struct {
 	Tag  string `json:"tag,omitempty"`
 	Rows int64  `json:"rows,omitempty"`
 	MS   int64  `json:"ms,omitempty"`
+	// More says another part of this answer follows, with the same ID: a
+	// schema answer too long for one frame is sent in parts.
+	More bool `json:"more,omitempty"`
 	// Truncated says the statement was stopped at MaxRows.
 	Truncated bool `json:"truncated,omitempty"`
 	// Error, Code (SQLSTATE) and Position (1-based, in characters) describe

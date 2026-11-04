@@ -470,6 +470,12 @@ func RecordHash(r tunnel.PGRecord) string {
 
 func (s *pgSession) send(a tunnel.PGAnswer) error {
 	b, _ := json.Marshal(a)
+	if len(b) > tunnel.MaxFrame {
+		// Written, it would fail and end the session. An answer that cannot
+		// be split says so instead, and the session goes on.
+		b, _ = json.Marshal(tunnel.PGAnswer{ID: a.ID, Type: "error",
+			Error: "the answer is too large to send; narrow what was asked"})
+	}
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
 	return tunnel.WriteFrame(s.stream, tunnel.FramePGAnswer, b)
@@ -943,7 +949,31 @@ func (s *pgSession) schema(ctx context.Context, req tunnel.PGRequest) error {
 		}
 		out = append(out, o)
 	}
-	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "schema", Objects: out})
+	return s.sendObjects(req.ID, out)
+}
+
+// schemaPartBudget is how much of a frame one part of a schema answer may
+// fill with objects, leaving room for the answer's other fields.
+const schemaPartBudget = tunnel.MaxFrame - 4<<10
+
+// sendObjects answers a schema request in as many parts as its objects need,
+// each under one frame, every part but the last marked More. A catalogue
+// with thousands of functions runs to megabytes; sent as one answer it did
+// not fit a frame, the write failed, and the session ended as it opened.
+func (s *pgSession) sendObjects(id uint32, objs []tunnel.PGObject) error {
+	start, size := 0, 0
+	for i, o := range objs {
+		b, _ := json.Marshal(o)
+		n := len(b) + 1 // and its comma
+		if size+n > schemaPartBudget && i > start {
+			if err := s.send(tunnel.PGAnswer{ID: id, Type: "schema", Objects: objs[start:i], More: true}); err != nil {
+				return err
+			}
+			start, size = i, 0
+		}
+		size += n
+	}
+	return s.send(tunnel.PGAnswer{ID: id, Type: "schema", Objects: objs[start:]})
 }
 
 // adminOp runs an administrative operation through the helper, as the
