@@ -328,6 +328,12 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 	}
 	a.live.add(ls)
 	defer a.live.remove(ls)
+	// What the session changes, once committed, goes to the Data changes log
+	// and to the people who should know. Postgres sessions only.
+	var changes *changeTracker
+	if pg {
+		changes = newChangeTracker(ctx, a, email, db, sessionID)
+	}
 
 	finish := func() {
 		recMu.Lock()
@@ -418,6 +424,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
+				changes.statement(req)
 				b, _ = json.Marshal(req)
 			} else {
 				var req tunnel.StoreRequest
@@ -469,6 +476,9 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 			}
 			if json.Unmarshal(p, &ans) != nil {
 				continue
+			}
+			if changes != nil {
+				changes.answer(p)
 			}
 			if sendJSON(pgBrowserMessage{Type: "ans", Ans: bytes.Clone(p)}) != nil {
 				return

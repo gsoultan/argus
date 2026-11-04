@@ -19,6 +19,9 @@ export const ALERT_KINDS: { kind: AlertKind; label: string; description: string;
   { kind: 'backup', label: 'Backups',
     description: 'A test restore fails, none has passed for too long, or scheduled backups fail or are missed three times in a row.',
     who: 'Admins, auditors' },
+  { kind: 'data', label: 'Data changes',
+    description: 'Someone inserts, updates or deletes rows, empties or drops a table, in a database you are assigned to; told once the change is committed.',
+    who: 'Admins, auditors, everyone assigned the database' },
 ]
 
 /* ── Fixture ─────────────────────────────────────────────────────────────── */

@@ -1533,6 +1533,29 @@ export async function deleteSavedQuery(dbId: string, id: string): Promise<void> 
   await send('DELETE', `/api/v1/databases/${encodeURIComponent(dbId)}/saved-queries/${encodeURIComponent(id)}`)
 }
 
+/** One committed statement that changed data, from the Data changes log. */
+export interface DataChange {
+  seq: number
+  at: string
+  sessionId: string
+  actor: string
+  /** insert, update, delete, merge, truncate, drop, restore or write. */
+  verb: string
+  objects: string[]
+  /** Rows Postgres said it changed; -1 when it did not say. */
+  rows: number
+  tag: string
+  sql: string
+  approvalId?: string
+}
+
+/** A database's Data changes log, newest first, before seq when given. */
+export async function dataChanges(dbId: string, before?: number): Promise<DataChange[]> {
+  const q = before ? `?before=${before}` : ''
+  const r = await get<{ changes: DataChange[] }>(`/api/v1/databases/${encodeURIComponent(dbId)}/changes${q}`)
+  return r.changes ?? []
+}
+
 /** Asks for approval to run statements on a production database. */
 export async function askStatements(dbId: string, ask: { items: StatementItem[]; summary?: Record<string, unknown>; justification: string }): Promise<StatementAsk> {
   return post<StatementAsk>(`/api/v1/databases/${encodeURIComponent(dbId)}/statements`, ask)
@@ -1899,7 +1922,7 @@ export async function controlStatus(): Promise<ControlStatus> {
 
 /* ── Console alerts (the bell) ──────────────────────────────────────────── */
 
-export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server' | 'backup'
+export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server' | 'backup' | 'data'
 
 /** One alert under the bell, as GET /api/v1/alerts returns it. */
 export interface ConsoleAlert {
