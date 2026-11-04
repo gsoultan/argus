@@ -330,13 +330,19 @@ test.describe('counts land on exactly what they counted', () => {
    * verdict covers it. The header is inflated on the first response only --
    * which is the one the console reads the total from, by design, so a write
    * landing mid-fetch cannot move the denominator.
+   *
+   * Home, where sign-in lands, asks for the six latest entries too. Which of
+   * the two requests came first was a race, and WebKit lost it: Home's took
+   * the inflated header and the audit page read the real total. So only the
+   * audit page's own first page is inflated.
    */
   test('the audit page admits when it is holding only part of the log', async ({ page }) => {
     let first = true
     await page.route('**/api/v1/audit*', async (route) => {
       const res = await route.fetch()
       const headers = { ...res.headers() }
-      if (first) {
+      const q = new URL(route.request().url()).searchParams
+      if (first && q.get('limit') !== '6' && !q.has('before')) {
         headers['x-argus-audit-total'] = '99999'
         first = false
       }
