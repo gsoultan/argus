@@ -39,6 +39,8 @@ export interface GridResult {
   sql: string
   cols: Col[]
   rows: Cell[][]
+  /** Cells the agent cut at its size limit, as `row:col`. */
+  cut?: Set<string>
   done?: { tag?: string; truncated?: boolean; ms?: number }
   error?: { error?: string; code?: string; hint?: string; guard?: unknown }
 }
@@ -192,7 +194,10 @@ type Panel =
   | { kind: 'new'; index: number }
   | { kind: 'linked'; title: string; cols: Col[]; row: Cell[] | null; loading: boolean; error?: string; back: Panel }
 
-function Fields({ cols, row, fks, onFollow }: { cols: Col[]; row: Cell[]; fks: Record<number, ForeignKey>; onFollow?: (i: number) => void }) {
+/** What the console says about a value the agent cut at its size limit. */
+const CUT_NOTE = 'Longer than the console shows a value (192 KB): this is its first part. Read the rest in pieces with substring() in SQL.'
+
+function Fields({ cols, row, fks, onFollow, cut }: { cols: Col[]; row: Cell[]; fks: Record<number, ForeignKey>; onFollow?: (i: number) => void; cut?: (i: number) => boolean }) {
   return (
     <Stack gap="sm">
       {cols.map((c, i) => {
@@ -204,6 +209,7 @@ function Fields({ cols, row, fks, onFollow }: { cols: Col[]; row: Cell[]; fks: R
             <Group gap={6} wrap="nowrap">
               <Text size={FS.meta} fw={600} ff="var(--font-mono)">{c.name}</Text>
               <Text size={FS.micro} c="dimmed">{c.type}</Text>
+              {cut?.(i) && <Badge size="xs" variant="light" color="amber" title={CUT_NOTE}>cut</Badge>}
               {fk && v !== null && onFollow && (
                 <Button size="compact-xs" variant="subtle" leftSection={<IconLink size={12} />} onClick={() => onFollow(i)} ml="auto">
                   {fk.table}
@@ -222,6 +228,7 @@ function Fields({ cols, row, fks, onFollow }: { cols: Col[]; row: Cell[]; fks: R
                 maxHeight: p.json ? 320 : undefined, overflow: 'auto' }}>
               {p.text}
             </Box>
+            {cut?.(i) && <Text size={FS.micro} c={INK.pending} mt={2}>{CUT_NOTE}</Text>}
           </Box>
         )
       })}
@@ -648,6 +655,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                           cursor: live && !lockReason(ri, j) ? 'cell' : undefined }}
                           title={changed ? `${cell ?? 'NULL'}\nwas ${row[j] ?? 'NULL'}` : (cell ?? 'NULL')}
                           onDoubleClick={live ? () => startEdit(ri, j) : undefined}>
+                          {result.cut?.has(`${ri}:${j}`) && <Badge size="xs" variant="light" color="amber" mr={4} title={CUT_NOTE}>cut</Badge>}
                           {cell === null ? 'null'
                             : fk && live ? (
                               <Group gap={4} wrap="nowrap" component="span" style={{ display: 'inline-flex' }}>
@@ -748,7 +756,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
               ? <RowForm fields={rowFields(panelIndex)}
                   onChange={(a, v) => setCell(panelIndex, colOf(a), v)}
                   onOpen={(a) => setOpen({ row: panelIndex, attnum: a })} />
-              : <Fields cols={cols} row={panelRow} fks={fks} onFollow={(i) => follow(panelRow, i, fks, panel)} />}
+              : <Fields cols={cols} row={panelRow} fks={fks} onFollow={(i) => follow(panelRow, i, fks, panel)} cut={(i) => Boolean(result.cut?.has(`${panelIndex}:${i}`))} />}
           </>
         )}
         {panel?.kind === 'new' && live && added[panel.index] && (

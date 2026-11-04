@@ -96,4 +96,13 @@ describe('Results grid', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }))
     await waitFor(() => expect(within(dialog).getByText('Row 1')).toBeInTheDocument())
   })
+
+  it('marks a value the agent cut at its size limit, in the grid and the row panel', async () => {
+    renderWithProviders(<ResultsGrid result={{ ...result, cut: new Set(['0:2']) }} narrow={false} />)
+    expect(screen.getAllByText('cut')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Open row 1' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('cut')).toBeInTheDocument()
+    expect(within(dialog).getByText(/Longer than the console shows a value \(192 KB\)/)).toBeInTheDocument()
+  })
 })

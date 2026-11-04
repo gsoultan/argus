@@ -32,7 +32,7 @@ another, each cell an unsigned varint and its bytes:
 
 	0          NULL
 	n > 0      (n-1)>>1 bytes of text follow; (n-1)&1 says the value was cut
-	           at MaxCell
+	           at MaxRowCell, or shorter so that its row fits one frame
 
 The browser knows how many cells a row has from the "cols" answer. Values are
 Postgres's own text format, so the agent decodes nothing and the browser shows
@@ -57,6 +57,11 @@ const (
 	// larger one is cut and marked, and a person who needs it whole can
 	// select a substring of it.
 	MaxCell = 64 << 10
+	// MaxRowCell is the longest Postgres value a row batch carries whole:
+	// a jsonb document or a long text is worth reading in full, and one row
+	// still fits one frame. A row whose values together would not fit has
+	// its longest values cut to share what does.
+	MaxRowCell = 192 << 10
 	// RowBatchBytes is the size a batch is flushed at.
 	RowBatchBytes = 128 << 10
 	// RowBatchRows is the most rows in one batch, so the first screen of a
@@ -603,21 +608,67 @@ type RowEncoder struct {
 
 // NewRowEncoder starts batches for request id.
 func NewRowEncoder(id uint32) *RowEncoder {
-	e := &RowEncoder{buf: make([]byte, 4, RowBatchBytes+MaxCell+64)}
+	e := &RowEncoder{buf: make([]byte, 4, MaxFrame)}
 	binary.BigEndian.PutUint32(e.buf, id)
 	return e
 }
 
+// rowBudget is what one row's values may take: a frame, less the id and a
+// varint for every cell.
+func rowBudget(n int) int { return MaxFrame - 4 - n*binary.MaxVarintLen64 }
+
+// cellLimit is the longest any one value of the row may be: MaxRowCell, or
+// less when the row's values together would not fit a frame. Then the
+// longest are cut to the same length, and the short ones stay whole.
+func cellLimit(cells [][]byte) int {
+	budget := rowBudget(len(cells))
+	total := func(limit int) int {
+		t := 0
+		for _, c := range cells {
+			t += min(len(c), limit)
+		}
+		return t
+	}
+	if total(MaxRowCell) <= budget {
+		return MaxRowCell
+	}
+	lo, hi := 0, MaxRowCell
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if total(mid) <= budget {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
+}
+
+// Fits reports whether a row can join the batch without the batch growing
+// past one frame. A batch with no rows takes any row: Add cuts it to fit.
+func (e *RowEncoder) Fits(cells [][]byte) bool {
+	if e.rows == 0 {
+		return true
+	}
+	limit := cellLimit(cells)
+	n := len(e.buf)
+	for _, c := range cells {
+		n += binary.MaxVarintLen64 + min(len(c), limit)
+	}
+	return n <= MaxFrame
+}
+
 // Add appends one row. A nil cell is NULL.
 func (e *RowEncoder) Add(cells [][]byte) {
+	limit := cellLimit(cells)
 	for _, c := range cells {
 		if c == nil {
 			e.buf = append(e.buf, 0)
 			continue
 		}
 		cut := uint64(0)
-		if len(c) > MaxCell {
-			c = trimUTF8(c[:MaxCell])
+		if len(c) > limit {
+			c = trimUTF8(c[:limit])
 			cut = 1
 		}
 		n := binary.PutUvarint(e.tmp[:], (uint64(len(c))<<1|cut)+1)

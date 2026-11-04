@@ -750,7 +750,11 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 			truncated = true
 			break
 		}
-		enc.Add(rr.Values())
+		vals := rr.Values()
+		if !enc.Fits(vals) {
+			flush()
+		}
+		enc.Add(vals)
 		rows++
 		if enc.Full() {
 			flush()
