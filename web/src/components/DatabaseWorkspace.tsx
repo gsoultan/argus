@@ -70,6 +70,8 @@ interface PGAnswer {
   tag?: string
   rows?: number
   ms?: number
+  // Another part of this answer follows.
+  more?: boolean
   truncated?: boolean
   error?: string
   code?: string
@@ -309,9 +311,15 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const schema = useCallback((kind: string, schemaName?: string, object?: string) =>
     new Promise<Obj[]>((resolve) => {
       const id = nextId.current++
+      // A long answer, such as a large database's catalogue, comes in parts.
+      const parts: Obj[] = []
       pending.current.set(id, (a) => {
+        if (a.type === 'schema') {
+          parts.push(...(a.objects ?? []))
+          if (a.more) return
+        }
         pending.current.delete(id)
-        resolve(a.type === 'schema' ? (a.objects ?? []) : [])
+        resolve(a.type === 'schema' ? parts : [])
       })
       if (!send({ id, op: 'schema', kind, schema: schemaName, object })) {
         pending.current.delete(id)
