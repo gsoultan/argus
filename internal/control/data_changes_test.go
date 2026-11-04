@@ -15,8 +15,8 @@ func TestChangeOf(t *testing.T) {
 	cl := tunnel.ClassifySQL
 	for _, tc := range []struct {
 		sql, tag, verb string
-		rows       int64
-		objects    string
+		rows           int64
+		objects        string
 	}{
 		{"INSERT INTO public.orders (id) VALUES (1)", "INSERT 0 1", "insert", 1, "public.orders"},
 		{`insert into "Sales"."Orders" values (1), (2)`, "INSERT 0 2", "insert", 2, `"Sales"."Orders"`},
