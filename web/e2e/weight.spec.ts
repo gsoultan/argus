@@ -76,7 +76,7 @@ const BUDGET_KB = {
    * chunks of their own, and nothing below the header is drawn until the
    * console knows who is signed in, so an admin's first visit does not fetch
    * the server cards it never shows.
-   * MEASURE_OVERVIEW kB with light and dark themes: the dark scheme's tokens in the
+   * 286.8 kB with light and dark themes (284.3 before, same build): the dark scheme's tokens in the
    * shared stylesheet, the per-scheme colour resolver and the theme menu in
    * the header with its three icons. All of it renders before the first
    * screen, so none of it can be lazy.
@@ -101,10 +101,10 @@ const BUDGET_KB = {
    * 392.2 kB with Home (390.8 before, same build): its menu item and icon, the
    * link-typed Anchor every route can use, and the recent-audit and status
    * queries in the shared queries module.
-   * MEASURE_SESSION kB with light and dark themes, the same shared weight as the
+   * 394.8 kB with light and dark themes, the same shared weight as the
    * overview.
    */
-  sessionDetail: 395,
+  sessionDetail: 397,
 }
 
 /**
