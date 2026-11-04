@@ -3,8 +3,8 @@ import {
   ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, Stack, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import {
-  IconArrowBackUp, IconArrowDown, IconArrowUp, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconEyeOff,
-  IconFilter, IconLink, IconPencil, IconPlus, IconSortAscending, IconSortDescending, IconTrash, IconWand, IconX,
+  IconArrowBackUp, IconArrowDown, IconArrowUp, IconChartBar, IconChevronDown, IconChevronLeft, IconChevronRight, IconCopy, IconEyeOff,
+  IconCopyPlus, IconFilter, IconLink, IconPencil, IconPlus, IconSortAscending, IconSortDescending, IconTrash, IconWand, IconX,
 } from '@tabler/icons-react'
 import { FS, INK } from '~/theme'
 import { itemLabel, summary, type J } from '~/lib/jsonSummary'
@@ -14,13 +14,18 @@ import {
   type Cell, type Col, type CopyFormat, type Filter, type ViewState,
 } from '~/lib/resultView'
 import type { Collected } from '~/components/DatabaseAdmin'
-import { editable, editorKind, insertStmt, updateStmt, type Stmt, type TableColumn } from '~/lib/rowEdit'
+import {
+  deleteStmt, duplicateValues, editable, editableGroups, editorKind, groupUpdateStmt, insertStmt, jsonKeyHints, updateStmt,
+  type EditGroup, type Stmt, type TableColumn,
+} from '~/lib/rowEdit'
 import { rowStatements } from '~/lib/sqlGen'
-import { CellInput, ChangesBar, ReviewDialog, RowForm, useEditTarget, type EditSupport, type FormField } from '~/components/RowEdits'
+import { CellInput, ChangesBar, ReviewDialog, RowForm, useEditTargets, type EditSupport, type FormField } from '~/components/RowEdits'
 import { ArrayEditor, JsonEditor } from '~/components/JsonEditor'
 
 // The JSON viewer loads when a row with JSON is first opened.
 const JsonView = lazy(() => import('~/components/JsonView').then((m) => ({ default: m.JsonView })))
+// Summarize and chart loads when it is first opened.
+const ResultSummary = lazy(() => import('~/components/ResultSummary').then((m) => ({ default: m.ResultSummary })))
 
 /*
 The query tab's results: a windowed grid of the rows the statement sent,
@@ -242,7 +247,10 @@ function Fields({ cols, row, fks, onFollow, cut }: { cols: Col[]; row: Cell[]; f
 type Changes = Map<number, Map<number, Cell>>
 
 /** Where a JSON or array editor is open: a loaded row, or a new one. */
-type Open = { row: number; attnum: number } | { added: number; attnum: number }
+type Open = { row: number; col: number } | { added: number; attnum: number }
+
+/** What each statement of a save stands for, to fold what it returns back in. */
+type Saved = { update: number; group: EditGroup } | { insert: true } | { del: number }
 
 export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRows }: {
   result: GridResult | null
@@ -262,9 +270,13 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
   const [panel, setPanel] = useState<Panel | null>(null)
   const [changes, setChanges] = useState<Changes>(() => new Map())
   const [added, setAdded] = useState<Map<number, Cell>[]>([])
+  // Rows marked to delete when the changes are saved, by result row.
+  const [deleted, setDeleted] = useState<Set<number>>(() => new Set())
   const [editing, setEditing] = useState<{ row: number; col: number } | null>(null)
   const [open, setOpen] = useState<Open | null>(null)
   const [reviewing, setReviewing] = useState(false)
+  // The grid, or the result summarized as a chart.
+  const [mode, setMode] = useState<'grid' | 'summary'>('grid')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   useEffect(() => {
@@ -284,9 +296,11 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
     setPanel(null)
     setChanges(new Map())
     setAdded([])
+    setDeleted(new Set())
     setEditing(null)
     setOpen(null)
     setSaveError(null)
+    setMode('grid')
   }, [rid])
   const setView = useCallback((f: (v: ViewState) => ViewState) => {
     setViewState(f)
@@ -301,8 +315,14 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
     [result, result?.rows.length, cols, view]) // eslint-disable-line react-hooks/exhaustive-deps
   const shownCols = useMemo(() => cols.map((_, i) => i).filter((i) => !view.hidden.includes(i)), [cols, view.hidden])
   const canEdit = Boolean(edit?.allowed && result?.done && !result.error)
-  const target = useEditTarget(cols, canEdit ? collect : undefined, canEdit ? rid : 0)
+  // A builder query says where its JSON key columns came from.
+  const hints = useMemo(() => jsonKeyHints(result?.sql ?? ''), [result?.sql])
+  const { targets, named } = useEditTargets(cols, hints, canEdit ? collect : undefined, canEdit ? rid : 0)
+  const target = useMemo(() => { const o = cols[0]?.table; return o ? targets.get(o) ?? null : null }, [cols, targets])
+  // `ed` is the result as one table, for Copy as statements; `eg` is what
+  // can be edited, table by table.
   const ed = useMemo(() => editable(cols, target), [cols, target])
+  const eg = useMemo(() => editableGroups(cols, targets, hints, named), [cols, targets, hints, named])
 
   const follow = useCallback((row: Cell[], i: number, fkMap: Record<number, ForeignKey>, back: Panel) => {
     const fk = fkMap[i]
@@ -359,17 +379,30 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
   const panelIndex = panel?.kind === 'row' ? order[panel.at] : undefined
   const panelRow = panelIndex !== undefined ? result.rows[panelIndex] : undefined
 
-  // Editing. `live` is the editable table, when there is one.
-  const live = canEdit && ed.ok ? ed : null
-  const tcol = (j: number): TableColumn | undefined => live?.target.columns.find((c) => c.attnum === cols[j]!.attnum)
-  const colOf = (attnum: number) => cols.findIndex((c) => c.attnum === attnum)
+  // Editing. `live` is what can be edited, table by table; `primary` is the
+  // table a new row goes into: the first column's, as the builder starts there.
+  const live = canEdit && eg.ok ? eg : null
+  const primary = live ? (live.byCol[0] ?? live.groups[0]) : undefined
+  const joined = (live?.groups.length ?? 0) > 1
+  const groupOf = (j: number): EditGroup | undefined => live?.byCol[j]
+  const tcol = (j: number): TableColumn | undefined => {
+    const g = groupOf(j)
+    if (!g) return undefined
+    const k = g.keys.get(j)
+    // A JSON key is edited as text; its JSON type is kept on save.
+    if (k) return { attnum: -(j + 1), name: cols[j]!.name, type: `text in ${k.column.name}`, notNull: false, hasDefault: false, generated: false }
+    return g.target.columns.find((c) => c.attnum === cols[j]!.attnum)
+  }
   const cut = edit?.cut
   const lockReason = (ri: number, j: number): string | undefined => {
     if (!live) return 'read only'
-    if (live.pkCols.includes(j)) return 'primary key'
+    const g = groupOf(j)
+    if (!g) return live.why[j] ?? 'read only'
+    if (deleted.has(ri)) return 'marked to delete'
+    if (g.pkCols.includes(j)) return 'primary key'
     if (tcol(j)?.generated) return 'generated'
     if (cut?.has(`${ri}:${j}`)) return 'too long to edit here'
-    if (live.pkCols.some((p) => cut?.has(`${ri}:${p}`))) return 'its key is too long'
+    if (g.pkCols.some((p) => cut?.has(`${ri}:${p}`))) return 'its key is too long'
     return undefined
   }
   const valueAt = (ri: number, j: number): Cell => {
@@ -398,30 +431,72 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
       return n
     }))
   }
-  const addRow = () => {
-    if (!live) return
-    // A column Postgres cannot fill in starts as a value to give.
-    const m = new Map<number, Cell>()
-    for (const c of live.target.columns) if (c.notNull && !c.hasDefault && !c.generated) m.set(c.attnum, '')
+  const newRow = (m: Map<number, Cell>) => {
+    setSaveError(null)
     setAdded((a) => [...a, m])
     setPanel({ kind: 'new', index: added.length })
+  }
+  const addRow = () => {
+    if (!primary) return
+    // A column Postgres cannot fill in starts as a value to give.
+    const m = new Map<number, Cell>()
+    for (const c of primary.target.columns) if (c.notNull && !c.hasDefault && !c.generated) m.set(c.attnum, '')
+    newRow(m)
+  }
+  /** A copy of a row, as it is now, as a new row: the key is left to Postgres. */
+  const duplicate = (ri: number) => {
+    if (!primary) return
+    newRow(duplicateValues(primary.target, cols, cols.map((_, j) => valueAt(ri, j))))
+  }
+  const toggleDelete = (ri: number) => {
+    setSaveError(null)
+    setDeleted((d) => {
+      const n = new Set(d)
+      if (n.has(ri)) n.delete(ri)
+      else n.add(ri)
+      return n
+    })
+    // A row to delete keeps no other change.
+    setChanges((prev) => { if (!prev.has(ri)) return prev; const n = new Map(prev); n.delete(ri); return n })
   }
   const startEdit = (ri: number, j: number) => {
     if (!live || lockReason(ri, j)) return
     const c = tcol(j)
     const kind = editorKind(c?.type ?? cols[j]!.type, c?.enumValues)
-    if (kind === 'json' || kind === 'array') setOpen({ row: ri, attnum: cols[j]!.attnum! })
+    if (kind === 'json' || kind === 'array') setOpen({ row: ri, col: j })
     else setEditing({ row: ri, col: j })
   }
-  const pending = (): { list: Stmt[]; rows: (number | null)[] } => {
+  const pending = (): { list: Stmt[]; rows: Saved[] } => {
     const list: Stmt[] = []
-    const rows: (number | null)[] = []
+    const rows: Saved[] = []
     if (!live) return { list, rows }
     for (const ri of [...changes.keys()].sort((a, b) => a - b)) {
-      list.push(updateStmt(live.target, cols, live.pkCols, result.rows[ri]!, changes.get(ri)!))
-      rows.push(ri)
+      if (deleted.has(ri)) continue
+      // Each table's part of the row is its own UPDATE, in one transaction.
+      const parts = new Map<EditGroup, Map<number, Cell>>()
+      for (const [j, v] of changes.get(ri)!) {
+        const g = groupOf(j)
+        if (!g) continue
+        const m = parts.get(g) ?? new Map<number, Cell>()
+        m.set(j, v)
+        parts.set(g, m)
+      }
+      for (const g of live.groups) {
+        const m = parts.get(g)
+        if (!m) continue
+        list.push(!joined && g.keys.size === 0
+          ? updateStmt(g.target, cols, g.pkCols, result.rows[ri]!, m)
+          : groupUpdateStmt(g, cols, result.rows[ri]!, m))
+        rows.push({ update: ri, group: g })
+      }
     }
-    for (const a of added) { list.push(insertStmt(live.target, a)); rows.push(null) }
+    if (primary) for (const a of added) { list.push(insertStmt(primary.target, a)); rows.push({ insert: true }) }
+    if (primary) {
+      for (const ri of [...deleted].sort((a, b) => a - b)) {
+        list.push(deleteStmt(primary.target, cols, primary.pkCols, result.rows[ri]!))
+        rows.push({ del: ri })
+      }
+    }
     return { list, rows }
   }
   /** A returned row in the result's own column order. */
@@ -432,6 +507,18 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
       const k = c.cols.findIndex((x) => (x.attnum && x.attnum === col.attnum) || x.name === col.name)
       return k < 0 ? null : (src[k] ?? null)
     })
+  }
+  /** A row with one table's part replaced by what its UPDATE returned. */
+  const withPart = (row: Cell[], c: Collected, g: EditGroup, ri: number): Cell[] => {
+    const src = c.rows[0]
+    if (!src) return row
+    const next = row.slice()
+    for (const j of g.cols) {
+      if (g.keys.has(j)) { const m = changes.get(ri); if (m?.has(j)) next[j] = m.get(j)!; continue }
+      const k = c.cols.findIndex((x) => x.attnum === cols[j]!.attnum)
+      if (k >= 0) next[j] = src[k] ?? null
+    }
+    return next
   }
   const save = async () => {
     if (!edit || !live || saving) return
@@ -445,38 +532,59 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
       setSaveError(`Nothing was saved. ${list[r.at]?.label ?? 'The save'}: ${r.error}`)
       return
     }
-    const next = result.rows.slice()
+    let next = result.rows.slice()
+    const gone = new Set<number>()
+    let trashed = false
     r.returned.forEach((c, k) => {
-      const row = asResultRow(c)
-      const ri = rows[k]
-      if (!row) return
-      if (ri === null || ri === undefined) next.push(row)
-      else next[ri] = row
+      const s = rows[k]
+      if (!s) return
+      if ('del' in s) { gone.add(s.del); if (c.trashed) trashed = true; return }
+      if ('insert' in s) { const row = asResultRow(c); if (row) next.push(row); return }
+      next[s.update] = !joined && s.group.keys.size === 0 ? (asResultRow(c) ?? next[s.update]!) : withPart(next[s.update]!, c, s.group, s.update)
     })
+    if (gone.size) next = next.filter((_, i) => !gone.has(i))
     setChanges(new Map())
     setAdded([])
+    setDeleted(new Set())
     setReviewing(false)
     setPanel(null)
     onRows?.(next)
-    notifyOk('Saved', `${list.length} ${list.length === 1 ? 'change' : 'changes'} to ${live.target.table}`)
+    const tables = [...new Set(live.groups.map((g) => g.target.table))].join(' and ')
+    notifyOk('Saved', `${list.length} ${list.length === 1 ? 'change' : 'changes'} to ${tables}`
+      + (trashed ? '. The deleted rows are kept in the trash for 30 days, where Undo puts them back.' : ''))
   }
-  const changeCount = changes.size + added.length
-  const rowFields = (ri: number): FormField[] => cols.flatMap((_, j) => {
-    const col = tcol(j)
-    if (!col) return []
-    return [{ col, value: valueAt(ri, j), original: result.rows[ri]?.[j] ?? null, locked: lockReason(ri, j) }]
-  })
-  const newFields = (k: number): FormField[] => (live?.target.columns ?? []).map((col) => {
+  const changeCount = changes.size + added.length + deleted.size
+  const rowFields = (ri: number): FormField[] => {
+    const out: FormField[] = []
+    // Fields of each table together, the tables in the order they appear.
+    for (const g of live?.groups ?? []) {
+      for (const j of [...g.cols].sort((a, b) => a - b)) {
+        const col = tcol(j)
+        if (!col) continue
+        out.push({ col, id: j, group: joined ? g.target.table : undefined, value: valueAt(ri, j), original: result.rows[ri]?.[j] ?? null, locked: lockReason(ri, j) })
+      }
+    }
+    return out
+  }
+  const newFields = (k: number): FormField[] => {
+    if (!primary) return []
     const m = added[k]
-    return { col, value: m?.get(col.attnum) ?? null, unset: !m?.has(col.attnum), locked: col.generated ? 'generated' : undefined }
-  })
+    const shown = new Set(primary.cols.map((j) => cols[j]!.attnum))
+    const required = (c: TableColumn) => c.notNull && !c.hasDefault && !c.generated
+    // Required columns first, then those the result shows; the rest wait
+    // under More columns.
+    const rank = (c: TableColumn) => (required(c) ? 0 : shown.has(c.attnum) && !c.generated ? 1 : 2)
+    return [...primary.target.columns].sort((a, b) => rank(a) - rank(b)).map((col) => ({
+      col, value: m?.get(col.attnum) ?? null, unset: !m?.has(col.attnum), locked: col.generated ? 'generated' : undefined, more: rank(col) === 2,
+    }))
+  }
   const openValue: Cell = open
-    ? 'row' in open ? valueAt(open.row, colOf(open.attnum)) : (added[open.added]?.get(open.attnum) ?? null)
+    ? 'row' in open ? valueAt(open.row, open.col) : (added[open.added]?.get(open.attnum) ?? null)
     : null
-  const openCol = open ? live?.target.columns.find((c) => c.attnum === open.attnum) : undefined
+  const openCol = open ? ('row' in open ? tcol(open.col) : primary?.target.columns.find((c) => c.attnum === open.attnum)) : undefined
   const applyOpen = (v: Cell) => {
     if (!open) return
-    if ('row' in open) setCell(open.row, colOf(open.attnum), v)
+    if ('row' in open) setCell(open.row, open.col, v)
     else setAddedValue(open.added, open.attnum, v)
     setOpen(null)
   }
@@ -517,10 +625,16 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
             )}
           </Group>
         )}
+        {!result.error && result.rows.length > 0 && result.done && (
+          <Button size="compact-xs" variant={mode === 'summary' ? 'light' : 'subtle'} ml="auto" leftSection={<IconChartBar size={12} />}
+            aria-pressed={mode === 'summary'} onClick={() => setMode((m) => (m === 'grid' ? 'summary' : 'grid'))}>
+            {mode === 'summary' ? 'Back to rows' : 'Summarize'}
+          </Button>
+        )}
         {!result.error && result.rows.length > 0 && (
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <Button size="compact-xs" variant="subtle" ml="auto" rightSection={<IconChevronDown size={12} />} leftSection={<IconCopy size={12} />}>
+              <Button size="compact-xs" variant="subtle" rightSection={<IconChevronDown size={12} />} leftSection={<IconCopy size={12} />}>
                 Copy as
               </Button>
             </Menu.Target>
@@ -542,19 +656,20 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
           </Menu>
         )}
       </Group>
-      {canEdit && cols.length > 0 && (live || ed.ok === false && ed.reason !== 'Reading the table…') && (
+      {canEdit && cols.length > 0 && (live || !eg.ok && eg.reason !== 'Reading the table…') && (
         <Group gap="sm" px="md" py={4} wrap="nowrap" aria-label="Editing" style={{ borderBottom: '1px solid var(--color-line)' }}>
           {live
             ? <>
                 <IconPencil size={12} color="var(--mantine-color-azure-text)" />
                 <Text size={FS.micro} style={{ flex: 1 }} truncate>
-                  <Text span fw={600} size={FS.micro}>Editable</Text> · {live.target.table} ·{' '}
+                  <Text span fw={600} size={FS.micro}>Editable</Text> · {live.groups.map((g) => g.target.table).join(', ')}
+                  {live.why.some(Boolean) ? ' (some columns read only)' : ''} ·{' '}
                   {narrow ? 'tap a row number, then Edit' : 'double-click a cell to change it'}
                   {edit?.inTransaction ? ' · saves go into your open transaction' : ''}
                 </Text>
                 <Button size="compact-xs" variant="light" leftSection={<IconPlus size={12} />} onClick={addRow}>Add a row</Button>
               </>
-            : <Text size={FS.micro} c="dimmed" truncate>Read only here: {ed.ok ? '' : ed.reason}</Text>}
+            : <Text size={FS.micro} c="dimmed" truncate>Read only here: {eg.ok ? '' : eg.reason}</Text>}
         </Group>
       )}
       {result.error ? (
@@ -573,10 +688,17 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
           </Box>
         </Box>
       ) : (
+        <>
+        {mode === 'summary' && (
+          <Suspense fallback={null}>
+            <ResultSummary cols={cols} rows={result.rows} sql={result.sql} truncated={Boolean(result.done?.truncated)}
+              onRunSQL={onAddToQuery ? (text) => onAddToQuery(text, {}) : undefined} />
+          </Suspense>
+        )}
         <div
           ref={viewport}
           onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-          style={{ flex: 1, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12, position: 'relative' }}
+          style={{ flex: 1, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12, position: 'relative', display: mode === 'summary' ? 'none' : undefined }}
         >
           <table style={{ borderCollapse: 'collapse', minWidth: '100%' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--color-raised)' }}>
@@ -613,6 +735,8 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                     </UnstyledButton>
                   </td>
                   {shownCols.map((j) => {
+                    // A new row goes into the first table; other tables' columns stay empty.
+                    if (cols[j]!.table !== primary?.target.oid) return <td key={j} style={td} />
                     const a = cols[j]!.attnum!
                     const has = m.has(a)
                     const v = m.get(a) ?? null
@@ -630,7 +754,8 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                 const row = result.rows[ri]!
                 const at = first + k
                 return (
-                  <tr key={ri} style={{ height: ROW_H }}>
+                  <tr key={ri} style={{ height: ROW_H, ...(deleted.has(ri) ? { textDecoration: 'line-through', background: 'var(--mantine-color-rose-light)' } : null) }}
+                    aria-label={deleted.has(ri) ? `Row ${ri + 1}, to delete` : undefined}>
                     <td style={{ ...td, padding: 0, background: 'var(--color-void)' }}>
                       <UnstyledButton onClick={() => setPanel({ kind: 'row', at })} aria-label={`Open row ${ri + 1}`}
                         style={{ display: 'block', width: '100%', padding: '0 12px', textAlign: 'right', color: 'var(--mantine-color-dimmed)', fontSize: 12, fontFamily: 'inherit' }}>
@@ -689,10 +814,11 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
             <Text size={FS.meta} c="dimmed" p="md">No loaded row matches the filters.</Text>
           )}
         </div>
+        </>
       )}
       {live && changeCount > 0 && (
-        <ChangesBar changedRows={changes.size} newRows={added.length} busy={Boolean(edit?.busy)} saving={saving} error={saveError} narrow={narrow}
-          onDiscard={() => { setChanges(new Map()); setAdded([]); setSaveError(null); if (panel?.kind === 'new') setPanel(null) }}
+        <ChangesBar changedRows={changes.size} newRows={added.length} deletedRows={deleted.size} busy={Boolean(edit?.busy)} saving={saving} error={saveError} narrow={narrow}
+          onDiscard={() => { setChanges(new Map()); setAdded([]); setDeleted(new Set()); setSaveError(null); if (panel?.kind === 'new') setPanel(null) }}
           onReview={() => setReviewing(true)} onSave={() => void save()} />
       )}
       {live && reviewing && (
@@ -706,7 +832,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
       <Drawer opened={panel !== null} onClose={() => setPanel(null)} position={narrow ? 'bottom' : 'right'} size={narrow ? '85%' : 460}
         withinPortal title={
           panel?.kind === 'new'
-            ? <Text size={FS.body} fw={600} truncate>New row in {live?.target.table}</Text>
+            ? <Text size={FS.body} fw={600} truncate>New row in {primary?.target.table}</Text>
             : panel?.kind === 'linked'
             ? <Group gap={6} wrap="nowrap">
                 <ActionIcon variant="subtle" size="sm" aria-label="Back" onClick={() => setPanel(panel.back)}><IconArrowBackUp size={14} /></ActionIcon>
@@ -735,6 +861,25 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                   {panel.editing ? 'Done editing' : 'Edit'}
                 </Button>
               )}
+              {live && primary && (
+                <>
+                  <Button size="compact-xs" variant="default" leftSection={<IconCopyPlus size={12} />} onClick={() => duplicate(panelIndex)}>
+                    Duplicate as new row
+                  </Button>
+                  {deleted.has(panelIndex)
+                    ? (
+                      <Button size="compact-xs" variant="light" color="rose" leftSection={<IconArrowBackUp size={12} />} onClick={() => toggleDelete(panelIndex)}>
+                        Undo delete
+                      </Button>
+                    )
+                    : (
+                      <Button size="compact-xs" variant="subtle" color="rose" leftSection={<IconTrash size={12} />} onClick={() => toggleDelete(panelIndex)}
+                        disabled={primary.pkCols.some((p) => cut?.has(`${panelIndex}:${p}`))}>
+                        {joined ? `Delete from ${primary.target.table}` : 'Delete row'}
+                      </Button>
+                    )}
+                </>
+              )}
               <Button size="compact-xs" variant="default" leftSection={<IconCopy size={12} />}
                 onClick={() => void copyText(copyAs('json', cols, [panelRow]).replace(/^\[\n|\n\]$/g, ''), 'the row as JSON')}>
                 Copy as JSON
@@ -754,10 +899,15 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                 </Menu>
               )}
             </Group>
+            {deleted.has(panelIndex) && (
+              <Text size={FS.micro} c={INK.denied} mb="sm">
+                This row is deleted when you save. Where the database keeps a trash, the row is kept for 30 days and Undo puts it back.
+              </Text>
+            )}
             {live && panel.editing
               ? <RowForm fields={rowFields(panelIndex)}
-                  onChange={(a, v) => setCell(panelIndex, colOf(a), v)}
-                  onOpen={(a) => setOpen({ row: panelIndex, attnum: a })} />
+                  onChange={(j, v) => setCell(panelIndex, j, v)}
+                  onOpen={(j) => setOpen({ row: panelIndex, col: j })} />
               : <Fields cols={cols} row={panelRow} fks={fks} onFollow={(i) => follow(panelRow, i, fks, panel)} cut={(i) => Boolean(result.cut?.has(`${panelIndex}:${i}`))} />}
           </>
         )}

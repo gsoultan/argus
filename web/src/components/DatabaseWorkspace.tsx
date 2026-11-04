@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, SegmentedControl, Stack, Tabs, Text,
   TextInput, Tooltip, UnstyledButton,
@@ -8,6 +8,7 @@ import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
   IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
+  IconAdjustmentsHorizontal,
 } from '@tabler/icons-react'
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
@@ -45,6 +46,9 @@ import type { EditTarget } from '~/lib/rowEdit'
 import { GenerateContext, NewTableButton, ObjectGenMenu, TableDesigner, type GenAction, type GenContext } from '~/components/SqlGenerate'
 import { DESIGN_SQL, blankColumn, ddlQuery, parseDesign, qualify, tableTemplate, type Design } from '~/lib/sqlGen'
 import { TARGET_BY_NAME_SQL, parseTarget } from '~/lib/rowEdit'
+
+// The query builder loads when it is first opened.
+const QueryBuilder = lazy(() => import('~/components/QueryBuilder').then((m) => ({ default: m.QueryBuilder })))
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -445,7 +449,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       pending.current.delete(id)
       collectors.current.delete(id)
       if (a.type !== 'done') c.error = { error: a.error, code: a.code }
-      else c.tag = a.tag
+      else { c.tag = a.tag; if (a.trash?.length) c.trashed = true }
       resolve(c)
     })
     if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined, approval, whole: true })) {
@@ -752,13 +756,16 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       for (let i = 0; i < stmts.length; i++) {
         const s = stmts[i]!
         const r = await collectWithId(s.sql, 2, track, s.params, approval)
-        note(s.sql, !r.error && r.rows.length === 1)
-        if (r.error || r.rows.length !== 1) {
+        // A DELETE has no RETURNING, so the trash can keep the row: its tag
+        // says how many rows it removed.
+        const one = !r.error && (s.deletes ? r.tag === 'DELETE 1' : r.rows.length === 1)
+        note(s.sql, one)
+        if (!one) {
           await collectWithId(inTx ? `ROLLBACK TO SAVEPOINT ${mark}` : 'ROLLBACK', 1, track)
           if (inTx) await collectWithId(`RELEASE SAVEPOINT ${mark}`, 1, track)
           const error = r.error
             ? `${r.error.error ?? 'Postgres refused it'}${r.error.code ? ` (${r.error.code})` : ''}`
-            : r.rows.length === 0
+            : r.rows.length === 0 || s.deletes
               ? 'the row is gone, or someone changed it since you read it. Run the query again to see it as it is now.'
               : 'it matched more than one row.'
           return { ok: false, at: i, error, approve: r.error?.code === NEEDS_APPROVAL && !approval && i === 0 ? r.error.error ?? '' : undefined }
@@ -1080,6 +1087,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // run there. The catalogue is read as the person's role, like anything else.
   const [designer, setDesigner] = useState<Design | null>(null)
   const [importing, setImporting] = useState<EditTarget | null>(null)
+  const [building, setBuilding] = useState<{ start?: { schema: string; name: string } } | null>(null)
   const genAct = useCallback(async (a: GenAction) => {
     if (narrow) tree.close()
     const show = (text: string, name: string) => {
@@ -1089,6 +1097,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       setDesigner({ schema: a.schema, name: 'new_table', columns: [{ ...blankColumn(1), name: 'id', type: 'bigint', default: 'GENERATED ALWAYS AS IDENTITY', pk: true, notNull: true }] })
       return
     }
+    if (a.what === 'build') { setBuilding({ start: { schema: a.schema, name: a.name } }); return }
     const q = qualify(a.schema, a.name)
     if (a.what === 'ddl') {
       const dq = ddlQuery(a.kind, a.schema, a.name)
@@ -1254,6 +1263,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             <Menu.Dropdown>
               <Menu.Item leftSection={<IconPlayerStop size={14} />} onClick={cancel} disabled={!runningHere && !waitingHere}>Cancel</Menu.Item>
               <Menu.Item leftSection={<IconIndentIncrease size={14} />} onClick={format} disabled={!sql.trim()}>Format</Menu.Item>
+              <Menu.Item leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setBuilding({})}>Build a query</Menu.Item>
               <Menu.Item leftSection={<IconDownload size={14} />} onClick={exportCsv} disabled={!result || result.rows.length === 0}>Export CSV</Menu.Item>
               <Menu.Divider />
               <Box px="sm" py={6}><Group gap={6}><Text size={FS.micro} c="dimmed">Show up to</Text>{rowLimit}</Group></Box>
@@ -1266,6 +1276,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             {dirty ? 'Save changes' : 'Save'}
           </Button>
           {formatButton}
+          <Button size="xs" variant="default" leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setBuilding({})}>Build</Button>
           <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={cancel}
             disabled={!runningHere && !waitingHere}>
             Cancel
@@ -1436,6 +1447,12 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       </Box>
       {approvalDialog}
       {importing && <ImportData target={importing} narrow={Boolean(narrow)} onClose={() => setImporting(null)} run={runImport} />}
+      {building && (
+        <Suspense fallback={null}>
+          <QueryBuilder collect={collect} start={building.start} narrow={Boolean(narrow)} onClose={() => setBuilding(null)}
+            onOpen={(text, name) => { setBuilding(null); if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />
+        </Suspense>
+      )}
       {designer && <TableDesigner start={designer} narrow={narrow} onClose={() => setDesigner(null)}
         onOpen={(text, name) => { setDesigner(null); if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />}
       <WriteCheckDialog state={writeCheck} label={database.label} step={gateStep} databaseId={database.id} canBackup={level === 'owner' || level === 'dba'}

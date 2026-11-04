@@ -100,7 +100,16 @@ export function parseTarget(oid: number, rows: Cell[][]): EditTarget | null {
 }
 
 /** A statement and its values, ready to send. */
-export interface Stmt { sql: string; params: (string | null)[]; label: string }
+export interface Stmt {
+  sql: string
+  params: (string | null)[]
+  label: string
+  /**
+   * A DELETE, sent without RETURNING so the trash can keep the row: it
+   * answers with the trash's own line, or only its tag when there is no trash.
+   */
+  deletes?: boolean
+}
 
 const cast = (n: number, type: string) => `CAST($${n} AS ${type})`
 
@@ -154,6 +163,33 @@ export function insertStmt(t: EditTarget, values: Map<number, Cell>): Stmt {
       : `INSERT INTO ${t.table} DEFAULT VALUES\nRETURNING *`,
     params, label: `Add a row to ${t.table}`,
   }
+}
+
+/**
+ * The DELETE for one row, by its primary key. It has no RETURNING, so a
+ * database with the trash keeps the row and Undo can put it back.
+ */
+export function deleteStmt(t: EditTarget, cols: Col[], pkCols: number[], original: Cell[]): Stmt {
+  const params: (string | null)[] = []
+  const typeOf = (i: number) => t.columns.find((c) => c.attnum === cols[i]!.attnum)?.type ?? cols[i]!.type
+  const cond = pkCols.map((i) => `${ident(cols[i]!.name)} = ${cast(params.push(original[i] ?? null), typeOf(i))}`)
+  const key = pkCols.map((i) => `${cols[i]!.name} ${original[i]}`).join(', ')
+  return { sql: `DELETE FROM ${t.table}\nWHERE ${cond.join('\n  AND ')}`, params, label: `Delete the row with ${key} from ${t.table}`, deletes: true }
+}
+
+/**
+ * A shown row's values as a new row of its table: the key, identity and
+ * generated columns are left to Postgres, and so is anything not shown.
+ */
+export function duplicateValues(t: EditTarget, cols: Col[], row: Cell[]): Map<number, Cell> {
+  const m = new Map<number, Cell>()
+  for (const c of t.columns) {
+    if (t.pk.includes(c.attnum) || c.generated || c.identity) continue
+    const i = cols.findIndex((x) => x.table === t.oid && x.attnum === c.attnum)
+    if (i >= 0) m.set(c.attnum, row[i] ?? null)
+    else if (c.notNull && !c.hasDefault) m.set(c.attnum, '')
+  }
+  return m
 }
 
 /** What a column is, for picking its editor. */
@@ -210,4 +246,160 @@ export function parseArray(v: string): (string | null)[] | null {
 export function formatArray(items: (string | null)[]): string {
   return `{${items.map((x) => (x === null ? 'NULL'
     : x === '' || /[{},"\\\s]/.test(x) || x.toUpperCase() === 'NULL' ? `"${x.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : x)).join(',')}}`
+}
+
+/*
+Editing a result table by table. In a join, each column says which table
+it came from; the columns of a table whose primary key is in the result can
+be edited, and a save writes each table's part of a row as its own UPDATE.
+A column the query builder made from a key inside a JSON column says so in
+a comment the builder writes (see jsonKeyHints), and is written back into
+its document with jsonb_set.
+*/
+
+/** A key inside a JSON column that a result column shows. */
+export interface JsonKeySource {
+  /** The table, schema.name as the builder quoted it. */
+  table: string
+  column: string
+  path: string[]
+}
+
+/** One table of a result that can be edited. */
+export interface EditGroup {
+  target: EditTarget
+  /** Result columns of the key, in key order. */
+  pkCols: number[]
+  /** Result columns that belong to this table, keys and JSON keys included. */
+  cols: number[]
+  /** Result columns that show a key inside one of the table's JSON columns. */
+  keys: Map<number, { column: TableColumn; path: string[] }>
+}
+
+export type EditGroups =
+  | { ok: true; groups: EditGroup[]; byCol: (EditGroup | undefined)[]; why: (string | undefined)[] }
+  | { ok: false; reason: string }
+
+// A block comment, so it stays when a script is split into statements
+// (leading comments are left out of a statement).
+const HINT = /\/\*\s*argus:json\s+(\{.*?\})\s*\*\//s
+
+/** The JSON key sources a builder query names in its comment, by output column. */
+export function jsonKeyHints(sql: string): Record<string, JsonKeySource> {
+  const m = HINT.exec(sql)
+  if (!m) return {}
+  try {
+    const raw = JSON.parse(m[1]!) as Record<string, [string, string, string[]]>
+    const out: Record<string, JsonKeySource> = {}
+    for (const [name, v] of Object.entries(raw)) {
+      if (Array.isArray(v) && typeof v[0] === 'string' && typeof v[1] === 'string' && Array.isArray(v[2])) out[name] = { table: v[0], column: v[1], path: v[2].map(String) }
+    }
+    return out
+  } catch { return {} }
+}
+
+/** The comment that tells the grid where JSON key columns came from. */
+export function jsonKeyComment(sources: Record<string, JsonKeySource>): string {
+  const o = Object.fromEntries(Object.entries(sources).map(([k, s]) => [k, [s.table, s.column, s.path]]))
+  // "*/" inside a name would end the comment; "\/" is the same JSON.
+  return Object.keys(o).length ? `/* argus:json ${JSON.stringify(o).replace(/\*\//g, '*\\/')} */` : ''
+}
+
+const sentence = (r: string) => `${r.charAt(0).toUpperCase()}${r.slice(1)}${r.endsWith('.') ? '' : '.'}`
+
+/**
+ * Which tables of a result can be edited. `targets` are the tables read so
+ * far by oid; `named` maps a hint's table name to its oid.
+ */
+export function editableGroups(cols: Col[], targets: Map<number, EditTarget>, hints: Record<string, JsonKeySource> = {}, named: Map<string, number> = new Map()): EditGroups {
+  if (cols.length === 0) return { ok: false, reason: 'The result has no columns.' }
+  const oids = [...new Set(cols.map((c) => c.table).filter((t): t is number => Boolean(t)))]
+  for (const h of Object.values(hints)) { const o = named.get(h.table); if (o && !oids.includes(o)) oids.push(o) }
+  if (oids.length === 0) return { ok: false, reason: 'A column is computed, not read from a table.' }
+  if (oids.some((o) => !targets.has(o))) return { ok: false, reason: 'Reading the table…' }
+  const groups: EditGroup[] = []
+  const byCol: (EditGroup | undefined)[] = cols.map(() => undefined)
+  const why: (string | undefined)[] = cols.map(() => undefined)
+  const reasons: string[] = []
+  for (const oid of oids) {
+    const target = targets.get(oid)!
+    const mine = cols.map((c, i) => (c.table === oid ? i : -1)).filter((i) => i >= 0)
+    const keys = new Map<number, { column: TableColumn; path: string[] }>()
+    cols.forEach((c, i) => {
+      const h = hints[c.name]
+      if (c.table || !h || named.get(h.table) !== oid) return
+      const column = target.columns.find((x) => x.name === h.column)
+      if (column && /^jsonb?$/.test(column.type) && h.path.length) keys.set(i, { column, path: h.path })
+    })
+    let reason: string | undefined
+    const attnums = mine.map((i) => cols[i]!.attnum)
+    if (target.pk.length === 0) reason = `${target.table} has no primary key, so a row cannot be named safely`
+    else if (new Set(attnums).size !== attnums.length) reason = `the result shows a column of ${target.table} twice`
+    const pkCols = target.pk.map((a) => mine.find((i) => cols[i]!.attnum === a) ?? -1)
+    if (!reason && pkCols.some((i) => i < 0)) reason = `the result leaves out the primary key of ${target.table}`
+    if (reason) {
+      for (const i of [...mine, ...keys.keys()]) why[i] = reason
+      reasons.push(reason)
+      continue
+    }
+    const g: EditGroup = { target, pkCols, cols: [...mine, ...keys.keys()], keys }
+    for (const i of g.cols) byCol[i] = g
+    groups.push(g)
+  }
+  for (let i = 0; i < cols.length; i++) if (!byCol[i] && !why[i]) why[i] = 'computed, not read from a table'
+  if (groups.length === 0) return { ok: false, reason: sentence(reasons[0] ?? 'a column is computed, not read from a table') }
+  return { ok: true, groups, byCol, why }
+}
+
+/**
+ * The UPDATE for one table's part of a changed row. A plain column is set
+ * to its value; a JSON key is set inside its document, keeping the value's
+ * JSON type where it was a number, boolean, object or array. The row must
+ * still hold what it was shown with, key by key.
+ */
+export function groupUpdateStmt(g: EditGroup, cols: Col[], original: Cell[], changed: Map<number, Cell>): Stmt {
+  const t = g.target
+  const params: (string | null)[] = []
+  const p = (v: Cell) => `$${params.push(v)}`
+  const typeOf = (i: number) => t.columns.find((c) => c.attnum === cols[i]!.attnum)?.type ?? cols[i]!.type
+  const set: string[] = []
+  const cond: string[] = []
+  const docs = new Map<string, { column: TableColumn; edits: [string[], Cell][] }>()
+  for (const [i, v] of changed) {
+    const k = g.keys.get(i)
+    if (k) {
+      const d = docs.get(k.column.name) ?? { column: k.column, edits: [] }
+      d.edits.push([k.path, v])
+      docs.set(k.column.name, d)
+      continue
+    }
+    set.push(`${ident(cols[i]!.name)} = ${cast(params.push(v), typeOf(i))}`)
+  }
+  for (const d of docs.values()) {
+    const col = ident(d.column.name)
+    let e = `COALESCE(${col}::jsonb, '{}'::jsonb)`
+    for (const [path, v] of d.edits) {
+      // The value keeps the JSON type the key had. The cast to jsonb is of
+      // an expression that reads the row: Postgres folds a cast of a bare
+      // parameter while planning, even in a branch it will not take, and
+      // "gold" is not valid JSON. One text parameter serves every use.
+      const pp = p(formatArray(path))
+      const pv = p(v)
+      e = `jsonb_set(${e}, CAST(${pp} AS text[]), CASE WHEN CAST(${pv} AS text) IS NULL THEN 'null'::jsonb`
+        + ` ELSE CAST(CASE WHEN jsonb_typeof(${col}::jsonb #> CAST(${pp} AS text[])) IN ('number', 'boolean', 'object', 'array') THEN CAST(${pv} AS text)`
+        + ` ELSE to_jsonb(CAST(${pv} AS text))::text END AS jsonb) END, true)`
+    }
+    set.push(`${col} = ${d.column.type === 'json' ? `(${e})::json` : e}`)
+  }
+  for (const i of g.pkCols) cond.push(`${ident(cols[i]!.name)} = ${cast(params.push(original[i] ?? null), typeOf(i))}`)
+  for (const i of changed.keys()) {
+    const k = g.keys.get(i)
+    if (k) cond.push(`${ident(k.column.name)}::jsonb #>> CAST(${p(formatArray(k.path))} AS text[]) IS NOT DISTINCT FROM CAST(${p(original[i] ?? null)} AS text)`)
+    else cond.push(`${ident(cols[i]!.name)}::text IS NOT DISTINCT FROM ${cast(params.push(original[i] ?? null), typeOf(i))}::text`)
+  }
+  const key = g.pkCols.map((i) => `${cols[i]!.name} ${original[i]}`).join(', ')
+  return {
+    sql: `UPDATE ${t.table}\nSET ${set.join(',\n    ')}\nWHERE ${cond.join('\n  AND ')}\nRETURNING *`,
+    params, label: `Change ${changed.size} ${changed.size === 1 ? 'value' : 'values'} in ${t.table}, the row with ${key}`,
+  }
 }

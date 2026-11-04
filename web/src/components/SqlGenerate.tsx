@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, useState } from 'react'
 import {
   ActionIcon, Alert, Autocomplete, Box, Button, Checkbox, Code, Group, Menu, Modal, ScrollArea, Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
-import { IconCode, IconDots, IconFileImport, IconPlus, IconTableOptions, IconX } from '@tabler/icons-react'
+import { IconCode, IconDots, IconFileImport, IconPlus, IconTableOptions, IconX, IconAdjustmentsHorizontal } from '@tabler/icons-react'
 import { FS } from '~/theme'
 import {
   COMMON_TYPES, DML_LABEL, alterTable, blankColumn, createTable, designProblems, type Design, type DesignColumn, type DmlKind,
@@ -16,7 +16,7 @@ the tab; nothing here runs anything.
 */
 
 export type GenAction =
-  | { what: 'ddl' | DmlKind | 'design' | 'import'; kind: string; schema: string; name: string }
+  | { what: 'ddl' | DmlKind | 'design' | 'import' | 'build'; kind: string; schema: string; name: string }
   | { what: 'new-table'; schema: string }
 
 export interface GenContext {
@@ -45,6 +45,7 @@ export function ObjectGenMenu({ kind, schema, name }: { kind: string; schema: st
         <Menu.Label>Open in a new tab</Menu.Label>
         <Menu.Item leftSection={<IconCode size={13} />} onClick={() => go('ddl')}>DDL (CREATE {kind === 'matview' ? 'MATERIALIZED VIEW' : kind.toUpperCase()})</Menu.Item>
         {table && DML.map((k) => <Menu.Item key={k} onClick={() => go(k)}>{DML_LABEL[k]}</Menu.Item>)}
+        {(table || kind === 'view' || kind === 'matview') && <Menu.Item leftSection={<IconAdjustmentsHorizontal size={13} />} onClick={() => go('build')}>Build a query…</Menu.Item>}
         {table && g.canWrite && (
           <>
             <Menu.Divider />

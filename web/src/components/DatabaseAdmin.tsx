@@ -23,6 +23,8 @@ export interface Collected {
   error?: { error?: string; code?: string }
   /** Postgres's command tag, when it finished: "INSERT 0 500". */
   tag?: string
+  /** A DELETE, DROP or TRUNCATE kept what it removed in the trash. */
+  trashed?: boolean
 }
 export type Collect = (sql: string, maxRows?: number, params?: (string | null)[]) => Promise<Collected>
 
