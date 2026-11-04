@@ -6,7 +6,7 @@ import './split.css'
 /**
  * A list beside the thing you opened from it.
  *
- * On a wide screen (88em and up) a server's or a database's page keeps the
+ * On a wide screen (75em and up) a server's or a database's page keeps the
  * list it came from down its left edge, so moving to the next one is one
  * click rather than Back and find it again. Below that the list is not drawn
  * at all and the page is what it always was.

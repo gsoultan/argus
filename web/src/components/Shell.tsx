@@ -1,6 +1,6 @@
 import {
-  ActionIcon, Alert, AppShell, Avatar, Badge, Box, Button, Center, Group,
-  Loader, Menu, Text, Tooltip,
+  ActionIcon, Alert, AppShell, Avatar, Badge, Box, Burger, Button, Center, Group,
+  Loader, Menu, NavLink as MantineNavLink, Stack, Text, Tooltip,
   UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -8,7 +8,7 @@ import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-ro
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconBuilding, IconCheck, IconSettings, IconChevronDown, IconInfoCircle, IconKey, IconLogout,
-  IconMenu2, IconSearch, IconShieldLock,
+  IconSearch, IconShieldLock,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { coverageQuery, directLoginsQuery, meQuery, myServerAccountQuery, statsQuery } from '~/lib/queries'
@@ -59,8 +59,7 @@ import {
 } from '~/lib/live'
 import { FS, SP } from '~/theme'
 
-/** The page bar beside the rail. Workspaces size themselves against it. */
-const HEADER_H = 56
+const HEADER_H = 60
 
 /**
  * Blocks the console until the user is signed in.
@@ -214,41 +213,38 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
   return (
     <AppShell
-      // "alt": the rail runs the full height of the window and the page bar
-      // sits beside it, so the rail reads as the frame and the page as the
-      // canvas.
-      layout="alt"
       header={{ height: HEADER_H }}
-      // A dark rail down the side from a laptop up: icons only between 62em
-      // and 75em, icons and words from there. Below 62em the same rail opens
-      // as a drawer from More on the tab bar.
-      navbar={{ width: { base: 260, md: 72, lg: 232 }, breakpoint: 'md', collapsed: { mobile: !opened } }}
+      // The menu lives in the top bar. On a phone the same items open from the
+      // burger as a panel down the side.
+      navbar={{ width: 260, breakpoint: 'md', collapsed: { mobile: !opened, desktop: true } }}
       padding={0}
       styles={{
         header: { background: 'var(--color-surface)', borderColor: 'var(--color-line)' },
-        navbar: { background: 'var(--color-rail)', borderColor: 'var(--color-rail-line)' },
+        navbar: { background: 'var(--color-surface)', borderColor: 'var(--color-line)' },
         main: { background: 'var(--color-void)' },
       }}
     >
       <AppShell.Header>
         <Group h="100%" px={{ base: 'md', sm: 'xl' }} justify="space-between" wrap="nowrap" gap="md">
-          <Group gap="md" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-            {/* The rail carries the name from a laptop up; on a phone the
-                page bar does. */}
-            <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }} aria-label="Argus home" className="argus-hidden-desktop">
+          <Group gap="lg" wrap="nowrap" style={{ minWidth: 0 }}>
+            <Burger
+              opened={opened}
+              onClick={toggle}
+              hiddenFrom="md"
+              size="sm"
+              aria-label={opened ? 'Close navigation' : 'Open navigation'}
+            />
+            <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }} aria-label="Argus home">
               <Group gap={SP.cozy} wrap="nowrap">
                 <LogoMark size={28} />
                 <Text fw={700} size="md" visibleFrom="xs">Argus</Text>
               </Group>
             </Link>
-            {whole && (
-              <UnstyledButton className="argus-findbar" onClick={palette.open} visibleFrom="md"
-                aria-label="Find a server, session or person">
-                <IconSearch size={15} />
-                <span>Find a server, session or person</span>
-                <kbd>⌘K</kbd>
-              </UnstyledButton>
-            )}
+            <Group component="nav" aria-label="Main" gap={4} wrap="nowrap" visibleFrom="md">
+              {items.map((item) => (
+                <TopNavLink key={item.to} item={item} pathname={pathname} counts={counts} />
+              ))}
+            </Group>
           </Group>
 
           <Group gap="xs" wrap="nowrap">
@@ -292,7 +288,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             {whole && (
               <Tooltip label="Find a server, session or person (⌘K)">
                 <ActionIcon
-                  hiddenFrom="md"
                   variant="subtle"
                   color="slate"
                   size="lg"
@@ -408,24 +403,26 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar className="argus-rail">
-        <Link to="/" className="argus-rail-brand" aria-label="Argus home">
-          <LogoMark size={30} />
-          <span className="argus-rail-label">Argus</span>
-        </Link>
-        <nav aria-label="Main" className="argus-rail-items">
-          {items.filter((i) => !MANAGE.includes(i.to)).map((item) => (
-            <RailLink key={item.to} item={item} pathname={pathname} counts={counts} />
-          ))}
-          {items.some((i) => MANAGE.includes(i.to)) && <div className="argus-rail-section">Manage</div>}
-          {items.filter((i) => MANAGE.includes(i.to)).map((item) => (
-            <RailLink key={item.to} item={item} pathname={pathname} counts={counts} />
-          ))}
-        </nav>
-        <Link to="/about" className="argus-rail-foot" title="About Argus">
-          <IconInfoCircle size={16} />
-          <span className="argus-rail-label">About · <span className="argus-digest">{argusVersion()}</span></span>
-        </Link>
+      <AppShell.Navbar p="sm" hiddenFrom="md">
+        <Stack gap={2}>
+          {items.map((item) => {
+            const count = item.badge ? item.badge(counts) : 0
+            return (
+              <MantineNavLink
+                key={item.to}
+                component={Link}
+                to={item.to as never}
+                label={item.label}
+                active={isActive(pathname, item.to)}
+                variant="light"
+                color="azure"
+                leftSection={<item.icon size={18} stroke={1.6} />}
+                rightSection={count > 0 ? <Badge size="sm" circle color="rose" variant="filled">{count}</Badge> : null}
+                className="argus-navlink"
+              />
+            )
+          })}
+        </Stack>
       </AppShell.Navbar>
 
       <AppShell.Main>
@@ -438,8 +435,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </Box>
       </AppShell.Main>
 
-      <TabBar items={items} pathname={pathname} counts={counts} onMore={toggle} moreOpen={opened} />
-
       {/* Mounted only while open, so the chunk is fetched on the first ⌘K
           rather than on every page load. */}
       {paletteOpen && (
@@ -451,69 +446,24 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** Teams and Settings sit under a "Manage" heading at the foot of the rail's list. */
-const MANAGE = ['/teams', '/settings']
-
-/**
- * One entry in the rail, with a red count when something waits on you. The
- * word hides between 62em and 75em, where the rail is icons only, and the
- * title says it on hover.
- */
-function RailLink({ item, pathname, counts }: { item: NavItem; pathname: string; counts: NavCounts }) {
+/** One word in the top bar, with a red count when something waits on you. */
+function TopNavLink({ item, pathname, counts }: { item: NavItem; pathname: string; counts: NavCounts }) {
   const count = item.badge ? item.badge(counts) : 0
   const active = isActive(pathname, item.to)
   return (
     <Link
       to={item.to as never}
-      className="argus-rail-link"
-      title={item.label}
+      className="argus-topnav"
       data-active={active || undefined}
       aria-current={active ? 'page' : undefined}
     >
-      <item.icon size={19} stroke={1.7} aria-hidden />
-      <span className="argus-rail-label">{item.label}</span>
+      {item.label}
       {count > 0 && (
-        <Badge size="sm" circle color="rose" variant="filled" aria-label={`${count} waiting`} className="argus-rail-count">
+        <Badge size="sm" circle color="rose" variant="filled" aria-label={`${count} waiting`}>
           {count}
         </Badge>
       )}
     </Link>
-  )
-}
-
-/**
- * The phone's menu: the four places someone goes most, under their thumb, and
- * More for the rest (the rail, as a drawer). Below 62em only.
- */
-const TAB_PATHS = ['/', '/assets', '/approvals', '/activity']
-
-function TabBar({ items, pathname, counts, onMore, moreOpen }: {
-  items: NavItem[]; pathname: string; counts: NavCounts; onMore: () => void; moreOpen: boolean
-}) {
-  const tabs = items.filter((i) => TAB_PATHS.includes(i.to))
-  const inTabs = tabs.some((t) => isActive(pathname, t.to))
-  return (
-    <nav aria-label="Tabs" className="argus-tabbar">
-      {tabs.map((item) => {
-        const count = item.badge ? item.badge(counts) : 0
-        const active = isActive(pathname, item.to)
-        return (
-          <Link key={item.to} to={item.to as never} className="argus-tab" data-active={active || undefined}
-            aria-current={active ? 'page' : undefined}>
-            <span className="argus-tab-icon">
-              <item.icon size={22} stroke={1.7} aria-hidden />
-              {count > 0 && <span className="argus-tab-count" aria-label={`${count} waiting`}>{count}</span>}
-            </span>
-            {item.label === 'My activity' ? 'Activity' : item.label}
-          </Link>
-        )
-      })}
-      <UnstyledButton className="argus-tab" onClick={onMore} data-active={moreOpen || !inTabs || undefined}
-        aria-expanded={moreOpen} aria-label={moreOpen ? 'Close navigation' : 'Open navigation'}>
-        <span className="argus-tab-icon"><IconMenu2 size={22} stroke={1.7} aria-hidden /></span>
-        More
-      </UnstyledButton>
-    </nav>
   )
 }
 

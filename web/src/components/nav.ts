@@ -10,9 +10,7 @@ import type { UserRole } from '~/types/domain'
 /**
  * The console's menu, in one place.
  *
- * Down the rail on the left, in two groups: the work (Home to Activity),
- * then "Manage" (Teams, Settings). On a phone the first four of the work are
- * a tab bar and the rest open from More.
+ * Six words across the top, and nothing else:
  *
  * - **Home**: where the console opens. What is waiting on you, then the fleet
  *   at a glance for whoever sees all of it, or your own servers otherwise.
@@ -23,8 +21,8 @@ import type { UserRole } from '~/types/domain'
  * - **Approvals**: everything waiting on a person. Logins straight to a server
  *   that the rule holds, root asked for, and access asked for. It is a menu
  *   item of its own, with a count, because someone is waiting at a terminal.
- * - **Activity**: who connected where, the recordings, and the audit log.
  * - **Teams**: teams and the people in them. A server is given to a team.
+ * - **Activity**: who connected where, the recordings, and the audit log.
  * - **Settings**: the rules for sessions and sign-in.
  *
  * Someone who is only given servers sees Servers and My activity. An approver
@@ -80,17 +78,17 @@ export const NAV_ITEMS: NavItem[] = [
     badge: (s) => s.approvalsPending,
   },
   {
-    to: '/activity',
-    label: 'Activity',
-    icon: IconHistory,
-    blurb: 'Who connected where, and recordings',
-  },
-  {
     to: '/teams',
     label: 'Teams',
     icon: IconUsersGroup,
     blurb: 'Teams and the people in them',
     audience: 'fleet',
+  },
+  {
+    to: '/activity',
+    label: 'Activity',
+    icon: IconHistory,
+    blurb: 'Who connected where, and recordings',
   },
   {
     to: '/settings',

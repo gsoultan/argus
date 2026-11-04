@@ -175,7 +175,7 @@ function Connect() {
     const isFiles = session.protocol === 'files'
     const isScreen = isRDP && assets?.find((a) => a.hostname === session.target)?.desktopMode === 'screen'
     return (
-      <Box h="calc(100dvh - var(--app-shell-header-offset, 56px) - var(--argus-tabbar-h, 0px))" style={{ display: 'flex', flexDirection: 'column' }}>
+      <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
           crumbs={[{ label: 'Servers', to: '/assets' }, { label: session.target.split('.')[0] ?? session.target }]}
           title={`${session.principal} on ${session.target.split('.')[0] ?? session.target}`}
@@ -537,7 +537,7 @@ function Connect() {
 /** The full-height middle of the page, for the one-card states. */
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <Center mih="calc(100dvh - var(--app-shell-header-offset, 56px) - var(--argus-tabbar-h, 0px))" p="md">
+    <Center mih="calc(100dvh - var(--app-shell-header-offset, 60px))" p="md">
       {children}
     </Center>
   )

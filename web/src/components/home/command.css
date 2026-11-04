@@ -15,7 +15,6 @@
     var(--color-band-mid) 55%,
     var(--color-band-to) 100%
   );
-  border: 1px solid var(--color-rail-line);
 }
 .argus-band::before {
   content: '';
@@ -51,6 +50,11 @@
   gap: 12px;
   margin-top: 20px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* Two across on a phone: an odd one out takes the whole row rather than
+   leaving a hole beside it. */
+@media (max-width: 61.99em) {
+  .argus-band-stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 @media (min-width: 62em) {
   .argus-band-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }

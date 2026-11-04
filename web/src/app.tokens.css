@@ -59,14 +59,8 @@
   --color-scrollbar-hover: #d0d5dd;
   --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-lift: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.05);
-  /* The rail: dark in both schemes, so it reads as the frame around the page. */
-  --color-rail: #0f172a;
-  --color-rail-line: #0f172a;
-  --color-rail-hover: #1e293b;
-  --color-rail-ink: #cbd5e1;
-  --color-rail-muted: #64748b;
-  /* Home's command band: the rail's colour, warming to the brand on the right,
-     so the band and the rail read as one frame. */
+  /* Home's command band: dark in both schemes. Navy warming to the brand in
+     light, the same as the server's own screen. */
   --color-band-from: #0f172a;
   --color-band-mid: #172554;
   --color-band-to: #1e3a8a;
@@ -108,11 +102,8 @@
   --color-scrollbar-hover: #3a4250;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-lift: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.35);
-  --color-rail: #0b0e13;
-  --color-rail-line: #1e232c;
-  --color-rail-hover: #1a1f28;
-  /* Starts on the dark rail's graphite and keeps only a hint of the brand, so
-     the band does not sit as a navy slab on a graphite page. */
+  /* Graphite with only a hint of the brand, so the band does not sit as a
+     navy slab on a graphite page. */
   --color-band-from: #0b0e13;
   --color-band-mid: #121826;
   --color-band-to: #1a2a4f;
@@ -417,211 +408,31 @@ button.argus-navsection:hover {
 }
 
 /* ---------------------------------------------------------------------------
-   The rail: the console's menu down the left. Icons and words from 75em,
-   icons only from 62em, and below that a drawer opened from More on the tab
-   bar. The page you are on is the one lit row, with a brand bar on its edge.
+   The top bar. One row: the name, the menu, and you. The page you are on is
+   the only item drawn in the brand colour.
    --------------------------------------------------------------------------- */
-.argus-rail {
-  display: flex;
-  flex-direction: column;
-  padding: 14px 12px;
-  gap: 2px;
-  color: var(--color-rail-ink);
-}
-.argus-rail-brand {
-  display: flex;
+.argus-topnav {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 6px 18px;
-  color: #fff;
-  font-weight: 700;
-  font-size: 17px;
-  text-decoration: none;
-}
-.argus-rail-items {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.argus-rail-section {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-rail-muted);
-  padding: 16px 10px 6px;
-}
-.argus-rail-link,
-.argus-rail-foot {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 40px;
-  padding: 0 11px;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
   border-radius: 8px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-rail-ink);
+  color: var(--color-ink-soft);
   text-decoration: none;
   white-space: nowrap;
   transition: background-color 120ms ease, color 120ms ease;
 }
-.argus-rail-link svg {
-  flex-shrink: 0;
-  opacity: 0.85;
+.argus-topnav:hover {
+  background: var(--color-raised);
+  color: var(--color-ink);
 }
-.argus-rail-link:hover,
-.argus-rail-foot:hover {
-  background: var(--color-rail-hover);
-  color: #fff;
-}
-.argus-rail-link[data-active] {
-  background: var(--color-rail-hover);
-  color: #fff;
+.argus-topnav[data-active] {
+  background: var(--color-brand-wash);
+  color: var(--color-brand-ink);
   font-weight: 600;
-}
-.argus-rail-link[data-active]::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--color-brand-bright);
-}
-.argus-rail-link[data-active] svg {
-  opacity: 1;
-  color: #93c5fd;
-}
-.argus-rail-count {
-  margin-left: auto;
-}
-.argus-rail-foot {
-  margin-top: auto;
-  height: 36px;
-  font-size: 12px;
-  color: var(--color-rail-muted);
-}
-/* Icons only: the rail is 72px wide and the count sits on the icon. */
-@media (min-width: 62em) and (max-width: 74.99em) {
-  .argus-rail { padding: 14px 10px; align-items: stretch; }
-  .argus-rail-label,
-  .argus-rail-section { display: none; }
-  .argus-rail-brand { justify-content: center; padding: 4px 0 18px; }
-  .argus-rail-link,
-  .argus-rail-foot { justify-content: center; padding: 0; }
-  .argus-rail-count {
-    position: absolute;
-    top: 2px;
-    right: 4px;
-    transform: scale(0.85);
-  }
-}
-@media (min-width: 62em) {
-  .argus-hidden-desktop { display: none; }
-}
-
-/* The page bar's search: a field-shaped button that opens the palette. */
-.argus-findbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: min(420px, 100%);
-  height: 36px;
-  padding: 0 10px 0 12px;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  background: var(--color-void);
-  color: var(--color-ink-muted);
-  font-size: 13.5px;
-  transition: border-color 120ms ease;
-}
-.argus-findbar:hover {
-  border-color: var(--color-brand-edge);
-}
-.argus-findbar kbd {
-  margin-left: auto;
-  font-family: var(--font-sans);
-  font-size: 11px;
-  padding: 1px 6px;
-  border: 1px solid var(--color-line);
-  border-radius: 4px;
-  background: var(--color-surface);
-}
-
-/* The phone's tab bar. Fixed to the bottom below 62em, clear of the home
-   indicator, and the page leaves room for it. */
-.argus-tabbar {
-  display: none;
-}
-@media (max-width: 61.99em) {
-  .argus-tabbar {
-    position: fixed;
-    z-index: 150;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    justify-content: space-around;
-    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
-    background: var(--color-surface);
-    border-top: 1px solid var(--color-line);
-  }
-  .argus-main {
-    padding-bottom: var(--argus-tabbar-h);
-  }
-  /* The drawer's last item clears the tab bar. */
-  .argus-rail {
-    padding-bottom: calc(var(--argus-tabbar-h) + 12px);
-  }
-}
-/* What the tab bar takes from the bottom of the screen. Full-height pages
-   (the terminal) subtract it. */
-:root {
-  --argus-tabbar-h: 0px;
-}
-@media (max-width: 61.99em) {
-  :root {
-    --argus-tabbar-h: calc(68px + env(safe-area-inset-bottom));
-  }
-}
-.argus-tab {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 4px 0;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-ink-muted);
-  text-decoration: none;
-}
-.argus-tab[data-active] {
-  color: var(--color-brand);
-  font-weight: 600;
-}
-.argus-tab-icon {
-  position: relative;
-  display: grid;
-  place-items: center;
-}
-.argus-tab-count {
-  position: absolute;
-  top: -5px;
-  right: -10px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: var(--mantine-color-rose-6);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 17px;
-  text-align: center;
 }
 
 /* A card that is the whole step on a wizard page. */

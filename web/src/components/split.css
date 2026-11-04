@@ -1,13 +1,13 @@
 /* Loaded with the component that uses it, so only the routes that draw it
    pay for it. Tokens come from app.tokens.css. */
 
-/* A list beside the item opened from it (SplitView). Only from 88em: below
+/* A list beside the item opened from it (SplitView). Only from 75em: below
    that the list is not drawn and the page is the item alone. */
 .argus-split-list,
 .argus-split-toggle {
   display: none;
 }
-@media (min-width: 88em) {
+@media (min-width: 75em) {
   .argus-split {
     display: grid;
     grid-template-columns: 340px minmax(0, 1fr);
@@ -19,8 +19,8 @@
     display: flex;
     flex-direction: column;
     position: sticky;
-    top: var(--app-shell-header-offset, 56px);
-    height: calc(100dvh - var(--app-shell-header-offset, 56px));
+    top: var(--app-shell-header-offset, 60px);
+    height: calc(100dvh - var(--app-shell-header-offset, 60px));
     overflow: hidden;
     background: var(--color-surface);
     border-right: 1px solid var(--color-line);
@@ -29,9 +29,11 @@
     visibility: hidden;
     border: 0;
   }
-  /* Room for the toggle, which straddles the list's right edge. */
+  /* Room for the toggle, which straddles the list's right edge. Beats the
+     list header's own padding prop, which would otherwise run the search
+     field under the toggle. */
   .argus-split-list > :first-child {
-    padding-right: 24px;
+    padding-right: 28px !important;
   }
   .argus-split-detail {
     position: relative;
