@@ -124,6 +124,8 @@ func (d *Database) validate() error {
 	switch {
 	case d.Name == "" || len(d.Name) > 63 || strings.ContainsAny(d.Name, "\x00\"'\\"):
 		return ErrInvalidDatabase{"the database name must be 1 to 63 characters with no quotes"}
+	case strings.HasPrefix(d.Name, tunnel.TestDBPrefix):
+		return ErrInvalidDatabase{tunnel.TestDBPrefix + " databases are the throwaway copies test restores make; Argus does not add them"}
 	case d.Host == "":
 		d.Host = "/var/run/postgresql"
 	case !tunnel.LocalPGHost(d.Host):

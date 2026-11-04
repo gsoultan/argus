@@ -13,9 +13,12 @@ export const ALERT_KINDS: { kind: AlertKind; label: string; description: string;
   { kind: 'session', label: 'Sessions opened',
     description: 'A terminal, desktop or database session starts, through Argus or around it.', who: 'Admins, auditors' },
   { kind: 'security', label: 'Security alerts',
-    description: 'A recovery code used, an authenticator reset, sign-ins refused, "this wasn\'t me", backups missed.',
+    description: 'A recovery code used, an authenticator reset, sign-ins refused, "this wasn\'t me".',
     who: 'Admins, auditors' },
   { kind: 'server', label: 'Servers', description: 'A server joins Argus, or its agent is uninstalled.', who: 'Admins, auditors' },
+  { kind: 'backup', label: 'Backups',
+    description: 'A test restore fails, none has passed for too long, or scheduled backups fail or are missed three times in a row.',
+    who: 'Admins, auditors' },
 ]
 
 /* ── Fixture ─────────────────────────────────────────────────────────────── */

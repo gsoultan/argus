@@ -140,3 +140,16 @@ func (a *API) alertServer(ctx context.Context, actor, title, detail string) {
 		Title: title, Detail: detail, Link: "/assets",
 	})
 }
+
+// alertBackup tells administrators a backup or a test restore of db needs
+// them, in the bell and, as a security alert, on their channels: a backup
+// that cannot be restored is found out now or on the worst day.
+func (a *API) alertBackup(ctx context.Context, db Database, severity, title, detail string) {
+	a.raiseAlert(ctx, ConsoleAlert{
+		Kind: AlertBackup, Severity: severity, Audience: AudienceAdmins, Actor: "",
+		Title: title, Detail: detail, Link: "/databases/" + db.ID,
+	})
+	if a.Alerts != nil {
+		a.Alerts.SecurityEvent("Argus: "+title, detail)
+	}
+}

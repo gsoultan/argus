@@ -942,7 +942,71 @@ export interface BackupSchedule {
   updatedAt: string
   /** False until an admin saves one; the rest are the defaults. */
   exists: boolean
+  /** Test restores: off, after every scheduled backup, daily or weekly. */
+  testEvery: 'off' | 'after' | 'daily' | 'weekly'
+  testHour: number
+  testMinute: number
+  testWeekday: number
+  testNextAt?: string | null
+  /** An admin's checks, each one SELECT, run on the restored copy. */
+  testChecks: TestCheck[]
 }
+
+export interface TestCheck { name: string; sql: string }
+
+export type BackupTestState = 'running' | 'passed' | 'warned' | 'failed' | 'skipped'
+
+export interface TestStep { name: string; ok: boolean; detail?: string; ms: number }
+
+/** One check of a test: built in or an admin's. */
+export interface TestCheckOutcome { name: string; kind: 'builtin' | 'custom'; state: 'ok' | 'warn' | 'fail'; value: string }
+
+export interface TestTableRows { name: string; rows: number; previous?: number }
+
+/** Numbers about the restored copy, never rows. */
+export interface TestReport {
+  steps: TestStep[] | null
+  checks: TestCheckOutcome[] | null
+  /** Only on a single test's read; the list leaves it out. */
+  tables: TestTableRows[] | null
+  tablesTotal: number
+  missing?: string[]
+  indexes: number
+  invalidIndexes: number
+  warnings: number
+  needBytes: number
+  freeBytes: number
+  sourceBytes: number
+  previousId?: string
+  previousBytes?: number
+}
+
+/** One test restore: a backup restored into a throwaway copy, checked and dropped. */
+export interface BackupTest {
+  id: UUID
+  backupId: UUID
+  databaseId: UUID
+  startedBy: string
+  state: BackupTestState
+  stage: string
+  detail: string
+  error: string
+  scratchName: string
+  scratchDropped: boolean
+  /** How long pg_restore took: the measured recovery time. */
+  restoreMs: number
+  tables: number
+  totalRows: number
+  bytes: number
+  report: TestReport
+  startedAt: string
+  finishedAt?: string
+  reportedAt: string
+  backupStartedAt: string
+}
+
+/** A check tried against the live database. */
+export interface CheckResult { name: string; ok: boolean; value?: string; error?: string }
 
 export type BackupState = 'running' | 'done' | 'failed' | 'skipped' | 'missed' | 'deleted'
 
@@ -1027,4 +1091,9 @@ export interface BackupsView {
   /** The control plane has storage a backup can be sent to. */
   storage: boolean
   staleAfterS: number
+  /** The latest test restores, newest first. */
+  tests: BackupTest[]
+  testing: BackupTest | null
+  /** The newest backup whose test passed; retention keeps it. */
+  lastGood: BackupTest | null
 }

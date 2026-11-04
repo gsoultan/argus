@@ -34,10 +34,11 @@ const (
 	AlertSession  = "session"
 	AlertSecurity = "security"
 	AlertServer   = "server"
+	AlertBackup   = "backup"
 )
 
 // AlertKinds is every kind, in the order Settings lists them.
-var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer}
+var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup}
 
 // Alert audiences.
 const (

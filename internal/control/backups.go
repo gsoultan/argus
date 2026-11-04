@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,9 +33,21 @@ type BackupSchedule struct {
 	KeepLast    int        `json:"keepLast"`
 	KeepDays    int        `json:"keepDays"`
 	NextRunAt   *time.Time `json:"nextRunAt,omitempty"`
-	Misses      int        `json:"misses"`
-	UpdatedBy   string     `json:"updatedBy"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	// Misses is scheduled runs in a row that produced no backup: missed,
+	// or started and failed.
+	Misses    int       `json:"misses"`
+	UpdatedBy string    `json:"updatedBy"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	// TestEvery is when the newest backup is test-restored: off, after
+	// (every scheduled backup), daily or weekly, at TestHour:TestMinute on
+	// TestWeekday. TestChecks are the admin's own checks.
+	TestEvery     string             `json:"testEvery"`
+	TestHour      int                `json:"testHour"`
+	TestMinute    int                `json:"testMinute"`
+	TestWeekday   int                `json:"testWeekday"`
+	TestNextAt    *time.Time         `json:"testNextAt,omitempty"`
+	TestChecks    []tunnel.TestCheck `json:"testChecks"`
+	TestOverdueAt *time.Time         `json:"-"`
 	// Exists says a row was saved; the zero schedule is what the console
 	// shows before one is.
 	Exists bool `json:"exists"`
@@ -44,7 +57,8 @@ type BackupSchedule struct {
 // nothing scheduled, nightly at two when they do.
 func DefaultBackupSchedule(dbID string) BackupSchedule {
 	return BackupSchedule{DatabaseID: dbID, Enabled: false, Every: "daily", AtHour: 2,
-		Destination: tunnel.BackupDestServer, KeepLast: 14}
+		Destination: tunnel.BackupDestServer, KeepLast: 14,
+		TestEvery: "weekly", TestHour: 4, TestWeekday: 0, TestChecks: []tunnel.TestCheck{}}
 }
 
 func (b *BackupSchedule) validate() error {
@@ -64,7 +78,72 @@ func (b *BackupSchedule) validate() error {
 	if b.KeepLast < 1 || b.KeepLast > 1000 || b.KeepDays < 0 || b.KeepDays > 3650 {
 		return ErrInvalidDatabase{"keep the last 1 to 1000 runs, and 0 to 3650 days"}
 	}
+	switch b.TestEvery {
+	case "off", "daily", "weekly":
+	case "after":
+		if b.Every == "hourly" {
+			return ErrInvalidDatabase{"a test restore after every hourly backup would never finish; test daily or weekly"}
+		}
+	default:
+		return ErrInvalidDatabase{"test restores run off, after every backup, daily or weekly"}
+	}
+	if b.TestHour < 0 || b.TestHour > 23 || b.TestMinute < 0 || b.TestMinute > 59 || b.TestWeekday < 0 || b.TestWeekday > 6 {
+		return ErrInvalidDatabase{"the test restore's time of day is out of range"}
+	}
+	if b.TestChecks == nil {
+		b.TestChecks = []tunnel.TestCheck{}
+	}
+	for i := range b.TestChecks {
+		b.TestChecks[i].Name = strings.TrimSpace(b.TestChecks[i].Name)
+		b.TestChecks[i].SQL = strings.TrimSpace(b.TestChecks[i].SQL)
+	}
+	if err := tunnel.ValidateTestChecks(b.TestChecks); err != nil {
+		return ErrInvalidDatabase{err.Error()}
+	}
 	return nil
+}
+
+// TestNextRun is when the next scheduled test restore is due after now;
+// nil when tests are off or follow each backup.
+func (b BackupSchedule) TestNextRun(now time.Time) *time.Time {
+	switch b.TestEvery {
+	case "daily", "weekly":
+		every := map[string]string{"daily": "daily", "weekly": "weekly"}[b.TestEvery]
+		t := BackupSchedule{Every: every, AtHour: b.TestHour, AtMinute: b.TestMinute, Weekday: b.TestWeekday}.NextRun(now)
+		return &t
+	}
+	return nil
+}
+
+// TestInterval is how often a test should pass, for the overdue alert;
+// zero when tests are off.
+func (b BackupSchedule) TestInterval() time.Duration {
+	switch b.TestEvery {
+	case "daily":
+		return 24 * time.Hour
+	case "weekly":
+		return 7 * 24 * time.Hour
+	case "after":
+		if b.Every == "weekly" {
+			return 7 * 24 * time.Hour
+		}
+		return 24 * time.Hour
+	}
+	return 0
+}
+
+// DescribeTests is the test schedule in the console's words.
+func (b BackupSchedule) DescribeTests() string {
+	at := fmt.Sprintf("%02d:%02d", b.TestHour, b.TestMinute)
+	switch b.TestEvery {
+	case "after":
+		return "after every scheduled backup"
+	case "daily":
+		return "every day at " + at
+	case "weekly":
+		return "every " + time.Weekday(b.TestWeekday).String() + " at " + at
+	}
+	return "off"
 }
 
 // NextRun is the first time after now the schedule fires.
@@ -184,13 +263,20 @@ func notUUID(err error) bool {
 /* ── Schedules ───────────────────────────────────────────────────────────── */
 
 const scheduleCols = `database_id::text, enabled, every, at_hour, at_minute, weekday, destination,
-	keep_last, keep_days, next_run_at, misses, updated_by, updated_at`
+	keep_last, keep_days, next_run_at, misses, updated_by, updated_at,
+	test_every, test_hour, test_minute, test_weekday, test_next_at, test_checks, test_overdue_at`
 
 func scanSchedule(row pgx.Row) (BackupSchedule, error) {
 	var b BackupSchedule
+	var checks []byte
 	err := row.Scan(&b.DatabaseID, &b.Enabled, &b.Every, &b.AtHour, &b.AtMinute, &b.Weekday, &b.Destination,
-		&b.KeepLast, &b.KeepDays, &b.NextRunAt, &b.Misses, &b.UpdatedBy, &b.UpdatedAt)
+		&b.KeepLast, &b.KeepDays, &b.NextRunAt, &b.Misses, &b.UpdatedBy, &b.UpdatedAt,
+		&b.TestEvery, &b.TestHour, &b.TestMinute, &b.TestWeekday, &b.TestNextAt, &checks, &b.TestOverdueAt)
 	b.Exists = err == nil
+	b.TestChecks = []tunnel.TestCheck{}
+	if len(checks) > 0 {
+		_ = json.Unmarshal(checks, &b.TestChecks)
+	}
 	return b, err
 }
 
@@ -204,8 +290,11 @@ func (s *Store) BackupSchedule(ctx context.Context, dbID string) (BackupSchedule
 	return b, err
 }
 
-// SetBackupSchedule saves the schedule and computes its next run.
+// SetBackupSchedule saves the schedule and computes its next runs.
 func (s *Store) SetBackupSchedule(ctx context.Context, b BackupSchedule, actor string) (BackupSchedule, error) {
+	if b.TestEvery == "" {
+		b.TestEvery = "off"
+	}
 	if err := b.validate(); err != nil {
 		return b, err
 	}
@@ -214,17 +303,22 @@ func (s *Store) SetBackupSchedule(ctx context.Context, b BackupSchedule, actor s
 		t := b.NextRun(time.Now())
 		next = &t
 	}
+	checks, _ := json.Marshal(b.TestChecks)
 	out, err := scanSchedule(s.db(ctx).QueryRow(ctx, `
 		INSERT INTO database_backup_schedules (database_id, enabled, every, at_hour, at_minute, weekday,
-			destination, keep_last, keep_days, next_run_at, misses, updated_by, updated_at)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, now())
+			destination, keep_last, keep_days, next_run_at, misses, updated_by, updated_at,
+			test_every, test_hour, test_minute, test_weekday, test_next_at, test_checks)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, now(), $12, $13, $14, $15, $16, $17::jsonb)
 		ON CONFLICT (database_id) DO UPDATE SET enabled = EXCLUDED.enabled, every = EXCLUDED.every,
 			at_hour = EXCLUDED.at_hour, at_minute = EXCLUDED.at_minute, weekday = EXCLUDED.weekday,
 			destination = EXCLUDED.destination, keep_last = EXCLUDED.keep_last, keep_days = EXCLUDED.keep_days,
-			next_run_at = EXCLUDED.next_run_at, misses = 0, updated_by = EXCLUDED.updated_by, updated_at = now()
+			next_run_at = EXCLUDED.next_run_at, misses = 0, updated_by = EXCLUDED.updated_by, updated_at = now(),
+			test_every = EXCLUDED.test_every, test_hour = EXCLUDED.test_hour, test_minute = EXCLUDED.test_minute,
+			test_weekday = EXCLUDED.test_weekday, test_next_at = EXCLUDED.test_next_at,
+			test_checks = EXCLUDED.test_checks, test_overdue_at = NULL
 		RETURNING `+scheduleCols,
 		b.DatabaseID, b.Enabled, b.Every, b.AtHour, b.AtMinute, b.Weekday, b.Destination, b.KeepLast, b.KeepDays,
-		next, actor))
+		next, actor, b.TestEvery, b.TestHour, b.TestMinute, b.TestWeekday, b.TestNextRun(time.Now()), string(checks)))
 	if err != nil && (notUUID(err) || strings.Contains(err.Error(), "foreign key")) {
 		return b, ErrDatabaseNotFound
 	}
@@ -250,14 +344,30 @@ func (s *Store) DueBackupSchedules(ctx context.Context, now time.Time) ([]Backup
 	return out, rows.Err()
 }
 
-// AdvanceBackupSchedule moves the schedule past now and counts a miss or
-// clears the count. It returns the miss count after.
+// AdvanceBackupSchedule moves the schedule past now, counting a miss when
+// the run did not start. A run that starts leaves the count alone: whether
+// it produced a backup is known when it ends (CountScheduledOutcome). It
+// returns the count after.
 func (s *Store) AdvanceBackupSchedule(ctx context.Context, b BackupSchedule, missed bool) (int, error) {
 	next := b.NextRun(time.Now())
 	var misses int
 	err := s.db(ctx).QueryRow(ctx, `UPDATE database_backup_schedules
-		SET next_run_at = $2, misses = CASE WHEN $3 THEN misses + 1 ELSE 0 END
+		SET next_run_at = $2, misses = CASE WHEN $3 THEN misses + 1 ELSE misses END
 		WHERE database_id = $1::uuid RETURNING misses`, b.DatabaseID, next, missed).Scan(&misses)
+	return misses, err
+}
+
+// CountScheduledOutcome records how a scheduled run ended: a failure adds to
+// the runs in a row that produced no backup, a success clears them. It
+// returns the count after.
+func (s *Store) CountScheduledOutcome(ctx context.Context, dbID string, ok bool) (int, error) {
+	var misses int
+	err := s.db(ctx).QueryRow(ctx, `UPDATE database_backup_schedules
+		SET misses = CASE WHEN $2 THEN 0 ELSE misses + 1 END
+		WHERE database_id = $1::uuid RETURNING misses`, dbID, ok).Scan(&misses)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
 	return misses, err
 }
 
@@ -426,7 +536,9 @@ func (s *Store) ClearBackupLocal(ctx context.Context, id string) error {
 }
 
 // RetentionCandidates are the done, unpinned backups retention no longer
-// keeps: beyond the newest keepLast, and older than keepDays when set.
+// keeps: beyond the newest keepLast, and older than keepDays when set. A
+// backup being restored or tested is kept, and so is the last known good:
+// the newest backup a test restore passed.
 func (s *Store) RetentionCandidates(ctx context.Context, dbID string, keepLast, keepDays int) ([]DatabaseBackup, error) {
 	rows, err := s.db(ctx).Query(ctx, `
 		WITH ranked AS (
@@ -435,6 +547,13 @@ func (s *Store) RetentionCandidates(ctx context.Context, dbID string, keepLast, 
 		SELECT `+backupCols+` FROM ranked
 		WHERE rn > $2 AND ($3 = 0 OR started_at < now() - ($3 || ' days')::interval)
 		  AND NOT EXISTS (SELECT 1 FROM database_restores r WHERE r.backup_id = ranked.id::uuid AND r.state = 'running')
+		  AND NOT EXISTS (SELECT 1 FROM database_backup_tests t WHERE t.backup_id = ranked.id::uuid AND t.state = 'running')
+		  -- The last known good: the newest backup a test restore passed is
+		  -- kept until a newer one passes.
+		  AND ranked.id::uuid IS DISTINCT FROM (SELECT t.backup_id FROM database_backup_tests t
+			JOIN database_backups g ON g.id = t.backup_id
+			WHERE t.database_id = $1::uuid AND t.state IN ('passed', 'warned') AND g.state = 'done'
+			ORDER BY g.started_at DESC LIMIT 1)
 		ORDER BY started_at`, dbID, keepLast, keepDays)
 	if err != nil {
 		return nil, err

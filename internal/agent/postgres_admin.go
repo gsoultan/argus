@@ -45,7 +45,7 @@ A role Argus did not create is never touched: it is reported as taken.
 
 // PGAdminRequest is one provisioning operation.
 type PGAdminRequest struct {
-	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases, discover-databases
+	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases, discover-databases, database-size, create-test, drop-test, test-checks, run-checks
 	// Database to connect to and grant in. The replace operations connect
 	// to the maintenance database and act on Target, since a database
 	// cannot be renamed from inside itself.
@@ -73,6 +73,9 @@ type PGAdminRequest struct {
 	// Admin is the operation, for admin. Owner names who asked, for the
 	// comment on what it creates.
 	Admin *tunnel.PGAdminOp `json:"admin,omitempty"`
+	// Checks are a test restore's custom checks, for test-checks and
+	// run-checks.
+	Checks []tunnel.TestCheck `json:"checks,omitempty"`
 }
 
 // PGAdminResult is the answer.
@@ -95,6 +98,13 @@ type PGAdminResult struct {
 	// Found is what discover-databases found, with owners and sizes.
 	Found     []tunnel.Discovered `json:"found,omitempty"`
 	Truncated bool                `json:"truncated,omitempty"`
+	// Bytes and DataDir are what database-size found.
+	Bytes   int64  `json:"bytes,omitempty"`
+	DataDir string `json:"dataDir,omitempty"`
+	// Test is what test-checks read from a test copy; Checks what
+	// run-checks found.
+	Test   *tunnel.TestData     `json:"test,omitempty"`
+	Checks []tunnel.CheckResult `json:"checks,omitempty"`
 }
 
 // pgAdminRunner performs provisioning; the production one runs the helper as
@@ -155,6 +165,8 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return pgReplaceOp(ctx, conn, req)
 	case "discover-databases":
 		return pgDiscover(ctx, conn)
+	case "database-size", "create-test", "drop-test", "test-checks", "run-checks":
+		return pgTestOp(ctx, conn, req)
 	}
 	if !tunnel.ValidPersonalRole(req.Role) {
 		return PGAdminResult{Error: "not a role name Argus will manage: " + req.Role}
@@ -525,7 +537,8 @@ func pgDiscover(ctx context.Context, conn *pgconn.PgConn) PGAdminResult {
 	version := conn.ParameterStatus("server_version")
 	res := conn.ExecParams(ctx, `SELECT datname, pg_get_userbyid(datdba),
 			CASE WHEN has_database_privilege(oid, 'CONNECT') THEN pg_database_size(oid) ELSE 0 END
-		FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY 1 LIMIT $1`,
+		FROM pg_database WHERE NOT datistemplate AND datallowconn
+		  AND datname NOT LIKE 'argus\_test\_%' ORDER BY 1 LIMIT $1`,
 		[][]byte{[]byte(strconv.Itoa(tunnel.MaxDiscovered + 1))}, nil, nil, nil).Read()
 	if res.Err != nil {
 		return PGAdminResult{Error: res.Err.Error(), Version: version}

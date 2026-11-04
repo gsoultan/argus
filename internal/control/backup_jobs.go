@@ -181,6 +181,8 @@ func (a *API) RunBackup(ctx context.Context, db Database, by, reason, destinatio
 	if destination != tunnel.BackupDestServer && a.backupStore(ctx) == nil {
 		return DatabaseBackup{}, errors.New("the control plane has no storage for backups; choose the server, or configure object storage or a recordings directory")
 	}
+	// A backup never waits behind a test restore.
+	a.makeWayForBackup(ctx, db)
 	row, err := a.store.StartBackup(ctx, db.ID, by, reason, destination)
 	if err != nil {
 		return row, err
@@ -304,11 +306,39 @@ func (a *API) finishBackup(ctx context.Context, db Database, row DatabaseBackup,
 			fmt.Sprintf("Backup %s of %s finished: %d bytes, sha256 %s, %s, encrypted to key %s, readable: %v.",
 				row.ID, db.Name, res.Bytes, res.SHA256, where, res.KeyID, res.Verified))
 		a.applyRetention(ctx, db)
+		a.afterScheduledBackup(ctx, db, row, true, "")
 		return out, nil
 	}
 	a.auditDB(ctx, "db.backup_failed", "warn", row.StartedBy, db.Hostname,
 		fmt.Sprintf("Backup %s of %s failed while %s: %s", row.ID, db.Name, res.Stage, res.Error))
+	a.afterScheduledBackup(ctx, db, row, false, res.Error)
 	return out, errors.New(res.Error)
+}
+
+// afterScheduledBackup counts a scheduled run's outcome toward the "in a
+// row" alert, which a run that starts and fails reaches as surely as one
+// that never starts; and queues the test restore that follows each
+// backup, when the schedule says so.
+func (a *API) afterScheduledBackup(ctx context.Context, db Database, row DatabaseBackup, ok bool, why string) {
+	if row.StartedBy != "schedule:"+db.ID {
+		return
+	}
+	misses, err := a.store.CountScheduledOutcome(ctx, db.ID, ok)
+	if err != nil {
+		return
+	}
+	if !ok && misses == backupMissAlertAt {
+		a.alertBackup(ctx, db, "critical", fmt.Sprintf("%d scheduled backups of %s failed in a row", misses, db.Name),
+			"The last on "+db.Hostname+": "+why)
+	}
+	if ok {
+		if s, err := a.store.BackupSchedule(ctx, db.ID); err == nil && s.TestEvery == "after" {
+			// A minute on, so the agent has freed the database's slot;
+			// the sweep starts it.
+			t := time.Now().Add(time.Minute)
+			_ = a.store.SetTestNext(ctx, db.ID, &t)
+		}
+	}
 }
 
 // applyRetention deletes what the schedule no longer keeps, each deletion
@@ -579,7 +609,7 @@ func (a *API) keptCopy(ctx context.Context, by string, db Database, r DatabaseRe
 }
 
 // BackupSweep is what the control plane's sweep runs per organization:
-// due schedules, stale jobs, and kept copies whose day is up.
+// due schedules, stale jobs, test restores, and kept copies whose day is up.
 func (a *API) BackupSweep(ctx context.Context) {
 	now := time.Now()
 	if stale, err := a.store.FailStaleBackups(ctx, backupStaleAfter); err == nil {
@@ -609,12 +639,8 @@ func (a *API) BackupSweep(ctx context.Context) {
 				a.auditDB(ctx, "db.backup_missed", "warn", by, db.Hostname,
 					fmt.Sprintf("The scheduled backup of %s was missed: %s (%d in a row).", db.Name, why, misses))
 				if misses == backupMissAlertAt {
-					a.alertSecurity(ctx, "", "Backups of "+db.Name+" on "+db.Hostname+" are being missed",
-						fmt.Sprintf("%d scheduled backups in a row did not run: %s.", misses, why))
-				}
-				if misses == backupMissAlertAt && a.Alerts != nil {
-					a.Alerts.SecurityEvent("Backups of "+db.Name+" on "+db.Hostname+" are being missed",
-						fmt.Sprintf("%d scheduled backups in a row did not run: %s.", misses, why))
+					a.alertBackup(ctx, db, "critical", "Backups of "+db.Name+" on "+db.Hostname+" are being missed",
+						fmt.Sprintf("%d scheduled backups in a row produced no backup; the last: %s.", misses, why))
 				}
 			}
 			// Else: wait for the agent, within the window.
@@ -631,6 +657,7 @@ func (a *API) BackupSweep(ctx context.Context) {
 			}(db, s)
 		}
 	}
+	a.backupTestSweep(ctx, now)
 	kept, err := a.store.KeptCopiesDue(ctx)
 	if err == nil {
 		for _, r := range kept {

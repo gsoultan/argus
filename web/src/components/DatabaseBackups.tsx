@@ -8,18 +8,20 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconArrowLeft, IconCheck, IconDotsVertical, IconDownload, IconInfoCircle, IconLock, IconPin, IconPinnedOff,
-  IconRefresh, IconRestore, IconTrash,
+  IconFlask, IconPlus, IconRefresh, IconRestore, IconShieldCheck, IconTrash, IconX,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { absTime, bytes, relTime } from '~/components/primitives'
 import { backupDownloadUrl } from '~/lib/live'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
-  backupCatalogQuery, databaseBackupsQuery, useCancelBackup, useCancelRestore, useDeleteBackup, usePinBackup, useRestoreBackup,
-  useSetBackupSchedule, useStartBackup, useUndoRestore,
+  backupCatalogQuery, backupTestQuery, databaseBackupsQuery, useCancelBackup, useCancelBackupTest, useCancelRestore, useDeleteBackup,
+  usePinBackup, useRestoreBackup, useSetBackupSchedule, useStartBackup, useTestBackup, useTryBackupChecks, useUndoRestore,
 } from '~/lib/queries'
 import { FS, SP, INK } from '~/theme'
-import type { BackupDestination, BackupSchedule, BackupsView, DBLevel, Database, DatabaseBackup, DatabaseRestore } from '~/types/domain'
+import type {
+  BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DBLevel, Database, DatabaseBackup, DatabaseRestore, TestCheck,
+} from '~/types/domain'
 
 /*
 Backups of one database. The agent on the database's server takes them with
@@ -54,6 +56,8 @@ function stageWords(stage: string, detail: string): string {
     starting: 'starting pg_dump', schema: 'dumping the schema', data: 'dumping', verifying: 'reading it back with pg_restore',
     uploading: 'sending to the control plane', restoring: 'restoring', preparing: 'preparing', finishing: 'finishing',
     creating: 'creating the database', renaming: 'renaming the current database', downloading: 'fetching the backup',
+    room: 'checking free space', fetching: 'fetching the backup', checking: 'checking the copy', counting: 'counting rows',
+    dropping: 'dropping the copy', queued: 'waiting for the server',
   }
   const w = s[stage] ?? stage
   return detail ? `${w} ${detail}` : w
@@ -82,6 +86,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
   const cancel = useCancelBackup()
   const [starting, startNow] = useDisclosure(false)
   const [restoring, setRestoring] = useState<DatabaseBackup | null>(null)
+  const [report, setReport] = useState<string | null>(null)
   const canBackup = atLeast(level, 'owner')
   const dba = level === 'dba'
 
@@ -117,6 +122,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
           {error && <Alert color="rose" variant="light">{(error as Error).message}</Alert>}
           {isPending && <Loader size="sm" />}
           {data?.running && <RunningCard b={data.running} view={data} onCancel={canBackup ? () => void onCancel(data.running!) : undefined} />}
+          {data?.testing && <TestingCard t={data.testing} database={database} dba={dba} onOpen={() => setReport(data.testing!.id)} />}
           {data?.restores.filter((r) => r.state === 'running' || r.state === 'pending').map((r) => (
             <RestoreCard key={r.id} r={r} database={database} dba={dba} />
           ))}
@@ -124,11 +130,12 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
           {data && data.restores.some((r) => r.state === 'done' && r.renamedTo && !r.keptDropped) && (
             <KeptCopies restores={data.restores} database={database} dba={dba} />
           )}
-          {data && <BackupTable view={data} database={database} level={level} onRestore={setRestoring} />}
+          {data && <LastGoodCard view={data} onOpen={setReport} />}
+          {data && <BackupTable view={data} database={database} level={level} onRestore={setRestoring} onReport={setReport} />}
           {data && (
             <Text size={FS.micro} c="dimmed">
               Retention keeps the last {data.schedule.keepLast}{data.schedule.keepDays ? ` and anything newer than ${data.schedule.keepDays} days` : ''}.
-              Pinned backups are kept until you unpin them. Deleting one is audited.
+              Pinned backups are kept until you unpin them, and so is the newest one that passed a test restore. Deleting one is audited.
             </Text>
           )}
         </Stack>
@@ -137,6 +144,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
       {restoring && (
         <RestoreModal database={database} b={restoring} level={level} opened onClose={() => setRestoring(null)} />
       )}
+      {report && <TestReportModal database={database} testId={report} narrow={narrow} onClose={() => setReport(null)} />}
     </Box>
   )
 }
@@ -212,14 +220,22 @@ function ScheduleLine({ s, database, admin, storage }: { s: BackupSchedule; data
     <Group gap="xs" px="sm" py={SP.cozy} wrap="wrap" style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
       <Badge size="xs" variant="light" color={s.enabled ? 'teal' : 'slate'} radius="sm">{s.enabled ? 'Scheduled' : 'Not scheduled'}</Badge>
       {s.enabled ? (
-        <Text size={FS.meta}><b>{describeSchedule(s)}</b> · keep the last {s.keepLast} · {where}</Text>
+        <Text size={FS.meta}>
+          <b>{describeSchedule(s)}</b> · keep the last {s.keepLast} · {where}
+          {s.testEvery !== 'off' && <> · <b>{describeTests(s)}</b></>}
+        </Text>
       ) : (
         <Text size={FS.meta} c="dimmed">Nothing runs on its own{storage ? '' : '; the control plane has no storage, so backups can only stay on the server'}.</Text>
       )}
       {s.enabled && s.nextRunAt && <Text size={FS.micro} c="dimmed">Next: {absTime(s.nextRunAt)}</Text>}
+      {s.enabled && s.testEvery === 'off' && (
+        <Tooltip label="A backup that pg_restore can read may still not restore. A test restore proves it on this server, then drops the copy." withArrow multiline w={300}>
+          <Badge size="xs" color="amber" variant="light" leftSection={<IconFlask size={10} />}>never test-restored on a schedule</Badge>
+        </Tooltip>
+      )}
       {s.misses >= 3 && (
-        <Tooltip label={`The last ${s.misses} scheduled runs did not happen; the agent was probably offline.`} withArrow>
-          <Badge size="xs" color="rose" variant="light" leftSection={<IconAlertTriangle size={10} />}>{s.misses} missed</Badge>
+        <Tooltip label={`The last ${s.misses} scheduled runs were missed or failed. Admins were alerted.`} withArrow>
+          <Badge size="xs" color="rose" variant="light" leftSection={<IconAlertTriangle size={10} />}>{s.misses} in a row did not finish</Badge>
         </Tooltip>
       )}
       {admin && (
@@ -237,6 +253,234 @@ export function describeSchedule(s: BackupSchedule): string {
   if (s.every === 'hourly') return `Every hour at :${String(s.atMinute).padStart(2, '0')}`
   if (s.every === 'weekly') return `Every ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][s.weekday]} at ${at}`
   return `Every day at ${at}`
+}
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+export function describeTests(s: BackupSchedule): string {
+  const at = `${String(s.testHour).padStart(2, '0')}:${String(s.testMinute).padStart(2, '0')}`
+  switch (s.testEvery) {
+    case 'after': return 'test restore after every backup'
+    case 'daily': return `test restore every day at ${at}`
+    case 'weekly': return `test restore every ${DAYS[s.testWeekday]} at ${at}`
+    default: return 'no test restores'
+  }
+}
+
+/** A duration in words: 850 ms, 42 s, 4 min 12 s, 1 h 3 min. */
+export function dur(ms: number): string {
+  if (ms < 1000) return `${ms} ms`
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s} s`
+  if (s < 3600) return `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ''}`
+  return `${Math.floor(s / 3600)} h${Math.floor((s % 3600) / 60) ? ` ${Math.floor((s % 3600) / 60)} min` : ''}`
+}
+
+const TEST_COLOR: Record<BackupTest['state'], string> = { running: 'azure', passed: 'teal', warned: 'amber', failed: 'rose', skipped: 'slate' }
+const TEST_WORD: Record<BackupTest['state'], string> = { running: 'testing', passed: 'passed', warned: 'passed with warnings', failed: 'failed', skipped: 'skipped' }
+
+/** A test restore in progress. */
+function TestingCard({ t, database, dba, onOpen }: { t: BackupTest; database: Database; dba: boolean; onOpen: () => void }) {
+  const cancel = useCancelBackupTest()
+  const [, tick] = useState(0)
+  useEffect(() => { const x = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(x) }, [])
+  const secs = Math.max(0, Math.round((Date.now() - Date.parse(t.startedAt)) / 1000))
+  const onCancel = async () => {
+    try {
+      await cancel.mutateAsync({ id: database.id, testId: t.id })
+      notifyOk('Stopping', 'The test restore is being stopped; its copy is dropped.')
+    } catch (err) {
+      notifyError('Not stopped', err)
+    }
+  }
+  return (
+    <Box p="sm" style={{ border: '1px solid var(--mantine-color-azure-4)', borderRadius: 8, background: 'var(--mantine-color-azure-light)' }}>
+      <Group gap="xs" wrap="nowrap">
+        <IconFlask size={14} style={{ color: 'var(--mantine-color-azure-6)', flexShrink: 0 }} />
+        <Text fw={600} size={FS.body}>Test-restoring</Text>
+        <Text size={FS.micro} c="dimmed" lineClamp={1}>
+          the backup of {absTime(t.backupStartedAt)} into <Code>{t.scratchName || 'a throwaway copy'}</Code> on {database.hostname}
+        </Text>
+        <Text size={FS.micro} ff="monospace" ml="auto" style={{ whiteSpace: 'nowrap' }}>{dur(secs * 1000)}</Text>
+        <Button size="compact-xs" variant="subtle" onClick={onOpen}>Details</Button>
+        {dba && <Button size="compact-xs" variant="subtle" color="rose" onClick={() => void onCancel()} loading={cancel.isPending}>Stop</Button>}
+      </Group>
+      <Progress value={100} animated size="sm" mt={6} color="azure" />
+      <Group justify="space-between" mt={4}>
+        <Text size={FS.micro} ff="monospace">{stageWords(t.stage, t.detail)}</Text>
+        <Text size={FS.micro} c="dimmed">Runs at low priority. A backup that needs the server stops it, and it is tried again later.</Text>
+      </Group>
+    </Box>
+  )
+}
+
+/** The newest backup proven to restore, and how long that took. */
+function LastGoodCard({ view, onOpen }: { view: BackupsView; onOpen: (id: string) => void }) {
+  const g = view.lastGood
+  const lastTest = view.tests.find((t) => t.state !== 'running')
+  if (!g) {
+    if (!lastTest && view.schedule.testEvery === 'off') return null
+    return (
+      <Group gap="xs" px="sm" py={SP.cozy} wrap="wrap" style={{ border: '1px solid var(--mantine-color-amber-4)', borderRadius: 8 }}>
+        <IconAlertTriangle size={14} style={{ color: 'var(--mantine-color-amber-6)' }} />
+        <Text size={FS.meta}>No backup of this database has passed a test restore yet.</Text>
+        {lastTest && (
+          <Anchor size={FS.meta} ml="auto" onClick={() => onOpen(lastTest.id)}>Last test: {TEST_WORD[lastTest.state]} {relTime(lastTest.startedAt)}</Anchor>
+        )}
+      </Group>
+    )
+  }
+  const failedSince = lastTest && lastTest.id !== g.id && lastTest.state === 'failed' ? lastTest : null
+  return (
+    <Box px="sm" py={SP.cozy} style={{ border: `1px solid var(--mantine-color-${failedSince ? 'rose' : 'teal'}-4)`, borderRadius: 8 }}>
+      <Group gap="xs" wrap="wrap">
+        <IconShieldCheck size={16} style={{ color: 'var(--mantine-color-teal-6)' }} />
+        <Text size={FS.meta}>
+          <b>Last known good:</b> the backup of {absTime(g.backupStartedAt)}, restored in <b>{dur(g.restoreMs)}</b> {relTime(g.finishedAt ?? g.startedAt)}
+          {' · '}{g.tables} tables, {g.totalRows.toLocaleString()} rows, {bytes(g.bytes)}
+        </Text>
+        <Anchor size={FS.meta} ml="auto" onClick={() => onOpen(g.id)}>Report</Anchor>
+      </Group>
+      {failedSince && (
+        <Text size={FS.micro} c="rose" mt={4}>
+          The test of {absTime(failedSince.backupStartedAt)} failed {relTime(failedSince.startedAt)}: {failedSince.error || 'see its report'}.{' '}
+          <Anchor size={FS.micro} onClick={() => onOpen(failedSince.id)}>Report</Anchor>
+        </Text>
+      )}
+      <Text size={FS.micro} c="dimmed" mt={2}>Retention keeps this backup until a newer one passes.</Text>
+    </Box>
+  )
+}
+
+/** The Tested cell of one backup. */
+function TestedCell({ b, test, good, onReport }: { b: DatabaseBackup; test?: BackupTest; good: boolean; onReport: (id: string) => void }) {
+  if (b.state !== 'done') return <Text size={FS.meta} c="dimmed">—</Text>
+  const readable = b.verified
+    ? <Group gap={4} wrap="nowrap"><IconCheck size={12} style={{ color: 'var(--mantine-color-teal-6)' }} /><Text size={FS.meta} c="dimmed">readable</Text></Group>
+    : <Text size={FS.meta} c="amber">not checked</Text>
+  if (!test) return readable
+  let words: string
+  if (test.state === 'running') words = 'testing…'
+  else if (test.state === 'passed') words = `restored in ${dur(test.restoreMs)}`
+  else if (test.state === 'warned') words = `restored in ${dur(test.restoreMs)}, warnings`
+  else if (test.state === 'failed') words = 'test failed'
+  else words = 'test skipped'
+  return (
+    <Stack gap={2}>
+      <Anchor size={FS.meta} c={TEST_COLOR[test.state]} onClick={() => onReport(test.id)} style={{ whiteSpace: 'nowrap' }}>{words}</Anchor>
+      {good && <Badge size="xs" variant="light" color="teal" radius="sm" leftSection={<IconShieldCheck size={10} />}>last known good</Badge>}
+      {test.state === 'skipped' && readable}
+    </Stack>
+  )
+}
+
+/** One test restore: what ran, each check, and the rows of each table. */
+function TestReportModal({ database, testId, narrow, onClose }: { database: Database; testId: string; narrow: boolean; onClose: () => void }) {
+  const { data: t, error } = useQuery(backupTestQuery(database.id, testId))
+  const r = t?.report
+  const icon = (state: 'ok' | 'warn' | 'fail' | boolean) => {
+    const ok = state === true || state === 'ok'
+    const c = ok ? 'teal' : state === 'warn' ? 'amber' : 'rose'
+    return ok ? <IconCheck size={13} style={{ color: `var(--mantine-color-${c}-6)` }} />
+      : state === 'warn' ? <IconAlertTriangle size={13} style={{ color: `var(--mantine-color-${c}-6)` }} />
+        : <IconX size={13} style={{ color: `var(--mantine-color-${c}-6)` }} />
+  }
+  return (
+    <Modal opened onClose={onClose} centered size="lg" fullScreen={narrow}
+      title={t ? <Group gap="xs"><Text fw={650}>Test restore</Text><Badge size="sm" variant="light" color={TEST_COLOR[t.state]} radius="sm">{TEST_WORD[t.state]}</Badge></Group> : 'Test restore'}>
+      {error && <Alert color="rose" variant="light">{(error as Error).message}</Alert>}
+      {!t && !error && <Loader size="sm" />}
+      {t && r && (
+        <Stack gap="sm">
+          <Text size={FS.meta} c="dimmed">
+            The backup of <b>{absTime(t.backupStartedAt)}</b>, restored on {database.hostname} into <Code>{t.scratchName || '—'}</Code>
+            {' · '}{startedBy({ startedBy: t.startedBy } as DatabaseBackup) === 'Scheduled' ? 'scheduled' : `started by ${t.startedBy}`} {relTime(t.startedAt)}
+          </Text>
+          {t.error && <Alert color={t.state === 'skipped' ? 'slate' : 'rose'} variant="light" p="xs">{t.error}</Alert>}
+          {t.state !== 'running' && t.state !== 'skipped' && (
+            <Group gap="lg" wrap="wrap">
+              <Stat label="Restore took" value={dur(t.restoreMs)} />
+              <Stat label="Tables" value={String(t.tables)} />
+              <Stat label="Rows" value={t.totalRows.toLocaleString()} />
+              <Stat label="Size" value={bytes(t.bytes)} />
+            </Group>
+          )}
+          {(r.checks ?? []).length > 0 && (
+            <Box>
+              <Text size={FS.micro} c="dimmed" mb={4}>Checks</Text>
+              <Table verticalSpacing={4} fz={FS.meta}>
+                <Table.Tbody>
+                  {(r.checks ?? []).map((c, i) => (
+                    <Table.Tr key={i}>
+                      <Table.Td w={22}>{icon(c.state)}</Table.Td>
+                      <Table.Td>{c.name}{c.kind === 'custom' && <Badge size="xs" variant="outline" color="slate" ml={6}>yours</Badge>}</Table.Td>
+                      <Table.Td c="dimmed" ff="monospace" style={{ wordBreak: 'break-word' }}>{c.value}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Box>
+          )}
+          {(r.steps ?? []).length > 0 && (
+            <Box>
+              <Text size={FS.micro} c="dimmed" mb={4}>Steps</Text>
+              <Table verticalSpacing={2} fz={FS.meta}>
+                <Table.Tbody>
+                  {(r.steps ?? []).map((st, i) => (
+                    <Table.Tr key={i}>
+                      <Table.Td w={22}>{icon(st.ok)}</Table.Td>
+                      <Table.Td>{st.name}</Table.Td>
+                      <Table.Td c="dimmed" style={{ wordBreak: 'break-word' }}>{st.detail}</Table.Td>
+                      <Table.Td ff="monospace" ta="right" style={{ whiteSpace: 'nowrap' }}>{dur(st.ms)}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Box>
+          )}
+          {(r.tables ?? []).length > 0 && (
+            <Box>
+              <Text size={FS.micro} c="dimmed" mb={4}>
+                Rows by table{r.tablesTotal > (r.tables ?? []).length ? `, the ${(r.tables ?? []).length} largest of ${r.tablesTotal}` : ''}
+                {r.previousId ? ', against the last passing test' : ''}
+              </Text>
+              <ScrollArea.Autosize mah={260} type="auto">
+                <Table verticalSpacing={2} fz={FS.meta} stickyHeader>
+                  <Table.Thead><Table.Tr><Table.Th>Table</Table.Th><Table.Th ta="right">Rows</Table.Th>{r.previousId && <Table.Th ta="right">Before</Table.Th>}</Table.Tr></Table.Thead>
+                  <Table.Tbody>
+                    {(r.tables ?? []).map((x) => {
+                      const shrunk = x.previous !== undefined && x.rows < x.previous / 2
+                      return (
+                        <Table.Tr key={x.name}>
+                          <Table.Td ff="monospace">{x.name}</Table.Td>
+                          <Table.Td ff="monospace" ta="right" c={x.rows < 0 ? 'amber' : shrunk ? 'amber' : undefined}>{x.rows < 0 ? 'not counted' : x.rows.toLocaleString()}</Table.Td>
+                          {r.previousId && <Table.Td ff="monospace" ta="right" c="dimmed">{x.previous === undefined ? '—' : x.previous.toLocaleString()}</Table.Td>}
+                        </Table.Tr>
+                      )
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea.Autosize>
+            </Box>
+          )}
+          <Text size={FS.micro} c="dimmed">
+            {t.state === 'running' ? 'The copy is dropped when the test ends, whatever happens.'
+              : t.scratchDropped || !t.scratchName ? 'The copy was dropped. Only these numbers are kept, never rows.'
+                : `The copy ${t.scratchName} could not be dropped yet; Argus keeps trying.`}
+          </Text>
+        </Stack>
+      )}
+    </Modal>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <Box>
+      <Text size={FS.micro} c="dimmed">{label}</Text>
+      <Text fw={650} size={FS.body} ff="monospace">{value}</Text>
+    </Box>
+  )
 }
 
 /** The copies a replace kept, with the way back. */
@@ -283,11 +527,22 @@ function KeptCopies({ restores, database, dba }: { restores: DatabaseRestore[]; 
   )
 }
 
-function BackupTable({ view, database, level, onRestore }: {
-  view: BackupsView; database: Database; level: DBLevel | ''; onRestore: (b: DatabaseBackup) => void
+function BackupTable({ view, database, level, onRestore, onReport }: {
+  view: BackupsView; database: Database; level: DBLevel | ''; onRestore: (b: DatabaseBackup) => void; onReport: (id: string) => void
 }) {
   const pin = usePinBackup()
   const del = useDeleteBackup()
+  const test = useTestBackup()
+  const latestTest = new Map<string, BackupTest>()
+  for (const t of view.tests ?? []) if (!latestTest.has(t.backupId)) latestTest.set(t.backupId, t)
+  const onTest = async (b: DatabaseBackup) => {
+    try {
+      await test.mutateAsync({ id: database.id, backupId: b.id })
+      notifyOk('Test-restoring', `The backup is being restored into a throwaway copy on ${database.hostname}, checked, and dropped.`)
+    } catch (err) {
+      notifyError('Not started', err)
+    }
+  }
   const dba = level === 'dba'
   const canRestore = atLeast(level, 'owner')
   const rows = view.backups.filter((b) => b.state !== 'running')
@@ -320,7 +575,7 @@ function BackupTable({ view, database, level, onRestore }: {
   return (
     <Table verticalSpacing="xs" style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
       <Table.Thead><Table.Tr>
-        <Table.Th>Backup</Table.Th><Table.Th>State</Table.Th><Table.Th>Size</Table.Th><Table.Th>Where</Table.Th><Table.Th>Verified</Table.Th><Table.Th></Table.Th>
+        <Table.Th>Backup</Table.Th><Table.Th>State</Table.Th><Table.Th>Size</Table.Th><Table.Th>Where</Table.Th><Table.Th>Tested</Table.Th><Table.Th></Table.Th>
       </Table.Tr></Table.Thead>
       <Table.Tbody>
         {rows.map((b) => (
@@ -337,9 +592,7 @@ function BackupTable({ view, database, level, onRestore }: {
             <Table.Td><Text size={FS.meta}>{b.state === 'done' ? bytes(b.bytes) : '—'}</Text></Table.Td>
             <Table.Td><Text size={FS.meta} c="dimmed">{b.state === 'done' ? whereIs(b) : '—'}</Text></Table.Td>
             <Table.Td>
-              {b.state !== 'done' ? <Text size={FS.meta} c="dimmed">—</Text> : b.verified
-                ? <Group gap={4} wrap="nowrap"><IconCheck size={12} style={{ color: 'var(--mantine-color-teal-6)' }} /><Text size={FS.meta} c="teal">readable</Text></Group>
-                : <Text size={FS.meta} c="amber">not checked</Text>}
+              <TestedCell b={b} test={latestTest.get(b.id)} good={view.lastGood?.backupId === b.id} onReport={onReport} />
             </Table.Td>
             <Table.Td>
               {b.state === 'done' && (
@@ -352,6 +605,10 @@ function BackupTable({ view, database, level, onRestore }: {
                     <Menu position="bottom-end" withinPortal>
                       <Menu.Target><ActionIcon variant="subtle" size="sm" aria-label="More"><IconDotsVertical size={14} /></ActionIcon></Menu.Target>
                       <Menu.Dropdown>
+                        <Menu.Item leftSection={<IconFlask size={14} />} disabled={Boolean(view.testing) || Boolean(view.running) || !database.tunnelConnected}
+                          onClick={() => void onTest(b)}>
+                          Test restore: restore a copy, check it, drop it
+                        </Menu.Item>
                         <Menu.Item leftSection={b.pinned ? <IconPinnedOff size={14} /> : <IconPin size={14} />} onClick={() => void onPin(b)}>
                           {b.pinned ? 'Unpin' : 'Pin: keep it past retention'}
                         </Menu.Item>
@@ -508,7 +765,9 @@ export function BackupSettings({ db }: { db: Database }) {
     try {
       await set.mutateAsync({ id: db.id, ...pick(s) })
       setForm(null)
-      notifyOk('Saved', s.enabled ? `${describeSchedule(s)}, keeping the last ${s.keepLast}.` : 'Nothing runs on its own. Backups on demand still work.')
+      notifyOk('Saved', s.enabled
+        ? `${describeSchedule(s)}, keeping the last ${s.keepLast}${s.testEvery !== 'off' ? `; ${describeTests(s)}` : ''}.`
+        : 'Nothing runs on its own. Backups on demand still work.')
     } catch (err) {
       notifyError('Not saved', err)
     }
@@ -521,7 +780,7 @@ export function BackupSettings({ db }: { db: Database }) {
           <Group align="flex-end" gap="md">
             <Box>
               <Text size={FS.micro} c="dimmed" mb={4}>Every</Text>
-              <SegmentedControl value={s.every} onChange={(v) => patch({ every: v as BackupSchedule['every'] })}
+              <SegmentedControl value={s.every} onChange={(v) => patch({ every: v as BackupSchedule['every'], ...(v === 'hourly' && s.testEvery === 'after' ? { testEvery: 'daily' as const } : {}) })}
                 data={[{ label: 'hour', value: 'hourly' }, { label: 'day', value: 'daily' }, { label: 'week', value: 'weekly' }]} disabled={!s.enabled} />
             </Box>
             {s.every === 'weekly' && (
@@ -546,6 +805,7 @@ export function BackupSettings({ db }: { db: Database }) {
             A run missed while the agent is offline happens when it is back, if less than 6 hours late; three misses in a row are flagged on the list.
           </Text>
         </SectionCard>
+        <TestRestoreSettings s={s} saved={saved!} dirty={dirty} db={db} patch={patch} />
         <SectionCard title="Keep">
           <Group align="flex-end" gap="md">
             <NumberInput label="Last" value={s.keepLast} onChange={(v) => patch({ keepLast: Number(v) || 1 })} min={1} max={1000} w={120} suffix=" runs" />
@@ -602,7 +862,122 @@ export function BackupSettings({ db }: { db: Database }) {
 }
 
 function pick(s: BackupSchedule) {
-  return { enabled: s.enabled, every: s.every, atHour: s.atHour, atMinute: s.atMinute, weekday: s.weekday, destination: s.destination, keepLast: s.keepLast, keepDays: s.keepDays }
+  return {
+    enabled: s.enabled, every: s.every, atHour: s.atHour, atMinute: s.atMinute, weekday: s.weekday, destination: s.destination, keepLast: s.keepLast, keepDays: s.keepDays,
+    testEvery: s.testEvery, testHour: s.testHour, testMinute: s.testMinute, testWeekday: s.testWeekday,
+    testChecks: (s.testChecks ?? []).map((c) => ({ name: c.name, sql: c.sql })),
+  }
+}
+
+const MAX_CHECKS = 20
+
+/** When to test-restore, and the admin's own checks on the restored copy. */
+function TestRestoreSettings({ s, saved, dirty, db, patch }: {
+  s: BackupSchedule; saved: BackupSchedule; dirty: boolean; db: Database; patch: (p: Partial<BackupSchedule>) => void
+}) {
+  const tryChecks = useTryBackupChecks()
+  const [tried, setTried] = useState<CheckResult[] | null>(null)
+  const checks = s.testChecks ?? []
+  const setChecks = (c: TestCheck[]) => { setTried(null); patch({ testChecks: c }) }
+  const off = s.testEvery === 'off'
+  const at = `${String(s.testHour).padStart(2, '0')}:${String(s.testMinute).padStart(2, '0')}`
+  const onTry = async () => {
+    try {
+      const r = await tryChecks.mutateAsync({ id: db.id, checks: checks.filter((c) => c.sql.trim()) })
+      setTried(r.checks)
+    } catch (err) {
+      notifyError('Checks not run', err)
+    }
+  }
+  return (
+    <SectionCard title="Test restores">
+      <Text size={FS.meta} c="dimmed" mb="sm">
+        Restores a backup into a throwaway database on {db.hostname}, counts every table, checks the indexes and your checks below, times it, and
+        drops it. Runs at low priority, one at a time, and only if the server has room. A failure alerts admins.
+      </Text>
+      <Group align="flex-end" gap="md">
+        <Box>
+          <Text size={FS.micro} c="dimmed" mb={4}>Test</Text>
+          <SegmentedControl value={s.testEvery} onChange={(v) => patch({ testEvery: v as BackupSchedule['testEvery'] })}
+            data={[
+              { label: 'off', value: 'off' },
+              { label: 'after every backup', value: 'after', disabled: s.every === 'hourly' },
+              { label: 'daily', value: 'daily' },
+              { label: 'weekly', value: 'weekly' },
+            ]} />
+        </Box>
+        {s.testEvery === 'weekly' && (
+          <Box>
+            <Text size={FS.micro} c="dimmed" mb={4}>On</Text>
+            <SegmentedControl value={String(s.testWeekday)} onChange={(v) => patch({ testWeekday: Number(v) })}
+              data={['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => ({ label: d, value: String(i) }))} />
+          </Box>
+        )}
+        {(s.testEvery === 'daily' || s.testEvery === 'weekly') && (
+          <TextInput key={`${s.testEvery}-${saved.testHour}-${saved.testMinute}`} label="At" w={110} ff="monospace" defaultValue={at}
+            onChange={(e) => {
+              const m = /^(\d{1,2}):(\d{2})$/.exec(e.currentTarget.value)
+              if (m && Number(m[1]) < 24 && Number(m[2]) < 60) patch({ testHour: Number(m[1]), testMinute: Number(m[2]) })
+            }} />
+        )}
+      </Group>
+      <Text size={FS.micro} c="dimmed" mt="sm">
+        {s.every === 'hourly' && 'After every backup is not offered with hourly backups; test daily or weekly instead. '}
+        {s.testEvery === 'after' && 'The newest backup is tested a minute after each scheduled run. '}
+        {!off && !dirty && saved.testNextAt ? `Next test ${absTime(saved.testNextAt)}. ` : ''}
+        {!off && 'The newest backup not tested yet is the one tested. If none passes for twice the interval and a day more, admins are alerted.'}
+        {off && 'Off: backups are only checked as readable by pg_restore, which does not prove they restore.'}
+      </Text>
+
+      <Box mt="md">
+        <Group justify="space-between" mb={4}>
+          <Text size={FS.micro} c="dimmed">Your checks · each one SELECT, run read only on the restored copy; true or a non-zero number passes</Text>
+        </Group>
+        <Stack gap="xs">
+          {checks.map((c, i) => {
+            const r = tried?.find((x) => x.name === c.name)
+            return (
+              <Box key={i} p="xs" style={{ border: '1px solid var(--color-line)', borderRadius: 6 }}>
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <Stack gap={6} style={{ flex: 1, minWidth: 0 }}>
+                    <TextInput size="xs" placeholder="Orders this year" value={c.name} maxLength={80} aria-label="Check name"
+                      onChange={(e) => setChecks(checks.map((x, j) => (j === i ? { ...x, name: e.currentTarget.value } : x)))} />
+                    <Textarea size="xs" ff="monospace" autosize minRows={1} maxLength={2000} aria-label="Check SQL"
+                      placeholder="SELECT count(*) > 0 FROM orders WHERE created_at > now() - interval '1 year'" value={c.sql}
+                      onChange={(e) => setChecks(checks.map((x, j) => (j === i ? { ...x, sql: e.currentTarget.value } : x)))} />
+                    {r && (
+                      <Group gap={4} wrap="nowrap">
+                        {r.ok ? <IconCheck size={12} style={{ color: 'var(--mantine-color-teal-6)' }} /> : <IconX size={12} style={{ color: 'var(--mantine-color-rose-6)' }} />}
+                        <Text size={FS.micro} c={r.ok ? 'teal' : 'rose'} ff="monospace" lineClamp={2}>
+                          {r.error ? r.error : `${r.value ?? ''} on the live database now`}
+                        </Text>
+                      </Group>
+                    )}
+                  </Stack>
+                  <ActionIcon variant="subtle" color="slate" aria-label="Remove check" onClick={() => setChecks(checks.filter((_, j) => j !== i))}>
+                    <IconTrash size={14} />
+                  </ActionIcon>
+                </Group>
+              </Box>
+            )
+          })}
+        </Stack>
+        <Group gap="xs" mt="xs">
+          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} disabled={checks.length >= MAX_CHECKS}
+            onClick={() => setChecks([...checks, { name: '', sql: '' }])}>
+            Add a check
+          </Button>
+          {checks.length > 0 && (
+            <Button size="compact-xs" variant="subtle" onClick={() => void onTry()} loading={tryChecks.isPending}
+              disabled={!db.tunnelConnected || checks.some((c) => !c.name.trim() || !c.sql.trim())}>
+              Try them on the live database
+            </Button>
+          )}
+          <Text size={FS.micro} c="dimmed">Trying is read only and audited.</Text>
+        </Group>
+      </Box>
+    </SectionCard>
+  )
 }
 
 /** The databases list's column. */

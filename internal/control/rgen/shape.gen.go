@@ -332,6 +332,39 @@ func _assertDatabaseBackupScheduleShape(m m0.DatabaseBackupSchedule) {
 		m.Misses,
 		m.UpdatedBy,
 		m.UpdatedAt,
+		m.TestEvery,
+		m.TestHour,
+		m.TestMinute,
+		m.TestWeekday,
+		m.TestNextAt,
+		m.TestChecks,
+		m.TestOverdueAt,
+	}
+}
+
+// _assertDatabaseBackupTestShape fails to compile if m0.DatabaseBackupTest gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseBackupTestShape(m m0.DatabaseBackupTest) {
+	type shape m0.DatabaseBackupTest
+	_ = shape{
+		m.ID,
+		m.Backup,
+		m.Database,
+		m.StartedBy,
+		m.State,
+		m.Stage,
+		m.Detail,
+		m.Error,
+		m.ScratchName,
+		m.ScratchDropped,
+		m.RestoreMs,
+		m.Tables,
+		m.TotalRows,
+		m.Bytes,
+		m.Report,
+		m.StartedAt,
+		m.FinishedAt,
+		m.ReportedAt,
 	}
 }
 

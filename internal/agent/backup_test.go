@@ -451,3 +451,160 @@ func TestCatalogAndPrune(t *testing.T) {
 		t.Fatal("the pruned file is still listed")
 	}
 }
+
+func testGrant(from tunnel.Grant, file, dk []byte, scratch, source string, checks []tunnel.TestCheck) tunnel.Grant {
+	g := backupGrant(tunnel.BackupJobTest, from.Backup.Host, from.Backup.Port, from.Backup.Name)
+	g.Backup.DataKey = base64.StdEncoding.EncodeToString(dk)
+	g.Backup.SHA256 = tunnel.SHA256Hex(file)
+	g.Backup.Test = &tunnel.GrantTest{Scratch: scratch, Source: source}
+	g.Backup.Checks = checks
+	return g
+}
+
+func TestTestRestoreRestoresCountsChecksAndDrops(t *testing.T) {
+	dsn, host, port, dbname := backupTest(t)
+	svc, pub, key := newBackupService(t, dsn, t.TempDir())
+	mustExec(t, dsn, `CREATE TABLE IF NOT EXISTS backup_probe (id int PRIMARY KEY, note text)`)
+	mustExec(t, dsn, `INSERT INTO backup_probe SELECT g, 'row' FROM generate_series(1, 25) g ON CONFLICT DO NOTHING`)
+	g, file, dk := dumpFor(t, svc, pub, key, host, port, dbname)
+	want := queryOne(t, dsn, `SELECT count(*) FROM backup_probe`)
+
+	scratch := fmt.Sprintf("argus_test_%08x", time.Now().UnixNano()&0xffffffff)
+	maint := withDB(dsn, "postgres")
+	t.Cleanup(func() { mustExec(t, maint, "DROP DATABASE IF EXISTS "+scratch) })
+	h := runJob(t, svc, pub, key, testGrant(g, file, dk, scratch, "local", []tunnel.TestCheck{
+		{Name: "Probe rows", SQL: "SELECT count(*) FROM backup_probe"},
+		{Name: "Nothing", SQL: "SELECT count(*) FROM backup_probe WHERE id < 0"},
+		// A read-only transaction stops a check that writes, whatever it
+		// looks like.
+		{Name: "Sneaky", SQL: "SELECT pg_catalog.set_config('x.y', 'z', false) IS NOT NULL AND nextval('nope') > 0"},
+	}), nil)
+	if !h.answer.OK {
+		t.Fatalf("refused: %s", h.answer.Error)
+	}
+	if !h.result.OK {
+		t.Fatalf("test restore failed at %s: %s (%+v)", h.result.Stage, h.result.Error, h.result.Test)
+	}
+	tr := h.result.Test
+	if tr == nil || tr.Data == nil {
+		t.Fatalf("no numbers in the result: %+v", h.result)
+	}
+	if !tr.Dropped {
+		t.Fatal("the test copy was not dropped")
+	}
+	if got := queryOne(t, maint, `SELECT count(*) FROM pg_database WHERE datname = '`+scratch+`'`); got != "0" {
+		t.Fatal("the test copy is still there")
+	}
+	var probe int64 = -2
+	for _, tb := range tr.Data.Tables {
+		if tb.Name == "public.backup_probe" {
+			probe = tb.Rows
+		}
+	}
+	if fmt.Sprint(probe) != want {
+		t.Fatalf("counted %d rows in the copy, the source has %s", probe, want)
+	}
+	found := false
+	for _, e := range tr.Expected {
+		found = found || e == "public.backup_probe"
+	}
+	if !found {
+		t.Fatalf("the table of contents does not list the table: %v", tr.Expected)
+	}
+	if tr.RestoreMS <= 0 || len(tr.Steps) < 5 {
+		t.Fatalf("steps or time missing: %+v", tr)
+	}
+	byName := map[string]tunnel.CheckResult{}
+	for _, c := range tr.Data.Checks {
+		byName[c.Name] = c
+	}
+	if c := byName["Probe rows"]; !c.OK || c.Value != want {
+		t.Fatalf("Probe rows: %+v", c)
+	}
+	if c := byName["Nothing"]; c.OK || c.Value != "0" {
+		t.Fatalf("a zero count passed: %+v", c)
+	}
+	if c := byName["Sneaky"]; c.OK || c.Error == "" {
+		t.Fatalf("a check that writes passed: %+v", c)
+	}
+	// The live database was never touched.
+	if got := queryOne(t, dsn, `SELECT count(*) FROM backup_probe`); got != want {
+		t.Fatalf("the source changed: %s", got)
+	}
+}
+
+func TestTestRestoreRefusesNamesThatAreNotTestCopies(t *testing.T) {
+	dsn, host, port, dbname := backupTest(t)
+	svc, pub, key := newBackupService(t, dsn, t.TempDir())
+	g, file, dk := dumpFor(t, svc, pub, key, host, port, dbname)
+	for _, name := range []string{dbname, "postgres", "argus_test_", "argus_test_zzzzzzzz", "orders_before_restore_x"} {
+		h := runJob(t, svc, pub, key, testGrant(g, file, dk, name, "local", nil), nil)
+		if h.answer.OK {
+			t.Fatalf("a test restore into %q was accepted", name)
+		}
+		d := backupGrant(tunnel.BackupJobDropTest, host, port, dbname)
+		d.Backup.Kept = name
+		if h := runJob(t, svc, pub, key, d, nil); h.answer.OK {
+			t.Fatalf("a drop of %q as a test copy was accepted", name)
+		}
+	}
+	// And a restore into a new database cannot take a test copy's name.
+	rg := restoreGrant(g, file, dk, tunnel.GrantRestore{Mode: tunnel.RestoreNew, NewName: "argus_test_0000abcd", Source: "local"})
+	if h := runJob(t, svc, pub, key, rg, nil); h.answer.OK {
+		t.Fatal("a restore took a test copy's name")
+	}
+}
+
+func TestChecksJobRunsReadOnlyAgainstTheLiveDatabase(t *testing.T) {
+	dsn, host, port, dbname := backupTest(t)
+	svc, pub, key := newBackupService(t, dsn, t.TempDir())
+	mustExec(t, dsn, `CREATE TABLE IF NOT EXISTS backup_probe (id int PRIMARY KEY, note text)`)
+	g := backupGrant(tunnel.BackupJobChecks, host, port, dbname)
+	g.Backup.Checks = []tunnel.TestCheck{{Name: "exists", SQL: "SELECT true"}, {Name: "typo", SQL: "SELECT count(*) FROM no_such_table"}}
+	h := runJob(t, svc, pub, key, g, nil)
+	if !h.answer.OK || !h.result.OK || len(h.result.Checks) != 2 {
+		t.Fatalf("checks job: %+v %+v", h.answer, h.result)
+	}
+	if !h.result.Checks[0].OK || h.result.Checks[1].OK || !strings.Contains(h.result.Checks[1].Error, "no_such_table") {
+		t.Fatalf("checks: %+v", h.result.Checks)
+	}
+	// A write is refused before it reaches Postgres.
+	g.Backup.Checks = []tunnel.TestCheck{{Name: "w", SQL: "DELETE FROM backup_probe"}}
+	if h := runJob(t, svc, pub, key, g, nil); h.answer.OK {
+		t.Fatal("a DELETE was accepted as a check")
+	}
+}
+
+func TestServerJobsLetATestRunAlone(t *testing.T) {
+	var s serverJobs
+	if !s.take("a") || s.take("a") {
+		t.Fatal("one job per database")
+	}
+	if s.takeAlone("b") {
+		t.Fatal("a test started beside another job")
+	}
+	s.give("a")
+	if !s.takeAlone("b") {
+		t.Fatal("a test could not start on an idle server")
+	}
+	if s.take("c") || s.takeAlone("c") {
+		t.Fatal("a job started beside a test")
+	}
+	s.give("b")
+	if !s.take("c") {
+		t.Fatal("the server stayed busy after the test")
+	}
+}
+
+func TestTOCDataTables(t *testing.T) {
+	list := `;
+; Archive created at 2026-11-04 04:00:00 UTC
+3360; 0 16390 TABLE DATA public orders postgres
+3361; 0 16391 TABLE DATA billing Order Items postgres
+215; 1259 16386 TABLE public orders postgres
+`
+	got := tocDataTables(list)
+	if len(got) != 2 || got[0] != "public.orders" || got[1] != "billing.Order Items" {
+		t.Fatalf("got %q", got)
+	}
+}

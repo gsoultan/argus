@@ -88,6 +88,16 @@ func (a *API) getBackups(w http.ResponseWriter, r *http.Request, _ string, db Da
 		a.fail(w, "restores", err)
 		return
 	}
+	tests, err := a.store.BackupTests(r.Context(), db.ID, 50)
+	if err != nil {
+		a.fail(w, "test restores", err)
+		return
+	}
+	lastGood, err := a.store.LastGoodTest(r.Context(), db.ID)
+	if err != nil {
+		a.fail(w, "test restores", err)
+		return
+	}
 	var running *DatabaseBackup
 	for i := range list {
 		if list[i].State == "running" {
@@ -95,11 +105,134 @@ func (a *API) getBackups(w http.ResponseWriter, r *http.Request, _ string, db Da
 			break
 		}
 	}
+	var testing *BackupTest
+	for i := range tests {
+		// The list is for the table: the per-table counts are in the one
+		// test's own route.
+		tests[i].Report.Tables = nil
+		if tests[i].State == "running" && testing == nil {
+			testing = &tests[i]
+		}
+	}
+	if lastGood != nil {
+		lastGood.Report.Tables = nil
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"backups": list, "running": running, "schedule": sched, "restores": restores, "level": level,
+		"tests": tests, "testing": testing, "lastGood": lastGood,
 		"storage":     a.backupStore(r.Context()) != nil,
 		"staleAfterS": 60,
 	})
+}
+
+// GET /api/v1/databases/{id}/backup-tests/{test}: one test, with its report.
+func (a *API) getBackupTest(w http.ResponseWriter, r *http.Request, _ string, db Database, _ string) {
+	t, err := a.store.BackupTest(r.Context(), r.PathValue("test"))
+	if err != nil || t.DatabaseID != db.ID {
+		writeErr(w, http.StatusNotFound, "no such test restore")
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// POST /api/v1/databases/{id}/backups/{backup}/test: test-restore it now.
+func (a *API) postBackupTest(w http.ResponseWriter, r *http.Request, email string, db Database, _ string) {
+	b, err := a.store.Backup(r.Context(), r.PathValue("backup"))
+	if err != nil || b.DatabaseID != db.ID {
+		writeErr(w, http.StatusNotFound, "no such backup")
+		return
+	}
+	if b.State != "done" {
+		writeErr(w, http.StatusConflict, "only a finished backup can be tested")
+		return
+	}
+	if !db.TunnelConnected {
+		writeErr(w, http.StatusConflict, "the agent on "+db.Hostname+" is not connected, so nothing can run there")
+		return
+	}
+	if busy, err := a.store.HostBusy(r.Context(), db.AssetID); err != nil {
+		a.fail(w, "test restore", err)
+		return
+	} else if busy {
+		writeErr(w, http.StatusConflict, ErrHostBusy.Error())
+		return
+	}
+	go func() {
+		if _, err := a.RunBackupTest(context.WithoutCancel(r.Context()), db, b, email); err != nil {
+			a.log.Warn("test restore did not pass", "database", db.ID, "by", email, "error", err)
+		}
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if list, err := a.store.BackupTests(r.Context(), db.ID, 1); err == nil && len(list) > 0 &&
+			list[0].State == "running" && list[0].BackupID == b.ID {
+			writeJSON(w, http.StatusAccepted, list[0])
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"state": "starting"})
+}
+
+// POST /api/v1/databases/{id}/backup-tests/{test}/cancel
+func (a *API) postBackupTestCancel(w http.ResponseWriter, r *http.Request, email string, db Database, _ string) {
+	t, err := a.store.BackupTest(r.Context(), r.PathValue("test"))
+	if err != nil || t.DatabaseID != db.ID {
+		writeErr(w, http.StatusNotFound, "no such test restore")
+		return
+	}
+	if !a.jobs.cancel(t.ID) {
+		writeErr(w, http.StatusConflict, "this test restore is not running on this control plane")
+		return
+	}
+	a.auditDB(r.Context(), "db.backup_test_cancelled", "notice", email, db.Hostname,
+		"Test restore "+t.ID+" of "+db.Name+" cancelled; its copy is dropped.")
+	writeJSON(w, http.StatusOK, map[string]string{"state": "cancelling"})
+}
+
+// POST /api/v1/databases/{id}/backup-checks (admin): run checks against the
+// live database, read only, so a typo shows when the check is saved.
+func (a *API) postBackupChecks(w http.ResponseWriter, r *http.Request, actor string) {
+	db, err := a.store.Database(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.dbErr(w, "database", err)
+		return
+	}
+	if db.Engine != tunnel.EnginePostgres {
+		writeErr(w, http.StatusBadRequest, "checks are for Postgres databases; "+db.Name+" is "+engineName(db.Engine))
+		return
+	}
+	var in struct {
+		Checks []tunnel.TestCheck `json:"checks"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(in.Checks) == 0 {
+		writeErr(w, http.StatusBadRequest, "there are no checks to run")
+		return
+	}
+	if err := tunnel.ValidateTestChecks(in.Checks); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !db.TunnelConnected {
+		writeErr(w, http.StatusConflict, "the agent on "+db.Hostname+" is not connected, so the checks cannot be tried")
+		return
+	}
+	names := make([]string, len(in.Checks))
+	for i, c := range in.Checks {
+		names[i] = fmt.Sprintf("%q: %s", c.Name, c.SQL)
+	}
+	a.auditDB(r.Context(), "db.backup_checks_tried", "notice", actor, db.Hostname,
+		fmt.Sprintf("Tried test restore checks on %s, read only: %s.", db.Name, strings.Join(names, "; ")))
+	res, err := a.runChecks(r.Context(), actor, db, in.Checks)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"checks": res})
 }
 
 // GET /api/v1/databases/{id}/backups/catalog: what the server can do.
@@ -287,6 +420,12 @@ func (a *API) putBackupSchedule(w http.ResponseWriter, r *http.Request, actor st
 		Destination string `json:"destination"`
 		KeepLast    int    `json:"keepLast"`
 		KeepDays    int    `json:"keepDays"`
+		// The test restore schedule; left out, it stays as it was.
+		TestEvery   *string             `json:"testEvery"`
+		TestHour    *int                `json:"testHour"`
+		TestMinute  *int                `json:"testMinute"`
+		TestWeekday *int                `json:"testWeekday"`
+		TestChecks  *[]tunnel.TestCheck `json:"testChecks"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -297,9 +436,32 @@ func (a *API) putBackupSchedule(w http.ResponseWriter, r *http.Request, actor st
 		return
 	}
 	before, _ := a.store.BackupSchedule(r.Context(), db.ID)
-	out, err := a.store.SetBackupSchedule(r.Context(), BackupSchedule{DatabaseID: db.ID, Enabled: in.Enabled, Every: in.Every,
+	next := BackupSchedule{DatabaseID: db.ID, Enabled: in.Enabled, Every: in.Every,
 		AtHour: in.AtHour, AtMinute: in.AtMinute, Weekday: in.Weekday, Destination: in.Destination,
-		KeepLast: in.KeepLast, KeepDays: in.KeepDays}, actor)
+		KeepLast: in.KeepLast, KeepDays: in.KeepDays,
+		TestEvery: before.TestEvery, TestHour: before.TestHour, TestMinute: before.TestMinute,
+		TestWeekday: before.TestWeekday, TestChecks: before.TestChecks}
+	if !before.Exists && in.TestEvery == nil {
+		// An older console saving a first schedule: tests stay off until
+		// someone turns them on.
+		next.TestEvery = "off"
+	}
+	if in.TestEvery != nil {
+		next.TestEvery = *in.TestEvery
+	}
+	if in.TestHour != nil {
+		next.TestHour = *in.TestHour
+	}
+	if in.TestMinute != nil {
+		next.TestMinute = *in.TestMinute
+	}
+	if in.TestWeekday != nil {
+		next.TestWeekday = *in.TestWeekday
+	}
+	if in.TestChecks != nil {
+		next.TestChecks = *in.TestChecks
+	}
+	out, err := a.store.SetBackupSchedule(r.Context(), next, actor)
 	if err != nil {
 		a.dbErr(w, "backup schedule", err)
 		return
@@ -308,7 +470,45 @@ func (a *API) putBackupSchedule(w http.ResponseWriter, r *http.Request, actor st
 		fmt.Sprintf("Backup schedule of %s changed: was %s (keep %d, %s), now %s (keep %d%s, %s).", db.Name,
 			before.Describe(), before.KeepLast, before.Destination, out.Describe(), out.KeepLast,
 			map[bool]string{true: fmt.Sprintf(" and %d days", out.KeepDays), false: ""}[out.KeepDays > 0], out.Destination))
+	if before.TestEvery != out.TestEvery || before.TestHour != out.TestHour || before.TestMinute != out.TestMinute ||
+		before.TestWeekday != out.TestWeekday || !sameChecks(before.TestChecks, out.TestChecks) {
+		a.auditDB(r.Context(), "db.backup_test_schedule_changed", "notice", actor, db.Hostname,
+			fmt.Sprintf("Test restores of %s changed: were %s with checks %s, now %s with checks %s.", db.Name,
+				describeTestsOf(before), describeChecks(before.TestChecks), out.DescribeTests(), describeChecks(out.TestChecks)))
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// describeTestsOf is "off" for a schedule never saved: its tests are a
+// default the console offers, not something that ran.
+func describeTestsOf(s BackupSchedule) string {
+	if !s.Exists {
+		return "off"
+	}
+	return s.DescribeTests()
+}
+
+func sameChecks(a, b []tunnel.TestCheck) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func describeChecks(c []tunnel.TestCheck) string {
+	if len(c) == 0 {
+		return "none of the admins'"
+	}
+	parts := make([]string, len(c))
+	for i, x := range c {
+		parts[i] = fmt.Sprintf("%q: %s", x.Name, x.SQL)
+	}
+	return "[" + strings.Join(parts, "; ") + "]"
 }
 
 // POST /api/v1/databases/{id}/backups/{backup}/restore
