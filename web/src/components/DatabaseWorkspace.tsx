@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, SegmentedControl, Stack, Tabs, Text,
-  Textarea, TextInput, Tooltip, UnstyledButton,
+  TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
-  IconArrowsExchange, IconArchive, IconDots, IconStar,
+  IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease,
 } from '@tabler/icons-react'
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
-import { useCompletion } from '~/components/Autocomplete'
+import { QueryParams } from '~/components/QueryParams'
+import { SqlEditor, pgErrorOffset, type EditorError, type SqlEditorHandle } from '~/components/SqlEditor'
+import { bindParams, originalOffset, paramNames, type Bound } from '~/lib/sqlParams'
 import { catalogFrom, completeSQL, type SQLCatalog, type SQLColumn } from '~/lib/sqlComplete'
 import {
   ActivityPanel, RolesPanel, type Admin, type AdminOp, type AdminResult, type Collect, type Collected,
@@ -149,8 +151,10 @@ const KIND_ICON: Record<string, typeof IconTable> = {
 }
 
 type Job =
-  | { tab: string; kind: 'run'; text: string; maxRows: number; confirm?: string }
-  | { tab: string; kind: 'explain'; text: string; mode: PlanRun['mode'] }
+  // text is what the person wrote; bound is what is sent (its :names as $n,
+  // with their values); at is where text begins in the editor.
+  | { tab: string; kind: 'run'; text: string; maxRows: number; confirm?: string; bound: Bound; at: number }
+  | { tab: string; kind: 'explain'; text: string; mode: PlanRun['mode']; bound: Bound }
 
 const DEFAULT_H = { wide: 170, narrow: 110 }
 
@@ -199,6 +203,10 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const [renaming, setRenaming] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [writeCheck, setWriteCheck] = useState<WriteCheckState | null>(null)
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  // Where Postgres said each tab's last statement failed, until it is edited.
+  const [marks, setMarks] = useState<Record<string, EditorError | null>>({})
   const result = results[tab.key] ?? null
   const plan = plans[tab.key]
   const resultView = shown[tab.key] ?? 'results'
@@ -208,6 +216,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }, [])
   const setSql = useCallback((v: string) => {
     patchTab(activeRef.current, (t) => ({ ...t, sql: v, name: t.named ? t.name : (nameFromSQL(v) ?? t.name) }))
+    setMarks((m) => (m[activeRef.current] ? { ...m, [activeRef.current]: null } : m))
   }, [patchTab])
 
   const failPendingRef = useRef<() => void>(() => {})
@@ -337,7 +346,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // collect runs one statement for a panel and resolves with everything it
   // returned. Recorded like any other statement; it is one. onId hears the
   // request id, so a plan in progress can be cancelled.
-  const collectWithId = useCallback((text: string, max = 1000, onId?: (id: number) => void) => new Promise<Collected>((resolve) => {
+  const collectWithId = useCallback((text: string, max = 1000, onId?: (id: number) => void, params?: (string | null)[]) => new Promise<Collected>((resolve) => {
     const id = nextId.current++
     onId?.(id)
     const c: Collected = { cols: [], rows: [] }
@@ -352,7 +361,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       if (a.type !== 'done') c.error = { error: a.error, code: a.code }
       resolve(c)
     })
-    if (!send({ id, op: 'run', sql: text, maxRows: max })) {
+    if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined })) {
       pending.current.delete(id)
       collectors.current.delete(id)
       resolve({ cols: [], rows: [], error: { error: 'the session ended' } })
@@ -414,12 +423,18 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       if (a.type === 'done') r.done = a
       else r.error = a
       setResults((prev) => ({ ...prev, [job.tab]: { ...r } }))
+      if (a.type === 'error' && a.position) {
+        const b = job.bound
+        const from = pgErrorOffset(b.sql, a.position, job.at, (o) => originalOffset(b, o))
+        setMarks((m) => ({ ...m, [job.tab]: { from, message: a.error ?? 'Postgres refused this' } }))
+      }
       if (a.type === 'error' && a.guard) openGuard(stmt, job.tab, a.guard)
       txOpen.current = txAfter(txOpen.current, stmt, a.type === 'done')
       setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
       finished()
     })
-    if (!send({ id, op: 'run', sql: stmt, maxRows: job.maxRows, confirm: job.confirm })) {
+    const b = job.bound
+    if (!send({ id, op: 'run', sql: b.sql, maxRows: job.maxRows, confirm: job.confirm, params: b.params.length ? b.params : undefined })) {
       pending.current.delete(id)
       live.current.delete(id)
       finished()
@@ -457,8 +472,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           return
         }
       }
-      const stmt = explainSQL(job.text, job.mode)
-      const r = await collectWithId(stmt, 20000, track)
+      const stmt = explainSQL(job.bound.sql, job.mode)
+      const r = await collectWithId(stmt, 20000, track, job.bound.params)
       if (wrap) await collectWithId('ROLLBACK', 1, track)
       setHistory((h) => [{ sql: stmt, at: Date.now(), ok: !r.error }, ...h].slice(0, 100))
       if (r.error) {
@@ -480,39 +495,46 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     startRef.current(j)
   }, [])
 
-  const run = useCallback((text: string, key = activeRef.current, confirm?: string) => {
+  const bindFor = useCallback((text: string, key: string) =>
+    bindParams(text, tabsRef.current.find((x) => x.key === key)?.params ?? {}), [])
+  const run = useCallback((text: string, key = activeRef.current, confirm?: string, at = 0) => {
     const stmt = text.trim()
     if (!stmt) return
     const t = tabs.find((x) => x.key === key)
-    enqueue({ tab: key, kind: 'run', text: stmt, maxRows: t?.maxRows ?? 1000, confirm })
-  }, [enqueue, tabs])
+    at += text.length - text.trimStart().length
+    enqueue({ tab: key, kind: 'run', text: stmt, maxRows: t?.maxRows ?? 1000, confirm, bound: bindFor(stmt, key), at })
+  }, [enqueue, tabs, bindFor])
 
   // check asks the agent what a write would do: it runs it as the person's
   // role and rolls it back.
-  const check = useCallback((text: string) => new Promise<PGAnswer>((resolve) => {
+  const check = useCallback((text: string, key: string) => new Promise<PGAnswer>((resolve) => {
     const id = nextId.current++
     pending.current.set(id, (a) => {
       pending.current.delete(id)
       resolve(a)
     })
-    if (!send({ id, op: 'check', sql: text })) {
+    const b = bindFor(text, key)
+    if (!send({ id, op: 'check', sql: b.sql, params: b.params.length ? b.params : undefined })) {
       pending.current.delete(id)
       resolve({ id, type: 'closed', error: 'the session ended' })
     }
-  }), [send])
+  }), [send, bindFor])
 
   // The person's Run: a write that may touch many rows is counted first;
   // everything else goes straight to the agent, whose guard stops a DROP,
   // TRUNCATE or an UPDATE/DELETE without WHERE and answers why.
-  const runChecked = useCallback((text: string, key = activeRef.current) => {
+  const checkAt = useRef(0)
+  const runChecked = useCallback((text: string, key = activeRef.current, at = 0) => {
     const stmt = text.trim()
     if (!stmt) return
+    at += text.length - text.trimStart().length
     if (!needsCheck(stmt)) {
-      run(stmt, key)
+      run(stmt, key, undefined, at)
       return
     }
+    checkAt.current = at
     setWriteCheck({ kind: 'checking', sql: stmt, tab: key })
-    void check(stmt).then((a) => {
+    void check(stmt, key).then((a) => {
       if (a.type === 'check' && a.check) {
         setWriteCheck((w) => (w?.sql === stmt ? { kind: 'checked', sql: stmt, tab: key, check: a.check! } : w))
         return
@@ -520,12 +542,16 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       if (a.type === 'error' && /unknown operation/.test(a.error ?? '')) {
         // An agent from before checks: run as it always did, guard and all.
         setWriteCheck(null)
-        run(stmt, key)
+        run(stmt, key, undefined, at)
         return
       }
       setWriteCheck((w) => (w?.sql === stmt ? { kind: 'failed', sql: stmt, tab: key, error: a.error ?? 'the check failed', code: a.code } : w))
+      if (a.type === 'error' && a.position) {
+        const b = bindFor(stmt, key)
+        setMarks((m) => ({ ...m, [key]: { from: pgErrorOffset(b.sql, a.position!, at, (o) => originalOffset(b, o)), message: a.error ?? 'Postgres refused this' } }))
+      }
     })
-  }, [check, run])
+  }, [check, run, bindFor])
 
   // admin sends one administrative operation to the agent's helper. The
   // agent records a mutation (redacted) before running it and refuses the
@@ -551,7 +577,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     setWaitingTabs(waiting.current.map((w) => w.tab))
   }, [send])
 
-  const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const editorRef = useRef<SqlEditorHandle | null>(null)
 
   // Autocomplete. The catalogue is asked for once per session; an agent too
   // old to answer it leaves keywords and built-in functions, which need none.
@@ -582,14 +608,12 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     for (const n of c?.needs ?? []) loadColumns(n.schema, n.name)
     return c
   }, [catalog, columnsOf, loadColumns])
-  const completion = useCompletion({
-    ref: editorRef, value: sql, setValue: setSql, complete: completeHere, refresh: columnsVersion,
-  })
-  const selectionOrAll = useCallback(() => {
-    const el = editorRef.current
-    return el && el.selectionStart !== el.selectionEnd ? el.value.slice(el.selectionStart, el.selectionEnd) : sql
-  }, [sql])
-  const runSelectionOrAll = useCallback(() => runChecked(selectionOrAll()), [runChecked, selectionOrAll])
+  const selectionAt = useCallback(() => editorRef.current?.selection() ?? { text: sql, from: 0 }, [sql])
+  const selectionOrAll = useCallback(() => selectionAt().text, [selectionAt])
+  const runSelectionOrAll = useCallback(() => {
+    const s = selectionAt()
+    runChecked(s.text, activeRef.current, s.from)
+  }, [runChecked, selectionAt])
   const explain = useCallback((mode: PlanRun['mode']) => {
     const text = selectionOrAll().trim()
     if (!text) return
@@ -599,36 +623,23 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       setShown((v) => ({ ...v, [activeRef.current]: 'plan' }))
       return
     }
-    enqueue({ tab: activeRef.current, kind: 'explain', text, mode })
-  }, [enqueue, selectionOrAll])
+    enqueue({ tab: activeRef.current, kind: 'explain', text, mode, bound: bindFor(text, activeRef.current) })
+  }, [enqueue, selectionOrAll, bindFor])
 
-  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (completion.onKeyDown(e)) return
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault()
-      runSelectionOrAll()
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault()
-      if (sql.trim()) setSaving(true)
-    }
-  }
+  const insert = (text: string) => { editorRef.current?.insert(text) }
 
-  const insert = (text: string) => {
-    const el = editorRef.current
-    if (!el) {
-      setSql(sql + text)
-      return
-    }
-    const a = el.selectionStart
-    const b = el.selectionEnd
-    const next = el.value.slice(0, a) + text + el.value.slice(b)
-    setSql(next)
-    requestAnimationFrame(() => {
-      el.focus()
-      el.selectionStart = el.selectionEnd = a + text.length
+  // Format lays the statement out; the formatter loads the first time.
+  const format = useCallback(() => {
+    const s = selectionAt()
+    if (!s.text.trim()) return
+    void import('sql-formatter').then(({ format: fmt }) => {
+      try {
+        editorRef.current?.replaceSelectionOrAll(fmt(s.text, { language: 'postgresql', keywordCase: 'preserve', paramTypes: { named: [':'], positional: true, numbered: ['$'] } }))
+      } catch (e) {
+        notifyWarn('Format could not read this statement', e instanceof Error ? (e.message.split('\n')[0] ?? '') : String(e))
+      }
     })
-  }
+  }, [selectionAt])
 
   const exportCsv = () => {
     const r = result
@@ -651,8 +662,6 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }
 
   /* Tabs */
-  const tabsRef = useRef(tabs)
-  tabsRef.current = tabs
   const openTab = useCallback((init?: Partial<QueryTab>) => {
     const ts = tabsRef.current
     if (ts.length >= MAX_TABS) {
@@ -837,6 +846,14 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       </Menu.Dropdown>
     </Menu>
   )
+  const names = useMemo(() => paramNames(sql), [sql])
+  const formatButton = (
+    <Tooltip label="Format (Shift+Alt+F)" withinPortal>
+      <Button size="xs" variant="default" leftSection={<IconIndentIncrease size={14} />} onClick={format} disabled={!sql.trim()}>
+        Format
+      </Button>
+    </Tooltip>
+  )
   const runLabel = runningHere ? 'Running…' : busyElsewhere ? (waitingHere ? `Waiting for ${runningName}` : `Run after ${runningName}`) : 'Run'
 
   const toolbar = (
@@ -858,6 +875,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Item leftSection={<IconPlayerStop size={14} />} onClick={cancel} disabled={!runningHere && !waitingHere}>Cancel</Menu.Item>
+              <Menu.Item leftSection={<IconIndentIncrease size={14} />} onClick={format} disabled={!sql.trim()}>Format</Menu.Item>
               <Menu.Item leftSection={<IconDownload size={14} />} onClick={exportCsv} disabled={!result || result.rows.length === 0}>Export CSV</Menu.Item>
               <Menu.Divider />
               <Box px="sm" py={6}><Group gap={6}><Text size={FS.micro} c="dimmed">Show up to</Text>{rowLimit}</Group></Box>
@@ -869,6 +887,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           <Button size="xs" variant="default" leftSection={<IconStar size={14} />} onClick={() => setSaving(true)} disabled={!sql.trim()}>
             {dirty ? 'Save changes' : 'Save'}
           </Button>
+          {formatButton}
           <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={cancel}
             disabled={!runningHere && !waitingHere}>
             Cancel
@@ -994,22 +1013,23 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'query' && <>
         {tabStrip}
         <Box style={{ flexShrink: 0 }}>
-          <Textarea
+          <SqlEditor
             ref={editorRef}
             value={sql}
-            {...completion.editorProps}
-            onChange={(e) => { completion.onTyped(); setSql(e.currentTarget.value) }}
-            onKeyDown={onKey}
-            placeholder={narrow ? 'SELECT …' : 'SELECT … (⌘/Ctrl+Enter runs; select part of it to run only that; Ctrl+Space suggests; Ctrl+S saves)'}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            aria-label="SQL"
-            styles={{ input: { fontFamily: 'var(--font-mono)', fontSize: narrow ? 12 : 13, lineHeight: '21px', border: 0, borderRadius: 0,
-              height: editorH, minHeight: 80, resize: 'none' } }}
+            onChange={setSql}
+            complete={completeHere}
+            refresh={columnsVersion}
+            onRun={runSelectionOrAll}
+            onSave={() => { if (tabsRef.current.find((x) => x.key === activeRef.current)?.sql.trim()) setSaving(true) }}
+            onFormat={format}
+            error={marks[tab.key] ?? null}
+            height={editorH}
+            narrow={narrow}
+            placeholder={narrow ? 'SELECT …' : 'SELECT … (⌘/Ctrl+Enter runs; select part of it to run only that; Ctrl+Space suggests; ⌘/Ctrl+F finds; Shift+Alt+F formats; :name adds a parameter)'}
           />
-          {completion.popup}
         </Box>
+        <QueryParams names={names} values={tab.params ?? {}} narrow={narrow}
+          onChange={(v) => patchTab(tab.key, (t) => ({ ...t, params: v }))} />
         {grip}
         {toolbar}
 
@@ -1024,7 +1044,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       <WriteCheckDialog state={writeCheck} label={database.label}
         onClose={() => setWriteCheck(null)}
         onBackups={() => { setWriteCheck(null); setView('query'); setPanel('backups') }}
-        onRun={(confirm) => { const w = writeCheck; setWriteCheck(null); if (w) run(w.sql, w.tab, confirm) }} />
+        onRun={(confirm) => { const w = writeCheck; setWriteCheck(null); if (w) run(w.sql, w.tab, confirm, checkAt.current) }} />
       {saving && (
         <SaveQueryDialog opened={saving} onClose={() => setSaving(false)} databaseId={database.id} databaseName={database.dbname}
           initial={{ id: tab.savedId, name: tab.name, sql: tab.sql, shared: false }}

@@ -18,6 +18,8 @@ export interface QueryTab {
   savedId?: string
   /** The text as last saved, so the tab can say it changed. */
   savedSql?: string
+  /** Values for the :name parameters in sql; null is NULL. */
+  params?: Record<string, string | null>
 }
 
 export const MAX_TABS = 10
@@ -59,7 +61,7 @@ export function loadTabs(dbId: string): { tabs: QueryTab[]; active: string } {
     if (raw) {
       const v = JSON.parse(raw) as { tabs?: unknown; active?: unknown }
       const tabs = (Array.isArray(v.tabs) ? v.tabs : []).filter(isTab).slice(0, MAX_TABS).map((t) => ({
-        ...t, key: newKey(), maxRows: ROW_LIMITS.includes(t.maxRows) ? t.maxRows : 1000,
+        ...t, key: newKey(), maxRows: ROW_LIMITS.includes(t.maxRows) ? t.maxRows : 1000, params: cleanParams(t.params),
       }))
       if (tabs.length) {
         const i = typeof v.active === 'number' && v.active >= 0 && v.active < tabs.length ? v.active : 0
@@ -76,12 +78,22 @@ export function loadTabs(dbId: string): { tabs: QueryTab[]; active: string } {
 export function saveTabs(dbId: string, tabs: QueryTab[], active: string): void {
   try {
     localStorage.setItem(storageKey(dbId), JSON.stringify({
-      tabs: tabs.map(({ name, named, sql, maxRows, savedId, savedSql }) => ({ name, named, sql, maxRows, savedId, savedSql })),
+      tabs: tabs.map(({ name, named, sql, maxRows, savedId, savedSql, params }) => ({ name, named, sql, maxRows, savedId, savedSql, params })),
       active: tabs.findIndex((t) => t.key === active),
     }))
   } catch {
     // full or blocked: the tabs still work for this page
   }
+}
+
+/** Stored values, kept only when they are what the form writes. */
+function cleanParams(v: unknown): Record<string, string | null> | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined
+  const out: Record<string, string | null> = {}
+  for (const [k, x] of Object.entries(v as Record<string, unknown>).slice(0, 100)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && (x === null || (typeof x === 'string' && x.length <= 10_000))) out[k] = x
+  }
+  return out
 }
 
 function isTab(v: unknown): v is QueryTab {

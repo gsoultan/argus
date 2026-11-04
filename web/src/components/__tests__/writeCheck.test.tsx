@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
 import { renderWithProviders } from '~/test/render'
 import type { Database } from '~/types/domain'
+import { setEditor } from '~/test/editor'
 
 /**
  * The guarded write path in the Postgres workspace. A DELETE is counted
@@ -48,9 +49,8 @@ async function open() {
 }
 
 function type(sql: string) {
-  const editor = screen.getByLabelText('SQL')
-  fireEvent.change(editor, { target: { value: sql } })
-  fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+  setEditor(sql)
+  fireEvent.keyDown(screen.getByLabelText('SQL'), { key: 'Enter', ctrlKey: true })
 }
 
 describe('Check before it runs', () => {

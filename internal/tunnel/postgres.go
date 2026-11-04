@@ -12,6 +12,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 /*
@@ -97,6 +98,31 @@ func RecordedTextFits(text string) bool {
 	return err == nil && len(b)+recordLineOverhead <= MaxRecordLine
 }
 
+// MaxParams is how many values one statement may carry.
+const MaxParams = 100
+
+// PGParamArgs checks a request's values and returns them as ExecParams
+// takes them, or the reason they cannot be used.
+func PGParamArgs(params []*string) ([][]byte, string) {
+	if len(params) == 0 {
+		return nil, ""
+	}
+	if len(params) > MaxParams {
+		return nil, fmt.Sprintf("a statement takes at most %d values", MaxParams)
+	}
+	args := make([][]byte, len(params))
+	for i, p := range params {
+		if p == nil {
+			continue
+		}
+		if !utf8.ValidString(*p) || strings.IndexByte(*p, 0) >= 0 {
+			return nil, fmt.Sprintf("value $%d is not valid text", i+1)
+		}
+		args[i] = []byte(*p)
+	}
+	return args, ""
+}
+
 // PGRequest is one thing the browser asks of a session.
 type PGRequest struct {
 	// ID ties answers and rows to the request. The browser numbers them.
@@ -105,6 +131,10 @@ type PGRequest struct {
 	Op string `json:"op"`
 	// SQL is one statement, for run.
 	SQL string `json:"sql,omitempty"`
+	// Params are the values for $1, $2 … in SQL, as text, for run and
+	// check; null is NULL. Postgres works out each one's type from where it
+	// is used, so a value is data and never part of the statement.
+	Params []*string `json:"params,omitempty"`
 	// MaxRows is how many rows run sends before it stops the statement.
 	MaxRows int `json:"maxRows,omitempty"`
 	// Kind and Schema are what schema lists: "schemas", "objects" (in
@@ -328,6 +358,8 @@ type PGRecord struct {
 	// SQL is the statement, on stmt and admin. On admin any password in it
 	// is already [redacted]; the real statement never reaches the recording.
 	SQL string `json:"sql,omitempty"`
+	// Params are the values the statement ran with, on stmt and check.
+	Params []*string `json:"params,omitempty"`
 	// Request ties stmt, done and error together.
 	Request uint32 `json:"req,omitempty"`
 	Tag     string `json:"tag,omitempty"`
