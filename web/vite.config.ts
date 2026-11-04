@@ -47,6 +47,11 @@ export default defineConfig({
           'assets/*.css',
           'assets/*-latin-wght-*.woff2',
         ],
+        // Stylesheets that only route chunks import (the split list beside a
+        // server or database, the filter rails on Activity and Audit) arrive
+        // with those chunks, so they are fetched on demand like the chunks
+        // themselves rather than pushed at every first visit.
+        globIgnores: ['assets/SplitView-*.css', 'assets/Rails-*.css'],
         // Anything the control plane serves must reach the control plane.
         //
         // /auth/ is load-bearing and was missing: loginURL() navigates to
