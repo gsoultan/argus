@@ -65,6 +65,11 @@
   --color-rail-hover: #1e293b;
   --color-rail-ink: #cbd5e1;
   --color-rail-muted: #64748b;
+  /* Home's command band: the rail's colour, warming to the brand on the right,
+     so the band and the rail read as one frame. */
+  --color-band-from: #0f172a;
+  --color-band-mid: #172554;
+  --color-band-to: #1e3a8a;
 }
 
 /* ---------------------------------------------------------------------------
@@ -106,6 +111,11 @@
   --color-rail: #0b0e13;
   --color-rail-line: #1e232c;
   --color-rail-hover: #1a1f28;
+  /* Starts on the dark rail's graphite and keeps only a hint of the brand, so
+     the band does not sit as a navy slab on a graphite page. */
+  --color-band-from: #0b0e13;
+  --color-band-mid: #121826;
+  --color-band-to: #1a2a4f;
 }
 
 /* Numbers line up in columns: timestamps, counts, durations, sizes. Plex's

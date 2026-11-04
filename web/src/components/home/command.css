@@ -9,7 +9,13 @@
   position: relative;
   overflow: hidden;
   color: #fff;
-  background: linear-gradient(120deg, #0f172a 0%, #172554 55%, #1e3a8a 100%);
+  background: linear-gradient(
+    120deg,
+    var(--color-band-from) 0%,
+    var(--color-band-mid) 55%,
+    var(--color-band-to) 100%
+  );
+  border: 1px solid var(--color-rail-line);
 }
 .argus-band::before {
   content: '';
