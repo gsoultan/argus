@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, MultiSelect,
+  Alert, Badge, Box, Button, Card, Checkbox, Code, Group, Modal, MultiSelect,
   SegmentedControl, Stack, Text, TextInput, Textarea, Tooltip,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -20,7 +20,7 @@ import {
 } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { LoginAsPicker } from '~/components/LoginAsPicker'
-import type { AccessRequest, DirectLogin } from '~/types/domain'
+import type { AccessRequest, DirectLogin, StatementAsk } from '~/types/domain'
 
 /**
  * Everything waiting on a person, in one place: logins straight to a server
@@ -277,6 +277,29 @@ function secondsLeft(iso: string): string {
   return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`
 }
 
+/** What a statement approval would let run, as it will run. */
+function StatementList({ ask }: { ask: StatementAsk }) {
+  const [all, setAll] = useState(false)
+  const shown = all ? ask.items : ask.items.slice(0, 3)
+  return (
+    <Stack gap={4} mt="xs" aria-label="Statements to approve">
+      <Text size={FS.micro} c="dimmed">On <Mono>{ask.databaseName}</Mono>:</Text>
+      {shown.map((it, i) => (
+        <Code key={i} block style={{ whiteSpace: 'pre-wrap', fontSize: 12, opacity: it.used ? 0.6 : 1 }}>
+          {it.sql}
+          {it.params?.length ? `\n-- values: ${it.params.map((p) => (p === null ? 'NULL' : JSON.stringify(p))).join(', ')}` : ''}
+          {it.used ? '\n-- ran' : ''}
+        </Code>
+      ))}
+      {ask.items.length > 3 && (
+        <Button size="compact-xs" variant="subtle" color="slate" onClick={() => setAll((v) => !v)} style={{ alignSelf: 'flex-start' }}>
+          {all ? 'Show fewer' : `Show all ${ask.items.length}`}
+        </Button>
+      )}
+    </Stack>
+  )
+}
+
 function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDecide: boolean }) {
   const decide = useDecideRequest()
   const [note, setNote] = useState('')
@@ -307,6 +330,8 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
         decision === 'approved'
           ? r.principal === 'db:restore'
             ? `The restore ${r.requesterEmail} asked for starts now on ${r.assetHostnames[0]}.`
+            : r.statement
+            ? `${r.requesterEmail} can run ${r.statement.items.length === 1 ? 'it' : 'them'} once, within the hour.`
             : `${r.requesterEmail} can reach ${r.assetHostnames.length} host(s) as ${r.principal} for ${r.durationMinutes / 60}h.`
           : `${r.requesterEmail} was notified.`,
     })
@@ -342,12 +367,18 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
               <Tooltip label="Approving replaces the database in place from a backup. The current one is renamed and kept for a day, so it can be put back.">
                 <Badge size="xs" variant="filled" color="rose" leftSection={<IconAlertTriangle size={10} />}>restore in place</Badge>
               </Tooltip>
+            ) : r.statement ? (
+              <Tooltip label="Each statement runs once, exactly as shown, from this person's session, within the hour.">
+                <Badge size="xs" variant="filled" color="amber" leftSection={<IconAlertTriangle size={10} />}>
+                  {r.statement.items.length === 1 ? 'statement' : `${r.statement.items.length} statements`} on production
+                </Badge>
+              </Tooltip>
             ) : r.principal.startsWith('db:') ? (
               <Badge size="xs" variant="light" color="azure">{r.principal.slice(3)} on a database</Badge>
             ) : (
               <Badge size="xs" variant="outline" color="slate">as {r.principal}</Badge>
             )}
-            {r.principal !== 'db:restore' && <Badge size="xs" variant="outline" color="slate">{r.durationMinutes / 60}h window</Badge>}
+            {r.principal !== 'db:restore' && !r.statement && <Badge size="xs" variant="outline" color="slate">{r.durationMinutes / 60}h window</Badge>}
             {r.assetHostnames.slice(0, 3).map((h) => (
               <Badge key={h} size="xs" variant="outline" color="slate" className="argus-digest">
                 {h.split('.')[0]}
@@ -359,6 +390,7 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
               </Badge>
             )}
           </Group>
+          {r.statement && <StatementList ask={r.statement} />}
         </Box>
 
         <Box ta="right" style={{ flexShrink: 0 }}>
@@ -426,7 +458,7 @@ function RequestCard({ request: r, canDecide }: { request: AccessRequest; canDec
                 loading={decide.isPending}
                 onClick={() => onDecide('approved')}
               >
-                {r.principal === 'db:restore' ? 'Approve the restore' : `Approve ${r.durationMinutes / 60}h`}
+                {r.principal === 'db:restore' ? 'Approve the restore' : r.statement ? 'Approve to run once' : `Approve ${r.durationMinutes / 60}h`}
               </Button>
             </Group>
           </Group>

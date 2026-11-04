@@ -657,8 +657,9 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	if bad != "" {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: bad})
 	}
-	if g := tunnel.GuardSQL(tunnel.ClassifySQL(sql), s.db.Name, req.Confirm); g != nil {
-		if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql, Params: req.Params}); err != nil {
+	class := tunnel.ClassifySQL(sql)
+	if g := tunnel.GuardSQL(class, s.db.Name, req.Confirm); g != nil {
+		if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql, Params: req.Params, Approval: req.Approval}); err != nil {
 			return fmt.Errorf("the recording failed: %w", err)
 		}
 		if err := s.record(tunnel.PGRecord{Kind: "error", Request: req.ID, Code: g.Code, Error: g.Reason}); err != nil {
@@ -675,8 +676,16 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	}
 	maxRows = min(maxRows, tunnel.MaxRowsCeiling)
 
+	// What it would remove goes to the trash instead, where it can be put
+	// back: see postgres_trash.go.
+	if s.db.Level != tunnel.LevelRead {
+		if ran := trashRewrite(class, sql); ran != "" {
+			return s.runTrashed(ctx, req, sql, ran, class, args)
+		}
+	}
+
 	// Recorded and sent before Postgres sees it. No record, no statement.
-	if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql, Params: req.Params}); err != nil {
+	if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql, Params: req.Params, Approval: req.Approval}); err != nil {
 		if errors.Is(err, tunnel.ErrRecordTooLong) {
 			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
 		}

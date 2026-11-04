@@ -7,13 +7,14 @@ import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
-  IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease,
+  IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease, IconTrash,
 } from '@tabler/icons-react'
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { ResultsGrid } from '~/components/ResultsGrid'
 import type { SaveResult } from '~/components/RowEdits'
 import type { Stmt } from '~/lib/rowEdit'
+import { TrashNotice, TrashPanel, type TrashItem } from '~/components/DatabaseTrash'
 import { QueryParams } from '~/components/QueryParams'
 import { SqlEditor, pgErrorOffset, type EditorError, type SqlEditorHandle } from '~/components/SqlEditor'
 import { bindParams, originalOffset, paramNames, type Bound } from '~/lib/sqlParams'
@@ -37,6 +38,7 @@ import {
 } from '~/lib/workspaceTabs'
 import { notifyWarn } from '~/lib/notify'
 import type { SavedQuery } from '~/lib/live'
+import { NEEDS_APPROVAL, useStatementApproval } from '~/components/StatementApproval'
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -98,9 +100,11 @@ interface PGAnswer {
   guard?: PGGuard
   /** What a checked write would do. */
   check?: PGCheck
+  /** What a DELETE, DROP or TRUNCATE put in the trash instead of losing. */
+  trash?: TrashItem[]
 }
 
-type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups'
+type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups' | 'trash'
 
 interface Result {
   id: number
@@ -403,10 +407,12 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       }
     }), [send])
 
+  const { ask: askApproval, dialog: approvalDialog } = useStatementApproval(database.id, database.dbname)
+
   // collect runs one statement for a panel and resolves with everything it
   // returned. Recorded like any other statement; it is one. onId hears the
   // request id, so a plan in progress can be cancelled.
-  const collectWithId = useCallback((text: string, max = 1000, onId?: (id: number) => void, params?: (string | null)[]) => new Promise<Collected>((resolve) => {
+  const collectWithId = useCallback((text: string, max = 1000, onId?: (id: number) => void, params?: (string | null)[], approval?: string) => new Promise<Collected>((resolve) => {
     const id = nextId.current++
     onId?.(id)
     const c: Collected = { cols: [], rows: [] }
@@ -421,13 +427,20 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       if (a.type !== 'done') c.error = { error: a.error, code: a.code }
       resolve(c)
     })
-    if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined })) {
+    if (!send({ id, op: 'run', sql: text, maxRows: max, params: params?.length ? params : undefined, approval })) {
       pending.current.delete(id)
       collectors.current.delete(id)
       resolve({ cols: [], rows: [], error: { error: 'the session ended' } })
     }
   }), [send])
-  const collect: Collect = useCallback((text, max, params) => collectWithId(text, max, undefined, params), [collectWithId])
+  // A panel's statement that changes a production database (a restore from
+  // the trash, a grant) waits for approval and is sent again with it.
+  const collect: Collect = useCallback(async (text, max, params) => {
+    const r = await collectWithId(text, max, undefined, params)
+    if (r.error?.code !== NEEDS_APPROVAL) return r
+    const id = await askApproval([{ sql: text, params }], { why: r.error.error })
+    return id ? collectWithId(text, max, undefined, params, id) : r
+  }, [collectWithId, askApproval])
 
   // openGuard shows why the agent stopped a statement, and for a DROP or
   // TRUNCATE what it would take with it, read as the person's role.
@@ -484,7 +497,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // final answer. It does not end the job: the caller does, after one
   // statement or after a script's last. `at` is where the statement starts
   // in the editor, so an error is marked where Postgres says.
-  const runPart = useCallback((key: string, stmt: string, maxRows: number, at: number, confirm?: string, onStart?: (r: Result) => void) =>
+  const runPart = useCallback((key: string, stmt: string, maxRows: number, at: number, confirm?: string, onStart?: (r: Result) => void, approval?: string) =>
     new Promise<{ r: Result; a: PGAnswer }>((resolve) => {
       const id = nextId.current++
       const b = bindFor(stmt, key)
@@ -514,7 +527,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
         resolve({ r, a })
       })
-      if (!send({ id, op: 'run', sql: b.sql, maxRows, confirm, params: b.params.length ? b.params : undefined })) {
+      if (!send({ id, op: 'run', sql: b.sql, maxRows, confirm, approval, params: b.params.length ? b.params : undefined })) {
         pending.current.delete(id)
         live.current.delete(id)
         const a: PGAnswer = { id, type: 'closed', error: 'the session ended' }
@@ -525,11 +538,17 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
 
   const startRun = useCallback((job: Extract<Job, { kind: 'run' }>) => {
     setScripts(({ [job.tab]: _s, ...rest }) => rest)
-    void runPart(job.tab, job.text, job.maxRows, job.at, job.confirm).then(({ a }) => {
+    void (async () => {
+      let { a } = await runPart(job.tab, job.text, job.maxRows, job.at, job.confirm)
+      if (a.type === 'error' && a.code === NEEDS_APPROVAL) {
+        const b = bindFor(job.text, job.tab)
+        const id = await askApproval([{ sql: b.sql, params: b.params }], { why: a.error })
+        if (id) ({ a } = await runPart(job.tab, job.text, job.maxRows, job.at, job.confirm, undefined, id))
+      }
       if (a.type === 'error' && a.guard) openGuard(job.text, job.tab, a.guard)
       finished()
-    })
-  }, [runPart, finished, openGuard])
+    })()
+  }, [runPart, finished, openGuard, bindFor, askApproval])
 
   // ask pauses a script on a dialog until the person answers it.
   const ask = useCallback((n: number, total: number, show: () => void) => new Promise<Gate>((resolve) => {
@@ -557,6 +576,10 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         ? ' Your transaction is still open; nothing in it is kept until you COMMIT, and ROLLBACK ends it.'
         : '')
       let ran = 0
+      // On production the first statement that needs approval asks for it
+      // and the rest of the script at once, so the approver sees the whole
+      // of what is left and the script waits once.
+      let approval: string | undefined
       for (let i = 0; i < total; i++) {
         const n = i + 1
         const { sql: stmt, at } = job.stmts[i]!
@@ -595,15 +618,23 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           break
         }
         const onStart = (r: Result) => { sc.parts[i] = r; publish() }
-        let res = await runPart(key, stmt, job.maxRows, at, confirm, onStart)
+        let res = await runPart(key, stmt, job.maxRows, at, confirm, onStart, approval)
         if (res.a.type === 'error' && res.a.guard) {
           const guard = res.a.guard
           const g = await ask(n, total, () => openGuard(stmt, key, guard))
-          if (g.go) res = await runPart(key, stmt, job.maxRows, at, g.confirm, onStart)
+          if (g.go) { confirm = g.confirm; res = await runPart(key, stmt, job.maxRows, at, g.confirm, onStart, approval) }
           else {
             publish()
             sc.note = `Argus stopped statement ${n} of ${total} before it ran; it and the rest did not run.${open()}`
             break
+          }
+        }
+        if (res.a.type === 'error' && res.a.code === NEEDS_APPROVAL && !approval) {
+          const items = job.stmts.slice(i).map((x) => { const b = bindFor(x.sql, key); return { sql: b.sql, params: b.params } })
+          const id = await askApproval(items, { why: res.a.error })
+          if (id) {
+            approval = id
+            res = await runPart(key, stmt, job.maxRows, at, confirm, onStart, approval)
           }
         }
         publish()
@@ -628,7 +659,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       scriptStop.current.delete(key)
       finished()
     })()
-  }, [runPart, check, ask, openGuard, finished, bindFor])
+  }, [runPart, check, ask, openGuard, finished, bindFor, askApproval])
 
   const startExplain = useCallback((job: Extract<Job, { kind: 'explain' }>) => {
     const key = job.tab
@@ -691,13 +722,15 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     const inTx = txOpen.current
     const mark = 'argus_row_edit'
     const note = (sql: string, ok: boolean) => setHistory((h) => [{ sql, at: Date.now(), ok }, ...h].slice(0, 100))
-    try {
+    // On production the first statement comes back asking for approval;
+    // then the whole save is asked for at once and sent again under it.
+    const attempt = async (approval?: string): Promise<SaveResult & { approve?: string }> => {
       const b = await collectWithId(inTx ? `SAVEPOINT ${mark}` : 'BEGIN', 1, track)
       if (b.error) return { ok: false, at: 0, error: b.error.error ?? 'could not start a transaction' }
       const returned = []
       for (let i = 0; i < stmts.length; i++) {
         const s = stmts[i]!
-        const r = await collectWithId(s.sql, 2, track, s.params)
+        const r = await collectWithId(s.sql, 2, track, s.params, approval)
         note(s.sql, !r.error && r.rows.length === 1)
         if (r.error || r.rows.length !== 1) {
           await collectWithId(inTx ? `ROLLBACK TO SAVEPOINT ${mark}` : 'ROLLBACK', 1, track)
@@ -707,17 +740,25 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             : r.rows.length === 0
               ? 'the row is gone, or someone changed it since you read it. Run the query again to see it as it is now.'
               : 'it matched more than one row.'
-          return { ok: false, at: i, error }
+          return { ok: false, at: i, error, approve: r.error?.code === NEEDS_APPROVAL && !approval && i === 0 ? r.error.error ?? '' : undefined }
         }
         returned.push(r)
       }
       const c = await collectWithId(inTx ? `RELEASE SAVEPOINT ${mark}` : 'COMMIT', 1, track)
       if (c.error) return { ok: false, at: stmts.length - 1, error: c.error.error ?? 'the commit failed' }
       return { ok: true, returned }
+    }
+    try {
+      const first = await attempt()
+      if (first.ok || first.approve === undefined) return first
+      const id = await askApproval(stmts.map((s) => ({ sql: s.sql, params: s.params })),
+        { why: first.approve, summary: { rows: stmts.length } })
+      if (!id) return { ok: false, at: 0, error: 'it needs approval on production, and none was given. Nothing was saved.' }
+      return await attempt(id)
     } finally {
       finished()
     }
-  }, [collectWithId, finished])
+  }, [collectWithId, finished, askApproval])
 
   startRef.current = (j: Job) => (j.kind === 'run' ? startRun(j) : j.kind === 'script' ? startScript(j) : startExplain(j))
   const enqueue = useCallback((j: Job) => {
@@ -1238,6 +1279,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'roles' && <RolesPanel {...adminProps} />}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} />}
+        {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} onBack={() => setPanel('query')} />}
         {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(orgAdmin)} />}
         {view === 'query' && panel === 'query' && <>
         {tabStrip}
@@ -1269,6 +1311,9 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             : <>
               {script && <ScriptSteps script={script} shownId={result?.id} narrow={narrow}
                 onPick={(r) => setResults((prev) => ({ ...prev, [tab.key]: { ...r } }))} />}
+              {result?.done?.trash && result.done.trash.length > 0 && (
+                <TrashNotice key={result.id} items={result.done.trash} collect={collect} canRestore={level !== 'read'} busy={running !== null} />
+              )}
               <ResultsGrid result={result} narrow={narrow} collect={collect}
                 onAddToQuery={(text, params) => { const k = openTab({ sql: text, params }); if (k) setView('query') }}
                 edit={level && level !== 'read' ? { allowed: true, busy: running !== null, inTransaction: txOpen.current, cut: result?.cut, save: saveEdits } : undefined}
@@ -1280,7 +1325,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         </Box>
         </>}
       </Box>
-      <WriteCheckDialog state={writeCheck} label={database.label} step={gateStep}
+      {approvalDialog}
+      <WriteCheckDialog state={writeCheck} label={database.label} step={gateStep} databaseId={database.id} canBackup={level === 'owner' || level === 'dba'}
         onClose={() => { setWriteCheck(null); answerGate({ go: false }) }}
         onBackups={() => { setWriteCheck(null); answerGate({ go: false }); setView('query'); setPanel('backups') }}
         onRun={(confirm) => {
@@ -1437,6 +1483,13 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
               aria-pressed={panel === 'backups'}>
               <IconArchive size={13} /><Text size={FS.meta}>Backups</Text>
             </UnstyledButton>
+            <Tooltip label="Deleted rows, dropped tables and schemas, kept so they can be put back" withArrow>
+              <UnstyledButton onClick={() => onPanel(panel === 'trash' ? 'query' : 'trash')} px={4} py={4}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'trash' ? 'var(--color-raised)' : undefined }}
+                aria-pressed={panel === 'trash'}>
+                <IconTrash size={13} /><Text size={FS.meta}>Trash</Text>
+              </UnstyledButton>
+            </Tooltip>
           </Box>
         </Box>
       )}

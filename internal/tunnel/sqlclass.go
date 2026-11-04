@@ -41,6 +41,15 @@ type SQLClass struct {
 	Writes bool `json:"writes,omitempty"`
 	// Cascade says a DROP or TRUNCATE ends in CASCADE.
 	Cascade bool `json:"cascade,omitempty"`
+	// Names are Targets as identifiers, part by part (schema, name), for
+	// building SQL that names them again. Not sent: the console has Targets.
+	Names [][]string `json:"-"`
+	// Alias is what a DELETE calls its table, when it gives it a name.
+	Alias string `json:"-"`
+	// Returning says the statement has a RETURNING list of its own.
+	Returning bool `json:"-"`
+	// IfExists says a DROP is DROP … IF EXISTS.
+	IfExists bool `json:"-"`
 }
 
 // Guard refusals. Their codes sit in the SQLSTATE field of the answer, in a
@@ -287,15 +296,30 @@ func ClassifySQL(sql string) SQLClass {
 		c.Writes = true
 		j := skipWords(rest, 0, "from")
 		j = skipWords(rest, j, "only")
-		name, _ := readName(rest, j)
+		name, k := readName(rest, j)
 		if name != "" {
 			c.Targets = []string{name}
+			parts, _ := readParts(rest, j)
+			c.Names = [][]string{parts}
+			if k < len(rest) && rest[k].punct == '*' {
+				k++
+			}
+			k = skipWords(rest, k, "as")
+			if k < len(rest) && rest[k].punct == 0 {
+				switch w := rest[k]; {
+				case w.quoted:
+					c.Alias = w.text
+				case w.text != "using" && w.text != "where" && w.text != "returning":
+					c.Alias = w.text
+				}
+			}
 		}
 		c.HasWhere = hasTopWord(rest, "where")
+		c.Returning = hasTopWord(rest, "returning")
 	case "truncate":
 		c.Writes = true
 		j := skipWords(rest, 0, "table")
-		c.Targets = readNameList(rest, j)
+		c.Targets, c.Names = readNameList(rest, j)
 		c.Cascade = lastWord(rest) == "cascade"
 	case "drop":
 		j := 0
@@ -309,8 +333,9 @@ func ClassifySQL(sql string) SQLClass {
 		j = skipWords(rest, j, "concurrently")
 		if j+1 < len(rest) && rest[j].text == "if" && rest[j+1].text == "exists" {
 			j += 2
+			c.IfExists = true
 		}
-		c.Targets = readNameList(rest, j)
+		c.Targets, c.Names = readNameList(rest, j)
 		c.Cascade = lastWord(rest) == "cascade"
 	}
 	return c
@@ -383,21 +408,40 @@ func readName(toks []sqlToken, i int) (string, int) {
 	return name, i
 }
 
+// readParts reads name or schema.name at i as its parts.
+func readParts(toks []sqlToken, i int) ([]string, int) {
+	if i >= len(toks) || toks[i].punct != 0 {
+		return nil, i
+	}
+	parts := []string{toks[i].text}
+	i++
+	for i+1 < len(toks) && toks[i].punct == '.' && toks[i+1].punct == 0 {
+		parts = append(parts, toks[i+1].text)
+		i += 2
+	}
+	return parts, i
+}
+
 // readNameList reads "a, b.c, d" at the top level, stopping at a keyword
-// that ends it.
-func readNameList(toks []sqlToken, i int) []string {
+// that ends it. It returns each name as written and as its parts.
+func readNameList(toks []sqlToken, i int) ([]string, [][]string) {
 	var names []string
+	var parts [][]string
 	for i < len(toks) {
 		i = skipWords(toks, i, "only")
 		name, j := readName(toks, i)
 		if name == "" {
 			break
 		}
-		switch name {
-		case "cascade", "restrict", "restart", "continue", "with":
-			return names
+		if !toks[i].quoted {
+			switch name {
+			case "cascade", "restrict", "restart", "continue", "with":
+				return names, parts
+			}
 		}
+		p, _ := readParts(toks, i)
 		names = append(names, name)
+		parts = append(parts, p)
 		i = j
 		if i < len(toks) && toks[i].punct == '*' {
 			i++
@@ -408,7 +452,7 @@ func readNameList(toks []sqlToken, i int) []string {
 		}
 		break
 	}
-	return names
+	return names, parts
 }
 
 func hasTopWord(toks []sqlToken, w string) bool {

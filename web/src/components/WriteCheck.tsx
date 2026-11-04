@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Badge, Box, Button, Group, Loader, Modal, Stack, Text, TextInput } from '@mantine/core'
-import { IconAlertTriangle, IconCheck, IconX } from '@tabler/icons-react'
+import { IconAlertTriangle, IconArchive, IconCheck, IconTrash, IconX } from '@tabler/icons-react'
+import { useQuery } from '@tanstack/react-query'
 import { FS } from '~/theme'
 import { GUARD_DROP_DB, GUARD_NO_WHERE, type PGGuard, type SQLClass } from '~/lib/sqlClass'
+import { databaseBackupsQuery, useStartBackup } from '~/lib/queries'
+import type { DatabaseBackup } from '~/types/domain'
 
 /*
 Check before it runs.
@@ -14,7 +17,24 @@ DROP DATABASE) with why and what would let it through.
 
 The typed phrase is the agent's, not ours: it compares it. What the person
 types is a pause, not a permission; their level's grants are the permission.
+
+What a DELETE, DROP TABLE, DROP SCHEMA or TRUNCATE removes goes to the
+database's trash (see DatabaseTrash), so the dialog says how long it is kept.
+A DELETE of more than 10,000 rows cannot keep a copy, so the agent refuses
+it, and the dialog says so before it is sent. Before a drop or an empty, a
+backup is taken first when the newest one is more than a day old.
 */
+
+/** The most rows a DELETE may remove while the trash keeps a copy. */
+export const KEPT_ROWS_MAX = 10000
+
+/** A backup older than this is taken again before a drop. */
+const FRESH_MS = 24 * 3600 * 1000
+
+/** Whether what a guarded statement removes goes to the trash. */
+export function goesToTrash(g: PGGuard): boolean {
+  return g.verb === 'truncate' || (g.verb === 'drop' && (g.object === 'table' || g.object === 'schema'))
+}
 
 export interface PGCheckTable { name: string; inserted?: number; updated?: number; deleted?: number; estimate?: number }
 export interface PGCheck { class: SQLClass; rows: number; tag?: string; tables?: PGCheckTable[]; guard?: PGGuard }
@@ -38,8 +58,12 @@ function bytes(b: number): string {
   return `${b < 10 && i ? b.toFixed(1) : Math.round(b)} ${u[i]}`
 }
 
-export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step }: {
+export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step, databaseId, canBackup }: {
   state: WriteCheckState | null
+  /** The database, to take a backup before a drop. */
+  databaseId?: string
+  /** The person's level may start a backup. */
+  canBackup?: boolean
   /** Where the statement is in a script being run, if it is in one. */
   step?: { n: number; total: number }
   /** production, staging or development. */
@@ -113,6 +137,18 @@ export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step
             <Text size={FS.micro} c="dimmed" mt={4}>By foreign keys with ON DELETE/UPDATE, or by triggers.</Text>
           </Box>
         )}
+        {verb === 'delete' && c.rows > KEPT_ROWS_MAX && (
+          <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
+            <Text size={FS.meta} fw={600}>Too many rows to keep a copy, so Argus will not run it.</Text>
+            <Text size={FS.meta}>A DELETE keeps the rows it removes, up to {n(KEPT_ROWS_MAX)}. Delete in smaller batches, or empty the table, which keeps it whole in the trash.</Text>
+          </Box>
+        )}
+        {verb === 'delete' && c.rows > 0 && c.rows <= KEPT_ROWS_MAX && (
+          <Group gap={6} wrap="nowrap" align="flex-start">
+            <IconTrash size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+            <Text size={FS.meta}>The deleted rows are kept for 30 days. Undo, under the result or in Trash, puts them back.</Text>
+          </Group>
+        )}
         {guard?.code === GUARD_NO_WHERE && (
           <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
             <Text size={FS.meta} fw={600}>{guard.reason}</Text>
@@ -125,7 +161,8 @@ export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step
       </Stack>
     )
     action = (
-      <Button color={guard ? 'rose' : undefined} disabled={!phraseOK} onClick={() => onRun(needsPhrase ? typed : undefined)}>
+      <Button color={guard ? 'rose' : undefined} disabled={!phraseOK || (verb === 'delete' && c.rows > KEPT_ROWS_MAX)}
+        onClick={() => onRun(needsPhrase ? typed : undefined)}>
         {c.rows === 0 ? 'Run it anyway' : `Run it: ${n(c.rows)} ${c.rows === 1 ? 'row' : 'rows'}`}
       </Button>
     )
@@ -152,11 +189,23 @@ export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step
           <Box style={{ border: '1px solid var(--color-line)', borderRadius: 8, maxHeight: 160, overflow: 'auto' }} p={8}>
             {f.dependents.map((d) => <Text key={d} size={FS.meta} ff="monospace">{d}</Text>)}
             <Text size={FS.micro} c="dimmed" mt={4}>
-              {guard.cascade ? 'CASCADE drops these too.' : 'Without CASCADE, Postgres will refuse while these exist.'}
+              {goesToTrash(guard) && guard.verb === 'drop' && guard.object === 'table'
+                ? 'While these depend on it, Argus will not drop it: dropping them with it could not be put back. Drop them first.'
+                : guard.cascade ? 'CASCADE drops these too.' : 'Without CASCADE, Postgres will refuse while these exist.'}
             </Text>
           </Box>
         )}
-        {guard.code !== GUARD_DROP_DB && (
+        {goesToTrash(guard) && (
+          <Group gap={8} wrap="nowrap" align="flex-start">
+            <IconTrash size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+            <Text size={FS.meta}>
+              {guard.verb === 'truncate'
+                ? 'A copy of its rows goes to the trash for 7 days (up to 1 GB), and Trash puts them back.'
+                : `The ${guard.object} goes to the trash for 7 days, out of everyone's reach, and Trash puts it back.`}
+            </Text>
+          </Group>
+        )}
+        {guard.code !== GUARD_DROP_DB && !goesToTrash(guard) && (
           <Group gap={8} wrap="nowrap" align="flex-start">
             <IconAlertTriangle size={16} color="var(--mantine-color-amber-6)" style={{ flexShrink: 0, marginTop: 2 }} />
             <Text size={FS.meta}>
@@ -168,11 +217,10 @@ export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step
       </Stack>
     )
     if (guard.code !== GUARD_DROP_DB) {
-      action = (
-        <Button color="rose" disabled={!phraseOK} onClick={() => onRun(typed)}>
-          {guard.verb === 'truncate' ? 'Empty it' : guard.verb === 'drop' ? 'Drop it' : 'Run it on every row'}
-        </Button>
-      )
+      const label = guard.verb === 'truncate' ? 'Empty it' : guard.verb === 'drop' ? 'Drop it' : 'Run it on every row'
+      action = goesToTrash(guard) && databaseId && canBackup
+        ? <BackupFirst databaseId={databaseId} label={label} disabled={!phraseOK} what={state.sql} onGo={() => onRun(typed)} />
+        : <Button color="rose" disabled={!phraseOK} onClick={() => onRun(typed)}>{label}</Button>
     }
   }
 
@@ -203,6 +251,69 @@ export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step
         </Group>
       </Stack>
     </Modal>
+  )
+}
+
+const ageText = (ms: number) => {
+  const h = Math.round(ms / 3600_000)
+  return h < 1 ? 'less than an hour ago' : h < 48 ? `${h} hours ago` : `${Math.round(h / 24)} days ago`
+}
+
+/**
+ * The Drop or Empty button, which first takes a backup when the newest one
+ * is more than a day old, and runs the statement once it is done.
+ */
+function BackupFirst({ databaseId, label, disabled, what, onGo }: {
+  databaseId: string
+  label: string
+  disabled: boolean
+  what: string
+  onGo: () => void
+}) {
+  const { data, isPending, isError, fetchStatus } = useQuery(databaseBackupsQuery(databaseId))
+  const start = useStartBackup()
+  const [waiting, setWaiting] = useState<string | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const went = useRef(false)
+  const newest: DatabaseBackup | undefined = data?.backups.filter((b) => b.state === 'done')
+    .sort((a, b) => (b.finishedAt ?? b.startedAt).localeCompare(a.finishedAt ?? a.startedAt))[0]
+  const age = newest ? Date.now() - new Date(newest.finishedAt ?? newest.startedAt).getTime() : Infinity
+  const fresh = age < FRESH_MS
+  // The backup this dialog started, as the polled list sees it.
+  const mine = waiting ? (data?.running?.id === waiting ? data.running : data?.backups.find((b) => b.id === waiting)) : undefined
+  useEffect(() => {
+    if (!waiting || !mine || went.current) return
+    if (mine.state === 'done') { went.current = true; onGo() }
+    else if (mine.state === 'failed' || mine.state === 'skipped') { setFailed(mine.error || 'the backup did not finish'); setWaiting(null) }
+  }, [waiting, mine, onGo])
+
+  if (isPending && fetchStatus !== 'idle') return <Button color="rose" disabled loading>{label}</Button>
+  // No backups to look at (none set up, or no way to ask): the trash still keeps it.
+  if (isError || !data) return <Button color="rose" disabled={disabled} onClick={onGo}>{label}</Button>
+  return (
+    <Group gap="xs" wrap="nowrap" align="center">
+      <Text size={FS.micro} c="dimmed" maw={230} ta="right">
+        {waiting ? <><Loader size={10} mr={4} />Backing up first{mine?.stage ? `: ${mine.stage}` : '…'}</>
+          : failed ? `The backup failed: ${failed}.`
+            : fresh ? <><IconArchive size={11} /> Last backup {ageText(age)}.</>
+              : newest ? `The last backup is from ${ageText(age)}, so one is taken first.` : 'There is no backup yet, so one is taken first.'}
+      </Text>
+      {failed
+        ? <Button color="rose" variant="light" disabled={disabled} onClick={onGo}>{label} without it</Button>
+        : <Button color="rose" disabled={disabled || Boolean(waiting) || Boolean(data.running && !waiting)} loading={Boolean(waiting)}
+            title={data.running && !waiting ? 'A backup is already running' : undefined}
+            onClick={async () => {
+              if (fresh) { onGo(); return }
+              try {
+                const b = await start.mutateAsync({ id: databaseId, reason: `Before: ${what.slice(0, 120)}` })
+                setWaiting(b.id)
+              } catch (err) {
+                setFailed(err instanceof Error ? err.message : String(err))
+              }
+            }}>
+            {fresh ? label : `Back up, then ${label.toLowerCase()}`}
+          </Button>}
+    </Group>
   )
 }
 

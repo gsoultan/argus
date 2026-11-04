@@ -32,6 +32,9 @@ type AccessRequest struct {
 	// RestoreID is set when the request stands for restoring a database in
 	// place; the approver's card shows what it would replace.
 	RestoreID *string `json:"restoreId,omitempty"`
+	// Statement is set when the request is to run statements on a
+	// production database; the approver's card shows them.
+	Statement *StatementAsk `json:"statement,omitempty"`
 }
 
 var (
@@ -164,7 +167,26 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	var ids []string
+	for _, r := range out {
+		if r.Principal == statementPrincipal {
+			ids = append(ids, r.ID)
+		}
+	}
+	if len(ids) > 0 {
+		asks, err := s.StatementAsks(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		for i := range out {
+			out[i].Statement = asks[out[i].ID]
+		}
+	}
+	return out, nil
 }
 
 // ActiveGrant reports whether email currently holds an approved, unexpired

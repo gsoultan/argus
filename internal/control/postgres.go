@@ -413,6 +413,11 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
+				if no := a.statementGate(ctx, email, db, level, req); no != nil {
+					ans, _ := json.Marshal(no)
+					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+					continue
+				}
 				b, _ = json.Marshal(req)
 			} else {
 				var req tunnel.StoreRequest

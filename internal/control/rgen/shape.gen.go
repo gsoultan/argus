@@ -398,6 +398,34 @@ func _assertDatabaseRestoreShape(m m0.DatabaseRestore) {
 	}
 }
 
+// _assertDatabaseStatementShape fails to compile if m0.DatabaseStatement gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseStatementShape(m m0.DatabaseStatement) {
+	type shape m0.DatabaseStatement
+	_ = shape{
+		m.ID,
+		m.Request,
+		m.Database,
+		m.RequesterEmail,
+		m.Summary,
+		m.CreatedAt,
+	}
+}
+
+// _assertDatabaseStatementItemShape fails to compile if m0.DatabaseStatementItem gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseStatementItemShape(m m0.DatabaseStatementItem) {
+	type shape m0.DatabaseStatementItem
+	_ = shape{
+		m.Statement,
+		m.Seq,
+		m.Sql,
+		m.Params,
+		m.Digest,
+		m.UsedAt,
+	}
+}
+
 // _assertDirectLoginRequestShape fails to compile if m0.DirectLoginRequest gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertDirectLoginRequestShape(m m0.DirectLoginRequest) {

@@ -441,6 +441,7 @@ func (s *Store) DatabaseAccess(ctx context.Context, email, dbID string) (DBAcces
 		err := s.db(ctx).QueryRow(ctx, `
 			SELECT database_level, expires_at FROM access_requests
 			WHERE requester_email = $1 AND database_id = $2::uuid AND state = 'approved'
+			  AND database_level IS NOT NULL
 			  AND expires_at > now()
 			ORDER BY expires_at DESC LIMIT 1`, email, dbID).Scan(&level, &expires)
 		if err == nil && tunnel.LevelRank(level) > tunnel.LevelRank(acc.Level) &&

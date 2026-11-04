@@ -67,16 +67,16 @@ describe('Check before it runs', () => {
     expect(ws.sent.some((r) => r.op === 'run' && r.sql === 'DELETE FROM orders')).toBe(false)
     const chk = ws.sent.find((r) => r.op === 'check')!
     ws.answer({
-      id: chk.id, type: 'check', rows: 221480,
+      id: chk.id, type: 'check', rows: 2480,
       check: {
-        class: { verb: 'delete', targets: ['orders'], writes: true }, rows: 221480,
-        tables: [{ name: 'public.orders', deleted: 221480, estimate: 221480 }, { name: 'public.order_items', deleted: 612 }],
+        class: { verb: 'delete', targets: ['orders'], writes: true }, rows: 2480,
+        tables: [{ name: 'public.orders', deleted: 2480, estimate: 2480 }, { name: 'public.order_items', deleted: 612 }],
         guard: { code: 'AR001', verb: 'delete', targets: ['orders'], confirm: 'orders/orders', reason: 'This DELETE has no WHERE, so it changes every row of orders.' },
       },
     })
-    expect(await screen.findByText('221,480')).toBeInTheDocument()
+    expect(await screen.findByText('2,480')).toBeInTheDocument()
     expect(screen.getByText(/public.order_items: 612 deleted/)).toBeInTheDocument()
-    const go = screen.getByRole('button', { name: /Run it: 221,480 rows/ })
+    const go = screen.getByRole('button', { name: /Run it: 2,480 rows/ })
     expect(go).toBeDisabled()
     const phrase = screen.getByLabelText(/to go ahead/)
     fireEvent.change(phrase, { target: { value: 'orders/order' } })
@@ -85,6 +85,16 @@ describe('Check before it runs', () => {
     expect(go).not.toBeDisabled()
     fireEvent.click(go)
     await waitFor(() => expect(ws.sent.find((r) => r.op === 'run' && r.sql === 'DELETE FROM orders')).toMatchObject({ confirm: 'orders/orders' }))
+  })
+
+  it('will not send a DELETE past what the trash can keep', async () => {
+    const ws = await open()
+    type('DELETE FROM orders WHERE placed < now()')
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'check')).toBe(true))
+    const chk = ws.sent.find((r) => r.op === 'check')!
+    ws.answer({ id: chk.id, type: 'check', check: { class: { verb: 'delete', targets: ['orders'], hasWhere: true, writes: true }, rows: 221480, tables: [{ name: 'public.orders', deleted: 221480, estimate: 221480 }] } })
+    expect(await screen.findByText(/Too many rows to keep a copy/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Run it: 221,480 rows/ })).toBeDisabled()
   })
 
   it('runs a checked DELETE with a WHERE with no phrase at all', async () => {

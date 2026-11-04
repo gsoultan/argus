@@ -204,6 +204,9 @@ func pgOpen(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdmi
 	if err := pgEnsureLevels(ctx, conn, req.Database, req.Level); err != nil {
 		return PGAdminResult{Error: err.Error(), Version: version}
 	}
+	if err := pgEnsureTrash(ctx, conn); err != nil {
+		return PGAdminResult{Error: "setting up the trash: " + err.Error(), Version: version}
+	}
 
 	// The person's role.
 	role := pgx(req.Role)
@@ -320,8 +323,10 @@ func pgEnsureLevels(ctx context.Context, conn *pgconn.PgConn, database, level st
 			"GRANT pg_signal_backend, pg_read_all_stats TO %s;\n",
 			pgx(names[tunnel.LevelRead]), pgx(names[tunnel.LevelWrite]), pgx(names[tunnel.LevelOwner]), pgx(d), pgx(d))
 	}
+	// The trash is no one's to read or change: it is reached through its
+	// functions only (see postgres_trash.go).
 	b.WriteString("FOR s IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' " +
-		"AND nspname <> 'information_schema' LOOP\n")
+		"AND nspname <> 'information_schema' AND nspname NOT LIKE 'argus\\_trash%' LOOP\n")
 	r := pgx(names[tunnel.LevelRead])
 	fmt.Fprintf(&b, "EXECUTE format('GRANT USAGE ON SCHEMA %%I TO %s', s);\n", r)
 	fmt.Fprintf(&b, "EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %%I TO %s', s);\n", r)
