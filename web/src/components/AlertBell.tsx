@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { IconBell } from '@tabler/icons-react'
 import {
-  alertPrefsQuery, unreadAlertsQuery, urgent, type ConsoleAlert, type StreamStatus,
+  alertPrefsQuery, refreshAlertTarget, unreadAlertsQuery, urgent, type ConsoleAlert, type StreamStatus,
 } from '~/lib/alerts'
 import { FS } from '~/theme'
 
@@ -120,7 +120,10 @@ function useAlertStream(panelOpen: boolean): StreamStatus {
   panelRef.current = panelOpen
 
   useEffect(() => {
-    const go = (link: string) => router.history.push(link)
+    const go = (link: string) => {
+      refreshAlertTarget(qc, link)
+      router.history.push(link)
+    }
     let stop: (() => void) | undefined
     let gone = false
     // After the first paint: nothing on screen waits for the stream.
@@ -133,6 +136,9 @@ function useAlertStream(panelOpen: boolean): StreamStatus {
         if (e.type === 'read') void qc.invalidateQueries({ queryKey: ['alerts', 'prefs'] })
         if (e.type !== 'alert') return
         const a = e.alert
+        // The page the alert is about may be the one on screen: show the
+        // change it announces without waiting for a click.
+        if (a.link) refreshAlertTarget(qc, a.link)
         const p = prefsRef.current
         notifyDesktop(a, go)
         if (document.visibilityState !== 'visible' || panelRef.current) return

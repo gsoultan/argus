@@ -3,14 +3,14 @@ import {
   ActionIcon, Badge, Box, Drawer, Button, Center, Divider, Group, Loader, ScrollArea, SegmentedControl,
   Stack, Switch, Text, ThemeIcon, UnstyledButton,
 } from '@mantine/core'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconArrowLeft, IconDatabase, IconHourglass, IconLogin2, IconServer, IconSettings,
   IconTableRow, IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import {
-  alertPrefsQuery, unreadAlertsQuery, type AlertKind, type AlertPrefs, type ConsoleAlert, type StreamStatus,
+  alertPrefsQuery, refreshAlertTarget, unreadAlertsQuery, type AlertKind, type AlertPrefs, type ConsoleAlert, type StreamStatus,
 } from '~/lib/alerts'
 import {
   ALERT_KINDS, allAlertsQuery, desktopPermission, desktopWanted, setDesktopWanted, useMarkAlertsRead,
@@ -77,6 +77,7 @@ export default function AlertPanel({ status, onClose, fullScreen }: {
   const all = useInfiniteQuery({ ...allAlertsQuery(), enabled: tab === 'all' })
   const mark = useMarkAlertsRead()
   const router = useRouter()
+  const qc = useQueryClient()
   const st = STATUS[status]
 
   const alerts = tab === 'unread'
@@ -91,6 +92,7 @@ export default function AlertPanel({ status, onClose, fullScreen }: {
     if (!a.read) mark.mutate({ seqs: [a.seq] })
     if (a.link) {
       onClose()
+      refreshAlertTarget(qc, a.link)
       router.history.push(a.link)
     }
   }
