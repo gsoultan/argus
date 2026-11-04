@@ -36,14 +36,21 @@ const (
 	maxApprovalItems     = 500
 	maxApprovalSQL       = 100000
 	maxApprovalTotal     = 2 << 20
-	statementPrincipal   = "db:statement"
+	// maxApprovalSummary holds the per-table counts and a preview of 20 rows
+	// a statement, cut to 200 characters a value, for a few statements.
+	maxApprovalSummary = 512 << 10
+	statementPrincipal = "db:statement"
 )
 
 // StatementItem is one statement of an ask.
 type StatementItem struct {
 	SQL    string    `json:"sql"`
 	Params []*string `json:"params,omitempty"`
-	Used   bool      `json:"used,omitempty"`
+	// Rows is how many rows the dry run counted when it was asked for, and
+	// the most it may change once approved. Nil is a statement that does not
+	// count rows, or one asked for without a dry run.
+	Rows *int64 `json:"rows,omitempty"`
+	Used bool   `json:"used,omitempty"`
 }
 
 // StatementAsk is what a db:statement request is for, for the approver's
@@ -83,6 +90,9 @@ func (s *Store) CreateStatementAsk(ctx context.Context, email string, db Databas
 			return AccessRequest{}, ErrInvalidDatabase{fmt.Sprintf("each statement is 1 to %d characters", maxApprovalSQL)}
 		}
 		total += len(it.SQL)
+		if it.Rows != nil && *it.Rows < 0 {
+			return AccessRequest{}, ErrInvalidDatabase{"a statement's row count cannot be negative"}
+		}
 		for _, p := range it.Params {
 			if p != nil {
 				total += len(*p)
@@ -91,6 +101,9 @@ func (s *Store) CreateStatementAsk(ctx context.Context, email string, db Databas
 	}
 	if total > maxApprovalTotal {
 		return AccessRequest{}, ErrInvalidDatabase{"the statements are too long to ask for at once"}
+	}
+	if len(summary) > maxApprovalSummary {
+		return AccessRequest{}, ErrInvalidDatabase{"the dry run's summary is too long to keep with the ask"}
 	}
 	if len(summary) == 0 || !json.Valid(summary) {
 		summary = json.RawMessage(`{}`)
@@ -127,9 +140,9 @@ func (s *Store) CreateStatementAsk(ctx context.Context, email string, db Databas
 		}
 		p, _ := json.Marshal(params)
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO database_statement_items (statement_id, seq, sql, params, digest)
-			VALUES ($1::uuid, $2, $3, $4::jsonb, $5)`,
-			sid, n, it.SQL, string(p), tunnel.StatementDigest(it.SQL, it.Params)); err != nil {
+			INSERT INTO database_statement_items (statement_id, seq, sql, params, digest, row_cap)
+			VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6)`,
+			sid, n, it.SQL, string(p), tunnel.StatementDigest(it.SQL, it.Params), it.Rows); err != nil {
 			return r, fmt.Errorf("create statement ask: %w", err)
 		}
 	}
@@ -145,7 +158,7 @@ func (s *Store) StatementAsks(ctx context.Context, ids []string) (map[string]*St
 	rows, err := s.db(ctx).Query(ctx, `
 		SELECT r.id::text, s.database_id::text, coalesce(d.dbname, ''), s.summary::text, r.state,
 		       r.expires_at, r.decided_by_email, r.decision_note,
-		       i.sql, i.params::text, i.used_at IS NOT NULL
+		       i.sql, i.params::text, i.row_cap, i.used_at IS NOT NULL
 		FROM access_requests r
 		JOIN database_statements s ON s.request_id = r.id
 		LEFT JOIN databases d ON d.id = s.database_id
@@ -161,7 +174,7 @@ func (s *Store) StatementAsks(ctx context.Context, ids []string) (map[string]*St
 		var summary, params string
 		var it StatementItem
 		if err := rows.Scan(&a.RequestID, &a.DatabaseID, &a.DatabaseName, &summary, &a.State,
-			&a.ExpiresAt, &a.DecidedBy, &a.Note, &it.SQL, &params, &it.Used); err != nil {
+			&a.ExpiresAt, &a.DecidedBy, &a.Note, &it.SQL, &params, &it.Rows, &it.Used); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(params), &it.Params)
@@ -178,13 +191,15 @@ func (s *Store) StatementAsks(ctx context.Context, ids []string) (map[string]*St
 }
 
 // UseStatementApproval marks the approved statement used, or says why it
-// cannot run. Each approved statement runs once.
-func (s *Store) UseStatementApproval(ctx context.Context, requestID, email, dbID string, sql string, params []*string) error {
+// cannot run. Each approved statement runs once. It returns the most rows
+// the statement may change, or nil for no cap.
+func (s *Store) UseStatementApproval(ctx context.Context, requestID, email, dbID string, sql string, params []*string) (*int64, error) {
 	if !uuidRE.MatchString(requestID) {
-		return errNoApproval{"that approval does not exist"}
+		return nil, errNoApproval{"that approval does not exist"}
 	}
 	digest := tunnel.StatementDigest(sql, params)
 	var n int
+	var rowCap *int64
 	err := s.db(ctx).QueryRow(ctx, `
 		UPDATE database_statement_items i SET used_at = now()
 		WHERE (i.statement_id, i.seq) = (
@@ -198,12 +213,12 @@ func (s *Store) UseStatementApproval(ctx context.Context, requestID, email, dbID
 			ORDER BY i2.seq LIMIT 1
 			FOR UPDATE OF i2)
 		  AND i.used_at IS NULL
-		RETURNING i.seq`, requestID, email, dbID, digest).Scan(&n)
+		RETURNING i.seq, i.row_cap`, requestID, email, dbID, digest).Scan(&n, &rowCap)
 	if err == nil {
-		return nil
+		return rowCap, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("checking the approval: %w", err)
+		return nil, fmt.Errorf("checking the approval: %w", err)
 	}
 	// Why not, in words.
 	var state, requester, db string
@@ -221,23 +236,23 @@ func (s *Store) UseStatementApproval(ctx context.Context, requestID, email, dbID
 		Scan(&state, &requester, &db, &expires, &matching, &unused)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return errNoApproval{"that approval does not exist"}
+		return nil, errNoApproval{"that approval does not exist"}
 	case err != nil:
-		return fmt.Errorf("checking the approval: %w", err)
+		return nil, fmt.Errorf("checking the approval: %w", err)
 	case !strings.EqualFold(requester, email) || db != dbID:
-		return errNoApproval{"that approval is for someone else's statement"}
+		return nil, errNoApproval{"that approval is for someone else's statement"}
 	case state == "pending":
-		return errNoApproval{"the approval is still waiting for a decision"}
+		return nil, errNoApproval{"the approval is still waiting for a decision"}
 	case state == "denied":
-		return errNoApproval{"the approval was denied"}
+		return nil, errNoApproval{"the approval was denied"}
 	case state != "approved" || expires == nil || !expires.After(time.Now()):
-		return errNoApproval{"the approval has expired; ask again"}
+		return nil, errNoApproval{"the approval has expired; ask again"}
 	case matching == 0:
-		return errNoApproval{"this statement is not the one that was approved; it changed after the ask, so ask again"}
+		return nil, errNoApproval{"this statement is not the one that was approved; it changed after the ask, so ask again"}
 	case unused == 0:
-		return errNoApproval{"this statement already ran under that approval; each approved statement runs once"}
+		return nil, errNoApproval{"this statement already ran under that approval; each approved statement runs once"}
 	}
-	return errNoApproval{"the approval does not cover this statement"}
+	return nil, errNoApproval{"the approval does not cover this statement"}
 }
 
 type statementAskInput struct {
@@ -248,8 +263,8 @@ type statementAskInput struct {
 
 // POST /api/v1/databases/{id}/statements
 func (a *API) postStatementAsk(w http.ResponseWriter, r *http.Request, email string, db Database, _ string) {
-	if db.Label != "production" {
-		writeErr(w, http.StatusBadRequest, db.Name+" is not production; its statements run without approval")
+	if !db.WritesNeedApproval() {
+		writeErr(w, http.StatusBadRequest, "statements on "+db.Name+" run without approval")
 		return
 	}
 	var in statementAskInput
@@ -270,9 +285,10 @@ func (a *API) postStatementAsk(w http.ResponseWriter, r *http.Request, email str
 		what = itoa(len(in.Items)) + " statements"
 	}
 	a.auditDB(r.Context(), "db.statement_requested", "notice", email, db.Hostname,
-		fmt.Sprintf("Asked to run %s on %s (production): %s. Waiting for an approver (request %s).",
-			what, db.Name, req.Justification, req.ID))
+		fmt.Sprintf("Asked to run %s on %s (%s): %s. Waiting for an approver (request %s).",
+			what, db.Name, db.Label, req.Justification, req.ID))
 	a.alertRequestWaiting(r.Context(), req)
+	a.alertEditorsWaiting(r.Context(), db, req)
 	asks, err := a.store.StatementAsks(r.Context(), []string{req.ID})
 	if err != nil || asks[req.ID] == nil {
 		a.fail(w, "statement approval", err)
@@ -311,10 +327,22 @@ func (a *API) getStatementAsk(w http.ResponseWriter, r *http.Request, email stri
 	writeJSON(w, http.StatusOK, ask)
 }
 
+// approvalWhy is what a refusal says about why db's changes wait.
+func approvalWhy(db Database) string {
+	if db.Label == "production" && db.Policy.WriteApproval == nil {
+		return " is production"
+	}
+	return " asks for approval of changes"
+}
+
 // statementGate decides, in the relay, whether a run request on db may pass
 // to the agent. It returns the refusal to answer with, or nil.
-func (a *API) statementGate(ctx context.Context, email string, db Database, level string, req tunnel.PGRequest) *tunnel.PGAnswer {
-	if req.Op != "run" || db.Label != "production" || level == "" || level == tunnel.LevelRead {
+//
+// It also sets req.RowCap from the approval the statement runs under, and
+// clears whatever the browser sent there.
+func (a *API) statementGate(ctx context.Context, email string, db Database, level string, req *tunnel.PGRequest) *tunnel.PGAnswer {
+	req.RowCap = nil
+	if req.Op != "run" || !db.WritesNeedApproval() || level == "" || level == tunnel.LevelRead {
 		return nil
 	}
 	c := tunnel.ClassifySQL(req.SQL)
@@ -328,10 +356,11 @@ func (a *API) statementGate(ctx context.Context, email string, db Database, leve
 	}
 	if req.Approval == "" {
 		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval,
-			Error: db.Name + " is production: a statement that changes it runs once someone else approves it"}
+			Error: db.Name + approvalWhy(db) + ": a statement that changes it runs once someone else approves it"}
 	}
-	err := a.store.UseStatementApproval(ctx, req.Approval, email, db.ID, req.SQL, req.Params)
+	rowCap, err := a.store.UseStatementApproval(ctx, req.Approval, email, db.ID, req.SQL, req.Params)
 	if err == nil {
+		req.RowCap = rowCap
 		return nil
 	}
 	var why errNoApproval

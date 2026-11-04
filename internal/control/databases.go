@@ -68,6 +68,24 @@ type DBPolicy struct {
 	MaxSessionS int `json:"maxSessionS,omitempty"`
 	// KeysLimit is the largest Redis db KEYS runs on. 0 = 10,000.
 	KeysLimit int `json:"keysLimit,omitempty"`
+	// WriteApproval: a statement that changes the database runs only once
+	// someone else approves it. Unset follows the label: on for production,
+	// off for staging and development. It is apart from a grant's
+	// needs_approval, which is about opening a session.
+	WriteApproval *bool `json:"writeApproval,omitempty"`
+	// WriteApprovers is who decides those changes: "approvers" (unset) for
+	// the organization's admins and approvers, or "editors" to add anyone
+	// with Write or above on this database. See change_editors.go.
+	WriteApprovers string `json:"writeApprovers,omitempty"`
+}
+
+// WritesNeedApproval says whether a statement that changes d waits for
+// someone else's approval.
+func (d Database) WritesNeedApproval() bool {
+	if d.Policy.WriteApproval != nil {
+		return *d.Policy.WriteApproval
+	}
+	return d.Label == "production"
 }
 
 // DBAssignment is who may open a database, at what level.
@@ -177,6 +195,14 @@ func (d *Database) validateCommon() error {
 			return ErrInvalidDatabase{"a limit cannot be negative"}
 		}
 	}
+	switch p.WriteApprovers {
+	case "", ApproversDefault, ApproversEditors:
+	default:
+		return ErrInvalidDatabase{`who can approve is "approvers" or "editors"`}
+	}
+	if p.WriteApprovers == ApproversDefault {
+		p.WriteApprovers = ""
+	}
 	if p.MaxRows > tunnel.MaxRowsCeiling {
 		p.MaxRows = tunnel.MaxRowsCeiling
 	}
@@ -187,6 +213,8 @@ func (d *Database) validateCommon() error {
 		// Nothing of Postgres's means anything here; keep it empty so a
 		// Redis never shows a PgBouncer.
 		d.PoolerHost, d.PoolerPort, d.AdminUser = "", 0, ""
+		// Only Postgres statements wait for approval; see statementGate.
+		p.WriteApproval, p.WriteApprovers = nil, ""
 		if p.MaxRows > tunnel.MaxStoreItems {
 			p.MaxRows = tunnel.MaxStoreItems
 		}

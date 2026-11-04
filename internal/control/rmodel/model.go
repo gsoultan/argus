@@ -1158,6 +1158,8 @@ type DatabaseStatementItem struct {
 	Params    storm.JSON
 	Digest    string
 	UsedAt    *time.Time
+	// RowCap is the most rows it may change once approved (migration 048).
+	RowCap *int64
 }
 
 func (m *DatabaseStatementItem) Schema(t *storm.Table) {

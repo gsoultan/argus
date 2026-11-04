@@ -158,6 +158,14 @@ type PGRequest struct {
 	// database whose writes need one. The control plane checks it before the
 	// request reaches the agent; the agent records it with the statement.
 	Approval string `json:"approval,omitempty"`
+	// RowCap is the most rows a statement run under Approval may change:
+	// what the dry run counted when it was asked for. The control plane sets
+	// it from the approval, whatever the browser sent; the agent rolls the
+	// statement back when it changes more. Nil is no cap.
+	RowCap *int64 `json:"rowCap,omitempty"`
+	// Preview asks a check for the first rows the statement changes; see
+	// PGPreview.
+	Preview bool `json:"preview,omitempty"`
 	// Whole asks for the rest of every value a row batch had to cut, as
 	// "part" answers after the batch, up to MaxWholeValue a value, for run.
 	Whole bool `json:"whole,omitempty"`
@@ -369,6 +377,24 @@ type PGCheck struct {
 	Tables []PGCheckTable `json:"tables,omitempty"`
 	// Guard is set when running the statement as written would be stopped.
 	Guard *PGGuard `json:"guard,omitempty"`
+	// Preview is the first rows it changed, when the check asked for them.
+	Preview *PGPreview `json:"preview,omitempty"`
+}
+
+// PreviewRows and PreviewValue bound a check's preview: the rows an approver
+// sees, not a copy of the table.
+const (
+	PreviewRows  = 20
+	PreviewValue = 200
+)
+
+// PGPreview is the first rows a checked statement changed: as they are after
+// an INSERT or UPDATE, and as they were before a DELETE.
+type PGPreview struct {
+	// Change is insert, update or delete.
+	Change  string      `json:"change"`
+	Columns []string    `json:"columns"`
+	Rows    [][]*string `json:"rows"`
 }
 
 // PGCheckTable is one table a checked statement touched.

@@ -728,6 +728,10 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: "BEGIN", MS: elapsed})
 		}
 	}
+	capKind, cerr := s.capOpen(sctx, req, class)
+	if cerr != nil {
+		return s.statementFailed(ctx, req.ID, cerr, 0, time.Since(start).Milliseconds())
+	}
 	rr := s.conn.ExecParams(sctx, sql, args, nil, nil, []int16{0})
 	h := sha256.New()
 	enc := tunnel.NewRowEncoder(req.ID)
@@ -795,6 +799,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 		cancel()
 	}
 	tag, err := rr.Close()
+	err = s.capClose(sctx, capKind, changedRows(tag), req.RowCap, err)
 	if wrapped && !s.conn.IsClosed() {
 		// Ours to end: commit what worked, roll back what failed, and leave
 		// nothing on the connection for the pool. Unless the statement

@@ -120,29 +120,63 @@ func (s *pgSession) check(ctx context.Context, req tunnel.PGRequest) error {
 			open = s.prelude
 		}
 	}
-	if _, err := s.conn.Exec(sctx, open).ReadAll(); err != nil {
-		return s.statementFailed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
-	}
-	before, err := s.xactTouched(sctx)
 	var (
 		tag     pgconn.CommandTag
 		touched map[string]tunnel.PGCheckTable
+		before  map[string]tunnel.PGCheckTable
+		preview *tunnel.PGPreview
+		err     error
 	)
-	if err == nil {
-		rr := s.conn.ExecParams(sctx, sql, args, nil, nil, []int16{0})
-		for rr.NextRow() {
-			// RETURNING rows are counted by the tag; nobody sees them.
-		}
-		tag, err = rr.Close()
+	// With a preview, first as written with RETURNING * added; if Postgres
+	// will not take that, once more as written, without a preview.
+	previewSQL := ""
+	if req.Preview {
+		previewSQL = previewable(class, sql)
 	}
-	if err == nil {
-		touched, err = s.xactTouched(sctx)
-	}
-	// Always undone, whatever happened, before anything else is said.
-	if !s.conn.IsClosed() {
-		if _, uerr := s.conn.Exec(cleanup, undo).ReadAll(); uerr != nil && err == nil {
-			err = uerr
+	for attempt := 0; attempt < 2; attempt++ {
+		ran := sql
+		if attempt == 0 && previewSQL != "" {
+			ran = previewSQL
 		}
+		if _, err = s.conn.Exec(sctx, open).ReadAll(); err != nil {
+			return s.statementFailed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
+		}
+		before, err = s.xactTouched(sctx)
+		if err == nil {
+			rr := s.conn.ExecParams(sctx, ran, args, nil, nil, []int16{0})
+			if req.Preview {
+				preview = &tunnel.PGPreview{Change: class.Verb, Columns: []string{}, Rows: [][]*string{}}
+			}
+			for rr.NextRow() {
+				// RETURNING rows are counted by the tag; only the first few
+				// are kept, for the preview.
+				if preview != nil && len(preview.Rows) < tunnel.PreviewRows {
+					preview.Rows = append(preview.Rows, previewRow(rr.Values()))
+				}
+			}
+			if preview != nil {
+				for _, fd := range rr.FieldDescriptions() {
+					preview.Columns = append(preview.Columns, fd.Name)
+				}
+				if len(preview.Columns) == 0 {
+					preview = nil
+				}
+			}
+			tag, err = rr.Close()
+		}
+		if err == nil {
+			touched, err = s.xactTouched(sctx)
+		}
+		// Always undone, whatever happened, before anything else is said.
+		if !s.conn.IsClosed() {
+			if _, uerr := s.conn.Exec(cleanup, undo).ReadAll(); uerr != nil && err == nil {
+				err = uerr
+			}
+		}
+		if err == nil || ran == sql || s.conn.IsClosed() {
+			break
+		}
+		preview = nil
 	}
 	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
@@ -150,7 +184,7 @@ func (s *pgSession) check(ctx context.Context, req tunnel.PGRequest) error {
 	}
 
 	c := &tunnel.PGCheck{Class: class, Rows: tag.RowsAffected(), Tag: tag.String(),
-		Guard: tunnel.GuardSQL(class, s.db.Name, "")}
+		Guard: tunnel.GuardSQL(class, s.db.Name, ""), Preview: preview}
 	for name, t := range touched {
 		b := before[name]
 		t.Inserted -= b.Inserted
@@ -176,4 +210,42 @@ func sortCheckTables(ts []tunnel.PGCheckTable) {
 			ts[j], ts[j-1] = ts[j-1], ts[j]
 		}
 	}
+}
+
+// previewable is sql with RETURNING * added, for a plain INSERT, UPDATE or
+// DELETE that returns nothing of its own, or "" when it cannot be previewed
+// that way: one that already returns rows keeps its own RETURNING.
+func previewable(c tunnel.SQLClass, sql string) string {
+	switch c.Verb {
+	case "insert", "update", "delete":
+	default:
+		return ""
+	}
+	body := strings.TrimRight(strings.TrimSpace(sql), "; \t\n")
+	first := strings.ToLower(strings.SplitN(strings.TrimSpace(body), " ", 2)[0])
+	if first != c.Verb || strings.Contains(strings.ToLower(body), "returning") ||
+		strings.Contains(body, "--") || strings.Contains(body, "/*") {
+		return ""
+	}
+	return body + "\nRETURNING *"
+}
+
+// previewRow is one row of a preview, each value cut to PreviewValue.
+func previewRow(vals [][]byte) []*string {
+	out := make([]*string, len(vals))
+	for i, v := range vals {
+		if v == nil {
+			continue
+		}
+		t := string(v)
+		if len(t) > tunnel.PreviewValue {
+			n := tunnel.PreviewValue
+			for n > 0 && !utf8.RuneStart(t[n]) {
+				n--
+			}
+			t = t[:n] + "…"
+		}
+		out[i] = &t
+	}
+	return out
 }

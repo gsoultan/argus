@@ -314,6 +314,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/databases/{id}/restores/{restore}/cancel", a.withDatabase(tunnel.LevelOwner, a.postRestoreCancel))
 	// Saved queries; see saved_queries.go.
 	mux.HandleFunc("POST /api/v1/databases/{id}/statements", a.withPostgres("statement approvals", tunnel.LevelWrite, a.postStatementAsk))
+	mux.HandleFunc("GET /api/v1/databases/{id}/approval", a.withPostgres("approvals", tunnel.LevelRead, a.getChangeApproval))
 	mux.HandleFunc("GET /api/v1/databases/{id}/statements/{request}", a.withPostgres("statement approvals", tunnel.LevelRead, a.getStatementAsk))
 	mux.HandleFunc("GET /api/v1/databases/{id}/changes", a.withPostgres("data changes", tunnel.LevelRead, a.getDataChanges))
 	mux.HandleFunc("GET /api/v1/databases/{id}/saved-queries", a.withPostgres("saved queries", tunnel.LevelRead, a.getSavedQueries))
