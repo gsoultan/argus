@@ -38,8 +38,10 @@ function bytes(b: number): string {
   return `${b < 10 && i ? b.toFixed(1) : Math.round(b)} ${u[i]}`
 }
 
-export function WriteCheckDialog({ state, label, onRun, onClose, onBackups }: {
+export function WriteCheckDialog({ state, label, onRun, onClose, onBackups, step }: {
   state: WriteCheckState | null
+  /** Where the statement is in a script being run, if it is in one. */
+  step?: { n: number; total: number }
   /** production, staging or development. */
   label: string
   onRun: (confirm?: string) => void
@@ -180,6 +182,11 @@ export function WriteCheckDialog({ state, label, onRun, onClose, onBackups }: {
         <Box p={8} style={{ background: 'var(--color-void)', borderRadius: 6, maxHeight: 96, overflow: 'auto' }}>
           <Text size={FS.meta} ff="monospace" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{state.sql.length > 600 ? state.sql.slice(0, 600) + '…' : state.sql}</Text>
         </Box>
+        {step && (
+          <Text size={FS.meta} c="dimmed">
+            Statement {step.n} of {step.total} in your script. The ones before it have run; going back stops the script here.
+          </Text>
+        )}
         {body}
         {needsPhrase && state.kind !== 'checking' && (
           <TextInput
@@ -191,7 +198,7 @@ export function WriteCheckDialog({ state, label, onRun, onClose, onBackups }: {
           />
         )}
         <Group justify="flex-end" gap="xs">
-          <Button variant="default" onClick={onClose}>{action ? 'Back to the editor' : 'Close'}</Button>
+          <Button variant="default" onClick={onClose}>{step ? 'Stop the script' : action ? 'Back to the editor' : 'Close'}</Button>
           {action}
         </Group>
       </Stack>

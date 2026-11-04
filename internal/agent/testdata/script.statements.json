@@ -1,0 +1,50 @@
+[
+  {
+    "sql": "BEGIN",
+    "line": 6
+  },
+  {
+    "sql": "CREATE TEMP TABLE input_widget (id int PRIMARY KEY) ON COMMIT DROP",
+    "line": 11
+  },
+  {
+    "sql": "INSERT INTO input_widget (id) VALUES\n    (1)",
+    "line": 12
+  },
+  {
+    "sql": "CREATE TEMP TABLE purge_row (\n    tbl regclass NOT NULL,\n    id  int      NOT NULL,\n    PRIMARY KEY (tbl, id)\n) ON COMMIT DROP",
+    "line": 15
+  },
+  {
+    "sql": "CREATE INDEX ON purge_row (id)",
+    "line": 20
+  },
+  {
+    "sql": "CREATE FUNCTION pg_temp.purge_delete()\nRETURNS TABLE (table_name text, deleted bigint) LANGUAGE plpgsql AS $$\nDECLARE\n    r record;\n    n bigint;\nBEGIN\n    FOR r IN SELECT DISTINCT p.tbl FROM purge_row p LOOP\n        EXECUTE format('DELETE FROM %s t WHERE t.id IN (SELECT p.id FROM purge_row p WHERE p.tbl = %L::regclass)', r.tbl, r.tbl);\n        GET DIAGNOSTICS n = ROW_COUNT;\n        table_name := r.tbl::text;\n        deleted := n;\n        RETURN NEXT;\n    END LOOP;\nEND $$",
+    "line": 23
+  },
+  {
+    "sql": "CREATE FUNCTION pg_temp.label(i int) RETURNS text LANGUAGE sql AS $fn$ SELECT 'widget; ' || i $fn$",
+    "line": 38
+  },
+  {
+    "sql": "INSERT INTO purge_row (tbl, id)\nSELECT 'argus_t_widget'::regclass, w.id FROM argus_t_widget w WHERE w.id IN (SELECT id FROM input_widget)",
+    "line": 40
+  },
+  {
+    "sql": "SELECT i.id AS widget_id_not_found FROM input_widget i\nWHERE NOT EXISTS (SELECT 1 FROM argus_t_widget w WHERE w.id = i.id)",
+    "line": 44
+  },
+  {
+    "sql": "SELECT pg_temp.label(id) AS label, 'it''s; quoted' AS q, E'back\\'slash;' AS e, \"id\" FROM input_widget",
+    "line": 47
+  },
+  {
+    "sql": "SELECT * FROM pg_temp.purge_delete()",
+    "line": 49
+  },
+  {
+    "sql": "ROLLBACK",
+    "line": 52
+  }
+]
