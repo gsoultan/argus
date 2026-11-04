@@ -8,7 +8,7 @@ import {
   IconShieldLock,
 } from '@tabler/icons-react'
 import { completeSetup, setupStatus, type SetupStatus } from '~/lib/live'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import { Brand, ErrorNote } from '~/components/SignIn'
 import { Install } from '~/components/Install'
 import { generatePassword } from '~/lib/password'
@@ -155,7 +155,7 @@ function SetupForm({ tokenFile, onCreated }: {
           <Alert color="sky" variant="light" icon={<IconShieldLock size={16} />} p="xs">
             <Text size="xs">Read it on the host:</Text>
             <Group gap={6} mt={4} wrap="nowrap">
-              <Text size={FS.digest} ff="monospace" c="slate.7" style={{ wordBreak: 'break-all' }}>
+              <Text size={FS.digest} ff="monospace" c="var(--color-ink-soft)" style={{ wordBreak: 'break-all' }}>
                 {command}
               </Text>
               <CopyButton value={command} timeout={1200}>
@@ -241,7 +241,7 @@ function SetupForm({ tokenFile, onCreated }: {
         )}
       </Group>
       {generated && (
-        <Text size="xs" c="amber.4" mt={6}>
+        <Text size="xs" c={INK.pending} mt={6}>
           Save this password in your password manager before you continue. It is not shown again.
         </Text>
       )}
@@ -301,7 +301,7 @@ function NotOffered() {
         could not write its setup token (its log says which). Create the first account on
         the host instead:
       </Text>
-      <Text size={FS.digest} ff="monospace" mt={6} c="slate.7">
+      <Text size={FS.digest} ff="monospace" mt={6} c="var(--color-ink-soft)">
         argus-control users add you@example.com --role admin
       </Text>
     </Alert>

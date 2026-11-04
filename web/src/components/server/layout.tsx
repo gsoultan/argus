@@ -1,7 +1,7 @@
 import { Badge, Box, Divider, Grid, Group, Stack, Text } from '@mantine/core'
 import type { ReactNode } from 'react'
 import { isElevatedAccount } from '~/lib/roles'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import type { Asset } from '~/types/domain'
 
 /**
@@ -17,7 +17,7 @@ export function SettingsSection({ title, description, danger = false, children }
   return (
     <Grid gap={{ base: 'xs', md: 'xl' }}>
       <Grid.Col span={{ base: 12, md: 4 }}>
-        <Text component="h2" fw={600} size="sm" c={danger ? 'rose.6' : undefined} style={{ margin: 0 }}>
+        <Text component="h2" fw={600} size="sm" c={danger ? INK.denied : undefined} style={{ margin: 0 }}>
           {title}
         </Text>
         {description && (

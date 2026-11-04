@@ -8,7 +8,7 @@ import { relTime } from '~/components/primitives'
 import { isConfigured, versionBefore, type AgentFleetRow, type AgentFleetView } from '~/lib/live'
 import { run } from '~/lib/notify'
 import { agentFleetQuery, useSetAgentAutoUpdate, useUpdateAgentFleet } from '~/lib/queries'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 
 /**
  * Every server's agent, on the Servers page.
@@ -169,7 +169,7 @@ function AgentRow({ row: s, latest, canEdit }: { row: AgentFleetRow; latest: str
           <Link
             to="/assets/$assetId"
             params={{ assetId: s.assetId }}
-            style={{ color: 'var(--mantine-color-azure-7)', fontSize: 14, fontWeight: 600, fontFamily: 'var(--mantine-font-family-monospace)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            style={{ color: INK.brand, fontSize: 14, fontWeight: 600, fontFamily: 'var(--mantine-font-family-monospace)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
           >
             {s.hostname}
           </Link>

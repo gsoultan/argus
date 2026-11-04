@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import { Badge, Box, Group, Loader, Stack, Text } from '@mantine/core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -373,7 +373,7 @@ export function LiveTerminal({
         <Group gap={8}>
           <StatusBadge state={state} />
           <Text size="xs" ff="monospace">
-            <Text span c="teal.4" inherit>{principal}</Text>
+            <Text span c={INK.verified} inherit>{principal}</Text>
             <Text span c="dimmed" inherit>@</Text>
             {target}
           </Text>

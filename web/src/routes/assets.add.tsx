@@ -18,7 +18,7 @@ import {
 import { guard } from '~/lib/guard'
 import { isElevatedAccount } from '~/lib/roles'
 import type { DiscoveredHost } from '~/types/domain'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 
 /**
  * Adding a server, in three steps on one page: name it, install the agent
@@ -125,7 +125,7 @@ function Stepper({ step }: { step: Step }) {
         const state = n < step ? 'done' : n === step ? 'current' : 'todo'
         return (
           <Group key={label} gap="xs" wrap="nowrap">
-            {i > 0 && <Box w={{ base: 16, sm: 40 }} h={2} bg={n <= step ? 'azure.6' : 'slate.2'} />}
+            {i > 0 && <Box w={{ base: 16, sm: 40 }} h={2} bg={n <= step ? 'azure.6' : 'var(--color-line)'} />}
             <Box className="argus-stepper-dot" data-state={state} aria-current={state === 'current' ? 'step' : undefined}>
               {state === 'done' ? <IconCheck size={14} /> : n}
             </Box>
@@ -468,7 +468,7 @@ function AccessStep({ hostname }: { hostname: string }) {
             />
           </Group>
           {needShared && (
-            <Text size={FS.meta} c="rose.7" mt="xs">Pick at least one, or nobody can log in.</Text>
+            <Text size={FS.meta} c={INK.denied} mt="xs">Pick at least one, or nobody can log in.</Text>
           )}
         </Box>
 

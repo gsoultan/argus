@@ -13,7 +13,7 @@ import { SystemCard } from '~/components/server/SystemCard'
 import type { ServerTab } from '~/components/server/tabs'
 import { directSshLabel } from '~/lib/directSsh'
 import { agentUpdateQuery, assignmentsQuery, policyQuery, teamAssignmentsQuery } from '~/lib/queries'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import type { Asset, Session } from '~/types/domain'
 
 const WEEK = 7 * 24 * 60 * 60 * 1000
@@ -125,7 +125,7 @@ export function OverviewTab({ asset, sessions, onTab }: {
                         <Text size={FS.meta} fw={500}>{s.userEmail.split('@')[0]}</Text>
                         <Text size={FS.micro} c="dimmed" hiddenFrom="sm" title={absTime(s.startedAt)}>{relTime(s.startedAt)}</Text>
                       </Table.Td>
-                      <Table.Td visibleFrom="sm"><Mono c="azure.3">{s.principal}</Mono></Table.Td>
+                      <Table.Td visibleFrom="sm"><Mono c={INK.brand}>{s.principal}</Mono></Table.Td>
                       <Table.Td visibleFrom="sm">
                         <Text size={FS.meta} c="dimmed" title={absTime(s.startedAt)}>{relTime(s.startedAt)}</Text>
                       </Table.Td>

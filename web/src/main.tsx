@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { MantineProvider } from '@mantine/core'
+import { MantineProvider, localStorageColorSchemeManager } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
@@ -10,12 +10,18 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 // file per family, so this costs two requests, both precached by the worker.
 import '@fontsource-variable/ibm-plex-sans'
 import '@fontsource-variable/jetbrains-mono'
-import { theme } from '~/theme'
+import { COLOR_SCHEME_KEY, cssVariablesResolver, theme } from '~/theme'
 import { ErrorState } from '~/components/ErrorState'
 import { RoutePending } from '~/components/page'
 import { PWAUpdate } from '~/components/PWAUpdate'
 import { routeTree } from './routeTree.gen'
 import '~/app.css'
+
+// The person's pick (light, dark or auto) is kept in this browser under the
+// same key public/color-scheme.js reads before the bundle loads, so the first
+// paint is already in the right scheme. "auto" -- the default -- follows the
+// operating system and changes with it, live.
+const colorSchemeManager = localStorageColorSchemeManager({ key: COLOR_SCHEME_KEY })
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -66,7 +72,12 @@ declare module '@tanstack/react-router' {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MantineProvider theme={theme} defaultColorScheme="light" forceColorScheme="light">
+    <MantineProvider
+      theme={theme}
+      cssVariablesResolver={cssVariablesResolver}
+      colorSchemeManager={colorSchemeManager}
+      defaultColorScheme="auto"
+    >
       <QueryClientProvider client={queryClient}>
         <Notifications position="bottom-right" limit={4} />
         <PWAUpdate />

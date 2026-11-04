@@ -3,6 +3,7 @@ import { Badge, Box, Group, Loader, Text } from '@mantine/core'
 import { PlayerControls } from '~/components/PlayerControls'
 import { canDecodeH264 } from '~/lib/gfx'
 import type { ReplayResponse } from '~/workers/rdpreplay.worker'
+import { INK } from '~/theme'
 
 export interface RDPReplayProps {
   /** The decoded frame stream from the control plane. */
@@ -204,7 +205,7 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
           </Text>
         </Group>
         {error && (
-          <Text size="xs" c="rose.4">
+          <Text size="xs" c={INK.denied}>
             {error}
           </Text>
         )}

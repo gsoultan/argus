@@ -9,7 +9,7 @@ import {
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
   IconArrowsExchange, IconArchive, IconDots, IconStar,
 } from '@tabler/icons-react'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { useCompletion } from '~/components/Autocomplete'
 import { catalogFrom, completeSQL, type SQLCatalog, type SQLColumn } from '~/lib/sqlComplete'
@@ -717,7 +717,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       })}
       <Tooltip label={tabs.length >= MAX_TABS ? `Up to ${MAX_TABS} tabs` : 'New tab'} withArrow>
         <UnstyledButton onClick={() => openTab()} px={10} py={7} disabled={tabs.length >= MAX_TABS}
-          style={{ flexShrink: 0, color: 'var(--color-brand)', fontWeight: 600, fontSize: 13, position: narrow ? 'sticky' : undefined, right: 0,
+          style={{ flexShrink: 0, color: INK.brand, fontWeight: 600, fontSize: 13, position: narrow ? 'sticky' : undefined, right: 0,
             background: narrow ? 'var(--color-void)' : undefined, marginLeft: narrow ? 'auto' : undefined }}
           aria-label="New tab">
           {narrow ? '+' : '+ New tab'}
@@ -799,7 +799,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           {busyElsewhere && (
             <Group gap={6} wrap="nowrap">
               <Loader size={12} />
-              <Text size={FS.micro} c="var(--color-brand)">{runningName} is running</Text>
+              <Text size={FS.micro} c={INK.brand}>{runningName} is running</Text>
             </Group>
           )}
           <Button size="xs" variant="subtle" ml="auto" leftSection={<IconDownload size={14} />} onClick={exportCsv}

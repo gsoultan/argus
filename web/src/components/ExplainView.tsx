@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ActionIcon, Alert, Badge, Box, Code, CopyButton, Group, ScrollArea, Stack, Text, Tooltip } from '@mantine/core'
 import { IconCheck, IconCopy } from '@tabler/icons-react'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import type { Plan, PlanNode } from '~/lib/explainPlan'
 
 /*
@@ -82,7 +82,7 @@ export function ExplainView({ run, raw, narrow }: { run: PlanRun; raw: boolean; 
                   <Code style={{ fontSize: 11 }}>{f.fix}</Code>
                   <CopyButton value={f.fix}>
                     {({ copied, copy }) => (
-                      <Text component="button" type="button" size={FS.micro} c="var(--color-brand)" onClick={copy}
+                      <Text component="button" type="button" size={FS.micro} c={INK.brand} onClick={copy}
                         style={{ background: 'none', border: 0, cursor: 'pointer', padding: 0 }}>{copied ? 'Copied' : 'Copy'}</Text>
                     )}
                   </CopyButton>

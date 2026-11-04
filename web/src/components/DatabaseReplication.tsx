@@ -4,7 +4,7 @@ import {
   Switch, Table, Tabs, Text, Textarea, TextInput, Tooltip,
 } from '@mantine/core'
 import { IconRefresh } from '@tabler/icons-react'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 import { notifyOk } from '~/lib/notify'
 import {
   AdminRefused, NeedsDBA, PanelFrame, type Admin, type AdminFailure, type AdminOp, type AdminPanelProps,
@@ -214,13 +214,13 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
                             <Table.Td>
                               <Badge size="xs" variant="light" color={st.color} radius="sm">{st.label}</Badge>
                               <Text size={FS.micro} c="dimmed">
-                                {s.enabled && <>lag <b style={{ color: (s.applyLagS ?? 0) > 300 ? 'var(--mantine-color-rose-7)' : undefined }}>{fmtLag(s.applyLagS)}</b></>}
+                                {s.enabled && <>lag <b style={{ color: (s.applyLagS ?? 0) > 300 ? INK.denied : undefined }}>{fmtLag(s.applyLagS)}</b></>}
                                 {s.workerPid ? ` · worker ${s.workerPid}` : ''}
                                 {s.lastMessageAt ? ` · last message ${new Date(s.lastMessageAt).toLocaleTimeString()}` : ''}
                               </Text>
                             </Table.Td>
                             <Table.Td>
-                              <Text size={FS.meta}><b>{s.tablesReady}</b> ready{s.tablesSyncing ? <> · <b style={{ color: 'var(--mantine-color-amber-7)' }}>{s.tablesSyncing}</b> copying</> : null}{s.tablesWaiting ? <> · {s.tablesWaiting} waiting</> : null}</Text>
+                              <Text size={FS.meta}><b>{s.tablesReady}</b> ready{s.tablesSyncing ? <> · <b style={{ color: INK.pending }}>{s.tablesSyncing}</b> copying</> : null}{s.tablesWaiting ? <> · {s.tablesWaiting} waiting</> : null}</Text>
                             </Table.Td>
                             {!narrow && (
                               <Table.Td>

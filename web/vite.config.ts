@@ -40,6 +40,9 @@ export default defineConfig({
         // the manifest twice, with the same revision.
         globPatterns: [
           'index.html',
+          // Sets light or dark before first paint; index.html loads it
+          // blocking, so an offline start without it would stall on a 404.
+          'color-scheme.js',
           'assets/index-*.js',
           'assets/*.css',
           'assets/*-latin-wght-*.woff2',

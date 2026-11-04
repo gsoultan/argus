@@ -11,7 +11,7 @@ import {
 } from '@tabler/icons-react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Digest, Mono, absTime, relTime } from '~/components/primitives'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import { downloadJSON, stamp } from '~/lib/download'
 import { notifyOk, notifyWarn } from '~/lib/notify'
 import { auditQuery } from '~/lib/queries'
@@ -208,7 +208,7 @@ function Audit() {
                     500 of 4,546 entries is a true statement about a window and
                     a false one about the log. */}
                 {partial && (
-                  <Text size={FS.meta} c="amber.4" mt={SP.cozy} lh={1.5} fw={500}>
+                  <Text size={FS.meta} c={INK.pending} mt={SP.cozy} lh={1.5} fw={500}>
                     This is the most recent {chain.links.length.toLocaleString()} of{' '}
                     {total!.toLocaleString()} entries{coverage ? ` (${coverage})` : ''} — the
                     console holds at most {AUDIT_CEILING.toLocaleString()}. Anything verified

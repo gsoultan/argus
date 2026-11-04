@@ -46,7 +46,7 @@ import {
   ArtefactPending, Digest, Field, FidelityBadge, Mono, RiskFlags, SessionDuration,
   SessionStateBadge, absTime, bytes, relTime,
 } from '~/components/primitives'
-import { FS, SP } from '~/theme'
+import { FS, SP, INK } from '~/theme'
 import { buildCast } from '~/lib/cast'
 import { downloadText, stamp } from '~/lib/download'
 import { isStatementProtocol } from '~/lib/engines'
@@ -517,7 +517,7 @@ function SessionDetail() {
                     </Group>
                   </Field>
                   <Group grow>
-                    <Field label="Principal"><Mono c="azure.3">{session.principal}</Mono></Field>
+                    <Field label="Principal"><Mono c={INK.brand}>{session.principal}</Mono></Field>
                     <Field label="Protocol"><Mono>{session.protocol}</Mono></Field>
                   </Group>
                   <Group grow>
@@ -604,7 +604,7 @@ function SessionDetail() {
                           py={SP.snug}
                           style={{
                             borderTop: '1px solid var(--color-line)',
-                            background: active ? 'rgba(108, 116, 240, 0.12)' : undefined,
+                            background: active ? 'var(--color-brand-wash)' : undefined,
                             borderLeft: active
                               ? '2px solid var(--color-brand-bright)'
                               : '2px solid transparent',
@@ -614,7 +614,10 @@ function SessionDetail() {
                             <Text size={FS.micro} c="dimmed" ff="monospace" w={38} style={{ flexShrink: 0 }}>
                               {`${String(Math.floor(c.t / 60)).padStart(2, '0')}:${String(Math.floor(c.t % 60)).padStart(2, '0')}`}
                             </Text>
-                            <Text size="xs" ff="monospace" c={active ? 'azure.2' : 'slate.2'} style={{ wordBreak: 'break-all' }}>
+                            {/* Body text, and the brand ink when the playhead is on it. This was
+                                slate.2 / azure.2, shades picked for the old dark console: on a
+                                white card a command was 1.2:1 and could not be read at all. */}
+                            <Text size="xs" ff="monospace" c={active ? INK.brand : undefined} fw={active ? 500 : undefined} style={{ overflowWrap: 'anywhere' }}>
                               {c.cmd}
                             </Text>
                           </Group>

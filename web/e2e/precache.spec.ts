@@ -24,9 +24,13 @@ const DIST = new URL('../dist/', import.meta.url).pathname
 /**
  * 8 entries and 623.5 kB on disk when these were set. 705.7 kB with the
  * alerts bell (697.3 before), whose eager code and stylesheet are in the shell.
+ * 712.7 kB and 9 entries with light and dark themes: public/color-scheme.js,
+ * which index.html loads before the bundle and so must be stored for an
+ * offline start, plus the dark tokens in the shared stylesheet and the theme
+ * menu in the entry chunk.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 712
+const MAX_KB = 716
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')

@@ -48,7 +48,7 @@ function NotFound() {
   return (
     <Box className="grid place-items-center" h="60vh">
       <Box ta="center">
-        <Text size={FS.display} fw={700} c="slate.7" lh={1}>404</Text>
+        <Text size={FS.display} fw={700} c="var(--color-ink-soft)" lh={1}>404</Text>
         <Text size="sm" c="dimmed" mt="xs" mb="md">No such page.</Text>
         <ButtonLink size="xs" variant="light" to="/">
           Back to Home

@@ -18,7 +18,7 @@ import {
 } from '~/lib/live'
 import { downloadText } from '~/lib/download'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
 
 const settingsKey = ['control-settings'] as const
 
@@ -322,8 +322,8 @@ function Certificate({ s, edit }: CardProps) {
             </Table.Tbody>
           </Table>
         ) : null}
-        {s.tls.certPem && <Text size={FS.micro} c="amber.4">A new certificate is staged; it is installed when you save.</Text>}
-        {s.tls.reissue && <Text size={FS.micro} c="amber.4">A fresh certificate is issued when you save.</Text>}
+        {s.tls.certPem && <Text size={FS.micro} c={INK.pending}>A new certificate is staged; it is installed when you save.</Text>}
+        {s.tls.reissue && <Text size={FS.micro} c={INK.pending}>A fresh certificate is issued when you save.</Text>}
         <Group gap="xs">
           <Button size="xs" variant="light" leftSection={<IconCloudUpload size={14} />} onClick={modal.open}>
             Upload a certificate
@@ -829,7 +829,7 @@ function ChannelRow({ name, on, detail, onSetUp }: {
  */
 function FormNote({ missing, children }: { missing: string[]; children: ReactNode }) {
   return missing.length > 0
-    ? <Text size={FS.meta} c="amber.7">Still needed: {missing.join(', ')}.</Text>
+    ? <Text size={FS.meta} c={INK.pending}>Still needed: {missing.join(', ')}.</Text>
     : <Text size={FS.meta} c="dimmed">{children}</Text>
 }
 
