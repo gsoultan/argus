@@ -95,6 +95,12 @@ type API struct {
 	// once it has been stored here, sent on every heartbeat reply. Zero sends
 	// nothing and the agent keeps its own default; negative is for ever.
 	AgentKeepRecordings time.Duration
+	// ArchiveAfter is how old a stored recording is before it is moved to
+	// the archive; zero or less never archives. ArchiveStorageClass is the
+	// bucket storage class archived recordings go to, empty for the
+	// bucket's default. See recording_archive.go.
+	ArchiveAfter        time.Duration
+	ArchiveStorageClass string
 
 	// Alerts tells administrators when a session starts. Nil sends nothing.
 	Alerts *notify.Dispatcher
@@ -859,7 +865,11 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// applies to everyone: a named account is never more open there than it
 	// was asked to be. An agent that reads them takes direct_ssh_default for
 	// every account it is not given.
-	reply := map[string]any{"status": "ok", "console_only": true}
+	reply := map[string]any{"status": "ok", "console_only": true,
+		// This control plane verifies and stores a recording shipped as
+		// zstd; an agent sends one plain to a control plane that does not
+		// say so.
+		"recording_encodings": []string{"zstd"}}
 	switch k := a.AgentKeepRecordings; {
 	case k < 0:
 		reply["keep_recordings_hours"] = 0

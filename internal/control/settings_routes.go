@@ -54,6 +54,9 @@ type Settings struct {
 	// AgentKeepRecordingsDays is how long servers keep their own copy of a
 	// recording once it is stored here: 0 is the default (7), -1 for ever.
 	AgentKeepRecordingsDays int `json:"agentKeepRecordingsDays"`
+	// Archive is when stored recordings move to the archive. Nil from a
+	// console older than the archive, which keeps what is configured.
+	Archive *RecordingArchiveSettings `json:"archive,omitempty"`
 
 	Database DatabaseSettings `json:"database"`
 	Storage  StorageSettings  `json:"storage"`
@@ -69,6 +72,16 @@ type Settings struct {
 	// are then kept as configured, for the same reason.
 	ServerAlerts *ServerAlertSettings `json:"serverAlerts,omitempty"`
 	Security     *SecuritySettings    `json:"security,omitempty"`
+}
+
+// RecordingArchiveSettings is when a stored recording is recompressed and
+// moved to the archive, and where.
+type RecordingArchiveSettings struct {
+	// AfterDays is the age in days: 0 is the default (30), -1 never.
+	AfterDays int `json:"afterDays"`
+	// StorageClass is the bucket storage class, empty for the default; one
+	// of ArchiveStorageClasses.
+	StorageClass string `json:"storageClass"`
 }
 
 // ServerAlertSettings is when administrators are told a server connected.

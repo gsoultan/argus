@@ -57,6 +57,12 @@ func (d *Dir) Upload(ctx context.Context, path, sessionID, chainHead string, sta
 		chainHead, startedAt)
 }
 
+// UploadKeyWith is UploadKey; a directory has no storage classes.
+func (d *Dir) UploadKeyWith(ctx context.Context, path, key, sessionID, chainHead string,
+	startedAt time.Time, _ PutOptions) (string, error) {
+	return d.UploadKey(ctx, path, key, sessionID, chainHead, startedAt)
+}
+
 // UploadKey is Upload at a key the caller chose; see Scoped.
 func (d *Dir) UploadKey(_ context.Context, path, key, _, _ string, _ time.Time) (string, error) {
 	if d == nil {

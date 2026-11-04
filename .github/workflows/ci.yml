@@ -176,6 +176,11 @@ jobs:
           go build -o "$tmp/argus-agent" ./cmd/argus-agent
           go build -o "$tmp/termdrill" ./scripts/tools/termdrill
           go build -o "$tmp/totp" ./scripts/tools/totp
+          go build -o "$tmp/argus-verify" ./cmd/argus-verify
+          # A sealed recording is compressed before it ships (<id>.cast.zst);
+          # read it through argus-verify, whichever name it has by now.
+          reccat() { for f in "$1.zst" "$1"; do
+            if sudo test -e "$f"; then sudo "$tmp/argus-verify" --cat "$f"; return; fi; done; return 1; }
           go run ./scripts/tools/gencerts "$tmp"
           chmod 600 "$tmp/server.key"
 
@@ -251,7 +256,7 @@ jobs:
             echo "::error::the session did not get the account's login shell"; exit 1; }
           [ "$(sudo stat -f %Su /Users/argusdrill/through-argus)" = argusdrill ]
           sid=$(sed -n 's/^session=//p' "$tmp/term.err")
-          sudo grep -q through-argus "/var/db/argus/recordings/$sid.cast" || {
+          reccat "/var/db/argus/recordings/$sid.cast" | grep through-argus >/dev/null || {
             echo "::error::the recording on the host does not hold the session"; exit 1; }
           [ "$(sudo stat -f '%Lp %Su' /var/db/argus/recordings)" = "700 root" ]
           for i in $(seq 1 30); do
@@ -309,6 +314,13 @@ jobs:
           go build -o "$tmp/totp.exe" ./scripts/tools/totp
           go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
           go build -o "$tmp/replaydump.exe" ./scripts/tools/replaydump
+          go build -o "$tmp/argus-verify.exe" ./cmd/argus-verify
+          # A sealed recording is compressed before it ships (<id>.cast.zst);
+          # read it through argus-verify, whichever name it has by now.
+          # Windows paths out: argus-verify.exe is a native program and is
+          # not handed /c/... translated in this job.
+          recfile() { if [ -e "$1.zst" ]; then cygpath -m "$1.zst"; else cygpath -m "$1"; fi; }
+          reccat() { "$tmp/argus-verify.exe" --cat "$(recfile "$1")"; }
           go run ./scripts/tools/gencerts "$tmp"
           # The Windows "chmod 600", which the control plane checks for.
           icacls "$(cygpath -w "$tmp/server.key")" /inheritance:r /grant:r "$USERNAME:R" \
@@ -396,7 +408,7 @@ jobs:
           grep -qi 'argusdrill' <<<"$owner" || {
             echo "::error::the file the session wrote is owned by '$owner', not the account"; exit 1; }
           sid=$(sed -n 's/^session=//p' "$tmp/term.err" | tr -d '\r')
-          grep -q through-argus "/c/ProgramData/Argus/recordings/$sid.cast" || {
+          reccat "/c/ProgramData/Argus/recordings/$sid.cast" | grep through-argus >/dev/null || {
             echo "::error::the recording on the host does not hold the session"; exit 1; }
           for i in $(seq 1 30); do
             who=$(psql "$PGURL" -tAc "SELECT user_email FROM sessions WHERE id = '$sid'::uuid")
@@ -479,9 +491,11 @@ jobs:
           done
           [ "$st" = "closed admin@ci.example rdp" ] || { tail -40 "$log"
             echo "::error::the desktop was reported as '$st'"; exit 1; }
-          rec="/c/ProgramData/Argus/recordings/$dsid.argusrdp"
+          rec=$(recfile "/c/ProgramData/Argus/recordings/$dsid.argusrdp")
           [ -s "$rec" ] || { echo "::error::the desktop's recording is not on the host"; exit 1; }
-          if grep -q "$DRILL_PASSWORD" "$rec" "$log"; then
+          # Searched decompressed: grep over the zstd bytes would find nothing
+          # whatever the recording held.
+          if reccat "$rec" | grep "$DRILL_PASSWORD" >/dev/null || grep -q "$DRILL_PASSWORD" "$log"; then
             echo "::error::the account's password was written down on the host"; exit 1
           fi
 
@@ -531,7 +545,7 @@ jobs:
             [ "$st" = closed ] && break
             sleep 1
           done
-          "$tmp/replaydump.exe" "C:/ProgramData/Argus/recordings/$gsid.argusrdp" \
+          "$tmp/replaydump.exe" "$(recfile "/c/ProgramData/Argus/recordings/$gsid.argusrdp")" \
             measure/graphics.replay || { echo "::error::the graphics session's recording did not replay"; exit 1; }
 
           # The same busy screen straight from Windows, with bitmap updates
@@ -995,6 +1009,11 @@ jobs:
           # Built, not `go run`: go run exits 1 for any non-zero status, and
           # the status is part of what is checked.
           go build -o "$tmp/termdrill" ./scripts/tools/termdrill
+          go build -o "$tmp/argus-verify" ./cmd/argus-verify
+          # A sealed recording is compressed before it ships (<id>.cast.zst);
+          # read it through argus-verify, whichever name it has by now.
+          reccat() { for f in "$1.zst" "$1"; do
+            if sudo test -e "$f"; then sudo "$tmp/argus-verify" --cat "$f"; return; fi; done; return 1; }
           set +e
           out=$("$tmp/termdrill" -url https://localhost:8080 -ca "$tmp/ca.crt" \
             -ticket "$tkt" -target "$(hostname)" -principal argusdrill \
@@ -1008,7 +1027,7 @@ jobs:
           [ "$(sudo stat -c %U /home/argusdrill/through-argus)" = argusdrill ] || {
             echo "::error::the session could not write to its own home: it inherited the agent's sandbox"; exit 1; }
           sid=$(sed -n 's/^session=//p' "$tmp/term.err")
-          sudo grep -q through-argus "/var/lib/argus/recordings/$sid.cast" || {
+          reccat "/var/lib/argus/recordings/$sid.cast" | grep through-argus >/dev/null || {
             echo "::error::the recording on the host does not hold the session"; exit 1; }
           for i in $(seq 1 30); do
             who=$(psql "$PGURL" -tAc "SELECT user_email FROM sessions WHERE id = '$sid'::uuid")

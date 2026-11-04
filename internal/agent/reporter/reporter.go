@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,6 +47,12 @@ type Client struct {
 	// so an unreachable control plane eventually takes privileged access down
 	// with it. Measured on the dev fleet: 11.9 MB and climbing.
 	MaxSpoolBytes int64
+
+	// shipZstd is whether the control plane said it reads zstd recordings.
+	// Until it has, a compressed recording is sent decompressed: an older
+	// control plane would verify the compressed bytes as lines, find they
+	// do not match, and refuse the evidence for good.
+	shipZstd atomic.Bool
 
 	// failures counts consecutive delivery failures, and firstFailure is when
 	// the run started. A single warning per report is indistinguishable from
@@ -137,6 +144,21 @@ type HeartbeatReply struct {
 	// recording once the control plane has stored it; 0 is for ever. Nil from
 	// a control plane older than the setting: the agent keeps its own default.
 	KeepRecordingsHours *int `json:"keep_recordings_hours"`
+	// RecordingEncodings is the compressions the control plane reads a
+	// shipped recording in. Absent from a control plane older than them,
+	// which is then sent every recording plain.
+	RecordingEncodings []string `json:"recording_encodings"`
+}
+
+// AcceptsZstd reports whether the reply says recordings may be shipped as
+// zstd.
+func (r HeartbeatReply) AcceptsZstd() bool {
+	for _, e := range r.RecordingEncodings {
+		if e == "zstd" {
+			return true
+		}
+	}
+	return false
 }
 
 // HeartbeatWithReply reports like Heartbeat and returns the control plane's

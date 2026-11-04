@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/gsoultan/argus/internal/rdp"
+	"github.com/gsoultan/argus/internal/recorder"
 )
 
 func main() {
@@ -33,12 +34,18 @@ func run(in, out string) error {
 		return err
 	}
 	defer r.Close()
+	// A stored recording is zstd; a fixture may be plain.
+	plain, err := recorder.Open(r)
+	if err != nil {
+		return err
+	}
+	defer plain.Close()
 	f, err := os.Create(out)
 	if err != nil {
 		return err
 	}
 	w := bufio.NewWriter(f)
-	info, err := rdp.DecodeRecording(r, w)
+	info, err := rdp.DecodeRecording(plain, w)
 	if err != nil {
 		f.Close()
 		return err

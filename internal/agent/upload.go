@@ -1,11 +1,9 @@
 package agent
 
 import (
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/agent/reporter"
+	"github.com/gsoultan/argus/internal/recorder"
 )
 
 /*
@@ -28,22 +27,24 @@ when the control plane has stored the bytes, or when it refuses them for good
 -- a chain that does not verify is kept on the host and said loudly, not
 retried for ever.
 
-The host's copy is never touched until the control plane has verified the
-chain and stored the bytes. From then on it is a second copy, and a fleet of
-servers keeping every session they ever recorded, uncompressed, for ever, is
-disk that fills on every host at once. So once shipped (Tidy):
+A sealed recording is compressed before it is shipped: zstd, <id>.cast.zst
+or <id>.argusrdp.zst, a desktop recording ten to twenty times smaller and a
+terminal one five to ten. That is the one change made to the host's copy
+before the control plane holds it, and it is made safely: the compressed copy
+is read back to the same bytes before the plain one is removed, and the chain
+covers the recording's lines, so it verifies to the same head. A control
+plane that has not said it reads zstd is sent the recording decompressed.
 
-  - after CompressAfter (an hour) it is gzipped in place, <id>.cast.gz.
-    Terminal recordings shrink five times or more; `gzip -dc` gives back
-    the exact bytes, which still verify against the same chain head.
-  - after Keep (7 days by default; the console's Settings, or --keep-shipped
-    on the host, which wins) it is deleted. Zero keeps it for ever. It was
-    90 days, and a host recording desktops kept three months of video that
-    the control plane already held.
+Once shipped, the host's copy is a second copy, and a fleet of servers keeping
+every session they ever recorded for ever is disk that fills on every host at
+once. So once shipped (Tidy) it is deleted after Keep (7 days by default; the
+console's Settings, or --keep-shipped on the host, which wins). Zero keeps it
+for ever. A copy shipped plain by an older agent is compressed after
+CompressAfter (an hour) in the meantime.
 
 A recording that was never shipped, is still queued, or was refused is never
-compressed or deleted: until the control plane holds a verified copy, the
-host's is the only evidence there is.
+deleted: until the control plane holds a verified copy, the host's is the
+only evidence there is.
 */
 
 // RecordingSender delivers one recording. *reporter.Client is one.
@@ -179,6 +180,9 @@ func (u *Uploads) Pass(ctx context.Context) int {
 			_ = os.Remove(marker)
 			continue
 		}
+		if !strings.HasSuffix(m.Path, recorder.CompressedExt) {
+			m = u.compress(marker, m)
+		}
 		sctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		err = u.send.UploadRecording(sctx, m.ID, m.ChainHead, m.Path)
 		cancel()
@@ -204,6 +208,32 @@ func (u *Uploads) Pass(ctx context.Context) int {
 		}
 	}
 	return waiting
+}
+
+// compress replaces a queued recording with its zstd copy and repoints the
+// marker at it. A failure leaves the plain recording queued as it was: it
+// ships plain, and is no less evidence for that.
+func (u *Uploads) compress(marker string, m uploadMarker) uploadMarker {
+	before, _ := os.Stat(m.Path)
+	path, err := recorder.CompressFile(m.Path, recorder.Hot)
+	if err != nil {
+		u.log.Warn("cannot compress a recording before shipping it; it ships as it is",
+			"session", m.ID, "path", m.Path, "error", err)
+		return m
+	}
+	c := m
+	c.Path = path
+	b, _ := json.Marshal(c)
+	if err := os.WriteFile(marker, b, 0o600); err != nil {
+		// The plain file is already gone; the marker must not name it.
+		u.log.Error("cannot repoint an upload marker at the compressed recording",
+			"session", m.ID, "error", err)
+	}
+	if after, err := os.Stat(path); err == nil && before != nil {
+		u.log.Info("recording compressed for shipping", "session", m.ID,
+			"bytes", before.Size(), "compressed", after.Size())
+	}
+	return c
 }
 
 func (u *Uploads) warnOnce(id string) bool {
@@ -267,17 +297,21 @@ func (u *Uploads) Tidy(now time.Time) (compressed, removed int) {
 		if keep > 0 && age >= keep {
 			_ = os.Remove(m.Path)
 			_ = os.Remove(m.Path + ".gz")
+			_ = os.Remove(recorder.CompressedName(m.Path))
 			_ = os.Remove(marker)
 			removed++
 			continue
 		}
-		if age < after || strings.HasSuffix(m.Path, ".gz") {
+		if age < after || strings.HasSuffix(m.Path, ".gz") ||
+			strings.HasSuffix(m.Path, recorder.CompressedExt) {
 			continue
 		}
 		if _, err := os.Stat(m.Path); err != nil {
 			continue
 		}
-		if err := gzipFile(m.Path); err != nil {
+		// Shipped plain, by an agent before compression at seal. The marker
+		// keeps the plain name; expiry removes either.
+		if _, err := recorder.CompressFile(m.Path, recorder.Hot); err != nil {
 			u.log.Warn("cannot compress a shipped recording; it stays as it is",
 				"session", m.ID, "path", m.Path, "error", err)
 			continue
@@ -289,47 +323,4 @@ func (u *Uploads) Tidy(now time.Time) (compressed, removed int) {
 			"compressed", compressed, "removed", removed, "keep", keep.String())
 	}
 	return compressed, removed
-}
-
-// gzipFile replaces path with path.gz, which is complete before the original
-// goes: a crash in between leaves both, never neither.
-func gzipFile(path string) error {
-	in, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	// Closed before the original is removed: Windows will not delete a
-	// file that is still open.
-	defer func() {
-		if in != nil {
-			_ = in.Close()
-		}
-	}()
-	tmp := path + ".gz.tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	zw, _ := gzip.NewWriterLevel(out, gzip.BestCompression)
-	zw.Name = filepath.Base(path)
-	_, err = io.Copy(zw, in)
-	if cerr := zw.Close(); err == nil {
-		err = cerr
-	}
-	if serr := out.Sync(); err == nil {
-		err = serr
-	}
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(tmp, path+".gz")
-	}
-	if err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	_ = in.Close()
-	in = nil
-	return os.Remove(path)
 }

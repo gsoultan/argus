@@ -86,7 +86,16 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 	// Buffered so the chain can be verified before a single byte is served.
 	// Handing over a recording and only then discovering it was altered would
 	// be exactly backwards.
-	body, err := io.ReadAll(io.LimitReader(obj, 256<<20))
+	// Stored compressed, and archived recordings more so; the chain covers
+	// the lines, so it is checked on what comes out. The bound is on the
+	// recording, not the object, as it always was.
+	plain, err := recorder.Open(obj)
+	if err != nil {
+		a.fail(w, "open recording", err)
+		return
+	}
+	defer plain.Close()
+	body, err := io.ReadAll(io.LimitReader(plain, 256<<20))
 	if err != nil {
 		a.fail(w, "read recording", err)
 		return

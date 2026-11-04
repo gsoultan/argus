@@ -7,6 +7,10 @@
 //
 //	argus-verify session.cast <chain-head>
 //	argus-verify --head session.cast          # just print the computed head
+//	argus-verify --cat session.cast.zst       # print the recording itself
+//
+// Recordings are kept compressed (zstd, and gzip on hosts an older agent
+// tidied); every mode reads through the compression.
 //
 // It also opens an encrypted database backup (.argusdump) outside Argus, for
 // break-glass recovery when the control plane is gone:
@@ -26,7 +30,6 @@ package main
 
 import (
 	"bufio"
-	"compress/gzip"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -43,6 +46,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	headOnly := flag.Bool("head", false, "print the computed chain head and exit")
+	cat := flag.Bool("cat", false, "print the recording, decompressed, and exit; nothing is verified")
 	quiet := flag.Bool("quiet", false, "suppress output; rely on exit status")
 	secret := flag.String("secret", "", "the control plane's root secret, to open a backup")
 	dataKey := flag.String("key", "", "a backup's data key (base64), to open it without the secret")
@@ -86,24 +90,34 @@ func main() {
 		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
 		os.Exit(2)
 	}
+	if *cat {
+		plain, err := recorder.Open(f)
+		if err == nil {
+			_, err = io.Copy(os.Stdout, plain)
+			_ = plain.Close()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
 	if !*headOnly && expected == "" {
 		fmt.Fprintln(os.Stderr, "argus-verify: an expected chain head is required (or pass --head)")
 		os.Exit(2)
 	}
 
-	// An agent gzips its own copy of a recording once the control plane has
-	// stored it. The chain covers the recording's bytes, not the file's, so a
-	// compressed copy is read through and checked exactly as it was written.
-	br := bufio.NewReader(f)
-	if magic, _ := br.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
-		zr, err := gzip.NewReader(br)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
-			os.Exit(2)
-		}
-		defer zr.Close()
-		br = bufio.NewReader(zr)
+	// Recordings are kept compressed: zstd once sealed, and gzip on a host
+	// an older agent tidied. The chain covers the recording's lines, not the
+	// file's bytes, so a compressed copy is read through and checked exactly
+	// as it was written.
+	plain, err := recorder.Open(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus-verify: %v\n", err)
+		os.Exit(2)
 	}
+	defer plain.Close()
+	br := bufio.NewReader(plain)
 
 	// A database session's recording (.argussql) is JSON lines with its own
 	// chain; the first bytes say which kind this is.

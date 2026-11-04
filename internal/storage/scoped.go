@@ -73,6 +73,34 @@ func (s *Scoped) Upload(ctx context.Context, path, sessionID, chainHead string,
 		sessionID, chainHead, startedAt)
 }
 
+// archiveUploader is what a store must offer to take an archived copy.
+type archiveUploader interface {
+	UploadKeyWith(ctx context.Context, path, key, sessionID, chainHead string,
+		startedAt time.Time, opt PutOptions) (string, error)
+}
+
+// ArchiveKey is where the organization's archived copy of a session's
+// recording goes. ext is the archived file's, .cast.zst or .argusrdp.zst.
+func (s *Scoped) ArchiveKey(startedAt time.Time, sessionID, ext string) string {
+	return s.prefix + ArchivePrefix + ObjectKeyExt(startedAt, sessionID, ext)
+}
+
+// PutArchive stores an archived recording at key, which ArchiveKey made.
+func (s *Scoped) PutArchive(ctx context.Context, path, key, sessionID, chainHead string,
+	startedAt time.Time, opt PutOptions) (string, error) {
+	if s == nil || s.inner == nil {
+		return "", ErrNotConfigured
+	}
+	if !s.Owns(key) {
+		return "", fmt.Errorf("object %q is not this organization's", key)
+	}
+	au, ok := s.inner.(archiveUploader)
+	if !ok {
+		return "", fmt.Errorf("%T cannot archive a recording", s.inner)
+	}
+	return au.UploadKeyWith(ctx, path, key, sessionID, chainHead, startedAt, opt)
+}
+
 // PutKey stores a file under key within the organization's prefix, for
 // objects that are not recordings (database backups). The key returned is
 // the one to read it back with.

@@ -65,6 +65,15 @@ type config struct {
 	// leaves it to the agent (7 days); -1 keeps it for ever. Never applies
 	// to a recording the control plane does not have.
 	AgentKeepRecordingsDays int `yaml:"agent_keep_recordings_days,omitempty"`
+	// RecordingsArchiveAfterDays is how old a stored recording is before it
+	// is recompressed harder and moved under archive/, where it is still
+	// replayed from the console. Zero is the default (30); -1 never
+	// archives.
+	RecordingsArchiveAfterDays int `yaml:"recordings_archive_after_days,omitempty"`
+	// RecordingsArchiveStorageClass is the bucket storage class archived
+	// recordings are stored in, such as STANDARD_IA or GLACIER_IR. Empty is
+	// the bucket's default. Only classes that read back at once are allowed.
+	RecordingsArchiveStorageClass string `yaml:"recordings_archive_storage_class,omitempty"`
 	// AgentReleasesURL is where agents download a new version from when the
 	// console updates them: <url>/v<version>/<package>, with checksums.txt
 	// beside it. Empty is the project's GitHub releases; set it to a mirror
@@ -492,6 +501,12 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		}
 	}
 	api.AgentKeepRecordings = agentKeepRecordings(cfg.AgentKeepRecordingsDays)
+	if !control.ValidArchiveStorageClass(cfg.RecordingsArchiveStorageClass) {
+		return fmt.Errorf("recordings_archive_storage_class is %q; use one of %s",
+			cfg.RecordingsArchiveStorageClass, strings.Join(control.ArchiveStorageClasses[1:], ", "))
+	}
+	api.ArchiveAfter = archiveAfter(cfg.RecordingsArchiveAfterDays)
+	api.ArchiveStorageClass = cfg.RecordingsArchiveStorageClass
 	api.Alerts = alerts
 	signIns, err := signInNotifier(cfg.Alerts, cfg.ConsoleURL, log)
 	if err != nil {
@@ -557,6 +572,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		log.Info("serving recordings from this host; configure object storage to keep them off it",
 			"dir", dir.Root())
 	}
+	// After the store is set: the archive reads and writes it.
+	go api.RunRecordingArchive(ctx, time.Hour)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process
 	// only ever sees plain HTTP.
@@ -1073,6 +1090,19 @@ func agentKeepRecordings(days int) time.Duration {
 		return -1
 	case days == 0:
 		return 0
+	default:
+		return time.Duration(days) * 24 * time.Hour
+	}
+}
+
+// archiveAfter turns the configured days into the archive age: the default
+// for zero, never for a negative.
+func archiveAfter(days int) time.Duration {
+	switch {
+	case days < 0:
+		return 0
+	case days == 0:
+		return control.DefaultArchiveAfter
 	default:
 		return time.Duration(days) * 24 * time.Hour
 	}

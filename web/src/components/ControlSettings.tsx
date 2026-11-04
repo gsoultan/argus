@@ -6,7 +6,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconBell, IconCertificate, IconCloudUpload, IconDatabase,
+  IconAlertTriangle, IconArchive, IconBell, IconCertificate, IconCloudUpload, IconDatabase,
   IconDownload, IconKey, IconLogin, IconNetwork, IconServer2, IconShieldLock, type IconProps,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
@@ -42,7 +42,7 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'security', label: 'Account security', icon: IconShieldLock, keys: ['security'] },
   { id: 'database', label: 'Database', icon: IconDatabase, keys: ['database'] },
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
-  { id: 'storage', label: 'Recordings', icon: IconCloudUpload, keys: ['storage', 'agentKeepRecordingsDays'] },
+  { id: 'storage', label: 'Recordings', icon: IconCloudUpload, keys: ['storage', 'agentKeepRecordingsDays', 'archive'] },
   { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts'] },
 ]
 
@@ -380,6 +380,32 @@ const KEEP_ON_SERVERS = [
   { value: '-1', label: 'For ever' },
 ]
 
+/** When a stored recording moves to the archive. 0 is the control plane's default. */
+const ARCHIVE_AFTER = [
+  { value: '7', label: '7 days' },
+  { value: '14', label: '14 days' },
+  { value: '0', label: '30 days (default)' },
+  { value: '60', label: '60 days' },
+  { value: '90', label: '90 days' },
+  { value: '180', label: '180 days' },
+  { value: '365', label: '1 year' },
+  { value: '-1', label: 'Never' },
+]
+
+/**
+ * Bucket storage classes a recording can be read back from at once. Glacier
+ * and Deep Archive are left out on purpose: a recording there cannot be
+ * replayed until a restore that takes hours, and the control plane refuses
+ * them for the same reason.
+ */
+const ARCHIVE_CLASSES = [
+  { value: '', label: "Bucket's default" },
+  { value: 'STANDARD_IA', label: 'Standard-IA' },
+  { value: 'ONEZONE_IA', label: 'One Zone-IA' },
+  { value: 'INTELLIGENT_TIERING', label: 'Intelligent-Tiering' },
+  { value: 'GLACIER_IR', label: 'Glacier Instant Retrieval' },
+]
+
 function Storage({ s, edit }: CardProps) {
   const st = s.storage
   const set = (patch: Partial<Settings['storage']>) => edit({ storage: { ...st, ...patch } })
@@ -387,10 +413,20 @@ function Storage({ s, edit }: CardProps) {
   const keepOptions = KEEP_ON_SERVERS.some((o) => o.value === keep)
     ? KEEP_ON_SERVERS
     : [...KEEP_ON_SERVERS, { value: keep, label: `${keep} days` }]
+  const archive = s.archive ?? { afterDays: 0, storageClass: '' }
+  const archiveAfter = String(archive.afterDays)
+  const archiveOptions = ARCHIVE_AFTER.some((o) => o.value === archiveAfter)
+    ? ARCHIVE_AFTER
+    : [...ARCHIVE_AFTER, { value: archiveAfter, label: `${archiveAfter} days` }]
+  // A class set in the file that this list does not name is still shown as
+  // what it is, rather than as the default it is not.
+  const classOptions = ARCHIVE_CLASSES.some((o) => o.value === archive.storageClass)
+    ? ARCHIVE_CLASSES
+    : [...ARCHIVE_CLASSES, { value: archive.storageClass, label: archive.storageClass }]
   return (
     <>
     <SectionCard title="Copies on servers" icon={IconCloudUpload}
-      description="Each server keeps its own copy of a recording after this control plane has verified and stored it, compressed after an hour. A recording this control plane does not hold is never removed from a server.">
+      description="Each server compresses a recording when the session ends and keeps its own copy after this control plane has verified and stored it. A recording this control plane does not hold is never removed from a server.">
       <Grid gap="xs">
         <Grid.Col span={{ base: 12, sm: 6 }}>
           <Select size="xs" label="Keep on servers for" allowDeselect={false}
@@ -399,6 +435,26 @@ function Storage({ s, edit }: CardProps) {
         </Grid.Col>
       </Grid>
     </SectionCard>
+    {s.archive && (
+      <SectionCard title="Archive" icon={IconArchive}
+        description="Recordings are stored compressed. Once older than this, each is recompressed at the strongest setting, verified against its chain head and moved to the archive. It replays from the console as before, and every replay still checks it.">
+        <Grid gap="xs">
+          <Grid.Col span={{ base: 12, sm: 6 }}>
+            <Select size="xs" label="Archive recordings older than" allowDeselect={false}
+              data={archiveOptions} value={archiveAfter}
+              onChange={(v) => edit({ archive: { ...archive, afterDays: Number(v ?? '0') } })} />
+          </Grid.Col>
+          {st.enabled && (
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <Select size="xs" label="Archive storage class" allowDeselect={false}
+                description="Only classes that open at once, so an archived recording still replays."
+                data={classOptions} value={archive.storageClass}
+                onChange={(v) => edit({ archive: { ...archive, storageClass: v ?? '' } })} />
+            </Grid.Col>
+          )}
+        </Grid>
+      </SectionCard>
+    )}
     <SectionCard title="Object storage" icon={IconCloudUpload}
       description="An S3-compatible bucket recordings are copied to, so the evidence is not only on this host. Without one, recordings are kept on this host's disk. Give Argus a key that can write and not delete.">
       <Stack gap="xs">

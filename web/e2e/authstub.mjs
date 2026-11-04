@@ -230,7 +230,7 @@ const SETTINGS = {
   listen: ':8443', consoleListen: '', quicListen: '', behindTlsProxy: false,
   allowedOrigins: [], trustedProxies: [], loginPerMinute: 10, failuresPerHour: 20,
   ticketsPerMinute: 30, sessionTtl: '8h', ticketTtl: '1m', agentStaleAfter: '2m', logLevel: 'info',
-  agentKeepRecordingsDays: 0,
+  agentKeepRecordingsDays: 0, archive: { afterDays: 0, storageClass: '' },
   database: { host: 'db', port: 5432, name: 'argus', user: 'argus', sslMode: 'disable', passwordSet: true },
   storage: { enabled: false, endpoint: '', bucket: '', region: '', useSsl: true, accessKey: '', secretKeySet: false },
   email: { enabled: false, via: 'smtp', host: '', port: 0, username: '', passwordSet: false, from: '', to: [],

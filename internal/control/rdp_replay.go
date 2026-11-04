@@ -63,7 +63,16 @@ func (a *API) getRDPReplay(w http.ResponseWriter, r *http.Request, actor string)
 	}
 	defer obj.Close()
 
-	body, err := io.ReadAll(io.LimitReader(obj, 256<<20))
+	// Stored compressed, and archived recordings more so; the chain covers
+	// the lines, so it is checked on what comes out. The bound is on the
+	// recording, not the object, as it always was.
+	plain, err := recorder.Open(obj)
+	if err != nil {
+		a.fail(w, "open recording", err)
+		return
+	}
+	defer plain.Close()
+	body, err := io.ReadAll(io.LimitReader(plain, 256<<20))
 	if err != nil {
 		a.fail(w, "read recording", err)
 		return

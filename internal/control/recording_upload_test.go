@@ -3,9 +3,11 @@ package control
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +39,31 @@ func castFor(t *testing.T) ([]byte, string) {
 		t.Fatal(err)
 	}
 	return buf.Bytes(), head
+}
+
+// plainOf decompresses a stored recording.
+func plainOf(t *testing.T, b []byte) []byte {
+	t.Helper()
+	r, err := recorder.Open(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// zstdOf compresses a recording as an agent does at seal.
+func zstdOf(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	if err := recorder.Compress(&out, bytes.NewReader(b), recorder.Hot); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
 }
 
 func putRecordingAs(h http.Handler, cred, id, head, format string, body []byte) *httptest.ResponseRecorder {
@@ -103,7 +130,11 @@ func TestAnAgentShipsTheRecordingOfASessionItReported(t *testing.T) {
 	if w := putRecordingAs(h, cred, id, head, "cast", cast); w.Code != http.StatusOK {
 		t.Fatalf("ship: %d %s", w.Code, w.Body)
 	}
-	if !bytes.Equal(stored, cast) {
+	// Stored compressed, as the same recording.
+	if !recorder.Compressed(stored) {
+		t.Error("a plain recording was stored plain")
+	}
+	if !bytes.Equal(plainOf(t, stored), cast) {
 		t.Error("what was stored is not what was shipped")
 	}
 	got, _ := s.Session(context.Background(), id)
@@ -186,5 +217,68 @@ func TestARecordingIsReplayedFromThisHostWithoutObjectStorage(t *testing.T) {
 	}
 	if v := w.Header().Get("X-Argus-Chain-Verified"); v != "intact" {
 		t.Errorf("verified %q", v)
+	}
+}
+
+// An agent that compressed the recording at seal ships it compressed. It is
+// verified through the compression, stored as it arrived under a .zst key,
+// and a compressed file whose lines were altered is refused exactly as a
+// plain one is.
+func TestACompressedRecordingIsVerifiedAndStoredAsItArrived(t *testing.T) {
+	a, s, h, _ := enrollAPI(t)
+	var stored []byte
+	var storedPath string
+	a.storeRecording = func(_ context.Context, path, id, head string, _ time.Time) (string, error) {
+		stored, _ = os.ReadFile(path)
+		storedPath = path
+		return "2026/10/23/" + id + ".cast.zst", nil
+	}
+	host := unique("shipz")
+	cred, _ := enrolled(t, s, h, host)
+	var id string
+	_ = s.pool.QueryRow(context.Background(), `SELECT gen_random_uuid()::text`).Scan(&id)
+	t.Cleanup(func() {
+		_, _ = s.pool.Exec(context.Background(), `DELETE FROM sessions WHERE id::text = $1`, id)
+	})
+	cast, head := castFor(t)
+	if w := do(t, h, http.MethodPost, "/api/v1/report/session", cred,
+		`{"id":"`+id+`","assetHostname":"`+host+`","principal":"root","protocol":"ssh",`+
+			`"state":"closed","chainHead":"`+head+`"}`); w.Code != http.StatusOK {
+		t.Fatalf("report: %d %s", w.Code, w.Body)
+	}
+
+	tampered := zstdOf(t, bytes.Replace(cast, []byte("uid=0"), []byte("uid=1"), 1))
+	if w := putRecordingAs(h, cred, id, head, "cast", tampered); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("tampered, compressed: %d %s", w.Code, w.Body)
+	}
+	if stored != nil {
+		t.Fatal("a compressed recording that does not verify was stored")
+	}
+
+	z := zstdOf(t, cast)
+	if w := putRecordingAs(h, cred, id, head, "cast", z); w.Code != http.StatusOK {
+		t.Fatalf("ship: %d %s", w.Code, w.Body)
+	}
+	if !bytes.Equal(stored, z) {
+		t.Error("a compressed recording was not stored as it arrived")
+	}
+	if !strings.HasSuffix(storedPath, ".cast.zst") {
+		t.Errorf("spooled as %s; the key would not say it is compressed", storedPath)
+	}
+}
+
+// The heartbeat tells an agent it may ship zstd. Without it an agent sends
+// a compressed recording plain, which an older control plane can verify.
+func TestTheHeartbeatSaysRecordingsMayShipCompressed(t *testing.T) {
+	_, s, h, _ := enrollAPI(t)
+	host := unique("hbz")
+	cred, _ := enrolled(t, s, h, host)
+	w := do(t, h, http.MethodPost, "/api/v1/report/heartbeat", cred,
+		`{"hostname":"`+host+`","version":"1.0.0"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("heartbeat: %d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), `"recording_encodings":["zstd"]`) {
+		t.Errorf("reply %s does not offer zstd", w.Body)
 	}
 }
