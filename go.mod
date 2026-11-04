@@ -2,6 +2,11 @@ module github.com/gsoultan/argus
 
 go 1.27.1
 
+// CVE-2026-98432: the only known exploit of this Linux TCP use-after-free
+// needs an MPTCP listener, and Go listens with MPTCP by default. Argus gains
+// nothing from multipath, so every binary here listens with plain TCP.
+godebug multipathtcp=0
+
 require (
 	github.com/cilium/ebpf v0.22.0
 	github.com/coder/websocket v1.8.15

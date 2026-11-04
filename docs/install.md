@@ -30,6 +30,15 @@ You also need:
   `/var/lib/argus-control/recordings` (`recordings_dir` in `control.yaml`), and
   the console replays them from there.
 
+- **A Linux kernel with the CVE-2026-98432 fix** on the control plane host.
+  It is a use-after-free in the kernel's IPv4 TCP handshake that anyone who can
+  reach `8080/tcp` can trigger, so no setting in Argus fully closes it. Argus
+  listens with plain TCP rather than MPTCP, which the only known exploit needs,
+  but install your distribution's fixed kernel and reboot. Fixed upstream:
+  7.3, 7.2.10, 6.18.56, 6.12.113, 6.6.159, 6.1.190, 5.15.223 and 5.10.272.
+  Until then, `net.ipv4.tcp_migrate_req = 0` and `net.mptcp.enabled = 0` in
+  `/etc/sysctl.d/` narrow it.
+
 ## 1. Download and verify
 
 From the release page, download the packages for your architecture plus
