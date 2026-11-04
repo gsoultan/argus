@@ -18,11 +18,11 @@ level can signal a backend or change who holds a level.
 
 type Cell = string | null
 export interface Collected {
-  cols: { name: string; type: string }[]
+  cols: { name: string; type: string; table?: number; attnum?: number }[]
   rows: Cell[][]
   error?: { error?: string; code?: string }
 }
-export type Collect = (sql: string, maxRows?: number) => Promise<Collected>
+export type Collect = (sql: string, maxRows?: number, params?: (string | null)[]) => Promise<Collected>
 
 /*
 Administrative operations (extensions, publications, subscriptions) are not
