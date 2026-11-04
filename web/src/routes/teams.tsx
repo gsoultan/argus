@@ -118,7 +118,7 @@ function TeamList({ admin, onNew }: { admin: boolean; onNew: () => void }) {
     )
   }
   return (
-    <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+    <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="md">
       {teams?.map((t) => <TeamCard key={t.id} team={t} admin={admin} />)}
     </SimpleGrid>
   )

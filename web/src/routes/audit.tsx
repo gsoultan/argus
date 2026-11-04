@@ -20,6 +20,8 @@ import { useAuditChain } from '~/lib/useWorkers'
 import type { AuditSeverity } from '~/types/domain'
 import { guard } from '~/lib/guard'
 import { ActivityTabs } from '~/components/ActivityTabs'
+import { Rails } from '~/components/Rails'
+import { AuditFacets, AuditInsight, areaOf } from '~/components/activity/AuditRails'
 
 export const Route = createFileRoute('/audit')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
@@ -57,21 +59,27 @@ function Audit() {
       : null
   const [search, setSearch] = useState('')
   const [severity, setSeverity] = useState<string | null>(null)
+  // Offered by the filter rail on a wide screen only.
+  const [area, setArea] = useState<string | null>(null)
+  const [actor, setActor] = useState<string | null>(null)
 
-  const rows = useMemo(() => {
+  const matched = useMemo(() => {
     let out = chain.links
     if (severity) out = out.filter((l) => l.severity === severity)
+    if (area) out = out.filter((l) => areaOf(l.action) === area)
+    if (actor) out = out.filter((l) => (l.actorEmail || 'argus') === actor)
     const needle = search.trim().toLowerCase()
     if (needle) {
       out = out.filter((l) =>
         `${l.actorEmail} ${l.action} ${l.target} ${l.detail}`.toLowerCase().includes(needle),
       )
     }
-    return out.slice(0, LIMIT)
-  }, [chain.links, search, severity])
+    return out
+  }, [chain.links, search, severity, area, actor])
+  const rows = useMemo(() => matched.slice(0, LIMIT), [matched])
 
   const verified = chain.verified
-  const filtered = Boolean(search.trim() || severity)
+  const filtered = Boolean(search.trim() || severity || area || actor)
 
   /**
    * Writes everything this page holds, not the filtered view.
@@ -138,7 +146,13 @@ function Audit() {
   }
 
   return (
-    <Box>
+    <Rails
+      facets={
+        <AuditFacets events={chain.links} severity={severity} onSeverity={setSeverity}
+          area={area} onArea={setArea} actor={actor} onActor={setActor} />
+      }
+      insight={chain.links.length > 0 && <AuditInsight events={matched} onActor={setActor} />}
+    >
       <PageHeader
         title="Activity"
         description="Everything anyone changed, in order. Each entry is chained to the one before, so a removed or edited entry shows."
@@ -296,6 +310,7 @@ function Audit() {
           />
           <Select
             w={150}
+            className="argus-rails-dup"
             placeholder="Any severity"
             clearable
             value={severity}
@@ -356,6 +371,6 @@ function Audit() {
           ))}
         </DataTable>
       </PageBody>
-    </Box>
+    </Rails>
   )
 }

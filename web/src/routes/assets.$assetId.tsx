@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconPencil, IconPlugConnected, IconServer2 } from '@tabler/icons-react'
 import { ReachBadge, reachOf } from '~/components/myservers'
+import { ServerList } from '~/components/ServerList'
+import { SplitView } from '~/components/SplitView'
 import { EmptyState, PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { AccessTab } from '~/components/server/AccessTab'
@@ -73,7 +75,7 @@ function AssetDetail() {
   const needsAttention = asset.hostKeyState !== 'pinned'
 
   return (
-    <Box>
+    <SplitView storageKey="servers" label="servers" list={<ServerList currentId={asset.id} />}>
       <PageHeader
         crumbs={[
           { label: 'Servers', to: '/assets' },
@@ -160,6 +162,6 @@ function AssetDetail() {
           <AssetForm opened={editing} onClose={() => setEditing(false)} asset={asset} />
         )}
       </Suspense>
-    </Box>
+    </SplitView>
   )
 }

@@ -1,0 +1,200 @@
+/* Loaded with the component that uses it, so only the routes that draw it
+   pay for it. Tokens come from app.tokens.css. */
+
+/* ---------------------------------------------------------------------------
+   Home's command band: dark in both schemes, a faint grid fading in from the
+   right, and the fleet's numbers as glass tiles on it.
+   --------------------------------------------------------------------------- */
+.argus-band {
+  position: relative;
+  overflow: hidden;
+  color: #fff;
+  background: linear-gradient(120deg, #0f172a 0%, #172554 55%, #1e3a8a 100%);
+}
+.argus-band::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: linear-gradient(90deg, transparent, #000 65%);
+}
+.argus-band-head,
+.argus-band-stats {
+  position: relative;
+}
+.argus-band .argus-band-sub,
+.argus-band-k {
+  color: #cbd5e1;
+}
+.argus-band-warn {
+  color: #fdb022;
+}
+.argus-band-btn {
+  background: #fff;
+  color: #1e3a8a;
+}
+.argus-band-btn:hover {
+  background: #e0e7ff;
+}
+.argus-band-stats {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 62em) {
+  .argus-band-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 88em) {
+  .argus-band-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+.argus-band-stat {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  text-align: left;
+  color: inherit;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.argus-band-stat[data-link]:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(147, 197, 253, 0.45);
+}
+.argus-band-skel::before,
+.argus-band-skel::after {
+  background: rgba(255, 255, 255, 0.15);
+}
+.argus-band-meter {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+.argus-band-meter > div {
+  height: 100%;
+  border-radius: 3px;
+  background: #93c5fd;
+}
+.argus-band-meter > div[data-warn] {
+  background: #fdb022;
+}
+.argus-band-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 26px;
+}
+.argus-band-spark i {
+  flex: 1;
+  border-radius: 1px;
+  background: rgba(147, 197, 253, 0.45);
+}
+.argus-band-spark i[data-now] {
+  background: #93c5fd;
+}
+@media (max-width: 47.99em) {
+  .argus-band-stat { padding: 10px 12px; }
+}
+
+/* Home's bento: twelve columns from 75em, two from 48em, one below. */
+.argus-bento {
+  display: grid;
+  gap: var(--mantine-spacing-md);
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 48em) {
+  .argus-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .argus-bento-7,
+  .argus-bento-12 { grid-column: 1 / -1; }
+}
+@media (min-width: 75em) {
+  .argus-bento { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  .argus-bento-3 { grid-column: span 3; }
+  .argus-bento-4 { grid-column: span 4; }
+  .argus-bento-5 { grid-column: span 5; }
+  .argus-bento-7 { grid-column: span 7; }
+  .argus-bento-12 { grid-column: span 12; }
+}
+
+/* Sessions by hour. */
+.argus-hourchart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 180px;
+}
+.argus-hourcol {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.argus-hourcol i {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  background: var(--mantine-color-azure-2);
+  overflow: hidden;
+}
+:root[data-mantine-color-scheme='dark'] .argus-hourcol i {
+  background: rgba(96, 165, 250, 0.35);
+}
+.argus-hourcol[data-now] i {
+  background: var(--color-brand);
+}
+.argus-hourcol i b {
+  display: block;
+  width: 100%;
+  background: var(--color-denied);
+}
+
+/* Every server, one square each. */
+.argus-fleetmap {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(auto-fill, minmax(22px, 1fr));
+}
+.argus-fleetcell {
+  aspect-ratio: 1;
+  border-radius: 4px;
+  background: var(--mantine-color-teal-1);
+}
+.argus-fleetcell:hover { outline: 2px solid var(--color-brand-edge); }
+.argus-fleetcell[data-reach='slow'] { background: var(--mantine-color-amber-2); }
+.argus-fleetcell[data-reach='offline'] { background: var(--color-line); }
+.argus-fleetcell[data-reach='blocked'] { background: var(--mantine-color-rose-3); }
+:root[data-mantine-color-scheme='dark'] .argus-fleetcell { background: rgba(50, 213, 131, 0.35); }
+:root[data-mantine-color-scheme='dark'] .argus-fleetcell[data-reach='slow'] { background: rgba(253, 176, 34, 0.45); }
+:root[data-mantine-color-scheme='dark'] .argus-fleetcell[data-reach='offline'] { background: var(--color-line); }
+:root[data-mantine-color-scheme='dark'] .argus-fleetcell[data-reach='blocked'] { background: rgba(249, 112, 102, 0.6); }
+
+/* The recording ring. */
+.argus-ring {
+  flex-shrink: 0;
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+.argus-ring-hole {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}

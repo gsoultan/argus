@@ -1,6 +1,6 @@
-import { Children, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
-  Badge, Box, Button, Card, Grid, Group, SegmentedControl, Skeleton, Stack, Text, TextInput,
+  Badge, Box, Button, Card, Group, SegmentedControl, Skeleton, Stack, Text, TextInput,
   ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
@@ -15,32 +15,14 @@ import { now, relTime } from '~/components/primitives'
 import { assetsQuery, meQuery, requestsQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
 import type { Asset } from '~/types/domain'
+import { kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
+
+// Re-exported: every page that shows a server's status imports them from here.
+export { kindOf, reachOf, shortName, type Reach }
 import { FS, SP, INK } from '~/theme'
 
 type Show = 'all' | 'online' | 'offline'
 type Kind = 'all' | 'linux' | 'windows'
-
-/**
- * Whether a server is worth trying, in words someone without the vocabulary can
- * act on.
- *
- * Built from what the console was last told, never from a probe, so every label
- * is a statement about the last check rather than a promise about the next
- * connect -- the card says when that check was. Only `blocked` stops the
- * Connect button, because it is the one case Argus itself refuses: SSH to a
- * server whose host key no longer matches the pin.
- */
-export type Reach = 'online' | 'slow' | 'offline' | 'blocked'
-
-export function reachOf(a: Asset): Reach {
-  if (a.protocol !== 'rdp' && a.hostKeyState === 'changed') return 'blocked'
-  // A connected agent tunnel is how every session opens, terminal or desktop,
-  // so it counts as reachable on its own.
-  if (a.tunnelConnected === true) return 'online'
-  if (a.health === 'reachable') return 'online'
-  if (a.health === 'degraded') return 'slow'
-  return 'offline'
-}
 
 const REACH: Record<Reach, { label: string; color: string; hint: string }> = {
   online: {
@@ -84,16 +66,6 @@ function Dot({ color }: { color: string }) {
       style={{ borderRadius: '50%', background: `var(--mantine-color-${color}-5)` }}
     />
   )
-}
-
-/** "Windows" or "Linux", which is the distinction a person picking a server makes. */
-export function kindOf(a: Asset): 'windows' | 'linux' {
-  return a.protocol === 'rdp' || /windows/i.test(a.os) ? 'windows' : 'linux'
-}
-
-/** The part of the hostname people say out loud. */
-export function shortName(hostname: string): string {
-  return hostname.split('.')[0] ?? hostname
 }
 
 /**
@@ -479,17 +451,14 @@ export function ServerCards() {
 }
 
 /**
- * One, two or three cards a row, by width.
- *
- * Grid rather than SimpleGrid: the console imports Mantine's stylesheets one
- * by one in a load-bearing order, and Grid's is already among them.
+ * As many cards a row as fit at a readable width: one on a phone, five on a
+ * 1920px screen. A plain CSS grid (`.argus-cardgrid`) rather than Mantine's,
+ * because the column count follows the width rather than a breakpoint table.
  */
 function CardGrid({ children, busy }: { children: ReactNode; busy?: boolean }) {
   return (
-    <Grid gap="md" aria-busy={busy || undefined} aria-label={busy ? 'Loading servers' : undefined}>
-      {Children.map(children, (c) => (
-        <Grid.Col span={{ base: 12, sm: 6, lg: 4 }}>{c}</Grid.Col>
-      ))}
-    </Grid>
+    <div className="argus-cardgrid" aria-busy={busy || undefined} aria-label={busy ? 'Loading servers' : undefined}>
+      {children}
+    </div>
   )
 }

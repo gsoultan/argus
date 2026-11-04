@@ -80,8 +80,14 @@ const BUDGET_KB = {
    * shared stylesheet, the per-scheme colour resolver and the theme menu in
    * the header with its three icons. All of it renders before the first
    * screen, so none of it can be lazy.
+   * 295.1 kB with the full-width redesign (287.0 before, same build): the
+   * dark rail and the phone's tab bar replace the top menu, and Home for the
+   * whole fleet became a command centre -- the band with its five numbers,
+   * sessions by hour, the fleet map and the recording ring, about 4 kB of
+   * Home's own chunk plus its stylesheet. Server status helpers moved to
+   * lib/reach.ts so the fleet map does not pull in the server cards (3.6 kB).
    */
-  overview: 288,
+  overview: 297,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -103,8 +109,12 @@ const BUDGET_KB = {
    * queries in the shared queries module.
    * 394.8 kB with light and dark themes, the same shared weight as the
    * overview.
+   * 399.5 kB with the full-width redesign (395.0 before, same build): the
+   * rail, the tab bar and the page bar's search field, which every route
+   * renders. Home's command centre, the filter rails and the split views are
+   * in their own chunks and stylesheets and are not paid here.
    */
-  sessionDetail: 397,
+  sessionDetail: 401,
 }
 
 /**
@@ -119,8 +129,13 @@ const BUDGET_KB = {
  * 32.1 kB on a session detail once PasswordInput's stylesheet joined the list.
  * It had been missing, which left every password field's input at the
  * browser's default width. Still 7 kB under the concatenated one.
+ *
+ * 33.6 kB on a session detail and 33.7 kB on Home with the full-width
+ * redesign: the rail, tab bar and page-bar search in the shared stylesheet
+ * (about 0.6 kB), and on Home its own command-centre stylesheet. The filter
+ * rails' and split views' styles load with their routes.
  */
-const CSS_BUDGET_KB = 33
+const CSS_BUDGET_KB = 34.5
 
 /**
  * The two self-hosted variable fonts, latin subsets.

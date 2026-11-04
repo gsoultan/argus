@@ -1,0 +1,73 @@
+/* Loaded with the component that uses it, so only the routes that draw it
+   pay for it. Tokens come from app.tokens.css. */
+
+/* A list beside the item opened from it (SplitView). Only from 88em: below
+   that the list is not drawn and the page is the item alone. */
+.argus-split-list,
+.argus-split-toggle {
+  display: none;
+}
+@media (min-width: 88em) {
+  .argus-split {
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr);
+  }
+  .argus-split[data-hidden] {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+  .argus-split-list {
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: var(--app-shell-header-offset, 56px);
+    height: calc(100dvh - var(--app-shell-header-offset, 56px));
+    overflow: hidden;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-line);
+  }
+  .argus-split[data-hidden] .argus-split-list {
+    visibility: hidden;
+    border: 0;
+  }
+  /* Room for the toggle, which straddles the list's right edge. */
+  .argus-split-list > :first-child {
+    padding-right: 24px;
+  }
+  .argus-split-detail {
+    position: relative;
+    min-width: 0;
+  }
+  .argus-split-toggle {
+    display: inline-flex;
+    position: absolute;
+    z-index: 5;
+    top: 18px;
+    left: -14px;
+    box-shadow: var(--shadow-card);
+  }
+  /* Put away, the toggle sits in the page's top-left corner, above the
+     breadcrumb rather than over it. */
+  .argus-split[data-hidden] .argus-split-toggle {
+    top: 4px;
+    left: 4px;
+  }
+}
+
+/* The rows of a SplitView list. */
+.argus-splitrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-line);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 100ms ease;
+}
+.argus-splitrow:hover {
+  background: var(--color-raised);
+}
+.argus-splitrow[data-active] {
+  background: var(--color-brand-wash);
+  box-shadow: inset 3px 0 0 var(--color-brand);
+}
