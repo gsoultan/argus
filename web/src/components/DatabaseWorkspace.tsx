@@ -25,6 +25,7 @@ import { ExplainView, planSummary, type PlanRun } from '~/components/ExplainView
 import { SchemaDiagram } from '~/components/SchemaDiagram'
 import { WriteCheckDialog, dropFactsSQL, type PGCheck, type WriteCheckState } from '~/components/WriteCheck'
 import { GUARD_DROP_DB, needsCheck, type PGGuard } from '~/lib/sqlClass'
+import { splitSQL } from '~/lib/sqlSplit'
 import { SaveQueryDialog, SavedQueriesList } from '~/components/SavedQueries'
 import { explainSQL, explainable, parsePlan } from '~/lib/explainPlan'
 import {
@@ -108,6 +109,35 @@ interface Result {
   startedAt: number
 }
 
+/**
+ * A script: several statements run one after another on the session, each
+ * its own request, so each is recorded, guarded and checked like any other.
+ * `parts` holds a result per statement that has started.
+ */
+interface Script {
+  parts: Result[]
+  stmts: string[]
+  state: 'running' | 'done' | 'stopped'
+  /** 1-based statement being checked or run. */
+  at: number
+  note?: string
+}
+
+/** What the person decided in a dialog that paused a script. */
+type Gate = { go: boolean; confirm?: string }
+
+/**
+ * Whether a checked write in a script touches only this session's temp
+ * tables (a script's own scratch tables), so it need not stop to ask. A
+ * count with no table behind it is asked about: statistics may be off.
+ */
+function onlyTempTouched(c: PGCheck): boolean {
+  if (c.guard) return false
+  const ts = c.tables ?? []
+  if (ts.length === 0) return c.rows === 0
+  return ts.every((t) => /^pg_temp_\d+\./.test(t.name))
+}
+
 /** The request id a row batch belongs to: its first four bytes. */
 function batchId(buf: ArrayBuffer): number {
   const b = new Uint8Array(buf)
@@ -154,6 +184,8 @@ type Job =
   // text is what the person wrote; bound is what is sent (its :names as $n,
   // with their values); at is where text begins in the editor.
   | { tab: string; kind: 'run'; text: string; maxRows: number; confirm?: string; bound: Bound; at: number }
+  // Each statement with where it starts in the editor, for error marks.
+  | { tab: string; kind: 'script'; stmts: { sql: string; at: number }[]; maxRows: number }
   | { tab: string; kind: 'explain'; text: string; mode: PlanRun['mode']; bound: Bound }
 
 const DEFAULT_H = { wide: 170, narrow: 110 }
@@ -203,6 +235,13 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const [renaming, setRenaming] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [writeCheck, setWriteCheck] = useState<WriteCheckState | null>(null)
+  // A script per tab, while it runs and after; a single statement clears it.
+  const [scripts, setScripts] = useState<Record<string, Script>>({})
+  // A dialog that paused a script resolves this with the person's answer.
+  const gate = useRef<((g: Gate) => void) | null>(null)
+  const [gateStep, setGateStep] = useState<{ n: number; total: number } | undefined>(undefined)
+  // Tabs whose script the person cancelled: it stops before the next statement.
+  const scriptStop = useRef(new Set<string>())
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
   // Where Postgres said each tab's last statement failed, until it is edited.
@@ -210,6 +249,16 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const result = results[tab.key] ?? null
   const plan = plans[tab.key]
   const resultView = shown[tab.key] ?? 'results'
+  const script = scripts[tab.key]
+  // Answers the dialog a script is paused on; false if none is.
+  const answerGate = (g: Gate) => {
+    const f = gate.current
+    if (!f) return false
+    gate.current = null
+    setGateStep(undefined)
+    f(g)
+    return true
+  }
 
   const patchTab = useCallback((key: string, f: (t: QueryTab) => QueryTab) => {
     setTabs((ts) => ts.map((t) => (t.key === key ? f(t) : t)))
@@ -403,43 +452,172 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     if (next) startRef.current(next)
   }, [])
 
-  const startRun = useCallback((job: Extract<Job, { kind: 'run' }>) => {
-    const stmt = job.text
+  const bindFor = useCallback((text: string, key: string) =>
+    bindParams(text, tabsRef.current.find((x) => x.key === key)?.params ?? {}), [])
+  // check asks the agent what a write would do: it runs it as the person's
+  // role and rolls it back.
+  const check = useCallback((text: string, key: string) => new Promise<PGAnswer>((resolve) => {
     const id = nextId.current++
-    const r: Result = { id, sql: stmt, cols: [], rows: [], startedAt: Date.now() }
-    live.current.set(id, { tab: job.tab, r })
-    runningRef.current = { id, tab: job.tab }
-    setRunning(runningRef.current)
-    setResults((prev) => ({ ...prev, [job.tab]: r }))
-    setShown((v) => ({ ...v, [job.tab]: 'results' }))
     pending.current.set(id, (a) => {
-      if (a.type === 'cols') {
-        r.cols = a.cols ?? []
-        setResults((prev) => ({ ...prev, [job.tab]: { ...r } }))
-        return
-      }
       pending.current.delete(id)
-      live.current.delete(id)
-      if (a.type === 'done') r.done = a
-      else r.error = a
-      setResults((prev) => ({ ...prev, [job.tab]: { ...r } }))
-      if (a.type === 'error' && a.position) {
-        const b = job.bound
-        const from = pgErrorOffset(b.sql, a.position, job.at, (o) => originalOffset(b, o))
-        setMarks((m) => ({ ...m, [job.tab]: { from, message: a.error ?? 'Postgres refused this' } }))
+      resolve(a)
+    })
+    const b = bindFor(text, key)
+    if (!send({ id, op: 'check', sql: b.sql, params: b.params.length ? b.params : undefined })) {
+      pending.current.delete(id)
+      resolve({ id, type: 'closed', error: 'the session ended' })
+    }
+  }), [send, bindFor])
+
+  // runPart runs one statement into the tab's result and resolves with its
+  // final answer. It does not end the job: the caller does, after one
+  // statement or after a script's last. `at` is where the statement starts
+  // in the editor, so an error is marked where Postgres says.
+  const runPart = useCallback((key: string, stmt: string, maxRows: number, at: number, confirm?: string, onStart?: (r: Result) => void) =>
+    new Promise<{ r: Result; a: PGAnswer }>((resolve) => {
+      const id = nextId.current++
+      const b = bindFor(stmt, key)
+      const r: Result = { id, sql: stmt, cols: [], rows: [], startedAt: Date.now() }
+      live.current.set(id, { tab: key, r })
+      runningRef.current = { id, tab: key }
+      setRunning(runningRef.current)
+      setResults((prev) => ({ ...prev, [key]: r }))
+      setShown((v) => ({ ...v, [key]: 'results' }))
+      onStart?.(r)
+      pending.current.set(id, (a) => {
+        if (a.type === 'cols') {
+          r.cols = a.cols ?? []
+          setResults((prev) => ({ ...prev, [key]: { ...r } }))
+          return
+        }
+        pending.current.delete(id)
+        live.current.delete(id)
+        if (a.type === 'done') r.done = a
+        else r.error = a
+        setResults((prev) => ({ ...prev, [key]: { ...r } }))
+        if (a.type === 'error' && a.position) {
+          const from = pgErrorOffset(b.sql, a.position, at, (o) => originalOffset(b, o))
+          setMarks((m) => ({ ...m, [key]: { from, message: a.error ?? 'Postgres refused this' } }))
+        }
+        txOpen.current = txAfter(txOpen.current, stmt, a.type === 'done')
+        setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
+        resolve({ r, a })
+      })
+      if (!send({ id, op: 'run', sql: b.sql, maxRows, confirm, params: b.params.length ? b.params : undefined })) {
+        pending.current.delete(id)
+        live.current.delete(id)
+        const a: PGAnswer = { id, type: 'closed', error: 'the session ended' }
+        r.error = a
+        resolve({ r, a })
       }
-      if (a.type === 'error' && a.guard) openGuard(stmt, job.tab, a.guard)
-      txOpen.current = txAfter(txOpen.current, stmt, a.type === 'done')
-      setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
+    }), [send, bindFor])
+
+  const startRun = useCallback((job: Extract<Job, { kind: 'run' }>) => {
+    setScripts(({ [job.tab]: _s, ...rest }) => rest)
+    void runPart(job.tab, job.text, job.maxRows, job.at, job.confirm).then(({ a }) => {
+      if (a.type === 'error' && a.guard) openGuard(job.text, job.tab, a.guard)
       finished()
     })
-    const b = job.bound
-    if (!send({ id, op: 'run', sql: b.sql, maxRows: job.maxRows, confirm: job.confirm, params: b.params.length ? b.params : undefined })) {
-      pending.current.delete(id)
-      live.current.delete(id)
+  }, [runPart, finished, openGuard])
+
+  // ask pauses a script on a dialog until the person answers it.
+  const ask = useCallback((n: number, total: number, show: () => void) => new Promise<Gate>((resolve) => {
+    gate.current = resolve
+    setGateStep({ n, total })
+    show()
+  }), [])
+
+  // startScript runs a script's statements in order on this session and
+  // stops at the first that fails, is refused, or that the person declines,
+  // so nothing after a failure runs (a COMMIT least of all). A write is
+  // checked first, as a single one would be; one that only fills the
+  // script's own temp tables goes on without asking.
+  const startScript = useCallback((job: Extract<Job, { kind: 'script' }>) => {
+    const key = job.tab
+    const total = job.stmts.length
+    const sc: Script = { parts: [], stmts: job.stmts.map((x) => x.sql), state: 'running', at: 1 }
+    const publish = () => setScripts((p) => ({ ...p, [key]: { ...sc, parts: [...sc.parts] } }))
+    scriptStop.current.delete(key)
+    runningRef.current = { id: -1, tab: key }
+    setRunning(runningRef.current)
+    publish()
+    void (async () => {
+      const open = () => (txOpen.current
+        ? ' Your transaction is still open; nothing in it is kept until you COMMIT, and ROLLBACK ends it.'
+        : '')
+      let ran = 0
+      for (let i = 0; i < total; i++) {
+        const n = i + 1
+        const { sql: stmt, at } = job.stmts[i]!
+        sc.at = n
+        publish()
+        if (scriptStop.current.has(key)) {
+          sc.note = `Cancelled before statement ${n} of ${total}; it and the rest did not run.${open()}`
+          break
+        }
+        let confirm: string | undefined
+        if (needsCheck(stmt)) {
+          const c = await check(stmt, key)
+          if (c.type === 'check' && c.check) {
+            if (!onlyTempTouched(c.check)) {
+              const g = await ask(n, total, () => setWriteCheck({ kind: 'checked', sql: stmt, tab: key, check: c.check! }))
+              if (!g.go) {
+                sc.note = `Stopped before statement ${n} of ${total}, as you chose; it and the rest did not run.${open()}`
+                break
+              }
+              confirm = g.confirm
+            }
+          } else if (!(c.type === 'error' && /unknown operation/.test(c.error ?? ''))) {
+            // An agent from before checks answers "unknown operation" and
+            // runs as it always did, guard and all. Anything else failed.
+            if (c.type === 'error' && c.position) {
+              const b = bindFor(stmt, key)
+              setMarks((m) => ({ ...m, [key]: { from: pgErrorOffset(b.sql, c.position!, at, (o) => originalOffset(b, o)), message: c.error ?? 'Postgres refused this' } }))
+            }
+            await ask(n, total, () => setWriteCheck({ kind: 'failed', sql: stmt, tab: key, error: c.error ?? 'the check failed', code: c.code }))
+            sc.note = `Stopped at statement ${n} of ${total}: Postgres refused it while checking; it and the rest did not run.${open()}`
+            break
+          }
+        }
+        if (scriptStop.current.has(key)) {
+          sc.note = `Cancelled before statement ${n} of ${total}; it and the rest did not run.${open()}`
+          break
+        }
+        const onStart = (r: Result) => { sc.parts[i] = r; publish() }
+        let res = await runPart(key, stmt, job.maxRows, at, confirm, onStart)
+        if (res.a.type === 'error' && res.a.guard) {
+          const guard = res.a.guard
+          const g = await ask(n, total, () => openGuard(stmt, key, guard))
+          if (g.go) res = await runPart(key, stmt, job.maxRows, at, g.confirm, onStart)
+          else {
+            publish()
+            sc.note = `Argus stopped statement ${n} of ${total} before it ran; it and the rest did not run.${open()}`
+            break
+          }
+        }
+        publish()
+        if (res.a.type !== 'done') {
+          const left = total - n
+          const rest = left ? ` The ${left === 1 ? 'statement' : `${left} statements`} after it did not run.` : ''
+          const why = scriptStop.current.has(key) ? 'cancelled' : res.a.type === 'closed' ? 'the session ended' : 'Postgres refused it'
+          sc.note = `Stopped at statement ${n} of ${total}: ${why}.${rest}${open()}`
+          break
+        }
+        ran++
+      }
+      sc.state = ran === total ? 'done' : 'stopped'
+      if (ran === total) sc.note = `All ${total} statements ran.${open()}`
+      // Show the failure if there was one, otherwise the last answer with
+      // columns: what a script usually ends by showing.
+      const last = sc.state === 'stopped' ? sc.parts[sc.parts.length - 1] : [...sc.parts].reverse().find((p) => p.cols.length > 0) ?? sc.parts[sc.parts.length - 1]
+      if (last) setResults((prev) => ({ ...prev, [key]: { ...last } }))
+      publish()
+      gate.current = null
+      setGateStep(undefined)
+      scriptStop.current.delete(key)
       finished()
-    }
-  }, [send, finished, openGuard])
+    })()
+  }, [runPart, check, ask, openGuard, finished, bindFor])
 
   const startExplain = useCallback((job: Extract<Job, { kind: 'explain' }>) => {
     const key = job.tab
@@ -484,7 +662,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     })()
   }, [collectWithId, finished])
 
-  startRef.current = (j: Job) => (j.kind === 'run' ? startRun(j) : startExplain(j))
+  startRef.current = (j: Job) => (j.kind === 'run' ? startRun(j) : j.kind === 'script' ? startScript(j) : startExplain(j))
   const enqueue = useCallback((j: Job) => {
     if (runningRef.current) {
       // One waiting job per tab: pressing Run again replaces it.
@@ -495,8 +673,6 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     startRef.current(j)
   }, [])
 
-  const bindFor = useCallback((text: string, key: string) =>
-    bindParams(text, tabsRef.current.find((x) => x.key === key)?.params ?? {}), [])
   const run = useCallback((text: string, key = activeRef.current, confirm?: string, at = 0) => {
     const stmt = text.trim()
     if (!stmt) return
@@ -505,29 +681,22 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     enqueue({ tab: key, kind: 'run', text: stmt, maxRows: t?.maxRows ?? 1000, confirm, bound: bindFor(stmt, key), at })
   }, [enqueue, tabs, bindFor])
 
-  // check asks the agent what a write would do: it runs it as the person's
-  // role and rolls it back.
-  const check = useCallback((text: string, key: string) => new Promise<PGAnswer>((resolve) => {
-    const id = nextId.current++
-    pending.current.set(id, (a) => {
-      pending.current.delete(id)
-      resolve(a)
-    })
-    const b = bindFor(text, key)
-    if (!send({ id, op: 'check', sql: b.sql, params: b.params.length ? b.params : undefined })) {
-      pending.current.delete(id)
-      resolve({ id, type: 'closed', error: 'the session ended' })
-    }
-  }), [send, bindFor])
-
   // The person's Run: a write that may touch many rows is counted first;
   // everything else goes straight to the agent, whose guard stops a DROP,
   // TRUNCATE or an UPDATE/DELETE without WHERE and answers why.
   const checkAt = useRef(0)
+  // A script of several statements runs them in turn (startScript), each
+  // checked and guarded on its own.
   const runChecked = useCallback((text: string, key = activeRef.current, at = 0) => {
-    const stmt = text.trim()
-    if (!stmt) return
-    at += text.length - text.trimStart().length
+    const parts = splitSQL(text)
+    if (parts.length === 0) return
+    if (parts.length > 1) {
+      const t = tabs.find((x) => x.key === key)
+      enqueue({ tab: key, kind: 'script', stmts: parts.map((x) => ({ sql: x.sql, at: at + x.from })), maxRows: t?.maxRows ?? 1000 })
+      return
+    }
+    const stmt = parts[0]!.sql
+    at += parts[0]!.from
     if (!needsCheck(stmt)) {
       run(stmt, key, undefined, at)
       return
@@ -551,7 +720,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         setMarks((m) => ({ ...m, [key]: { from: pgErrorOffset(b.sql, a.position!, at, (o) => originalOffset(b, o)), message: a.error ?? 'Postgres refused this' } }))
       }
     })
-  }, [check, run, bindFor])
+  }, [check, run, bindFor, enqueue, tabs])
 
   // admin sends one administrative operation to the agent's helper. The
   // agent records a mutation (redacted) before running it and refuses the
@@ -571,6 +740,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
 
   const cancel = useCallback(() => {
     const r = runningRef.current
+    // A script stops before its next statement, as well as this one.
+    if (r) scriptStop.current.add(r.tab)
     if (r && r.id > 0) send({ id: r.id, op: 'cancel' })
     // What was waiting for this tab goes too.
     waiting.current = waiting.current.filter((w) => w.tab !== activeRef.current)
@@ -680,6 +851,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     waiting.current = waiting.current.filter((w) => w.tab !== key)
     setWaitingTabs(waiting.current.map((w) => w.tab))
     setResults(({ [key]: _r, ...rest }) => rest)
+    setScripts(({ [key]: _s, ...rest }) => rest)
     setPlans(({ [key]: _p, ...rest }) => rest)
     setTabs((ts) => {
       const i = ts.findIndex((t) => t.key === key)
@@ -1037,14 +1209,22 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           {resultTabs}
           {plan && resultView !== 'results'
             ? <ExplainView run={plan} raw={resultView === 'raw'} narrow={narrow} />
-            : <Results result={result} narrow={narrow} />}
+            : <>
+              {script && <ScriptSteps script={script} shownId={result?.id} narrow={narrow}
+                onPick={(r) => setResults((prev) => ({ ...prev, [tab.key]: { ...r } }))} />}
+              <Results result={result} narrow={narrow} />
+            </>}
         </Box>
         </>}
       </Box>
-      <WriteCheckDialog state={writeCheck} label={database.label}
-        onClose={() => setWriteCheck(null)}
-        onBackups={() => { setWriteCheck(null); setView('query'); setPanel('backups') }}
-        onRun={(confirm) => { const w = writeCheck; setWriteCheck(null); if (w) run(w.sql, w.tab, confirm, checkAt.current) }} />
+      <WriteCheckDialog state={writeCheck} label={database.label} step={gateStep}
+        onClose={() => { setWriteCheck(null); answerGate({ go: false }) }}
+        onBackups={() => { setWriteCheck(null); answerGate({ go: false }); setView('query'); setPanel('backups') }}
+        onRun={(confirm) => {
+          const w = writeCheck
+          setWriteCheck(null)
+          if (!answerGate({ go: true, confirm }) && w) run(w.sql, w.tab, confirm, checkAt.current)
+        }} />
       {saving && (
         <SaveQueryDialog opened={saving} onClose={() => setSaving(false)} databaseId={database.id} databaseName={database.dbname}
           initial={{ id: tab.savedId, name: tab.name, sql: tab.sql, shared: false }}
@@ -1145,6 +1325,60 @@ function Results({ result, narrow }: { result: Result | null; narrow: boolean })
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * A script's statements in a row: each one's place, what Postgres said, and
+ * a click to show its result below. The note says where it stopped and
+ * whether a transaction is still open.
+ */
+function ScriptSteps({ script, shownId, narrow, onPick }: {
+  script: Script
+  shownId?: number
+  narrow: boolean
+  onPick: (r: Result) => void
+}) {
+  const total = script.stmts.length
+  return (
+    <Box px={narrow ? 'sm' : 'md'} py={6} style={{ borderBottom: '1px solid var(--color-line)' }}>
+      <Group gap={6} wrap="nowrap" mb={4}>
+        <Text size={FS.meta} fw={600} style={{ whiteSpace: 'nowrap' }}>Script</Text>
+        <Text size={FS.meta} c={script.state === 'stopped' ? 'rose' : 'dimmed'} style={{ minWidth: 0 }} lineClamp={2}>
+          {script.state === 'running'
+            ? `Running statement ${script.at} of ${total}…`
+            : script.note}
+        </Text>
+      </Group>
+      <ScrollArea type="auto" scrollbarSize={6} offsetScrollbars="x">
+        <Group gap={4} wrap="nowrap" pb={2}>
+          {script.stmts.map((stmt, i) => {
+            const r = script.parts[i]
+            const failed = Boolean(r?.error)
+            const label = r?.done
+              ? `${r.done.tag ?? 'done'}${r.cols.length ? ` · ${r.rows.length.toLocaleString()}` : ''}`
+              : failed ? 'failed' : r ? 'running…' : 'not run'
+            const here = r !== undefined && r.id === shownId
+            return (
+              <Tooltip key={i} label={stmt.length > 300 ? stmt.slice(0, 300) + '…' : stmt} multiline maw={420}
+                styles={{ tooltip: { fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'pre-wrap' } }} openDelay={300}>
+                <UnstyledButton disabled={!r} onClick={() => r && onPick(r)} aria-label={`Statement ${i + 1}: ${label}`}
+                  style={{
+                    flexShrink: 0, padding: '2px 8px', borderRadius: 6, whiteSpace: 'nowrap',
+                    border: `1px solid ${here ? 'var(--color-brand)' : 'var(--color-line)'}`,
+                    background: failed ? 'var(--mantine-color-rose-light)' : here ? 'var(--color-raised)' : undefined,
+                    opacity: r ? 1 : 0.5, cursor: r ? 'pointer' : 'default',
+                  }}>
+                  <Text size={FS.micro} ff="monospace" c={failed ? 'rose' : undefined}>
+                    <Text span size={FS.micro} c="dimmed">{i + 1}</Text> {label}
+                  </Text>
+                </UnstyledButton>
+              </Tooltip>
+            )
+          })}
+        </Group>
+      </ScrollArea>
+    </Box>
   )
 }
 

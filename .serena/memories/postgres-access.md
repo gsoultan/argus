@@ -198,6 +198,19 @@ left-bar entries, *Extensions* and *Replication*, in
   text kept in localStorage per database, results never stored. The session
   runs one statement at a time, so other tabs queue ("Run after X"). Ctrl+T
   and Ctrl+W cannot be taken from a browser; Ctrl+Enter runs, Ctrl+S saves.
+- **Scripts (2026-11)**: the extended protocol refuses more than one
+  statement ("cannot insert multiple commands into a prepared statement"),
+  and that stays: one statement per request is what makes each recorded,
+  guarded and checked on its own. So the console cuts a pasted script
+  (`web/src/lib/sqlSplit.ts`: quotes, `$tag$` bodies, nested comments,
+  parentheses, BEGIN ATOMIC) and runs it statement by statement on the same
+  session, so BEGIN, temp tables and `pg_temp` functions last until the
+  script ends them. It stops at the first failure, refusal or declined
+  dialog, so a COMMIT after a failure is never sent, and says when a
+  transaction is still open. A write is checked as a single one would be;
+  one whose check touched only `pg_temp_N.*` tables goes on unasked.
+  `internal/agent/testdata/script.sql` and its `.statements.json` are read
+  by both the TS splitter test and the agent's real-Postgres test.
 - **Saved queries**: migration 043, `internal/control/saved_queries.go`.
   Private or shared with everyone who can open the same database; author
   edits, author or admin removes; audited `db.query_saved`/`db.query_removed`.
