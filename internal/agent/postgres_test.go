@@ -138,7 +138,13 @@ func (h *pgHarness) answer() tunnel.PGAnswer {
 
 // run sends a statement and collects its columns, rows and final answer.
 func (h *pgHarness) run(id uint32, sql string, maxRows int) (cols []tunnel.PGColumn, rows [][]*string, final tunnel.PGAnswer) {
-	h.send(tunnel.PGRequest{ID: id, Op: "run", SQL: sql, MaxRows: maxRows})
+	return h.do(tunnel.PGRequest{ID: id, Op: "run", SQL: sql, MaxRows: maxRows})
+}
+
+// do sends any request and reads to its final answer.
+func (h *pgHarness) do(req tunnel.PGRequest) (cols []tunnel.PGColumn, rows [][]*string, final tunnel.PGAnswer) {
+	id := req.ID
+	h.send(req)
 	for {
 		typ, p, err := h.fr.Next()
 		if err != nil {
@@ -405,7 +411,7 @@ func TestPostgresWriteSessionAndCancel(t *testing.T) {
 		t.Fatalf("insert: %+v", final)
 	}
 	// A transaction spanning requests, then a rollback: nothing kept.
-	for i, s := range []string{"BEGIN", "DELETE FROM argus_t_w", "ROLLBACK"} {
+	for i, s := range []string{"BEGIN", "DELETE FROM argus_t_w WHERE id > 0", "ROLLBACK"} {
 		if _, _, final = h.run(uint32(10+i), s, 0); final.Type != "done" {
 			t.Fatalf("%s: %+v", s, final)
 		}

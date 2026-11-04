@@ -21,6 +21,8 @@ import { ReplicationPanel } from '~/components/DatabaseReplication'
 import { BackupsPanel } from '~/components/DatabaseBackups'
 import { ExplainView, planSummary, type PlanRun } from '~/components/ExplainView'
 import { SchemaDiagram } from '~/components/SchemaDiagram'
+import { WriteCheckDialog, dropFactsSQL, type PGCheck, type WriteCheckState } from '~/components/WriteCheck'
+import { GUARD_DROP_DB, needsCheck, type PGGuard } from '~/lib/sqlClass'
 import { SaveQueryDialog, SavedQueriesList } from '~/components/SavedQueries'
 import { explainSQL, explainable, parsePlan } from '~/lib/explainPlan'
 import {
@@ -65,7 +67,7 @@ type Obj = { name: string; kind: string; detail?: string; count?: number; schema
 
 interface PGAnswer {
   id: number
-  type: 'ready' | 'cols' | 'done' | 'error' | 'schema' | 'closed' | 'admin'
+  type: 'ready' | 'cols' | 'done' | 'error' | 'schema' | 'closed' | 'admin' | 'check'
   cols?: Col[]
   tag?: string
   rows?: number
@@ -84,6 +86,10 @@ interface PGAnswer {
   session?: string
   via?: string
   levels?: Partial<Record<DBLevel, string>>
+  /** Why the agent stopped a statement before it ran. */
+  guard?: PGGuard
+  /** What a checked write would do. */
+  check?: PGCheck
 }
 
 type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups'
@@ -141,7 +147,7 @@ const KIND_ICON: Record<string, typeof IconTable> = {
 }
 
 type Job =
-  | { tab: string; kind: 'run'; text: string; maxRows: number }
+  | { tab: string; kind: 'run'; text: string; maxRows: number; confirm?: string }
   | { tab: string; kind: 'explain'; text: string; mode: PlanRun['mode'] }
 
 const DEFAULT_H = { wide: 170, narrow: 110 }
@@ -190,6 +196,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const txOpen = useRef(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [writeCheck, setWriteCheck] = useState<WriteCheckState | null>(null)
   const result = results[tab.key] ?? null
   const plan = plans[tab.key]
   const resultView = shown[tab.key] ?? 'results'
@@ -345,6 +352,31 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }), [send])
   const collect: Collect = useCallback((text, max) => collectWithId(text, max), [collectWithId])
 
+  // openGuard shows why the agent stopped a statement, and for a DROP or
+  // TRUNCATE what it would take with it, read as the person's role.
+  const openGuard = useCallback((stmt: string, key: string, guard: PGGuard) => {
+    setWriteCheck({ kind: 'guard', sql: stmt, tab: key, guard, facts: guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete' ? null : undefined })
+    if (guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete') return
+    const q = dropFactsSQL(guard)
+    void (async () => {
+      const facts: NonNullable<Extract<WriteCheckState, { kind: 'guard' }>['facts']> = { dependents: [] }
+      if (q.size) {
+        const r = await collect(q.size, 1)
+        if (r.error) facts.error = r.error.error
+        else if (r.rows[0]) { facts.rows = Number(r.rows[0][0] ?? 0); facts.bytes = Number(r.rows[0][1] ?? 0) }
+      }
+      if (q.tables) {
+        const r = await collect(q.tables, 1)
+        if (!r.error && r.rows[0]) facts.tables = Number(r.rows[0][0] ?? 0)
+      }
+      if (q.deps) {
+        const r = await collect(q.deps, 50)
+        if (!r.error) facts.dependents = r.rows.map((x) => x[0] ?? '').filter(Boolean)
+      }
+      setWriteCheck((w) => (w?.kind === 'guard' && w.sql === stmt ? { ...w, facts } : w))
+    })()
+  }, [collect])
+
   const startRef = useRef<(j: Job) => void>(() => {})
   const finished = useCallback(() => {
     runningRef.current = null
@@ -374,16 +406,17 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       if (a.type === 'done') r.done = a
       else r.error = a
       setResults((prev) => ({ ...prev, [job.tab]: { ...r } }))
+      if (a.type === 'error' && a.guard) openGuard(stmt, job.tab, a.guard)
       txOpen.current = txAfter(txOpen.current, stmt, a.type === 'done')
       setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
       finished()
     })
-    if (!send({ id, op: 'run', sql: stmt, maxRows: job.maxRows })) {
+    if (!send({ id, op: 'run', sql: stmt, maxRows: job.maxRows, confirm: job.confirm })) {
       pending.current.delete(id)
       live.current.delete(id)
       finished()
     }
-  }, [send, finished])
+  }, [send, finished, openGuard])
 
   const startExplain = useCallback((job: Extract<Job, { kind: 'explain' }>) => {
     const key = job.tab
@@ -439,12 +472,52 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     startRef.current(j)
   }, [])
 
-  const run = useCallback((text: string, key = activeRef.current) => {
+  const run = useCallback((text: string, key = activeRef.current, confirm?: string) => {
     const stmt = text.trim()
     if (!stmt) return
     const t = tabs.find((x) => x.key === key)
-    enqueue({ tab: key, kind: 'run', text: stmt, maxRows: t?.maxRows ?? 1000 })
+    enqueue({ tab: key, kind: 'run', text: stmt, maxRows: t?.maxRows ?? 1000, confirm })
   }, [enqueue, tabs])
+
+  // check asks the agent what a write would do: it runs it as the person's
+  // role and rolls it back.
+  const check = useCallback((text: string) => new Promise<PGAnswer>((resolve) => {
+    const id = nextId.current++
+    pending.current.set(id, (a) => {
+      pending.current.delete(id)
+      resolve(a)
+    })
+    if (!send({ id, op: 'check', sql: text })) {
+      pending.current.delete(id)
+      resolve({ id, type: 'closed', error: 'the session ended' })
+    }
+  }), [send])
+
+  // The person's Run: a write that may touch many rows is counted first;
+  // everything else goes straight to the agent, whose guard stops a DROP,
+  // TRUNCATE or an UPDATE/DELETE without WHERE and answers why.
+  const runChecked = useCallback((text: string, key = activeRef.current) => {
+    const stmt = text.trim()
+    if (!stmt) return
+    if (!needsCheck(stmt)) {
+      run(stmt, key)
+      return
+    }
+    setWriteCheck({ kind: 'checking', sql: stmt, tab: key })
+    void check(stmt).then((a) => {
+      if (a.type === 'check' && a.check) {
+        setWriteCheck((w) => (w?.sql === stmt ? { kind: 'checked', sql: stmt, tab: key, check: a.check! } : w))
+        return
+      }
+      if (a.type === 'error' && /unknown operation/.test(a.error ?? '')) {
+        // An agent from before checks: run as it always did, guard and all.
+        setWriteCheck(null)
+        run(stmt, key)
+        return
+      }
+      setWriteCheck((w) => (w?.sql === stmt ? { kind: 'failed', sql: stmt, tab: key, error: a.error ?? 'the check failed', code: a.code } : w))
+    })
+  }, [check, run])
 
   // admin sends one administrative operation to the agent's helper. The
   // agent records a mutation (redacted) before running it and refuses the
@@ -508,7 +581,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     const el = editorRef.current
     return el && el.selectionStart !== el.selectionEnd ? el.value.slice(el.selectionStart, el.selectionEnd) : sql
   }, [sql])
-  const runSelectionOrAll = useCallback(() => run(selectionOrAll()), [run, selectionOrAll])
+  const runSelectionOrAll = useCallback(() => runChecked(selectionOrAll()), [runChecked, selectionOrAll])
   const explain = useCallback((mode: PlanRun['mode']) => {
     const text = selectionOrAll().trim()
     if (!text) return
@@ -940,6 +1013,10 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         </Box>
         </>}
       </Box>
+      <WriteCheckDialog state={writeCheck} label={database.label}
+        onClose={() => setWriteCheck(null)}
+        onBackups={() => { setWriteCheck(null); setView('query'); setPanel('backups') }}
+        onRun={(confirm) => { const w = writeCheck; setWriteCheck(null); if (w) run(w.sql, w.tab, confirm) }} />
       {saving && (
         <SaveQueryDialog opened={saving} onClose={() => setSaving(false)} databaseId={database.id} databaseName={database.dbname}
           initial={{ id: tab.savedId, name: tab.name, sql: tab.sql, shared: false }}
@@ -996,7 +1073,7 @@ function Results({ result, narrow }: { result: Result | null; narrow: boolean })
         <Box p="md">
           <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
             <Text size={FS.body} fw={600}>
-              Postgres refused this: {result.error.error}
+              {result.error.guard ? 'Argus stopped this before it ran' : 'Postgres refused this'}: {result.error.error}
               {result.error.code && <Text span size={FS.micro} ff="monospace" ml={6}>({result.error.code})</Text>}
             </Text>
             {result.error.hint && <Text size={FS.meta} mt={4}>{result.error.hint}</Text>}

@@ -101,7 +101,7 @@ func RecordedTextFits(text string) bool {
 type PGRequest struct {
 	// ID ties answers and rows to the request. The browser numbers them.
 	ID uint32 `json:"id"`
-	// Op is run, cancel, schema or admin.
+	// Op is run, check, cancel, schema or admin.
 	Op string `json:"op"`
 	// SQL is one statement, for run.
 	SQL string `json:"sql,omitempty"`
@@ -116,6 +116,9 @@ type PGRequest struct {
 	Object string `json:"object,omitempty"`
 	// Admin is the operation, for admin. See PGAdminOp.
 	Admin *PGAdminOp `json:"admin,omitempty"`
+	// Confirm is the phrase the person typed to let a guarded statement run
+	// (see GuardSQL), for run.
+	Confirm string `json:"confirm,omitempty"`
 }
 
 /*
@@ -246,7 +249,7 @@ type PGObject struct {
 // PGAnswer is the agent's reply to a request, or news about the session.
 type PGAnswer struct {
 	ID uint32 `json:"id"`
-	// Type is ready, cols, done, error, schema or admin.
+	// Type is ready, cols, done, error, schema, admin or check.
 	Type string     `json:"type"`
 	Cols []PGColumn `json:"cols,omitempty"`
 	// Tag is Postgres's command tag: "SELECT 214", "UPDATE 1".
@@ -277,6 +280,34 @@ type PGAnswer struct {
 	// Levels names the level roles of this database, read to dba, so the
 	// console's administration panels can speak of them without guessing.
 	Levels map[string]string `json:"levels,omitempty"`
+	// Guard is why a run was stopped before it reached Postgres, on an error
+	// whose Code is one of the Guard* codes.
+	Guard *PGGuard `json:"guard,omitempty"`
+	// Check answers check.
+	Check *PGCheck `json:"check,omitempty"`
+}
+
+// PGCheck is what a statement would do, learned by running it and rolling
+// it back. Tables counts every table it touched, cascades and triggers
+// included, from Postgres's own per-transaction statistics.
+type PGCheck struct {
+	Class SQLClass `json:"class"`
+	// Rows is what the statement itself reports: the command tag's count.
+	Rows   int64          `json:"rows"`
+	Tag    string         `json:"tag,omitempty"`
+	Tables []PGCheckTable `json:"tables,omitempty"`
+	// Guard is set when running the statement as written would be stopped.
+	Guard *PGGuard `json:"guard,omitempty"`
+}
+
+// PGCheckTable is one table a checked statement touched.
+type PGCheckTable struct {
+	Name     string `json:"name"`
+	Inserted int64  `json:"inserted,omitempty"`
+	Updated  int64  `json:"updated,omitempty"`
+	Deleted  int64  `json:"deleted,omitempty"`
+	// Estimate is Postgres's estimate of the table's rows (reltuples).
+	Estimate int64 `json:"estimate,omitempty"`
 }
 
 // PGRecord is one line of a database session's recording. Each line carries
@@ -285,9 +316,11 @@ type PGAnswer struct {
 type PGRecord struct {
 	Seq  int64  `json:"seq"`
 	Time string `json:"t"`
-	// Kind is open, stmt, admin, done, error, cancel or close. An admin line
-	// is an administrative operation run through the agent's helper as the
-	// server's postgres account, not as the person's role.
+	// Kind is open, stmt, check, admin, done, error, cancel or close. An
+	// admin line is an administrative operation run through the agent's
+	// helper as the server's postgres account, not as the person's role. A
+	// check line is a statement run inside a transaction that was then rolled
+	// back, so nothing it did remains; its done line says what it would do.
 	Kind string `json:"kind"`
 	// SQL is the statement, on stmt and admin. On admin any password in it
 	// is already [redacted]; the real statement never reaches the recording.
