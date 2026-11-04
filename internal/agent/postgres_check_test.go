@@ -151,3 +151,49 @@ func TestPostgresCheckCountsAndRollsBack(t *testing.T) {
 	}
 	h.close()
 }
+
+// Values travel as bind parameters: a value that looks like SQL stays a
+// value, NULL is NULL, and the recording keeps what the statement ran with.
+func TestPostgresRunWithParams(t *testing.T) {
+	dsn, _, _, _ := pgTest(t)
+	superExec(t, dsn,
+		"DROP TABLE IF EXISTS argus_t_p",
+		"CREATE TABLE argus_t_p (id int PRIMARY KEY, v text)",
+		"INSERT INTO argus_t_p VALUES (1, 'a'), (2, 'b')")
+	h := openPG(t, tunnel.LevelOwner, nil)
+	s := func(v string) *string { return &v }
+
+	_, rows, final := h.do(tunnel.PGRequest{ID: 1, Op: "run", SQL: "SELECT v, $2::text IS NULL FROM argus_t_p WHERE id = $1",
+		Params: []*string{s("2"), nil}})
+	if final.Type != "done" || len(rows) != 1 || *rows[0][0] != "b" || *rows[0][1] != "t" {
+		t.Fatalf("select with params: %+v %v", final, rows)
+	}
+	_, _, final = h.do(tunnel.PGRequest{ID: 2, Op: "run", SQL: "UPDATE argus_t_p SET v = $1 WHERE id = $2",
+		Params: []*string{s("x'; DROP TABLE argus_t_p; --"), s("1")}})
+	if final.Type != "done" || final.Rows != 1 {
+		t.Fatalf("update with params: %+v", final)
+	}
+	if got := superQuery(t, dsn, "SELECT v FROM argus_t_p WHERE id = 1"); got[0][0] != "x'; DROP TABLE argus_t_p; --" {
+		t.Fatalf("the value was not kept as a value: %v", got)
+	}
+	var recorded []*string
+	for _, r := range h.rec {
+		if r.Request == 2 && r.Kind == "stmt" {
+			recorded = r.Params
+		}
+	}
+	if len(recorded) != 2 || *recorded[1] != "1" {
+		t.Fatalf("the recording does not keep the values: %v", recorded)
+	}
+	// Checked with the same values, then rolled back.
+	_, _, final = h.do(tunnel.PGRequest{ID: 3, Op: "check", SQL: "DELETE FROM argus_t_p WHERE id = $1", Params: []*string{s("2")}})
+	if final.Type != "check" || final.Check == nil || final.Check.Rows != 1 {
+		t.Fatalf("check with params: %+v", final)
+	}
+	_, _, final = h.do(tunnel.PGRequest{ID: 4, Op: "run", SQL: "SELECT $1::text", Params: []*string{s("a\x00b")}})
+	if final.Type != "error" {
+		t.Fatalf("a value with NUL ran: %+v", final)
+	}
+	h.close()
+	superExec(t, dsn, "DROP TABLE IF EXISTS argus_t_p")
+}

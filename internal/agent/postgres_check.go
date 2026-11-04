@@ -80,12 +80,16 @@ func (s *pgSession) check(ctx context.Context, req tunnel.PGRequest) error {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardCheckOnly,
 			Error: "only INSERT, UPDATE, DELETE and MERGE are checked before they run"})
 	}
+	args, bad := tunnel.PGParamArgs(req.Params)
+	if bad != "" {
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: bad})
+	}
 	if s.conn.TxStatus() == 'E' {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "25P02",
 			Error: "your transaction has already failed; ROLLBACK before checking anything"})
 	}
 
-	if err := s.record(tunnel.PGRecord{Kind: "check", Request: req.ID, SQL: sql}); err != nil {
+	if err := s.record(tunnel.PGRecord{Kind: "check", Request: req.ID, SQL: sql, Params: req.Params}); err != nil {
 		if errors.Is(err, tunnel.ErrRecordTooLong) {
 			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
 		}
@@ -125,7 +129,7 @@ func (s *pgSession) check(ctx context.Context, req tunnel.PGRequest) error {
 		touched map[string]tunnel.PGCheckTable
 	)
 	if err == nil {
-		rr := s.conn.ExecParams(sctx, sql, nil, nil, nil, []int16{0})
+		rr := s.conn.ExecParams(sctx, sql, args, nil, nil, []int16{0})
 		for rr.NextRow() {
 			// RETURNING rows are counted by the tag; nobody sees them.
 		}

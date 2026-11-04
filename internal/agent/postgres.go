@@ -653,8 +653,12 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	// row, a DROP or TRUNCATE nobody confirmed. The attempt and the reason
 	// are recorded, so the replay shows what was asked and why it did not
 	// happen.
+	args, bad := tunnel.PGParamArgs(req.Params)
+	if bad != "" {
+		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: bad})
+	}
 	if g := tunnel.GuardSQL(tunnel.ClassifySQL(sql), s.db.Name, req.Confirm); g != nil {
-		if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql}); err != nil {
+		if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql, Params: req.Params}); err != nil {
 			return fmt.Errorf("the recording failed: %w", err)
 		}
 		if err := s.record(tunnel.PGRecord{Kind: "error", Request: req.ID, Code: g.Code, Error: g.Reason}); err != nil {
@@ -672,7 +676,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	maxRows = min(maxRows, tunnel.MaxRowsCeiling)
 
 	// Recorded and sent before Postgres sees it. No record, no statement.
-	if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql}); err != nil {
+	if err := s.record(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: sql, Params: req.Params}); err != nil {
 		if errors.Is(err, tunnel.ErrRecordTooLong) {
 			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
 		}
@@ -708,7 +712,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: "BEGIN", MS: elapsed})
 		}
 	}
-	rr := s.conn.ExecParams(sctx, sql, nil, nil, nil, []int16{0})
+	rr := s.conn.ExecParams(sctx, sql, args, nil, nil, []int16{0})
 	h := sha256.New()
 	enc := tunnel.NewRowEncoder(req.ID)
 	var (
