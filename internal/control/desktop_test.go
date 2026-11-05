@@ -305,7 +305,11 @@ func (e *tunnelEnv) runScreenAgent(t *testing.T, cred, host string, desk *fakeDe
 		return func(_ agent.DesktopConfig, _ string, open tunnel.DesktopOpen,
 			_ *slog.Logger) (agent.DesktopClient, agent.DesktopInfo, error) {
 			mu.Lock()
-			*opened = append(*opened, kind+":"+open.Password)
+			entry := kind + ":" + open.Password
+			if open.Graphics {
+				entry += "+h264"
+			}
+			*opened = append(*opened, entry)
 			mu.Unlock()
 			return desk, info, nil
 		}
@@ -344,8 +348,10 @@ func TestAServerSetToScreenSharingOpensItsConsoleAndNeverPassesThePassword(t *te
 	ticket, _ := signer.IssueTicket("ana@example.com", host, "ana", time.Minute)
 	c := e.openDesktop(t, host, "ana", ticket)
 	defer c.CloseNow()
+	// The browser decodes H.264 (video), and does not ask Remote Desktop's
+	// graphics pipeline, which is not what opens here.
 	b, _ := json.Marshal(map[string]any{"type": "logon", "password": "typed anyway",
-		"width": 1024, "height": 768})
+		"width": 1024, "height": 768, "video": true})
 	if err := c.Write(context.Background(), websocket.MessageText, b); err != nil {
 		t.Fatal(err)
 	}
@@ -355,8 +361,8 @@ func TestAServerSetToScreenSharingOpensItsConsoleAndNeverPassesThePassword(t *te
 	if len(frame) < rdp.FrameHeaderSize || frame[0] != rdp.FrameReady {
 		t.Fatalf("not ready: %v %+v", frame, msgs)
 	}
-	if len(opened) != 1 || opened[0] != "screen:" {
-		t.Fatalf("opened %q; want the console, with no password", opened)
+	if len(opened) != 1 || opened[0] != "screen:+h264" {
+		t.Fatalf("opened %q; want the console, with no password, sending motion as H.264", opened)
 	}
 	desk.frames <- []rdp.Bitmap{{Width: 4, Height: 1, BPP: 16, Data: []byte("console!")}}
 	if frame = nextBinary(cev, &msgs, 10*time.Second); !strings.Contains(string(frame), "console!") {

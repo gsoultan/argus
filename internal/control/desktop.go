@@ -49,8 +49,12 @@ type desktopLogon struct {
 	Password string `json:"password"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
-	// Graphics says the browser decodes the graphics pipeline.
+	// Graphics asks Remote Desktop for its graphics pipeline, which the
+	// browser decodes.
 	Graphics bool `json:"graphics"`
+	// Video says the browser decodes H.264, so screen sharing may send
+	// motion as it.
+	Video bool `json:"video"`
 }
 
 // handleDesktop serves GET /api/v1/desktop.
@@ -136,6 +140,9 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 		// pass on, and none is.
 		service, what = agentScreenService, "Screen sharing of the console"
 		logon.Password = ""
+		// Pictures for motion, then exact tiles once still; a browser
+		// that cannot decode them gets exact tiles only.
+		logon.Graphics = logon.Video
 	}
 
 	g := tunnel.NewGrant(email, host, principal, client)

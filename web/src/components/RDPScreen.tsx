@@ -88,7 +88,9 @@ export function RDPScreen({
   const [size, setSize] = useState({ width: 1024, height: 768 })
   // Frames a second, the round trip and the bandwidth, over the last second.
   // Only a shared console's frames are counted (they carry marks).
-  const [stats, setStats] = useState<{ fps: number; rttMs: number; mbit: number } | null>(null)
+  const [stats, setStats] = useState<{ fps: number; rttMs: number; mbit: number; video: boolean } | null>(
+    null,
+  )
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -126,10 +128,12 @@ export function RDPScreen({
     let bytes = 0
     let rttMs = 0
     let marked = false
+    let video = false
     const tick = window.setInterval(() => {
-      if (marked) setStats({ fps: frames, rttMs, mbit: (bytes * 8) / 1e6 })
+      if (marked) setStats({ fps: frames, rttMs, mbit: (bytes * 8) / 1e6, video })
       frames = 0
       bytes = 0
+      video = false
     }, 1000)
 
     // Rectangles are queued and drawn in one animation frame rather than one at
@@ -182,6 +186,7 @@ export function RDPScreen({
           marked = true
           frames++
           rttMs = m.rttMs
+          video ||= m.video
           const ws = wsRef.current
           if (!shadowSessionId && ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'ack', frame: m.id }))
@@ -200,6 +205,9 @@ export function RDPScreen({
       }
 
       const graphics = !shadowSessionId && (await wantsGraphics())
+      // Screen sharing sends motion as H.264 to a browser that decodes it,
+      // and exact pixels once still; Remote Desktop ignores this.
+      const video = !shadowSessionId && (await canDecodeH264())
       if (disposed) return
 
       const url = new URL(endpoint, window.location.href)
@@ -221,7 +229,13 @@ export function RDPScreen({
         // server's own Remote Desktop to authenticate, and the size to open at.
         ws.onopen = () => {
           ws.send(
-            JSON.stringify({ type: 'logon', password: takePassword?.() ?? '', graphics, ...wantedSize() }),
+            JSON.stringify({
+              type: 'logon',
+              password: takePassword?.() ?? '',
+              graphics,
+              video,
+              ...wantedSize(),
+            }),
           )
         }
       }
@@ -368,6 +382,7 @@ export function RDPScreen({
           {state === 'live' && stats && (
             <Text size="xs" c="dimmed" data-testid="desktop-stats">
               {stats.fps} fps · {stats.rttMs} ms · {stats.mbit.toFixed(1)} Mbit/s
+              {stats.video ? ' · H.264' : ' · exact'}
             </Text>
           )}
         </Group>
