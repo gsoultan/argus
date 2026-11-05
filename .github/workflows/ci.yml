@@ -600,7 +600,16 @@ jobs:
           # same measurement. Reported, not yet held to a number: what is on a
           # runner's console (a desktop, or a sign-in screen) is the runner's.
           desktop_gone
-          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'screen' WHERE lower(hostname) = lower('$host')"
+          # The setting is the server's, so the server is added first, the
+          # way the console adds a discovered one; with no server row there is
+          # nothing to set and every desktop opens as Remote Desktop.
+          asset=$($c -X POST "https://localhost:8080/api/v1/discovered/$host/enrol" \
+            -d '{"principals":["argusdrill"],"people":["admin@ci.example"]}' | jq -r .assetId)
+          # -q: without it psql prints "UPDATE 1" after what came back.
+          set_mode=$(psql "$PGURL" -qtAc "UPDATE assets SET desktop_mode = 'screen'
+                WHERE id = '$asset' RETURNING desktop_mode" | tr -d '\r')
+          [ "$set_mode" = screen ] || {
+            echo "::error::could not set $host ($asset) to screen sharing"; exit 1; }
           # Twice: as a browser without an H.264 decoder sees it (exact tiles
           # only), and as the console does, with motion as H.264.
           measure_screen() { # name, title, deskdrill flags...
@@ -634,19 +643,32 @@ jobs:
           measure_screen screen-measure "exact tiles"
           desktop_gone
           measure_screen screen-video-measure "motion as H.264" -video
-          # Which the agent used: H.264, or exact tiles and why.
-          grep -i "sends motion as" "$log" | tail -3 || true
-          # The helper's own cost while it ran, from the agent's log.
-          grep -i "screen" "$log" | tail -10 || true
-          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE lower(hostname) = lower('$host')"
+          # What the agent made of it: whether H.264 was asked for, what
+          # motion went as (or why not), and how many pictures it sent. -a:
+          # the log is searched as text whatever bytes are in it.
+          grep -a "tunnel: .*screen\|tunnel: desktop" "$log" | tail -16 || true
+          # What each kept on disk: the recording before and after its
+          # compression, the last two being the two screen sharing runs.
+          grep -a "recording compressed for shipping" "$log" | tail -2 || true
+          # A measurement that came through Remote Desktop instead would be
+          # reported as screen sharing's, so it is checked, not assumed.
+          grep -aq "tunnel: sharing the console's screen" "$log" || {
+            echo "::error::the screen sharing measurements opened as Remote Desktop"; exit 1; }
+          if ! grep -aq "sends motion as.*codec=h264" "$log"; then
+            echo "::warning::screen sharing did not send motion as H.264 on this runner"
+          fi
+          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE id = '$asset'"
 
           # Stopping the service seals and exits cleanly.
-          "$agent" service stop
+          "$agent" service stop || { sc.exe query argus-agent || true; tail -30 "$log"
+            echo "::error::the agent's service did not stop"; exit 1; }
           for i in $(seq 1 30); do
             sc.exe query argus-agent | grep -q STOPPED && break
             sleep 1
           done
-          sc.exe query argus-agent | grep -q STOPPED
+          sc.exe query argus-agent | grep -q STOPPED || {
+            tail -30 "$log"; tasklist | grep -i argus || true
+            echo "::error::the agent's service was still stopping 30 s later"; exit 1; }
           tail -5 "$log"
           grep -q 'shutdown complete' "$log"
 

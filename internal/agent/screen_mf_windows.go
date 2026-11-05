@@ -62,10 +62,10 @@ var (
 	mfMTTransfer       = windows.GUID{Data1: 0x5fb0fce9, Data2: 0xbe5c, Data3: 0x4935, Data4: [8]byte{0xa8, 0x11, 0xec, 0x83, 0x8f, 0x8e, 0xed, 0x93}}
 
 	codecAPIRateControlMode = windows.GUID{Data1: 0x1c0608e9, Data2: 0x370c, Data3: 0x4710, Data4: [8]byte{0x8a, 0x58, 0xcb, 0x61, 0x81, 0xc4, 0x24, 0x23}}
-	codecAPIQuality         = windows.GUID{Data1: 0xfcbf57a3, Data2: 0x7ea5, Data3: 0x4b0c, Data4: [8]byte{0x96, 0x44, 0x69, 0xb4, 0x0c, 0x39, 0xc3, 0x91}}
 	codecAPILowLatency      = windows.GUID{Data1: 0x9c27891a, Data2: 0xed7a, Data3: 0x40e1, Data4: [8]byte{0x88, 0xe8, 0xb2, 0x27, 0x27, 0xa0, 0x24, 0xee}}
 	codecAPIGOPSize         = windows.GUID{Data1: 0x95f31b26, Data2: 0x95a4, Data3: 0x41aa, Data4: [8]byte{0x93, 0x03, 0x24, 0x6a, 0x7f, 0xc6, 0xee, 0xf1}}
 	codecAPIBPictures       = windows.GUID{Data1: 0x8d390aac, Data2: 0xdc5c, Data3: 0x4200, Data4: [8]byte{0xb5, 0x7f, 0x81, 0x4d, 0x04, 0xba, 0xba, 0xb2}}
+	codecAPIMeanBitRate     = windows.GUID{Data1: 0xf7222374, Data2: 0x2144, Data3: 0x4815, Data4: [8]byte{0xb5, 0x50, 0xa3, 0x7f, 0x8e, 0x12, 0xee, 0x52}}
 	codecAPIForceKeyFrame   = windows.GUID{Data1: 0x398c1b98, Data2: 0x8353, Data3: 0x475a, Data4: [8]byte{0x9e, 0xf2, 0x8f, 0x26, 0x5d, 0x26, 0x03, 0x45}}
 )
 
@@ -127,12 +127,20 @@ const (
 	vtUI4  = 19
 	vtBool = 11
 
-	rateControlQuality = 3
-	h264ProfileBase    = 66
+	rateControlCBR  = 0
+	h264ProfileBase = 66
 
 	// screenVideoRate is the frame rate the encoder plans its bits for; the
 	// timestamps say when pictures really were.
 	screenVideoRate = 60
+
+	// screenVideoBits is what motion costs at most, in bits a second for
+	// each pixel of the screen: 0.8 Mbit/s at 1024x768, 2 Mbit/s at full
+	// HD. Motion is a little soft for it; it is sent again exactly a
+	// quarter of a second after it stops, and the recording is kept small:
+	// H.264 is already compressed, so the recording's own compression takes
+	// nothing more off it.
+	screenVideoBits = 1
 )
 
 // variant is a VARIANT: its type, three reserved words, and the value.
@@ -207,8 +215,8 @@ func (e *mfEncoder) open() error {
 	if c, err := e.mft.query(&iidICodecAPI); err == nil {
 		e.codec = c
 		e.setValue(&codecAPILowLatency, vtBool, 0xFFFF) // VARIANT_TRUE
-		e.setValue(&codecAPIRateControlMode, vtUI4, rateControlQuality)
-		e.setValue(&codecAPIQuality, vtUI4, 70)
+		e.setValue(&codecAPIRateControlMode, vtUI4, rateControlCBR)
+		e.setValue(&codecAPIMeanBitRate, vtUI4, uint64(e.bitrate()))
 		e.setValue(&codecAPIBPictures, vtUI4, 0)
 		// No key frame but those asked for: the stream is reliable, and a
 		// key frame is the most expensive picture there is.
@@ -217,9 +225,7 @@ func (e *mfEncoder) open() error {
 
 	size := uint64(e.width)<<32 | uint64(e.height)
 	rate := uint64(screenVideoRate)<<32 | 1
-	// Bits for a busy full-HD screen, scaled by area; the quality setting
-	// decides within it.
-	bitrate := uint32(min(int64(e.width)*int64(e.height)*4, 40_000_000))
+	bitrate := e.bitrate()
 
 	out, err := newMediaType()
 	if err != nil {
@@ -288,6 +294,11 @@ func colour(t *comObject) {
 func (e *mfEncoder) setValue(api *windows.GUID, vt uint16, v uint64) {
 	val := variant{vt: vt, val: v}
 	e.codec.call(vtCodecSetValue, uintptr(unsafe.Pointer(api)), uintptr(unsafe.Pointer(&val)))
+}
+
+// bitrate is what motion on this screen may cost, in bits a second.
+func (e *mfEncoder) bitrate() uint32 {
+	return uint32(min(max(int64(e.width)*int64(e.height)*screenVideoBits, 500_000), 8_000_000))
 }
 
 // sequenceHeader reads the SPS and PPS the encoder put on its output type.

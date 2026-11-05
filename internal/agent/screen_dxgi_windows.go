@@ -86,6 +86,14 @@ type comObject struct {
 }
 
 // call calls method slot of o with args, returning the HRESULT.
+//
+// Callers pass pointers to their own variables as uintptr, for the method
+// to write through. uintptrescapes keeps those variables on the heap and
+// alive for the call: without it they can sit on the goroutine's stack,
+// which moves when it grows, and the method then writes into the old one,
+// so what the caller reads back is whatever was there before.
+//
+//go:uintptrescapes
 func (o *comObject) call(slot int, args ...uintptr) uint32 {
 	all := append([]uintptr{uintptr(unsafe.Pointer(o))}, args...)
 	r, _, _ := syscall.SyscallN(o.vtbl[slot], all...)
