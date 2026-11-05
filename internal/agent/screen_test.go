@@ -76,13 +76,13 @@ func (p *pipePair) Close() error {
 	return err
 }
 
-func startFakeHelper(s *fakeScreen) *pipePair {
+func startFakeHelper(s *fakeScreen, video func(int, int) (screenVideo, error)) *pipePair {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	p := &pipePair{PipeReader: outR, w: inW, closed: make(chan struct{})}
 	go func() {
 		defer close(p.closed)
-		_ = serveScreen(s, func() screenInputer { return s }, inR, outW, testPace)
+		_ = serveScreen(s, func() screenInputer { return s }, inR, outW, testPace, video)
 		_ = outW.Close()
 	}()
 	return p
@@ -96,6 +96,9 @@ type fakeScreenHost struct {
 	started  []uint32
 	sas      int
 	startErr error
+	// video makes the helper's encoder, when a helper is let use one.
+	video func(int, int) (screenVideo, error)
+	modes []helperMode
 }
 
 func (h *fakeScreenHost) ConsoleSession() (uint32, bool) {
@@ -113,14 +116,19 @@ func (h *fakeScreenHost) ConsoleAccount(uint32) string {
 // testPace is quick, so tests do not wait on the frame rate.
 var testPace = screenPace{minGap: time.Millisecond, idleMax: 5 * time.Millisecond}
 
-func (h *fakeScreenHost) StartHelper(session uint32, _ bool) (io.ReadWriteCloser, error) {
+func (h *fakeScreenHost) StartHelper(session uint32, mode helperMode) (io.ReadWriteCloser, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.startErr != nil {
 		return nil, h.startErr
 	}
 	h.started = append(h.started, session)
-	return startFakeHelper(h.screens[session]), nil
+	h.modes = append(h.modes, mode)
+	var video func(int, int) (screenVideo, error)
+	if mode.video {
+		video = h.video
+	}
+	return startFakeHelper(h.screens[session], video), nil
 }
 
 func (h *fakeScreenHost) SecureAttention() error {
@@ -156,7 +164,7 @@ func nextRects(t *testing.T, c *screenClient) []rdp.Bitmap {
 func TestScreenSharesTheConsoleAndRecordsWhatItShows(t *testing.T) {
 	host := &fakeScreenHost{session: 1, account: `HOST\alice`,
 		screens: map[uint32]*fakeScreen{1: newFakeScreen(130, 70, 0x40)}}
-	c, err := openScreen(host, slog.New(slog.DiscardHandler))
+	c, err := openScreen(host, false, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +228,7 @@ func TestScreenSharesTheConsoleAndRecordsWhatItShows(t *testing.T) {
 func TestScreenPlaysInputAndTurnsCtrlAltDelIntoTheSecureSequence(t *testing.T) {
 	host := &fakeScreenHost{session: 1,
 		screens: map[uint32]*fakeScreen{1: newFakeScreen(64, 64, 0)}}
-	c, err := openScreen(host, slog.New(slog.DiscardHandler))
+	c, err := openScreen(host, false, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +258,7 @@ func TestScreenPlaysInputAndTurnsCtrlAltDelIntoTheSecureSequence(t *testing.T) {
 func TestScreenFollowsTheConsoleAndRecordsWhoIsSignedIn(t *testing.T) {
 	host := &fakeScreenHost{session: 1, screens: map[uint32]*fakeScreen{
 		1: newFakeScreen(64, 64, 0x10), 2: newFakeScreen(64, 64, 0x20)}}
-	c, err := openScreen(host, slog.New(slog.DiscardHandler))
+	c, err := openScreen(host, false, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +320,7 @@ func TestScreenFollowsTheConsoleAndRecordsWhoIsSignedIn(t *testing.T) {
 
 func TestScreenRefusesWhenTheHelperCannotStart(t *testing.T) {
 	host := &fakeScreenHost{session: 1, startErr: errors.New("no")}
-	if _, err := openScreen(host, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := openScreen(host, false, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("opened without a helper")
 	}
 }
@@ -347,7 +355,7 @@ func drainFrame(t *testing.T, c *screenClient) uint32 {
 func TestScreenSendsNoMoreFramesThanTheBrowserHasRoomFor(t *testing.T) {
 	screen := newFakeScreen(130, 70, 0x40)
 	host := &fakeScreenHost{session: 1, screens: map[uint32]*fakeScreen{1: screen}}
-	c, err := openScreen(host, slog.New(slog.DiscardHandler))
+	c, err := openScreen(host, false, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +438,7 @@ func TestScreenPlaysQueuedMouseMovesAsOne(t *testing.T) {
 	go func() { _, _ = io.Copy(io.Discard, outR); close(copied) }()
 	served := make(chan struct{})
 	go func() {
-		_ = serveScreen(screen, func() screenInputer { return screen }, inR, outW, testPace)
+		_ = serveScreen(screen, func() screenInputer { return screen }, inR, outW, testPace, nil)
 		_ = outW.Close()
 		close(served)
 	}()

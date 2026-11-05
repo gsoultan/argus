@@ -27,8 +27,10 @@ import (
 
 // update is one message from the control plane, as it arrived.
 type update struct {
-	at     time.Time
-	bytes  int
+	at    time.Time
+	bytes int
+	// video is the bytes of it that were H.264 pictures.
+	video  int
 	rects  int
 	pixels int
 	decode time.Duration
@@ -62,6 +64,9 @@ type Report struct {
 	BusyDecodeShare float64
 	BusyGapP95MS    float64
 	BusyGapMaxMS    float64
+	// BusyVideoShare is the part of the busy window's bytes that were
+	// H.264 pictures rather than exact tiles.
+	BusyVideoShare float64
 }
 
 type meter struct {
@@ -165,6 +170,9 @@ func measure(ctx context.Context, c *websocket.Conn, send func(any), busyFor tim
 		r.BusyFramesPerSec = float64(len(slots)) / secs
 		r.BusyScreensPerSec = float64(area) / float64(m.width*m.height) / secs
 		r.BusyDecodeShare = decode.Seconds() / secs
+		if total := sum(busy, func(u update) int { return u.bytes }); total > 0 {
+			r.BusyVideoShare = float64(sum(busy, func(u update) int { return u.video })) / float64(total)
+		}
 		var gaps []float64
 		for i := 1; i < len(busy); i++ {
 			gaps = append(gaps, ms(busy[i].at.Sub(busy[i-1].at)))
@@ -225,6 +233,17 @@ func (m *meter) read() {
 				size += w * h * 4
 				u.rects++
 				u.pixels += w * h
+			case rdp.FrameGraphics, rdp.FrameGraphicsPart:
+				n := int(binary.LittleEndian.Uint32(p[4:8]))
+				size += (n + 3) &^ 3
+				if size > len(p) {
+					fail("an update is cut short")
+				}
+				u.video += n
+				u.rects++
+				if p[0] == rdp.FrameGraphics {
+					u.pixels += pictureArea(p[rdp.FrameHeaderSize : rdp.FrameHeaderSize+n])
+				}
 			case rdp.FrameClosed:
 				m.errs <- fmt.Errorf("the desktop closed")
 				return
@@ -357,4 +376,22 @@ func sum(us []update, f func(update) int) int {
 		n += f(u)
 	}
 	return n
+}
+
+// pictureArea is how much of the screen an H.264 picture shows: its regions.
+func pictureArea(cmd []byte) int {
+	pdus, err := rdp.ParseGraphics(cmd)
+	if err != nil || len(pdus) != 1 || pdus[0].Cmd != rdp.GfxWireToSurface1 || len(pdus[0].Bitmap) < 4 {
+		return 0
+	}
+	b := pdus[0].Bitmap
+	n := int(binary.LittleEndian.Uint32(b))
+	area := 0
+	for i := 0; i < n && 4+i*8+8 <= len(b); i++ {
+		o := 4 + i*8
+		w := int(binary.LittleEndian.Uint16(b[o+4:])) - int(binary.LittleEndian.Uint16(b[o:]))
+		h := int(binary.LittleEndian.Uint16(b[o+6:])) - int(binary.LittleEndian.Uint16(b[o+2:]))
+		area += max(w, 0) * max(h, 0)
+	}
+	return area
 }

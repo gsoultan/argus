@@ -91,10 +91,14 @@ func (s *staticChannel) feed(pdu []byte) ([]byte, error) {
 }
 
 // channelPDUs splits a message into static channel PDUs.
-func channelPDUs(msg []byte) [][]byte {
+func channelPDUs(msg []byte) [][]byte { return channelPDUsOf(msg, channelChunk) }
+
+// channelPDUsOf splits a message into static channel PDUs of at most chunk
+// bytes of data each.
+func channelPDUsOf(msg []byte, chunk int) [][]byte {
 	var out [][]byte
 	for at := 0; at < len(msg) || at == 0; {
-		n := min(channelChunk, len(msg)-at)
+		n := min(chunk, len(msg)-at)
 		var flags uint32
 		if at == 0 {
 			flags |= channelFlagFirst
@@ -238,9 +242,15 @@ func (d *dynamicChannels) handle(msg []byte) (dvcEvent, error) {
 	return dvcEvent{}, nil
 }
 
-// dvcData builds data PDUs carrying msg on channel id.
+// dvcMessages builds data PDUs carrying msg on channel id, each small enough
+// for one static channel chunk.
 func dvcMessages(id uint32, cbID int, msg []byte) [][]byte {
-	const room = channelChunk - 6 // header byte and at most a four-byte id
+	return dvcMessagesOf(id, cbID, msg, channelChunk-6) // header byte and at most a four-byte id
+}
+
+// dvcMessagesOf builds data PDUs carrying msg on channel id, with at most
+// room bytes of msg in each.
+func dvcMessagesOf(id uint32, cbID int, msg []byte, room int) [][]byte {
 	head := func(cmd byte) []byte { return append([]byte{cmd<<4 | byte(cbID)}, dvcPut(id, cbID)...) }
 	if len(msg) <= room {
 		return [][]byte{append(head(dvcData), msg...)}

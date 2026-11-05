@@ -92,8 +92,11 @@ type GraphicsSink struct {
 }
 
 // Add is the rdp.ClientConfig.Graphics callback.
-func (g *GraphicsSink) Add(p rdp.GraphicsPDU) {
-	g.frames = append(g.frames, rdp.EncodeGraphics(p.Raw)...)
+func (g *GraphicsSink) Add(p rdp.GraphicsPDU) { g.addCommand(p.Raw) }
+
+// addCommand adds one whole command.
+func (g *GraphicsSink) addCommand(raw []byte) {
+	g.frames = append(g.frames, rdp.EncodeGraphics(raw)...)
 }
 
 // take returns what has gathered, at most limit bytes of whole frames, and
@@ -252,7 +255,13 @@ func desktopFlags(info DesktopInfo) []string {
 	if info.Screen {
 		// Whoever is signed in at the console is who the session acts as,
 		// and anyone in front of the screen sees it.
-		return []string{"console-takeover"}
+		flags := []string{"console-takeover"}
+		if info.Graphics != nil {
+			// Motion was sent as H.264, which replay decodes as the live
+			// view did.
+			flags = append(flags, "graphics-pipeline")
+		}
+		return flags
 	}
 	// The password the person typed is one they hold for this host: a
 	// standing credential, which is what injection exists to remove.

@@ -52,8 +52,11 @@ export type RDPWorkerResponse =
   | { type: 'ready'; width: number; height: number }
   | { type: 'closed' }
   | { type: 'error'; message: string }
-  /** A frame ended and everything before it is decoded: acknowledge it. */
-  | { type: 'mark'; id: number; rttMs: number }
+  /**
+   * A frame ended and everything before it is decoded: acknowledge it.
+   * video says pictures (H.264) were drawn since the last mark.
+   */
+  | { type: 'mark'; id: number; rttMs: number; video: boolean }
 
 /** The decoder, fetched once per worker and shared by every frame. */
 const pixels: Promise<PixelsModule> = loadPixels(
@@ -76,6 +79,8 @@ let queue: Promise<void> = Promise.resolve()
  */
 let graphics: GraphicsRenderer | null = null
 const parts = new PartJoiner()
+/** Whether graphics commands came since the last frame mark. */
+let videoSinceMark = false
 
 function renderer(): GraphicsRenderer {
   graphics ??= new GraphicsRenderer({
@@ -141,6 +146,7 @@ async function handle(buf: ArrayBuffer) {
         let command: Uint8Array | null = new Uint8Array(buf, at + HEADER, length)
         at += HEADER + padded
         if (kind === FRAME_GRAPHICS_PART) command = parts.add(command, total)
+        videoSinceMark = true
         if (command) {
           // Bitmaps decoded earlier in this message go first, in order.
           await flush(pending)
@@ -167,7 +173,13 @@ async function handle(buf: ArrayBuffer) {
             post({ type: 'closed' })
             break
           case FRAME_MARK:
-            post({ type: 'mark', id: view.getUint32(at - HEADER + 2, true), rttMs: view.getUint16(at - HEADER + 10, true) })
+            post({
+              type: 'mark',
+              id: view.getUint32(at - HEADER + 2, true),
+              rttMs: view.getUint16(at - HEADER + 10, true),
+              video: videoSinceMark,
+            })
+            videoSinceMark = false
             break
         }
         continue

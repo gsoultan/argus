@@ -182,6 +182,7 @@ type screenDiffer struct {
 
 // tileJob is one tile to encode, and what it became.
 type tileJob struct {
+	index      int
 	x, y, w, h int
 	hash       uint64
 	frame      []byte
@@ -190,6 +191,13 @@ type tileJob struct {
 // changed returns the changed tiles as display frames (rdp.EncodeBitmap),
 // grouped into batches under limit bytes. force sends every tile.
 func (d *screenDiffer) changed(s screenShot, force bool, limit int) [][]byte {
+	return d.batches(s, d.find(s, force), limit)
+}
+
+// find returns the tiles that changed since they were last found, and
+// remembers them as they are now. force returns every tile, as does a
+// screen of a new size.
+func (d *screenDiffer) find(s screenShot, force bool) []tileJob {
 	if s.width != d.width || s.height != d.height || d.hashes == nil {
 		d.width, d.height = s.width, s.height
 		d.cols = (s.width + screenTile - 1) / screenTile
@@ -201,17 +209,27 @@ func (d *screenDiffer) changed(s screenShot, force bool, limit int) [][]byte {
 	look := d.tilesToLook(s.dirty, force)
 	var jobs []tileJob
 	for _, i := range look {
-		tx, ty := (i%d.cols)*screenTile, (i/d.cols)*screenTile
-		tw, th := min(screenTile, s.width-tx), min(screenTile, s.height-ty)
-		h := tileHash(d.seed, s.fb, s.stride, tx, ty, tw, th)
+		j := d.job(s, i)
+		h := tileHash(d.seed, s.fb, s.stride, j.x, j.y, j.w, j.h)
 		if !force && h == d.hashes[i] {
 			continue
 		}
 		d.hashes[i] = h
-		jobs = append(jobs, tileJob{x: tx, y: ty, w: tw, h: th, hash: h})
+		j.hash = h
+		jobs = append(jobs, j)
 	}
-	d.encode(s, jobs)
+	return jobs
+}
 
+// job is tile i of s, to encode.
+func (d *screenDiffer) job(s screenShot, i int) tileJob {
+	tx, ty := (i%d.cols)*screenTile, (i/d.cols)*screenTile
+	return tileJob{index: i, x: tx, y: ty, w: min(screenTile, s.width-tx), h: min(screenTile, s.height-ty)}
+}
+
+// batches encodes jobs as display frames, grouped under limit bytes.
+func (d *screenDiffer) batches(s screenShot, jobs []tileJob, limit int) [][]byte {
+	d.encode(s, jobs)
 	var batches [][]byte
 	batch := []byte(nil)
 	for _, j := range jobs {
@@ -317,7 +335,7 @@ func tileHash(seed maphash.Seed, fb []byte, stride, x, y, w, h int) uint64 {
 // takes frames, so a slow link gets fewer, newer frames instead of a queue of
 // old ones, and the screen a person sees is the one that is there now.
 func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, out io.Writer,
-	pace screenPace) error {
+	pace screenPace, newVideo func(width, height int) (screenVideo, error)) error {
 	runtime.LockOSThread()
 	defer c.Close()
 
@@ -399,11 +417,18 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	}()
 
 	var diff screenDiffer
+	var sharp screenSharpener
+	mo := motion{newVideo: newVideo, out: out}
+	defer mo.close()
 	credits := 1
 	force := true
 	lastW, lastH := 0, 0
 	lastSent := time.Time{}
 	idle := pace.minGap
+	// last is the whole screen as last captured. The capturer reuses its
+	// buffer, which always holds the screen as it is now; a capture that
+	// found nothing new returns no shot, and tiles are sharpened from this.
+	var last screenShot
 	for {
 		// A credit, first: the agent has room for another frame.
 		for credits == 0 {
@@ -430,8 +455,13 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		default:
 		}
 
+		// Wait no longer than the next tile takes to settle.
+		wait := idle
+		if at := sharp.next(); !at.IsZero() {
+			wait = max(0, min(wait, time.Until(at)))
+		}
 		started := time.Now()
-		shot, changed, err := c.Capture(idle)
+		shot, changed, err := c.Capture(wait)
 		if err != nil {
 			// The input desktop switching (a sign-in, a UAC prompt) fails
 			// a capture; the next one is on the new desktop.
@@ -440,26 +470,68 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			}
 			continue
 		}
-		var batches [][]byte
-		if changed || force {
-			if shot.width != lastW || shot.height != lastH {
+		if changed {
+			last = shot
+		}
+		var jobs []tileJob
+		repaint := false
+		if (changed || force) && last.fb != nil {
+			if last.width != lastW || last.height != lastH {
 				var p [4]byte
-				binary.LittleEndian.PutUint16(p[0:], uint16(shot.width))
-				binary.LittleEndian.PutUint16(p[2:], uint16(shot.height))
+				binary.LittleEndian.PutUint16(p[0:], uint16(last.width))
+				binary.LittleEndian.PutUint16(p[2:], uint16(last.height))
 				if err := writeScreenMsg(out, scrSize, p[:]); err != nil {
 					return err
 				}
-				lastW, lastH, force = shot.width, shot.height, true
+				lastW, lastH, force = last.width, last.height, true
 			}
-			batches = diff.changed(shot, force, desktopBatch)
+			repaint = force
+			jobs = diff.find(last, force)
 			force = false
 		}
-		if len(batches) == 0 {
+		if repaint {
+			// Everything goes exactly; and a viewer who arrived late (what
+			// a refresh is for) needs a key frame before the next picture.
+			sharp.reset(diff.cols * diff.rows)
+			mo.needKey = true
+		}
+
+		now := time.Now()
+		sent := false
+		if !repaint && mo.wants(len(jobs), now) {
+			ok, err := mo.send(last, &diff, &sharp, jobs, now)
+			if err != nil {
+				return err
+			}
+			if ok {
+				// The changed tiles went as video; they are sharpened later.
+				jobs, sent = nil, true
+			}
+		}
+		// Tiles that settled after video go again, exactly.
+		busy := make(map[int]bool, len(jobs))
+		for _, j := range jobs {
+			busy[j.index] = true
+			if sharp.blurry != nil {
+				sharp.clear(j.index)
+			}
+		}
+		if last.fb != nil {
+			for _, i := range sharp.due(now, busy, screenRefineMax) {
+				jobs = append(jobs, diff.job(last, i))
+			}
+		}
+		batches := diff.batches(last, jobs, desktopBatch)
+		if len(batches) == 0 && !sent {
 			// Nothing new. A capturer that waited has already spent the
 			// time; one that looked and returned (GDI) waits here, a
 			// little longer each time the screen stays still, and not at
 			// all once input arrives.
-			if rest := idle - time.Since(started); rest > 0 {
+			rest := idle - time.Since(started)
+			if at := sharp.next(); !at.IsZero() {
+				rest = min(rest, time.Until(at))
+			}
+			if rest > 0 {
 				select {
 				case err := <-done:
 					return endOf(err)
@@ -486,6 +558,103 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		credits--
 		lastSent = time.Now()
 		idle = pace.minGap
+	}
+}
+
+// motion sends the frames where much of the screen changed as H.264.
+type motion struct {
+	newVideo func(width, height int) (screenVideo, error)
+	out      io.Writer
+	video    screenVideo
+	w, h     int
+	// off is set once video cannot be had; why was sent to the agent.
+	off     bool
+	needKey bool
+	last    time.Time
+}
+
+// wants says whether a frame of changed tiles is motion.
+func (m *motion) wants(changed int, now time.Time) bool {
+	if m.newVideo == nil || m.off || changed == 0 {
+		return false
+	}
+	return changed >= screenVideoTiles || now.Sub(m.last) < screenVideoLinger
+}
+
+// send encodes the screen and writes it as a picture showing the changed
+// tiles. It reports false, having written nothing, when the frame should go
+// as exact tiles instead: no encoder, or no key frame where one is needed.
+func (m *motion) send(s screenShot, d *screenDiffer, sharp *screenSharpener, jobs []tileJob,
+	now time.Time) (bool, error) {
+	if m.video == nil || m.w != s.width || m.h != s.height {
+		if err := m.open(s.width, s.height); err != nil {
+			return false, err
+		}
+		if m.off {
+			return false, nil
+		}
+	}
+	h264, err := m.video.Encode(s, m.needKey)
+	if err != nil {
+		return false, m.disable("the H.264 encoder failed: " + err.Error())
+	}
+	key := h264HasIDR(h264)
+	if len(h264) == 0 || (m.needKey && !key) {
+		// Nothing a viewer can start on; these tiles go exactly, and the
+		// next picture asks again.
+		return false, nil
+	}
+	var regions []image.Rectangle
+	if key {
+		// A key frame starts the picture afresh, so all of it is shown,
+		// and every tile is sharpened once it settles.
+		regions = []image.Rectangle{image.Rect(0, 0, s.width, s.height)}
+		for i := range sharp.blurry {
+			sharp.mark(i, now)
+		}
+	} else {
+		tiles := make([]int, len(jobs))
+		for i, j := range jobs {
+			tiles[i] = j.index
+			sharp.mark(j.index, now)
+		}
+		regions = tileRegions(d.cols, s.width, s.height, tiles)
+	}
+	if err := writeScreenMsg(m.out, scrVideo, encodeVideoMsg(key, s.width, s.height, regions, h264)); err != nil {
+		return false, err
+	}
+	m.needKey, m.last = false, now
+	return true, nil
+}
+
+// open makes an encoder for a screen of width by height.
+func (m *motion) open(width, height int) error {
+	if m.video != nil {
+		m.video.Close()
+		m.video = nil
+	}
+	if width%2 != 0 || height%2 != 0 {
+		return m.disable("the screen's size is odd, which H.264 does not encode")
+	}
+	v, err := m.newVideo(width, height)
+	if err != nil {
+		return m.disable(err.Error())
+	}
+	m.video, m.w, m.h, m.needKey = v, width, height, true
+	return writeScreenMsg(m.out, scrCodec, []byte("h264"))
+}
+
+// disable turns video off for the helper's life and tells the agent why.
+func (m *motion) disable(why string) error {
+	m.close()
+	m.off = true
+	return writeScreenMsg(m.out, scrCodec, []byte("exact: "+why))
+}
+
+func (m *motion) close() {
+	if m.video != nil {
+		m.video.Close()
+		m.video = nil
 	}
 }
 
@@ -520,12 +689,27 @@ type screenHost interface {
 	// "" for the sign-in screen.
 	ConsoleAccount(session uint32) string
 	// StartHelper runs the helper in the session, its stdin and stdout the
-	// returned pipe. Closing the pipe ends the helper. gdiOnly keeps it to
-	// GDI capture, for a helper started after one failed.
-	StartHelper(session uint32, gdiOnly bool) (io.ReadWriteCloser, error)
+	// returned pipe. Closing the pipe ends the helper.
+	StartHelper(session uint32, mode helperMode) (io.ReadWriteCloser, error)
 	// SecureAttention is Ctrl+Alt+Del, which no keystroke can send.
 	SecureAttention() error
 }
+
+// helperMode is how a helper is to capture and send the screen.
+type helperMode struct {
+	// gdiOnly keeps it to GDI capture and exact tiles, the paths with
+	// nothing new in them, for a helper started after one failed.
+	gdiOnly bool
+	// video lets it send motion as H.264, for a browser that decodes it.
+	video bool
+}
+
+// screenGraphicsChannel is the MCS channel a screen session's pictures are
+// recorded on, as a Remote Desktop server's graphics pipeline would be.
+const screenGraphicsChannel = 1004
+
+// screenSurface is the one surface a screen session draws pictures on.
+const screenSurface = 1
 
 // screenMsg is one message from the helper, or how its pipe ended.
 type screenMsg struct {
@@ -548,6 +732,14 @@ type screenClient struct {
 	// done is closed with the client, so a helper's reader never blocks on
 	// msgs after nobody reads it.
 	done chan struct{}
+
+	// video is set when the browser decodes H.264; gfx then takes the
+	// pictures for the browser, and gtap turns them into what is recorded.
+	video   bool
+	gfx     *GraphicsSink
+	gtap    *rdp.GraphicsTap
+	frameID uint32
+	codec   string
 
 	mu            sync.Mutex
 	helper        io.ReadWriteCloser
@@ -586,14 +778,17 @@ type screenClient struct {
 
 // openScreen starts the helper in the console's session and waits for it
 // to say how large the screen is.
-func openScreen(host screenHost, log *slog.Logger) (*screenClient, error) {
+func openScreen(host screenHost, video bool, log *slog.Logger) (*screenClient, error) {
 	session, ok := host.ConsoleSession()
 	if !ok {
 		return nil, errors.New("this host has no console session to share; " +
 			"it may be starting or shutting down")
 	}
 	c := &screenClient{host: host, log: log, msgs: make(chan screenMsg, 8),
-		done: make(chan struct{}), checkEvery: time.Second}
+		done: make(chan struct{}), checkEvery: time.Second, video: video}
+	if video {
+		c.gfx, c.gtap = &GraphicsSink{}, rdp.NewGraphicsTap(screenGraphicsChannel)
+	}
 	c.account = host.ConsoleAccount(session)
 	if err := c.start(session); err != nil {
 		return nil, fmt.Errorf("could not start sharing the screen: %w", err)
@@ -626,9 +821,9 @@ func openScreen(host screenHost, log *slog.Logger) (*screenClient, error) {
 // start runs a helper in session and reads it until its pipe ends.
 func (c *screenClient) start(session uint32) error {
 	c.mu.Lock()
-	gdiOnly := c.failed > 0
+	failed := c.failed > 0
 	c.mu.Unlock()
-	h, err := c.host.StartHelper(session, gdiOnly)
+	h, err := c.host.StartHelper(session, helperMode{gdiOnly: failed, video: c.video && !failed})
 	if err != nil {
 		return err
 	}
@@ -714,6 +909,17 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 				}
 			case scrRects:
 				return c.rects(m.p)
+			case scrVideo:
+				if err := c.picture(m.p); err != nil {
+					return nil, err
+				}
+				return nil, nil
+			case scrCodec:
+				if codec := string(m.p); codec != c.codec {
+					c.codec = codec
+					c.log.Info("tunnel: screen sharing sends motion as", "codec", codec)
+					c.record(map[string]any{"type": "screen-codec", "codec": codec})
+				}
 			case scrFrame:
 				c.mu.Lock()
 				c.holding = false
@@ -770,6 +976,41 @@ func (c *screenClient) rects(p []byte) ([]rdp.Bitmap, error) {
 		}
 	}
 	return out, nil
+}
+
+// picture passes one H.264 picture on as graphics pipeline commands, and
+// records it as them. A key frame starts the surface afresh, which is also
+// what lets a viewer who joined late begin to see video.
+func (c *screenClient) picture(p []byte) error {
+	m, err := parseVideoMsg(p)
+	if err != nil {
+		return err
+	}
+	if c.gfx == nil {
+		return errors.New("the screen helper sent video nobody asked for")
+	}
+	var cmds [][]byte
+	if m.key {
+		cmds = append(cmds, rdp.BuildResetGraphics(m.width, m.height),
+			rdp.BuildCreateSurface(screenSurface, m.width, m.height),
+			rdp.BuildMapSurfaceToOutput(screenSurface, 0, 0))
+	}
+	c.frameID++
+	cmds = append(cmds, rdp.BuildStartFrame(c.frameID),
+		rdp.BuildAVC420(screenSurface, m.width, m.height, m.regions, m.h264),
+		rdp.BuildEndFrame(c.frameID))
+	for _, cmd := range cmds {
+		c.gfx.addCommand(cmd)
+	}
+	c.mu.Lock()
+	tap := c.tap
+	c.mu.Unlock()
+	if tap != nil {
+		for _, pdu := range c.gtap.PDUs(cmds...) {
+			tap(pdu)
+		}
+	}
+	return nil
 }
 
 // follow notices the console changing hands: another session (a sign-out,
@@ -969,7 +1210,7 @@ func (c *screenClient) Close() error {
 }
 
 // connectScreen opens the console for a session through the tunnel.
-func connectScreen(cfg DesktopConfig, _ string, _ tunnel.DesktopOpen,
+func connectScreen(cfg DesktopConfig, _ string, open tunnel.DesktopOpen,
 	log *slog.Logger) (DesktopClient, DesktopInfo, error) {
 	host := cfg.ScreenHost
 	if host == nil {
@@ -978,9 +1219,13 @@ func connectScreen(cfg DesktopConfig, _ string, _ tunnel.DesktopOpen,
 	if host == nil {
 		return nil, DesktopInfo{}, errors.New("screen sharing works on Windows hosts only")
 	}
-	c, err := openScreen(host, log)
+	c, err := openScreen(host, open.Graphics, log)
 	if err != nil {
 		return nil, DesktopInfo{}, err
 	}
-	return c, DesktopInfo{Screen: true}, nil
+	info := DesktopInfo{Screen: true}
+	if c.video {
+		info.Graphics, info.GraphicsChannel = c.gfx, screenGraphicsChannel
+	}
+	return c, info, nil
 }

@@ -196,7 +196,7 @@ func (p *screenHelperPipe) Close() error {
 // StartHelper runs "argus-agent screen-helper" in the session as
 // LocalSystem: the agent's own token, moved to that session. Its only
 // handles are the two pipes.
-func (windowsScreenHost) StartHelper(session uint32, gdiOnly bool) (io.ReadWriteCloser, error) {
+func (windowsScreenHost) StartHelper(session uint32, mode helperMode) (io.ReadWriteCloser, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -275,8 +275,11 @@ func (windowsScreenHost) StartHelper(session uint32, gdiOnly bool) (io.ReadWrite
 	}
 
 	args := []string{exe, "screen-helper"}
-	if gdiOnly {
+	if mode.gdiOnly {
 		args = append(args, "--gdi")
+	}
+	if mode.video {
+		args = append(args, "--video")
 	}
 	cmdline := windows.ComposeCommandLine(args)
 	var pi windows.ProcessInformation
@@ -315,8 +318,8 @@ const screenPipeBuffer = 1 << 20
 
 // RunScreenHelper is "argus-agent screen-helper": the agent runs it in the
 // console session and it serves the screen on stdin and stdout until stdin
-// closes. args "--gdi" keeps it to GDI capture, which the agent asks for
-// after a helper has failed.
+// closes. "--gdi" keeps it to GDI capture, which the agent asks for after a
+// helper has failed; "--video" lets it send motion as H.264.
 func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	// Real pixels, not the scaled ones a process that is not DPI aware sees.
 	if procSetProcessDpiAwareCtx.Find() == nil {
@@ -324,10 +327,22 @@ func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	} else if procSetProcessDPIAware.Find() == nil {
 		procSetProcessDPIAware.Call()
 	}
-	gdiOnly := len(args) > 0 && args[0] == "--gdi"
+	gdiOnly, video := false, false
+	for _, a := range args {
+		switch a {
+		case "--gdi":
+			gdiOnly = true
+		case "--video":
+			video = true
+		}
+	}
 	c := newConsoleCapturer(gdiOnly)
 	newInput := func() screenInputer { return &inputPlayer{} }
-	if err := serveScreen(c, newInput, in, out, defaultScreenPace); err != nil {
+	var newVideo func(int, int) (screenVideo, error)
+	if video {
+		newVideo = newMFEncoder
+	}
+	if err := serveScreen(c, newInput, in, out, defaultScreenPace, newVideo); err != nil {
 		_ = writeScreenMsg(out, scrFail, []byte(err.Error()))
 		return 1
 	}
