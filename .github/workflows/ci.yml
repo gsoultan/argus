@@ -600,7 +600,15 @@ jobs:
           # same measurement. Reported, not yet held to a number: what is on a
           # runner's console (a desktop, or a sign-in screen) is the runner's.
           desktop_gone
-          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'screen' WHERE lower(hostname) = lower('$host')"
+          # The setting is the server's, so the server is added first, the
+          # way the console adds a discovered one; with no server row there is
+          # nothing to set and every desktop opens as Remote Desktop.
+          asset=$($c -X POST "https://localhost:8080/api/v1/discovered/$host/enrol" \
+            -d '{"principals":["argusdrill"],"people":["admin@ci.example"]}' | jq -r .assetId)
+          set_mode=$(psql "$PGURL" -tAc "UPDATE assets SET desktop_mode = 'screen'
+                WHERE id = '$asset' RETURNING desktop_mode")
+          [ "$set_mode" = screen ] || {
+            echo "::error::could not set $host ($asset) to screen sharing"; exit 1; }
           # Twice: as a browser without an H.264 decoder sees it (exact tiles
           # only), and as the console does, with motion as H.264.
           measure_screen() { # name, title, deskdrill flags...
@@ -638,15 +646,14 @@ jobs:
           # motion went as (or why not), and how many pictures it sent. -a:
           # the log is searched as text whatever bytes are in it.
           grep -a "tunnel: .*screen" "$log" | tail -12 || true
-          # Where the log went, and what fills it: a rotated log has lost
-          # what the session said when it began.
-          ls -la /c/ProgramData/Argus/ | grep -i "agent.log" || true
-          cat "$log.1" "$log" 2>/dev/null | grep -ao 'msg="[^"]*"' | sort | uniq -c | sort -rn | head -15 || true
-          grep -ah "tunnel: desktop opened\|tunnel: .*screen" "$log.1" "$log" 2>/dev/null | tail -12 || true
+          # A measurement that came through Remote Desktop instead would be
+          # reported as screen sharing's, so it is checked, not assumed.
+          grep -aq "tunnel: sharing the console's screen" "$log" || {
+            echo "::error::the screen sharing measurements opened as Remote Desktop"; exit 1; }
           if ! grep -aq "sends motion as.*codec=h264" "$log"; then
             echo "::warning::screen sharing did not send motion as H.264 on this runner"
           fi
-          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE lower(hostname) = lower('$host')"
+          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE id = '$asset'"
 
           # Stopping the service seals and exits cleanly.
           "$agent" service stop
