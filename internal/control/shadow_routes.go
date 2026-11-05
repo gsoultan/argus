@@ -12,7 +12,9 @@ import (
 // deliberately not something an ordinary user can do to another. Auditors can,
 // because observing privileged access is the entire point of the role — note
 // that they are refused a terminal of their own in handleTicket, which is the
-// same separation seen from the other side.
+// same separation seen from the other side. Approvers can while the session
+// runs, since they decide who gets onto a server; they are not given its
+// recording afterwards.
 func (a *API) handleShadowTicket(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.authenticate(r)
 	if !ok {
@@ -37,14 +39,11 @@ func (a *API) handleShadowTicket(w http.ResponseWriter, r *http.Request) {
 
 	// Your own session is always yours to watch; nothing is disclosed that you
 	// are not already looking at.
-	if subject.UserEmail != sess.Email {
-		switch sess.Role {
-		case "admin", "owner", "auditor":
-		default:
-			writeErr(w, http.StatusForbidden,
-				"watching another user's session requires the auditor, admin or owner role")
-			return
-		}
+	// Approvers too, while it runs: they decide who gets onto a server.
+	if subject.UserEmail != sess.Email && !watchesLive(sess.Role, subject) {
+		writeErr(w, http.StatusForbidden,
+			"watching another user's session requires the approver, auditor, admin or owner role")
+		return
 	}
 
 	ticket, err := a.signerFor(r).IssueSessionScopedTicket(

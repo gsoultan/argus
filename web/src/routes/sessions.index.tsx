@@ -176,7 +176,9 @@ function Sessions() {
         description={
           wholeFleet
             ? 'Who connected where, live and earlier. Open any row to watch the recording.'
-            : 'Your sessions, live and earlier. Open any row to watch the recording.'
+            : me?.role === 'approver'
+              ? "Your sessions, and everyone's that are live now. Open a live one to watch it."
+              : 'Your sessions, live and earlier. Open any row to watch the recording.'
         }
       />
 

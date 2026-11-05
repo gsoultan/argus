@@ -88,6 +88,15 @@ func seesWholeFleet(role string) bool {
 	return role == "admin" || role == "owner" || role == "auditor"
 }
 
+// watchesLive says whether a role may watch someone else's session while it
+// is running: the roles that see the whole fleet, and approvers, who decide
+// who gets onto a server and are the ones who watch what they let in. Live
+// only: an approver is shown a session while it runs and the live view of it,
+// never its recording, which stays with the roles that review the fleet.
+func watchesLive(role string, s *Session) bool {
+	return seesWholeFleet(role) || (role == "approver" && s != nil && s.State == "active")
+}
+
 func (a *API) postAssetCreate(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.authenticate(r)
 	if !ok {

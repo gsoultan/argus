@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -627,7 +628,39 @@ func (a *API) getSessions(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "sessions", err)
 		return
 	}
+	// An approver also sees everyone's sessions that are running now, which
+	// are the ones they may watch, and nobody else's past ones.
+	if sess.Role == "approver" && (filter.State == "" || filter.State == "active") {
+		live := filter
+		live.State, live.UserEmail = "active", ""
+		running, err := a.store.Sessions(r.Context(), live)
+		if err != nil {
+			a.fail(w, "sessions", err)
+			return
+		}
+		sessions = mergeSessions(sessions, running, filter.Limit)
+	}
 	writeJSON(w, http.StatusOK, sessions)
+}
+
+// mergeSessions joins two newest-first lists without repeating a session,
+// newest first, at most limit long when limit is set.
+func mergeSessions(a, b []Session, limit int) []Session {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]Session, 0, len(a)+len(b))
+	for _, list := range [][]Session{a, b} {
+		for _, s := range list {
+			if !seen[s.ID] {
+				seen[s.ID] = true
+				out = append(out, s)
+			}
+		}
+	}
+	slices.SortStableFunc(out, func(x, y Session) int { return y.StartedAt.Compare(x.StartedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
@@ -645,7 +678,7 @@ func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
 	// Not found, rather than forbidden, for someone else's session. A 403 would
 	// confirm the id names a real session and who it belongs to, which is most
 	// of what the recording would have told them.
-	if sess == nil || (!seesWholeFleet(auth.Role) && !strings.EqualFold(sess.UserEmail, auth.Email)) {
+	if sess == nil || (!watchesLive(auth.Role, sess) && !strings.EqualFold(sess.UserEmail, auth.Email)) {
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
 	}

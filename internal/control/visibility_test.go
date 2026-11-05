@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/gsoultan/argus/internal/auth"
 )
 
 /*
@@ -28,7 +30,18 @@ func visibilityAPI(t *testing.T, email string) (*API, *Store) {
 	s := testStore(t)
 	a := NewAPI(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	a.UserTokens = map[string]string{"tok": email}
+	withSigner(t, a)
 	return a, s
+}
+
+func withSigner(t *testing.T, a *API) {
+	t.Helper()
+	signer, err := auth.NewSigner("a-signing-secret-with-plenty-of-variety-0193")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(signer.Close)
+	a.signer = signer
 }
 
 // insertSession writes a session straight to the table. The reporter path needs
@@ -240,5 +253,123 @@ func TestAnAuditorStillSeesTheFleet(t *testing.T) {
 	}
 	if !found {
 		t.Error("an auditor could not see a session they are meant to review")
+	}
+}
+
+/* ── An approver watches what runs now ───────────────────────────────────── */
+
+// Approvers decide who gets onto a server, so they can watch someone else's
+// session while it runs. Only while it runs: an ended session, and every
+// recording, stays with the roles that review the fleet.
+func TestAnApproverSeesAndWatchesRunningSessionsOnly(t *testing.T) {
+	s := testStore(t)
+	email, _ := newAccount(t, s, "approver")
+	a := NewAPI(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a.UserTokens = map[string]string{"tok": email}
+	withSigner(t, a)
+
+	asset := testAsset(t, s, "ops")
+	other := unique("other") + "@corp.example"
+	live, ended := newID(t), newID(t)
+	insertSession(t, s, live, other, asset.Hostname)
+	insertSession(t, s, ended, other, asset.Hostname)
+	if _, err := s.pool.Exec(context.Background(),
+		`UPDATE sessions SET state = 'closed', ended_at = now() WHERE id = $1::uuid`, ended); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
+	r.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	a.getSessions(w, r)
+	var got []Session
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding sessions: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, sess := range got {
+		seen[sess.ID] = true
+	}
+	if !seen[live] {
+		t.Error("an approver was not shown a session running now")
+	}
+	if seen[ended] {
+		t.Error("an approver was shown someone else's ended session")
+	}
+
+	read := func(id string) int {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+id, nil)
+		r.SetPathValue("id", id)
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		a.getSession(w, r)
+		return w.Code
+	}
+	if c := read(live); c != http.StatusOK {
+		t.Errorf("an approver reading a running session got %d", c)
+	}
+	if c := read(ended); c != http.StatusNotFound {
+		t.Errorf("an approver reading an ended session got %d", c)
+	}
+
+	watch := func(id string) int {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/"+id+"/shadow", nil)
+		r.SetPathValue("id", id)
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		a.handleShadowTicket(w, r)
+		return w.Code
+	}
+	if c := watch(live); c != http.StatusOK {
+		t.Errorf("an approver could not watch a running session: %d", c)
+	}
+	if c := watch(ended); c != http.StatusForbidden {
+		t.Errorf("an approver asking to watch an ended session got %d", c)
+	}
+
+	// The watch is audited as watching someone else.
+	var n int
+	if err := s.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_events WHERE action = 'session.shadow' AND actor_email = $1
+		   AND severity = 'warn'`, email).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("an approver's watch left %d warning audit entries, want 1", n)
+	}
+
+	// And the recording is still not theirs.
+	if _, err := s.pool.Exec(context.Background(),
+		`UPDATE sessions SET recording_path = 'recordings/x.cast' WHERE id = ANY($1::uuid[])`,
+		[]string{live, ended}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{live, ended} {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+id+"/recording", nil)
+		r.SetPathValue("id", id)
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		a.getRecording(w, r, email)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("an approver reading a recording got %d", w.Code)
+		}
+	}
+}
+
+// An operator still cannot watch anyone else's session.
+func TestAnOperatorCannotWatchSomeoneElse(t *testing.T) {
+	email := unique("lin") + "@corp.example"
+	a, s := visibilityAPI(t, email)
+	asset := assignedAsset(t, s, email, "ops")
+	theirs := newID(t)
+	insertSession(t, s, theirs, unique("other")+"@corp.example", asset.Hostname)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/"+theirs+"/shadow", nil)
+	r.SetPathValue("id", theirs)
+	r.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	a.handleShadowTicket(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("an operator asking to watch someone else's session got %d", w.Code)
 	}
 }
