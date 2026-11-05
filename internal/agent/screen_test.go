@@ -521,3 +521,32 @@ func TestScreenDifferLooksOnlyWhereTheScreenSaysItChanged(t *testing.T) {
 		t.Errorf("an unchanged screen sent %d tiles", n)
 	}
 }
+
+// A browser leaving a still screen ends the session: nothing more comes
+// from the helper to say so, and the agent's shutdown waits on sessions.
+func TestScreenEndsWhenClosedOnAStillScreen(t *testing.T) {
+	host := &fakeScreenHost{session: 1, account: `HOST\alice`,
+		screens: map[uint32]*fakeScreen{1: newFakeScreen(130, 70, 0x40)}}
+	c, err := openScreen(host, false, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextRects(t, c)
+
+	ended := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := c.NextBitmaps(); err != nil {
+				ended <- err
+				return
+			}
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	_ = c.Close()
+	select {
+	case <-ended:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the session went on after it was closed")
+	}
+}

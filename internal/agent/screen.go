@@ -943,6 +943,10 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 				c.mu.Unlock()
 				return nil, nil
 			}
+		case <-c.done:
+			// Closed with nothing more from the helper, as when the browser
+			// leaves a still screen: no message would ever come to say so.
+			return nil, errors.New("closed")
 		case <-check.C:
 			c.nextCheck = time.Now().Add(c.checkEvery)
 			if err := c.follow(); err != nil {
