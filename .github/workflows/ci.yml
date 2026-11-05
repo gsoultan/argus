@@ -646,7 +646,7 @@ jobs:
           # What the agent made of it: whether H.264 was asked for, what
           # motion went as (or why not), and how many pictures it sent. -a:
           # the log is searched as text whatever bytes are in it.
-          grep -a "tunnel: .*screen" "$log" | tail -12 || true
+          grep -a "tunnel: .*screen\|tunnel: desktop" "$log" | tail -16 || true
           # A measurement that came through Remote Desktop instead would be
           # reported as screen sharing's, so it is checked, not assumed.
           grep -aq "tunnel: sharing the console's screen" "$log" || {
@@ -663,7 +663,9 @@ jobs:
             sc.exe query argus-agent | grep -q STOPPED && break
             sleep 1
           done
-          sc.exe query argus-agent | grep -q STOPPED
+          sc.exe query argus-agent | grep -q STOPPED || {
+            tail -30 "$log"; tasklist | grep -i argus || true
+            echo "::error::the agent's service was still stopping 30 s later"; exit 1; }
           tail -5 "$log"
           grep -q 'shutdown complete' "$log"
 
