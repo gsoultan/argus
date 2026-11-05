@@ -134,8 +134,23 @@ jobs:
           ./internal/secrets/... ./internal/hashchain/... ./internal/recorder/...
           ./internal/tunnel/... ./internal/tlsconfig/... ./internal/rdp/...
           ./cmd/argus-verify/...
+      # Windows Server has the H.264 encoder only with its Media Foundation
+      # feature; screen sharing sends motion as H.264 with it and exact
+      # tiles without. Added where it can be, so both are exercised.
+      - name: Add Media Foundation (Windows Server)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $r = Install-WindowsFeature Server-Media-Foundation
+          $r | Format-List Success, RestartNeeded, ExitCode
+          if ($r.Success -and "$($r.RestartNeeded)" -ne 'Yes') {
+            "ARGUS_TEST_H264=require" >> $env:GITHUB_ENV
+          }
       - name: Test the agent
         run: go test -count=1 ./internal/agent/... ./cmd/argus-agent/...
+      - name: Encode H.264 with Media Foundation
+        if: runner.os == 'Windows'
+        run: go test -count=1 -v -run TestMediaFoundationEncodesTheScreen ./internal/agent/
       - name: Build and start each binary
         run: |
           set -euo pipefail
@@ -302,6 +317,17 @@ jobs:
           "$pg/initdb" -D "$RUNNER_TEMP/pg" -U argus --auth=trust >/dev/null
           "$pg/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" -o "-p 5433" start
           "$pg/createdb" -h localhost -p 5433 -U argus argus
+      # Windows Server has the H.264 encoder only with its Media Foundation
+      # feature; screen sharing sends motion as H.264 with it and exact
+      # tiles without. Added where it can be, so both are exercised.
+      - name: Add Media Foundation (Windows Server)
+        shell: pwsh
+        run: |
+          $r = Install-WindowsFeature Server-Media-Foundation
+          $r | Format-List Success, RestartNeeded, ExitCode
+          if ($r.Success -and "$($r.RestartNeeded)" -ne 'Yes') {
+            "ARGUS_TEST_H264=require" >> $env:GITHUB_ENV
+          }
       - name: Install the agent, enroll it, open a session through it
         env:
           PGURL: postgres://argus@localhost:5433/argus?sslmode=disable
@@ -575,29 +601,41 @@ jobs:
           # runner's console (a desktop, or a sign-in screen) is the runner's.
           desktop_gone
           psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'screen' WHERE lower(hostname) = lower('$host')"
-          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
-            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
-          if "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
-               -ticket "$tkt" -target "$host" -principal argusdrill \
-               -password-env DRILL_PASSWORD -measure 20s \
-               -report "$tmp/screen-measure.json" 2>"$tmp/screen.err"; then
-            cat "$tmp/screen.err"
-            cp "$tmp/screen-measure.json" measure/
-            jq -r '"### Screen sharing through the agent, \(.Width)x\(.Height)",
-              "",
-              "| | |", "|---|---|",
-              "| First paint | \(.FirstPaintMS / 1000 | floor) s, \(.FirstPaintBytes / 1e6 * 10 | floor / 10) MB |",
-              "| Idle | \(.IdleBitsPerSec / 1000 | floor) kbit/s |",
-              "| Keystroke to screen (\(.KeySamples) keys, \(.KeyMissed) missed) | p50 \(.KeyP50MS) ms, p95 \(.KeyP95MS) ms, max \(.KeyMaxMS) ms |",
-              "| Busy window: frames | \(.BusyFramesPerSec * 10 | floor / 10) per s (\(.BusyMessagesPerSec * 10 | floor / 10) updates per s) |",
-              "| Busy window: bandwidth | \(.BusyMbitPerSec * 100 | floor / 100) Mbit/s, \(.BusyScreensPerSec * 100 | floor / 100) screens redrawn per s |",
-              "| Busy window: longest wait | p95 \(.BusyGapP95MS) ms, max \(.BusyGapMaxMS) ms |"' \
-              "$tmp/screen-measure.json" >> "$GITHUB_STEP_SUMMARY"
-          else
-            cat "$tmp/screen.err"; tail -40 "$log"
-            echo "::warning::screen sharing could not be measured on this runner"
-            { echo "### Screen sharing through the agent"; echo; echo "Not measured: see the job's log."; } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          # Twice: as a browser without an H.264 decoder sees it (exact tiles
+          # only), and as the console does, with motion as H.264.
+          measure_screen() { # name, title, deskdrill flags...
+            local name=$1 title=$2; shift 2
+            local tkt
+            tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+              -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+            if "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+                 -ticket "$tkt" -target "$host" -principal argusdrill \
+                 -password-env DRILL_PASSWORD -measure 20s "$@" \
+                 -report "$tmp/$name.json" 2>"$tmp/$name.err"; then
+              cat "$tmp/$name.err"
+              cp "$tmp/$name.json" measure/
+              jq -r --arg title "$title" '"### Screen sharing through the agent, \($title), \(.Width)x\(.Height)",
+                "",
+                "| | |", "|---|---|",
+                "| First paint | \(.FirstPaintMS / 1000 | floor) s, \(.FirstPaintBytes / 1e6 * 10 | floor / 10) MB |",
+                "| Idle | \(.IdleBitsPerSec / 1000 | floor) kbit/s |",
+                "| Keystroke to screen (\(.KeySamples) keys, \(.KeyMissed) missed) | p50 \(.KeyP50MS) ms, p95 \(.KeyP95MS) ms, max \(.KeyMaxMS) ms |",
+                "| Busy window: frames | \(.BusyFramesPerSec * 10 | floor / 10) per s (\(.BusyMessagesPerSec * 10 | floor / 10) updates per s) |",
+                "| Busy window: bandwidth | \(.BusyMbitPerSec * 100 | floor / 100) Mbit/s, \(.BusyScreensPerSec * 100 | floor / 100) screens redrawn per s |",
+                "| Busy window: sent as H.264 | \((.BusyVideoShare // 0) * 100 | floor) % of the bytes |",
+                "| Busy window: longest wait | p95 \(.BusyGapP95MS) ms, max \(.BusyGapMaxMS) ms |"' \
+                "$tmp/$name.json" >> "$GITHUB_STEP_SUMMARY"
+            else
+              cat "$tmp/$name.err"; tail -40 "$log"
+              echo "::warning::screen sharing ($title) could not be measured on this runner"
+              { echo "### Screen sharing through the agent, $title"; echo; echo "Not measured: see the job's log."; } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          measure_screen screen-measure "exact tiles"
+          desktop_gone
+          measure_screen screen-video-measure "motion as H.264" -video
+          # Which the agent used: H.264, or exact tiles and why.
+          grep -i "sends motion as" "$log" | tail -3 || true
           # The helper's own cost while it ran, from the agent's log.
           grep -i "screen" "$log" | tail -10 || true
           psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE lower(hostname) = lower('$host')"

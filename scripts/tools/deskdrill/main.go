@@ -45,6 +45,7 @@ func main() {
 	keys := flag.Int("keys", 40, "keystrokes to time when measuring")
 	report := flag.String("report", "", "file to write the measurement to, as JSON")
 	graphics := flag.Bool("graphics", false, "ask for the graphics pipeline (H.264)")
+	video := flag.Bool("video", false, "say the browser decodes H.264, as the console does, so screen sharing sends motion as it")
 	capturePath := flag.String("capture", "", "file to keep the display messages in")
 	captureFor := flag.Duration("capture-for", 15*time.Second, "how long to capture, from the first screen")
 	flag.Parse()
@@ -88,7 +89,7 @@ func main() {
 		password = os.Getenv(*passwordEnv)
 	}
 	logon, _ := json.Marshal(map[string]any{"type": "logon", "password": password,
-		"width": *width, "height": *height, "graphics": *graphics})
+		"width": *width, "height": *height, "graphics": *graphics, "video": *video})
 	if err := c.Write(ctx, websocket.MessageText, logon); err != nil {
 		fail("%v", err)
 	}
