@@ -647,6 +647,9 @@ jobs:
           # motion went as (or why not), and how many pictures it sent. -a:
           # the log is searched as text whatever bytes are in it.
           grep -a "tunnel: .*screen\|tunnel: desktop" "$log" | tail -16 || true
+          # What each kept on disk: the recording before and after its
+          # compression, the last two being the two screen sharing runs.
+          grep -a "recording compressed for shipping" "$log" | tail -2 || true
           # A measurement that came through Remote Desktop instead would be
           # reported as screen sharing's, so it is checked, not assumed.
           grep -aq "tunnel: sharing the console's screen" "$log" || {
