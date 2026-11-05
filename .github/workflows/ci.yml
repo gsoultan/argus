@@ -638,6 +638,11 @@ jobs:
           # motion went as (or why not), and how many pictures it sent. -a:
           # the log is searched as text whatever bytes are in it.
           grep -a "tunnel: .*screen" "$log" | tail -12 || true
+          # Where the log went, and what fills it: a rotated log has lost
+          # what the session said when it began.
+          ls -la /c/ProgramData/Argus/ | grep -i "agent.log" || true
+          cat "$log.1" "$log" 2>/dev/null | grep -ao 'msg="[^"]*"' | sort | uniq -c | sort -rn | head -15 || true
+          grep -ah "tunnel: desktop opened\|tunnel: .*screen" "$log.1" "$log" 2>/dev/null | tail -12 || true
           if ! grep -aq "sends motion as.*codec=h264" "$log"; then
             echo "::warning::screen sharing did not send motion as H.264 on this runner"
           fi
