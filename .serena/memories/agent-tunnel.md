@@ -64,6 +64,16 @@ systemd host (`SpawnAuto` as root) the shell runs in a transient
 `--wait` for the exit status. Elsewhere (and in tests) a direct child.
 The CI drill proves it by writing to the account's home.
 
+**rabbitmqctl runs as the rabbitmq account (2026-11).** The packaged
+`/usr/sbin/rabbitmqctl` is a wrapper that, started by root, does `su rabbitmq`.
+su needs CAP_SETGID/CAP_SETUID, which the unit does not keep, so every RabbitMQ
+session and vhost listing failed with "su: cannot set groups: Operation not
+permitted". `agent/rabbitmqctl_unix.go` starts it as the broker's account
+instead: `systemd-run --pipe --wait --uid=rabbitmq` as root on systemd, a direct
+child with credentials as root elsewhere, unchanged when there is no rabbitmq
+account or the agent is not root. Do not fix this by giving the unit
+SETUID/SETGID: that hands every agent child the means to become anyone.
+
 Browser protocol is the gateway's (JSON control messages) except output is
 **binary** WebSocket messages; `LiveTerminal` handles both. The console picks
 the agent path when `asset.tunnelConnected` (EXISTS on a fresh, unrevoked

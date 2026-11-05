@@ -109,7 +109,7 @@ func runRabbitmqctl(ctx context.Context, args []string, stdin string) ([]byte, e
 	}
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, bin, args...)
+	cmd := rabbitmqctlCmd(cctx, bin, args)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
