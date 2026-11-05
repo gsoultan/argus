@@ -657,7 +657,8 @@ jobs:
           psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE id = '$asset'"
 
           # Stopping the service seals and exits cleanly.
-          "$agent" service stop
+          "$agent" service stop || { sc.exe query argus-agent || true; tail -30 "$log"
+            echo "::error::the agent's service did not stop"; exit 1; }
           for i in $(seq 1 30); do
             sc.exe query argus-agent | grep -q STOPPED && break
             sleep 1
