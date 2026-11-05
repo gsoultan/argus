@@ -184,14 +184,30 @@ func (p *screenHelperPipe) Read(b []byte) (int, error)  { return p.r.Read(b) }
 func (p *screenHelperPipe) Write(b []byte) (int, error) { return p.w.Write(b) }
 func (p *screenHelperPipe) Close() error {
 	p.once.Do(func() {
-		_ = p.w.Close()
-		// Closing the job ends the helper, kill-on-close.
+		// The end of its stdin tells the helper to stop, and it lets go of
+		// any key or button it is holding down on the way out. Closed apart:
+		// closing a pipe waits for a write still blocked on it, and one is
+		// when the helper has stopped reading, which only its end undoes.
+		closed := make(chan struct{})
+		go func() {
+			_ = p.w.Close()
+			close(closed)
+		}()
+		// A moment to exit, then the job ends it whatever it is doing. An
+		// ending session must not wait on the helper: the agent's shutdown
+		// waits on the session.
+		_, _ = windows.WaitForSingleObject(p.proc, uint32(screenHelperExit/time.Millisecond))
+		_ = windows.TerminateJobObject(p.job, 1)
 		windows.CloseHandle(p.job)
 		windows.CloseHandle(p.proc)
+		<-closed
 		_ = p.r.Close()
 	})
 	return nil
 }
+
+// screenHelperExit is how long a helper told to stop has before it is ended.
+const screenHelperExit = time.Second
 
 // StartHelper runs "argus-agent screen-helper" in the session as
 // LocalSystem: the agent's own token, moved to that session. Its only
