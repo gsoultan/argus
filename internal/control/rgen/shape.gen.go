@@ -442,6 +442,7 @@ func _assertDatabaseStatementItemShape(m m0.DatabaseStatementItem) {
 		m.Params,
 		m.Digest,
 		m.UsedAt,
+		m.RowCap,
 	}
 }
 

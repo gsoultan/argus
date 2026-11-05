@@ -26,7 +26,7 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
     defaults: { dbname: '', host: '/var/run/postgresql', port: 5432 },
     levels: {
       read: 'Look at data and run reports. The default.',
-      write: 'Change rows. On production, needs approval each time unless you turn that off.',
+      write: 'Read and change rows: INSERT, UPDATE, DELETE.',
       owner: 'Change tables, columns and indexes too.',
       dba: 'Manage roles and grants, end other people’s queries. Never a Postgres superuser.',
     },

@@ -693,22 +693,27 @@ export interface AccessRequest {
   breakGlass: boolean
   /** Set when the request stands for restoring a database in place. */
   restoreId?: string
-  /** Set when the request is to run statements on a production database. */
+  /** Set when the request is to run statements on a database whose changes need approval. */
   statement?: StatementAsk
+  /** Set on a change the reader may decide as an editor of its database. */
+  asEditor?: boolean
 }
 
-/** One statement of an ask to run statements on production. */
+/** One statement of an ask to run statements on a database whose changes need approval. */
 export interface StatementItem {
   sql: string
   params?: (string | null)[]
+  /** Rows the dry run counted when it was asked for: the most it may change once approved. */
+  rows?: number
   used?: boolean
 }
 
-/** What a request to run statements on a production database is for. */
+/** What a request to run statements on a database whose changes need approval is for. */
 export interface StatementAsk {
   requestId: string
   databaseId: string
   databaseName: string
+  databaseLabel?: DBLabel
   items: StatementItem[]
   summary?: Record<string, unknown>
   /** pending, approved, denied or expired. */
@@ -880,6 +885,26 @@ export interface DBPolicy {
   maxSessionS?: number
   /** Redis: the largest db KEYS runs on. */
   keysLimit?: number
+  /**
+   * Postgres: a statement that changes it runs once someone else approves
+   * it. Unset follows the label: on for production, off otherwise.
+   */
+  writeApproval?: boolean
+  /** Who decides those changes. Unset is 'approvers'. */
+  writeApprovers?: ChangeApprovers
+}
+
+/** Who decides a database's changes: the organization's admins and approvers, or also its editors. */
+export type ChangeApprovers = 'approvers' | 'editors'
+
+/** How a database's changes are approved, from the control plane. */
+export interface ChangeApproval {
+  needed: boolean
+  /** Whether they would be by the label alone. */
+  default: boolean
+  approvers: ChangeApprovers
+  /** Who may change it now (Write, Owner or DBA), when editors approve. */
+  editors: string[]
 }
 
 /** What a database entry is: a Postgres database, a Redis server or a RabbitMQ vhost. */

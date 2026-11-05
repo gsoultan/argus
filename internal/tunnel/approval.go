@@ -25,6 +25,20 @@ person can see they are doing.
 // arrives without a usable approval.
 const GuardNeedsApproval = "AR007"
 
+// GuardOverCap is the answer's code when an approved statement would change
+// more rows than were approved, and was rolled back.
+const GuardOverCap = "AR008"
+
+// CountsRows is whether a statement's tag counts the rows it changed, so an
+// approval's row count can hold it.
+func CountsRows(c SQLClass) bool {
+	switch c.Verb {
+	case "insert", "update", "delete", "merge":
+		return true
+	}
+	return false
+}
+
 // readVerbs are the statements that change nothing in the database.
 var readVerbs = map[string]bool{
 	"": true, "select": true, "with": true, "show": true, "explain": true, "values": true, "table": true,

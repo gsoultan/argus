@@ -5,7 +5,7 @@ import { useStatementApproval } from '~/components/StatementApproval'
 import { renderWithProviders } from '~/test/render'
 
 /**
- * On production a statement that changes the database waits for someone
+ * Where a database's changes need approval, a statement that changes it waits for someone
  * else's approval: the person says why, the ask goes to Approvals, and the
  * statement is sent again with the approval once it is approved.
  */
@@ -34,7 +34,7 @@ describe('Statement approval', () => {
       .mockResolvedValue({ requestId: 'r1', state: 'approved', decidedBy: 'budi', items: [] })
     renderWithProviders(<Harness />)
     fireEvent.click(screen.getByText('go'))
-    expect(await screen.findByText(/orders is production/)).toBeInTheDocument()
+    expect(await screen.findByText(/Changes on orders need a second person's approval/)).toBeInTheDocument()
     expect(screen.getByText(/-- values: "7"/)).toBeInTheDocument()
     const askBtn = screen.getByRole('button', { name: 'Ask for approval' })
     expect(askBtn).toBeDisabled()

@@ -34,8 +34,17 @@ func (a *API) alertRequestWaiting(ctx context.Context, req AccessRequest) {
 	}
 	a.raiseAlert(ctx, ConsoleAlert{
 		Kind: AlertApproval, Severity: sev, Audience: AudienceDeciders, Actor: req.RequesterEmail,
-		Title: title, Detail: req.Justification, Link: "/approvals",
+		Title: title, Detail: req.Justification, Link: requestLink(req),
 	})
+}
+
+// requestLink is where a request is decided: a change request opens for
+// review.
+func requestLink(req AccessRequest) string {
+	if req.Principal == statementPrincipal && req.ID != "" {
+		return changeLink(req.ID)
+	}
+	return "/approvals"
 }
 
 // alertRequestDecided tells the person who asked.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // getRequests lists access requests: the whole queue for whoever decides or
@@ -17,14 +18,33 @@ func (a *API) getRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requester := ""
+	var edited []string
 	if !seesRequestQueue(sess.Role) {
 		requester = sess.Email
+		// Their own, and the changes on databases whose editors approve
+		// each other's, which they edit.
+		var err error
+		if sess.Role != "auditor" {
+			if edited, err = a.store.EditedDatabases(r.Context(), sess.Email); err != nil {
+				a.fail(w, "requests", err)
+				return
+			}
+		}
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	reqs, err := a.store.Requests(r.Context(), r.URL.Query().Get("state"), requester, limit)
+	reqs, err := a.store.Requests(r.Context(), r.URL.Query().Get("state"), requester, limit, edited...)
 	if err != nil {
 		a.fail(w, "requests", err)
 		return
+	}
+	if err := a.hidePreviews(r.Context(), sess.Email, sess.Role, reqs); err != nil {
+		a.fail(w, "requests", err)
+		return
+	}
+	if len(edited) > 0 {
+		for i := range reqs {
+			reqs[i].AsEditor = !strings.EqualFold(reqs[i].RequesterEmail, sess.Email)
+		}
 	}
 	writeJSON(w, http.StatusOK, reqs)
 }
@@ -125,11 +145,22 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 
 	// Deciding is a privileged act in its own right. An operator who could
 	// approve is an operator who holds standing root.
+	asEditor := ""
 	switch sess.Role {
 	case "approver", "admin", "owner":
 	default:
-		writeErr(w, http.StatusForbidden, "your role cannot decide access requests")
-		return
+		// Or an editor of the database a change is for, where its editors
+		// approve each other's changes.
+		db, ok, err := a.decidesAsEditor(r.Context(), sess.Email, r.PathValue("id"))
+		if err != nil {
+			a.fail(w, "decide", err)
+			return
+		}
+		if !ok || sess.Role == "auditor" {
+			writeErr(w, http.StatusForbidden, "your role cannot decide access requests")
+			return
+		}
+		asEditor = db.Name
 	}
 
 	var in struct {
@@ -185,6 +216,9 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 	if in.Decision == "denied" {
 		action = "request.deny"
 		detail = "Denied " + out.Principal + " for " + out.RequesterEmail + ": " + in.Note
+	}
+	if asEditor != "" {
+		detail += " Decided as an editor of " + asEditor + "."
 	}
 	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action:     action,

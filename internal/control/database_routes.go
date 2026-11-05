@@ -124,6 +124,7 @@ func (a *API) patchDatabase(w http.ResponseWriter, r *http.Request, actor string
 		a.dbErr(w, "database", err)
 		return
 	}
+	wasDB := db
 	var in struct {
 		Label      *string   `json:"label"`
 		Host       *string   `json:"host"`
@@ -162,6 +163,7 @@ func (a *API) patchDatabase(w http.ResponseWriter, r *http.Request, actor string
 	if in.Policy != nil {
 		db.Policy = *in.Policy
 	}
+	before := wasDB
 	db, err = a.store.UpdateDatabase(r.Context(), db)
 	if err != nil {
 		a.dbErr(w, "update database", err)
@@ -169,6 +171,7 @@ func (a *API) patchDatabase(w http.ResponseWriter, r *http.Request, actor string
 	}
 	a.auditDB(r.Context(), "db.policy_changed", "notice", actor, db.Hostname,
 		"Changed settings of database "+db.Name+" on "+db.Hostname+".")
+	a.auditApprovalChange(r.Context(), actor, before, db)
 	writeJSON(w, http.StatusOK, db)
 }
 

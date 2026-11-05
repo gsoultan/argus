@@ -1,3 +1,5 @@
+import { ApprovalBadge } from '~/components/ChangeImpact'
+import { writesNeedApproval } from '~/lib/changeApproval'
 import { Alert, Badge, Box, Button, Group, SegmentedControl, Stack, Table, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -156,7 +158,10 @@ function Databases() {
                 </Group>
                 </Table.Td>
                 <Table.Td><Text size={FS.meta} c="dimmed">{engineOf(d.engine).label}</Text></Table.Td>
-                <Table.Td><Badge variant="light" color={LABEL_COLOR[d.label]} radius="sm">{d.label}</Badge></Table.Td>
+                <Table.Td><Group gap={6} wrap="nowrap">
+                  <Badge variant="light" color={LABEL_COLOR[d.label]} radius="sm">{d.label}</Badge>
+                  {writesNeedApproval(d) && <ApprovalBadge />}
+                </Group></Table.Td>
                 <Table.Td><Group gap={6} wrap="nowrap">
                   <LevelBadge level={acc?.level} />
                   <Text size={FS.micro} c="dimmed">{describeAccess(acc)}</Text>

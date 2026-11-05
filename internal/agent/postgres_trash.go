@@ -576,8 +576,15 @@ func (s *pgSession) runTrashed(ctx context.Context, req tunnel.PGRequest, sql, r
 		}
 		wrapped = true
 	}
+	capKind, cerr := s.capOpen(sctx, req, c)
+	if cerr != nil {
+		return s.statementFailed(ctx, req.ID, cerr, 0, time.Since(start).Milliseconds())
+	}
 	res := s.conn.ExecParams(sctx, ran, args, nil, nil, nil).Read()
 	err := res.Err
+	if capKind != "" {
+		err = s.capClose(sctx, capKind, trashedRows(res.Rows), req.RowCap, err)
+	}
 	if wrapped && !s.conn.IsClosed() {
 		switch s.conn.TxStatus() {
 		case 'T':
@@ -628,4 +635,17 @@ func (s *pgSession) runTrashed(ctx context.Context, req tunnel.PGRequest, sql, r
 		return rerr
 	}
 	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: tag, Rows: removed, MS: elapsed, Trash: items})
+}
+
+// trashedRows is how many rows a trashed statement removed, from the rows
+// its rewrite returns (id, kind, source, rows, expires).
+func trashedRows(rows [][][]byte) int64 {
+	var n int64
+	for _, r := range rows {
+		if len(r) >= 5 {
+			v, _ := strconv.ParseInt(string(r[3]), 10, 64)
+			n += v
+		}
+	}
+	return n
 }

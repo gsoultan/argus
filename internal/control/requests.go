@@ -35,6 +35,9 @@ type AccessRequest struct {
 	// Statement is set when the request is to run statements on a
 	// production database; the approver's card shows them.
 	Statement *StatementAsk `json:"statement,omitempty"`
+	// AsEditor is set on a change request the reader may decide as an
+	// editor of its database, rather than by their role.
+	AsEditor bool `json:"asEditor,omitempty"`
 }
 
 var (
@@ -140,7 +143,13 @@ func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy
 
 // Requests lists access requests, newest first. A non-empty requester narrows
 // it to that person's own.
-func (s *Store) Requests(ctx context.Context, state, requester string, limit int) ([]AccessRequest, error) {
+//
+// With a requester, only theirs, and the change requests on the databases
+// named in alsoDBs.
+func (s *Store) Requests(ctx context.Context, state, requester string, limit int, alsoDBs ...string) ([]AccessRequest, error) {
+	if alsoDBs == nil {
+		alsoDBs = []string{}
+	}
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -150,8 +159,9 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 		       decision_note, expires_at, break_glass, restore_id::text
 		FROM access_requests
 		WHERE ($1 = '' OR state = $1)
-		  AND ($3 = '' OR lower(requester_email) = lower($3))
-		ORDER BY created_at DESC LIMIT $2`, state, limit, requester)
+		  AND ($3 = '' OR lower(requester_email) = lower($3)
+		       OR (principal = 'db:statement' AND database_id = ANY($4::uuid[])))
+		ORDER BY created_at DESC LIMIT $2`, state, limit, requester, alsoDBs)
 	if err != nil {
 		return nil, err
 	}

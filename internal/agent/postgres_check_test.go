@@ -237,3 +237,85 @@ func TestPostgresSendsALongValueWhole(t *testing.T) {
 	h.close()
 	superExec(t, dsn, "DROP TABLE IF EXISTS argus_t_long")
 }
+
+// A check asked for a preview returns the first rows the statement changes,
+// and a statement it cannot add RETURNING to is still counted.
+func TestPostgresCheckPreviewsTheRows(t *testing.T) {
+	dsn, _, _, _ := pgTest(t)
+	superExec(t, dsn,
+		"DROP TABLE IF EXISTS argus_t_pv",
+		"CREATE TABLE argus_t_pv (id int PRIMARY KEY, status text)",
+		"INSERT INTO argus_t_pv SELECT g, 'open' FROM generate_series(1, 30) g")
+	h := openPG(t, tunnel.LevelWrite, nil)
+
+	_, _, final := h.do(tunnel.PGRequest{ID: 1, Op: "check", Preview: true,
+		SQL: "UPDATE argus_t_pv SET status = 'paid' WHERE id <= 25;"})
+	p := final.Check.Preview
+	if final.Type != "check" || final.Check.Rows != 25 || p == nil || p.Change != "update" ||
+		len(p.Rows) != tunnel.PreviewRows || len(p.Columns) != 2 || *p.Rows[0][1] != "paid" {
+		t.Fatalf("preview of an update: %+v %+v", final, p)
+	}
+	_, _, final = h.do(tunnel.PGRequest{ID: 2, Op: "check", Preview: true,
+		SQL: "DELETE FROM argus_t_pv WHERE id = 3 RETURNING id"})
+	if final.Check == nil || final.Check.Rows != 1 || final.Check.Preview == nil || len(final.Check.Preview.Columns) != 1 {
+		t.Fatalf("a statement with its own RETURNING: %+v", final.Check)
+	}
+	if got := superQuery(t, dsn, "SELECT count(*) FILTER (WHERE status = 'open') FROM argus_t_pv"); got[0][0] != "30" {
+		t.Fatalf("the preview left changes behind: %v", got)
+	}
+	h.close()
+}
+
+// An approved statement that would change more rows than were approved is
+// rolled back, alone or inside the person's transaction.
+func TestPostgresApprovedCapRollsBack(t *testing.T) {
+	dsn, _, _, _ := pgTest(t)
+	superExec(t, dsn,
+		"DROP TABLE IF EXISTS argus_t_cap",
+		"CREATE TABLE argus_t_cap (id int PRIMARY KEY, status text)",
+		"INSERT INTO argus_t_cap SELECT g, 'open' FROM generate_series(1, 10) g")
+	h := openPG(t, tunnel.LevelWrite, nil)
+	n := func(v int64) *int64 { return &v }
+
+	_, _, final := h.do(tunnel.PGRequest{ID: 1, Op: "run", RowCap: n(3),
+		SQL: "UPDATE argus_t_cap SET status = 'paid' WHERE id <= 5"})
+	if final.Type != "error" || final.Code != tunnel.GuardOverCap {
+		t.Fatalf("over the cap: %+v", final)
+	}
+	if got := superQuery(t, dsn, "SELECT count(*) FROM argus_t_cap WHERE status = 'paid'"); got[0][0] != "0" {
+		t.Fatalf("the change over the cap stayed: %v", got)
+	}
+	_, _, final = h.do(tunnel.PGRequest{ID: 2, Op: "run", RowCap: n(5),
+		SQL: "UPDATE argus_t_cap SET status = 'paid' WHERE id <= 5"})
+	if final.Type != "done" || final.Rows != 5 {
+		t.Fatalf("within the cap: %+v", final)
+	}
+	if got := superQuery(t, dsn, "SELECT count(*) FROM argus_t_cap WHERE status = 'paid'"); got[0][0] != "5" {
+		t.Fatalf("the change within the cap was not kept: %v", got)
+	}
+	// A delete goes through the trash, and is held the same.
+	_, _, final = h.do(tunnel.PGRequest{ID: 3, Op: "run", RowCap: n(1), SQL: "DELETE FROM argus_t_cap WHERE id > 8"})
+	if final.Code != tunnel.GuardOverCap {
+		t.Fatalf("a delete over the cap: %+v", final)
+	}
+	if got := superQuery(t, dsn, "SELECT count(*) FROM argus_t_cap"); got[0][0] != "10" {
+		t.Fatalf("the delete over the cap stayed: %v", got)
+	}
+	// Inside their transaction, a savepoint: their earlier work stays.
+	for i, s := range []string{"BEGIN", "UPDATE argus_t_cap SET status = 'mine' WHERE id = 9"} {
+		if _, _, f := h.run(uint32(10+i), s, 0); f.Type != "done" {
+			t.Fatalf("%s: %+v", s, f)
+		}
+	}
+	_, _, final = h.do(tunnel.PGRequest{ID: 12, Op: "run", RowCap: n(0), SQL: "UPDATE argus_t_cap SET status = 'x' WHERE id = 10"})
+	if final.Code != tunnel.GuardOverCap {
+		t.Fatalf("over the cap in a transaction: %+v", final)
+	}
+	if _, _, f := h.run(13, "COMMIT", 0); f.Type != "done" {
+		t.Fatalf("commit: %+v", f)
+	}
+	if got := superQuery(t, dsn, "SELECT status FROM argus_t_cap WHERE id IN (9, 10) ORDER BY id"); got[0][0] != "mine" || got[1][0] != "open" {
+		t.Fatalf("their transaction after the cap: %v", got)
+	}
+	h.close()
+}
