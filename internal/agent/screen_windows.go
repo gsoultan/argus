@@ -3,10 +3,12 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -64,9 +66,8 @@ const (
 	smCXVirtualScreen = 78
 	smCYVirtualScreen = 79
 
-	srcCopy    = 0x00CC0020
-	captureBlt = 0x40000000
-	diNormal   = 0x0003
+	srcCopy  = 0x00CC0020
+	diNormal = 0x0003
 
 	cursorShowing = 0x00000001
 
@@ -195,7 +196,7 @@ func (p *screenHelperPipe) Close() error {
 // StartHelper runs "argus-agent screen-helper" in the session as
 // LocalSystem: the agent's own token, moved to that session. Its only
 // handles are the two pipes.
-func (windowsScreenHost) StartHelper(session uint32) (io.ReadWriteCloser, error) {
+func (windowsScreenHost) StartHelper(session uint32, gdiOnly bool) (io.ReadWriteCloser, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -224,7 +225,9 @@ func (windowsScreenHost) StartHelper(session uint32) (io.ReadWriteCloser, error)
 	if err := windows.CreatePipe(&inR, &inW, sa, 0); err != nil {
 		return nil, err
 	}
-	if err := windows.CreatePipe(&outR, &outW, sa, 0); err != nil {
+	// The screen's pipe holds a whole batch of tiles: the default 4 KB made
+	// one 192 KB batch fifty round trips between the two processes.
+	if err := windows.CreatePipe(&outR, &outW, sa, screenPipeBuffer); err != nil {
 		windows.CloseHandle(inR)
 		windows.CloseHandle(inW)
 		return nil, err
@@ -271,7 +274,11 @@ func (windowsScreenHost) StartHelper(session uint32) (io.ReadWriteCloser, error)
 		return nil, err
 	}
 
-	cmdline := windows.ComposeCommandLine([]string{exe, "screen-helper"})
+	args := []string{exe, "screen-helper"}
+	if gdiOnly {
+		args = append(args, "--gdi")
+	}
+	cmdline := windows.ComposeCommandLine(args)
 	var pi windows.ProcessInformation
 	if err := windows.CreateProcessAsUser(token, nil, windows.StringToUTF16Ptr(cmdline),
 		nil, nil, true,
@@ -301,37 +308,46 @@ func (windowsScreenHost) StartHelper(session uint32) (io.ReadWriteCloser, error)
 	}, nil
 }
 
+// screenPipeBuffer is the size of the pipe the screen comes through.
+const screenPipeBuffer = 1 << 20
+
 /* ── The helper ──────────────────────────────────────────────────────────── */
 
 // RunScreenHelper is "argus-agent screen-helper": the agent runs it in the
 // console session and it serves the screen on stdin and stdout until stdin
-// closes.
-func RunScreenHelper(in io.Reader, out io.Writer) int {
+// closes. args "--gdi" keeps it to GDI capture, which the agent asks for
+// after a helper has failed.
+func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	// Real pixels, not the scaled ones a process that is not DPI aware sees.
 	if procSetProcessDpiAwareCtx.Find() == nil {
 		procSetProcessDpiAwareCtx.Call(^uintptr(3)) // PER_MONITOR_AWARE_V2, -4
 	} else if procSetProcessDPIAware.Find() == nil {
 		procSetProcessDPIAware.Call()
 	}
-	c := &gdiCapturer{}
-	if err := serveScreen(c, in, out, screenInterval); err != nil {
+	gdiOnly := len(args) > 0 && args[0] == "--gdi"
+	c := newConsoleCapturer(gdiOnly)
+	newInput := func() screenInputer { return &inputPlayer{} }
+	if err := serveScreen(c, newInput, in, out, defaultScreenPace); err != nil {
 		_ = writeScreenMsg(out, scrFail, []byte(err.Error()))
 		return 1
 	}
 	return 0
 }
 
-type gdiCapturer struct {
-	desk          uintptr
-	dib           uintptr
-	bits          []byte
-	x, y          int
-	width, height int
+// inputDesktop keeps a thread on whichever desktop is taking input now: the
+// user's, the sign-in screen's or a UAC prompt's. It looks again at most
+// every quarter second, and at once when asked to after a failure: opening
+// the desktop on every event cost a system call per mouse move.
+type inputDesktop struct {
+	desk   uintptr
+	looked time.Time
 }
 
-// followInput puts this thread on whichever desktop is taking input now:
-// the user's, the sign-in screen's or a UAC prompt's.
-func (c *gdiCapturer) followInput() {
+func (d *inputDesktop) follow(now bool) {
+	if !now && d.desk != 0 && time.Since(d.looked) < 250*time.Millisecond {
+		return
+	}
+	d.looked = time.Now()
 	h, _, _ := procOpenInputDesktop.Call(0, 0, genericAll)
 	if h == 0 {
 		return
@@ -340,10 +356,17 @@ func (c *gdiCapturer) followInput() {
 		procCloseDesktop.Call(h)
 		return
 	}
-	if c.desk != 0 {
-		procCloseDesktop.Call(c.desk)
+	if d.desk != 0 {
+		procCloseDesktop.Call(d.desk)
 	}
-	c.desk = h
+	d.desk = h
+}
+
+func (d *inputDesktop) close() {
+	if d.desk != 0 {
+		procCloseDesktop.Call(d.desk)
+		d.desk = 0
+	}
 }
 
 func metric(i int) int {
@@ -363,54 +386,269 @@ type bitmapInfoHeader struct {
 	ClrImportant  uint32
 }
 
-func (c *gdiCapturer) Capture() ([]byte, int, int, int, error) {
-	c.followInput()
+// screenBuffer is the frame the helper sends from: a DIB section the size of
+// the virtual screen, which GDI can draw the pointer onto.
+type screenBuffer struct {
+	dib           uintptr
+	mem           uintptr
+	old           uintptr
+	bits          []byte
+	width, height int
+}
+
+// ensure makes the buffer w by h, keeping it if it already is.
+func (b *screenBuffer) ensure(w, h int) error {
+	if b.dib != 0 && w == b.width && h == b.height {
+		return nil
+	}
+	b.release()
+	screen, _, _ := procGetDC.Call(0)
+	if screen == 0 {
+		return errors.New("could not open the screen")
+	}
+	defer procReleaseDC.Call(0, screen)
+	bi := bitmapInfoHeader{Width: int32(w), Height: -int32(h), Planes: 1, BitCount: 32}
+	bi.Size = uint32(unsafe.Sizeof(bi))
+	var bits unsafe.Pointer
+	dib, _, _ := procCreateDIBSection.Call(screen, uintptr(unsafe.Pointer(&bi)), 0,
+		uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if dib == 0 || bits == nil {
+		return errors.New("could not make a screen buffer")
+	}
+	mem, _, _ := procCreateCompatibleDC.Call(screen)
+	if mem == 0 {
+		procDeleteObject.Call(dib)
+		return errors.New("could not make a drawing surface")
+	}
+	b.old, _, _ = procSelectObject.Call(mem, dib)
+	b.dib, b.mem, b.width, b.height = dib, mem, w, h
+	b.bits = unsafe.Slice((*byte)(bits), w*h*4)
+	return nil
+}
+
+func (b *screenBuffer) release() {
+	if b.mem != 0 {
+		procSelectObject.Call(b.mem, b.old)
+		procDeleteDC.Call(b.mem)
+		b.mem = 0
+	}
+	if b.dib != 0 {
+		procDeleteObject.Call(b.dib)
+		b.dib, b.bits = 0, nil
+	}
+}
+
+// pointerSprite draws the pointer into the buffer and puts back what was
+// under it before drawing it somewhere else, so the pixels around it stay the
+// screen's. The recording therefore shows where the pointer was.
+type pointerSprite struct {
+	saved  []byte
+	at     image.Rectangle // where the saved pixels came from; empty when none
+	cursor windows.Handle
+	pos    image.Point
+}
+
+// restore puts back the pixels under the last pointer and says where.
+func (p *pointerSprite) restore(b *screenBuffer) image.Rectangle {
+	r := p.at
+	if r.Empty() {
+		return r
+	}
+	restoreRect(b.bits, b.width*4, p.saved, r)
+	p.at = image.Rectangle{}
+	return r
+}
+
+// draw saves what is under the pointer and draws it, returning where.
+func (p *pointerSprite) draw(b *screenBuffer, originX, originY int) image.Rectangle {
+	ci := cursorInfo{}
+	ci.Size = uint32(unsafe.Sizeof(ci))
+	if r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r == 0 ||
+		ci.Flags&cursorShowing == 0 || ci.Cursor == 0 {
+		p.cursor = 0
+		return image.Rectangle{}
+	}
+	var ii iconInfo
+	if r, _, _ := procGetIconInfo.Call(uintptr(ci.Cursor), uintptr(unsafe.Pointer(&ii))); r == 0 {
+		return image.Rectangle{}
+	}
+	if ii.Mask != 0 {
+		defer procDeleteObject.Call(uintptr(ii.Mask))
+	}
+	if ii.Colour != 0 {
+		defer procDeleteObject.Call(uintptr(ii.Colour))
+	}
+	px := int(ci.X) - int(ii.XHot) - originX
+	py := int(ci.Y) - int(ii.YHot) - originY
+	p.cursor, p.pos = ci.Cursor, image.Pt(int(ci.X), int(ci.Y))
+	// A pointer is at most 256 pixels square, and most are 32 or 48.
+	r := image.Rect(px, py, px+pointerBox, py+pointerBox).Intersect(image.Rect(0, 0, b.width, b.height))
+	if r.Empty() {
+		return r
+	}
+	if cap(p.saved) < r.Dx()*r.Dy()*4 {
+		p.saved = make([]byte, pointerBox*pointerBox*4)
+	}
+	p.saved = p.saved[:r.Dx()*r.Dy()*4]
+	saveRect(p.saved, b.bits, b.width*4, r)
+	p.at = r
+	procDrawIconEx.Call(b.mem, uintptr(px), uintptr(py), uintptr(ci.Cursor), 0, 0, 0, 0, diNormal)
+	procGdiFlush.Call()
+	return r
+}
+
+// moved reports whether the pointer is not where, or not what, it was drawn.
+func (p *pointerSprite) moved() bool {
+	ci := cursorInfo{}
+	ci.Size = uint32(unsafe.Sizeof(ci))
+	if r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r == 0 {
+		return false
+	}
+	showing := ci.Flags&cursorShowing != 0 && ci.Cursor != 0
+	if !showing {
+		return p.cursor != 0
+	}
+	return ci.Cursor != p.cursor || image.Pt(int(ci.X), int(ci.Y)) != p.pos
+}
+
+// pointerBox bounds the pixels a pointer can cover.
+const pointerBox = 64
+
+// saveRect copies the rectangle r of a frame (stride bytes a row) into a
+// packed buffer.
+func saveRect(dst, frame []byte, stride int, r image.Rectangle) {
+	w := r.Dx() * 4
+	for y := 0; y < r.Dy(); y++ {
+		o := (r.Min.Y+y)*stride + r.Min.X*4
+		copy(dst[y*w:(y+1)*w], frame[o:o+w])
+	}
+}
+
+// restoreRect puts a packed buffer back at the rectangle r of a frame.
+func restoreRect(frame []byte, stride int, src []byte, r image.Rectangle) {
+	w := r.Dx() * 4
+	for y := 0; y < r.Dy(); y++ {
+		o := (r.Min.Y+y)*stride + r.Min.X*4
+		copy(frame[o:o+w], src[y*w:(y+1)*w])
+	}
+}
+
+// consoleCapturer captures with Desktop Duplication when it can and GDI when
+// it cannot: on a host with no display adapter of its own, on a desktop
+// Duplication is refused (the sign-in and UAC desktops, for a moment), or
+// across several monitors. It tries Duplication again a second after giving
+// up on it.
+type consoleCapturer struct {
+	desk    inputDesktop
+	buf     screenBuffer
+	pointer pointerSprite
+	dup     *duplicator
+	gdiOnly bool
+	retry   time.Time
+	// fresh says the buffer was refilled whole and every tile must be looked at.
+	fresh bool
+}
+
+func newConsoleCapturer(gdiOnly bool) *consoleCapturer {
+	return &consoleCapturer{gdiOnly: gdiOnly, fresh: true}
+}
+
+func (c *consoleCapturer) Capture(wait time.Duration) (screenShot, bool, error) {
+	c.desk.follow(false)
+	if c.dup == nil && !c.gdiOnly && time.Now().After(c.retry) {
+		d, err := newDuplicator()
+		if err != nil {
+			c.retry = time.Now().Add(time.Second)
+		} else {
+			c.dup, c.fresh = d, true
+		}
+	}
+	if c.dup != nil {
+		shot, changed, err := c.captureDup(wait)
+		if err == nil {
+			return shot, changed, nil
+		}
+		// Lost: a desktop switch, a mode change, a driver update. GDI for
+		// now, and Duplication again in a second, on the new desktop.
+		c.dup.close()
+		c.dup, c.fresh = nil, true
+		c.retry = time.Now().Add(time.Second)
+		c.desk.follow(true)
+	}
+	return c.captureGDI()
+}
+
+// captureDup waits for Duplication's next frame and copies what changed.
+func (c *consoleCapturer) captureDup(wait time.Duration) (screenShot, bool, error) {
+	w, h := c.dup.width, c.dup.height
+	if err := c.buf.ensure(w, h); err != nil {
+		return screenShot{}, false, err
+	}
+	all := c.fresh
+	// The pointer first: put back what it covered, so what Duplication
+	// copies in next is not undone by it, then draw it where it is now.
+	moved := c.pointer.moved()
+	var dirty []image.Rectangle
+	if r := c.pointer.restore(&c.buf); !r.Empty() {
+		dirty = append(dirty, r)
+	}
+	changed, got, err := c.dup.next(wait, c.buf.bits, w*4, all)
+	if err != nil {
+		return screenShot{}, false, err
+	}
+	dirty = append(dirty, changed...)
+	if r := c.pointer.draw(&c.buf, c.dup.originX, c.dup.originY); !r.Empty() {
+		dirty = append(dirty, r)
+	}
+	if !got && (all || !moved) {
+		// Nothing new; and a buffer still waiting for its first whole
+		// frame has nothing to show yet.
+		return screenShot{}, false, nil
+	}
+	shot := screenShot{fb: c.buf.bits, stride: w * 4, width: w, height: h, dirty: dirty}
+	if all {
+		shot.dirty, c.fresh = nil, false
+	}
+	return shot, true, nil
+}
+
+// captureGDI copies the whole virtual screen and draws the pointer on it.
+func (c *consoleCapturer) captureGDI() (screenShot, bool, error) {
 	x, y := metric(smXVirtualScreen), metric(smYVirtualScreen)
 	w, h := metric(smCXVirtualScreen), metric(smCYVirtualScreen)
 	w, h = min(w, rdp.MaxDimension), min(h, rdp.MaxDimension)
 	if w <= 0 || h <= 0 {
-		return nil, 0, 0, 0, errors.New("the screen has no size")
+		return screenShot{}, false, errors.New("the screen has no size")
+	}
+	if err := c.buf.ensure(w, h); err != nil {
+		return screenShot{}, false, err
 	}
 	screen, _, _ := procGetDC.Call(0)
 	if screen == 0 {
-		return nil, 0, 0, 0, errors.New("could not open the screen")
+		return screenShot{}, false, errors.New("could not open the screen")
 	}
 	defer procReleaseDC.Call(0, screen)
-	mem, _, _ := procCreateCompatibleDC.Call(screen)
-	if mem == 0 {
-		return nil, 0, 0, 0, errors.New("could not make a drawing surface")
-	}
-	defer procDeleteDC.Call(mem)
-
-	if c.dib == 0 || w != c.width || h != c.height {
-		if c.dib != 0 {
-			procDeleteObject.Call(c.dib)
-			c.dib, c.bits = 0, nil
-		}
-		bi := bitmapInfoHeader{Width: int32(w), Height: -int32(h), Planes: 1, BitCount: 32}
-		bi.Size = uint32(unsafe.Sizeof(bi))
-		var bits unsafe.Pointer
-		dib, _, _ := procCreateDIBSection.Call(screen, uintptr(unsafe.Pointer(&bi)), 0,
-			uintptr(unsafe.Pointer(&bits)), 0, 0)
-		if dib == 0 || bits == nil {
-			return nil, 0, 0, 0, errors.New("could not make a screen buffer")
-		}
-		c.dib, c.width, c.height = dib, w, h
-		c.bits = unsafe.Slice((*byte)(bits), w*h*4)
-	}
-	c.x, c.y = x, y
-	old, _, _ := procSelectObject.Call(mem, c.dib)
-	r, _, err := procBitBlt.Call(mem, 0, 0, uintptr(w), uintptr(h), screen,
-		uintptr(x), uintptr(y), srcCopy|captureBlt)
-	if r != 0 {
-		c.drawCursor(mem)
-	}
-	procSelectObject.Call(mem, old)
-	procGdiFlush.Call()
+	// No CAPTUREBLT: with the desktop composed (Windows 8 and later always
+	// is) layered windows are in the screen's pixels already, and asking for
+	// them again makes BitBlt several times slower and the pointer flicker.
+	r, _, err := procBitBlt.Call(c.buf.mem, 0, 0, uintptr(w), uintptr(h), screen,
+		uintptr(x), uintptr(y), srcCopy)
 	if r == 0 {
-		return nil, 0, 0, 0, fmt.Errorf("capturing the screen: %v", err)
+		c.desk.follow(true)
+		return screenShot{}, false, fmt.Errorf("capturing the screen: %v", err)
 	}
-	return c.bits, w * 4, w, h, nil
+	c.pointer.at = image.Rectangle{} // the copy replaced whatever was under it
+	c.pointer.draw(&c.buf, x, y)
+	c.fresh = true
+	return screenShot{fb: c.buf.bits, stride: w * 4, width: w, height: h}, true, nil
+}
+
+func (c *consoleCapturer) Close() {
+	if c.dup != nil {
+		c.dup.close()
+	}
+	c.buf.release()
+	c.desk.close()
 }
 
 type cursorInfo struct {
@@ -424,30 +662,6 @@ type iconInfo struct {
 	Icon         int32
 	XHot, YHot   uint32
 	Mask, Colour windows.Handle
-}
-
-// drawCursor puts the pointer into the frame, so the recording shows where
-// it was.
-func (c *gdiCapturer) drawCursor(dc uintptr) {
-	ci := cursorInfo{}
-	ci.Size = uint32(unsafe.Sizeof(ci))
-	if r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r == 0 ||
-		ci.Flags&cursorShowing == 0 || ci.Cursor == 0 {
-		return
-	}
-	var ii iconInfo
-	if r, _, _ := procGetIconInfo.Call(uintptr(ci.Cursor), uintptr(unsafe.Pointer(&ii))); r == 0 {
-		return
-	}
-	if ii.Mask != 0 {
-		defer procDeleteObject.Call(uintptr(ii.Mask))
-	}
-	if ii.Colour != 0 {
-		defer procDeleteObject.Call(uintptr(ii.Colour))
-	}
-	px := int(ci.X) - int(ii.XHot) - c.x
-	py := int(ci.Y) - int(ii.YHot) - c.y
-	procDrawIconEx.Call(dc, uintptr(px), uintptr(py), uintptr(ci.Cursor), 0, 0, 0, 0, diNormal)
 }
 
 type mouseInputT struct {
@@ -480,8 +694,25 @@ func send(in *sendInput) error {
 	return nil
 }
 
-func (c *gdiCapturer) Input(e rdp.InputEvent) error {
-	c.followInput()
+// inputPlayer plays input with SendInput, on its own thread and desktop.
+type inputPlayer struct {
+	desk inputDesktop
+}
+
+func (p *inputPlayer) Input(e rdp.InputEvent) error {
+	p.desk.follow(false)
+	err := p.play(e)
+	if err != nil {
+		// Probably the desktop changed under it: once more, on the new one.
+		p.desk.follow(true)
+		err = p.play(e)
+	}
+	return err
+}
+
+func (p *inputPlayer) Close() { p.desk.close() }
+
+func (p *inputPlayer) play(e rdp.InputEvent) error {
 	switch e.Kind {
 	case "key":
 		in := sendInput{Type: inputKeyboard}
@@ -496,13 +727,14 @@ func (c *gdiCapturer) Input(e rdp.InputEvent) error {
 		}
 		return send(&in)
 	case "mouse", "button", "wheel":
-		if c.width <= 1 || c.height <= 1 {
+		width, height := metric(smCXVirtualScreen), metric(smCYVirtualScreen)
+		if width <= 1 || height <= 1 {
 			return nil
 		}
 		in := sendInput{Type: inputMouse}
-		x, y := min(max(e.X, 0), c.width-1), min(max(e.Y, 0), c.height-1)
-		in.Mi.Dx = int32(x * 65535 / (c.width - 1))
-		in.Mi.Dy = int32(y * 65535 / (c.height - 1))
+		x, y := min(max(e.X, 0), width-1), min(max(e.Y, 0), height-1)
+		in.Mi.Dx = int32(x * 65535 / (width - 1))
+		in.Mi.Dy = int32(y * 65535 / (height - 1))
 		in.Mi.Flags = mouseMove | mouseAbsolute | mouseVirtualDsk
 		switch e.Kind {
 		case "button":
@@ -534,13 +766,4 @@ func (c *gdiCapturer) Input(e rdp.InputEvent) error {
 		return send(&in)
 	}
 	return nil
-}
-
-func (c *gdiCapturer) Close() {
-	if c.dib != 0 {
-		procDeleteObject.Call(c.dib)
-	}
-	if c.desk != 0 {
-		procCloseDesktop.Call(c.desk)
-	}
 }

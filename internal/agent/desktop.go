@@ -372,6 +372,17 @@ type desktopInput struct {
 	Y      int    `json:"y"`
 	Button int    `json:"button"`
 	Delta  int    `json:"delta"`
+	// Frame is the mark a browser acknowledges ("ack").
+	Frame uint32 `json:"frame"`
+}
+
+// desktopFramer is a desktop whose frames are paced by the browser: a mark
+// is written after each one, and the browser acknowledges it once drawn.
+// The shared console is one; a Remote Desktop connection is paced by the
+// target and is not.
+type desktopFramer interface {
+	TakeMark() (id uint32, rtt time.Duration, ok bool)
+	Ack(id uint32)
 }
 
 // runDesktop relays until the desktop or the stream ends, then seals the
@@ -401,6 +412,14 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 			case tunnel.FrameInput:
 				var m desktopInput
 				if json.Unmarshal(p, &m) != nil {
+					continue
+				}
+				if m.Type == "ack" {
+					// Only a framed desktop's marks are acknowledged; a
+					// browser acknowledges no others.
+					if f, ok := client.(desktopFramer); ok {
+						f.Ack(m.Frame)
+					}
 					continue
 				}
 				e := rdp.InputEvent{Kind: m.Type, Down: m.Down, X: m.X, Y: m.Y,
@@ -447,6 +466,12 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 			// the size bitmaps go in.
 			for b := gfx.take(desktopBatch); b != nil && err == nil; b = gfx.take(desktopBatch) {
 				err = write(tunnel.FrameOutput, b)
+			}
+		}
+		// A frame that just ended is marked, after all of its rectangles.
+		if f, ok := client.(desktopFramer); ok && err == nil {
+			if id, rtt, ok := f.TakeMark(); ok {
+				err = write(tunnel.FrameOutput, rdp.EncodeMark(id, rtt))
 			}
 		}
 		if err != nil || len(bitmaps) == 0 {

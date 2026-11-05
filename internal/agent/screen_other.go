@@ -8,4 +8,4 @@ import "io"
 func platformScreenHost() screenHost { return nil }
 
 // RunScreenHelper is not used off Windows.
-func RunScreenHelper(io.Reader, io.Writer) int { return 2 }
+func RunScreenHelper([]string, io.Reader, io.Writer) int { return 2 }

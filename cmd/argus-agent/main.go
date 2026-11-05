@@ -72,7 +72,7 @@ func main() {
 	case "screen-helper":
 		// Run by the daemon in the console's session, on Windows, to share
 		// the screen: input on stdin, screen updates on stdout.
-		os.Exit(agent.RunScreenHelper(os.Stdin, os.Stdout))
+		os.Exit(agent.RunScreenHelper(os.Args[2:], os.Stdin, os.Stdout))
 	case "pg-admin":
 		// Run by the postgres service as the postgres account: one request
 		// on stdin, one answer on stdout, over the local socket.

@@ -228,6 +228,12 @@ func (m *meter) read() {
 			case rdp.FrameClosed:
 				m.errs <- fmt.Errorf("the desktop closed")
 				return
+			case rdp.FrameMark:
+				// A shared console paces itself on these, as the console
+				// acknowledges them: once the frame before it is decoded.
+				if id, _, ok := rdp.ParseMark(p); ok {
+					m.send(map[string]any{"type": "ack", "frame": id})
+				}
 			}
 			p = p[min(size, len(p)):]
 		}

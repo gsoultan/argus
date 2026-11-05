@@ -1,11 +1,12 @@
 package agent
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/maphash"
+	"image"
 	"io"
 	"log/slog"
 	"runtime"
@@ -56,9 +57,26 @@ const screenProtocol = "screen"
 // screenTile is the side of the squares the screen is compared in.
 const screenTile = 64
 
-// screenInterval paces capture: about twenty frames a second at most, and
-// the encoder only sends what changed.
-const screenInterval = 50 * time.Millisecond
+// screenMinGap is the least time between frames: sixty a second at most.
+// There is no clock beyond that: a frame is captured when the screen changes
+// and the agent has room for it.
+const screenMinGap = time.Second / 60
+
+// screenIdleMax is the longest a polling capture (GDI) waits between looks
+// at a screen that is not changing. Input cuts it short.
+const screenIdleMax = 250 * time.Millisecond
+
+// screenEncoders is how many cores a full-screen change is encoded on.
+const screenEncoders = 4
+
+// screenWindow is how many frames may be on their way to the browser, not
+// yet drawn, before the agent stops asking for more: enough to keep a link
+// busy, few enough that what is shown is never far behind.
+const screenWindow = 2
+
+// screenAckFloor keeps the screen, and so the recording, moving at least
+// once a second when a browser stops acknowledging frames.
+const screenAckFloor = time.Second
 
 // The helper's pipes carry messages: a type byte, a four-byte length and the
 // payload.
@@ -67,10 +85,12 @@ const (
 	scrSize  byte = 1 // width, height as uint16 LE
 	scrRects byte = 2 // rdp.EncodeBitmap frames, back to back
 	scrFail  byte = 3 // why the helper stopped, as text
+	scrFrame byte = 4 // the frame's rectangles are all sent
 
 	// agent → helper
 	scrInput   byte = 10 // one rdp.InputEvent as JSON
 	scrRefresh byte = 11 // send every tile next time
+	scrNext    byte = 12 // room for one more frame
 )
 
 // maxScreenMsg bounds one message from the helper. A full 4K screen of
@@ -107,58 +127,99 @@ func readScreenMsg(r io.Reader) (byte, []byte, error) {
 
 /* ── The helper ──────────────────────────────────────────────────────────── */
 
-// screenCapturer is the console's screen and input, as the helper sees it.
-// Every call is made from the one OS thread the helper locks, which is what
-// Windows needs to keep the thread on the input desktop.
+// screenShot is the screen as one capture saw it.
+type screenShot struct {
+	// fb is the whole screen, top-down 32-bit BGRX, stride bytes a row. It
+	// may be reused by the next capture.
+	fb            []byte
+	stride        int
+	width, height int
+	// dirty is where the screen may have changed since the last shot, when
+	// the capturer knows (Desktop Duplication does). Nil means anywhere.
+	dirty []image.Rectangle
+}
+
+// screenCapturer is the console's screen, as the helper sees it. Every call
+// is made from the one OS thread the helper locks for capture, which is what
+// Windows needs to keep that thread on the input desktop.
 type screenCapturer interface {
-	// Capture returns the whole screen, top-down 32-bit BGRX, stride bytes
-	// a row. The buffer may be reused by the next call.
-	Capture() (fb []byte, stride, width, height int, err error)
-	// Input plays one event to the console.
+	// Capture waits up to wait for the screen to change and returns it;
+	// changed is false when nothing did. A capturer that cannot wait (GDI)
+	// returns at once, changed, and the comparison finds what moved.
+	Capture(wait time.Duration) (shot screenShot, changed bool, err error)
+	Close()
+}
+
+// screenInputer plays input to the console. It is made and used on an OS
+// thread of its own, so a keystroke never waits behind a capture.
+type screenInputer interface {
 	Input(rdp.InputEvent) error
 	Close()
 }
 
-// screenDiffer finds the tiles of a frame that differ from the last one.
+// screenPace is how fast the helper captures.
+type screenPace struct {
+	// minGap is the least time between two frames: 60 a second at most.
+	minGap time.Duration
+	// idleMax is the longest a polling capturer waits between looks at a
+	// screen that is not changing. Input resets it.
+	idleMax time.Duration
+}
+
+var defaultScreenPace = screenPace{minGap: screenMinGap, idleMax: screenIdleMax}
+
+// screenDiffer finds the tiles of a frame that differ from the last one it
+// sent. It keeps a 64-bit hash of each tile rather than a copy of the
+// screen: 16 KB for a 4K display instead of 33 MB.
 type screenDiffer struct {
-	prev          []byte
 	width, height int
-	stride        int
-	scratch       []byte
+	cols, rows    int
+	hashes        []uint64
+	seed          maphash.Seed
+	// scratch is one encoding buffer per worker.
+	scratch [][]byte
+}
+
+// tileJob is one tile to encode, and what it became.
+type tileJob struct {
+	x, y, w, h int
+	hash       uint64
+	frame      []byte
 }
 
 // changed returns the changed tiles as display frames (rdp.EncodeBitmap),
 // grouped into batches under limit bytes. force sends every tile.
-func (d *screenDiffer) changed(fb []byte, stride, width, height int, force bool,
-	limit int) [][]byte {
-
-	if width != d.width || height != d.height || stride != d.stride || len(d.prev) != len(fb) {
-		d.prev = make([]byte, len(fb))
-		d.width, d.height, d.stride = width, height, stride
+func (d *screenDiffer) changed(s screenShot, force bool, limit int) [][]byte {
+	if s.width != d.width || s.height != d.height || d.hashes == nil {
+		d.width, d.height = s.width, s.height
+		d.cols = (s.width + screenTile - 1) / screenTile
+		d.rows = (s.height + screenTile - 1) / screenTile
+		d.hashes = make([]uint64, d.cols*d.rows)
+		d.seed = maphash.MakeSeed()
 		force = true
 	}
+	look := d.tilesToLook(s.dirty, force)
+	var jobs []tileJob
+	for _, i := range look {
+		tx, ty := (i%d.cols)*screenTile, (i/d.cols)*screenTile
+		tw, th := min(screenTile, s.width-tx), min(screenTile, s.height-ty)
+		h := tileHash(d.seed, s.fb, s.stride, tx, ty, tw, th)
+		if !force && h == d.hashes[i] {
+			continue
+		}
+		d.hashes[i] = h
+		jobs = append(jobs, tileJob{x: tx, y: ty, w: tw, h: th, hash: h})
+	}
+	d.encode(s, jobs)
+
 	var batches [][]byte
 	batch := []byte(nil)
-	for ty := 0; ty < height; ty += screenTile {
-		th := min(screenTile, height-ty)
-		for tx := 0; tx < width; tx += screenTile {
-			tw := min(screenTile, width-tx)
-			if !force && tileSame(d.prev, fb, stride, tx, ty, tw, th) {
-				continue
-			}
-			b := rdp.CompressRect(d.scratch, fb, stride, tx, ty, tw, th)
-			d.scratch = b.Data[:0]
-			f := rdp.EncodeBitmap(b)
-			if len(batch)+len(f) > limit && len(batch) > 0 {
-				batches = append(batches, batch)
-				batch = nil
-			}
-			batch = append(batch, f...)
-			for r := ty; r < ty+th; r++ {
-				o := r*stride + tx*4
-				copy(d.prev[o:o+tw*4], fb[o:o+tw*4])
-			}
+	for _, j := range jobs {
+		if len(batch)+len(j.frame) > limit && len(batch) > 0 {
+			batches = append(batches, batch)
+			batch = nil
 		}
+		batch = append(batch, j.frame...)
 	}
 	if len(batch) > 0 {
 		batches = append(batches, batch)
@@ -166,25 +227,115 @@ func (d *screenDiffer) changed(fb []byte, stride, width, height int, force bool,
 	return batches
 }
 
-func tileSame(a, b []byte, stride, x, y, w, h int) bool {
-	for r := y; r < y+h; r++ {
-		o := r*stride + x*4
-		if !bytes.Equal(a[o:o+w*4], b[o:o+w*4]) {
-			return false
+// tilesToLook lists the tiles a shot's dirty rectangles touch, in order;
+// all of them when it has none or force is set.
+func (d *screenDiffer) tilesToLook(dirty []image.Rectangle, force bool) []int {
+	n := d.cols * d.rows
+	if force || dirty == nil {
+		all := make([]int, n)
+		for i := range all {
+			all[i] = i
+		}
+		return all
+	}
+	mark := make([]bool, n)
+	bounds := image.Rect(0, 0, d.width, d.height)
+	for _, r := range dirty {
+		r = r.Intersect(bounds)
+		if r.Empty() {
+			continue
+		}
+		for ty := r.Min.Y / screenTile; ty <= (r.Max.Y-1)/screenTile; ty++ {
+			for tx := r.Min.X / screenTile; tx <= (r.Max.X-1)/screenTile; tx++ {
+				mark[ty*d.cols+tx] = true
+			}
 		}
 	}
-	return true
+	var out []int
+	for i, m := range mark {
+		if m {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// encode compresses the jobs' tiles, spread over a few cores when there are
+// many: a whole new screen is then encoded in a quarter of the time, and a
+// keystroke's few tiles are not worth a goroutine.
+func (d *screenDiffer) encode(s screenShot, jobs []tileJob) {
+	workers := 1
+	if len(jobs) >= 32 {
+		workers = min(runtime.GOMAXPROCS(0), screenEncoders, len(jobs)/16)
+	}
+	for len(d.scratch) < workers {
+		d.scratch = append(d.scratch, nil)
+	}
+	if workers <= 1 {
+		for i := range jobs {
+			jobs[i].frame = d.encodeOne(0, s, jobs[i])
+		}
+		return
+	}
+	var wg sync.WaitGroup
+	for w := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := w; i < len(jobs); i += workers {
+				jobs[i].frame = d.encodeOne(w, s, jobs[i])
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func (d *screenDiffer) encodeOne(worker int, s screenShot, j tileJob) []byte {
+	b := rdp.CompressRect(d.scratch[worker], s.fb, s.stride, j.x, j.y, j.w, j.h)
+	d.scratch[worker] = b.Data[:0]
+	return rdp.EncodeBitmap(b)
+}
+
+// tileHash hashes one tile's pixels, row by row.
+func tileHash(seed maphash.Seed, fb []byte, stride, x, y, w, h int) uint64 {
+	var mh maphash.Hash
+	mh.SetSeed(seed)
+	for r := y; r < y+h; r++ {
+		o := r*stride + x*4
+		_, _ = mh.Write(fb[o : o+w*4])
+	}
+	return mh.Sum64()
 }
 
 // serveScreen is the helper's loop: input from in is played to the console,
 // and what changes on screen is written to out, until in closes.
-func serveScreen(c screenCapturer, in io.Reader, out io.Writer, interval time.Duration) error {
+//
+// Three threads, so nothing waits behind anything else: one reads the agent,
+// one plays input (and wakes capture, so a keystroke's answer is looked for
+// at once), and this one captures. Capture sends a frame only when the agent
+// has given it a credit (scrNext): the agent hands them out as the browser
+// takes frames, so a slow link gets fewer, newer frames instead of a queue of
+// old ones, and the screen a person sees is the one that is there now.
+func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, out io.Writer,
+	pace screenPace) error {
 	runtime.LockOSThread()
 	defer c.Close()
 
 	inputs := make(chan rdp.InputEvent, 256)
 	refresh := make(chan struct{}, 1)
+	credit := make(chan struct{}, 64)
+	poke := make(chan struct{}, 1)
 	done := make(chan error, 1)
+	stop := make(chan struct{})
+	defer close(stop)
+
+	signal := func(ch chan struct{}) {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+
 	go func() {
 		for {
 			typ, p, err := readScreenMsg(in)
@@ -196,59 +347,166 @@ func serveScreen(c screenCapturer, in io.Reader, out io.Writer, interval time.Du
 			case scrInput:
 				var e rdp.InputEvent
 				if json.Unmarshal(p, &e) == nil {
-					inputs <- e
+					select {
+					case inputs <- e:
+					case <-stop:
+						return
+					}
 				}
 			case scrRefresh:
-				select {
-				case refresh <- struct{}{}:
-				default:
-				}
+				signal(refresh)
+			case scrNext:
+				signal(credit)
 			}
 		}
 	}()
 
+	go func() {
+		// Its own OS thread, for its own desktop: SendInput goes to the
+		// desktop the calling thread is on.
+		runtime.LockOSThread()
+		player := newInput()
+		defer player.Close()
+		var held *rdp.InputEvent
+		for {
+			var e rdp.InputEvent
+			if held != nil {
+				e, held = *held, nil
+			} else {
+				select {
+				case e = <-inputs:
+				case <-stop:
+					return
+				}
+			}
+			// Mouse moves that have queued up behind each other are one
+			// move, to where the pointer is now.
+			for e.Kind == "mouse" {
+				select {
+				case next := <-inputs:
+					if next.Kind == "mouse" {
+						e = next
+						continue
+					}
+					held = &next
+				default:
+				}
+				break
+			}
+			_ = player.Input(e)
+			signal(poke)
+		}
+	}()
+
 	var diff screenDiffer
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
+	credits := 1
 	force := true
 	lastW, lastH := 0, 0
+	lastSent := time.Time{}
+	idle := pace.minGap
 	for {
+		// A credit, first: the agent has room for another frame.
+		for credits == 0 {
+			select {
+			case err := <-done:
+				return endOf(err)
+			case <-credit:
+				credits++
+			case <-refresh:
+				force = true
+			}
+		}
+		// No faster than the frame rate allows.
+		if wait := pace.minGap - time.Since(lastSent); wait > 0 {
+			if err := sleepOr(wait, done); err != nil {
+				return endOf(err)
+			}
+		}
 		select {
 		case err := <-done:
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		case e := <-inputs:
-			// Played on this thread, which is on the input desktop.
-			_ = c.Input(e)
-			continue
+			return endOf(err)
 		case <-refresh:
 			force = true
-			continue
-		case <-tick.C:
+		default:
 		}
-		fb, stride, w, h, err := c.Capture()
+
+		started := time.Now()
+		shot, changed, err := c.Capture(idle)
 		if err != nil {
 			// The input desktop switching (a sign-in, a UAC prompt) fails
-			// one capture; the next one is on the new desktop.
+			// a capture; the next one is on the new desktop.
+			if err := sleepOr(pace.minGap, done); err != nil {
+				return endOf(err)
+			}
 			continue
 		}
-		if w != lastW || h != lastH {
-			var p [4]byte
-			binary.LittleEndian.PutUint16(p[0:], uint16(w))
-			binary.LittleEndian.PutUint16(p[2:], uint16(h))
-			if err := writeScreenMsg(out, scrSize, p[:]); err != nil {
-				return err
+		var batches [][]byte
+		if changed || force {
+			if shot.width != lastW || shot.height != lastH {
+				var p [4]byte
+				binary.LittleEndian.PutUint16(p[0:], uint16(shot.width))
+				binary.LittleEndian.PutUint16(p[2:], uint16(shot.height))
+				if err := writeScreenMsg(out, scrSize, p[:]); err != nil {
+					return err
+				}
+				lastW, lastH, force = shot.width, shot.height, true
 			}
-			lastW, lastH, force = w, h, true
+			batches = diff.changed(shot, force, desktopBatch)
+			force = false
 		}
-		for _, b := range diff.changed(fb, stride, w, h, force, desktopBatch) {
+		if len(batches) == 0 {
+			// Nothing new. A capturer that waited has already spent the
+			// time; one that looked and returned (GDI) waits here, a
+			// little longer each time the screen stays still, and not at
+			// all once input arrives.
+			if rest := idle - time.Since(started); rest > 0 {
+				select {
+				case err := <-done:
+					return endOf(err)
+				case <-poke:
+					idle = pace.minGap
+				case <-refresh:
+					force = true
+				case <-time.After(rest):
+					idle = min(idle*2, pace.idleMax)
+				}
+			} else {
+				idle = min(idle*2, pace.idleMax)
+			}
+			continue
+		}
+		for _, b := range batches {
 			if err := writeScreenMsg(out, scrRects, b); err != nil {
 				return err
 			}
 		}
-		force = false
+		if err := writeScreenMsg(out, scrFrame, nil); err != nil {
+			return err
+		}
+		credits--
+		lastSent = time.Now()
+		idle = pace.minGap
+	}
+}
+
+func endOf(err error) error {
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
+
+// sleepOr sleeps for d unless the agent's pipe ends first.
+func sleepOr(d time.Duration, done chan error) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case err := <-done:
+		// Put back for the loop's own check.
+		done <- err
+		return err
+	case <-t.C:
+		return nil
 	}
 }
 
@@ -262,8 +520,9 @@ type screenHost interface {
 	// "" for the sign-in screen.
 	ConsoleAccount(session uint32) string
 	// StartHelper runs the helper in the session, its stdin and stdout the
-	// returned pipe. Closing the pipe ends the helper.
-	StartHelper(session uint32) (io.ReadWriteCloser, error)
+	// returned pipe. Closing the pipe ends the helper. gdiOnly keeps it to
+	// GDI capture, for a helper started after one failed.
+	StartHelper(session uint32, gdiOnly bool) (io.ReadWriteCloser, error)
 	// SecureAttention is Ctrl+Alt+Del, which no keystroke can send.
 	SecureAttention() error
 }
@@ -299,6 +558,9 @@ type screenClient struct {
 	tap           func([]byte)
 	closed        bool
 	restarts      []time.Time
+	// failed counts helpers that stopped on their own; after one has, the
+	// next are kept to GDI capture, the path with nothing new in it.
+	failed int
 
 	// ctrl and alt held, so Ctrl+Alt+Del can become the secure attention
 	// sequence it means.
@@ -307,6 +569,19 @@ type screenClient struct {
 	checkEvery time.Duration
 	// nextCheck is when follow runs next; NextBitmaps' goroutine only.
 	nextCheck time.Time
+
+	// Frame flow. The helper sends a frame only on a credit; the agent gives
+	// one when the browser has room, which it says by acknowledging the
+	// marks written after each frame. A browser that never acknowledges
+	// (an older console) is given a frame whenever the last one is written.
+	holding  bool // the helper has a credit it has not used
+	acks     bool // the browser acknowledges frames
+	marked   uint32
+	acked    uint32
+	granted  time.Time
+	mark     uint32 // a frame ended and its mark is not yet written
+	markedAt [8]time.Time
+	rtt      time.Duration
 }
 
 // openScreen starts the helper in the console's session and waits for it
@@ -350,7 +625,10 @@ func openScreen(host screenHost, log *slog.Logger) (*screenClient, error) {
 
 // start runs a helper in session and reads it until its pipe ends.
 func (c *screenClient) start(session uint32) error {
-	h, err := c.host.StartHelper(session)
+	c.mu.Lock()
+	gdiOnly := c.failed > 0
+	c.mu.Unlock()
+	h, err := c.host.StartHelper(session, gdiOnly)
 	if err != nil {
 		return err
 	}
@@ -366,6 +644,8 @@ func (c *screenClient) start(session uint32) error {
 	c.gen++
 	gen := c.gen
 	c.helper, c.session = h, session
+	// A new helper starts with one credit of its own.
+	c.holding, c.granted = true, time.Now()
 	c.mu.Unlock()
 	go func() {
 		for {
@@ -434,12 +714,23 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 				}
 			case scrRects:
 				return c.rects(m.p)
+			case scrFrame:
+				c.mu.Lock()
+				c.holding = false
+				c.marked++
+				c.mark = c.marked
+				c.grantLocked(false)
+				c.mu.Unlock()
+				return nil, nil
 			}
 		case <-check.C:
 			c.nextCheck = time.Now().Add(c.checkEvery)
 			if err := c.follow(); err != nil {
 				return nil, err
 			}
+			c.mu.Lock()
+			c.grantLocked(true)
+			c.mu.Unlock()
 			check.Reset(c.checkEvery)
 		}
 	}
@@ -521,6 +812,7 @@ func (c *screenClient) restart(why string) error {
 		}
 	}
 	c.restarts = append(recent, now)
+	c.failed++
 	tooMany := len(c.restarts) > 3
 	c.mu.Unlock()
 	if tooMany {
@@ -536,6 +828,55 @@ func (c *screenClient) restart(why string) error {
 		return fmt.Errorf("%s, and could not be restarted: %w", why, err)
 	}
 	return nil
+}
+
+// grantLocked gives the helper a credit when it has none and the browser has
+// room; floor gives one anyway when none has been given for a second, so a
+// browser that stopped drawing does not stop the recording. c.mu is held.
+func (c *screenClient) grantLocked(floor bool) {
+	if c.holding || c.closed || c.helper == nil {
+		return
+	}
+	room := !c.acks || c.marked-c.acked < screenWindow
+	if !room && !(floor && time.Since(c.granted) >= screenAckFloor) {
+		return
+	}
+	if writeScreenMsg(c.helper, scrNext, nil) == nil {
+		c.holding, c.granted = true, time.Now()
+	}
+}
+
+// TakeMark returns the mark of the frame that just ended, if one did since
+// it was last asked, and the last measured round trip to the browser.
+func (c *screenClient) TakeMark() (uint32, time.Duration, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mark == 0 {
+		return 0, 0, false
+	}
+	id := c.mark
+	c.mark = 0
+	c.markedAt[id%uint32(len(c.markedAt))] = time.Now()
+	return id, c.rtt, true
+}
+
+// Ack is the browser saying it has drawn every frame up to id.
+func (c *screenClient) Ack(id uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if id == 0 || id > c.marked {
+		return
+	}
+	c.acks = true
+	if c.marked-id < uint32(len(c.markedAt)) {
+		if at := c.markedAt[id%uint32(len(c.markedAt))]; !at.IsZero() {
+			c.rtt = time.Since(at)
+		}
+	}
+	if id > c.acked {
+		c.acked = id
+	}
+	c.grantLocked(false)
 }
 
 func (c *screenClient) record(v any) {

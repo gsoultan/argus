@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"testing"
+	"time"
 )
 
 // fastPathUpdate wraps an update payload in a Fast-Path output PDU.
@@ -221,5 +222,24 @@ func TestEncodeBitmap(t *testing.T) {
 	raw := EncodeBitmap(Bitmap{Width: 1, Height: 1, BPP: 24, Data: []byte{1, 2, 3}})
 	if raw[1] != 24 {
 		t.Errorf("an uncompressed bitmap's format = %#x, want 24 with no RLE bit", raw[1])
+	}
+}
+
+// A mark carries its id and the round trip, and has no size: a reader that
+// does not know the kind skips exactly its twelve bytes.
+func TestMarkRoundTripsAndHasNoSize(t *testing.T) {
+	f := EncodeMark(0xDEADBEEF, 1234*time.Millisecond)
+	if len(f) != FrameHeaderSize || f[0] != FrameMark {
+		t.Fatalf("mark is %x", f)
+	}
+	if f[6] != 0 || f[7] != 0 || f[8] != 0 || f[9] != 0 {
+		t.Errorf("a mark has a size: %x", f[6:10])
+	}
+	id, rtt, ok := ParseMark(f)
+	if !ok || id != 0xDEADBEEF || rtt != 1234*time.Millisecond {
+		t.Errorf("parsed %x %v %v", id, rtt, ok)
+	}
+	if _, rtt, _ := ParseMark(EncodeMark(1, time.Hour)); rtt != 0xFFFF*time.Millisecond {
+		t.Errorf("a long round trip read back as %v", rtt)
 	}
 }
