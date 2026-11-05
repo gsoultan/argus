@@ -3,6 +3,7 @@ package control
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -152,6 +153,10 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 		// Or an editor of the database a change is for, where its editors
 		// approve each other's changes.
 		db, ok, err := a.decidesAsEditor(r.Context(), sess.Email, r.PathValue("id"))
+		if errors.Is(err, ErrRequestNotFound) {
+			writeErr(w, http.StatusNotFound, "no such request; it may have been removed")
+			return
+		}
 		if err != nil {
 			a.fail(w, "decide", err)
 			return
@@ -201,21 +206,34 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, ErrAlreadyDecided) {
+		// Someone else decided it, or the person who asked took it back,
+		// while it was on this approver's screen. Their alert is stale too.
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
+	if errors.Is(err, ErrRequestNotFound) {
+		writeErr(w, http.StatusNotFound, "no such request; it may have been removed")
+		return
+	}
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		a.fail(w, "decide", err)
 		return
 	}
 
-	action := "request.approve"
-	severity := "notice"
-	detail := "Approved " + out.Principal + " for " + out.RequesterEmail +
-		", expiring " + out.ExpiresAt.Format("15:04:05 MST") + "."
+	// Worked out per decision: a denial has no expiry. Building the
+	// approval's words first dereferenced it and crashed every denial after
+	// it had committed, which a proxy in front answered as a 502.
+	action, severity := "request.approve", "notice"
+	var detail string
 	if in.Decision == "denied" {
 		action = "request.deny"
 		detail = "Denied " + out.Principal + " for " + out.RequesterEmail + ": " + in.Note
+	} else {
+		detail = "Approved " + out.Principal + " for " + out.RequesterEmail + "."
+		if out.ExpiresAt != nil {
+			detail = "Approved " + out.Principal + " for " + out.RequesterEmail +
+				", expiring " + out.ExpiresAt.UTC().Format("15:04:05 MST") + "."
+		}
 	}
 	if asEditor != "" {
 		detail += " Decided as an editor of " + asEditor + "."
@@ -230,6 +248,7 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 		a.log.Error("audit append failed", "error", aerr)
 	}
 
+	a.closeRequestAlerts(r.Context(), out)
 	a.alertRequestDecided(r.Context(), out, in.Decision, sess.Email, in.Note)
 	a.log.Info("access request decided",
 		"decision", in.Decision, "by", sess.Email,
@@ -243,6 +262,113 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// postCancel takes back a pending request, for the person who asked.
+//
+// Before this existed, closing the console's wait only stopped the console
+// waiting: the request stayed pending in every approver's queue and bell,
+// and an approval given later was one nobody would use.
+func (a *API) postCancel(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in struct {
+		Note string `json:"note"`
+	}
+	if r.ContentLength != 0 {
+		if err := decode(r, &in); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	out, err := a.store.CancelRequest(r.Context(), r.PathValue("id"), sess.Email, clip(strings.TrimSpace(in.Note), 500))
+	switch {
+	case errors.Is(err, ErrRequestNotFound):
+		writeErr(w, http.StatusNotFound, "no such request")
+		return
+	case errors.Is(err, ErrNotYourRequest):
+		writeErr(w, http.StatusForbidden, err.Error()+"; an approver who does not want it denies it")
+		return
+	case errors.Is(err, ErrAlreadyDecided):
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		a.fail(w, "cancel request", err)
+		return
+	}
+	detail := "Cancelled their request for " + describeAsk(out.Principal, out.AssetHostnames) + " before it was decided."
+	if out.DecisionNote != nil {
+		detail += " " + *out.DecisionNote
+	}
+	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action:     "request.cancel",
+		Severity:   "info",
+		ActorEmail: sess.Email,
+		Target:     joinHosts(out.AssetHostnames),
+		Detail:     detail + " (request " + out.ID + ")",
+	}); aerr != nil {
+		a.log.Error("audit append failed", "error", aerr)
+	}
+	a.closeRequestAlerts(r.Context(), out)
+	if out.Principal == "db:restore" {
+		a.restoreCancelled(r.Context(), out.ID, sess.Email)
+	}
+	if out.Principal == statementPrincipal {
+		if asks, err := a.store.StatementAsks(r.Context(), []string{out.ID}); err == nil {
+			out.Statement = asks[out.ID]
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// getOneRequest reads one request, for whoever may see it in the list: the
+// queue's readers, the person who asked, and an editor deciding a change on
+// a database they edit. Anyone else is told it does not exist.
+//
+// An alert links to its request; by the time it is opened the request may
+// be decided or taken back, and the page has to say so rather than show
+// nothing.
+func (a *API) getOneRequest(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	req, dbID, err := a.store.Request(r.Context(), r.PathValue("id"))
+	if errors.Is(err, ErrRequestNotFound) {
+		writeErr(w, http.StatusNotFound, "no such request")
+		return
+	}
+	if err != nil {
+		a.fail(w, "request", err)
+		return
+	}
+	mine := strings.EqualFold(req.RequesterEmail, sess.Email)
+	if !seesRequestQueue(sess.Role) && !mine {
+		edits := false
+		if sess.Role != "auditor" && req.Principal == statementPrincipal && dbID != "" {
+			edited, err := a.store.EditedDatabases(r.Context(), sess.Email)
+			if err != nil {
+				a.fail(w, "request", err)
+				return
+			}
+			edits = slices.Contains(edited, dbID)
+		}
+		if !edits {
+			writeErr(w, http.StatusNotFound, "no such request")
+			return
+		}
+		req.AsEditor = true
+	}
+	one := []AccessRequest{req}
+	if err := a.hidePreviews(r.Context(), sess.Email, sess.Role, one); err != nil {
+		a.fail(w, "request", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, one[0])
 }
 
 // grantFor reports the caller's active grant, so the console can tell someone

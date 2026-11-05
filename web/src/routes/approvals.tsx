@@ -15,9 +15,10 @@ import { Mono, RequestStateBadge, absTime, relTime } from '~/components/primitiv
 import { FS, SP, INK } from '~/theme'
 import { notifyError, notifyWarn } from '~/lib/notify'
 import {
-  assetsQuery, directLoginsQuery, meQuery, requestsQuery, useCreateRequest, useDecideDirectLogin,
-  useDecideRequest,
+  assetsQuery, directLoginsQuery, meQuery, requestQuery, requestsQuery, useCancelRequest, useCreateRequest,
+  useDecideDirectLogin, useDecideRequest,
 } from '~/lib/queries'
+import { requestOutcome, settledMeanwhile } from '~/lib/requestOutcome'
 import { canSee } from '~/lib/roles'
 import { LoginAsPicker } from '~/components/LoginAsPicker'
 import { ChangeReview, ChangesTable } from '~/components/ChangeReview'
@@ -89,9 +90,25 @@ function Approvals() {
   const mine = me?.email.toLowerCase()
   const editing = !decides && (requests ?? []).some((r) => r.asEditor)
   const changes = (requests ?? []).filter((r) => r.statement && r.state === 'pending')
+  const navigate = Route.useNavigate()
   const [reviewId, setReviewId] = useState<string | null>(search.req ?? null)
   useEffect(() => { if (search.req) setReviewId(search.req) }, [search.req])
-  const review = reviewId ? (requests ?? []).find((r) => r.id === reviewId) ?? null : null
+  // The request an alert links to is read on its own: by the time the alert
+  // is opened it may be decided or taken back, and so missing from the queue.
+  // It used to be looked up in the queue only, and the link opened nothing.
+  const one = useQuery({ ...requestQuery(reviewId ?? ''), enabled: !!reviewId })
+  const review = reviewId ? (requests ?? []).find((r) => r.id === reviewId) ?? one.data ?? null : null
+  const closeReview = () => {
+    setReviewId(null)
+    // Off the address too, so the same alert opens it again.
+    if (search.req) void navigate({ search: (s) => ({ ...s, req: undefined }), replace: true })
+  }
+  useEffect(() => {
+    if (reviewId && one.isError && !(requests ?? []).some((r) => r.id === reviewId)) {
+      notifyWarn('Request not found', 'It does not exist, or it is not one you can see.')
+      closeReview()
+    }
+  }, [reviewId, one.isError])
   const mayDecide = (r: AccessRequest) => (decides || !!r.asEditor) && r.requesterEmail.toLowerCase() !== mine
 
   return (
@@ -160,6 +177,7 @@ function Approvals() {
               <RequestCard
                 key={r.id}
                 request={r}
+                mine={!!mine && r.requesterEmail.toLowerCase() === mine}
                 // The control plane refuses a decision from anyone else, and
                 // refuses anyone deciding their own, so neither gets the buttons.
                 canDecide={mayDecide(r)}
@@ -199,7 +217,13 @@ function Approvals() {
       </PageBody>
 
       <NewRequestModal opened={newOpen} onClose={newModal.close} host={search.ask} account={search.as} />
-      {review && <ChangeReview request={review} canDecide={mayDecide(review)} onClose={() => setReviewId(null)} />}
+      {review?.statement && <ChangeReview request={review} canDecide={mayDecide(review)} me={me?.email} onClose={closeReview} />}
+      {review && !review.statement && (
+        <Modal opened onClose={closeReview} size="lg" centered title={<Text fw={650}>Access request</Text>}>
+          <RequestCard request={review} canDecide={mayDecide(review)} mine={review.requesterEmail.toLowerCase() === mine}
+            onReview={() => undefined} onDecided={closeReview} />
+        </Modal>
+      )}
     </Box>
   )
 }
@@ -322,8 +346,29 @@ function StatementList({ ask }: { ask: StatementAsk }) {
   )
 }
 
-function RequestCard({ request: r, canDecide, onReview }: { request: AccessRequest; canDecide: boolean; onReview: () => void }) {
+function RequestCard({ request: r, canDecide, mine, onReview, onDecided }: {
+  request: AccessRequest
+  canDecide: boolean
+  /** The reader asked for it, so may cancel it while it waits. */
+  mine?: boolean
+  onReview: () => void
+  onDecided?: () => void
+}) {
   const decide = useDecideRequest()
+  const cancel = useCancelRequest()
+  const { data: me } = useQuery(meQuery())
+  const outcome = requestOutcome(r, me?.email)
+
+  const onCancel = async () => {
+    try {
+      await cancel.mutateAsync(r.id)
+    } catch (err) {
+      if (settledMeanwhile(err)) notifyWarn('Already decided', err instanceof Error ? err.message : String(err))
+      else notifyError('Request not cancelled', err)
+      return
+    }
+    notifications.show({ color: 'slate', title: 'Request cancelled', message: 'Approvers no longer see it as waiting.' })
+  }
   const [note, setNote] = useState('')
   const [expanded, setExpanded] = useState(false)
 
@@ -339,12 +384,19 @@ function RequestCard({ request: r, canDecide, onReview }: { request: AccessReque
     try {
       await decide.mutateAsync({ id: r.id, decision, note })
     } catch (err) {
+      // Decided by someone else, or taken back by the person who asked,
+      // while it was on screen. The list is refetched and shows how.
+      if (settledMeanwhile(err)) {
+        notifyWarn('Nothing to decide', err instanceof Error ? err.message : String(err))
+        return
+      }
       notifyError(
         decision === 'approved' ? 'Access not granted' : 'Request not denied',
         err,
       )
       return
     }
+    onDecided?.()
     notifications.show({
       color: decision === 'approved' ? 'teal' : 'rose',
       title: decision === 'approved' ? 'Access granted' : 'Request denied',
@@ -433,18 +485,25 @@ function RequestCard({ request: r, canDecide, onReview }: { request: AccessReque
         </Box>
       </Group>
 
-      {!pending && (
+      {outcome && (
         <Box pt="xs" style={{ borderTop: '1px solid var(--color-line)' }}>
           <Text size={FS.micro} c="dimmed">
-            {r.state} by <Mono>{r.decidedByEmail}</Mono> · {absTime(r.decidedAt)}
-            {r.decisionNote && ` — ${r.decisionNote}`}
+            {outcome.title} · {absTime(r.decidedAt)}
+            {outcome.detail && ` — ${outcome.detail}`}
           </Text>
         </Box>
       )}
 
       {pending && !canDecide && (
         <Box pt="xs" style={{ borderTop: '1px solid var(--color-line)' }}>
-          <Text size={FS.micro} c="dimmed">{r.statement ? 'Waiting for someone else to decide. Never you.' : 'Waiting for an approver.'}</Text>
+          <Group justify="space-between" gap="xs">
+            <Text size={FS.micro} c="dimmed">{r.statement ? 'Waiting for someone else to decide. Never you.' : 'Waiting for an approver.'}</Text>
+            {mine && (
+              <Button size="compact-xs" variant="subtle" color="rose" loading={cancel.isPending} onClick={() => void onCancel()}>
+                Cancel request
+              </Button>
+            )}
+          </Group>
         </Box>
       )}
 

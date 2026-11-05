@@ -34,24 +34,42 @@ func (a *API) alertRequestWaiting(ctx context.Context, req AccessRequest) {
 	}
 	a.raiseAlert(ctx, ConsoleAlert{
 		Kind: AlertApproval, Severity: sev, Audience: AudienceDeciders, Actor: req.RequesterEmail,
-		Title: title, Detail: req.Justification, Link: requestLink(req),
+		Title: title, Detail: req.Justification, Link: requestLink(req), Subject: requestSubject(req.ID),
 	})
 }
 
-// requestLink is where a request is decided: a change request opens for
-// review.
+// requestLink is where a request is decided: Approvals, opened on that
+// request (a change request opens for review).
 func requestLink(req AccessRequest) string {
-	if req.Principal == statementPrincipal && req.ID != "" {
+	if req.ID != "" {
 		return changeLink(req.ID)
 	}
 	return "/approvals"
+}
+
+// closeRequestAlerts closes what asked anyone to decide req, saying how it
+// ended.
+func (a *API) closeRequestAlerts(ctx context.Context, req AccessRequest) {
+	by := deref(req.DecidedByEmail)
+	var how string
+	switch req.State {
+	case "approved":
+		how = "Approved by " + by
+	case "denied":
+		how = "Denied by " + by
+	case "cancelled":
+		how = "Cancelled by " + by
+	default:
+		how = "No longer waiting"
+	}
+	a.closeAlerts(ctx, requestSubject(req.ID), how)
 }
 
 // alertRequestDecided tells the person who asked.
 func (a *API) alertRequestDecided(ctx context.Context, req AccessRequest, decision, by, note string) {
 	what := describeAsk(req.Principal, req.AssetHostnames)
 	al := ConsoleAlert{Kind: AlertApproval, Audience: AudiencePerson, Recipient: req.RequesterEmail,
-		Actor: by, Link: "/approvals"}
+		Actor: by, Link: changeLink(req.ID)}
 	if decision == "approved" {
 		al.Title = "Your request for " + what + " was approved"
 		al.Detail = "Approved by " + by + "."
@@ -72,7 +90,7 @@ func (a *API) alertDirectLoginWaiting(ctx context.Context, d DirectLogin) {
 		Kind: AlertApproval, Severity: "warning", Audience: AudienceDeciders,
 		Title:  "Direct login waiting on " + d.Hostname + " as " + d.Principal,
 		Detail: describeDirectLogin(d) + ". The server holds it until someone decides.",
-		Link:   "/approvals",
+		Link:   "/approvals", Subject: "direct-login:" + d.ID,
 	})
 }
 

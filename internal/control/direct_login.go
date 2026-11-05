@@ -565,6 +565,11 @@ func (a *API) postDirectLoginDecision(w http.ResponseWriter, r *http.Request) {
 	if _, err := a.store.AppendAudit(r.Context(), e); err != nil {
 		a.log.Error("audit append failed", "error", err)
 	}
+	how := "Denied by " + sess.Email
+	if in.Approve {
+		how = "Approved by " + sess.Email
+	}
+	a.closeAlerts(r.Context(), "direct-login:"+d.ID, how)
 	writeJSON(w, http.StatusOK, d)
 }
 

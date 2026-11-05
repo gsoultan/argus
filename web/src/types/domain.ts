@@ -671,7 +671,8 @@ export type RiskFlag =
 
 /* ── Access requests (JIT) ───────────────────────────────────────────────── */
 
-export type RequestState = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked'
+/** cancelled: the person who asked took it back before anyone decided. */
+export type RequestState = 'pending' | 'approved' | 'denied' | 'expired' | 'revoked' | 'cancelled'
 
 export interface AccessRequest {
   id: UUID
@@ -716,7 +717,7 @@ export interface StatementAsk {
   databaseLabel?: DBLabel
   items: StatementItem[]
   summary?: Record<string, unknown>
-  /** pending, approved, denied or expired. */
+  /** pending, approved, denied, cancelled or expired. */
   state: string
   expiresAt?: string
   decidedBy?: string | null
@@ -1084,7 +1085,7 @@ export interface DatabaseBackup {
   reportedAt: string
 }
 
-export type RestoreState = 'pending' | 'denied' | 'running' | 'done' | 'failed' | 'undone'
+export type RestoreState = 'pending' | 'denied' | 'cancelled' | 'running' | 'done' | 'failed' | 'undone'
 
 /** One restore: into a new database, or over the existing one. */
 export interface DatabaseRestore {

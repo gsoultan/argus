@@ -44,11 +44,14 @@ export type StreamStatus = 'fixture' | 'connecting' | 'live' | 'reconnecting' | 
 
 export type StreamEvent =
   | { type: 'alert'; alert: ConsoleAlert }
+  /** Alerts whose request was decided or taken back: nothing to act on now. */
+  | { type: 'closed'; seqs: number[] }
   | { type: 'ready' | 'read' }
   | { type: 'end' }
 
 /** Whether an alert is one someone has to act on, which earns the chime. */
 export function urgent(a: ConsoleAlert): boolean {
+  if (a.closed) return false
   return a.kind === 'security' || (a.kind === 'approval' && a.severity !== 'info')
 }
 

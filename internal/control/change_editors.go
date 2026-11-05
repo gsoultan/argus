@@ -147,13 +147,13 @@ func (s *Store) EditedDatabases(ctx context.Context, email string) ([]string, er
 // if any.
 func (s *Store) requestDatabase(ctx context.Context, id string) (principal, dbID string, err error) {
 	if !uuidRE.MatchString(id) {
-		return "", "", fmt.Errorf("request not found")
+		return "", "", ErrRequestNotFound
 	}
 	var db *string
 	err = s.db(ctx).QueryRow(ctx,
 		`SELECT principal, database_id::text FROM access_requests WHERE id = $1::uuid`, id).Scan(&principal, &db)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", fmt.Errorf("request not found")
+		return "", "", ErrRequestNotFound
 	}
 	if err != nil {
 		return "", "", err
@@ -251,7 +251,7 @@ func (a *API) alertEditorsWaiting(ctx context.Context, db Database, req AccessRe
 			Actor:  req.RequesterEmail,
 			Title:  req.RequesterEmail + " asks you to approve a change on " + db.Name,
 			Detail: about + ", as an editor of " + db.Name + ". " + also + " " + req.Justification,
-			Link:   changeLink(req.ID),
+			Link:   changeLink(req.ID), Subject: requestSubject(req.ID),
 		})
 	}
 }

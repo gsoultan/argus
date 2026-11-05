@@ -7,7 +7,8 @@ import { IconAlertTriangle, IconCheck, IconDatabase, IconShieldCheck, IconX } fr
 import { relTime } from '~/components/primitives'
 import { EnvBadge, ImpactText, ImpactTiles, PreviewRows } from '~/components/ChangeImpact'
 import { BIG_CHANGE, impactOf, impactWords, shortName } from '~/lib/changeApproval'
-import { notifyError } from '~/lib/notify'
+import { notifyError, notifyWarn } from '~/lib/notify'
+import { requestOutcome, settledMeanwhile } from '~/lib/requestOutcome'
 import { useDecideRequest } from '~/lib/queries'
 import { FS } from '~/theme'
 import type { AccessRequest } from '~/types/domain'
@@ -70,7 +71,7 @@ export function ChangesTable({ reqs, mine, onOpen }: { reqs: AccessRequest[]; mi
 }
 
 /** One change request, opened: what it changes, and the decision. */
-export function ChangeReview({ request: r, canDecide, onClose }: { request: AccessRequest | null; canDecide: boolean; onClose: () => void }) {
+export function ChangeReview({ request: r, canDecide, onClose, me }: { request: AccessRequest | null; canDecide: boolean; onClose: () => void; me?: string }) {
   const decide = useDecideRequest()
   const [note, setNote] = useState('')
   const [tab, setTab] = useState<string | null>('rows')
@@ -83,6 +84,7 @@ export function ChangeReview({ request: r, canDecide, onClose }: { request: Acce
   const preview = impact.preview ?? []
   const hidden = !preview.length && (impact.rows ?? 0) > 0 && impact.checked
   const pending = r.state === 'pending'
+  const outcome = requestOutcome(r, me)
 
   const onDecide = async (decision: 'approved' | 'denied') => {
     if (decision === 'denied' && note.trim().length < MIN_DENIAL_NOTE) {
@@ -92,7 +94,9 @@ export function ChangeReview({ request: r, canDecide, onClose }: { request: Acce
     try {
       await decide.mutateAsync({ id: r.id, decision, note })
     } catch (err) {
-      notifyError(decision === 'approved' ? 'Not approved' : 'Not denied', err)
+      // Settled while it was open: the review stays, and its banner says how.
+      if (settledMeanwhile(err)) notifyWarn('Nothing to decide', err instanceof Error ? err.message : String(err))
+      else notifyError(decision === 'approved' ? 'Not approved' : 'Not denied', err)
       return
     }
     notifications.show({
@@ -115,6 +119,12 @@ export function ChangeReview({ request: r, canDecide, onClose }: { request: Acce
         </Group>
       }>
       <Stack gap="sm">
+        {outcome && (
+          <Alert variant="light" color={outcome.color} title={outcome.title}>
+            {outcome.detail && <Text size={FS.meta}>{outcome.detail}</Text>}
+            {r.decidedAt && <Text size={FS.micro} c="dimmed">{relTime(r.decidedAt)}</Text>}
+          </Alert>
+        )}
         <Group justify="space-between" align="flex-start" wrap="nowrap">
           <Text size={FS.meta} c="dimmed">
             {n === 1 ? '1 statement' : `${n} statements`} · asked {relTime(r.createdAt)}
@@ -183,7 +193,7 @@ export function ChangeReview({ request: r, canDecide, onClose }: { request: Acce
             {r.requesterEmail.length && !canDecide ? 'Waiting for someone else to decide. You never decide your own.' : ''}
           </Text>
         ) : (
-          <Text size={FS.meta} c="dimmed">{r.state} by {r.decidedByEmail}{r.decisionNote ? `: ${r.decisionNote}` : ''}</Text>
+          <Group justify="flex-end"><Button variant="default" onClick={onClose}>Close</Button></Group>
         )}
       </Stack>
     </Modal>

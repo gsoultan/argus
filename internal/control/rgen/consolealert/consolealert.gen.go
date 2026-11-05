@@ -30,6 +30,9 @@ type Row struct {
 	Title     string
 	Detail    string
 	Link      string
+	Subject   string
+	Closed    string
+	ClosedAt  runtime.Null[time.Time]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -68,7 +71,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 10
+const nCols = 13
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -250,6 +253,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.Link
 		q.ns++
+	case 10:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Subject
+		q.ns++
+	case 11:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Closed
+		q.ns++
+	case 12:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.ClosedAt.V
+		q.ntm++
 	}
 }
 
@@ -417,6 +441,9 @@ var (
 	Title     = TextCol{7}
 	Detail    = TextCol{8}
 	Link      = TextCol{9}
+	Subject   = TextCol{10}
+	Closed    = TextCol{11}
+	ClosedAt  = NullTimeCol{12}
 )
 
 // Int64Col addresses a int8 column.
@@ -490,6 +517,27 @@ func (h TextCol) In(v ...string) Pred   { return Pred{col: h.c, op: opIn, anyStr
 // comparison NULL for every row and the result empty —
 // PostgreSQL's rule for NOT IN, not storm's.
 func (h TextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
+
+// NullTimeCol addresses a timestamptz column.
+type NullTimeCol struct{ c uint8 }
+
+func (h NullTimeCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullTimeCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullTimeCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullTimeCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullTimeCol) Eq(v time.Time) Pred    { return Pred{col: h.c, op: opEq, tim: v} }
+func (h NullTimeCol) NotEq(v time.Time) Pred { return Pred{col: h.c, op: opNotEq, tim: v} }
+func (h NullTimeCol) Gt(v time.Time) Pred    { return Pred{col: h.c, op: opGt, tim: v} }
+func (h NullTimeCol) Gte(v time.Time) Pred   { return Pred{col: h.c, op: opGte, tim: v} }
+func (h NullTimeCol) Lt(v time.Time) Pred    { return Pred{col: h.c, op: opLt, tim: v} }
+func (h NullTimeCol) Lte(v time.Time) Pred   { return Pred{col: h.c, op: opLte, tim: v} }
+func (h NullTimeCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
+func (h NullTimeCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -695,6 +743,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 10:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 11:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -774,6 +836,27 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 10:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 11:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 12:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -881,8 +964,38 @@ func (q Query) LinkLike(v string) Query          { return q.Where(Link.Like(v)) 
 func (q Query) LinkILike(v string) Query         { return q.Where(Link.ILike(v)) }
 func (q Query) LinkIn(v ...string) Query         { return q.Where(Link.In(v...)) }
 func (q Query) LinkNotIn(v ...string) Query      { return q.Where(Link.NotIn(v...)) }
+func (q Query) SubjectEq(v string) Query         { return q.Where(Subject.Eq(v)) }
+func (q Query) SubjectNotEq(v string) Query      { return q.Where(Subject.NotEq(v)) }
+func (q Query) SubjectGt(v string) Query         { return q.Where(Subject.Gt(v)) }
+func (q Query) SubjectGte(v string) Query        { return q.Where(Subject.Gte(v)) }
+func (q Query) SubjectLt(v string) Query         { return q.Where(Subject.Lt(v)) }
+func (q Query) SubjectLte(v string) Query        { return q.Where(Subject.Lte(v)) }
+func (q Query) SubjectEqLower(v string) Query    { return q.Where(Subject.EqLower(v)) }
+func (q Query) SubjectLike(v string) Query       { return q.Where(Subject.Like(v)) }
+func (q Query) SubjectILike(v string) Query      { return q.Where(Subject.ILike(v)) }
+func (q Query) SubjectIn(v ...string) Query      { return q.Where(Subject.In(v...)) }
+func (q Query) SubjectNotIn(v ...string) Query   { return q.Where(Subject.NotIn(v...)) }
+func (q Query) ClosedEq(v string) Query          { return q.Where(Closed.Eq(v)) }
+func (q Query) ClosedNotEq(v string) Query       { return q.Where(Closed.NotEq(v)) }
+func (q Query) ClosedGt(v string) Query          { return q.Where(Closed.Gt(v)) }
+func (q Query) ClosedGte(v string) Query         { return q.Where(Closed.Gte(v)) }
+func (q Query) ClosedLt(v string) Query          { return q.Where(Closed.Lt(v)) }
+func (q Query) ClosedLte(v string) Query         { return q.Where(Closed.Lte(v)) }
+func (q Query) ClosedEqLower(v string) Query     { return q.Where(Closed.EqLower(v)) }
+func (q Query) ClosedLike(v string) Query        { return q.Where(Closed.Like(v)) }
+func (q Query) ClosedILike(v string) Query       { return q.Where(Closed.ILike(v)) }
+func (q Query) ClosedIn(v ...string) Query       { return q.Where(Closed.In(v...)) }
+func (q Query) ClosedNotIn(v ...string) Query    { return q.Where(Closed.NotIn(v...)) }
+func (q Query) ClosedAtEq(v time.Time) Query     { return q.Where(ClosedAt.Eq(v)) }
+func (q Query) ClosedAtNotEq(v time.Time) Query  { return q.Where(ClosedAt.NotEq(v)) }
+func (q Query) ClosedAtGt(v time.Time) Query     { return q.Where(ClosedAt.Gt(v)) }
+func (q Query) ClosedAtGte(v time.Time) Query    { return q.Where(ClosedAt.Gte(v)) }
+func (q Query) ClosedAtLt(v time.Time) Query     { return q.Where(ClosedAt.Lt(v)) }
+func (q Query) ClosedAtLte(v time.Time) Query    { return q.Where(ClosedAt.Lte(v)) }
+func (q Query) ClosedAtIsNull() Query            { return q.Where(ClosedAt.IsNull()) }
+func (q Query) ClosedAtIsNotNull() Query         { return q.Where(ClosedAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "seq", "at", "kind", "severity", "audience", "recipient", "actor", "title", "detail", "link" FROM "console_alerts"`
+const selectPrefix = `SELECT "seq", "at", "kind", "severity", "audience", "recipient", "actor", "title", "detail", "link", "subject", "closed", "closed_at" FROM "console_alerts"`
 const countPrefix = `SELECT count(*) FROM "console_alerts"`
 const existsPrefix = `SELECT 1 FROM "console_alerts"`
 const existsSuffix = ` LIMIT 1`
@@ -979,6 +1092,24 @@ var orderTable = [nCols][4]string{
 		"\"link\" ASC NULLS FIRST",
 		"\"link\" DESC NULLS LAST",
 	},
+	{ // subject
+		"\"subject\"",
+		"\"subject\" DESC",
+		"\"subject\" ASC NULLS FIRST",
+		"\"subject\" DESC NULLS LAST",
+	},
+	{ // closed
+		"\"closed\"",
+		"\"closed\" DESC",
+		"\"closed\" ASC NULLS FIRST",
+		"\"closed\" DESC NULLS LAST",
+	},
+	{ // closed_at
+		"\"closed_at\"",
+		"\"closed_at\" DESC",
+		"\"closed_at\" ASC NULLS FIRST",
+		"\"closed_at\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -994,6 +1125,9 @@ var identTable = [nCols]string{
 	"\"title\"",
 	"\"detail\"",
 	"\"link\"",
+	"\"subject\"",
+	"\"closed\"",
+	"\"closed_at\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1026,7 +1160,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [10][28]runtime.Frag{
+var fragTable = [13][28]runtime.Frag{
 	{ // seq
 		{}, // opNone
 		{A: "\"seq\" = $", B: ""},
@@ -1327,6 +1461,96 @@ var fragTable = [10][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // subject
+		{}, // opNone
+		{A: "\"subject\" = $", B: ""},
+		{A: "\"subject\" <> $", B: ""},
+		{A: "\"subject\" > $", B: ""},
+		{A: "\"subject\" >= $", B: ""},
+		{A: "\"subject\" < $", B: ""},
+		{A: "\"subject\" <= $", B: ""},
+		{A: "lower(\"subject\") = lower($", B: ")"},
+		{A: "\"subject\" LIKE $", B: ""},
+		{A: "\"subject\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"subject\" = ANY($", B: ")"},
+		{A: "\"subject\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // closed
+		{}, // opNone
+		{A: "\"closed\" = $", B: ""},
+		{A: "\"closed\" <> $", B: ""},
+		{A: "\"closed\" > $", B: ""},
+		{A: "\"closed\" >= $", B: ""},
+		{A: "\"closed\" < $", B: ""},
+		{A: "\"closed\" <= $", B: ""},
+		{A: "lower(\"closed\") = lower($", B: ")"},
+		{A: "\"closed\" LIKE $", B: ""},
+		{A: "\"closed\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"closed\" = ANY($", B: ")"},
+		{A: "\"closed\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // closed_at
+		{}, // opNone
+		{A: "\"closed_at\" = $", B: ""},
+		{A: "\"closed_at\" <> $", B: ""},
+		{A: "\"closed_at\" > $", B: ""},
+		{A: "\"closed_at\" >= $", B: ""},
+		{A: "\"closed_at\" < $", B: ""},
+		{A: "\"closed_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"closed_at\" IS NULL", B: ""},
+		{A: "\"closed_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1493,6 +1717,9 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Title = sl.Str(rv[7])
 	r.Detail = sl.Str(rv[8])
 	r.Link = sl.Str(rv[9])
+	r.Subject = sl.Str(rv[10])
+	r.Closed = sl.Str(rv[11])
+	r.ClosedAt = runtime.Nullable(rv[12], runtime.Timestamptz)
 	return nil
 }
 
@@ -1593,6 +1820,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 10:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 11:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -1637,6 +1872,18 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 10:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 11:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 12:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		}
 	}
 	b.vals = v
@@ -1774,7 +2021,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "console_alerts" ("seq", "at", "kind", "severity", "audience", "recipient", "actor", "title", "detail", "link") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING "seq", "at", "kind", "severity", "audience", "recipient", "actor", "title", "detail", "link"`
+const insertSQL = `INSERT INTO "console_alerts" ("seq", "at", "kind", "severity", "audience", "recipient", "actor", "title", "detail", "link", "subject", "closed", "closed_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING "seq", "at", "kind", "severity", "audience", "recipient", "actor", "title", "detail", "link", "subject", "closed", "closed_at"`
 
 const updatePrefix = `UPDATE "console_alerts" SET `
 const deletePrefix = `DELETE FROM "console_alerts"`
@@ -1791,9 +2038,12 @@ const (
 	dTitle     uint64 = 1 << 6
 	dDetail    uint64 = 1 << 7
 	dLink      uint64 = 1 << 8
+	dSubject   uint64 = 1 << 9
+	dClosed    uint64 = 1 << 10
+	dClosedAt  uint64 = 1 << 11
 )
 
-const nUpdatable = 9
+const nUpdatable = 12
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1806,21 +2056,27 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"title\" = $", B: ""},     // title
 	{A: "\"detail\" = $", B: ""},    // detail
 	{A: "\"link\" = $", B: ""},      // link
+	{A: "\"subject\" = $", B: ""},   // subject
+	{A: "\"closed\" = $", B: ""},    // closed
+	{A: "\"closed_at\" = $", B: ""}, // closed_at
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
 // of a bound value. A zero Frag means the column admits none. None of
 // these end in a placeholder sigil, so none consumes an argument slot.
 var exprFrags = [nUpdatable]runtime.Frag{
-	{A: "\"at\" = now()", B: ""}, // at = the database's clock
-	{},                           // kind has no server-side form
-	{},                           // severity has no server-side form
-	{},                           // audience has no server-side form
-	{},                           // recipient has no server-side form
-	{},                           // actor has no server-side form
-	{},                           // title has no server-side form
-	{},                           // detail has no server-side form
-	{},                           // link has no server-side form
+	{A: "\"at\" = now()", B: ""},        // at = the database's clock
+	{},                                  // kind has no server-side form
+	{},                                  // severity has no server-side form
+	{},                                  // audience has no server-side form
+	{},                                  // recipient has no server-side form
+	{},                                  // actor has no server-side form
+	{},                                  // title has no server-side form
+	{},                                  // detail has no server-side form
+	{},                                  // link has no server-side form
+	{},                                  // subject has no server-side form
+	{},                                  // closed has no server-side form
+	{A: "\"closed_at\" = now()", B: ""}, // closed_at = the database's clock
 }
 
 // pkFrags addresses one row.
@@ -1842,9 +2098,12 @@ const (
 	iTitle     uint64 = 1 << 7
 	iDetail    uint64 = 1 << 8
 	iLink      uint64 = 1 << 9
+	iSubject   uint64 = 1 << 10
+	iClosed    uint64 = 1 << 11
+	iClosedAt  uint64 = 1 << 12
 )
 
-const nInsertable = 10
+const nInsertable = 13
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1858,6 +2117,9 @@ var insCols = [nInsertable]string{
 	"\"title\"",
 	"\"detail\"",
 	"\"link\"",
+	"\"subject\"",
+	"\"closed\"",
+	"\"closed_at\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1866,7 +2128,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"console_alerts\""
-const insReturning = " RETURNING \"seq\", \"at\", \"kind\", \"severity\", \"audience\", \"recipient\", \"actor\", \"title\", \"detail\", \"link\""
+const insReturning = " RETURNING \"seq\", \"at\", \"kind\", \"severity\", \"audience\", \"recipient\", \"actor\", \"title\", \"detail\", \"link\", \"subject\", \"closed\", \"closed_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1885,7 +2147,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"seq\", \"at\", \"kind\", \"severity\", \"audience\", \"recipient\", \"actor\", \"title\", \"detail\", \"link\""
+const updReturning = " RETURNING \"seq\", \"at\", \"kind\", \"severity\", \"audience\", \"recipient\", \"actor\", \"title\", \"detail\", \"link\", \"subject\", \"closed\", \"closed_at\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -1998,6 +2260,43 @@ func (m *Mut) SetLink(v string) {
 	m.expr &^= dLink
 }
 
+func (m *Mut) SetSubject(v string) {
+	m.row.Subject = v
+	m.dirty |= dSubject
+	m.expr &^= dSubject
+}
+
+func (m *Mut) SetClosed(v string) {
+	m.row.Closed = v
+	m.dirty |= dClosed
+	m.expr &^= dClosed
+}
+
+func (m *Mut) SetClosedAt(v time.Time) {
+	m.row.ClosedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dClosedAt
+	m.expr &^= dClosedAt
+}
+
+// SetClosedAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetClosedAtNow() {
+	m.expr |= dClosedAt
+	m.dirty &^= dClosedAt
+}
+
+// SetClosedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetClosedAtNull() {
+	m.row.ClosedAt = runtime.Null[time.Time]{}
+	m.dirty |= dClosedAt
+	m.expr &^= dClosedAt
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2073,6 +2372,28 @@ func (n *Ins) SetLink(v string) {
 	n.set |= iLink
 }
 
+func (n *Ins) SetSubject(v string) {
+	n.row.Subject = v
+	n.set |= iSubject
+}
+
+func (n *Ins) SetClosed(v string) {
+	n.row.Closed = v
+	n.set |= iClosed
+}
+
+func (n *Ins) SetClosedAt(v time.Time) {
+	n.row.ClosedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iClosedAt
+}
+
+// SetClosedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetClosedAtNull() {
+	n.row.ClosedAt = runtime.Null[time.Time]{}
+	n.set |= iClosedAt
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2118,7 +2439,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 9)
+	set := make([]string, 0, 12)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2147,6 +2468,15 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<9) != 0 {
 			set = append(set, "link")
+		}
+		if mask&(1<<10) != 0 {
+			set = append(set, "subject")
+		}
+		if mask&(1<<11) != 0 {
+			set = append(set, "closed")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "closed_at")
 		}
 	}
 	return set
@@ -2205,6 +2535,9 @@ var assignFor = map[string]string{
 	"title":     "\"title\" = EXCLUDED.\"title\"",
 	"detail":    "\"detail\" = EXCLUDED.\"detail\"",
 	"link":      "\"link\" = EXCLUDED.\"link\"",
+	"subject":   "\"subject\" = EXCLUDED.\"subject\"",
+	"closed":    "\"closed\" = EXCLUDED.\"closed\"",
+	"closed_at": "\"closed_at\" = EXCLUDED.\"closed_at\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2268,6 +2601,12 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.Detail)
 		case 9:
 			args = append(args, n.row.Link)
+		case 10:
+			args = append(args, n.row.Subject)
+		case 11:
+			args = append(args, n.row.Closed)
+		case 12:
+			args = append(args, n.row.ClosedAt.Arg())
 		}
 	}
 	var out Row
@@ -2305,7 +2644,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 10)
+	args := make([]any, 0, 13)
 	args = append(args, r.Seq)
 	args = append(args, r.At)
 	args = append(args, r.Kind)
@@ -2316,6 +2655,9 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.Title)
 	args = append(args, r.Detail)
 	args = append(args, r.Link)
+	args = append(args, r.Subject)
+	args = append(args, r.Closed)
+	args = append(args, r.ClosedAt.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2352,13 +2694,16 @@ var copyCols = []string{
 	"title",
 	"detail",
 	"link",
+	"subject",
+	"closed",
+	"closed_at",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [10]any
+	buf  [13]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2386,6 +2731,9 @@ func (s *rowSource) Values() []any {
 	s.buf[7] = &r.Title
 	s.buf[8] = &r.Detail
 	s.buf[9] = &r.Link
+	s.buf[10] = &r.Subject
+	s.buf[11] = &r.Closed
+	s.buf[12] = r.ClosedAt.Ptr()
 	return s.buf[:]
 }
 
@@ -2426,8 +2774,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 7
 	mask |= 1 << 8
 	mask |= 1 << 9
+	mask |= 1 << 10
+	mask |= 1 << 11
+	mask |= 1 << 12
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 10)
+	args := make([]any, 0, 13)
 	args = append(args, r.Seq)
 	args = append(args, r.At)
 	args = append(args, r.Kind)
@@ -2438,6 +2789,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.Title)
 	args = append(args, r.Detail)
 	args = append(args, r.Link)
+	args = append(args, r.Subject)
+	args = append(args, r.Closed)
+	args = append(args, r.ClosedAt.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2491,6 +2845,12 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.Detail)
 		case 9:
 			args = append(args, n.row.Link)
+		case 10:
+			args = append(args, n.row.Subject)
+		case 11:
+			args = append(args, n.row.Closed)
+		case 12:
+			args = append(args, n.row.ClosedAt.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2555,6 +2915,12 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.Detail)
 		case 8:
 			args = append(args, m.row.Link)
+		case 9:
+			args = append(args, m.row.Subject)
+		case 10:
+			args = append(args, m.row.Closed)
+		case 11:
+			args = append(args, m.row.ClosedAt.Arg())
 		}
 	}
 	args = append(args, m.row.Seq)
@@ -2655,6 +3021,12 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.Detail)
 		case 8:
 			args = append(args, m.row.Link)
+		case 9:
+			args = append(args, m.row.Subject)
+		case 10:
+			args = append(args, m.row.Closed)
+		case 11:
+			args = append(args, m.row.ClosedAt.Arg())
 		}
 	}
 	args = append(args, m.row.Seq)
@@ -2821,6 +3193,12 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.Detail)
 		case 8:
 			args = append(args, m.row.Link)
+		case 9:
+			args = append(args, m.row.Subject)
+		case 10:
+			args = append(args, m.row.Closed)
+		case 11:
+			args = append(args, m.row.ClosedAt.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

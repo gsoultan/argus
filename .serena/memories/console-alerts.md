@@ -29,3 +29,23 @@ settings), `lib/alerts.ts` (queries, fixture, the shared stream).
   Desktop notifications are per browser (localStorage + permission).
 - Before this, `@mantine/notifications/styles.layer.css` was never imported, so
   every toast in the console rendered below the page, off screen.
+- **Alerts that ask someone to act close themselves (2026-11).** An alert
+  carries a `subject` (`request:<id>`, `direct-login:<id>`); when that request
+  is approved, denied or cancelled by its asker, `closeAlerts` sets `closed`
+  ("Approved by …", "Cancelled by …") and `closed_at`. A closed alert is not
+  unread, does not chime, and the stream sends a `closed` event with its seqs
+  so open consoles drop the pop-up and refetch Approvals. The cross-replica
+  poll picks up closings in the same query as new alerts (`seq > last OR
+  closed_at > closedAt`). The asker's own "was approved/denied" alert has no
+  subject: it is news, not a task.
+- **Requests can be cancelled** by the person who asked
+  (`POST /api/v1/requests/{id}/cancel`, state `cancelled`, audit
+  `request.cancel`). The statement-approval dialog cancels its ask when closed
+  while waiting, because nothing else can use a later approval. Deciding a
+  settled request answers 409 with who settled it (`requestClosed`).
+  `GET /api/v1/requests/{id}` is what an alert's `/approvals?req=` link opens,
+  so a stale link shows how it ended rather than nothing.
+- Before this, every Deny crashed after committing (the audit text
+  dereferenced a denial's nil expiry) and a proxy answered 502. Handlers now
+  run under `recoverPanics`, which answers 500 instead of dropping the
+  connection.

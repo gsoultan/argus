@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -218,7 +219,7 @@ func (a *API) Handler() http.Handler {
 	a.registerFleet(mux)
 	// scope first: the gate checks the cookie against the organization's
 	// own table, so it needs to know which one.
-	return a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))
+	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux)))))
 }
 
 // ConsoleHandler serves the surface a person reaches: sign-in, the console's
@@ -235,7 +236,7 @@ func (a *API) ConsoleHandler() http.Handler {
 	a.registerConsole(mux)
 	// scope first: the gate checks the cookie against the organization's
 	// own table, so it needs to know which one.
-	return a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))
+	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux)))))
 }
 
 // FleetHandler serves the surface gateways and agents reach.
@@ -249,7 +250,7 @@ func (a *API) FleetHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerFleet(mux)
-	return a.securityHeaders(a.cors(a.scope(mux)))
+	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(mux))))
 }
 
 // registerCommon adds what both surfaces need: liveness, and the process's own
@@ -336,6 +337,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("GET /api/v1/requests/accounts", a.getRequestAccounts)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)
+	mux.HandleFunc("POST /api/v1/requests/{id}/cancel", a.postCancel)
+	mux.HandleFunc("GET /api/v1/requests/{id}", a.getOneRequest)
 	mux.HandleFunc("GET /api/v1/direct-logins", a.user(a.getDirectLogins))
 	mux.HandleFunc("POST /api/v1/direct-logins/{id}/decision", a.postDirectLoginDecision)
 	mux.HandleFunc("GET /api/v1/grant", a.user(a.getGrant))
@@ -1038,6 +1041,32 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// recoverPanics answers a handler's panic with a 500 and logs it with its
+// stack, instead of letting net/http drop the connection: a proxy in front
+// reports a dropped connection as 502 Bad Gateway, which tells the operator
+// the control plane is unreachable when it answered every other request.
+// http.ErrAbortHandler is net/http's own way to abort and is passed on.
+func (a *API) recoverPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			v := recover()
+			if v == nil {
+				return
+			}
+			if v == http.ErrAbortHandler {
+				panic(v)
+			}
+			a.log.Error("handler panicked", "method", r.Method, "path", r.URL.Path,
+				"panic", fmt.Sprint(v), "stack", string(debug.Stack()))
+			a.errs.record(time.Now(), r.Method+" "+r.URL.Path, fmt.Sprint("panic: ", v))
+			// If the handler had started its answer this lands after it,
+			// which is still better than a connection cut mid-way.
+			writeErr(w, http.StatusInternalServerError, "internal error")
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // fail logs the real error and returns a generic one.

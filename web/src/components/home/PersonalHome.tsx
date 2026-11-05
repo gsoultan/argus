@@ -122,6 +122,7 @@ const REQUEST_STATE: Record<AccessRequest['state'], { label: string; color: stri
   denied: { label: 'Denied', color: 'rose' },
   expired: { label: 'Expired', color: 'slate' },
   revoked: { label: 'Revoked', color: 'slate' },
+  cancelled: { label: 'Cancelled', color: 'slate' },
 }
 
 function YourRequests({ me }: { me: User | undefined }) {

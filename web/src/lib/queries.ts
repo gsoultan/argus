@@ -126,7 +126,19 @@ export const sessionQuery = (id: string) =>
   queryOptions({ queryKey: qk.session(id), queryFn: () => api.session(id) })
 
 export const requestsQuery = (state?: AccessRequest['state']) =>
-  queryOptions({ queryKey: qk.requests(state), queryFn: () => api.requests(state) })
+  queryOptions({
+    queryKey: qk.requests(state),
+    queryFn: () => api.requests(state),
+    // The bell's stream refreshes this the moment a request is asked for,
+    // decided or taken back. The interval is the net under it, for a stream
+    // that is down, so a queue never shows a request as waiting for long
+    // after it stopped.
+    refetchInterval: state === 'pending' ? 30_000 : false,
+  })
+
+/** One request, as it stands now: what an alert's link opens. */
+export const requestQuery = (id: string) =>
+  queryOptions({ queryKey: ['requests', 'one', id] as const, queryFn: () => api.request(id), retry: false })
 
 /** Direct SSH logins: polled, since someone is waiting at a terminal. */
 export const directLoginsQuery = () =>
@@ -277,7 +289,22 @@ export function useDecideRequest() {
   return useMutation({
     mutationFn: (v: { id: string; decision: 'approved' | 'denied'; note: string }) =>
       api.decideRequest(v.id, v.decision, v.note),
-    onSuccess: () => {
+    // Settled, not only succeeded: a refusal because someone else decided it,
+    // or the asker took it back, is news the list has to show too.
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['requests'] })
+      void qc.invalidateQueries({ queryKey: qk.stats })
+      void qc.invalidateQueries({ queryKey: ['alerts', 'list'] })
+    },
+  })
+}
+
+/** Takes back the caller's own pending request. */
+export function useCancelRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.cancelRequest(id),
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['requests'] })
       void qc.invalidateQueries({ queryKey: qk.stats })
     },

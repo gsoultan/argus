@@ -99,6 +99,7 @@ class AlertStream {
     on('ready', () => ({ type: 'ready' }))
     on('read', () => ({ type: 'read' }))
     on('alert', (d) => ({ type: 'alert', alert: d as ConsoleAlert }))
+    on('closed', (d) => ({ type: 'closed', seqs: ((d as { seqs?: number[] } | null)?.seqs ?? []) }))
     on('end', () => {
       es.close()
       this.emit({ status: 'ended' }, true)
@@ -152,10 +153,18 @@ export function desktopPermission(): NotificationPermission | 'unsupported' {
  * Shows an alert as a desktop notification, from a tab nobody is looking at.
  * Tagged by seq, so the same alert heard in several tabs is shown once.
  */
+// Desktop notifications still showing, so one whose request is settled can
+// be taken down. Bounded: the oldest are forgotten, not closed.
+const shown = new Map<number, Notification>()
+
 export function notifyDesktop(a: ConsoleAlert, open: (link: string) => void): void {
+  if (a.closed) return
   if (!desktopWanted() || desktopPermission() !== 'granted' || document.visibilityState === 'visible') return
   try {
     const n = new Notification(a.title, { body: a.detail, tag: `argus-alert-${a.seq}`, icon: '/icon.svg' })
+    shown.set(a.seq, n)
+    if (shown.size > 50) shown.delete(shown.keys().next().value as number)
+    n.onclose = () => shown.delete(a.seq)
     n.onclick = () => {
       window.focus()
       if (a.link) open(a.link)
@@ -163,6 +172,14 @@ export function notifyDesktop(a: ConsoleAlert, open: (link: string) => void): vo
     }
   } catch {
     // Some mobile browsers only notify from a service worker.
+  }
+}
+
+/** Takes down the desktop notifications for alerts that were closed. */
+export function closeDesktop(seqs: number[]): void {
+  for (const s of seqs) {
+    shown.get(s)?.close()
+    shown.delete(s)
   }
 }
 
