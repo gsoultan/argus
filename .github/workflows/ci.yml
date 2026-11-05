@@ -634,10 +634,13 @@ jobs:
           measure_screen screen-measure "exact tiles"
           desktop_gone
           measure_screen screen-video-measure "motion as H.264" -video
-          # Which the agent used: H.264, or exact tiles and why.
-          grep -i "sends motion as" "$log" | tail -3 || true
-          # The helper's own cost while it ran, from the agent's log.
-          grep -i "screen" "$log" | tail -10 || true
+          # What the agent made of it: whether H.264 was asked for, what
+          # motion went as (or why not), and how many pictures it sent. -a:
+          # the log is searched as text whatever bytes are in it.
+          grep -a "tunnel: .*screen" "$log" | tail -12 || true
+          if ! grep -aq "sends motion as.*codec=h264" "$log"; then
+            echo "::warning::screen sharing did not send motion as H.264 on this runner"
+          fi
           psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE lower(hostname) = lower('$host')"
 
           # Stopping the service seals and exits cleanly.

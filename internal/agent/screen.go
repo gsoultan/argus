@@ -555,6 +555,14 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		if err := writeScreenMsg(out, scrFrame, nil); err != nil {
 			return err
 		}
+		// The encoder is made once the first frame is out, not when motion
+		// first comes, so the agent hears at once what motion will go as,
+		// and an encoder that cannot be had is found before it is needed.
+		if mo.newVideo != nil && !mo.off && (mo.video == nil || mo.w != lastW || mo.h != lastH) {
+			if err := mo.open(lastW, lastH); err != nil {
+				return err
+			}
+		}
 		credits--
 		lastSent = time.Now()
 		idle = pace.minGap
@@ -740,6 +748,9 @@ type screenClient struct {
 	gtap    *rdp.GraphicsTap
 	frameID uint32
 	codec   string
+	// pictures and keys count what went as H.264, for the log at the end;
+	// they and codec are held by mu.
+	pictures, keys int
 
 	mu            sync.Mutex
 	helper        io.ReadWriteCloser
@@ -915,8 +926,11 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 				}
 				return nil, nil
 			case scrCodec:
-				if codec := string(m.p); codec != c.codec {
-					c.codec = codec
+				c.mu.Lock()
+				was := c.codec
+				c.codec = string(m.p)
+				c.mu.Unlock()
+				if codec := string(m.p); codec != was {
 					c.log.Info("tunnel: screen sharing sends motion as", "codec", codec)
 					c.record(map[string]any{"type": "screen-codec", "codec": codec})
 				}
@@ -989,6 +1003,12 @@ func (c *screenClient) picture(p []byte) error {
 	if c.gfx == nil {
 		return errors.New("the screen helper sent video nobody asked for")
 	}
+	c.mu.Lock()
+	c.pictures++
+	if m.key {
+		c.keys++
+	}
+	c.mu.Unlock()
 	var cmds [][]byte
 	if m.key {
 		cmds = append(cmds, rdp.BuildResetGraphics(m.width, m.height),
@@ -1203,6 +1223,10 @@ func (c *screenClient) Close() error {
 	}
 	c.closed = true
 	close(c.done)
+	if c.video {
+		c.log.Info("tunnel: screen sharing ended", "codec", c.codec,
+			"pictures", c.pictures, "key_frames", c.keys)
+	}
 	if c.helper != nil {
 		return c.helper.Close()
 	}
@@ -1223,6 +1247,8 @@ func connectScreen(cfg DesktopConfig, _ string, open tunnel.DesktopOpen,
 	if err != nil {
 		return nil, DesktopInfo{}, err
 	}
+	log.Info("tunnel: sharing the console's screen", "width", c.width, "height", c.height,
+		"h264_asked", c.video)
 	info := DesktopInfo{Screen: true}
 	if c.video {
 		info.Graphics, info.GraphicsChannel = c.gfx, screenGraphicsChannel
