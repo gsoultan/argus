@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Alert, Button, Code, Group, Loader, Modal, ScrollArea, Stack, Text, Textarea, ThemeIcon } from '@mantine/core'
 import { IconCheck, IconClockHour4, IconShieldCheck } from '@tabler/icons-react'
 import { FS } from '~/theme'
-import { askStatements, changeApproval, statementAsk } from '~/lib/live'
-import { notifyOk } from '~/lib/notify'
+import { useQueryClient } from '@tanstack/react-query'
+import { askStatements, cancelRequest, changeApproval, statementAsk } from '~/lib/live'
+import { notifyOk, notifyWarn } from '~/lib/notify'
 import { combineChecks, deciderWords, impactWords, shortName, type ChangeImpact, type CheckLike } from '~/lib/changeApproval'
 import { EnvBadge, ImpactTiles, People } from '~/components/ChangeImpact'
 import type { ChangeApproval, DBLabel, StatementItem } from '~/types/domain'
@@ -36,8 +37,9 @@ const POLL_MS = 3000
 type Phase =
   | { kind: 'form'; error?: string }
   | { kind: 'sending' }
-  | { kind: 'waiting'; id: string }
+  | { kind: 'waiting'; id: string; cancelling?: boolean; error?: string }
   | { kind: 'denied'; by?: string | null; note?: string | null }
+  | { kind: 'cancelled' }
   | { kind: 'expired' }
 
 interface Open {
@@ -72,6 +74,7 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
   openRef.current = open
   const checkRef = useRef(opts.check)
   checkRef.current = opts.check
+  const qc = useQueryClient()
 
   const ask: AskApproval = useCallback((items, o) => new Promise<string | null>((resolve) => {
     openRef.current?.resolve(null)
@@ -122,6 +125,7 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
         }
         if (a.state === 'denied') { setPhase({ kind: 'denied', by: a.decidedBy, note: a.note }); return }
         if (a.state === 'expired') { setPhase({ kind: 'expired' }); return }
+        if (a.state === 'cancelled') { setPhase({ kind: 'cancelled' }); return }
       } catch {
         // A blip; the next tick tries again.
       }
@@ -129,7 +133,41 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
     }
     let timer = setTimeout(tick, POLL_MS)
     return () => { stop = true; clearTimeout(timer) }
-  }, [phase, databaseId, close])
+  }, [phase.kind, phase.kind === 'waiting' ? phase.id : '', databaseId, close])
+
+  // Closing the wait takes the ask back. Nothing else can use an approval
+  // given later: the statement runs from this dialog, so an ask left behind
+  // would sit in every approver's queue and bell, waiting for a decision
+  // that changes nothing.
+  const cancelAsk = useCallback(async (id: string) => {
+    setPhase({ kind: 'waiting', id, cancelling: true })
+    try {
+      await cancelRequest(id)
+      notifyOk('Ask cancelled', 'Nothing ran. The approvers no longer see it as waiting.')
+      close(null)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'the ask was not cancelled'
+      if (/already approved/.test(msg)) {
+        // Approved while this was being cancelled. It is not run: the person
+        // asked for it not to be.
+        notifyWarn('Approved before it was cancelled', `${msg}. Nothing ran; ask again when you want to run it.`)
+        close(null)
+        return
+      }
+      if (/already denied|cancelled/.test(msg)) { close(null); return }
+      setPhase({ kind: 'waiting', id, error: `Not cancelled: ${msg}` })
+    } finally {
+      void qc.invalidateQueries({ queryKey: ['requests'] })
+    }
+  }, [close, qc])
+
+  const dismiss = () => {
+    if (phase.kind === 'waiting') {
+      if (!phase.cancelling) void cancelAsk(phase.id)
+      return
+    }
+    close(null)
+  }
 
   const send = async () => {
     if (!open) return
@@ -152,7 +190,7 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
     .filter((e) => e.toLowerCase() !== opts.me?.toLowerCase())
   const deciders = deciderWords(databaseName, approval, opts.me)
   const dialog = (
-    <Modal opened={open !== null} onClose={() => close(null)} centered size="lg"
+    <Modal opened={open !== null} onClose={dismiss} centered size="lg"
       title={<Group gap="xs"><IconShieldCheck size={18} /><Text fw={650}>Ask for approval</Text>{opts.label && <EnvBadge label={opts.label} />}</Group>}>
       {open && (
         <Stack gap="sm">
@@ -214,7 +252,7 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
                     {others.length > 0 && <People emails={others} />}
                     <Text size={FS.meta} c="dimmed">
                       {others.length ? `${others.map(shortName).join(', ')} (editors of ${databaseName}), and the admins and approvers. Not you.` : 'An admin or an approver. Not you.'}
-                      {' '}It runs as soon as they approve; you can keep this open or come back.
+                      {' '}It runs as soon as they approve, while this stays open.
                     </Text>
                   </Stack>
                 </Group>
@@ -225,9 +263,10 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
                   </Text>
                 </Group>
               </Stack>
-              <Text size={FS.micro} c="dimmed">Waiting for someone to approve it in Approvals.</Text>
+              {phase.error && <Alert color="rose" variant="light">{phase.error}</Alert>}
+              <Text size={FS.micro} c="dimmed">Waiting for someone to approve it in Approvals. Closing this cancels the ask, so nobody is left deciding it.</Text>
               <Group justify="flex-end">
-                <Button variant="default" onClick={() => close(null)}>Stop waiting</Button>
+                <Button variant="default" color="rose" loading={phase.cancelling} onClick={() => void cancelAsk(phase.id)}>Cancel the ask</Button>
               </Group>
             </>
           )}
@@ -237,6 +276,15 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
                 {phase.by ?? 'The approver'} denied it{phase.note ? `: ${phase.note}` : '.'} Nothing ran.
               </Alert>
               <Group justify="flex-end"><Button variant="default" onClick={() => close(null)}>Close</Button></Group>
+            </>
+          )}
+          {phase.kind === 'cancelled' && (
+            <>
+              <Alert color="slate" variant="light" title="Cancelled">The ask was cancelled, from another tab or window. Nothing ran.</Alert>
+              <Group justify="flex-end">
+                <Button variant="default" onClick={() => close(null)}>Close</Button>
+                <Button onClick={() => setPhase({ kind: 'form' })}>Ask again</Button>
+              </Group>
             </>
           )}
           {phase.kind === 'expired' && (

@@ -63,11 +63,19 @@ type ConsoleAlert struct {
 	Detail   string    `json:"detail"`
 	Link     string    `json:"link"`
 	Read     bool      `json:"read"`
+	// Closed says that what the alert asked for is over, and how: "Approved
+	// by …", "Cancelled by …". A closed alert no longer counts as unread and
+	// asks nobody to act; it stays in the list as a record.
+	Closed   string     `json:"closed,omitempty"`
+	ClosedAt *time.Time `json:"closedAt,omitempty"`
 
 	// Who may see it; never sent to a browser.
 	Audience  string `json:"-"`
 	Recipient string `json:"-"`
 	Actor     string `json:"-"`
+	// Subject is what the alert is about, such as "request:<id>", so it can
+	// be closed when that is settled. Empty for an alert that is only news.
+	Subject string `json:"-"`
 }
 
 // AlertPrefs is what one person chose for their bell.
@@ -164,6 +172,24 @@ func (a *API) raiseAlert(ctx context.Context, al ConsoleAlert) {
 	a.alertHub.publish(tenantIDOf(ctx), out)
 }
 
+// closeAlerts closes the alerts about subject and tells every open console
+// on this replica, so a request taken back or decided stops asking anyone
+// to act on it: in the list, in the count, and in a pop-up still on screen.
+// Like raiseAlert, it never fails its caller.
+func (a *API) closeAlerts(ctx context.Context, subject, closed string) {
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	out, err := a.store.CloseConsoleAlerts(sctx, subject, closed)
+	if err != nil {
+		a.log.Error("could not close console alerts", "subject", subject, "error", err)
+		return
+	}
+	a.alertHub.publishClosed(tenantIDOf(ctx), out)
+}
+
+// requestSubject is what a request's alerts are about.
+func requestSubject(id string) string { return "request:" + id }
+
 func clip(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -177,12 +203,13 @@ func clip(s string, n int) string {
 
 /* ── Store ──────────────────────────────────────────────────────────────── */
 
-const alertColumns = `a.seq, a.at, a.kind, a.severity, a.title, a.detail, a.link, a.audience, a.recipient, a.actor`
+const alertColumns = `a.seq, a.at, a.kind, a.severity, a.title, a.detail, a.link, a.audience, a.recipient, a.actor,
+	a.subject, a.closed, a.closed_at`
 
 func scanAlert(row pgx.Row, extra ...any) (ConsoleAlert, error) {
 	var al ConsoleAlert
 	dest := append([]any{&al.Seq, &al.At, &al.Kind, &al.Severity, &al.Title, &al.Detail, &al.Link,
-		&al.Audience, &al.Recipient, &al.Actor}, extra...)
+		&al.Audience, &al.Recipient, &al.Actor, &al.Subject, &al.Closed, &al.ClosedAt}, extra...)
 	err := row.Scan(dest...)
 	return al, err
 }
@@ -193,21 +220,29 @@ func (s *Store) InsertConsoleAlert(ctx context.Context, al ConsoleAlert) (Consol
 		al.Severity = "info"
 	}
 	row := s.db(ctx).QueryRow(ctx, `
-		INSERT INTO console_alerts AS a (kind, severity, audience, recipient, actor, title, detail, link)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		INSERT INTO console_alerts AS a (kind, severity, audience, recipient, actor, title, detail, link, subject)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING `+alertColumns,
-		al.Kind, al.Severity, al.Audience, al.Recipient, al.Actor, al.Title, al.Detail, al.Link)
+		al.Kind, al.Severity, al.Audience, al.Recipient, al.Actor, al.Title, al.Detail, al.Link, al.Subject)
 	return scanAlert(row)
 }
 
-// ConsoleAlertsSince is every alert after seq, oldest first, at most limit:
-// what another replica raised, for this one's streams.
-func (s *Store) ConsoleAlertsSince(ctx context.Context, seq int64, limit int) ([]ConsoleAlert, error) {
-	rows, err := s.db(ctx).Query(ctx, `SELECT `+alertColumns+` FROM console_alerts a
-		WHERE a.seq > $1 ORDER BY a.seq LIMIT $2`, seq, limit)
+// CloseConsoleAlerts closes every open alert about subject, saying how it
+// ended, and returns them.
+func (s *Store) CloseConsoleAlerts(ctx context.Context, subject, closed string) ([]ConsoleAlert, error) {
+	if subject == "" {
+		return nil, nil
+	}
+	rows, err := s.db(ctx).Query(ctx, `UPDATE console_alerts a SET closed = $2, closed_at = now()
+		WHERE a.subject = $1 AND a.closed_at IS NULL
+		RETURNING `+alertColumns, subject, clip(closed, 200))
 	if err != nil {
 		return nil, err
 	}
+	return collectAlerts(rows)
+}
+
+func collectAlerts(rows pgx.Rows) ([]ConsoleAlert, error) {
 	defer rows.Close()
 	var out []ConsoleAlert
 	for rows.Next() {
@@ -220,11 +255,27 @@ func (s *Store) ConsoleAlertsSince(ctx context.Context, seq int64, limit int) ([
 	return out, rows.Err()
 }
 
-// LatestConsoleAlertSeq is the newest alert's seq, or 0.
-func (s *Store) LatestConsoleAlertSeq(ctx context.Context) (int64, error) {
+// ConsoleAlertsSince is every alert after seq, and every one closed after
+// closedAfter, in seq order, at most limit: what another replica raised or
+// closed, for this one's streams.
+func (s *Store) ConsoleAlertsSince(ctx context.Context, seq int64, closedAfter time.Time, limit int) ([]ConsoleAlert, error) {
+	rows, err := s.db(ctx).Query(ctx, `SELECT `+alertColumns+` FROM console_alerts a
+		WHERE a.seq > $1 OR a.closed_at > $2 ORDER BY a.seq LIMIT $3`, seq, closedAfter, limit)
+	if err != nil {
+		return nil, err
+	}
+	return collectAlerts(rows)
+}
+
+// LatestConsoleAlertSeq is the newest alert's seq, or 0, and when the last
+// alert was closed, or now when none has been.
+func (s *Store) LatestConsoleAlertSeq(ctx context.Context) (int64, time.Time, error) {
 	var seq int64
-	err := s.db(ctx).QueryRow(ctx, `SELECT coalesce(max(seq), 0) FROM console_alerts`).Scan(&seq)
-	return seq, err
+	var closed time.Time
+	err := s.db(ctx).QueryRow(ctx, `SELECT coalesce(max(seq), 0),
+		coalesce((SELECT max(closed_at) FROM console_alerts WHERE closed_at IS NOT NULL), now())
+		FROM console_alerts`).Scan(&seq, &closed)
+	return seq, closed, err
 }
 
 // AlertPrefs is email's choices, or the defaults.
@@ -285,7 +336,7 @@ func (s *Store) ConsoleAlerts(ctx context.Context, rd alertReader, unreadOnly bo
 		LEFT JOIN console_alert_reads r ON r.email = $1 AND r.seq = a.seq
 		WHERE ` + where
 	if unreadOnly {
-		q += ` AND NOT ` + readExpr
+		q += ` AND NOT ` + readExpr + ` AND a.closed_at IS NULL`
 	}
 	if before > 0 {
 		args = append(args, before)
@@ -327,13 +378,14 @@ func (s *Store) ConsoleAlerts(ctx context.Context, rd alertReader, unreadOnly bo
 const unreadCap = 100
 
 // UnreadConsoleAlerts counts what rd may read and has not, up to unreadCap.
+// A closed alert is not counted: what it asked for is over.
 func (s *Store) UnreadConsoleAlerts(ctx context.Context, rd alertReader) (int, error) {
 	where, args := alertVisibleSQL(rd)
 	var n int
 	err := s.db(ctx).QueryRow(ctx, `SELECT count(*) FROM (SELECT 1 FROM console_alerts a
 		LEFT JOIN console_alert_prefs p ON p.email = $1
 		LEFT JOIN console_alert_reads r ON r.email = $1 AND r.seq = a.seq
-		WHERE `+where+` AND a.seq > coalesce(p.read_seq, 0) AND r.seq IS NULL
+		WHERE `+where+` AND a.seq > coalesce(p.read_seq, 0) AND r.seq IS NULL AND a.closed_at IS NULL
 		LIMIT `+strconv.Itoa(unreadCap)+`) x`, args...).Scan(&n)
 	return n, err
 }
@@ -397,6 +449,9 @@ type alertEvent struct {
 	// read is set when the subscriber's own read state or preferences changed
 	// in another tab: the console refetches.
 	read bool
+	// closed is alerts that were closed; each stream sends only those its
+	// reader may see.
+	closed []ConsoleAlert
 }
 
 type alertSub struct {
@@ -420,7 +475,10 @@ type tenantAlerts struct {
 	// last is the newest seq this replica has sent; the poller sends what
 	// is above it.
 	last int64
-	stop chan struct{}
+	// closedAt is when the newest closing this replica has sent happened;
+	// the poller sends closings after it.
+	closedAt time.Time
+	stop     chan struct{}
 }
 
 // subscribe opens a stream for email in tenant t.
@@ -500,6 +558,29 @@ func (h *alertHub) publish(tid string, al ConsoleAlert) {
 	h.sendLocked(tid, ta, func(*alertSub) (alertEvent, bool) { c := al; return alertEvent{alert: &c}, true })
 }
 
+// publishClosed tells every stream in the organization that als were closed.
+func (h *alertHub) publishClosed(tid string, als []ConsoleAlert) {
+	if len(als) == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ta := h.tenants[tid]
+	if ta == nil {
+		return
+	}
+	h.sendLockedClosed(tid, ta, als)
+}
+
+func (h *alertHub) sendLockedClosed(tid string, ta *tenantAlerts, als []ConsoleAlert) {
+	for _, al := range als {
+		if al.ClosedAt != nil && al.ClosedAt.After(ta.closedAt) {
+			ta.closedAt = *al.ClosedAt
+		}
+	}
+	h.sendLocked(tid, ta, func(*alertSub) (alertEvent, bool) { return alertEvent{closed: als}, true })
+}
+
 // touched tells email's own streams that their read state or preferences
 // changed, so every tab they have open agrees.
 func (h *alertHub) touched(tid, email string) {
@@ -541,10 +622,13 @@ func (h *alertHub) sendLocked(tid string, ta *tenantAlerts, ev func(*alertSub) (
 // it, because it refetches on every event and on reconnect.
 func (h *alertHub) poll(tid string, ta *tenantAlerts) {
 	ctx := WithTenant(context.Background(), ta.tenant)
-	if seq, err := h.store.LatestConsoleAlertSeq(ctx); err == nil {
+	if seq, closed, err := h.store.LatestConsoleAlertSeq(ctx); err == nil {
 		h.mu.Lock()
 		if seq > ta.last {
 			ta.last = seq
+		}
+		if closed.After(ta.closedAt) {
+			ta.closedAt = closed
 		}
 		h.mu.Unlock()
 	}
@@ -557,10 +641,10 @@ func (h *alertHub) poll(tid string, ta *tenantAlerts) {
 		case <-t.C:
 		}
 		h.mu.Lock()
-		last := ta.last
+		last, closedAt := ta.last, ta.closedAt
 		h.mu.Unlock()
 		qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		news, err := h.store.ConsoleAlertsSince(qctx, last, 50)
+		news, err := h.store.ConsoleAlertsSince(qctx, last, closedAt, 50)
 		cancel()
 		if err != nil {
 			if h.logErr != nil {
@@ -568,15 +652,29 @@ func (h *alertHub) poll(tid string, ta *tenantAlerts) {
 			}
 			continue
 		}
+		var closed []ConsoleAlert
 		for _, al := range news {
 			h.mu.Lock()
 			if h.tenants[tid] != ta {
 				h.mu.Unlock()
 				return
 			}
-			if al.Seq > ta.last {
+			switch {
+			case al.Seq > ta.last:
+				// A new alert carries whether it is closed already.
 				h.sendLockedAlert(tid, ta, al)
+			case al.ClosedAt != nil && al.ClosedAt.After(ta.closedAt):
+				closed = append(closed, al)
 			}
+			h.mu.Unlock()
+		}
+		if len(closed) > 0 {
+			h.mu.Lock()
+			if h.tenants[tid] != ta {
+				h.mu.Unlock()
+				return
+			}
+			h.sendLockedClosed(tid, ta, closed)
 			h.mu.Unlock()
 		}
 	}

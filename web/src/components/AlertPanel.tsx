@@ -197,19 +197,23 @@ export default function AlertPanel({ status, onClose, fullScreen }: {
 
 function AlertRow({ alert: a, onOpen }: { alert: ConsoleAlert; onOpen: () => void }) {
   const Icon = KIND_ICON[a.kind] ?? IconAlertTriangle
-  const tone = a.kind === 'session' && a.severity === 'info' ? 'sky' : TONE[a.severity]
+  // A request decided or taken back asks nobody to act: it reads as done,
+  // not as waiting, however it was marked.
+  const closed = !!a.closed
+  const fresh = !a.read && !closed
+  const tone = closed ? 'slate' : a.kind === 'session' && a.severity === 'info' ? 'sky' : TONE[a.severity]
   return (
     <UnstyledButton
       onClick={onOpen}
       px="md"
       py="sm"
-      aria-label={`${a.read ? '' : 'Unread: '}${a.title}`}
+      aria-label={`${fresh ? 'Unread: ' : ''}${a.title}${closed ? `. ${a.closed}` : ''}`}
       style={{
         display: 'flex', gap: 12, borderBottom: '1px solid var(--color-line)', position: 'relative',
-        background: a.read ? undefined : 'var(--mantine-color-azure-light)',
+        background: fresh ? 'var(--mantine-color-azure-light)' : undefined,
       }}
     >
-      {!a.read && (
+      {fresh && (
         <Box pos="absolute" left={6} top={22} w={6} h={6}
           style={{ borderRadius: '50%', background: 'var(--mantine-color-azure-6)' }} />
       )}
@@ -217,11 +221,16 @@ function AlertRow({ alert: a, onOpen }: { alert: ConsoleAlert; onOpen: () => voi
         <Icon size={16} />
       </ThemeIcon>
       <Box style={{ flex: 1, minWidth: 0 }}>
-        <Text size={FS.body} fw={a.read ? 500 : 600} lh={1.35}>{a.title}</Text>
+        <Text size={FS.body} fw={fresh ? 600 : 500} lh={1.35} c={closed ? 'dimmed' : undefined}
+          td={closed ? 'line-through' : undefined}>{a.title}</Text>
         {a.detail && <Text size={FS.meta} c="dimmed" lh={1.4} mt={SP.hair} lineClamp={3}>{a.detail}</Text>}
         <Group gap="xs" mt={SP.snug}>
           <Text size={FS.micro} c="dimmed">{agoText(a.at)}</Text>
-          {a.kind === 'approval' && a.severity !== 'info' && a.link && (
+          {closed ? (
+            <Badge size="xs" variant="light" color={/^Approved/.test(a.closed ?? '') ? 'teal' : /^Denied/.test(a.closed ?? '') ? 'rose' : 'slate'}>
+              {a.closed}
+            </Badge>
+          ) : a.kind === 'approval' && a.severity !== 'info' && a.link && (
             <Badge size="xs" variant="light" color="azure">Review</Badge>
           )}
         </Group>

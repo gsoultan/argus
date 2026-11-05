@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -43,9 +44,57 @@ type AccessRequest struct {
 var (
 	// ErrSelfApproval means someone tried to decide their own request.
 	ErrSelfApproval = errors.New("you cannot decide your own access request")
-	// ErrAlreadyDecided means the request is no longer pending.
+	// ErrAlreadyDecided means the request is no longer pending. The error
+	// returned is a requestClosed, which says who closed it and how.
 	ErrAlreadyDecided = errors.New("request has already been decided")
+	// ErrRequestNotFound is an id that names no request, or a malformed one.
+	ErrRequestNotFound = errors.New("request not found")
+	// ErrNotYourRequest is someone taking back a request they did not make.
+	ErrNotYourRequest = errors.New("only the person who asked can cancel a request")
 )
+
+// requestClosed is a request that is no longer pending, in words the person
+// who tried to act on it can act on: who closed it and how, rather than a
+// bare "already decided".
+type requestClosed struct {
+	state string
+	by    string
+}
+
+func (e requestClosed) Is(target error) bool { return target == ErrAlreadyDecided }
+
+func (e requestClosed) Error() string {
+	by := e.by
+	if by == "" {
+		by = "someone"
+	}
+	switch e.state {
+	case "approved":
+		return "this request was already approved by " + by
+	case "denied":
+		return "this request was already denied by " + by
+	case "cancelled":
+		return by + " cancelled this request; there is nothing left to decide"
+	case "expired":
+		return "this request was approved and has since expired"
+	case "revoked":
+		return "this request was approved and then revoked"
+	}
+	return "this request is " + e.state + ", not waiting for a decision"
+}
+
+// requestColumns are an AccessRequest's columns, in scanRequest's order.
+const requestColumns = `id::text, requester_email, asset_hostnames, principal,
+	justification, duration_minutes, state, created_at, decided_at,
+	decided_by_email, decision_note, expires_at, break_glass, restore_id::text`
+
+func scanRequest(row pgx.Row) (AccessRequest, error) {
+	var r AccessRequest
+	err := row.Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
+		&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
+		&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID)
+	return r, err
+}
 
 // MaxDurationMinutes caps how long any grant can last.
 //
@@ -84,6 +133,9 @@ func (s *Store) CreateRequest(ctx context.Context, r AccessRequest) (AccessReque
 
 // DecideRequest approves or denies, enforcing separation of duty.
 func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy string) (AccessRequest, error) {
+	if !uuidRE.MatchString(id) {
+		return AccessRequest{}, ErrRequestNotFound
+	}
 	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return AccessRequest{}, err
@@ -93,19 +145,20 @@ func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy
 	// Lock the row: two approvers clicking at once must not both decide, or the
 	// audit log records a decision that never took effect.
 	var requester, state string
+	var by *string
 	var duration int
 	err = tx.QueryRow(ctx, `
-		SELECT requester_email, state, duration_minutes
+		SELECT requester_email, state, duration_minutes, decided_by_email
 		FROM access_requests WHERE id = $1 FOR UPDATE`, id).
-		Scan(&requester, &state, &duration)
-	if err == pgx.ErrNoRows {
-		return AccessRequest{}, fmt.Errorf("request not found")
+		Scan(&requester, &state, &duration, &by)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AccessRequest{}, ErrRequestNotFound
 	}
 	if err != nil {
 		return AccessRequest{}, err
 	}
 	if state != "pending" {
-		return AccessRequest{}, fmt.Errorf("%w: it is %s", ErrAlreadyDecided, state)
+		return AccessRequest{}, requestClosed{state: state, by: deref(by)}
 	}
 
 	// Separation of duty. Without it the approval step is decoration: anyone
@@ -121,24 +174,88 @@ func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy
 		expires = &t
 	}
 
-	var out AccessRequest
-	err = tx.QueryRow(ctx, `
+	out, err := scanRequest(tx.QueryRow(ctx, `
 		UPDATE access_requests SET
 			state = $2, decided_at = now(), decided_by_email = $3,
 			decision_note = NULLIF($4,''), expires_at = $5
 		WHERE id = $1
-		RETURNING id::text, requester_email, asset_hostnames, principal,
-		          justification, duration_minutes, state, created_at, decided_at,
-		          decided_by_email, decision_note, expires_at, break_glass, restore_id::text`,
-		id, decision, decidedBy, note, expires).
-		Scan(&out.ID, &out.RequesterEmail, &out.AssetHostnames, &out.Principal,
-			&out.Justification, &out.DurationMinutes, &out.State, &out.CreatedAt,
-			&out.DecidedAt, &out.DecidedByEmail, &out.DecisionNote, &out.ExpiresAt,
-			&out.BreakGlass, &out.RestoreID)
+		RETURNING `+requestColumns,
+		id, decision, decidedBy, note, expires))
 	if err != nil {
 		return AccessRequest{}, err
 	}
 	return out, tx.Commit(ctx)
+}
+
+// CancelRequest takes back a pending request, for the person who made it.
+//
+// Nobody else may: an approver who wants a request gone denies it, with a
+// reason the requester reads. The row is locked as in DecideRequest, so a
+// cancellation and a decision arriving together cannot both take effect.
+func (s *Store) CancelRequest(ctx context.Context, id, email, note string) (AccessRequest, error) {
+	if !uuidRE.MatchString(id) {
+		return AccessRequest{}, ErrRequestNotFound
+	}
+	tx, err := s.db(ctx).Begin(ctx)
+	if err != nil {
+		return AccessRequest{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var requester, state string
+	var by *string
+	err = tx.QueryRow(ctx, `
+		SELECT requester_email, state, decided_by_email
+		FROM access_requests WHERE id = $1 FOR UPDATE`, id).Scan(&requester, &state, &by)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AccessRequest{}, ErrRequestNotFound
+	}
+	if err != nil {
+		return AccessRequest{}, err
+	}
+	if !strings.EqualFold(requester, email) {
+		return AccessRequest{}, ErrNotYourRequest
+	}
+	if state != "pending" {
+		return AccessRequest{}, requestClosed{state: state, by: deref(by)}
+	}
+	out, err := scanRequest(tx.QueryRow(ctx, `
+		UPDATE access_requests SET
+			state = 'cancelled', decided_at = now(), decided_by_email = $2,
+			decision_note = NULLIF($3,'')
+		WHERE id = $1
+		RETURNING `+requestColumns, id, requester, note))
+	if err != nil {
+		return AccessRequest{}, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+// Request reads one request, with its statements when it has any, and the
+// database it is on, if any.
+func (s *Store) Request(ctx context.Context, id string) (AccessRequest, string, error) {
+	if !uuidRE.MatchString(id) {
+		return AccessRequest{}, "", ErrRequestNotFound
+	}
+	var dbID *string
+	var r AccessRequest
+	err := s.db(ctx).QueryRow(ctx, `SELECT `+requestColumns+`, database_id::text
+		FROM access_requests WHERE id = $1`, id).Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
+		&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
+		&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID, &dbID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AccessRequest{}, "", ErrRequestNotFound
+	}
+	if err != nil {
+		return AccessRequest{}, "", err
+	}
+	if r.Principal == statementPrincipal {
+		asks, err := s.StatementAsks(ctx, []string{r.ID})
+		if err != nil {
+			return AccessRequest{}, "", err
+		}
+		r.Statement = asks[r.ID]
+	}
+	return r, deref(dbID), nil
 }
 
 // Requests lists access requests, newest first. A non-empty requester narrows
@@ -154,9 +271,7 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 		limit = 100
 	}
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT id::text, requester_email, asset_hostnames, principal, justification,
-		       duration_minutes, state, created_at, decided_at, decided_by_email,
-		       decision_note, expires_at, break_glass, restore_id::text
+		SELECT `+requestColumns+`
 		FROM access_requests
 		WHERE ($1 = '' OR state = $1)
 		  AND ($3 = '' OR lower(requester_email) = lower($3)
@@ -169,10 +284,8 @@ func (s *Store) Requests(ctx context.Context, state, requester string, limit int
 
 	out := []AccessRequest{}
 	for rows.Next() {
-		var r AccessRequest
-		if err := rows.Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
-			&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
-			&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID); err != nil {
+		r, err := scanRequest(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, r)

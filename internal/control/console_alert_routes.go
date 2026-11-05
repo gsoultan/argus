@@ -214,6 +214,18 @@ func (a *API) getConsoleAlertStream(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
+			if len(ev.closed) > 0 {
+				seqs := []int64{}
+				for _, al := range ev.closed {
+					if alertVisible(rd, al) {
+						seqs = append(seqs, al.Seq)
+					}
+				}
+				if len(seqs) > 0 && !send("closed", map[string]any{"seqs": seqs}) {
+					return
+				}
+				continue
+			}
 			if ev.alert == nil || !alertVisible(rd, *ev.alert) {
 				continue
 			}

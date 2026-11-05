@@ -6,6 +6,8 @@ import {
   archiveAsset as archiveOnControlPlane,
   assetAssignments,
   createAsset as createOnControlPlane,
+  accessRequest,
+  cancelRequest,
   createRequest,
   decideDirectLogin,
   decideRequest,
@@ -983,6 +985,30 @@ export const api = {
     return req
   },
 
+  async request(id: string): Promise<AccessRequest> {
+    return live.orFallback(
+      () => accessRequest(id),
+      async () => {
+        await latency(60)
+        const r = db.requests.find((x) => x.id === id)
+        if (!r) throw new Error('request not found')
+        return r
+      },
+    )
+  },
+
+  async cancelRequest(id: string): Promise<AccessRequest> {
+    if (isConfigured()) return cancelRequest(id)
+    await latency(300)
+    const r = db.requests.find((x) => x.id === id)
+    if (!r) throw new Error('request not found')
+    if (r.state !== 'pending') throw new Error(`this request was already ${r.state}`)
+    r.state = 'cancelled'
+    r.decidedAt = new Date().toISOString()
+    r.decidedByEmail = currentUser.email
+    return r
+  },
+
   async decideRequest(
     id: string,
     decision: 'approved' | 'denied',
@@ -992,6 +1018,7 @@ export const api = {
     await latency(450)
     const r = db.requests.find((x) => x.id === id)
     if (!r) throw new Error('request not found')
+    if (r.state !== 'pending') throw new Error(`this request was already ${r.state}`)
     r.state = decision
     r.decidedAt = new Date().toISOString()
     r.decidedByEmail = currentUser.email

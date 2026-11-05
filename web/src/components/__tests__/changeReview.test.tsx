@@ -33,6 +33,9 @@ const ask = (over: Partial<AccessRequest> = {}): AccessRequest => ({
   ...over,
 })
 
+const notify = vi.hoisted(() => ({ notifyWarn: vi.fn(), notifyError: vi.fn() }))
+vi.mock('~/lib/notify', async (orig) => ({ ...(await orig<typeof import('~/lib/notify')>()), ...notify }))
+
 afterEach(() => vi.clearAllMocks())
 
 describe('Change review', () => {
@@ -66,5 +69,23 @@ describe('Change review', () => {
     renderWithProviders(<ChangeReview request={own} canDecide={false} onClose={() => {}} />)
     expect(screen.getByText(/Only people who can read orders see the affected rows/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Approve/ })).toBeNull()
+  })
+
+  it('says the asker cancelled it, and offers nothing to decide, when opened from a stale alert', () => {
+    const gone = ask({ state: 'cancelled', decidedAt: new Date().toISOString(), decidedByEmail: 'ana@example.com' })
+    renderWithProviders(<ChangeReview request={gone} canDecide onClose={() => {}} me="bo@example.com" />)
+    expect(screen.getByText('Cancelled by ana@example.com, who asked for it')).toBeInTheDocument()
+    expect(screen.getByText('There is nothing left to decide.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Approve|Deny/ })).toBeNull()
+  })
+
+  it('keeps the review open and warns, rather than erroring, when it was settled meanwhile', async () => {
+    api.decideRequest.mockRejectedValue(new Error('ana@example.com cancelled this request; there is nothing left to decide'))
+    const close = vi.fn()
+    renderWithProviders(<ChangeReview request={ask()} canDecide onClose={close} />)
+    fireEvent.click(screen.getByRole('button', { name: /Approve 2 statements/ }))
+    await waitFor(() => expect(notify.notifyWarn).toHaveBeenCalledWith('Nothing to decide', expect.stringContaining('cancelled')))
+    expect(notify.notifyError).not.toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
   })
 })

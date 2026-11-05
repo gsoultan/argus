@@ -127,18 +127,30 @@ function useAlertStream(panelOpen: boolean): StreamStatus {
     let stop: (() => void) | undefined
     let gone = false
     // After the first paint: nothing on screen waits for the stream.
-    void import('~/lib/alertStream').then(({ chime, notifyDesktop, subscribeAlertStream }) => {
+    void import('~/lib/alertStream').then(({ chime, closeDesktop, notifyDesktop, subscribeAlertStream }) => {
       if (gone) return
       stop = subscribeAlertStream(
       (e) => {
         if (e.type === 'end') return
         void qc.invalidateQueries({ queryKey: ['alerts', 'list'] })
         if (e.type === 'read') void qc.invalidateQueries({ queryKey: ['alerts', 'prefs'] })
+        if (e.type === 'closed') {
+          // A request was decided or taken back: its pop-up, which stays
+          // until dismissed, would otherwise go on asking for a decision
+          // nobody can make, and the queue behind it is out of date.
+          for (const seq of e.seqs) notifications.hide(`alert-${seq}`)
+          closeDesktop(e.seqs)
+          void qc.invalidateQueries({ queryKey: ['requests'] })
+          void qc.invalidateQueries({ queryKey: ['stats'] })
+          return
+        }
         if (e.type !== 'alert') return
         const a = e.alert
         // The page the alert is about may be the one on screen: show the
         // change it announces without waiting for a click.
         if (a.link) refreshAlertTarget(qc, a.link)
+        // Raised and settled before it reached this tab: nothing to announce.
+        if (a.closed) return
         const p = prefsRef.current
         notifyDesktop(a, go)
         if (document.visibilityState !== 'visible' || panelRef.current) return

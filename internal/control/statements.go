@@ -247,6 +247,8 @@ func (s *Store) UseStatementApproval(ctx context.Context, requestID, email, dbID
 		return nil, errNoApproval{"the approval is still waiting for a decision"}
 	case state == "denied":
 		return nil, errNoApproval{"the approval was denied"}
+	case state == "cancelled":
+		return nil, errNoApproval{"the ask was cancelled; ask again"}
 	case state != "approved" || expires == nil || !expires.After(time.Now()):
 		return nil, errNoApproval{"the approval has expired; ask again"}
 	case matching == 0:

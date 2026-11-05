@@ -264,7 +264,7 @@ export function SessionStateBadge({
 
 export function RequestStateBadge({ state }: { state: RequestState }) {
   const map: Record<RequestState, string> = {
-    pending: 'amber', approved: 'teal', denied: 'rose', expired: 'slate', revoked: 'rose',
+    pending: 'amber', approved: 'teal', denied: 'rose', expired: 'slate', revoked: 'rose', cancelled: 'slate',
   }
   return <Badge color={map[state]}>{state}</Badge>
 }

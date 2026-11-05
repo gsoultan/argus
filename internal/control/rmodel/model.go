@@ -367,6 +367,9 @@ type ConsoleAlert struct {
 	Title     string
 	Detail    string
 	Link      string
+	Subject   string
+	Closed    string
+	ClosedAt  *time.Time
 }
 
 func (m *ConsoleAlert) Schema(t *storm.Table) {
@@ -378,6 +381,8 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.Col(&m.Actor).Default("''::text")
 	t.Col(&m.Detail).Default("''::text")
 	t.Col(&m.Link).Default("''::text")
+	t.Col(&m.Subject).Default("''::text")
+	t.Col(&m.Closed).Default("''::text")
 	t.CheckNamed("console_alerts_kind_check",
 		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text])")
 	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
@@ -386,6 +391,8 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.CheckNamed("console_alerts_check", "(audience <> 'person'::text) OR (recipient <> ''::text)")
 	t.Index(&m.At).Named("console_alerts_at")
 	t.Index(&m.Recipient, &m.Seq).Where("audience = 'person'::text").Named("console_alerts_recipient")
+	t.Index(&m.Subject).Where("subject <> ''::text").Named("console_alerts_subject")
+	t.Index(&m.ClosedAt).Where("closed_at IS NOT NULL").Named("console_alerts_closed_at")
 }
 
 // ConsoleAlertPref is table console_alert_prefs: one person's choices for
@@ -1005,7 +1012,7 @@ func (m *DatabaseRestore) Schema(t *storm.Table) {
 	t.CheckNamed("database_restores_check", "(mode = 'replace'::text) = (new_name = ''::text)")
 	t.CheckNamed("database_restores_mode_check", "mode = ANY (ARRAY['new'::text, 'replace'::text])")
 	t.CheckNamed("database_restores_state_check",
-		"state = ANY (ARRAY['pending'::text, 'denied'::text, 'running'::text, 'done'::text, 'failed'::text, 'undone'::text])")
+		"state = ANY (ARRAY['pending'::text, 'denied'::text, 'cancelled'::text, 'running'::text, 'done'::text, 'failed'::text, 'undone'::text])")
 	t.Index(&m.Database, storm.Desc(&m.CreatedAt)).Named("database_restores_db_idx")
 }
 

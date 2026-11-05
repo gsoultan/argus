@@ -216,6 +216,9 @@ func _assertConsoleAlertShape(m m0.ConsoleAlert) {
 		m.Title,
 		m.Detail,
 		m.Link,
+		m.Subject,
+		m.Closed,
+		m.ClosedAt,
 	}
 }
 

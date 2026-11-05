@@ -501,6 +501,16 @@ export async function decideRequest(
   return post<AccessRequest>(`/api/v1/requests/${id}/decision`, { decision, note })
 }
 
+/** Takes back the caller's own pending request. */
+export async function cancelRequest(id: string, note = ''): Promise<AccessRequest> {
+  return post<AccessRequest>(`/api/v1/requests/${encodeURIComponent(id)}/cancel`, { note })
+}
+
+/** One request, however it stands now. */
+export async function accessRequest(id: string): Promise<AccessRequest> {
+  return get<AccessRequest>(`/api/v1/requests/${encodeURIComponent(id)}`)
+}
+
 export async function terminalTicket(
   target: string,
   principal: string,
@@ -1940,6 +1950,12 @@ export interface ConsoleAlert {
   /** A console path, or empty. */
   link: string
   read: boolean
+  /**
+   * Set once what the alert asked for is over: "Approved by …", "Cancelled
+   * by …". A closed alert is not unread and asks nobody to act.
+   */
+  closed?: string
+  closedAt?: string
 }
 
 export interface AlertPage {

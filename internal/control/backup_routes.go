@@ -674,6 +674,18 @@ func (a *API) restoreApproved(ctx context.Context, requestID, decidedBy string) 
 }
 
 // restoreDenied records the denial on the restore row.
+// restoreCancelled ends the restore a cancelled request stood for.
+func (a *API) restoreCancelled(ctx context.Context, requestID, by string) {
+	rs, err := a.store.RestoreByRequest(ctx, requestID)
+	if err != nil || rs.State != "pending" {
+		return
+	}
+	_, _ = a.store.FinishRestore(ctx, rs.ID, tunnel.BackupResult{Stage: "approval", Error: "cancelled by " + by + " before it was decided"}, 0, "")
+	_ = a.store.SetRestoreState(ctx, rs.ID, "cancelled", "approval", "")
+	a.auditDB(ctx, "db.restore_cancelled", "info", by, rs.Hostname,
+		fmt.Sprintf("Cancelled replacing %s from backup %s before it was decided.", rs.DBName, rs.BackupID))
+}
+
 func (a *API) restoreDenied(ctx context.Context, requestID, decidedBy, note string) {
 	rs, err := a.store.RestoreByRequest(ctx, requestID)
 	if err != nil || rs.State != "pending" {

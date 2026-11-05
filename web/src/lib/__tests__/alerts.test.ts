@@ -22,5 +22,7 @@ describe('the bell', () => {
     // A decision on your own request is news, not a task.
     expect(urgent(alert({ kind: 'approval', severity: 'info' }))).toBe(false)
     expect(urgent(alert({ kind: 'signin', severity: 'warning' }))).toBe(false)
+    // A request decided or taken back asks nobody to act, so it does not chime.
+    expect(urgent(alert({ kind: 'approval', severity: 'warning', closed: 'Cancelled by ana@example.com' }))).toBe(false)
   })
 })
