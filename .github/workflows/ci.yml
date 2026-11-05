@@ -570,6 +570,38 @@ jobs:
             (to_entries[] | "| \(.key) | \(.value.MbitPerSec * 100 | floor / 100) | \(.value.FramesPerSec * 10 | floor / 10) | \(.value.CodecBytes | to_entries | map("\(.key) \(.value / 1024 | floor) KiB") | join(", ")) |")' \
             "$tmp/graphics.json" >> "$GITHUB_STEP_SUMMARY"
 
+          # Screen sharing (no Remote Desktop): the runner's own console, the
+          # same measurement. Reported, not yet held to a number: what is on a
+          # runner's console (a desktop, or a sign-in screen) is the runner's.
+          desktop_gone
+          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'screen' WHERE lower(hostname) = lower('$host')"
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          if "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+               -ticket "$tkt" -target "$host" -principal argusdrill \
+               -password-env DRILL_PASSWORD -measure 20s \
+               -report "$tmp/screen-measure.json" 2>"$tmp/screen.err"; then
+            cat "$tmp/screen.err"
+            cp "$tmp/screen-measure.json" measure/
+            jq -r '"### Screen sharing through the agent, \(.Width)x\(.Height)",
+              "",
+              "| | |", "|---|---|",
+              "| First paint | \(.FirstPaintMS / 1000 | floor) s, \(.FirstPaintBytes / 1e6 * 10 | floor / 10) MB |",
+              "| Idle | \(.IdleBitsPerSec / 1000 | floor) kbit/s |",
+              "| Keystroke to screen (\(.KeySamples) keys, \(.KeyMissed) missed) | p50 \(.KeyP50MS) ms, p95 \(.KeyP95MS) ms, max \(.KeyMaxMS) ms |",
+              "| Busy window: frames | \(.BusyFramesPerSec * 10 | floor / 10) per s (\(.BusyMessagesPerSec * 10 | floor / 10) updates per s) |",
+              "| Busy window: bandwidth | \(.BusyMbitPerSec * 100 | floor / 100) Mbit/s, \(.BusyScreensPerSec * 100 | floor / 100) screens redrawn per s |",
+              "| Busy window: longest wait | p95 \(.BusyGapP95MS) ms, max \(.BusyGapMaxMS) ms |"' \
+              "$tmp/screen-measure.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            cat "$tmp/screen.err"; tail -40 "$log"
+            echo "::warning::screen sharing could not be measured on this runner"
+            { echo "### Screen sharing through the agent"; echo; echo "Not measured: see the job's log."; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # The helper's own cost while it ran, from the agent's log.
+          grep -i "screen" "$log" | tail -10 || true
+          psql "$PGURL" -qc "UPDATE assets SET desktop_mode = 'rdp' WHERE lower(hostname) = lower('$host')"
+
           # Stopping the service seals and exits cleanly.
           "$agent" service stop
           for i in $(seq 1 30); do

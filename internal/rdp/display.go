@@ -3,6 +3,7 @@ package rdp
 import (
 	"encoding/binary"
 	"fmt"
+	"time"
 )
 
 // The display stream carried to a browser.
@@ -36,6 +37,10 @@ const (
 	// FrameGraphicsPart carries a piece of a graphics command too large for
 	// one frame. See EncodeGraphics.
 	FrameGraphicsPart uint8 = 7
+	// FrameMark ends a frame: everything before it is one picture. A browser
+	// that understands it acknowledges it once that picture is drawn, which
+	// is how the agent knows to send the next one. See EncodeMark.
+	FrameMark uint8 = 8
 )
 
 // Fast-Path update codes (MS-RDPBCGR 2.2.9.1.2.1).
@@ -111,6 +116,28 @@ func EncodeControl(kind uint8, width, height int) []byte {
 	binary.LittleEndian.PutUint16(out[6:8], uint16(width))
 	binary.LittleEndian.PutUint16(out[8:10], uint16(height))
 	return out
+}
+
+// EncodeMark serialises a frame mark: its id at bytes 2-5, and the last
+// round trip the agent measured, in milliseconds, at bytes 10-11, for the
+// console to show. Width and height stay zero, so a reader that does not know
+// the kind skips its twelve bytes and nothing more.
+func EncodeMark(id uint32, rtt time.Duration) []byte {
+	out := make([]byte, FrameHeaderSize)
+	out[0] = FrameMark
+	binary.LittleEndian.PutUint32(out[2:6], id)
+	ms := min(rtt.Milliseconds(), 0xFFFF)
+	binary.LittleEndian.PutUint16(out[10:12], uint16(max(ms, 0)))
+	return out
+}
+
+// ParseMark reads a frame mark.
+func ParseMark(f []byte) (id uint32, rtt time.Duration, ok bool) {
+	if len(f) < FrameHeaderSize || f[0] != FrameMark {
+		return 0, 0, false
+	}
+	return binary.LittleEndian.Uint32(f[2:6]),
+		time.Duration(binary.LittleEndian.Uint16(f[10:12])) * time.Millisecond, true
 }
 
 // Reassembler extracts bitmap updates from the Fast-Path output stream.

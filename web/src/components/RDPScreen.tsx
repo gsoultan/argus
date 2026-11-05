@@ -86,6 +86,9 @@ export function RDPScreen({
   const stateRef = useRef<RDPState>('connecting')
   const [detail, setDetail] = useState<string>()
   const [size, setSize] = useState({ width: 1024, height: 768 })
+  // Frames a second, the round trip and the bandwidth, over the last second.
+  // Only a shared console's frames are counted (they carry marks).
+  const [stats, setStats] = useState<{ fps: number; rttMs: number; mbit: number } | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -116,6 +119,18 @@ export function RDPScreen({
     const worker = new Worker(new URL('../workers/rdp.worker.ts', import.meta.url), {
       type: 'module',
     })
+
+    // What the last second was like, shown once a second rather than on
+    // every frame, so the page does not re-render at the desktop's rate.
+    let frames = 0
+    let bytes = 0
+    let rttMs = 0
+    let marked = false
+    const tick = window.setInterval(() => {
+      if (marked) setStats({ fps: frames, rttMs, mbit: (bytes * 8) / 1e6 })
+      frames = 0
+      bytes = 0
+    }, 1000)
 
     // Rectangles are queued and drawn in one animation frame rather than one at
     // a time. A desktop update is often a dozen rectangles; drawing each on
@@ -159,6 +174,20 @@ export function RDPScreen({
         case 'error':
           setStatus('error', m.message)
           break
+        case 'mark': {
+          // Decoded: the agent may send the next frame. Acknowledged here, as
+          // the worker finishes, rather than after the paint, so a tab in the
+          // background (where animation frames stop) does not stop the
+          // screen and its recording. A watcher sends nothing back.
+          marked = true
+          frames++
+          rttMs = m.rttMs
+          const ws = wsRef.current
+          if (!shadowSessionId && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ack', frame: m.id }))
+          }
+          break
+        }
       }
     }
 
@@ -198,6 +227,7 @@ export function RDPScreen({
       }
       ws.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) {
+          bytes += ev.data.byteLength
           // Transferred, not copied: the main thread gives up the buffer.
           worker.postMessage(ev.data, [ev.data])
           return
@@ -220,6 +250,7 @@ export function RDPScreen({
 
     return () => {
       disposed = true
+      window.clearInterval(tick)
       wsRef.current?.close()
       worker.terminate()
       for (const r of pending) r.bitmap.close()
@@ -334,6 +365,11 @@ export function RDPScreen({
           <Text size="xs" c="dimmed">
             {size.width}×{size.height}
           </Text>
+          {state === 'live' && stats && (
+            <Text size="xs" c="dimmed" data-testid="desktop-stats">
+              {stats.fps} fps · {stats.rttMs} ms · {stats.mbit.toFixed(1)} Mbit/s
+            </Text>
+          )}
         </Group>
         <Group gap="xs">
           {detail && (

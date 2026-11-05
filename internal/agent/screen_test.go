@@ -2,7 +2,9 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"image"
 	"io"
 	"log/slog"
 	"sync"
@@ -29,10 +31,10 @@ func newFakeScreen(w, h int, colour byte) *fakeScreen {
 	return s
 }
 
-func (s *fakeScreen) Capture() ([]byte, int, int, int, error) {
+func (s *fakeScreen) Capture(time.Duration) (screenShot, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]byte(nil), s.fb...), s.w * 4, s.w, s.h, nil
+	return screenShot{fb: append([]byte(nil), s.fb...), stride: s.w * 4, width: s.w, height: s.h}, true, nil
 }
 
 func (s *fakeScreen) Input(e rdp.InputEvent) error {
@@ -59,7 +61,7 @@ func (s *fakeScreen) inputCount() int {
 
 // pipePair is a helper's two pipes, joined to serveScreen in a goroutine.
 type pipePair struct {
-	io.Reader
+	*io.PipeReader
 	w      io.WriteCloser
 	closed chan struct{}
 }
@@ -67,6 +69,9 @@ type pipePair struct {
 func (p *pipePair) Write(b []byte) (int, error) { return p.w.Write(b) }
 func (p *pipePair) Close() error {
 	err := p.w.Close()
+	// As the real pipe does: the helper's writes fail once the agent's end
+	// is closed.
+	_ = p.PipeReader.Close()
 	<-p.closed
 	return err
 }
@@ -74,10 +79,10 @@ func (p *pipePair) Close() error {
 func startFakeHelper(s *fakeScreen) *pipePair {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	p := &pipePair{Reader: outR, w: inW, closed: make(chan struct{})}
+	p := &pipePair{PipeReader: outR, w: inW, closed: make(chan struct{})}
 	go func() {
 		defer close(p.closed)
-		_ = serveScreen(s, inR, outW, 5*time.Millisecond)
+		_ = serveScreen(s, func() screenInputer { return s }, inR, outW, testPace)
 		_ = outW.Close()
 	}()
 	return p
@@ -105,7 +110,10 @@ func (h *fakeScreenHost) ConsoleAccount(uint32) string {
 	return h.account
 }
 
-func (h *fakeScreenHost) StartHelper(session uint32) (io.ReadWriteCloser, error) {
+// testPace is quick, so tests do not wait on the frame rate.
+var testPace = screenPace{minGap: time.Millisecond, idleMax: 5 * time.Millisecond}
+
+func (h *fakeScreenHost) StartHelper(session uint32, _ bool) (io.ReadWriteCloser, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.startErr != nil {
@@ -314,5 +322,194 @@ func TestScreenRejectsOversizedHelperMessages(t *testing.T) {
 	b.Write([]byte{scrRects, 0, 0, 0, 0x7F})
 	if _, _, err := readScreenMsg(&b); err == nil {
 		t.Fatal("read a 2 GB message")
+	}
+}
+
+// drain reads the client until a frame has ended, and returns its mark.
+func drainFrame(t *testing.T, c *screenClient) uint32 {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := c.NextBitmaps(); err != nil {
+			t.Fatal(err)
+		}
+		if id, _, ok := c.TakeMark(); ok {
+			return id
+		}
+	}
+	t.Fatal("no frame ended")
+	return 0
+}
+
+// A browser that acknowledges frames is sent at most screenWindow of them
+// ahead of what it has drawn: a slow link gets the newest screen, not a
+// queue of old ones.
+func TestScreenSendsNoMoreFramesThanTheBrowserHasRoomFor(t *testing.T) {
+	screen := newFakeScreen(130, 70, 0x40)
+	host := &fakeScreenHost{session: 1, screens: map[uint32]*fakeScreen{1: screen}}
+	c, err := openScreen(host, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.checkEvery = time.Hour // no floor during the test
+
+	first := drainFrame(t, c)
+	c.Ack(first) // this browser acknowledges
+
+	// The screen keeps changing; nothing more is acknowledged.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for v := byte(0); ; v++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			screen.paint(int(v)%130, 10, v)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	var last uint32
+	for range screenWindow {
+		last = drainFrame(t, c)
+	}
+	if last-first != screenWindow {
+		t.Fatalf("frames %d..%d sent; want %d after the acknowledged one", first, last, screenWindow)
+	}
+	// Room is full: no frame ends until one is acknowledged.
+	got := make(chan uint32, 1)
+	go func() {
+		for {
+			if _, err := c.NextBitmaps(); err != nil {
+				return
+			}
+			if id, _, ok := c.TakeMark(); ok {
+				got <- id
+				return
+			}
+		}
+	}()
+	select {
+	case id := <-got:
+		t.Fatalf("frame %d was sent with %d unacknowledged", id, screenWindow)
+	case <-time.After(150 * time.Millisecond):
+	}
+	c.Ack(last)
+	select {
+	case id := <-got:
+		if id != last+1 {
+			t.Errorf("after the acknowledgement frame %d came, want %d", id, last+1)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no frame came after the browser made room")
+	}
+}
+
+// slowInput is a console whose input blocks until released, so events
+// queue up behind the first.
+type slowInput struct {
+	*fakeScreen
+	gate chan struct{}
+	once sync.Once
+}
+
+func (s *slowInput) Input(e rdp.InputEvent) error {
+	s.once.Do(func() { <-s.gate })
+	return s.fakeScreen.Input(e)
+}
+
+// Mouse moves queued behind each other are played as one, to the latest
+// position; clicks and keys are never dropped and keep their order.
+func TestScreenPlaysQueuedMouseMovesAsOne(t *testing.T) {
+	screen := &slowInput{fakeScreen: newFakeScreen(64, 64, 0), gate: make(chan struct{})}
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	copied := make(chan struct{})
+	go func() { _, _ = io.Copy(io.Discard, outR); close(copied) }()
+	served := make(chan struct{})
+	go func() {
+		_ = serveScreen(screen, func() screenInputer { return screen }, inR, outW, testPace)
+		_ = outW.Close()
+		close(served)
+	}()
+	defer func() { _ = inW.Close(); <-served; <-copied }()
+
+	send := func(e rdp.InputEvent) {
+		p, _ := json.Marshal(e)
+		if err := writeScreenMsg(inW, scrInput, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(rdp.InputEvent{Kind: "key", Scancode: 0x1E, Down: true}) // blocks the player
+	for i := range 50 {
+		send(rdp.InputEvent{Kind: "mouse", X: i, Y: i})
+	}
+	send(rdp.InputEvent{Kind: "button", Button: 0, Down: true, X: 49, Y: 49})
+	time.Sleep(50 * time.Millisecond)
+	close(screen.gate)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		screen.mu.Lock()
+		last := screen.inputs
+		screen.mu.Unlock()
+		if len(last) > 0 && last[len(last)-1].Kind == "button" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	screen.mu.Lock()
+	inputs := append([]rdp.InputEvent(nil), screen.inputs...)
+	screen.mu.Unlock()
+	if len(inputs) < 3 || inputs[0].Kind != "key" || inputs[len(inputs)-1].Kind != "button" {
+		t.Fatalf("played %+v", inputs)
+	}
+	moves := inputs[1 : len(inputs)-1]
+	if len(moves) > 5 {
+		t.Errorf("50 queued moves were played as %d", len(moves))
+	}
+	if m := moves[len(moves)-1]; m.Kind != "mouse" || m.X != 49 || m.Y != 49 {
+		t.Errorf("the last move played was %+v, want the pointer at 49,49", m)
+	}
+}
+
+// With dirty rectangles (Desktop Duplication), only tiles they touch are
+// looked at; without, every tile is.
+func TestScreenDifferLooksOnlyWhereTheScreenSaysItChanged(t *testing.T) {
+	w, h := 256, 128
+	fb := make([]byte, w*h*4)
+	var d screenDiffer
+	if n := len(d.changed(screenShot{fb: fb, stride: w * 4, width: w, height: h}, false, 1<<20)); n == 0 {
+		t.Fatal("the first frame sent nothing")
+	}
+	paint := func(x, y int) {
+		o := (y*w + x) * 4
+		fb[o], fb[o+1], fb[o+2] = 0xFF, 0xFF, 0xFF
+	}
+	tiles := func(b [][]byte) int {
+		n := 0
+		for _, f := range b {
+			for p := f; len(p) >= rdp.FrameHeaderSize; n++ {
+				l := int(p[10]) | int(p[11])<<8
+				p = p[rdp.FrameHeaderSize+(l+3)&^3:]
+			}
+		}
+		return n
+	}
+	paint(10, 10)   // tile 0
+	paint(200, 100) // tile (3,1)
+	got := d.changed(screenShot{fb: fb, stride: w * 4, width: w, height: h,
+		dirty: []image.Rectangle{image.Rect(5, 5, 20, 20)}}, false, 1<<20)
+	if n := tiles(got); n != 1 {
+		t.Errorf("a dirty rectangle over one tile sent %d tiles", n)
+	}
+	got = d.changed(screenShot{fb: fb, stride: w * 4, width: w, height: h}, false, 1<<20)
+	if n := tiles(got); n != 1 {
+		t.Errorf("a full comparison found %d changed tiles, want the one outside the last rectangle", n)
+	}
+	if n := tiles(d.changed(screenShot{fb: fb, stride: w * 4, width: w, height: h}, false, 1<<20)); n != 0 {
+		t.Errorf("an unchanged screen sent %d tiles", n)
 	}
 }
