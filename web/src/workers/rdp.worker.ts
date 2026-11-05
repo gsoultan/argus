@@ -32,6 +32,8 @@ const FRAME_RESIZE = 2
 const FRAME_READY = 3
 const FRAME_CLOSED = 4
 const FRAME_ENCODED = 5
+/** Ends a frame; acknowledged once it is drawn. See internal/rdp EncodeMark. */
+const FRAME_MARK = 8
 
 /** The header is 12 bytes so pixels start 4-byte aligned. */
 const HEADER = 12
@@ -50,6 +52,8 @@ export type RDPWorkerResponse =
   | { type: 'ready'; width: number; height: number }
   | { type: 'closed' }
   | { type: 'error'; message: string }
+  /** A frame ended and everything before it is decoded: acknowledge it. */
+  | { type: 'mark'; id: number; rttMs: number }
 
 /** The decoder, fetched once per worker and shared by every frame. */
 const pixels: Promise<PixelsModule> = loadPixels(
@@ -161,6 +165,9 @@ async function handle(buf: ArrayBuffer) {
             graphics?.close()
             graphics = null
             post({ type: 'closed' })
+            break
+          case FRAME_MARK:
+            post({ type: 'mark', id: view.getUint32(at - HEADER + 2, true), rttMs: view.getUint16(at - HEADER + 10, true) })
             break
         }
         continue
