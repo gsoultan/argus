@@ -421,7 +421,7 @@ function TopicDetail({ name, ask, act, can, hostname, narrow, onBack, onPublish 
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
         <Card withBorder radius="md" padding={0}>
           <Text fw={600} size={FS.body} p="sm" pb={0}>Partitions</Text>
-          <Table.ScrollContainer minWidth={420}>
+          <Table.ScrollContainer minWidth={340}>
             <Table verticalSpacing={6} fz="sm">
               <Table.Thead><Table.Tr><Table.Th>#</Table.Th><Table.Th>Leader</Table.Th><Table.Th>In sync</Table.Th><Table.Th ta="right">Start</Table.Th><Table.Th ta="right">End</Table.Th></Table.Tr></Table.Thead>
               <Table.Tbody>
