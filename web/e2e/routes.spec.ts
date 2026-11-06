@@ -8,7 +8,7 @@ const ROUTES: Array<[string, string | RegExp]> = [
   ['/', HOME],
   ['/sessions', 'Activity'],
   ['/assets', 'Servers'],
-  ['/assets/add', 'Add server'],
+  ['/assets/add', 'Add server or device'],
   ['/approvals', 'Approvals'],
   ['/audit', 'Activity'],
   ['/teams', 'Teams'],

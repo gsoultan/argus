@@ -162,7 +162,10 @@ const win01: Asset = {
  */
 const pixel01: Asset = {
   ...generatedAssets[1]!,
-  id: uuid(),
+  // A fixed id rather than uuid(): drawing one would shift every id and
+  // session drawn after it, and the browser checks follow the first rows
+  // of the fixture expecting the same records each time.
+  id: '5c1e1a0e-7b7e-4c7a-9c4e-2d6f3a8b1e42',
   hostname: 'rina-pixel-8',
   address: '10.44.9.31',
   port: 0,
