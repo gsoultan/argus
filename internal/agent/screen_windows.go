@@ -674,6 +674,14 @@ func (c *consoleCapturer) captureGDI() (screenShot, bool, error) {
 	return screenShot{fb: c.buf.bits, stride: w * 4, width: w, height: h}, true, nil
 }
 
+// kind says how the screen is being captured, for the helper's stats.
+func (c *consoleCapturer) kind() string {
+	if c.dup != nil {
+		return "dxgi"
+	}
+	return "gdi"
+}
+
 func (c *consoleCapturer) Close() {
 	if c.dup != nil {
 		c.dup.close()

@@ -20,6 +20,14 @@
  *  - buffers are transferred rather than copied. An ImageBitmap sent through
  *    postMessage with a transfer list changes owner; the worker's reference is
  *    detached, so the same pixels are never resident twice.
+ *
+ * Where the browser allows it, the page hands this worker the canvas itself
+ * (an OffscreenCanvas) and the worker draws into it the moment a rectangle is
+ * decoded. That takes three steps out of every frame: building an ImageBitmap,
+ * the hop back to the page, and waiting there for the page's next animation
+ * frame -- up to 16 ms on its own, which a person typing feels. It also keeps
+ * the screen moving while the page's own thread is busy. Without that support
+ * the worker posts bitmaps and the page draws them, as before.
  */
 
 import { FRAME_GRAPHICS, FRAME_GRAPHICS_PART, PartJoiner } from '~/lib/gfx'
@@ -45,6 +53,9 @@ export interface DisplayRect {
   height: number
   bitmap: ImageBitmap
 }
+
+/** What the page sends: frames as they came off the socket, or the canvas once. */
+export type RDPWorkerRequest = ArrayBuffer | { type: 'canvas'; canvas: OffscreenCanvas }
 
 export type RDPWorkerResponse =
   | { type: 'rects'; rects: DisplayRect[] }
@@ -82,17 +93,62 @@ const parts = new PartJoiner()
 /** Whether graphics commands came since the last frame mark. */
 let videoSinceMark = false
 
+/**
+ * The page's canvas, when it was handed over: rectangles are drawn here as
+ * they are decoded, instead of being posted to the page.
+ */
+let surface: OffscreenCanvas | null = null
+let screen: OffscreenCanvasRenderingContext2D | null = null
+
+/** Sizes the canvas to the desktop. Resizing clears it, so only on a change. */
+function fit(width: number, height: number) {
+  if (!surface || width <= 0 || height <= 0) return
+  if (surface.width !== width) surface.width = width
+  if (surface.height !== height) surface.height = height
+}
+
+/** Draws bitmaps here when the canvas is ours, and otherwise sends them on. */
+function deliver(rects: DisplayRect[]) {
+  if (rects.length === 0) return
+  if (!screen) {
+    // The bitmaps are what gets transferred; the source buffers stay here and
+    // are collected.
+    post({ type: 'rects', rects }, rects.map((r) => r.bitmap))
+    return
+  }
+  for (const r of rects) {
+    screen.drawImage(r.bitmap, r.x, r.y)
+    r.bitmap.close()
+  }
+}
+
 function renderer(): GraphicsRenderer {
   graphics ??= new GraphicsRenderer({
-    rects: (rects) => post({ type: 'rects', rects }, rects.map((r) => r.bitmap)),
-    resize: (width, height) => post({ type: 'resize', width, height }),
+    rects: deliver,
+    resize: (width, height) => {
+      fit(width, height)
+      post({ type: 'resize', width, height })
+    },
   })
   return graphics
 }
 
-self.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
-  const buf = ev.data
-  queue = queue.then(() => handle(buf))
+self.onmessage = (ev: MessageEvent<RDPWorkerRequest>) => {
+  const msg = ev.data
+  if (!(msg instanceof ArrayBuffer)) {
+    if (msg?.type === 'canvas') {
+      // Sent before the socket opens, so before any frame: nothing drawn
+      // earlier is lost.
+      surface = msg.canvas
+      // alpha: false lets the compositor skip blending the desktop against
+      // the page; desynchronized lets a frame reach the screen without
+      // waiting on the page's compositing.
+      screen = surface.getContext('2d', { alpha: false, desynchronized: true } as CanvasRenderingContext2DSettings)
+      if (!screen) surface = null
+    }
+    return
+  }
+  queue = queue.then(() => handle(msg))
 }
 
 async function handle(buf: ArrayBuffer) {
@@ -131,7 +187,8 @@ async function handle(buf: ArrayBuffer) {
           // cosmetic fault.
           continue
         }
-        pending.push(bitmapRect(new ImageData(rgba, width, height), x, y))
+        if (screen) screen.putImageData(new ImageData(rgba, width, height), x, y)
+        else pending.push(bitmapRect(new ImageData(rgba, width, height), x, y))
         continue
       }
 
@@ -162,9 +219,11 @@ async function handle(buf: ArrayBuffer) {
         await flush(pending)
         switch (kind) {
           case FRAME_RESIZE:
+            fit(width, height)
             post({ type: 'resize', width, height })
             break
           case FRAME_READY:
+            fit(width, height)
             post({ type: 'ready', width, height })
             break
           case FRAME_CLOSED:
@@ -197,7 +256,8 @@ async function handle(buf: ArrayBuffer) {
       // A view, not a copy. createImageBitmap reads it synchronously into the
       // bitmap, so the underlying buffer is free immediately afterwards.
       const raw = new Uint8ClampedArray(buf, at + HEADER, bytes)
-      pending.push(bitmapRect(new ImageData(raw, width, height), x, y))
+      if (screen) screen.putImageData(new ImageData(raw, width, height), x, y)
+      else pending.push(bitmapRect(new ImageData(raw, width, height), x, y))
 
       at += HEADER + bytes
     }
@@ -211,10 +271,7 @@ async function handle(buf: ArrayBuffer) {
 /** Posts the rectangles decoded so far and empties the list. */
 async function flush(pending: Array<Promise<DisplayRect>>) {
   if (pending.length === 0) return
-  const rects = await Promise.all(pending.splice(0))
-  // The bitmaps are what gets transferred; the source ArrayBuffer stays here
-  // and is collected.
-  post({ type: 'rects', rects }, rects.map((r) => r.bitmap))
+  deliver(await Promise.all(pending.splice(0)))
 }
 
 async function bitmapRect(image: ImageData, x: number, y: number): Promise<DisplayRect> {

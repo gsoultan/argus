@@ -71,6 +71,15 @@ type graphicsMeasure struct {
 	Commands      int
 	CodecBytes    map[string]int
 	CodecCommands map[string]int
+	// KeyFrames counts H.264 pictures a decoder could start on (an IDR)
+	// while busy, and KeyAfterRefresh says whether one came within a few
+	// seconds of asking for the screen again: what someone who starts
+	// watching partway through needs.
+	KeyFrames       int
+	KeyAfterRefresh bool
+	// DroppedOnRefresh says the server ended the session when asked to
+	// repaint, which is what a viewer joining would do to it.
+	DroppedOnRefresh bool
 }
 
 func (m graphicsMeasure) String() string {
@@ -79,14 +88,15 @@ func (m graphicsMeasure) String() string {
 		codecs = append(codecs, fmt.Sprintf("%s=%dKiB/%d", k, v/1024, m.CodecCommands[k]))
 	}
 	sort.Strings(codecs)
-	return fmt.Sprintf("%.2f Mbit/s, %.1f frames/s, %d commands, %s",
-		m.MbitPerSec, m.FramesPerSec, m.Commands, strings.Join(codecs, " "))
+	return fmt.Sprintf("%.2f Mbit/s, %.1f frames/s, %d commands, %s, %d key frames, key after refresh %v, dropped on refresh %v",
+		m.MbitPerSec, m.FramesPerSec, m.Commands, strings.Join(codecs, " "), m.KeyFrames, m.KeyAfterRefresh,
+		m.DroppedOnRefresh)
 }
 
 func measureMode(t *testing.T, addr, user, password string, graphics bool, busy time.Duration) graphicsMeasure {
 	t.Helper()
 	m := graphicsMeasure{CodecBytes: map[string]int{}, CodecCommands: map[string]int{}}
-	counting := false
+	counting, refreshed := false, false
 	cfg := rdp.ClientConfig{Width: 1920, Height: 1080, Depth: 16}
 	if graphics {
 		cfg.Graphics = func(p rdp.GraphicsPDU) {
@@ -98,6 +108,13 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 			switch p.Cmd {
 			case rdp.GfxWireToSurface1, rdp.GfxWireToSurface2:
 				name = rdp.CodecName(p.Codec)
+				if hasIDR(p.Bitmap) {
+					if refreshed {
+						m.KeyAfterRefresh = true
+					} else {
+						m.KeyFrames++
+					}
+				}
 			case rdp.GfxSolidFill:
 				name = "solidfill"
 			case rdp.GfxSurfaceToSurface:
@@ -139,6 +156,10 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 			if errors.As(err, &ne) && ne.Timeout() {
 				continue
 			}
+			if err != nil && refreshed {
+				m.DroppedOnRefresh = true
+				return
+			}
 			if err != nil {
 				t.Fatalf("reading updates: %v", err)
 			}
@@ -159,13 +180,34 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 	counting = true
 	start := time.Now()
 	read(busy)
-	counting = false
 	secs := time.Since(start).Seconds()
+	busyWire, busyFrames := wire, m.Frames
+	if graphics {
+		// A viewer arriving now: ask for the whole screen again, and see
+		// whether a picture to start on follows.
+		refreshed = true
+		if err := client.Refresh(); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		read(3 * time.Second)
+	}
+	counting = false
 
 	m.Seconds = secs
-	m.MbitPerSec = float64(wire) * 8 / secs / 1e6
-	m.FramesPerSec = float64(m.Frames) / secs
+	m.Frames = busyFrames
+	m.MbitPerSec = float64(busyWire) * 8 / secs / 1e6
+	m.FramesPerSec = float64(busyFrames) / secs
 	return m
+}
+
+// hasIDR reports whether an H.264 stream in Annex B holds an IDR slice.
+func hasIDR(b []byte) bool {
+	for i := 0; i+3 < len(b); i++ {
+		if b[i] == 0 && b[i+1] == 0 && b[i+2] == 1 && b[i+3]&0x1F == 5 {
+			return true
+		}
+	}
+	return false
 }
 
 // runFromRunBox opens the Run box and types a command into it.

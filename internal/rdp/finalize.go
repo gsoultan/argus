@@ -22,6 +22,7 @@ const (
 	pduType2FontList    = 39
 	pduType2FontMap     = 40
 	pduType2RefreshRect = 33
+	pduType2SuppressOut = 35
 	pduType2ErrorInfo   = 47
 )
 
@@ -207,4 +208,24 @@ func RefreshRectPDU(shareID uint32, userID uint16, width, height int) []byte {
 	b = binary.LittleEndian.AppendUint16(b, uint16(width-1))
 	b = binary.LittleEndian.AppendUint16(b, uint16(height-1))
 	return shareDataPDU(shareID, userID, pduType2RefreshRect, b)
+}
+
+// SuppressOutputPDU tells the server to stop sending screen updates, or, with
+// allow, to start again for the whole screen (MS-RDPBCGR 2.2.11.3.1).
+//
+// Stopping and starting again is how a session on the graphics pipeline is
+// asked to repaint. A Refresh Rect there ends the connection: Windows resets
+// it the moment one arrives, measured on Server 2022/2025.
+func SuppressOutputPDU(shareID uint32, userID uint16, allow bool, width, height int) []byte {
+	b := make([]byte, 0, 12)
+	if !allow {
+		b = append(b, 0, 0, 0, 0)
+		return shareDataPDU(shareID, userID, pduType2SuppressOut, b)
+	}
+	b = append(b, 1, 0, 0, 0)
+	b = binary.LittleEndian.AppendUint16(b, 0)
+	b = binary.LittleEndian.AppendUint16(b, 0)
+	b = binary.LittleEndian.AppendUint16(b, uint16(width-1))
+	b = binary.LittleEndian.AppendUint16(b, uint16(height-1))
+	return shareDataPDU(shareID, userID, pduType2SuppressOut, b)
 }

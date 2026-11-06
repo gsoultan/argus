@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsoultan/argus/internal/rdp"
@@ -343,6 +344,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	refresh := make(chan struct{}, 1)
 	credit := make(chan struct{}, 64)
 	poke := make(chan struct{}, 1)
+	// lastInput is when the last key or click went in (UnixNano), until a
+	// frame captured after it is sent: see screenStats.input.
+	var lastInput atomic.Int64
 	done := make(chan error, 1)
 	stop := make(chan struct{})
 	defer close(stop)
@@ -412,6 +416,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				break
 			}
 			_ = player.Input(e)
+			if e.Kind != "mouse" {
+				lastInput.CompareAndSwap(0, time.Now().UnixNano())
+			}
 			signal(poke)
 		}
 	}()
@@ -420,6 +427,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	var sharp screenSharpener
 	mo := motion{newVideo: newVideo, out: out}
 	defer mo.close()
+	stats := newScreenStats()
 	credits := 1
 	force := true
 	lastW, lastH := 0, 0
@@ -431,6 +439,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	var last screenShot
 	for {
 		// A credit, first: the agent has room for another frame.
+		waited := time.Now()
 		for credits == 0 {
 			select {
 			case err := <-done:
@@ -441,8 +450,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				force = true
 			}
 		}
+		stats.CreditMS += millis(time.Since(waited))
 		// No faster than the frame rate allows.
 		if wait := pace.minGap - time.Since(lastSent); wait > 0 {
+			stats.PaceMS += millis(wait)
 			if err := sleepOr(wait, done); err != nil {
 				return endOf(err)
 			}
@@ -462,6 +473,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		}
 		started := time.Now()
 		shot, changed, err := c.Capture(wait)
+		captured := time.Now()
 		if err != nil {
 			// The input desktop switching (a sign-in, a UAC prompt) fails
 			// a capture; the next one is on the new desktop.
@@ -489,6 +501,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			jobs = diff.find(last, force)
 			force = false
 		}
+		found := time.Now()
 		if repaint {
 			// Everything goes exactly; and a viewer who arrived late (what
 			// a refresh is for) needs a key frame before the next picture.
@@ -496,7 +509,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			mo.needKey = true
 		}
 
-		now := time.Now()
+		now := found
 		sent := false
 		if !repaint && mo.wants(len(jobs), now) {
 			ok, err := mo.send(last, &diff, &sharp, jobs, now)
@@ -521,7 +534,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				jobs = append(jobs, diff.job(last, i))
 			}
 		}
+		coded := time.Now()
 		batches := diff.batches(last, jobs, desktopBatch)
+		encoded := time.Now()
 		if len(batches) == 0 && !sent {
 			// Nothing new. A capturer that waited has already spent the
 			// time; one that looked and returned (GDI) waits here, a
@@ -554,6 +569,16 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		}
 		if err := writeScreenMsg(out, scrFrame, nil); err != nil {
 			return err
+		}
+		finished := time.Now()
+		stats.frame(c, started, captured, found, coded, encoded, finished, sent)
+		if t := lastInput.Load(); t != 0 && t < captured.UnixNano() && lastInput.CompareAndSwap(t, 0) {
+			stats.input(time.Unix(0, t), captured, finished)
+		}
+		if stats.due() {
+			if err := writeScreenMsg(out, scrStats, stats.encode()); err != nil {
+				return err
+			}
 		}
 		// The encoder is made once the first frame is out, not when motion
 		// first comes, so the agent hears at once what motion will go as,
@@ -751,6 +776,8 @@ type screenClient struct {
 	// pictures and keys count what went as H.264, for the log at the end;
 	// they and codec are held by mu.
 	pictures, keys int
+	// stats is the helper's last word on what its frames cost (scrStats).
+	stats []byte
 
 	mu            sync.Mutex
 	helper        io.ReadWriteCloser
@@ -934,6 +961,11 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 					c.log.Info("tunnel: screen sharing sends motion as", "codec", codec)
 					c.record(map[string]any{"type": "screen-codec", "codec": codec})
 				}
+			case scrStats:
+				c.mu.Lock()
+				c.stats = append(c.stats[:0], m.p...)
+				c.mu.Unlock()
+				return nil, nil
 			case scrFrame:
 				c.mu.Lock()
 				c.holding = false
@@ -1227,10 +1259,8 @@ func (c *screenClient) Close() error {
 	}
 	c.closed = true
 	close(c.done)
-	if c.video {
-		c.log.Info("tunnel: screen sharing ended", "codec", c.codec,
-			"pictures", c.pictures, "key_frames", c.keys)
-	}
+	c.log.Info("tunnel: screen sharing ended", "codec", c.codec,
+		"pictures", c.pictures, "key_frames", c.keys, "frames", string(c.stats))
 	if c.helper != nil {
 		return c.helper.Close()
 	}
