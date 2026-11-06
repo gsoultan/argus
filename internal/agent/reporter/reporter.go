@@ -140,6 +140,10 @@ type HeartbeatReply struct {
 	// decodes it. Absent when nothing is asked, and from a control plane
 	// older than updates.
 	Update json.RawMessage `json:"update"`
+	// Packages is what the console wants done about operating system
+	// updates, as the agent decodes it. Absent from a control plane older
+	// than them: the agent then does not look for updates.
+	Packages json.RawMessage `json:"packages"`
 	// KeepRecordingsHours is how long the console wants this host to keep a
 	// recording once the control plane has stored it; 0 is for ever. Nil from
 	// a control plane older than the setting: the agent keeps its own default.
