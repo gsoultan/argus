@@ -2,16 +2,18 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useQuery } from '@tanstack/react-query'
 import { meQuery } from '~/lib/queries'
 import {
-  ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, SegmentedControl, Stack, Tabs, Text,
+  ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, Stack, Tabs, Text,
   TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
-  IconChevronDown, IconChevronRight, IconDatabase, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
+  IconChevronDown, IconChevronRight, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
   IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
-  IconAdjustmentsHorizontal,
+  IconAdjustmentsHorizontal, IconSettings,
 } from '@tabler/icons-react'
+import { Link } from '@tanstack/react-router'
+import { EngineMark } from '~/components/EngineMark'
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { ResultsGrid } from '~/components/ResultsGrid'
@@ -124,6 +126,8 @@ interface PGAnswer {
 }
 
 type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups' | 'trash' | 'changes'
+type ManagePanel = Exclude<Panel, 'query'>
+type WorkspaceTab = 'query' | 'diagram' | 'manage'
 
 interface Result {
   id: number
@@ -239,6 +243,15 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const collectors = useRef(new Map<number, Collected>())
   const [panel, setPanel] = useState<Panel>(initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' ? initialPanel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
+  // The three tabs under the header. Manage is any administration panel;
+  // it reopens the one last looked at.
+  const lastManage = useRef<ManagePanel>(panel === 'query' ? 'activity' : panel)
+  if (panel !== 'query') lastManage.current = panel
+  const tabNow: WorkspaceTab = view === 'diagram' ? 'diagram' : panel === 'query' ? 'query' : 'manage'
+  const goTab = (t: WorkspaceTab) => {
+    setView(t === 'diagram' ? 'diagram' : 'query')
+    setPanel(t === 'manage' ? lastManage.current : 'query')
+  }
 
   // Tabs: each its own editor text, row limit, result and plan. Text is
   // kept in this browser per database; results never are.
@@ -1147,20 +1160,17 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const bar = (
     <GenerateContext.Provider value={gen}><LeftBar
       database={database}
-      level={level}
       schema={schema}
       onPick={(q) => { setView('query'); insert(q); if (narrow) tree.close() }}
       onRun={(q) => { setSql(q); setPanel('query'); setView('query'); run(q); if (narrow) tree.close() }}
       history={history}
-      panel={panel}
-      onPanel={(p) => { setPanel(p); setView('query'); if (narrow) tree.close() }}
       onOpenSaved={openSaved}
       orgAdmin={Boolean(orgAdmin)}
     /></GenerateContext.Provider>
   )
   const adminProps = {
     collect, admin, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
-    onBack: () => setPanel('query'), onAskForAccess,
+    onAskForAccess,
   }
   const busyElsewhere = running !== null && running.tab !== tab.key
   const waitingHere = waitingTabs.includes(tab.key)
@@ -1254,13 +1264,6 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     </Menu>
   )
   const names = useMemo(() => paramNames(sql), [sql])
-  const formatButton = (
-    <Tooltip label="Format (Shift+Alt+F)" withinPortal>
-      <Button size="xs" variant="default" leftSection={<IconIndentIncrease size={14} />} onClick={format} disabled={!sql.trim()}>
-        Format
-      </Button>
-    </Tooltip>
-  )
   const runLabel = runningHere ? 'Running…' : busyElsewhere ? (waitingHere ? `Waiting for ${runningName}` : `Run after ${runningName}`) : 'Run'
 
   const toolbar = (
@@ -1292,15 +1295,29 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         </>
       ) : (
         <>
-          <Button size="xs" variant="default" leftSection={<IconStar size={14} />} onClick={() => setSaving(true)} disabled={!sql.trim()}>
-            {dirty ? 'Save changes' : 'Save'}
-          </Button>
-          {formatButton}
-          <Button size="xs" variant="default" leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setBuilding({})}>Build</Button>
-          <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} onClick={cancel}
-            disabled={!runningHere && !waitingHere}>
-            Cancel
-          </Button>
+          <Box w={1} h={20} mx={2} style={{ background: 'var(--color-line)' }} />
+          <Tooltip label={dirty ? 'Save changes to the saved query (⌘/Ctrl+S)' : 'Save the query (⌘/Ctrl+S)'} withinPortal>
+            <ActionIcon size={30} variant={dirty ? 'light' : 'subtle'} color={dirty ? 'azure' : 'slate'} onClick={() => setSaving(true)} disabled={!sql.trim()}
+              aria-label={dirty ? 'Save changes' : 'Save'}>
+              <IconStar size={15} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Format (Shift+Alt+F)" withinPortal>
+            <ActionIcon size={30} variant="subtle" color="slate" onClick={format} disabled={!sql.trim()} aria-label="Format">
+              <IconIndentIncrease size={15} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Build a query by picking tables and columns" withinPortal>
+            <ActionIcon size={30} variant="subtle" color="slate" onClick={() => setBuilding({})} aria-label="Build">
+              <IconAdjustmentsHorizontal size={15} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Cancel the running statement" withinPortal>
+            <ActionIcon size={30} variant="subtle" color="slate" onClick={cancel} disabled={!runningHere && !waitingHere} aria-label="Cancel">
+              <IconPlayerStop size={15} />
+            </ActionIcon>
+          </Tooltip>
+          <Box w={1} h={20} mx={2} style={{ background: 'var(--color-line)' }} />
           <Group gap={4} wrap="nowrap">
             <Text size={FS.micro} c="dimmed">Show up to</Text>
             {rowLimit}
@@ -1348,56 +1365,24 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   )
 
   return (
-    <Box style={{ display: 'flex', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
+    <Box style={{ display: 'flex', height: narrow ? 'auto' : 'calc(100dvh - var(--app-shell-header-offset, 60px))', minHeight: 480 }}>
       {narrow ? (
         <Drawer opened={treeOpen} onClose={tree.close} size="85%" padding="xs" title={database.dbname}>
           {bar}
         </Drawer>
       ) : (
-        <Box w={280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden' }}>
-          <ScrollArea h="100%" type="auto">{bar}</ScrollArea>
+        <Box w={tabNow === 'manage' ? 220 : 280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden', background: 'var(--color-surface)' }}>
+          <ScrollArea h="100%" type="auto">
+            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} narrow={false} onPick={setPanel} /> : bar}
+          </ScrollArea>
         </Box>
       )}
 
       <Box ref={area} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <Group gap="xs" px={narrow ? 'sm' : 'md'} py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-          {narrow && (
-            <ActionIcon variant="subtle" onClick={tree.open} aria-label="Open the object tree">
-              <IconMenu2 size={18} />
-            </ActionIcon>
-          )}
-          {!narrow && <IconDatabase size={16} color="var(--color-brand)" />}
-          <Text fw={650} size={FS.body} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{database.dbname}</Text>
-          {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace" style={{ whiteSpace: 'nowrap' }}>{database.hostname}{ready?.version ? ` · Postgres ${ready.version.split(' ')[0]}` : ''}{ready?.via === 'pgbouncer' ? ' · via PgBouncer' : ''}</Text>}
-          <Box style={{ flexShrink: 0 }}><EnvBadge label={database.label} /></Box>
-          {!narrow && writesNeedApproval(database) && <Box style={{ flexShrink: 0 }}><ApprovalBadge /></Box>}
-          <SegmentedControl size="xs" ml={narrow ? 'auto' : 'sm'} value={view} onChange={(v) => { setView(v as 'query' | 'diagram'); setPanel('query') }}
-            data={[{ label: 'Query', value: 'query' }, { label: 'Diagram', value: 'diagram' }]} aria-label="View" />
-          {!narrow && (
-            <Group gap={6} ml="auto" wrap="nowrap">
-              <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">
-                You can: {level ? level.toUpperCase() : '…'}
-              </Badge>
-              {(access.approvable || onAskForAccess) && level === 'read' && (
-                <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
-                  Ask for write access
-                </Button>
-              )}
-              <Badge variant="light" color="rose" radius="sm" leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
-                {status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'}
-              </Badge>
-            </Group>
-          )}
-        </Group>
-        {narrow && (
-          <Group gap={6} px="sm" py={6} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">You can: {level ? level.toUpperCase() : '…'}</Badge>
-            {(access.approvable || onAskForAccess) && level === 'read' && (
-              <Button size="compact-xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>Ask</Button>
-            )}
-            <Badge variant="light" color="rose" radius="sm" ml="auto">{status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'}</Badge>
-          </Group>
-        )}
+        <WorkspaceHeader database={database} narrow={Boolean(narrow)} level={level} status={status} version={ready?.version} viaPooler={ready?.via === 'pgbouncer'}
+          canAsk={Boolean((access.approvable || onAskForAccess) && level === 'read')} onAskForAccess={onAskForAccess}
+          settings={orgAdmin} tab={tabNow} onTab={goTab} onOpenTree={tree.open} />
+        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} narrow onPick={setPanel} />}
 
         {writesNeedApproval(database) && <ChangesWaitingBanner database={database} me={me?.email} />}
         {fatal && (
@@ -1418,9 +1403,9 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'roles' && <RolesPanel {...adminProps} />}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} />}
-        {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} onBack={() => setPanel('query')} />}
-        {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} onBack={() => setPanel('query')} />}
-        {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} onBack={() => setPanel('query')} admin={Boolean(orgAdmin)} />}
+        {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} />}
+        {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} />}
+        {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} admin={Boolean(orgAdmin)} />}
         {view === 'query' && panel === 'query' && <>
         {tabStrip}
         <Box style={{ flexShrink: 0 }}>
@@ -1550,15 +1535,12 @@ function ScriptSteps({ script, shownId, narrow, onPick }: {
 
 /* ── Left bar ───────────────────────────────────────────────────────────── */
 
-function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPanel, onOpenSaved, orgAdmin }: {
+function LeftBar({ database, schema, onPick, onRun, history, onOpenSaved, orgAdmin }: {
   database: Database
-  level: DBLevel | ''
   schema: (kind: string, schemaName?: string, object?: string) => Promise<Obj[]>
   onPick: (text: string) => void
   onRun: (sql: string) => void
   history: { sql: string; at: number; ok: boolean }[]
-  panel: Panel
-  onPanel: (p: Panel) => void
   onOpenSaved: (q: SavedQuery) => void
   orgAdmin: boolean
 }) {
@@ -1568,18 +1550,6 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
 
   return (
     <Stack gap={SP.tight} p="xs">
-      <Box p="xs" style={{ background: 'var(--color-raised)', borderRadius: 8 }}>
-        <Group gap={6} wrap="nowrap">
-          <span style={{ width: 7, height: 7, borderRadius: 4, background: 'var(--mantine-color-teal-6)' }} />
-          <Text fw={600} size={FS.body}>{database.dbname}</Text>
-          <Text size={FS.micro} c="dimmed" ff="monospace">{database.hostname}</Text>
-        </Group>
-        <Group gap={4} mt={4}>
-          <Badge size="xs" variant="light" color={{ production: 'rose', staging: 'amber', development: 'teal' }[database.label]} radius="sm">{database.label}</Badge>
-          <Badge size="xs" variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">{level || '…'}</Badge>
-          <Badge size="xs" variant="outline" color="slate" radius="sm">recorded</Badge>
-        </Group>
-      </Box>
       <Tabs value={tab} onChange={setTab} variant="pills" radius="sm">
         <Tabs.List grow>
           <Tabs.Tab value="objects" fz={FS.meta}>Objects</Tabs.Tab>
@@ -1596,57 +1566,6 @@ function LeftBar({ database, level, schema, onPick, onRun, history, panel, onPan
           {schemas?.map((s) => (
             <SchemaNode key={s.name} s={s} schema={schema} onPick={onPick} onRun={onRun} />
           ))}
-          <Box mt="sm" px={4}>
-            <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} py={4} style={{ letterSpacing: '.06em' }}>Administration</Text>
-            <UnstyledButton onClick={() => onPanel(panel === 'activity' ? 'query' : 'activity')} px={4} py={4}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'activity' ? 'var(--color-raised)' : undefined }}
-              aria-pressed={panel === 'activity'}>
-              <IconActivity size={13} /><Text size={FS.meta}>Activity &amp; locks</Text>
-            </UnstyledButton>
-            <Tooltip label={level === 'dba' ? 'Who holds which level; give or take a level from an application role' : 'Needs DBA access'} withArrow>
-              <UnstyledButton onClick={() => onPanel(panel === 'roles' ? 'query' : 'roles')} px={4} py={4}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'roles' ? 'var(--color-raised)' : undefined, opacity: level === 'dba' ? 1 : .7 }}
-                aria-pressed={panel === 'roles'}>
-                <IconUsersGroup size={13} /><Text size={FS.meta}>Roles &amp; access</Text>
-                <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
-              </UnstyledButton>
-            </Tooltip>
-            <Tooltip label={level === 'dba' ? 'Installed and available extensions; install, update, remove' : 'Needs DBA access'} withArrow>
-              <UnstyledButton onClick={() => onPanel(panel === 'extensions' ? 'query' : 'extensions')} px={4} py={4}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'extensions' ? 'var(--color-raised)' : undefined, opacity: level === 'dba' ? 1 : .7 }}
-                aria-pressed={panel === 'extensions'}>
-                <IconPuzzle size={13} /><Text size={FS.meta}>Extensions</Text>
-                <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
-              </UnstyledButton>
-            </Tooltip>
-            <Tooltip label={level === 'dba' ? 'Publications and subscriptions: logical replication in and out of this database' : 'Needs DBA access'} withArrow>
-              <UnstyledButton onClick={() => onPanel(panel === 'replication' ? 'query' : 'replication')} px={4} py={4}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'replication' ? 'var(--color-raised)' : undefined, opacity: level === 'dba' ? 1 : .7 }}
-                aria-pressed={panel === 'replication'}>
-                <IconArrowsExchange size={13} /><Text size={FS.meta}>Replication</Text>
-                <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>
-              </UnstyledButton>
-            </Tooltip>
-            <UnstyledButton onClick={() => onPanel(panel === 'backups' ? 'query' : 'backups')} px={4} py={4}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'backups' ? 'var(--color-raised)' : undefined }}
-              aria-pressed={panel === 'backups'}>
-              <IconArchive size={13} /><Text size={FS.meta}>Backups</Text>
-            </UnstyledButton>
-            <Tooltip label="Deleted rows, dropped tables and schemas, kept so they can be put back" withArrow>
-              <UnstyledButton onClick={() => onPanel(panel === 'trash' ? 'query' : 'trash')} px={4} py={4}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'trash' ? 'var(--color-raised)' : undefined }}
-                aria-pressed={panel === 'trash'}>
-                <IconTrash size={13} /><Text size={FS.meta}>Trash</Text>
-              </UnstyledButton>
-            </Tooltip>
-            <Tooltip label="Who inserted, updated or deleted what, from the console" withArrow>
-              <UnstyledButton onClick={() => onPanel(panel === 'changes' ? 'query' : 'changes')} px={4} py={4}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', borderRadius: 6, background: panel === 'changes' ? 'var(--color-raised)' : undefined }}
-                aria-pressed={panel === 'changes'}>
-                <IconHistory size={13} /><Text size={FS.meta}>Data changes</Text>
-              </UnstyledButton>
-            </Tooltip>
-          </Box>
         </Box>
       )}
       {tab === 'history' && (
@@ -1739,6 +1658,14 @@ function KindGroup({ label, items, schemaName, schema, onPick, onRun }: {
   )
 }
 
+/** An estimated row count, short enough for the tree: 940, 12k, 1.2M. */
+export function compactCount(n: number): string {
+  if (n < 1000) return String(Math.round(n))
+  const [d, u] = n < 999_500 ? [1e3, 'k'] : n < 999_500_000 ? [1e6, 'M'] : [1e9, 'B']
+  const v = n / d
+  return `${v < 10 ? Math.round(v * 10) / 10 : Math.round(v)}${u}`
+}
+
 /** The hover text for an object: its size and estimated rows for a table. */
 function objectTitle(o: Obj, qualified: string): string {
   if (o.kind === 'function' || o.kind === 'procedure') return o.detail ? `${o.name}(${o.detail})` : qualified
@@ -1770,7 +1697,10 @@ function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
           {expandable ? (open ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />) : <span style={{ width: 11 }} />}
           <Icon size={12} style={{ color: 'var(--mantine-color-dimmed)', flexShrink: 0 }} />
           <Text size={FS.meta} ff="monospace" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</Text>
-          {o.detail && o.kind !== 'function' && o.kind !== 'procedure' && (
+          {(o.kind === 'table' || o.kind === 'matview') && o.count && o.count > 0 ? (
+            <Text size={FS.micro} c="dimmed" ff="monospace" ml="auto" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              aria-label={`about ${o.count.toLocaleString()} rows`}>≈{compactCount(o.count)}</Text>
+          ) : o.detail && o.kind !== 'function' && o.kind !== 'procedure' && (
             <Text size={FS.micro} c="dimmed" ml="auto" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{o.detail}</Text>
           )}
         </UnstyledButton>
@@ -1796,6 +1726,167 @@ function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
           ))}
         </Box>
       )}
+    </Box>
+  )
+}
+
+/* ── Header and Manage ─────────────────────────────────────────────────── */
+
+/*
+The workspace's one header. The name, server, engine version, label and
+approval rule used to appear in a breadcrumb row, in this header and again in
+a card at the top of the object tree; they are said once, here. A production
+database carries a rose edge across the top, so which world the next
+statement lands in is visible before it is read. Under it, three tabs: the
+editor, the diagram, and Manage, which holds every administration panel that
+used to hang under the object tree.
+*/
+function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, canAsk, onAskForAccess, settings, tab, onTab, onOpenTree }: {
+  database: Database
+  narrow: boolean
+  level: DBLevel | ''
+  status: 'connecting' | 'ready' | 'closed'
+  version?: string
+  viaPooler: boolean
+  canAsk: boolean
+  onAskForAccess?: () => void
+  /** An organization admin: links to who can connect and the settings. */
+  settings?: boolean
+  tab: WorkspaceTab
+  onTab: (t: WorkspaceTab) => void
+  onOpenTree: () => void
+}) {
+  const prod = database.label === 'production'
+  const where = `${database.hostname}${version ? ` · Postgres ${version.split(' ')[0]}` : ''}${viaPooler ? ' · via PgBouncer' : ''}`
+  const recorded = status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'
+  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = [
+    { key: 'query', label: 'Query', hint: 'Write and run statements' },
+    { key: 'diagram', label: 'Diagram', hint: 'Tables and how they link' },
+    { key: 'manage', label: 'Manage', hint: 'Activity, backups, data changes, trash, roles, extensions, replication' },
+  ]
+  return (
+    <Box data-env={database.label} style={{ borderBottom: '1px solid var(--color-line)', background: 'var(--color-surface)',
+      boxShadow: prod ? 'inset 0 3px 0 var(--mantine-color-rose-6)' : undefined, paddingTop: prod ? 3 : 0 }}>
+      <Group gap="sm" px={narrow ? 'sm' : 'md'} pt={narrow ? 8 : 10} wrap="nowrap">
+        {narrow && (
+          <ActionIcon variant="subtle" onClick={onOpenTree} aria-label="Open the object tree">
+            <IconMenu2 size={18} />
+          </ActionIcon>
+        )}
+        <EngineMark engine={database.engine} size={narrow ? 26 : 30} />
+        <Box style={{ minWidth: 0, flexShrink: narrow ? 1 : 0 }}>
+          <Text fw={650} size={narrow ? FS.body : 'md'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{database.dbname}</Text>
+          {narrow && <Text size={FS.micro} c="dimmed" ff="monospace" truncate>{where}</Text>}
+        </Box>
+        {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{where}</Text>}
+        <Box style={{ flexShrink: 0 }} ml={narrow ? 'auto' : undefined}><EnvBadge label={database.label} /></Box>
+        {!narrow && writesNeedApproval(database) && <Box style={{ flexShrink: 0 }}><ApprovalBadge /></Box>}
+        {!narrow && (
+          <Group gap={6} ml="auto" wrap="nowrap" style={{ flexShrink: 0 }}>
+            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">
+              You can: {level ? level.toUpperCase() : '…'}
+            </Badge>
+            {canAsk && (
+              <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
+                Ask for write access
+              </Button>
+            )}
+            <Badge variant="light" color="rose" radius="sm" leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
+              {recorded}
+            </Badge>
+            {settings && (
+              <Tooltip label="Who can connect, and this database's settings" withArrow>
+                <Link to="/databases/$dbId/settings" params={{ dbId: database.id }} aria-label="Who can connect and settings"
+                  style={{ display: 'inline-flex', padding: 6, borderRadius: 6, color: 'var(--mantine-color-dimmed)' }}>
+                  <IconSettings size={16} />
+                </Link>
+              </Tooltip>
+            )}
+          </Group>
+        )}
+      </Group>
+      <Group gap={narrow ? 0 : 2} px={narrow ? 4 : 'xs'} mt={narrow ? 4 : 6} wrap="nowrap" role="tablist" aria-label="View">
+        {tabs.map((t) => {
+          const on = t.key === tab
+          return (
+            <UnstyledButton key={t.key} role="tab" aria-selected={on} onClick={() => onTab(t.key)} title={t.hint}
+              px={narrow ? 10 : 12} py={8}
+              style={{ borderBottom: `2px solid ${on ? 'var(--color-brand)' : 'transparent'}`, marginBottom: -1 }}>
+              <Text size={FS.body} fw={on ? 600 : 400} c={on ? undefined : 'dimmed'}>{t.label}</Text>
+            </UnstyledButton>
+          )
+        })}
+        {narrow && (
+          <Group gap={6} ml="auto" pr="xs" wrap="nowrap">
+            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">{level ? level.toUpperCase() : '…'}</Badge>
+            {canAsk && (
+              <Button size="compact-xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>Ask</Button>
+            )}
+            <Badge variant="light" color="rose" radius="sm">{recorded}</Badge>
+          </Group>
+        )}
+      </Group>
+    </Box>
+  )
+}
+
+const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba' }[] = [
+  { key: 'activity', label: 'Activity & locks', icon: IconActivity, hint: 'What is running on this database now, and what waits on what', group: 'care' },
+  { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
+  { key: 'changes', label: 'Data changes', icon: IconHistory, hint: 'Who inserted, updated or deleted what, from the console', group: 'care' },
+  { key: 'trash', label: 'Trash', icon: IconTrash, hint: 'Deleted rows, dropped tables and schemas, kept so they can be put back', group: 'care' },
+  { key: 'roles', label: 'Roles & access', icon: IconUsersGroup, hint: 'Who holds which level; give or take a level from an application role', dba: true, group: 'dba' },
+  { key: 'extensions', label: 'Extensions', icon: IconPuzzle, hint: 'Installed and available extensions; install, update, remove', dba: true, group: 'dba' },
+  { key: 'replication', label: 'Replication', icon: IconArrowsExchange, hint: 'Publications and subscriptions: logical replication in and out of this database', dba: true, group: 'dba' },
+]
+
+/** The list of administration panels: a column on a wide screen, a row of chips on a phone. */
+function ManageNav({ panel, level, narrow, onPick }: {
+  panel: ManagePanel; level: DBLevel | ''; narrow: boolean; onPick: (p: ManagePanel) => void
+}) {
+  if (narrow) {
+    return (
+      <Group gap={6} px="sm" py={8} wrap="nowrap" role="tablist" aria-label="Manage"
+        style={{ overflowX: 'auto', scrollbarWidth: 'none', borderBottom: '1px solid var(--color-line)' }}>
+        {MANAGE.map((m) => (
+          <UnstyledButton key={m.key} role="tab" aria-selected={m.key === panel} onClick={() => onPick(m.key)}
+            px={10} py={5}
+            style={{ flexShrink: 0, borderRadius: 999, border: '1px solid', fontSize: 12.5,
+              borderColor: m.key === panel ? 'var(--color-brand)' : 'var(--color-line)',
+              background: m.key === panel ? 'var(--mantine-color-azure-light)' : 'var(--color-surface)',
+              color: m.key === panel ? 'var(--mantine-color-azure-light-color)' : undefined }}>
+            {m.label}
+          </UnstyledButton>
+        ))}
+      </Group>
+    )
+  }
+  const section = (group: 'care' | 'dba', title: string) => (
+    <Box mb="sm">
+      <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={10} py={4} style={{ letterSpacing: '.06em' }}>{title}</Text>
+      {MANAGE.filter((m) => m.group === group).map((m) => {
+        const on = m.key === panel
+        const Icon = m.icon
+        return (
+          <Tooltip key={m.key} label={m.dba && level !== 'dba' ? 'Needs DBA access' : m.hint} withArrow position="right" multiline w={240}>
+            <UnstyledButton onClick={() => onPick(m.key)} aria-current={on ? 'page' : undefined} px={10} py={7}
+              style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', borderRadius: 7, marginBottom: 1,
+                background: on ? 'var(--mantine-color-azure-light)' : undefined,
+                color: on ? 'var(--mantine-color-azure-light-color)' : undefined,
+                opacity: m.dba && level !== 'dba' ? 0.7 : 1 }}>
+              <Icon size={15} />
+              <Text size={FS.body} fw={on ? 600 : 400}>{m.label}</Text>
+              {m.dba && <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>}
+            </UnstyledButton>
+          </Tooltip>
+        )
+      })}
+    </Box>
+  )
+  return (
+    <Box p="xs" pt="sm" aria-label="Manage">
+      {section('care', 'Look after')}
+      {section('dba', 'DBA')}
     </Box>
   )
 }

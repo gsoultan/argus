@@ -25,7 +25,7 @@ const when = (iso: string) => {
 
 const rowsText = (c: DataChange) => (c.rows < 0 ? '' : c.rows === 1 ? '1 row' : `${c.rows.toLocaleString()} rows`)
 
-export function ChangesPanel({ databaseId, narrow, onBack }: { databaseId: string; narrow: boolean; onBack: () => void }) {
+export function ChangesPanel({ databaseId, narrow, onBack }: { databaseId: string; narrow: boolean; onBack?: () => void }) {
   const q = useInfiniteQuery({
     queryKey: ['database', databaseId, 'changes'],
     queryFn: ({ pageParam }) => (isConfigured() ? dataChanges(databaseId, pageParam || undefined) : Promise.resolve([])),
@@ -37,7 +37,7 @@ export function ChangesPanel({ databaseId, narrow, onBack }: { databaseId: strin
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
       <Group gap="xs" px="md" py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-        <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>
+        {onBack && <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>}
         <Box style={{ minWidth: 0, flex: 1 }}>
           <Text fw={650} size={FS.body}>Data changes</Text>
           {!narrow && <Text size={FS.micro} c="dimmed" lineClamp={1}>Every committed insert, update, delete, empty, drop and restore made from the console, newest first. Kept 180 days.</Text>}

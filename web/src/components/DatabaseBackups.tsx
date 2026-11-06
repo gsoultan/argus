@@ -78,7 +78,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
   database: Database
   level: DBLevel | ''
   narrow: boolean
-  onBack: () => void
+  onBack?: () => void
   /** The person is an admin, so the schedule link goes somewhere for them. */
   admin: boolean
 }) {
@@ -102,7 +102,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
       <Group gap="xs" px="md" py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-        <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>
+        {onBack && <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>}
         <Box style={{ minWidth: 0, flex: 1 }}>
           <Text fw={650} size={FS.body}>Backups</Text>
           {!narrow && <Text size={FS.micro} c="dimmed" lineClamp={1}>Encrypted before they touch a disk. Only the control plane can open them.</Text>}

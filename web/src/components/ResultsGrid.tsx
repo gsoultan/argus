@@ -243,6 +243,14 @@ function Fields({ cols, row, fks, onFollow, cut }: { cols: Col[]; row: Cell[]; f
   )
 }
 
+/** NULL in a cell: a quiet tag, so it never reads as the text "null". */
+function NullTag() {
+  return (
+    <span style={{ fontSize: 10, fontStyle: 'italic', letterSpacing: '.03em', padding: '0 5px', borderRadius: 4,
+      color: 'var(--mantine-color-dimmed)', background: 'var(--color-raised)' }}>NULL</span>
+  )
+}
+
 /** A row's changed cells, by result column. */
 type Changes = Map<number, Map<number, Cell>>
 
@@ -710,10 +718,13 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                   return (
                     <th key={i} style={th} aria-sort={sorted ? (view.sort!.desc ? 'descending' : 'ascending') : undefined}>
                       <ColumnMenu col={c} index={i} rows={result.rows} view={view} setView={setView}>
-                        <UnstyledButton px={12} py={6} w="100%" aria-label={`Column ${c.name}`}
-                          style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-                          <span>{c.name}</span>
-                          {!narrow && <span style={{ fontWeight: 400, color: 'var(--mantine-color-dimmed)' }}>{c.type}</span>}
+                        <UnstyledButton px={12} py={narrow ? 6 : 5} w="100%" aria-label={`Column ${c.name}`}
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12, fontFamily: 'var(--font-mono)',
+                            justifyContent: isNumeric(c) ? 'flex-end' : undefined }}>
+                          <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25, alignItems: isNumeric(c) ? 'flex-end' : undefined }}>
+                            <span>{c.name}</span>
+                            {!narrow && <span style={{ fontWeight: 400, fontSize: 10.5, color: 'var(--mantine-color-dimmed)' }}>{c.type}</span>}
+                          </span>
                           {fks[i] && <IconLink size={11} color="var(--mantine-color-dimmed)" aria-label={`links to ${fks[i]!.table}`} />}
                           {sorted && (view.sort!.desc ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />)}
                           {view.filters[i] && <IconFilter size={11} color="var(--mantine-color-azure-text)" />}
@@ -754,11 +765,14 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                 const row = result.rows[ri]!
                 const at = first + k
                 return (
-                  <tr key={ri} style={{ height: ROW_H, ...(deleted.has(ri) ? { textDecoration: 'line-through', background: 'var(--mantine-color-rose-light)' } : null) }}
-                    aria-label={deleted.has(ri) ? `Row ${ri + 1}, to delete` : undefined}>
-                    <td style={{ ...td, padding: 0, background: 'var(--color-void)' }}>
-                      <UnstyledButton onClick={() => setPanel({ kind: 'row', at })} aria-label={`Open row ${ri + 1}`}
-                        style={{ display: 'block', width: '100%', padding: '0 12px', textAlign: 'right', color: 'var(--mantine-color-dimmed)', fontSize: 12, fontFamily: 'inherit' }}>
+                  <tr key={ri} style={{ height: ROW_H, ...(deleted.has(ri) ? { textDecoration: 'line-through', background: 'var(--mantine-color-rose-light)' }
+                    : ri === panelIndex ? { background: 'var(--mantine-color-azure-light)' } : null) }}
+                    aria-label={deleted.has(ri) ? `Row ${ri + 1}, to delete` : undefined} aria-selected={ri === panelIndex || undefined}>
+                    <td style={{ ...td, padding: 0, background: ri === panelIndex ? 'var(--mantine-color-azure-light)' : 'var(--color-void)',
+                      boxShadow: ri === panelIndex ? 'inset 3px 0 0 var(--color-brand)' : undefined }}>
+                      <UnstyledButton onClick={() => setPanel({ kind: 'row', at })} aria-label={`Open row ${ri + 1}`} title="Every field of this row, in full"
+                        style={{ display: 'block', width: '100%', padding: '0 12px', textAlign: 'right', fontSize: 12, fontFamily: 'inherit',
+                          color: ri === panelIndex ? 'var(--mantine-color-azure-light-color)' : 'var(--mantine-color-dimmed)', fontWeight: ri === panelIndex ? 600 : undefined }}>
                         {ri + 1}
                       </UnstyledButton>
                     </td>
@@ -777,13 +791,13 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
                         )
                       }
                       return (
-                        <td key={j} style={{ ...td, color: cell === null ? 'var(--mantine-color-dimmed)' : undefined, fontStyle: cell === null ? 'italic' : undefined,
+                        <td key={j} style={{ ...td,
                           textAlign: isNumeric(c) ? 'right' : undefined, background: changed ? 'var(--mantine-color-amber-light)' : undefined,
                           cursor: live && !lockReason(ri, j) ? 'cell' : undefined }}
                           title={changed ? `${cell ?? 'NULL'}\nwas ${row[j] ?? 'NULL'}` : (cell ?? 'NULL')}
                           onDoubleClick={live ? () => startEdit(ri, j) : undefined}>
                           {result.cut?.has(`${ri}:${j}`) && <Badge size="xs" variant="light" color="amber" mr={4} title={CUT_NOTE}>cut</Badge>}
-                          {cell === null ? 'null'
+                          {cell === null ? <NullTag />
                             : fk && live ? (
                               <Group gap={4} wrap="nowrap" component="span" style={{ display: 'inline-flex' }}>
                                 <span>{cell}</span>
