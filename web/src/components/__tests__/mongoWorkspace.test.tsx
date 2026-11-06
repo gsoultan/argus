@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MongoWorkspace, formatMongo } from '~/components/MongoWorkspace'
+import { MongoWorkspace, formatMongo, shellValue } from '~/components/MongoWorkspace'
 import { renderWithProviders } from '~/test/render'
 import type { Database } from '~/types/domain'
 
@@ -71,6 +71,13 @@ describe('MongoWorkspace', () => {
     expect(second).toMatchObject({ command: 'db.orders.deleteMany({})', confirm: 'docs-01' })
     ws.answer({ id: second.id, type: 'result', data: [{ n: 2140, ok: 1 }], tag: 'delete 2140', ms: 41 })
     expect(await screen.findByText('delete 2140 · 41 ms')).toBeInTheDocument()
+  })
+
+  it('shows documents as mongosh does', () => {
+    expect(shellValue({ _id: { $oid: '65a1b2c3d4e5f60718293a4b' }, at: { $date: '2026-11-06T05:58:11Z' }, 'a b': [1, 2] }))
+      .toBe('{ _id: ObjectId("65a1b2c3d4e5f60718293a4b"), at: ISODate("2026-11-06T05:58:11Z"), "a b": [ 1, 2 ] }')
+    const long = shellValue({ note: 'x'.repeat(120), n: 1 })
+    expect(long.split('\n')).toHaveLength(4)
   })
 
   it('formats documents and refusals for the terminal', () => {

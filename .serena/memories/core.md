@@ -38,6 +38,7 @@ enforces all of it and CI runs it by name.
 | [shutdown-and-evidence](shutdown-and-evidence.md) | Any long-running loop, restarts, drains, reporting goroutines |
 | [postgres-access](postgres-access.md) | Databases: levels to Postgres roles, the pg-admin helper, the statement recording, the query workspace |
 | [mysql-access](mysql-access.md) | MySQL/MariaDB entries: per-person users, admin sign-in, how they reuse the Postgres session frames |
+| [mongodb-access](mongodb-access.md) | MongoDB entries: per-person users, the admin file, the mongosh-style command line |
 | [app-discovery](app-discovery.md) | What the agent finds running on a server, and what it must never read |
 | [server-system](server-system.md) | The System card: OS, processor, memory, disks, load, and how fresh they are |
 | [console-alerts](console-alerts.md) | The bell in the header: who sees which alert, the SSE stream, per-person settings |

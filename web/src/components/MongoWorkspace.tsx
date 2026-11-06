@@ -39,10 +39,37 @@ export function mongoDocs(a: StoreAnswer | null): unknown[] {
   return Array.isArray(a?.data) ? a!.data as unknown[] : []
 }
 
+const WRAPPERS: Record<string, string> = { $oid: 'ObjectId', $date: 'ISODate', $numberDecimal: 'NumberDecimal', $numberLong: 'NumberLong' }
+const IDENT = /^[A-Za-z_$][\w$]*$/
+
+/**
+ * A value as mongosh shows it: ObjectId("…") and ISODate("…") instead of
+ * their Extended JSON wrappers, plain field names, and on one line when it
+ * fits, so a page of short documents reads as a page, not a scroll.
+ */
+export function shellValue(v: unknown, indent = ''): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'undefined'
+  if (!Array.isArray(v)) {
+    const keys = Object.keys(v)
+    const w = keys.length === 1 ? WRAPPERS[keys[0]!] : undefined
+    const inner = w ? (v as Record<string, unknown>)[keys[0]!] : undefined
+    if (w && typeof inner === 'string') return `${w}(${JSON.stringify(inner)})`
+  }
+  const next = indent + '  '
+  const parts = Array.isArray(v)
+    ? v.map((x) => shellValue(x, next))
+    : Object.entries(v).map(([k, x]) => `${IDENT.test(k) ? k : JSON.stringify(k)}: ${shellValue(x, next)}`)
+  const [open, close] = Array.isArray(v) ? ['[', ']'] : ['{', '}']
+  if (parts.length === 0) return open + close
+  const flat = `${open} ${parts.join(', ')} ${close}`
+  if (flat.length + indent.length <= 100 && !flat.includes('\n')) return flat
+  return `${open}\n${parts.map((x) => next + x).join(',\n')}\n${indent}${close}`
+}
+
 /** How a command line answer reads in the terminal. */
 export function formatMongo(a: StoreAnswer): string {
   const docs = mongoDocs(a)
-  const body = docs.map((d) => JSON.stringify(d, null, 2)).join('\n')
+  const body = docs.map((d) => shellValue(d)).join('\n')
   const more = a.truncated ? '\n… more documents than shown; narrow the filter or add .limit()' : ''
   if (a.type !== 'result') return `(refused) ${a.error ?? 'failed'}${body ? `\n${body}` : ''}`
   return (body || '(no documents)') + more
