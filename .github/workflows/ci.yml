@@ -1316,8 +1316,14 @@ jobs:
             echo "::error::the agent says it cannot update itself: $(status reason)"; exit 1; }
           [ "$(status restartable)" = true ] || { dump
             echo "::error::the agent says it cannot restart: $(status restart_reason)"; exit 1; }
-          asset=$($c -X POST "https://localhost:8080/api/v1/discovered/$host/enrol" \
-            -d '{"principals":["Administrator"],"people":["admin@ci.example"]}' | jq -r .assetId)
+          # Enrolling with a token from the console adds the server; one that
+          # was only discovered is added here.
+          asset=$(q "SELECT id FROM assets WHERE lower(hostname) = lower('$host')")
+          if [ -z "$asset" ]; then
+            asset=$($c -X POST "https://localhost:8080/api/v1/discovered/$host/enrol" \
+              -d '{"principals":["Administrator"],"people":["admin@ci.example"]}' | jq -r .assetId)
+          fi
+          [ -n "$asset" ] && [ "$asset" != null ] || { dump; echo "::error::no server for $host"; exit 1; }
 
           # waitfor <state...>: the update's outcome, within four minutes.
           waitfor() {
