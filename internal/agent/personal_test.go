@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,5 +128,30 @@ func TestPersonalAccountsAreOnlyWhatTheControlPlaneSaid(t *testing.T) {
 	}
 	if p, _ := c.PersonalAccount("ana"); p.Direct != "" {
 		t.Errorf("kept an unknown direct mode %q", p.Direct)
+	}
+}
+
+// CVE-2026-123158: on musl, crypt() reports failure by returning "*" (or "x"
+// when the setting itself starts with "*"), and an sshd built without PAM
+// there compared that to the stored field. A personal account's field must
+// be neither, must not be empty (no password at all), must not read as a hash
+// crypt() could produce, and must not be locked, or sshd refuses its key too.
+func TestNoPasswordIsNeverACryptFailure(t *testing.T) {
+	for _, bad := range []string{"", "*", "x"} {
+		if noPassword == bad {
+			t.Fatalf("noPassword is %q, which musl's crypt() returns on failure", bad)
+		}
+	}
+	if len(noPassword) < 4 {
+		t.Errorf("noPassword %q is shorter than OpenSSH 10.6p2 accepts as a hash", noPassword)
+	}
+	if strings.HasPrefix(noPassword, "!") {
+		t.Errorf("noPassword %q is locked, so sshd would refuse the account's key", noPassword)
+	}
+	if noPassword[0] != '*' {
+		t.Errorf("noPassword %q does not start with a byte no crypt() output starts with", noPassword)
+	}
+	if got := passwordState(noPassword); got != PasswordLocked {
+		t.Errorf("posture reads noPassword as %q, want %q (no password login)", got, PasswordLocked)
 	}
 }

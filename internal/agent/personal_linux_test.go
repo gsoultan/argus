@@ -180,7 +180,7 @@ func TestProvisionerLocksWhatNobodyWants(t *testing.T) {
 		t.Errorf("locked again: %v", h.ran)
 	}
 	p.Reconcile(context.Background(), []PersonalAccount{{Name: "ana", Owner: "ana@corp.example"}})
-	if !h.ranAny("usermod --expiredate  --password * ana") {
+	if !h.ranAny("usermod --expiredate  --password *NP* ana") {
 		t.Errorf("not reopened: %v", h.ran)
 	}
 }
