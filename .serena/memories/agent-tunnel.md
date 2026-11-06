@@ -83,6 +83,46 @@ Not yet: the recording still reaches the control plane only at the end (live
 chunk streaming is next), and a tunnel held by another replica is "not
 connected" from this one.
 
+## Held terminals (2026-11)
+
+A terminal outlives the stream between control and agent. The control plane
+opens `terminal` with `Header.Hold{ForS, RunningS}` (reattach window 5m,
+keep-running 4h; config `terminal_reattach_window`, `terminal_keep_running`);
+an agent built with `TerminalConfig.Held` answers `Holds: true`. Then:
+
+- A stream that drops without `FrameHangup` ('h') keeps the shell, still
+  recorded; the agent keeps the last 128 KB of output and a byte count.
+- `terminal.resume` (its own service name, so an old agent refuses it as
+  unknown instead of opening a fresh shell) on a fresh terminal grant for the
+  **same email and account** picks it up from `Resume.From` bytes; the answer
+  says where it starts and whether output in between is gone (`Gap`). A
+  replaced stream gets `FrameNotice{kind:"moved"}` first so the replica holding
+  it does not take it straight back.
+- Control reconnects by itself when the stream drops while the browser stays
+  (`reconnectAgent`, notices `agent-reconnecting`/`agent-back` to the browser,
+  typing dropped meanwhile); a browser coming back to a control plane that does
+  not have the session (restart, other replica) goes through `resumeFromAgent`;
+  `retry` (non-final) while the agent's tunnel is not back yet.
+- When control's own window runs out it sends `FrameRelease` "1" and keeps the
+  stream (so watch and terminate still work); the agent hangs up at once if the
+  shell is at its prompt, otherwise when its foreground job ends
+  (`foregroundBusy`: TIOCGPGRP vs TIOCGSID on the master, Linux; pid on other
+  Unix; never on Windows) or RunningS runs out. `sudo -i` looks busy for its
+  whole life, which errs toward keeping.
+- The first `terminal` handler blocks for the shell's life, so the update gate
+  (`openStreams`) counts held shells and waits for them; `terminal.resume` is
+  neither gated nor counted.
+- Agent drain (`Collector.OnDrain`) sends `FrameNotice{kind:"restarting",
+  ends_in_s}`; control forwards notices as `{"type":"notice"}`. Control's
+  shutdown tells browsers `control-restarting`.
+- Console (`LiveTerminal`): session id in sessionStorage per account@host, so
+  a reload or another page and back resumes; unmount no longer hangs up, only
+  Disconnect (with a confirm) does; `beforeunload` asks while live.
+
+Not yet: an admin cannot end a held session from the console when no replica
+is relaying it (terminate goes through the relaying replica); desktops and
+database sessions still end with their browser connection.
+
 ## macOS (step 6)
 
 Same code, three seams (`internal/agent/paths_*.go`, `accounts*.go`,

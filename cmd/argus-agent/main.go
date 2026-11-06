@@ -258,12 +258,18 @@ func runDaemon(args []string) int {
 		services := agent.DefaultTunnelServices()
 		// Browser sessions open here, as the account, recorded by this
 		// daemon before anything is shown.
-		services[agent.TerminalService] = agent.Terminal(agent.TerminalConfig{
+		// A shell whose stream to the control plane drops is kept running,
+		// and recorded, for the console to pick back up: argus-control
+		// restarting or the tunnel reconnecting no longer ends it.
+		termCfg := agent.TerminalConfig{
 			Collector: col,
 			Verifier:  &tunnel.GrantVerifier{Host: hostname},
 			Hostname:  hostname,
 			Log:       log,
-		})
+			Held:      agent.NewHeldTerminals(),
+		}
+		services[agent.TerminalService] = agent.Terminal(termCfg)
+		services[agent.TerminalResumeService] = agent.TerminalResume(termCfg)
 		// A read-only view of any session being recorded here, for the
 		// console's Watch live.
 		services[agent.WatchService] = agent.Watch(agent.WatchConfig{

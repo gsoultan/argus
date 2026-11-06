@@ -52,6 +52,9 @@ type Collector struct {
 	// tunnels is every session still open that is reported as running:
 	// through the tunnel, terminal or desktop, and direct logins.
 	tunnels map[string]liveRecording
+	// drainHooks are told when a shutdown starts draining, and how long
+	// sessions have before they are ended; see OnDrain.
+	drainHooks []func(time.Duration)
 
 	// OnSession is called when a recording is sealed. The daemon uses it to
 	// report to the control plane; nil in standalone mode.
@@ -393,14 +396,23 @@ func (c *Collector) Close() error { return c.CloseWithin(DefaultDrain) }
 func (c *Collector) CloseWithin(d time.Duration) error {
 	stop := c.stopping()
 	c.mu.Lock()
+	first := !c.closing
 	if !c.closing {
 		close(stop)
 	}
 	c.closing = true
 	ln := c.listener
+	hooks := append([]func(time.Duration){}, c.drainHooks...)
 	c.mu.Unlock()
 	if ln != nil {
 		_ = ln.Close()
+	}
+	if first {
+		// Before the wait, not after it: the person at a terminal is told
+		// the session is about to end while there is still time to finish.
+		for _, h := range hooks {
+			h(d)
+		}
 	}
 
 	if !waitGroup(&c.wg, d) {
@@ -432,6 +444,14 @@ func (c *Collector) CloseWithin(d time.Duration) error {
 		}
 	}
 	return nil
+}
+
+// OnDrain registers f to be told when a shutdown starts draining sessions,
+// with how long they have before they are ended.
+func (c *Collector) OnDrain(f func(time.Duration)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.drainHooks = append(c.drainHooks, f)
 }
 
 func (c *Collector) trackConn(conn net.Conn) {

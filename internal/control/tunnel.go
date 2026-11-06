@@ -62,6 +62,7 @@ type TunnelHub struct {
 	byCred map[string]*liveTunnel
 	byHost map[string]*liveTunnel
 	closed bool
+	done   chan struct{} // see closing
 
 	// grantKeys caches the per-organization keys derived from GrantKey.
 	gmu       sync.Mutex
@@ -286,6 +287,9 @@ func (h *TunnelHub) Open(ctx context.Context, host, service string) (tunnel.Stre
 // replica answers next.
 func (h *TunnelHub) Close() {
 	h.mu.Lock()
+	if !h.closed {
+		close(h.closing())
+	}
 	h.closed = true
 	all := make([]*liveTunnel, 0, len(h.byCred))
 	for _, t := range h.byCred {
@@ -295,6 +299,22 @@ func (h *TunnelHub) Close() {
 	for _, t := range all {
 		_ = t.sess.Close()
 	}
+}
+
+// closing is closed once the hub is: whatever waits on an agent coming back
+// stops waiting. Called with h.mu held.
+func (h *TunnelHub) closing() chan struct{} {
+	if h.done == nil {
+		h.done = make(chan struct{})
+	}
+	return h.done
+}
+
+// Done is closed when the hub is.
+func (h *TunnelHub) Done() <-chan struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.closing()
 }
 
 /* ── Admission ───────────────────────────────────────────────────────────── */
