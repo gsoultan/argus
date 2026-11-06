@@ -123,6 +123,25 @@ Traps found in the drill: the helper must date what it writes to
 "failed" over the helper's own result. And the new agent must watch the file
 (`Updater.Watch`), or "done" reaches the console only at the next heartbeat.
 
+### Windows (2026-11)
+
+`update_windows.go` (platform: `check`/`restartCheck` need elevated + running
+as the `argus-agent` service + the service's BinaryPathName being the running
+exe, cached 5 min) and `update_service.go` (`ServiceApplier`, no build tag so
+Linux CI tests it with a fake service manager). No package: the release file
+is `argus_<v>_windows_<arch>.zip`; `prepare` sees the `archiveInstall`
+interface, unpacks `argus-agent.exe` before anything stops, and skips the
+running version's archive (the copied binary is the whole install). The helper
+is a detached copy of the exe (`DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP`,
+breakaway from any job when allowed), logging to
+`C:\ProgramData\Argus\update-helper.log`. It renames the running exe to
+`.old` and moves the new one in while the old agent still serves, then
+SCM-stops (killing the process after 90s) and starts. Ready check is the
+shared `awaitAgentReady`; a crash loop is the service's process id changing or
+going to 0, three times (recovery restarts after 5s, 5s, 30s). Rollback stops
+first, then swaps the previous binary back. CI job `windows-agent-update`
+drills update, rollback and restart on a real service.
+
 ### Restarting an agent from the console
 
 A restart is an update request with `agent_credentials.update_restart` set

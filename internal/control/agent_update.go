@@ -299,6 +299,19 @@ func (s *Store) recordAgentUpdate(ctx context.Context, hostname string,
 	return &r, nil
 }
 
+// AgentHostname is the name the agent on the server called hostname reports
+// and holds its credential under: the server's agent_hostname when it has
+// one, else its hostname. A server added from discovery is named by the FQDN
+// its agent reported, and its agent_hostname is the short name the agent
+// goes by; looking the agent up by the server's own name finds nothing.
+func (s *Store) AgentHostname(ctx context.Context, hostname string) (string, error) {
+	var h string
+	err := s.db(ctx).QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(agent_hostname, ''), hostname) FROM assets WHERE hostname = $1`,
+		hostname).Scan(&h)
+	return h, err
+}
+
 /* ── Routes ──────────────────────────────────────────────────────────────── */
 
 // agentUpdateView is the card for an asset, with this control plane's
@@ -343,7 +356,12 @@ func (a *API) getAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 		a.failAsset(w, "asset", err)
 		return
 	}
-	v, err := a.agentUpdateView(r, asset.Hostname)
+	agentHost, err := a.store.AgentHostname(r.Context(), asset.Hostname)
+	if err != nil {
+		a.fail(w, "agent update", err)
+		return
+	}
+	v, err := a.agentUpdateView(r, agentHost)
 	if err != nil {
 		a.fail(w, "agent update", err)
 		return
@@ -373,6 +391,11 @@ func (a *API) postAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 		a.failAsset(w, "asset", err)
 		return
 	}
+	agentHost, err := a.store.AgentHostname(r.Context(), asset.Hostname)
+	if err != nil {
+		a.fail(w, "agent update", err)
+		return
+	}
 	version := strings.TrimPrefix(strings.TrimSpace(in.Version), "v")
 	if version == "" {
 		version, _, _ = a.agentTarget()
@@ -382,7 +405,7 @@ func (a *API) postAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 			"plane was built from source, so it has no version of its own to offer")
 		return
 	}
-	view, err := a.agentUpdateView(r, asset.Hostname)
+	view, err := a.agentUpdateView(r, agentHost)
 	if err != nil {
 		a.fail(w, "agent update", err)
 		return
@@ -406,7 +429,7 @@ func (a *API) postAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := a.store.RequestAgentUpdate(r.Context(), asset.Hostname, version, in.Now, sess.Email)
+	req, err := a.store.RequestAgentUpdate(r.Context(), agentHost, version, in.Now, sess.Email)
 	if errors.Is(err, ErrNoLiveAgent) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -453,7 +476,12 @@ func (a *API) postAssetAgentRestart(w http.ResponseWriter, r *http.Request) {
 		a.failAsset(w, "asset", err)
 		return
 	}
-	view, err := a.agentUpdateView(r, asset.Hostname)
+	agentHost, err := a.store.AgentHostname(r.Context(), asset.Hostname)
+	if err != nil {
+		a.fail(w, "agent update", err)
+		return
+	}
+	view, err := a.agentUpdateView(r, agentHost)
 	if err != nil {
 		a.fail(w, "agent restart", err)
 		return
@@ -479,7 +507,7 @@ func (a *API) postAssetAgentRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := a.store.RequestAgentRestart(r.Context(), asset.Hostname, view.AgentVersion, in.Now, sess.Email)
+	req, err := a.store.RequestAgentRestart(r.Context(), agentHost, view.AgentVersion, in.Now, sess.Email)
 	if errors.Is(err, ErrNoLiveAgent) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -513,7 +541,12 @@ func (a *API) deleteAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 		a.failAsset(w, "asset", err)
 		return
 	}
-	cancelled, err := a.store.CancelAgentUpdate(r.Context(), asset.Hostname)
+	agentHost, err := a.store.AgentHostname(r.Context(), asset.Hostname)
+	if err != nil {
+		a.fail(w, "agent update", err)
+		return
+	}
+	cancelled, err := a.store.CancelAgentUpdate(r.Context(), agentHost)
 	if err != nil {
 		a.fail(w, "agent update", err)
 		return

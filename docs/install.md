@@ -430,8 +430,9 @@ automatically. The row says what happened, and **Try again** retries it.
 Turning the setting on or off is audited (`agent.auto_update_on`,
 `agent.auto_update_off`).
 
-**One server, from the console** (Linux servers with systemd, agent installed
-from the package): open the server under **Servers**. The **Agent** card shows
+**One server, from the console** (Linux servers with systemd and the agent
+installed from the package, or Windows servers with the agent installed as the
+`argus-agent` service): open the server under **Servers**. The **Agent** card shows
 the version it runs and offers **Update to** the newest version. Either way,
 the agent then:
 
@@ -462,10 +463,24 @@ agent_releases_url: "https://mirror.internal/argus/releases/download"
 agent_releases_api: "https://mirror.internal/argus/releases.json"
 ```
 
-An agent older than this needs one upgrade by hand; after that it updates from
-the console. macOS and Windows agents are upgraded by hand.
+On Windows there is no package: the agent downloads the release's
+`argus_<version>_windows_<arch>.zip`, checks it against `checksums.txt`, and
+takes `argus-agent.exe` out of it before anything stops. When the server is
+free, a helper puts the new `argus-agent.exe` in place of the running one (the
+running file is renamed aside, which Windows allows), then stops and starts the
+`argus-agent` service, so the agent is down only for the stop and the start. If
+the new version does not take logins and reconnect within 90 seconds, or keeps
+exiting, the helper puts the previous `argus-agent.exe` back and restarts the
+service on it. What the helper did is in
+`C:\ProgramData\Argus\update-helper.log`. A mirror for Windows servers holds
+the zip beside `checksums.txt` in the same `<url>/v<version>/` folder.
 
-**Restarting an agent, from the console** (Linux servers with systemd): the
+An agent older than this needs one upgrade by hand; after that it updates from
+the console (Windows agents from the release after this one). macOS agents are
+upgraded by hand.
+
+**Restarting an agent, from the console** (Linux servers with systemd, or
+Windows servers running the `argus-agent` service): the
 same card offers **Restart agent**, which restarts it on the version it runs.
 It waits until nobody is connected unless you choose **Restart now**, holds
 SSH logins that arrive during the restart instead of refusing them, and

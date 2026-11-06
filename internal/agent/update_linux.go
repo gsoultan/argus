@@ -128,12 +128,6 @@ type Applier struct {
 	Restarts func() int
 }
 
-// crashLoop is how many times a new version may exit on its own before the
-// helper stops waiting for it. systemd restarts it every two seconds, so a
-// binary that cannot start would otherwise keep logins waiting for the whole
-// of readyWait.
-const crashLoop = 3
-
 func (a *Applier) restarts() int {
 	if a.Restarts != nil {
 		return a.Restarts()
@@ -328,30 +322,8 @@ func (a *Applier) awaitReady(version string, since time.Time) error {
 	if wait == 0 {
 		wait = readyWait
 	}
-	deadline := time.Now().Add(wait)
-	var last AgentReady
 	base := a.restarts()
-	for time.Now().Before(deadline) {
-		if n := a.restarts() - base; n >= crashLoop {
-			return fmt.Errorf("exited %d times as it started", n)
-		}
-		if r, ok := ReadReady(a.Plan.StateDir); ok && r.At.After(since.Add(-time.Second)) {
-			last = r
-			if r.Version == version && r.Listening && (r.Tunnel || !a.Plan.NeedTunnel) {
-				return nil
-			}
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	switch {
-	case last.Version == "":
-		return fmt.Errorf("did not start within %s", wait)
-	case last.Version != version:
-		return fmt.Errorf("did not start within %s (%s is running)", wait, last.Version)
-	case !last.Listening:
-		return fmt.Errorf("started but did not take SSH logins within %s", wait)
-	}
-	return fmt.Errorf("started but did not reconnect to Argus within %s", wait)
+	return awaitAgentReady(a.Plan, version, since, wait, func() int { return a.restarts() - base })
 }
 
 func (a *Applier) write(s UpdateStatus) {
