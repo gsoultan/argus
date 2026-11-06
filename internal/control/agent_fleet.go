@@ -74,15 +74,18 @@ type AgentFleetView struct {
 // AgentFleet reads every enrolled agent, by hostname.
 func (s *Store) AgentFleet(ctx context.Context) ([]AgentFleetRow, error) {
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT a.id, a.hostname, COALESCE(g.version, ''), g.last_seen_at,
+		SELECT a.id, h.name, COALESCE(g.version, ''), g.last_seen_at,
 		       COALESCE(g.active_sessions, 0), g.update_status,
 		       c.update_id, c.update_version, c.update_now, c.update_requested_at,
 		       c.update_requested_by, c.update_restart
 		  FROM assets a
-		  JOIN agent_credentials c ON lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
-		  LEFT JOIN agents g ON lower(g.hostname) = lower(a.hostname)
+		  -- The agent's own name: a server added from discovery is named by
+		  -- its FQDN and its agent by agent_hostname (see AgentHostname).
+		  CROSS JOIN LATERAL (SELECT COALESCE(NULLIF(a.agent_hostname, ''), a.hostname) AS name) h
+		  JOIN agent_credentials c ON lower(c.hostname) = lower(h.name) AND c.revoked_at IS NULL
+		  LEFT JOIN agents g ON lower(g.hostname) = lower(h.name)
 		 WHERE a.archived_at IS NULL
-		 ORDER BY lower(a.hostname)`)
+		 ORDER BY lower(h.name)`)
 	if err != nil {
 		return nil, err
 	}

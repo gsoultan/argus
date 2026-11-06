@@ -1332,8 +1332,8 @@ jobs:
             asset=$(jq -r .assetId "$tmp/post.out")
           fi
           [ -n "$asset" ] && [ "$asset" != null ] || { dump; echo "::error::no server for $host"; exit 1; }
-          # Adding the server reconnects the agent's tunnel; wait for the
-          # console to see its credential again.
+          # The server is named by its FQDN and its agent by the short name;
+          # the card has to find the agent through the server.
           for i in $(seq 1 60); do
             [ "$($c "https://localhost:8080/api/v1/assets/$asset/agent/update" | jq -r .enrolled)" = true ] && break
             sleep 1

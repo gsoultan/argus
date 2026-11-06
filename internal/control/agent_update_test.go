@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -311,5 +312,48 @@ func TestAgentRestartIsRefusedWhenItCannotHappen(t *testing.T) {
 	}
 	if r := beatWith(t, h, cred, asset.Hostname, "1.0.0", `{"supported":true,"restartable":true}`); r["update"] != nil {
 		t.Errorf("a cancelled restart was still asked for: %v", r)
+	}
+}
+
+// A server added from discovery is named by the FQDN its agent reported,
+// while the agent, its credential and its heartbeats go by the short name in
+// agent_hostname. Looked up by the server's own name, the agent card found no
+// enrolled agent and refused to update one that was running and able to.
+func TestAgentUpdateFindsTheAgentOfAServerNamedByItsFQDN(t *testing.T) {
+	s, h, _ := updateAPI(t)
+	short := unique("win")
+	cred, _ := enrolled(t, s, h, short)
+	asset, err := s.CreateAsset(context.Background(), AssetInput{
+		Hostname: short + ".corp.example", Address: "192.0.2.11", Principals: []string{"ops"},
+		CredentialRef: "injected",
+	})
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+	if _, err := s.pool.Exec(context.Background(),
+		`UPDATE assets SET agent_hostname = $2 WHERE id = $1::uuid`, asset.ID, short); err != nil {
+		t.Fatal(err)
+	}
+	beatWith(t, h, cred, short, "1.0.0", `{"supported":true,"restartable":true}`)
+
+	path := "/api/v1/assets/" + asset.ID + "/agent/update"
+	w := do(t, h, http.MethodGet, path, "admin-token", "")
+	var v AgentUpdateView
+	_ = json.Unmarshal(w.Body.Bytes(), &v)
+	if !v.Enrolled || v.AgentVersion != "1.0.0" || v.Status == nil || !v.Status.Supported {
+		t.Fatalf("the card does not see the agent: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, h, http.MethodPost, path, "admin-token", `{}`); w.Code != http.StatusAccepted {
+		t.Fatalf("update: %d %s", w.Code, w.Body)
+	}
+	r := beatWith(t, h, cred, short, "1.0.0", `{"supported":true,"restartable":true}`)
+	if u, _ := r["update"].(map[string]any); u["version"] != "1.1.0" {
+		t.Fatalf("the agent was not asked to update: %v", r)
+	}
+
+	// And the fleet lists it under the name its agent goes by.
+	w = do(t, h, http.MethodGet, "/api/v1/agents/updates", "admin-token", "")
+	if !strings.Contains(w.Body.String(), `"hostname":"`+short+`"`) {
+		t.Fatalf("the fleet does not list %s: %s", short, w.Body)
 	}
 }
