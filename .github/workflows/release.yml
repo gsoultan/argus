@@ -119,5 +119,64 @@ jobs:
             echo "| \`argus-verify\` | wherever recordings are checked |"
             echo
             echo "macOS and Windows archives carry argus-control, argus-verify"
-            echo "and argus-agent."
+            echo "and argus-agent. The Windows installers (.msi) are attached by"
+            echo "the Windows installer job: wait for it before publishing."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The Windows installers, built on Windows (WiX needs it) from the
+  # argus-agent.exe in the release's own zip, so an installed agent and one
+  # the console updates run the same file. Each .msi is signed with cosign
+  # like checksums.txt, as <name>.msi.sig and <name>.msi.pem.
+  windows-installer:
+    name: Windows installer
+    needs: release
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Build, sign and attach the installers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:GITHUB_REF_NAME
+          $v = $tag.TrimStart('v')
+          $d = Join-Path $env:RUNNER_TEMP 'msi'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $d `
+            --pattern "argus_${v}_windows_*.zip" --pattern checksums.txt
+          if ($LASTEXITCODE -ne 0) { throw 'the release zips could not be downloaded' }
+          $sums = Get-Content "$d\checksums.txt"
+          $first = $true
+          foreach ($arch in 'amd64', 'arm64') {
+            $zip = "argus_${v}_windows_${arch}.zip"
+            # The zip is the one checksums.txt, which is signed, vouches for.
+            $want = ($sums | Where-Object { $_ -match "  $([regex]::Escape($zip))$" }) -replace '\s.*$', ''
+            $have = (Get-FileHash "$d\$zip" -Algorithm SHA256).Hash.ToLower()
+            if (-not $want -or $want -ne $have) { throw "$zip does not match checksums.txt" }
+            Expand-Archive "$d\$zip" "$d\$arch" -Force
+            $msi = "$d\argus-agent_${v}_windows_${arch}.msi"
+            $extra = @{}
+            if ($first) { $extra.InstallWix = $true; $first = $false }
+            ./packaging/windows/build-msi.ps1 -Exe "$d\$arch\argus-agent.exe" -Version $v `
+              -Arch $arch -Out $msi @extra
+            cosign sign-blob --yes --output-signature "$msi.sig" --output-certificate "$msi.pem" $msi
+            if ($LASTEXITCODE -ne 0) { throw "$msi could not be signed" }
+            gh release upload $tag --repo $env:GITHUB_REPOSITORY --clobber $msi "$msi.sig" "$msi.pem"
+            if ($LASTEXITCODE -ne 0) { throw "$msi could not be attached" }
+          }
+
+      - name: Summarise
+        run: |
+          $v = $env:GITHUB_REF_NAME.TrimStart('v')
+          @(
+            '### Windows installers'
+            ''
+            "argus-agent_${v}_windows_amd64.msi and argus-agent_${v}_windows_arm64.msi, each with .sig and .pem."
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY

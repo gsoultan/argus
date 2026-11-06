@@ -315,6 +315,14 @@ release:
     agent and its launchd job in `launchd/`; the Windows archive carries the
     agent, which installs itself with `argus-agent service install`.
 
+    The Windows agent also has an installer,
+    `argus-agent_{{ .Version }}_windows_<arch>.msi`, attached once the release's
+    Windows job finishes:
+
+    ```powershell
+    msiexec /i argus-agent_{{ .Version }}_windows_amd64.msi /qn CONTROL_URL=https://argus.example.com:8080 PIN=sha256/... TOKEN=argus-enrol-...
+    ```
+
     Nothing starts on install. These services need certificates, secrets and an
     inventory first, and a package that starts a half-configured privileged
     access service is one that fails in the worst possible place.

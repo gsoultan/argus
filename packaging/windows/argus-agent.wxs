@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer for argus-agent (WiX 5). Built by build-msi.ps1 beside
+  this file, in CI and for every release, from the same argus-agent.exe the
+  release's zip carries, so an agent installed from it updates itself from the
+  console exactly as one installed by hand does.
+
+  It installs:
+    C:\Program Files\Argus\argus-agent.exe
+    the argus-agent service: LocalSystem, starts at boot, restarted when it
+      fails, given 75 seconds at shutdown to seal open recordings -- what
+      `argus-agent service install` sets up.
+
+  Public properties, all optional, for an unattended install:
+    CONTROL_URL   the control plane, as this server reaches it (https://)
+    TOKEN         the single-use enrollment token from the console
+    PIN           the control plane's key pin shown beside the token
+    CONTROL_CA    a CA file to trust instead of PIN
+    FORCE=1       on removal: uninstall even when recordings or reports have
+                  not reached the control plane (they stay on the server)
+
+    msiexec /i argus-agent_<v>_windows_amd64.msi /qn CONTROL_URL=https://argus.example.com:8080 PIN=sha256/... TOKEN=argus-enrol-...
+
+  With TOKEN the server is enrolled before the service first starts. Without
+  it, an upgrade keeps the enrollment it has, and a new install starts
+  unenrolled until `argus-agent enroll` is run.
+
+  Removing it (Apps, or msiexec /x) runs `argus-agent uninstall --yes`: it
+  ships what has not reached the control plane, revokes this server's
+  credential and deletes it, and refuses -- leaving the agent running -- when
+  recordings would be stranded, unless FORCE=1. Recordings in
+  C:\ProgramData\Argus are never removed: removing the software must not
+  destroy the evidence it produced. An upgrade does none of that; the
+  enrollment and state carry over.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Argus agent"
+           Manufacturer="Argus"
+           Version="$(ProductVersion)"
+           UpgradeCode="37FFE309-69A5-4A98-AF87-CA2BFC2C6A0D"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <!-- Each release replaces the one before. Installing the same version
+         again is allowed so a server can be re-run with a TOKEN. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallValidate"
+                  DowngradeErrorMessage="A newer Argus agent is already installed. Remove it first to go back to this version." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="CONTROL_URL" Secure="yes" />
+    <Property Id="TOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="PIN" Secure="yes" />
+    <Property Id="CONTROL_CA" Secure="yes" />
+    <Property Id="FORCE" Secure="yes" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/gsoultan/argus" />
+
+    <Launch Condition="NOT TOKEN OR CONTROL_URL"
+            Message="TOKEN needs CONTROL_URL: the address of the Argus control plane, as this server reaches it." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Argus">
+        <Component Id="Agent" Bitness="always64">
+          <!-- argus-agent.exe has no version resource. Giving it one here
+               makes Windows Installer treat it as versioned, so it always
+               replaces an argus-agent.exe copied in by hand or put there by
+               an update from the console. -->
+          <File Id="AgentExe" Name="argus-agent.exe" Source="$(AgentExe)"
+                KeyPath="yes" DefaultVersion="$(ProductVersion)" />
+          <!-- Left beside it by an update from the console. -->
+          <RemoveFile Id="AgentOld" Name="argus-agent.exe.old" On="both" />
+          <RemoveFile Id="AgentNew" Name="argus-agent.exe.new" On="both" />
+
+          <ServiceInstall Id="AgentService"
+                          Name="argus-agent"
+                          DisplayName="Argus agent"
+                          Description="Records sessions on this host and holds its tunnel to the Argus control plane."
+                          Type="ownProcess"
+                          Start="auto"
+                          ErrorControl="normal"
+                          Account="LocalSystem"
+                          Arguments="daemon"
+                          Vital="yes">
+            <!-- Time to seal open recordings when the host shuts down, and a
+                 restart after any failure, as the service install command
+                 sets. -->
+            <ServiceConfig PreShutdownDelay="75000"
+                           FailureActionsWhen="failedToStopOrReturnedError"
+                           OnInstall="yes" OnReinstall="yes" />
+            <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
+              <Failure Action="restartService" Delay="5000" />
+              <Failure Action="restartService" Delay="5000" />
+              <Failure Action="restartService" Delay="30000" />
+            </ServiceConfigFailureActions>
+          </ServiceInstall>
+          <!-- Remove on install as well: a service registered by hand with
+               `argus-agent service install` is replaced by this one. -->
+          <ServiceControl Id="AgentServiceControl" Name="argus-agent"
+                          Start="install" Stop="both" Remove="both" Wait="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Argus agent" Level="1">
+      <ComponentRef Id="Agent" />
+    </Feature>
+
+    <!-- The commands below run argus-agent.exe as SYSTEM, without a console;
+         what they print goes to the installer's log (msiexec /l*v). -->
+    <!-- Stop the running agent and wait for it to seal its recordings before
+         anything is replaced. The service manager would otherwise give up on
+         it, or Windows Installer on the service, partway through. Ignored when
+         nothing is installed yet. -->
+    <SetProperty Id="StopAgent" Sequence="execute" Before="StopAgent"
+                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; service stop" />
+    <CustomAction Id="StopAgent" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <!-- Enroll with the token before the service first starts. The token is
+         kept out of the installer's log. -->
+    <Property Id="EnrollAgent" Hidden="yes" />
+    <SetProperty Id="EnrollAgent" Sequence="execute" Before="EnrollAgent"
+                 Condition="TOKEN AND NOT REMOVE"
+                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; enroll --control-url &quot;[CONTROL_URL]&quot; --token &quot;[TOKEN]&quot; --pin &quot;[PIN]&quot; --control-ca &quot;[CONTROL_CA]&quot;" />
+    <CustomAction Id="EnrollAgent" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="check" HideTarget="yes" />
+
+    <!-- Removal, not an upgrade: take the agent off the server properly. -->
+    <SetProperty Id="UninstallAgent" Sequence="execute" Before="UninstallAgent"
+                 Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND NOT FORCE"
+                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; uninstall --yes" />
+    <SetProperty Id="UninstallAgentForce" Sequence="execute" Before="UninstallAgentForce"
+                 Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND FORCE"
+                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; uninstall --yes --force" />
+    <CustomAction Id="UninstallAgent" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="UninstallAgentForce" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="UninstallAgent" After="InstallInitialize"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND NOT FORCE" />
+      <Custom Action="UninstallAgentForce" After="UninstallAgent"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND FORCE" />
+      <Custom Action="StopAgent" Before="StopServices" />
+      <Custom Action="EnrollAgent" After="InstallFiles" Condition="TOKEN AND NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
