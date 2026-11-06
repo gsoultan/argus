@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,9 +50,12 @@ type Client struct {
 	wmu sync.Mutex
 
 	// The graphics pipeline, when it was asked for.
-	graphics   func(GraphicsPDU)
-	dynvc      uint16 // MCS channel of drdynvc
-	gfx        graphicsChannel
+	graphics func(GraphicsPDU)
+	dynvc    uint16 // MCS channel of drdynvc
+	gfx      graphicsChannel
+	// gfxLive is set once the graphics pipeline carries a message. Refresh
+	// reads it from another goroutine than the one reading the session.
+	gfxLive    atomic.Bool
 	gfxDecoded uint32
 }
 
@@ -384,6 +388,9 @@ func (c *Client) virtual(pdu []byte) error {
 			return err
 		}
 	}
+	if ev.data != nil {
+		c.gfxLive.Store(true)
+	}
 	if ev.data != nil && c.gfx.messages == 1 {
 		c.log.Info("rdp graphics: the first message arrived on the graphics channel", "bytes", len(ev.data))
 	}
@@ -533,9 +540,21 @@ func (c *Client) Refresh() error {
 	if c.shareID == 0 {
 		return errors.New("session is not active")
 	}
-	pdu := RefreshRectPDU(c.shareID, c.userID, c.width, c.height)
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
+	if c.gfxLive.Load() {
+		// The graphics pipeline: a Refresh Rect makes Windows drop the
+		// connection, so pause the screen's updates and resume them, which
+		// it answers by sending the screen again.
+		for _, allow := range []bool{false, true} {
+			pdu := SuppressOutputPDU(c.shareID, c.userID, allow, c.width, c.height)
+			if _, err := c.conn.Write(SendDataRequest(c.userID, c.channel, pdu)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	pdu := RefreshRectPDU(c.shareID, c.userID, c.width, c.height)
 	_, err := c.conn.Write(SendDataRequest(c.userID, c.channel, pdu))
 	return err
 }
