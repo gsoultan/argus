@@ -77,6 +77,9 @@ type graphicsMeasure struct {
 	// watching partway through needs.
 	KeyFrames       int
 	KeyAfterRefresh bool
+	// DroppedOnRefresh says the server ended the session when asked to
+	// repaint, which is what a viewer joining would do to it.
+	DroppedOnRefresh bool
 }
 
 func (m graphicsMeasure) String() string {
@@ -85,8 +88,9 @@ func (m graphicsMeasure) String() string {
 		codecs = append(codecs, fmt.Sprintf("%s=%dKiB/%d", k, v/1024, m.CodecCommands[k]))
 	}
 	sort.Strings(codecs)
-	return fmt.Sprintf("%.2f Mbit/s, %.1f frames/s, %d commands, %s, %d key frames, key after refresh %v",
-		m.MbitPerSec, m.FramesPerSec, m.Commands, strings.Join(codecs, " "), m.KeyFrames, m.KeyAfterRefresh)
+	return fmt.Sprintf("%.2f Mbit/s, %.1f frames/s, %d commands, %s, %d key frames, key after refresh %v, dropped on refresh %v",
+		m.MbitPerSec, m.FramesPerSec, m.Commands, strings.Join(codecs, " "), m.KeyFrames, m.KeyAfterRefresh,
+		m.DroppedOnRefresh)
 }
 
 func measureMode(t *testing.T, addr, user, password string, graphics bool, busy time.Duration) graphicsMeasure {
@@ -151,6 +155,10 @@ func measureMode(t *testing.T, addr, user, password string, graphics bool, busy 
 			var ne net.Error
 			if errors.As(err, &ne) && ne.Timeout() {
 				continue
+			}
+			if err != nil && refreshed {
+				m.DroppedOnRefresh = true
+				return
 			}
 			if err != nil {
 				t.Fatalf("reading updates: %v", err)
