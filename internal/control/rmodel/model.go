@@ -764,7 +764,7 @@ func (m *Database) Schema(t *storm.Table) {
 	t.UniqueNamed("databases_asset_id_port_dbname_key", &m.Asset, &m.Port, &m.Dbname)
 	t.CheckNamed("databases_dbname_check", "(length(dbname) >= 1) AND (length(dbname) <= 63)")
 	t.CheckNamed("databases_engine_check",
-		"engine = ANY (ARRAY['postgres'::text, 'redis'::text, 'rabbitmq'::text, 'mysql'::text])")
+		"engine = ANY (ARRAY['postgres'::text, 'redis'::text, 'rabbitmq'::text, 'mysql'::text, 'mongodb'::text, 'kafka'::text])")
 	t.CheckNamed("databases_label_check",
 		"label = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("databases_port_check", "(port >= 1) AND (port <= 65535)")

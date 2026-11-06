@@ -134,12 +134,14 @@ func (d *Database) validate() error {
 		return d.validateRabbit()
 	case tunnel.EngineMySQL:
 		return d.validateMySQL()
+	case tunnel.EngineMongoDB:
+		return d.validateMongo()
 	case tunnel.EnginePostgres:
 	default:
-		return ErrInvalidDatabase{"the engine must be postgres, mysql, redis or rabbitmq"}
+		return ErrInvalidDatabase{"the engine must be postgres, mysql, mongodb, redis or rabbitmq"}
 	}
 	if d.ConfigPath != "" {
-		return ErrInvalidDatabase{"a config file is only for Redis and MySQL"}
+		return ErrInvalidDatabase{"a config file is only for Redis, MySQL and MongoDB"}
 	}
 	switch {
 	case d.Name == "" || len(d.Name) > 63 || strings.ContainsAny(d.Name, "\x00\"'\\"):
@@ -288,6 +290,35 @@ func (d *Database) validateMySQL() error {
 	}
 	if d.ConfigPath != "" && !tunnel.ValidMySQLOptionFile(d.ConfigPath) {
 		return ErrInvalidDatabase{"the option file must be an absolute path to a .cnf file on the server"}
+	}
+	return d.validateCommon()
+}
+
+// validateMongo: one database on a mongod on this asset, reached on loopback
+// or its unix socket. ConfigPath is the file on the server with the admin
+// credentials the agent signs in with; empty means tunnel.MongoAdminFile.
+func (d *Database) validateMongo() error {
+	if !tunnel.ValidMongoDB(d.Name) {
+		return ErrInvalidDatabase{"the MongoDB database name must be 1 to 63 characters with none of / \\ . \" $ * < > : | ? or spaces, " +
+			"and not admin, local or config"}
+	}
+	if strings.HasPrefix(d.Name, tunnel.TestDBPrefix) {
+		return ErrInvalidDatabase{"databases named " + tunnel.TestDBPrefix + "… are Argus's own restore tests"}
+	}
+	if d.Host == "" {
+		d.Host = "127.0.0.1"
+	}
+	if !tunnel.LocalPGHost(d.Host) {
+		return ErrInvalidDatabase{"MongoDB must be on the server itself: a loopback address or its unix socket, not " + d.Host}
+	}
+	if d.Port == 0 {
+		d.Port = 27017
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
+	}
+	if d.ConfigPath != "" && !tunnel.ValidMongoAdminFile(d.ConfigPath) {
+		return ErrInvalidDatabase{"the admin file must be an absolute path to a .conf file on the server"}
 	}
 	return d.validateCommon()
 }
