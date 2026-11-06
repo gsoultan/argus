@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Badge, Box, Button, Group, Loader, Stack, Text } from '@mantine/core'
 import { canDecodeH264 } from '~/lib/gfx'
-import type { RDPWorkerResponse } from '~/workers/rdp.worker'
+import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
 export type RDPState = 'connecting' | 'live' | 'closed' | 'error'
 
@@ -59,10 +59,11 @@ async function wantsGraphics(): Promise<boolean> {
 /**
  * A Remote Desktop session in a canvas.
  *
- * The main thread does one thing: blit finished ImageBitmaps into a canvas.
- * Decoding and image construction happen in a worker (rdp.worker.ts), and
- * neither touches this thread — so input latency does not depend on how busy
- * the remote desktop is.
+ * Decoding and drawing happen in a worker (rdp.worker.ts), which is handed
+ * the canvas itself where the browser allows it, so a frame reaches the screen
+ * without passing through this thread at all; elsewhere the worker sends
+ * finished ImageBitmaps and this thread only blits them. Either way input
+ * latency does not depend on how busy the remote desktop is.
  *
  * Memory is one framebuffer. The canvas is the only thing that persists;
  * rectangles are drawn and closed immediately, so a session that runs for hours
@@ -78,9 +79,17 @@ export function RDPScreen({
   shadowSessionId,
   onStateChange,
 }: RDPScreenProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  // The canvas is made here rather than rendered by React. A canvas handed
+  // to a worker can be handed over once and can no longer be resized from
+  // this side, which React would try on every resize; and a reconnect, or
+  // StrictMode mounting the effect twice, needs a fresh one.
+  const boxRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
+  // The desktop's size, for pointing: the canvas's own width is not it once
+  // the worker owns the canvas.
+  const sizeRef = useRef({ width: 1024, height: 768 })
 
   const [state, setState] = useState<RDPState>('connecting')
   const stateRef = useRef<RDPState>('connecting')
@@ -93,9 +102,40 @@ export function RDPScreen({
   )
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const box = boxRef.current
+    if (!box) return
     let disposed = false
+
+    const canvas = document.createElement('canvas')
+    canvas.width = sizeRef.current.width
+    canvas.height = sizeRef.current.height
+    canvas.tabIndex = readOnly ? -1 : 0
+    Object.assign(canvas.style, {
+      // Scaled by the browser rather than by resampling pixels in
+      // JavaScript, and never scaled up past its own resolution — the
+      // desktop is shown at full fidelity or letterboxed, not blurred.
+      width: '100%',
+      height: 'auto',
+      display: 'block',
+      outline: 'none',
+      cursor: readOnly ? 'default' : 'crosshair',
+    })
+    box.appendChild(canvas)
+    canvasRef.current = canvas
+    setCanvas(canvas)
+
+    const resizeTo = (width: number, height: number) => {
+      sizeRef.current = { width, height }
+      setSize({ width, height })
+      // The worker sizes a canvas it owns; this side only sets the shape it
+      // is laid out at.
+      if (!offscreen) {
+        canvas.width = width
+        canvas.height = height
+      }
+      canvas.style.maxWidth = `${width}px`
+      canvas.style.aspectRatio = `${width} / ${height}`
+    }
 
     const setStatus = (s: RDPState, d?: string) => {
       stateRef.current = s
@@ -104,23 +144,38 @@ export function RDPScreen({
       onStateChange?.(s, d)
     }
 
-    // alpha: false lets the compositor skip blending the canvas against the
-    // page, which is measurable on a full-screen desktop.
-    // desynchronized: true allows the browser to bypass a compositing frame,
-    // which is what keeps pointer movement feeling attached to the cursor.
-    const ctx = canvas.getContext('2d', {
-      alpha: false,
-      desynchronized: true,
-    }) as CanvasRenderingContext2D | null
-    if (!ctx) {
-      setStatus('error', 'this browser has no 2D canvas')
-      return
-    }
-    ctxRef.current = ctx
-
     const worker = new Worker(new URL('../workers/rdp.worker.ts', import.meta.url), {
       type: 'module',
     })
+    const toWorker = (msg: RDPWorkerRequest, transfer: Transferable[]) => worker.postMessage(msg, transfer)
+
+    // The worker draws straight into the canvas where it can. The 2D context
+    // below is only for browsers that cannot hand a canvas to a worker.
+    let offscreen = false
+    let ctx: CanvasRenderingContext2D | null = null
+    if (typeof canvas.transferControlToOffscreen === 'function' && typeof OffscreenCanvas !== 'undefined') {
+      try {
+        const surface = canvas.transferControlToOffscreen()
+        toWorker({ type: 'canvas', canvas: surface }, [surface])
+        offscreen = true
+      } catch {
+        // Fall through to drawing here.
+      }
+    }
+    if (!offscreen) {
+      // alpha: false lets the compositor skip blending the canvas against the
+      // page, which is measurable on a full-screen desktop.
+      // desynchronized: true allows the browser to bypass a compositing frame,
+      // which is what keeps pointer movement feeling attached to the cursor.
+      ctx = canvas.getContext('2d', { alpha: false, desynchronized: true }) as CanvasRenderingContext2D | null
+      if (!ctx) {
+        worker.terminate()
+        canvas.remove()
+        setStatus('error', 'this browser has no 2D canvas')
+        return
+      }
+    }
+    resizeTo(sizeRef.current.width, sizeRef.current.height)
 
     // What the last second was like, shown once a second rather than on
     // every frame, so the page does not re-render at the desktop's rate.
@@ -146,7 +201,7 @@ export function RDPScreen({
       const batch = pending
       pending = []
       for (const r of batch) {
-        ctx.drawImage(r.bitmap, r.x, r.y)
+        ctx?.drawImage(r.bitmap, r.x, r.y)
         // Closing releases the decoded pixels immediately instead of waiting
         // for the collector, which is what stops memory tracking session
         // length rather than screen size.
@@ -165,11 +220,11 @@ export function RDPScreen({
           }
           break
         case 'ready':
-          setSize({ width: m.width, height: m.height })
+          resizeTo(m.width, m.height)
           setStatus('live')
           break
         case 'resize':
-          setSize({ width: m.width, height: m.height })
+          resizeTo(m.width, m.height)
           break
         case 'closed':
           // A reason the control plane gave just before stays on screen.
@@ -243,7 +298,7 @@ export function RDPScreen({
         if (ev.data instanceof ArrayBuffer) {
           bytes += ev.data.byteLength
           // Transferred, not copied: the main thread gives up the buffer.
-          worker.postMessage(ev.data, [ev.data])
+          toWorker(ev.data, [ev.data])
           return
         }
         // Text is the control plane saying why: a refusal, or who ended it.
@@ -269,15 +324,24 @@ export function RDPScreen({
       worker.terminate()
       for (const r of pending) r.bitmap.close()
       pending = []
+      canvas.remove()
+      if (canvasRef.current === canvas) canvasRef.current = null
     }
     // size is state this effect sets; including it would reconnect on resize.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint, target, principal, shadowSessionId])
 
+  // Whether the canvas takes focus and shows a pointer follows readOnly
+  // without reconnecting.
+  useEffect(() => {
+    if (!canvas) return
+    canvas.tabIndex = readOnly ? -1 : 0
+    canvas.style.cursor = readOnly ? 'default' : 'crosshair'
+  }, [canvas, readOnly])
+
   /* ── Input ─────────────────────────────────────────────────────────────── */
 
   useEffect(() => {
-    const canvas = canvasRef.current
     if (!canvas || readOnly) return
 
     const send = (payload: object) => {
@@ -291,8 +355,8 @@ export function RDPScreen({
     const toDesktop = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect()
       return {
-        x: Math.round(((e.clientX - rect.left) / rect.width) * canvas.width),
-        y: Math.round(((e.clientY - rect.top) / rect.height) * canvas.height),
+        x: Math.round(((e.clientX - rect.left) / rect.width) * sizeRef.current.width),
+        y: Math.round(((e.clientY - rect.top) / rect.height) * sizeRef.current.height),
       }
     }
 
@@ -336,7 +400,8 @@ export function RDPScreen({
     canvas.addEventListener('mousedown', down)
     canvas.addEventListener('mouseup', up)
     canvas.addEventListener('wheel', onWheel, { passive: false })
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+    const noMenu = (e: MouseEvent) => e.preventDefault()
+    canvas.addEventListener('contextmenu', noMenu)
     canvas.addEventListener('keydown', keyDown)
     canvas.addEventListener('keyup', keyUp)
 
@@ -345,10 +410,11 @@ export function RDPScreen({
       canvas.removeEventListener('mousedown', down)
       canvas.removeEventListener('mouseup', up)
       canvas.removeEventListener('wheel', onWheel)
+      canvas.removeEventListener('contextmenu', noMenu)
       canvas.removeEventListener('keydown', keyDown)
       canvas.removeEventListener('keyup', keyUp)
     }
-  }, [readOnly])
+  }, [readOnly, canvas])
 
   /**
    * Ctrl+Alt+Del, which no browser lets a page capture from the keyboard.
@@ -408,23 +474,7 @@ export function RDPScreen({
           lineHeight: 0,
         }}
       >
-        <canvas
-          ref={canvasRef}
-          width={size.width}
-          height={size.height}
-          tabIndex={readOnly ? -1 : 0}
-          style={{
-            // Scaled by the browser rather than by resampling pixels in
-            // JavaScript, and never scaled up past its own resolution — the
-            // desktop is shown at full fidelity or letterboxed, not blurred.
-            width: '100%',
-            height: 'auto',
-            maxWidth: size.width,
-            display: 'block',
-            outline: 'none',
-            cursor: readOnly ? 'default' : 'crosshair',
-          }}
-        />
+        <div ref={boxRef} />
       </Box>
     </Stack>
   )
