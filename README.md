@@ -221,7 +221,11 @@ macOS and Windows get archives rather than packages:
 `argus_<version>_darwin_<arch>.tar.gz` (control plane, verifier and the macOS
 agent with its launchd job) and `argus_<version>_windows_<arch>.zip` (control
 plane, verifier and the Windows agent, which installs itself with
-`argus-agent service install`). Nothing else installs a service from them. To check recordings
+`argus-agent service install`). Nothing else installs a service from them.
+The Windows agent also has an installer,
+`argus-agent_<version>_windows_<arch>.msi`, which installs the service and can
+enroll the server unattended; see
+[docs/install.md](docs/install.md#windows-servers). To check recordings
 from a workstation, `argus-verify` from the archive is all you need.
 
 ### First run: `/setup`

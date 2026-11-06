@@ -332,7 +332,61 @@ It works as on Linux, with these differences:
 
 ### Windows servers
 
-The agent for Windows is `argus-agent.exe` in
+Each release has an installer for the agent,
+`argus-agent_<version>_windows_<arch>.msi` (amd64 and arm64). It puts
+`argus-agent.exe` in `C:\Program Files\Argus` and registers the `argus-agent`
+service, set up as `service install` sets it up below. Run unattended, it
+enrolls the server too, from an elevated PowerShell:
+
+```powershell
+msiexec /i argus-agent_<version>_windows_amd64.msi /qn /l*v argus-install.log `
+    CONTROL_URL=https://argus.example.com:8080 PIN=sha256/... TOKEN=argus-enrol-...
+```
+
+| Property | |
+|---|---|
+| `CONTROL_URL` | the control plane, as this server reaches it |
+| `TOKEN` | the single-use enrollment token from the console; kept out of the log |
+| `PIN` | the key pin shown beside the token |
+| `CONTROL_CA` | a CA file to trust instead of the pin |
+| `FORCE=1` | on removal only: see below |
+
+With `TOKEN`, the server is enrolled before the agent first starts, and a
+failed enrollment fails the install (the reason is in the log). Without it, a
+new install starts unenrolled until `argus-agent enroll` is run, and an
+upgrade keeps the enrollment the server has. Opened with a double click, the
+installer asks nothing and installs that way.
+
+- **Upgrading** is running the newer installer the same way; the service,
+  enrollment and recordings carry over. An older installer is refused. An
+  agent installed by hand is taken over: its service is replaced by the
+  installer's.
+- **Updates from the console** work on an agent the installer put there, as on
+  one installed by hand. Windows' list of apps then still shows the version
+  last installed by the installer; `argus-agent version` says what runs.
+- **Removing** it, from Settings > Apps or with
+  `msiexec /x argus-agent_<version>_windows_amd64.msi /qn`, runs
+  `argus-agent uninstall --yes`: it ships what has not reached the control
+  plane, revokes the server's credential, and removes the service and the
+  program. When recordings would be stranded it refuses and leaves the agent
+  running; `FORCE=1` removes it anyway, leaving them on the server. Recordings
+  in `C:\ProgramData\Argus` are always kept.
+
+The installer is signed with Sigstore like `checksums.txt`, as
+`<name>.msi.sig` and `<name>.msi.pem`:
+
+```sh
+cosign verify-blob argus-agent_<version>_windows_amd64.msi \
+  --signature argus-agent_<version>_windows_amd64.msi.sig \
+  --certificate argus-agent_<version>_windows_amd64.msi.pem \
+  --certificate-identity-regexp 'https://github.com/gsoultan/argus/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+It has no Authenticode signature, so SmartScreen warns when it is opened from
+a browser download.
+
+Without the installer, `argus-agent.exe` is also in
 `argus_<version>_windows_<arch>.zip`. In an elevated PowerShell:
 
 ```powershell
@@ -345,8 +399,9 @@ cd 'C:\Program Files\Argus'
 ```
 
 `service install` registers the `argus-agent` service to start at boot as
-LocalSystem, restarts it if it fails, and starts it. `service stop`,
-`service start` and `service uninstall` do what they say. To take the agent off
+LocalSystem, restarts it if it fails, and starts it. `service stop` returns
+once the agent has stopped and sealed its open recordings. `service start`
+and `service uninstall` do what they say. To take the agent off
 the server altogether, use `.\argus-agent.exe uninstall` (see
 [Uninstalling the agent](#uninstalling-the-agent)); `service uninstall` only
 removes the service.

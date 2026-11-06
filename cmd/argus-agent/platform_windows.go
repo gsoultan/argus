@@ -214,17 +214,20 @@ func startService() error {
 	return s.Start()
 }
 
+// stopService returns once the service has stopped, which is after it has
+// sealed its open recordings, so whatever runs next -- the installer
+// replacing the program, a person copying the state away -- finds them whole.
 func stopService() error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
 	}
-	defer m.Disconnect()
 	s, err := m.OpenService(serviceName)
 	if err != nil {
+		m.Disconnect()
 		return errors.New("not installed")
 	}
-	defer s.Close()
-	_, err = s.Control(svc.Stop)
-	return err
+	s.Close()
+	m.Disconnect()
+	return stopAgent()
 }
