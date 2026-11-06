@@ -250,7 +250,8 @@ function AddFound({ app, engine, added, onAdd }: {
         return (
           <Group key={p ?? 'default'} gap={SP.tight} justify="flex-end" wrap="wrap">
             {db && (
-              <ButtonLink to="/databases/$dbId" params={{ dbId: db.id }} size="compact-xs" variant="light" color="teal">
+              <ButtonLink {...(db.engine === 'rabbitmq' ? { to: '/brokers/$brokerId', params: { brokerId: db.id } } as const : { to: '/databases/$dbId', params: { dbId: db.id } } as const)}
+                size="compact-xs" variant="light" color="teal">
                 In Argus{engine === 'redis' ? '' : ` as ${db.dbname}`}
               </ButtonLink>
             )}

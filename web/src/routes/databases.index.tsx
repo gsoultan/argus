@@ -4,11 +4,12 @@ import { Alert, Badge, Box, Button, Group, SegmentedControl, SimpleGrid, Stack, 
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconDatabase, IconInfoCircle, IconLock, IconPlus, IconSearch } from '@tabler/icons-react'
+import { IconDatabase, IconInfoCircle, IconPlus, IconSearch } from '@tabler/icons-react'
 import { Fragment, useMemo, useState } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { LastBackupCell } from '~/components/DatabaseBackups'
+import { LevelBadge } from '~/components/LevelBadge'
 import { relTime } from '~/components/primitives'
 import { databasesQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
@@ -17,7 +18,7 @@ import { engineOf } from '~/lib/engines'
 import { FS, INK } from '~/theme'
 import { EngineMark } from '~/components/EngineMark'
 import { loadRecentDatabases } from '~/lib/recentDatabases'
-import type { DBAccess, DBEngine, DBLabel, DBLevel, Database, DatabaseBackup } from '~/types/domain'
+import type { DBAccess, DBEngine, DBLabel, Database, DatabaseBackup } from '~/types/domain'
 
 /**
  * Databases: every database this person may open, one row each, with what
@@ -38,17 +39,6 @@ export const Route = createFileRoute('/databases/')({
 
 export const LABEL_COLOR: Record<DBLabel, string> = { production: 'rose', staging: 'amber', development: 'teal' }
 
-export function LevelBadge({ level, approval }: { level: DBLevel | '' | undefined; approval?: boolean }) {
-  if (!level) return <Text size={FS.meta} c="dimmed">none</Text>
-  const label = { read: 'Read', write: 'Write', owner: 'Owner', dba: 'DBA' }[level]
-  return (
-    <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm"
-      leftSection={approval ? <IconLock size={10} /> : undefined}>
-      {label}
-    </Badge>
-  )
-}
-
 function describeAccess(acc: DBAccess | undefined): string {
   if (!acc) return ''
   if (acc.level && acc.grantExpires) return `until ${new Date(acc.grantExpires).toLocaleTimeString()}`
@@ -58,7 +48,8 @@ function describeAccess(acc: DBAccess | undefined): string {
 
 const LABEL_ORDER: DBLabel[] = ['production', 'staging', 'development']
 const LABEL_TITLE: Record<DBLabel, string> = { production: 'Production', staging: 'Staging', development: 'Development' }
-const ENGINE_ORDER: DBEngine[] = ['postgres', 'redis', 'rabbitmq']
+// RabbitMQ is a message broker and is listed under Brokers.
+const ENGINE_ORDER: DBEngine[] = ['postgres', 'redis']
 
 function displayName(d: Database): string {
   return d.engine === 'redis' ? `db ${d.dbname}` : d.dbname
@@ -75,15 +66,18 @@ function Databases() {
   const [recentIds] = useState(loadRecentDatabases)
   const narrow = useMediaQuery('(max-width: 48em)')
 
+  // Message brokers have their own page, so the databases are the rest.
+  const all = useMemo(() => (data?.databases ?? []).filter((d) => d.engine !== 'rabbitmq'), [data])
+
   const rows = useMemo(() => {
-    const list = data?.databases ?? []
+    const list = all
     const needle = q.trim().toLowerCase()
     return list.filter((d) =>
       (label === 'all' || d.label === label) &&
       (engine === 'all' || d.engine === engine) &&
       (!needle || d.dbname.toLowerCase().includes(needle) || d.hostname.toLowerCase().includes(needle)),
     )
-  }, [data, label, engine, q])
+  }, [all, label, engine, q])
 
   // Grouped by environment, production first, so which world a row is in
   // is the first thing read, not one badge among six columns.
@@ -92,23 +86,23 @@ function Databases() {
     .filter((g) => g.items.length > 0), [rows])
 
   const engines = useMemo(() => {
-    const list = data?.databases ?? []
+    const list = all
     return ENGINE_ORDER.map((e) => ({ engine: e, n: list.filter((d) => d.engine === e).length })).filter((x) => x.n > 0)
-  }, [data])
+  }, [all])
 
   // Opened recently in this browser, and still listed for this person.
   const recent = useMemo(() => {
-    const byId = new Map((data?.databases ?? []).map((d) => [d.id, d]))
+    const byId = new Map(all.map((d) => [d.id, d]))
     return recentIds.flatMap((r) => {
       const d = byId.get(r.id)
       return d ? [{ d, at: r.at }] : []
     }).slice(0, 3)
-  }, [data, recentIds])
+  }, [all, recentIds])
 
   if (!isConfigured()) {
     return (
       <Box>
-        <PageHeader title="Databases" description="Open a database, a Redis or a RabbitMQ in the browser. Everything is recorded." />
+        <PageHeader title="Databases" description="Open a Postgres database or a Redis in the browser. Everything is recorded." />
         <PageBody>
           <Alert icon={<IconInfoCircle size={16} />} color="amber" variant="light">
             No control plane is configured, so there are no databases to show. This page has no sample data on
@@ -125,7 +119,7 @@ function Databases() {
     <Box>
       <PageHeader
         title="Databases"
-        description="Open a Postgres database, a Redis or a RabbitMQ you've been given. Argus signs you in for this session only and records every statement and command."
+        description="Open a Postgres database or a Redis you've been given. Argus signs you in for this session only and records every statement and command. Message brokers are under Brokers."
         actions={
           admin ? (
             <ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>
@@ -164,7 +158,7 @@ function Databases() {
           <Toolbar
             right={
               <Text size={FS.meta} c="dimmed">
-                {data ? `${rows.length} of ${data.databases.length}` : null}
+                {data ? `${rows.length} of ${all.length}` : null}
               </Text>
             }
           >
@@ -203,7 +197,7 @@ function Databases() {
           {narrow && !isPending ? (
             <Stack gap="xs">
               {rows.length === 0 && (
-                <Text size={FS.meta} c="dimmed">{data && data.databases.length > 0 ? 'No database matches.' : 'No databases for you yet.'}</Text>
+                <Text size={FS.meta} c="dimmed">{data && all.length > 0 ? 'No database matches.' : 'No databases for you yet.'}</Text>
               )}
               {groups.map((g) => (
                 <Box key={g.label}>
@@ -226,9 +220,9 @@ function Databases() {
             empty={
               <EmptyState
                 icon={IconDatabase}
-                title={data && data.databases.length > 0 ? 'No database matches' : admin ? 'No databases yet' : 'No databases for you yet'}
+                title={data && all.length > 0 ? 'No database matches' : admin ? 'No databases yet' : 'No databases for you yet'}
                 description={
-                  data && data.databases.length > 0
+                  data && all.length > 0
                     ? 'Clear the search or pick another environment or engine.'
                     : admin
                       ? 'Add one from a server’s page. The agent on that server opens it; nothing else needs installing.'

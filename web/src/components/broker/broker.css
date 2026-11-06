@@ -1,0 +1,14 @@
+/* The broker workspace's two-column pages: main content and a side column
+   that drops under it on narrower screens. */
+.argus-broker-grid { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 75em) {
+  .argus-broker-grid { grid-template-columns: minmax(0, 1fr) 380px; }
+}
+.argus-broker-side { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 62em) {
+  .argus-broker-side { grid-template-columns: 240px minmax(0, 1fr); }
+}
+.argus-broker-pre {
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  margin: 0; padding: 10px 12px;
+}

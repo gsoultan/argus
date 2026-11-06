@@ -25,6 +25,8 @@ import { Route as UsersRouteImport } from './routes/users'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
 import { Route as AssetsAddRouteImport } from './routes/assets.add'
+import { Route as BrokersIndexRouteImport } from './routes/brokers.index'
+import { Route as BrokersBrokerIdRouteImport } from './routes/brokers.$brokerId'
 import { Route as DatabasesIndexRouteImport } from './routes/databases.index'
 import { Route as DatabasesDbIdRouteImport } from './routes/databases.$dbId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
@@ -111,6 +113,16 @@ const AssetsAddRoute = AssetsAddRouteImport.update({
   path: '/assets/add',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BrokersIndexRoute = BrokersIndexRouteImport.update({
+  id: '/brokers/',
+  path: '/brokers/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrokersBrokerIdRoute = BrokersBrokerIdRouteImport.update({
+  id: '/brokers/$brokerId',
+  path: '/brokers/$brokerId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DatabasesIndexRoute = DatabasesIndexRouteImport.update({
   id: '/databases/',
   path: '/databases/',
@@ -153,9 +165,11 @@ export interface FileRoutesByFullPath {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
+  '/brokers/': typeof BrokersIndexRoute
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
@@ -176,9 +190,11 @@ export interface FileRoutesByTo {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets': typeof AssetsIndexRoute
+  '/brokers': typeof BrokersIndexRoute
   '/databases': typeof DatabasesIndexRoute
   '/sessions': typeof SessionsIndexRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
@@ -200,9 +216,11 @@ export interface FileRoutesById {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
+  '/brokers/': typeof BrokersIndexRoute
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/databases/$dbId_/settings': typeof DatabasesDbIdSettingsRoute
@@ -225,9 +243,11 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/brokers/$brokerId'
     | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets/'
+    | '/brokers/'
     | '/databases/'
     | '/sessions/'
     | '/databases/$dbId/settings'
@@ -248,9 +268,11 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/brokers/$brokerId'
     | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets'
+    | '/brokers'
     | '/databases'
     | '/sessions'
     | '/databases/$dbId/settings'
@@ -271,9 +293,11 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/brokers/$brokerId'
     | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets/'
+    | '/brokers/'
     | '/databases/'
     | '/sessions/'
     | '/databases/$dbId_/settings'
@@ -295,9 +319,11 @@ export interface RootRouteChildren {
   UsersRoute: typeof UsersRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
+  BrokersBrokerIdRoute: typeof BrokersBrokerIdRoute
   DatabasesDbIdRoute: typeof DatabasesDbIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   AssetsIndexRoute: typeof AssetsIndexRoute
+  BrokersIndexRoute: typeof BrokersIndexRoute
   DatabasesIndexRoute: typeof DatabasesIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
   DatabasesDbIdSettingsRoute: typeof DatabasesDbIdSettingsRoute
@@ -417,6 +443,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssetsAddRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/brokers/': {
+      id: '/brokers/'
+      path: '/brokers'
+      fullPath: '/brokers/'
+      preLoaderRoute: typeof BrokersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brokers/$brokerId': {
+      id: '/brokers/$brokerId'
+      path: '/brokers/$brokerId'
+      fullPath: '/brokers/$brokerId'
+      preLoaderRoute: typeof BrokersBrokerIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/databases/': {
       id: '/databases/'
       path: '/databases'
@@ -471,9 +511,11 @@ const rootRouteChildren: RootRouteChildren = {
   UsersRoute: UsersRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,
+  BrokersBrokerIdRoute: BrokersBrokerIdRoute,
   DatabasesDbIdRoute: DatabasesDbIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   AssetsIndexRoute: AssetsIndexRoute,
+  BrokersIndexRoute: BrokersIndexRoute,
   DatabasesIndexRoute: DatabasesIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
   DatabasesDbIdSettingsRoute: DatabasesDbIdSettingsRoute,

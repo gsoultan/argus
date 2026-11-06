@@ -91,7 +91,9 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
           label: d.dbname,
           hint: `${d.hostname.split('.')[0]} · ${d.label} · ${dbs?.access[d.id]?.level || 'ask for access'}`,
           kind: 'Database',
-          go: () => navigate({ to: '/databases/$dbId', params: { dbId: d.id } }),
+          go: () => d.engine === 'rabbitmq'
+            ? navigate({ to: '/brokers/$brokerId', params: { brokerId: d.id } })
+            : navigate({ to: '/databases/$dbId', params: { dbId: d.id } }),
         })
       }
 

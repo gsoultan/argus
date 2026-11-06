@@ -1,5 +1,5 @@
 import {
-  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconHome, IconInfoCircle, IconServer2, IconSettings,
+  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconHome, IconInfoCircle, IconServer2, IconSettings, IconStack2,
   IconUsersGroup,
   type IconProps,
 } from '@tabler/icons-react'
@@ -68,6 +68,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Databases',
     icon: IconDatabase,
     blurb: 'Open a database in the browser; every statement is recorded',
+  },
+  {
+    to: '/brokers',
+    label: 'Brokers',
+    icon: IconStack2,
+    blurb: 'RabbitMQ: queues, routing and who is connected; every action is recorded',
   },
   {
     to: '/approvals',

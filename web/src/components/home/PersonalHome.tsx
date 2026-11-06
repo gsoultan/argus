@@ -98,7 +98,8 @@ export default function PersonalHome({ me }: { me: User | undefined }) {
                       <AnchorLink to="/approvals" size={FS.meta} fw={650}>{waitingOn(d.id)} waiting for you</AnchorLink>
                     )}
                   </Box>
-                  <ButtonLink to="/databases/$dbId" params={{ dbId: d.id }} size="compact-sm" style={{ flexShrink: 0 }}>
+                  <ButtonLink {...(d.engine === 'rabbitmq' ? { to: '/brokers/$brokerId', params: { brokerId: d.id } } as const : { to: '/databases/$dbId', params: { dbId: d.id } } as const)}
+                    size="compact-sm" style={{ flexShrink: 0 }}>
                     Open
                   </ButtonLink>
                 </Group>
