@@ -582,3 +582,39 @@ func TestMySQLDiscover(t *testing.T) {
 		t.Fatalf("the socket of port %d answered for port %d", port, port+1000)
 	}
 }
+
+// An approved change that changes more rows than were approved is rolled
+// back, alone or inside the person's own transaction.
+func TestMySQLRowCap(t *testing.T) {
+	m := newMyService(t)
+	root := myRoot(t, m.sock)
+	myDB(t, root, "argus_t_cap")
+	h := m.mustOpen(t, "argus_t_cap", tunnel.LevelWrite)
+	one, three := int64(1), int64(3)
+	_, _, a := h.do(tunnel.PGRequest{ID: 1, Op: "run", SQL: "UPDATE items SET note = 'x' WHERE id > 0", RowCap: &one})
+	if a.Type != "error" || !strings.Contains(a.Error, "rolled back") {
+		t.Fatalf("over the cap: %+v", a)
+	}
+	var n int
+	_ = root.QueryRow("SELECT COUNT(*) FROM argus_t_cap.items WHERE note = 'x'").Scan(&n)
+	if n != 0 {
+		t.Fatalf("the over-cap update was kept: %d", n)
+	}
+	h.run(2, "BEGIN", 0)
+	h.run(3, "INSERT INTO items VALUES (7,'seven',NULL)", 0)
+	if _, _, a := h.do(tunnel.PGRequest{ID: 4, Op: "run", SQL: "DELETE FROM items WHERE id > 0", RowCap: &three}); a.Type != "error" {
+		t.Fatalf("over the cap in a transaction: %+v", a)
+	}
+	if _, rows, _ := h.run(5, "SELECT COUNT(*) FROM items", 0); cell(rows, 0, 0) != "4" {
+		t.Fatalf("the savepoint did not keep the person's insert: %v", rows)
+	}
+	if _, _, a := h.do(tunnel.PGRequest{ID: 6, Op: "run", SQL: "UPDATE items SET note = 'y' WHERE id = 7", RowCap: &one}); a.Type != "done" {
+		t.Fatalf("within the cap: %+v", a)
+	}
+	h.run(7, "COMMIT", 0)
+	h.close()
+	_ = root.QueryRow("SELECT COUNT(*) FROM argus_t_cap.items WHERE note = 'y'").Scan(&n)
+	if n != 1 {
+		t.Fatalf("the change within its cap was not kept: %d", n)
+	}
+}

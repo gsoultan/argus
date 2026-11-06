@@ -837,8 +837,22 @@ func (s *mysqlSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	defer timer.Stop()
 
 	start := time.Now()
+	// An approved change holds to the rows the approver saw counted: it
+	// runs in a transaction of its own, or under a savepoint inside the
+	// person's, and is rolled back when it changes more.
+	capped := req.RowCap != nil && class.Writes
+	var capEnd func(ok bool)
+	if capped {
+		var err error
+		if capEnd, err = s.capOpen(ctx); err != nil {
+			return s.failed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
+		}
+	}
 	rows, err := s.conn.QueryContext(ctx, query, args...)
 	if err != nil {
+		if capEnd != nil {
+			capEnd(false)
+		}
 		return s.failed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
 	}
 	cols, _ := rows.ColumnTypes()
@@ -929,6 +943,9 @@ func (s *mysqlSession) run(ctx context.Context, req tunnel.PGRequest) error {
 		err = nil
 	}
 	if err != nil {
+		if capEnd != nil {
+			capEnd(false)
+		}
 		return s.failed(ctx, req.ID, err, n, elapsed)
 	}
 	verb := strings.ToUpper(class.Verb)
@@ -951,11 +968,70 @@ func (s *mysqlSession) run(ctx context.Context, req tunnel.PGRequest) error {
 			tag = "OK"
 		}
 	}
+	if capEnd != nil {
+		if rowsOut > *req.RowCap {
+			capEnd(false)
+			err := fmt.Errorf("it changed %d rows, more than the %d approved, so it was rolled back", rowsOut, *req.RowCap)
+			return s.failed(ctx, req.ID, err, rowsOut, elapsed)
+		}
+		capEnd(true)
+	}
 	if err := s.rec.write(tunnel.PGRecord{Kind: "done", Request: req.ID, Tag: tag, Rows: rowsOut, MS: elapsed,
 		ResultSHA256: hex.EncodeToString(h.Sum(nil)), Truncated: truncated}); err != nil {
 		return err
 	}
 	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: tag, Rows: rowsOut, MS: elapsed, Truncated: truncated})
+}
+
+// capOpen starts what holds an approved change to its cap, and returns
+// what ends it: commit or release on true, roll back on false.
+func (s *mysqlSession) capOpen(ctx context.Context) (func(ok bool), error) {
+	inTx, err := s.inTransaction(ctx)
+	if err != nil {
+		return nil, err
+	}
+	bg := context.WithoutCancel(ctx)
+	if !inTx {
+		if _, err := s.conn.ExecContext(ctx, "START TRANSACTION"); err != nil {
+			return nil, err
+		}
+		return func(ok bool) {
+			q := "ROLLBACK"
+			if ok {
+				q = "COMMIT"
+			}
+			_, _ = s.conn.ExecContext(bg, q)
+		}, nil
+	}
+	if _, err := s.conn.ExecContext(ctx, "SAVEPOINT argus_cap"); err != nil {
+		return nil, err
+	}
+	return func(ok bool) {
+		q := "ROLLBACK TO SAVEPOINT argus_cap"
+		if ok {
+			q = "RELEASE SAVEPOINT argus_cap"
+		}
+		_, _ = s.conn.ExecContext(bg, q)
+	}, nil
+}
+
+// inTransaction reports whether the person's connection is inside a
+// transaction. MySQL has no variable for it (MariaDB's @@in_transaction), so
+// a savepoint tells: outside a transaction, autocommit drops it at once and
+// rolling back to it fails with 1305.
+func (s *mysqlSession) inTransaction(ctx context.Context) (bool, error) {
+	if _, err := s.conn.ExecContext(ctx, "SAVEPOINT argus_probe"); err != nil {
+		return false, err
+	}
+	_, err := s.conn.ExecContext(ctx, "ROLLBACK TO SAVEPOINT argus_probe")
+	if mysqlErrNo(err) == 1305 {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, _ = s.conn.ExecContext(ctx, "RELEASE SAVEPOINT argus_probe")
+	return true, nil
 }
 
 func mysqlErrNo(err error) uint16 {
