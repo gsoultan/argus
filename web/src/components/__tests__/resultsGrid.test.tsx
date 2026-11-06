@@ -108,4 +108,15 @@ describe('Results grid', () => {
     expect(within(dialog).getByText('cut')).toBeInTheDocument()
     expect(within(dialog).getByText(/loaded only the first part of this value/)).toBeInTheDocument()
   })
+
+  it('says what a permission error means at the session\'s level, and offers more access only where it helps', () => {
+    const refused: GridResult = { id: 2, sql: 'ALTER TABLE quotations ADD c int', cols: [], rows: [],
+      error: { error: 'must be owner of table quotations', code: '42501' } }
+    const { unmount } = renderWithProviders(<ResultsGrid result={refused} narrow={false} level="owner" canAsk />)
+    expect(screen.getByText(/You already have OWNER access, so asking for more will not help/)).toBeInTheDocument()
+    expect(screen.queryByText(/Ask for write access/)).not.toBeInTheDocument()
+    unmount()
+    renderWithProviders(<ResultsGrid result={refused} narrow={false} level="read" canAsk />)
+    expect(screen.getByText(/Use Ask for write access above/)).toBeInTheDocument()
+  })
 })

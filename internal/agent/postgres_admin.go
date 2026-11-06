@@ -338,8 +338,73 @@ func pgEnsureLevels(ctx context.Context, conn *pgconn.PgConn, database, level st
 	if o, ok := names[tunnel.LevelOwner]; ok {
 		fmt.Fprintf(&b, "EXECUTE format('GRANT CREATE ON SCHEMA %%I TO %s', s);\n", pgx(o))
 	}
-	b.WriteString("END LOOP;\nEND\n$argus$")
+	b.WriteString("END LOOP;\n")
+	if o, ok := names[tunnel.LevelOwner]; ok {
+		b.WriteString(ownerReachSQL(o))
+	}
+	b.WriteString("END\n$argus$")
 	return execAll(ctx, conn, b.String())
+}
+
+/*
+ownerReachSQL makes the owner level a member of the roles that own what is in
+the database: an application's own role, which made its tables before anyone
+used Argus. Postgres lets only an owner, or a member of the owner's role, ALTER
+or DROP a table; without this an owner session could change only what it made
+itself, and "must be owner of table quotations" is all anyone saw.
+
+The membership is for what those roles own and may do, never for becoming
+them. Postgres 16 and later grant it WITH INHERIT TRUE, SET FALSE, so SET ROLE
+to the application's role is refused and its attributes stay with it. Before
+16 a member may always SET ROLE, so there a role is passed over when it, or
+anything it is a member of, carries an attribute an ordinary role does not.
+
+A role is never handed out when it, or any role it is a member of, is a
+superuser, can create roles, or holds the server-file roles: owning what a
+superuser owns is a way to become one (replace a SECURITY DEFINER function it
+owns), and the rest are ways out of the database. Each open re-checks: a role
+that became one of those since is taken away again. Argus's own roles, the
+predefined pg_ roles, and a role already holding this level (a DBA may give an
+application's role a level) are left out.
+*/
+func ownerReachSQL(ownerLevel string) string {
+	lit := quoteLiteral(ownerLevel)
+	// danger(R): R reaches a role an owner session must not.
+	danger := `EXISTS (SELECT 1 FROM pg_roles x WHERE pg_has_role(%[1]s, x.oid, 'MEMBER') AND (x.rolsuper OR x.rolcreaterole
+	  OR x.rolname IN ('pg_read_server_files', 'pg_write_server_files', 'pg_execute_server_program')
+	  OR (NOT pg16 AND (x.rolcreatedb OR x.rolreplication OR x.rolbypassrls))))`
+	managed := `coalesce(shobj_description(%[1]s, 'pg_authid'), '') LIKE ` + strings.ReplaceAll(quoteLiteral(roleMarker+"%"), "%", "%%")
+	ns := `n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'argus\_trash%'`
+	return fmt.Sprintf(`DECLARE
+  lvl oid := (SELECT oid FROM pg_roles WHERE rolname = %[1]s);
+  pg16 boolean := current_setting('server_version_num')::int >= 160000;
+  r record;
+BEGIN
+  -- Taken away: what is no longer safe to hold.
+  FOR r IN SELECT g.oid, g.rolname FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
+            WHERE m.member = lvl AND NOT (%[2]s) AND (%[3]s) LOOP
+    EXECUTE format('REVOKE %%I FROM %%I', r.rolname, %[1]s);
+  END LOOP;
+  -- Given: the owners of what is in this database.
+  FOR r IN SELECT o.oid, o.rolname FROM pg_roles o WHERE o.oid IN (
+             SELECT c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE %[6]s
+             UNION SELECT n.nspowner FROM pg_namespace n WHERE %[6]s
+             UNION SELECT p.proowner FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE %[6]s
+             UNION SELECT t.typowner FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE %[6]s)
+           AND o.oid <> lvl AND o.rolname NOT LIKE 'pg\_%%'
+           AND NOT (%[4]s) AND NOT (%[5]s)
+           AND NOT pg_has_role(o.oid, lvl, 'MEMBER') LOOP
+    IF pg16 THEN
+      EXECUTE format('GRANT %%I TO %%I WITH INHERIT TRUE, SET FALSE', r.rolname, %[1]s);
+    ELSIF NOT pg_has_role(lvl, r.oid, 'MEMBER') THEN
+      EXECUTE format('GRANT %%I TO %%I', r.rolname, %[1]s);
+    END IF;
+  END LOOP;
+END;
+`, lit,
+		fmt.Sprintf(managed, "g.oid"), fmt.Sprintf(danger, "g.oid"),
+		fmt.Sprintf(managed, "o.oid"), fmt.Sprintf(danger, "o.oid"),
+		ns)
 }
 
 // revokeIfExists takes group away from member when group exists; a level

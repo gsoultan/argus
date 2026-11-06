@@ -260,9 +260,33 @@ type Open = { row: number; col: number } | { added: number; attnum: number }
 /** What each statement of a save stands for, to fold what it returns back in. */
 type Saved = { update: number; group: EditGroup } | { insert: true } | { del: number }
 
-export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRows }: {
+/**
+ * What to say under Postgres's permission error (42501), by the session's
+ * level. Asking for more access only helps below owner: at owner and dba the
+ * refusal is about who owns the object, which no higher level changes.
+ */
+export function refusedNote(level?: string, canAsk?: boolean): string {
+  switch (level) {
+    case 'read':
+      return canAsk
+        ? 'Your access to this database is read only. Nothing was changed. Use Ask for write access above if you need it.'
+        : 'Your access to this database is read only. Nothing was changed.'
+    case 'write':
+      return 'Your access lets you change rows, not the tables themselves. Nothing was changed. Creating, altering or dropping tables needs owner access.'
+    case 'owner':
+    case 'dba':
+      return `Nothing was changed. You already have ${level.toUpperCase()} access, so asking for more will not help. What you are changing belongs to a role Argus does not lend out: a superuser, a role that can create roles, or Postgres itself. Change it as that role, or ask whoever runs this Postgres. If your application's role owns it, open a new session to pick that up.`
+    default:
+      return 'Your access to this database does not allow that. Nothing was changed.'
+  }
+}
+
+export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRows, level, canAsk }: {
   result: GridResult | null
   narrow: boolean
+  /** The session's access level and whether more can be asked for, for what a permission error says. */
+  level?: string
+  canAsk?: boolean
   collect?: GridCollect
   /** Opens the statement with the grid's sort and filters as SQL. */
   onAddToQuery?: (sql: string, params: Record<string, string>) => void
@@ -689,9 +713,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
             </Text>
             {result.error.hint && <Text size={FS.meta} mt={4}>{result.error.hint}</Text>}
             {result.error.code === '42501' && (
-              <Text size={FS.meta} mt={4}>
-                Your access to this database does not allow that. Nothing was changed. Use <b>Ask for write access</b> above if you need it.
-              </Text>
+              <Text size={FS.meta} mt={4}>{refusedNote(level, canAsk)}</Text>
             )}
           </Box>
         </Box>
