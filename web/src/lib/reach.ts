@@ -38,6 +38,15 @@ export function kindOf(a: Asset): 'windows' | 'linux' | 'android' {
   return a.protocol === 'rdp' || /windows/i.test(a.os) ? 'windows' : 'linux'
 }
 
+/**
+ * What a host that checked in and is not yet added is, from the OS its agent
+ * reports: the Argus app says "Android …", so finishing adding it offers a
+ * device's choices rather than a server's.
+ */
+export function kindOfHost(h: { os?: string }): 'android' | undefined {
+  return /android/i.test(h.os ?? '') ? 'android' : undefined
+}
+
 /** Whether this is an Android device driven through the Argus app on it. */
 export function isDevice(a: Asset | undefined): boolean {
   return a?.kind === 'android'

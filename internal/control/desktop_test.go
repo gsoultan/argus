@@ -92,7 +92,7 @@ func (e *tunnelEnv) runDesktopAgent(t *testing.T, cred, host string, desk *fakeD
 	services := agent.DefaultTunnelServices()
 	services[agent.DesktopService] = agent.Desktop(agent.DesktopConfig{
 		Collector: col, Verifier: &tunnel.GrantVerifier{Host: host}, Hostname: host, Log: log,
-		Connect: func(_ agent.DesktopConfig, principal string, open tunnel.DesktopOpen,
+		Connect: func(_ agent.DesktopConfig, _ tunnel.Grant, open tunnel.DesktopOpen,
 			_ *slog.Logger) (agent.DesktopClient, agent.DesktopInfo, error) {
 			if open.Password != "correct horse" {
 				return nil, agent.DesktopInfo{}, errors.New("logon failure: wrong password")
@@ -300,9 +300,9 @@ func (e *tunnelEnv) runScreenAgent(t *testing.T, cred, host string, desk *fakeDe
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	col := agent.NewCollector(t.TempDir(), log)
 	var mu sync.Mutex
-	connect := func(kind string, info agent.DesktopInfo) func(agent.DesktopConfig, string,
+	connect := func(kind string, info agent.DesktopInfo) func(agent.DesktopConfig, tunnel.Grant,
 		tunnel.DesktopOpen, *slog.Logger) (agent.DesktopClient, agent.DesktopInfo, error) {
-		return func(_ agent.DesktopConfig, _ string, open tunnel.DesktopOpen,
+		return func(_ agent.DesktopConfig, _ tunnel.Grant, open tunnel.DesktopOpen,
 			_ *slog.Logger) (agent.DesktopClient, agent.DesktopInfo, error) {
 			mu.Lock()
 			entry := kind + ":" + open.Password

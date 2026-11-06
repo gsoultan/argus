@@ -145,6 +145,10 @@ type API struct {
 	// empty is DefaultAgentReleasesURL. A mirror, for servers that cannot
 	// reach GitHub.
 	AgentReleasesURL string
+	// AndroidAPK is a built Argus app for Android to hand to phones at
+	// /api/v1/install/argus-android.apk; empty sends them to the release
+	// of this version under AgentReleasesURL. See android_apk.go.
+	AndroidAPK string
 	// Releases finds the newest agent release, so the console can offer a
 	// version newer than its own. Nil offers only Version.
 	Releases *ReleaseWatcher
@@ -465,6 +469,8 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	// sign-in: the token is the only thing it checks.
 	mux.HandleFunc("POST /api/v1/agents/enroll", a.limitLogin(a.postEnroll))
 	mux.HandleFunc("GET /api/v1/install/agent.sh", a.getInstallScript)
+	// The app a phone installs before it scans the console's code.
+	mux.HandleFunc("GET /api/v1/install/"+androidAPKName, a.getAndroidAPK)
 }
 
 // securityHeaders sets the response headers a browser needs to protect the

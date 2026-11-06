@@ -363,7 +363,9 @@ func runDaemon(args []string) int {
 					Hostname:  hostname,
 					Log:       log,
 				},
-				Device: func() (agent.AndroidDevice, error) { return agent.NewFakeAndroid(0, 0), nil },
+				Device: func(agent.AndroidOpen) (agent.AndroidDevice, error) {
+					return agent.NewFakeAndroid(0, 0), nil
+				},
 			})
 		}
 		go agent.RunTunnel(ctx, agent.TunnelConfig{
@@ -492,7 +494,7 @@ func runDaemon(args []string) int {
 		// becomes visible, not where it becomes real.
 		appendJSONL(*stateDir+"/sessions.jsonl", rec, log)
 
-		rep.Session(ctx, sessionReport(rec))
+		rep.Session(ctx, agent.SessionReport(rec))
 		// The recording itself, so it can be replayed from the console. Queued
 		// on disk first: the host's copy is the evidence until the control
 		// plane has verified and stored its own.
@@ -501,7 +503,7 @@ func runDaemon(args []string) int {
 	// A session through the tunnel shows in the console while it runs, and is
 	// spoken for every minute, so a long one is not taken for one whose host
 	// went quiet.
-	col.OnActive = func(rec agent.SessionRecord) { rep.Session(ctx, sessionReport(rec)) }
+	col.OnActive = func(rec agent.SessionRecord) { rep.Session(ctx, agent.SessionReport(rec)) }
 
 	// Kernel execution tracing, when the host can support it. A failure here is
 	// a supported configuration, not a fatal one: the agent still records
@@ -531,7 +533,7 @@ func runDaemon(args []string) int {
 	posture := agent.NewPostureCache(agent.DefaultScanConfig(*shimPath), *scanEvery)
 	go loop(time.Minute, stop, func() {
 		for _, rec := range col.ActiveTunnelRecords() {
-			rep.Session(ctx, sessionReport(rec))
+			rep.Session(ctx, agent.SessionReport(rec))
 		}
 	})
 	go loop(*scanEvery, stop, func() {
@@ -847,60 +849,6 @@ func runDaemon(args []string) int {
 // sessions before it disconnects them and seals their recordings.
 const updateDrain = 2 * time.Second
 
-// sessionReport is what the control plane is told about a session.
-func sessionReport(rec agent.SessionRecord) map[string]any {
-	// A session through the tunnel is attributed to the person the control
-	// plane signed it for; a login through sshd only to the local account.
-	who := rec.Principal + "@" + rec.Hostname
-	if rec.Actor != "" {
-		who = rec.Actor
-	}
-	protocol, state := rec.Protocol, rec.State
-	if protocol == "" {
-		protocol = "ssh"
-	}
-	if state == "" {
-		state = "closed"
-	}
-	fidelity := rec.Fidelity
-	if protocol == "rdp" {
-		fidelity = "rdp"
-	}
-	out := map[string]any{
-		"id":             rec.ID,
-		"userEmail":      who,
-		"assetHostname":  rec.Hostname,
-		"principal":      rec.Principal,
-		"protocol":       protocol,
-		"origin":         string(rec.Origin),
-		"state":          state,
-		"startedAt":      rec.StartedAt,
-		"clientIp":       rec.ClientAddr,
-		"fidelity":       fidelity,
-		"commandCount":   rec.Commands,
-		"recordingBytes": rec.Bytes,
-		"reportedBy":     "agent:" + rec.Hostname,
-		"riskFlags":      agentRiskFlags(rec),
-	}
-	if state != "active" {
-		out["endedAt"] = rec.EndedAt
-		out["exitCode"] = rec.ExitCode
-		out["chainHead"] = rec.ChainHead
-	}
-	if rec.TerminatedBy != "" {
-		out["terminatedBy"] = rec.TerminatedBy
-		out["terminationReason"] = rec.TerminationReason
-	}
-	if rec.Auth != nil {
-		out["auth"] = rec.Auth
-	}
-	if rec.DirectApproval != "" {
-		out["directApproval"] = rec.DirectApproval
-		out["directLoginId"] = rec.DirectLoginID
-	}
-	return out
-}
-
 // askDirectApproval asks the control plane whether a direct login may go
 // ahead, and waits for an admin's answer while it is held.
 //
@@ -967,20 +915,6 @@ func askDirectApproval(ctx context.Context, rep *reporter.Client, m agent.Sessio
 		return agent.Approval{ID: a.ID, Reason: reason}
 	}
 	return agent.Approval{ID: a.ID, Reason: "Argus did not approve this login"}
-}
-
-// agentRiskFlags marks what the console highlights about a session the agent saw.
-func agentRiskFlags(rec agent.SessionRecord) []string {
-	flags := []string{}
-	if rec.Origin == agent.Direct {
-		flags = append(flags, "bypassed-gateway")
-	}
-	// Administrator is to Windows what root is to Linux.
-	switch strings.ToLower(rec.Principal) {
-	case "root", "administrator":
-		flags = append(flags, "root-principal")
-	}
-	return append(flags, rec.Flags...)
 }
 
 func runShim(args []string) int {

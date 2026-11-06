@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- canPerformGestures: taps and swipes from the console. canRetrieveWindowContent:
+     to find the field that has focus, for typed text. No events are asked
+     for: Argus never reads what is on the screen through this service; the
+     screen reaches the console as pixels, with the holder's consent. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewFocused"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/input_service_description"
+    android:notificationTimeout="100" />

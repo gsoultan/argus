@@ -115,24 +115,35 @@ type androidClient struct {
 // AndroidConfig is what the android service needs beyond a desktop's.
 type AndroidConfig struct {
 	DesktopConfig
-	// Device opens the device for a session. Called once per session.
-	Device func() (AndroidDevice, error)
+	// Device opens the device for a session. Called once per session, and
+	// may take its time: in attended mode it returns once whoever holds the
+	// device has accepted, or with why not.
+	Device func(AndroidOpen) (AndroidDevice, error)
+}
+
+// AndroidOpen is who a session is for, for the device to show whoever holds
+// it before it opens.
+type AndroidOpen struct {
+	// Person is the email the grant names.
+	Person string
+	// Principal is DeviceViewPrincipal or DeviceControlPrincipal.
+	Principal string
 }
 
 // Android returns the android service: the device's screen, driven from
 // the console.
 func Android(cfg AndroidConfig) TunnelService {
 	open := cfg.Device
-	cfg.Connect = func(_ DesktopConfig, principal string, _ tunnel.DesktopOpen,
+	cfg.Connect = func(_ DesktopConfig, g tunnel.Grant, _ tunnel.DesktopOpen,
 		_ *slog.Logger) (DesktopClient, DesktopInfo, error) {
 		if open == nil {
 			return nil, DesktopInfo{}, errors.New("this agent has no device to share")
 		}
-		dev, err := open()
+		dev, err := open(AndroidOpen{Person: g.Email, Principal: g.Principal})
 		if err != nil {
 			return nil, DesktopInfo{}, err
 		}
-		c, info := connectAndroid(dev, principal)
+		c, info := connectAndroid(dev, g.Principal)
 		return c, info, nil
 	}
 	return desktopService(cfg.DesktopConfig, AndroidService)

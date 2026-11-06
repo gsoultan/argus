@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AssetForm } from '~/components/AssetForm'
 import { api } from '~/lib/api'
 import { deviceEnrolPayload } from '~/lib/live'
-import { kindOf } from '~/lib/reach'
+import { kindOf, kindOfHost } from '~/lib/reach'
 import { isElevatedAccount, principalLabel } from '~/lib/roles'
 import { assets, currentUser } from '~/lib/seed'
 import { renderWithProviders } from '~/test/render'
@@ -50,6 +50,15 @@ describe('the code the app scans', () => {
       argus: 'enrol', url: 'https://argus.example', token: 'tok-1', pin: 'off',
     })
     expect(JSON.parse(deviceEnrolPayload({ ...t, pin: 'sha256:abc' })).pin).toBe('sha256:abc')
+    // The name the console gave the device, so the app enrols under it and
+    // the wizard finds it by name.
+    expect(JSON.parse(deviceEnrolPayload(t, ' rina-pixel-8 ')).name).toBe('rina-pixel-8')
+  })
+
+  it('tells a device that checked in from a server by the OS the app reports', () => {
+    expect(kindOfHost({ os: 'Android 14' })).toBe('android')
+    expect(kindOfHost({ os: 'Ubuntu 24.04' })).toBeUndefined()
+    expect(kindOfHost({})).toBeUndefined()
   })
 })
 
