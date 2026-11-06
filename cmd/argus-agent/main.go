@@ -324,6 +324,13 @@ func runDaemon(args []string) int {
 			RecordDir: *dir,
 			Log:       log,
 		})
+		// Kafka the same way: a SCRAM user with ACLs on the entry's topics for
+		// the session, every read of messages and change recorded before it runs.
+		services[agent.KafkaService] = agent.Kafka(agent.StoreConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
+		})
 		services[agent.RabbitMQService] = agent.RabbitMQ(agent.RabbitConfig{StoreConfig: agent.StoreConfig{
 			Verifier:  &tunnel.GrantVerifier{Host: hostname},
 			RecordDir: *dir,

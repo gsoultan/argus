@@ -48,6 +48,8 @@ func ServiceForEngine(engine string) string {
 		return MySQLService
 	case EngineMongoDB:
 		return MongoDBService
+	case EngineKafka:
+		return KafkaService
 	}
 	return PostgresService
 }
