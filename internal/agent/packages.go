@@ -354,8 +354,12 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 	}
 	if p.run.ID != "" && !p.run.Finished() {
 		// One run at a time. The console sends the next only once this
-		// one is reported; this is a second line of defence.
-		fail("another update run (" + p.run.ID + ") is still going on this server")
+		// one is reported; this is a second line of defence. The new one
+		// is left unanswered rather than failed, which would forget the
+		// run still going: it is started on a later heartbeat, once this
+		// one has ended.
+		p.Log.Warn("packages: a run was asked for while another is going; it waits",
+			"going", p.run.ID, "asked", req.ID)
 		return
 	}
 	if reason := p.platform.supported(); reason != "" {

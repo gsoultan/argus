@@ -61,6 +61,10 @@ func _assertAgentShape(m m0.Agent) {
 		m.Applications,
 		m.System,
 		m.Usage,
+		m.Packages,
+		m.PackagesState,
+		m.PackagesCheckID,
+		m.PackagesCheckAt,
 		m.UsageAt,
 	}
 }
@@ -490,6 +494,7 @@ func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
 		m.UpdatedBy,
 		m.DirectSsh,
 		m.AgentAutoUpdate,
+		m.PackageHolds,
 	}
 }
 
@@ -503,6 +508,59 @@ func _assertHostKeyPinShape(m m0.HostKeyPin) {
 		m.KeyType,
 		m.PinnedAt,
 		m.PinnedBy,
+	}
+}
+
+// _assertPackageRunShape fails to compile if m0.PackageRun gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertPackageRunShape(m m0.PackageRun) {
+	type shape m0.PackageRun
+	_ = shape{
+		m.ID,
+		m.Hostname,
+		m.AssetHostname,
+		m.Mode,
+		m.Packages,
+		m.Holds,
+		m.Reboot,
+		m.Trigger,
+		m.State,
+		m.RequestedBy,
+		m.RequestedAt,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.SentAt,
+		m.StartedAt,
+		m.FinishedAt,
+		m.UpdatedAt,
+		m.Step,
+		m.Message,
+		m.Planned,
+		m.Upgraded,
+		m.Restarted,
+		m.RebootRequired,
+		m.Rebooted,
+		m.Log,
+		m.BatchID,
+		m.BatchPosition,
+		m.WindowStart,
+	}
+}
+
+// _assertPackageUpdateRuleShape fails to compile if m0.PackageUpdateRule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertPackageUpdateRuleShape(m m0.PackageUpdateRule) {
+	type shape m0.PackageUpdateRule
+	_ = shape{
+		m.ID,
+		m.Position,
+		m.Tag,
+		m.Mode,
+		m.WindowDays,
+		m.WindowStartMinute,
+		m.WindowMinutes,
+		m.Reboot,
+		m.NeedsApproval,
 	}
 }
 

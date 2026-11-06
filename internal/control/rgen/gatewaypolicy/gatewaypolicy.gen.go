@@ -32,6 +32,7 @@ type Row struct {
 	UpdatedBy                 string
 	DirectSsh                 string
 	AgentAutoUpdate           bool
+	PackageHolds              []string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -70,7 +71,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 12
+const nCols = 13
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -412,6 +413,7 @@ func (q Query) stream(buf *[21]runtime.Tok) []runtime.Tok {
 type Pred struct {
 	col    uint8
 	op     runtime.Op
+	num    int64
 	str    string
 	tim    time.Time
 	bol    bool
@@ -441,6 +443,7 @@ var (
 	UpdatedBy                 = TextCol{9}
 	DirectSsh                 = TextCol{10}
 	AgentAutoUpdate           = BoolCol{11}
+	PackageHolds              = TextArrayCol{12}
 )
 
 // BoolCol addresses a bool column.
@@ -504,6 +507,35 @@ func (h TextCol) In(v ...string) Pred   { return Pred{col: h.c, op: opIn, anyStr
 // comparison NULL for every row and the result empty —
 // PostgreSQL's rule for NOT IN, not storm's.
 func (h TextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
+
+// TextArrayCol addresses a text[] column.
+type TextArrayCol struct{ c uint8 }
+
+func (h TextArrayCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h TextArrayCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h TextArrayCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h TextArrayCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+// Contains is `@>`: every element of v is in the column.
+// An empty v is true for every row — every array contains
+// the empty one.
+func (h TextArrayCol) Contains(v ...string) Pred {
+	return Pred{col: h.c, op: opArrayContains, anyStr: v}
+}
+
+// ContainedBy is `<@`: every element of the column is in v.
+func (h TextArrayCol) ContainedBy(v ...string) Pred {
+	return Pred{col: h.c, op: opArrayContainedBy, anyStr: v}
+}
+
+// Overlaps is `&&`: the column and v share an element.
+func (h TextArrayCol) Overlaps(v ...string) Pred {
+	return Pred{col: h.c, op: opArrayOverlaps, anyStr: v}
+}
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -660,6 +692,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 12:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -776,40 +815,45 @@ func (q Query) FailClosedOnRecordingLossEq(v bool) Query {
 func (q Query) FailClosedOnRecordingLossNotEq(v bool) Query {
 	return q.Where(FailClosedOnRecordingLoss.NotEq(v))
 }
-func (q Query) RequireEbpfForRootEq(v bool) Query    { return q.Where(RequireEbpfForRoot.Eq(v)) }
-func (q Query) RequireEbpfForRootNotEq(v bool) Query { return q.Where(RequireEbpfForRoot.NotEq(v)) }
-func (q Query) UpdatedAtEq(v time.Time) Query        { return q.Where(UpdatedAt.Eq(v)) }
-func (q Query) UpdatedAtNotEq(v time.Time) Query     { return q.Where(UpdatedAt.NotEq(v)) }
-func (q Query) UpdatedAtGt(v time.Time) Query        { return q.Where(UpdatedAt.Gt(v)) }
-func (q Query) UpdatedAtGte(v time.Time) Query       { return q.Where(UpdatedAt.Gte(v)) }
-func (q Query) UpdatedAtLt(v time.Time) Query        { return q.Where(UpdatedAt.Lt(v)) }
-func (q Query) UpdatedAtLte(v time.Time) Query       { return q.Where(UpdatedAt.Lte(v)) }
-func (q Query) UpdatedByEq(v string) Query           { return q.Where(UpdatedBy.Eq(v)) }
-func (q Query) UpdatedByNotEq(v string) Query        { return q.Where(UpdatedBy.NotEq(v)) }
-func (q Query) UpdatedByGt(v string) Query           { return q.Where(UpdatedBy.Gt(v)) }
-func (q Query) UpdatedByGte(v string) Query          { return q.Where(UpdatedBy.Gte(v)) }
-func (q Query) UpdatedByLt(v string) Query           { return q.Where(UpdatedBy.Lt(v)) }
-func (q Query) UpdatedByLte(v string) Query          { return q.Where(UpdatedBy.Lte(v)) }
-func (q Query) UpdatedByEqLower(v string) Query      { return q.Where(UpdatedBy.EqLower(v)) }
-func (q Query) UpdatedByLike(v string) Query         { return q.Where(UpdatedBy.Like(v)) }
-func (q Query) UpdatedByILike(v string) Query        { return q.Where(UpdatedBy.ILike(v)) }
-func (q Query) UpdatedByIn(v ...string) Query        { return q.Where(UpdatedBy.In(v...)) }
-func (q Query) UpdatedByNotIn(v ...string) Query     { return q.Where(UpdatedBy.NotIn(v...)) }
-func (q Query) DirectSshEq(v string) Query           { return q.Where(DirectSsh.Eq(v)) }
-func (q Query) DirectSshNotEq(v string) Query        { return q.Where(DirectSsh.NotEq(v)) }
-func (q Query) DirectSshGt(v string) Query           { return q.Where(DirectSsh.Gt(v)) }
-func (q Query) DirectSshGte(v string) Query          { return q.Where(DirectSsh.Gte(v)) }
-func (q Query) DirectSshLt(v string) Query           { return q.Where(DirectSsh.Lt(v)) }
-func (q Query) DirectSshLte(v string) Query          { return q.Where(DirectSsh.Lte(v)) }
-func (q Query) DirectSshEqLower(v string) Query      { return q.Where(DirectSsh.EqLower(v)) }
-func (q Query) DirectSshLike(v string) Query         { return q.Where(DirectSsh.Like(v)) }
-func (q Query) DirectSshILike(v string) Query        { return q.Where(DirectSsh.ILike(v)) }
-func (q Query) DirectSshIn(v ...string) Query        { return q.Where(DirectSsh.In(v...)) }
-func (q Query) DirectSshNotIn(v ...string) Query     { return q.Where(DirectSsh.NotIn(v...)) }
-func (q Query) AgentAutoUpdateEq(v bool) Query       { return q.Where(AgentAutoUpdate.Eq(v)) }
-func (q Query) AgentAutoUpdateNotEq(v bool) Query    { return q.Where(AgentAutoUpdate.NotEq(v)) }
+func (q Query) RequireEbpfForRootEq(v bool) Query      { return q.Where(RequireEbpfForRoot.Eq(v)) }
+func (q Query) RequireEbpfForRootNotEq(v bool) Query   { return q.Where(RequireEbpfForRoot.NotEq(v)) }
+func (q Query) UpdatedAtEq(v time.Time) Query          { return q.Where(UpdatedAt.Eq(v)) }
+func (q Query) UpdatedAtNotEq(v time.Time) Query       { return q.Where(UpdatedAt.NotEq(v)) }
+func (q Query) UpdatedAtGt(v time.Time) Query          { return q.Where(UpdatedAt.Gt(v)) }
+func (q Query) UpdatedAtGte(v time.Time) Query         { return q.Where(UpdatedAt.Gte(v)) }
+func (q Query) UpdatedAtLt(v time.Time) Query          { return q.Where(UpdatedAt.Lt(v)) }
+func (q Query) UpdatedAtLte(v time.Time) Query         { return q.Where(UpdatedAt.Lte(v)) }
+func (q Query) UpdatedByEq(v string) Query             { return q.Where(UpdatedBy.Eq(v)) }
+func (q Query) UpdatedByNotEq(v string) Query          { return q.Where(UpdatedBy.NotEq(v)) }
+func (q Query) UpdatedByGt(v string) Query             { return q.Where(UpdatedBy.Gt(v)) }
+func (q Query) UpdatedByGte(v string) Query            { return q.Where(UpdatedBy.Gte(v)) }
+func (q Query) UpdatedByLt(v string) Query             { return q.Where(UpdatedBy.Lt(v)) }
+func (q Query) UpdatedByLte(v string) Query            { return q.Where(UpdatedBy.Lte(v)) }
+func (q Query) UpdatedByEqLower(v string) Query        { return q.Where(UpdatedBy.EqLower(v)) }
+func (q Query) UpdatedByLike(v string) Query           { return q.Where(UpdatedBy.Like(v)) }
+func (q Query) UpdatedByILike(v string) Query          { return q.Where(UpdatedBy.ILike(v)) }
+func (q Query) UpdatedByIn(v ...string) Query          { return q.Where(UpdatedBy.In(v...)) }
+func (q Query) UpdatedByNotIn(v ...string) Query       { return q.Where(UpdatedBy.NotIn(v...)) }
+func (q Query) DirectSshEq(v string) Query             { return q.Where(DirectSsh.Eq(v)) }
+func (q Query) DirectSshNotEq(v string) Query          { return q.Where(DirectSsh.NotEq(v)) }
+func (q Query) DirectSshGt(v string) Query             { return q.Where(DirectSsh.Gt(v)) }
+func (q Query) DirectSshGte(v string) Query            { return q.Where(DirectSsh.Gte(v)) }
+func (q Query) DirectSshLt(v string) Query             { return q.Where(DirectSsh.Lt(v)) }
+func (q Query) DirectSshLte(v string) Query            { return q.Where(DirectSsh.Lte(v)) }
+func (q Query) DirectSshEqLower(v string) Query        { return q.Where(DirectSsh.EqLower(v)) }
+func (q Query) DirectSshLike(v string) Query           { return q.Where(DirectSsh.Like(v)) }
+func (q Query) DirectSshILike(v string) Query          { return q.Where(DirectSsh.ILike(v)) }
+func (q Query) DirectSshIn(v ...string) Query          { return q.Where(DirectSsh.In(v...)) }
+func (q Query) DirectSshNotIn(v ...string) Query       { return q.Where(DirectSsh.NotIn(v...)) }
+func (q Query) AgentAutoUpdateEq(v bool) Query         { return q.Where(AgentAutoUpdate.Eq(v)) }
+func (q Query) AgentAutoUpdateNotEq(v bool) Query      { return q.Where(AgentAutoUpdate.NotEq(v)) }
+func (q Query) PackageHoldsContains(v ...string) Query { return q.Where(PackageHolds.Contains(v...)) }
+func (q Query) PackageHoldsContainedBy(v ...string) Query {
+	return q.Where(PackageHolds.ContainedBy(v...))
+}
+func (q Query) PackageHoldsOverlaps(v ...string) Query { return q.Where(PackageHolds.Overlaps(v...)) }
 
-const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update" FROM "gateway_policy"`
+const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds" FROM "gateway_policy"`
 const countPrefix = `SELECT count(*) FROM "gateway_policy"`
 const existsPrefix = `SELECT 1 FROM "gateway_policy"`
 const existsSuffix = ` LIMIT 1`
@@ -918,6 +962,12 @@ var orderTable = [nCols][4]string{
 		"\"agent_auto_update\" ASC NULLS FIRST",
 		"\"agent_auto_update\" DESC NULLS LAST",
 	},
+	{ // package_holds
+		"\"package_holds\"",
+		"\"package_holds\" DESC",
+		"\"package_holds\" ASC NULLS FIRST",
+		"\"package_holds\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -935,6 +985,7 @@ var identTable = [nCols]string{
 	"\"updated_by\"",
 	"\"direct_ssh\"",
 	"\"agent_auto_update\"",
+	"\"package_holds\"",
 }
 
 var lowering = runtime.Lowering{
@@ -967,7 +1018,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [12][28]runtime.Frag{
+var fragTable = [13][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1328,6 +1379,36 @@ var fragTable = [12][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // package_holds
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"package_holds\" @> $", B: ""},
+		{A: "\"package_holds\" <@ $", B: ""},
+		{A: "\"package_holds\" && $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1484,6 +1565,7 @@ func Scan(rv [][]byte, r *Row, sl *runtime.Slab) error { return scan(rv, r, sl) 
 // numeric past 18 significant digits, or a NaN. Those must not become a
 // plausible zero, and a row scanner is the last place that can tell.
 func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
+	var decErr error
 	r.ID = runtime.Bool(rv[0])
 	r.AllowLocalForward = runtime.Bool(rv[1])
 	r.AllowRemoteForward = runtime.Bool(rv[2])
@@ -1496,7 +1578,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.UpdatedBy = sl.Str(rv[9])
 	r.DirectSsh = sl.Str(rv[10])
 	r.AgentAutoUpdate = runtime.Bool(rv[11])
-	return nil
+	r.PackageHolds, decErr = runtime.TextArray(rv[12], sl)
+	if decErr != nil {
+		return decErr
+	}
+	return decErr
 }
 
 type binder struct {
@@ -1561,6 +1647,10 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 10:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 12:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1753,7 +1843,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update"`
+const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds"`
 
 const updatePrefix = `UPDATE "gateway_policy" SET `
 const deletePrefix = `DELETE FROM "gateway_policy"`
@@ -1772,9 +1862,10 @@ const (
 	dUpdatedBy                 uint64 = 1 << 8
 	dDirectSsh                 uint64 = 1 << 9
 	dAgentAutoUpdate           uint64 = 1 << 10
+	dPackageHolds              uint64 = 1 << 11
 )
 
-const nUpdatable = 11
+const nUpdatable = 12
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1789,6 +1880,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"updated_by\" = $", B: ""},                    // updated_by
 	{A: "\"direct_ssh\" = $", B: ""},                    // direct_ssh
 	{A: "\"agent_auto_update\" = $", B: ""},             // agent_auto_update
+	{A: "\"package_holds\" = $", B: ""},                 // package_holds
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1806,6 +1898,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                   // updated_by has no server-side form
 	{},                                   // direct_ssh has no server-side form
 	{},                                   // agent_auto_update has no server-side form
+	{},                                   // package_holds has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1829,9 +1922,10 @@ const (
 	iUpdatedBy                 uint64 = 1 << 9
 	iDirectSsh                 uint64 = 1 << 10
 	iAgentAutoUpdate           uint64 = 1 << 11
+	iPackageHolds              uint64 = 1 << 12
 )
 
-const nInsertable = 12
+const nInsertable = 13
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1847,6 +1941,7 @@ var insCols = [nInsertable]string{
 	"\"updated_by\"",
 	"\"direct_ssh\"",
 	"\"agent_auto_update\"",
+	"\"package_holds\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1855,7 +1950,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"gateway_policy\""
-const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\""
+const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1874,7 +1969,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\""
+const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -1999,6 +2094,12 @@ func (m *Mut) SetAgentAutoUpdate(v bool) {
 	m.expr &^= dAgentAutoUpdate
 }
 
+func (m *Mut) SetPackageHolds(v []string) {
+	m.row.PackageHolds = v
+	m.dirty |= dPackageHolds
+	m.expr &^= dPackageHolds
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2084,6 +2185,11 @@ func (n *Ins) SetAgentAutoUpdate(v bool) {
 	n.set |= iAgentAutoUpdate
 }
 
+func (n *Ins) SetPackageHolds(v []string) {
+	n.row.PackageHolds = v
+	n.set |= iPackageHolds
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2129,7 +2235,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 11)
+	set := make([]string, 0, 12)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2164,6 +2270,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<11) != 0 {
 			set = append(set, "agent_auto_update")
+		}
+		if mask&(1<<12) != 0 {
+			set = append(set, "package_holds")
 		}
 	}
 	return set
@@ -2224,6 +2333,7 @@ var assignFor = map[string]string{
 	"updated_by":                    "\"updated_by\" = EXCLUDED.\"updated_by\"",
 	"direct_ssh":                    "\"direct_ssh\" = EXCLUDED.\"direct_ssh\"",
 	"agent_auto_update":             "\"agent_auto_update\" = EXCLUDED.\"agent_auto_update\"",
+	"package_holds":                 "\"package_holds\" = EXCLUDED.\"package_holds\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2291,6 +2401,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.DirectSsh)
 		case 11:
 			args = append(args, n.row.AgentAutoUpdate)
+		case 12:
+			args = append(args, n.row.PackageHolds)
 		}
 	}
 	var out Row
@@ -2328,7 +2440,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 12)
+	args := make([]any, 0, 13)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2341,6 +2453,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.UpdatedBy)
 	args = append(args, r.DirectSsh)
 	args = append(args, r.AgentAutoUpdate)
+	args = append(args, r.PackageHolds)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2379,13 +2492,14 @@ var copyCols = []string{
 	"updated_by",
 	"direct_ssh",
 	"agent_auto_update",
+	"package_holds",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [12]any
+	buf  [13]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2415,6 +2529,7 @@ func (s *rowSource) Values() []any {
 	s.buf[9] = &r.UpdatedBy
 	s.buf[10] = &r.DirectSsh
 	s.buf[11] = &r.AgentAutoUpdate
+	s.buf[12] = &r.PackageHolds
 	return s.buf[:]
 }
 
@@ -2457,8 +2572,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 9
 	mask |= 1 << 10
 	mask |= 1 << 11
+	mask |= 1 << 12
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 12)
+	args := make([]any, 0, 13)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2471,6 +2587,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.UpdatedBy)
 	args = append(args, r.DirectSsh)
 	args = append(args, r.AgentAutoUpdate)
+	args = append(args, r.PackageHolds)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2528,6 +2645,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.DirectSsh)
 		case 11:
 			args = append(args, n.row.AgentAutoUpdate)
+		case 12:
+			args = append(args, n.row.PackageHolds)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2596,6 +2715,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.DirectSsh)
 		case 10:
 			args = append(args, m.row.AgentAutoUpdate)
+		case 11:
+			args = append(args, m.row.PackageHolds)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2700,6 +2821,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.DirectSsh)
 		case 10:
 			args = append(args, m.row.AgentAutoUpdate)
+		case 11:
+			args = append(args, m.row.PackageHolds)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2870,6 +2993,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.DirectSsh)
 		case 10:
 			args = append(args, m.row.AgentAutoUpdate)
+		case 11:
+			args = append(args, m.row.PackageHolds)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

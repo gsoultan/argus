@@ -44,6 +44,10 @@ type Row struct {
 	Applications    runtime.Null[runtime.JSON]
 	System          runtime.Null[runtime.JSON]
 	Usage           runtime.Null[runtime.JSON]
+	Packages        runtime.Null[runtime.JSON]
+	PackagesState   runtime.Null[runtime.JSON]
+	PackagesCheckID runtime.Null[string]
+	PackagesCheckAt runtime.Null[time.Time]
 	UsageAt         runtime.Null[time.Time]
 }
 
@@ -83,7 +87,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 25
+const nCols = 29
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -309,7 +313,21 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.ExecReason
 		q.ns++
-	case 24:
+	case 26:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.PackagesCheckID.V
+		q.ns++
+	case 27:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.PackagesCheckAt.V
+		q.ntm++
+	case 28:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
@@ -507,7 +525,11 @@ var (
 	Applications    = NullJSONCol{21}
 	System          = NullJSONCol{22}
 	Usage           = NullJSONCol{23}
-	UsageAt         = NullTimeCol{24}
+	Packages        = NullJSONCol{24}
+	PackagesState   = NullJSONCol{25}
+	PackagesCheckID = NullTextCol{26}
+	PackagesCheckAt = NullTimeCol{27}
+	UsageAt         = NullTimeCol{28}
 )
 
 // TextCol addresses a text column.
@@ -994,6 +1016,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 24:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 25:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 26:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1151,6 +1194,34 @@ func (q *Query) leaf(p Pred) {
 		q.jsns[q.njs] = p.jsn
 		q.njs++
 	case 24:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 25:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 26:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 27:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 28:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
@@ -1338,20 +1409,59 @@ func (q Query) ApplicationsHasAnyKey(v ...string) Query { return q.Where(Applica
 func (q Query) ApplicationsHasAllKeys(v ...string) Query {
 	return q.Where(Applications.HasAllKeys(v...))
 }
-func (q Query) ApplicationsIsNull() Query              { return q.Where(Applications.IsNull()) }
-func (q Query) ApplicationsIsNotNull() Query           { return q.Where(Applications.IsNotNull()) }
-func (q Query) SystemContains(v runtime.JSON) Query    { return q.Where(System.Contains(v)) }
-func (q Query) SystemContainedBy(v runtime.JSON) Query { return q.Where(System.ContainedBy(v)) }
-func (q Query) SystemHasAnyKey(v ...string) Query      { return q.Where(System.HasAnyKey(v...)) }
-func (q Query) SystemHasAllKeys(v ...string) Query     { return q.Where(System.HasAllKeys(v...)) }
-func (q Query) SystemIsNull() Query                    { return q.Where(System.IsNull()) }
-func (q Query) SystemIsNotNull() Query                 { return q.Where(System.IsNotNull()) }
-func (q Query) UsageContains(v runtime.JSON) Query     { return q.Where(Usage.Contains(v)) }
-func (q Query) UsageContainedBy(v runtime.JSON) Query  { return q.Where(Usage.ContainedBy(v)) }
-func (q Query) UsageHasAnyKey(v ...string) Query       { return q.Where(Usage.HasAnyKey(v...)) }
-func (q Query) UsageHasAllKeys(v ...string) Query      { return q.Where(Usage.HasAllKeys(v...)) }
-func (q Query) UsageIsNull() Query                     { return q.Where(Usage.IsNull()) }
-func (q Query) UsageIsNotNull() Query                  { return q.Where(Usage.IsNotNull()) }
+func (q Query) ApplicationsIsNull() Query                  { return q.Where(Applications.IsNull()) }
+func (q Query) ApplicationsIsNotNull() Query               { return q.Where(Applications.IsNotNull()) }
+func (q Query) SystemContains(v runtime.JSON) Query        { return q.Where(System.Contains(v)) }
+func (q Query) SystemContainedBy(v runtime.JSON) Query     { return q.Where(System.ContainedBy(v)) }
+func (q Query) SystemHasAnyKey(v ...string) Query          { return q.Where(System.HasAnyKey(v...)) }
+func (q Query) SystemHasAllKeys(v ...string) Query         { return q.Where(System.HasAllKeys(v...)) }
+func (q Query) SystemIsNull() Query                        { return q.Where(System.IsNull()) }
+func (q Query) SystemIsNotNull() Query                     { return q.Where(System.IsNotNull()) }
+func (q Query) UsageContains(v runtime.JSON) Query         { return q.Where(Usage.Contains(v)) }
+func (q Query) UsageContainedBy(v runtime.JSON) Query      { return q.Where(Usage.ContainedBy(v)) }
+func (q Query) UsageHasAnyKey(v ...string) Query           { return q.Where(Usage.HasAnyKey(v...)) }
+func (q Query) UsageHasAllKeys(v ...string) Query          { return q.Where(Usage.HasAllKeys(v...)) }
+func (q Query) UsageIsNull() Query                         { return q.Where(Usage.IsNull()) }
+func (q Query) UsageIsNotNull() Query                      { return q.Where(Usage.IsNotNull()) }
+func (q Query) PackagesContains(v runtime.JSON) Query      { return q.Where(Packages.Contains(v)) }
+func (q Query) PackagesContainedBy(v runtime.JSON) Query   { return q.Where(Packages.ContainedBy(v)) }
+func (q Query) PackagesHasAnyKey(v ...string) Query        { return q.Where(Packages.HasAnyKey(v...)) }
+func (q Query) PackagesHasAllKeys(v ...string) Query       { return q.Where(Packages.HasAllKeys(v...)) }
+func (q Query) PackagesIsNull() Query                      { return q.Where(Packages.IsNull()) }
+func (q Query) PackagesIsNotNull() Query                   { return q.Where(Packages.IsNotNull()) }
+func (q Query) PackagesStateContains(v runtime.JSON) Query { return q.Where(PackagesState.Contains(v)) }
+func (q Query) PackagesStateContainedBy(v runtime.JSON) Query {
+	return q.Where(PackagesState.ContainedBy(v))
+}
+func (q Query) PackagesStateHasAnyKey(v ...string) Query {
+	return q.Where(PackagesState.HasAnyKey(v...))
+}
+func (q Query) PackagesStateHasAllKeys(v ...string) Query {
+	return q.Where(PackagesState.HasAllKeys(v...))
+}
+func (q Query) PackagesStateIsNull() Query             { return q.Where(PackagesState.IsNull()) }
+func (q Query) PackagesStateIsNotNull() Query          { return q.Where(PackagesState.IsNotNull()) }
+func (q Query) PackagesCheckIDEq(v string) Query       { return q.Where(PackagesCheckID.Eq(v)) }
+func (q Query) PackagesCheckIDNotEq(v string) Query    { return q.Where(PackagesCheckID.NotEq(v)) }
+func (q Query) PackagesCheckIDGt(v string) Query       { return q.Where(PackagesCheckID.Gt(v)) }
+func (q Query) PackagesCheckIDGte(v string) Query      { return q.Where(PackagesCheckID.Gte(v)) }
+func (q Query) PackagesCheckIDLt(v string) Query       { return q.Where(PackagesCheckID.Lt(v)) }
+func (q Query) PackagesCheckIDLte(v string) Query      { return q.Where(PackagesCheckID.Lte(v)) }
+func (q Query) PackagesCheckIDEqLower(v string) Query  { return q.Where(PackagesCheckID.EqLower(v)) }
+func (q Query) PackagesCheckIDLike(v string) Query     { return q.Where(PackagesCheckID.Like(v)) }
+func (q Query) PackagesCheckIDILike(v string) Query    { return q.Where(PackagesCheckID.ILike(v)) }
+func (q Query) PackagesCheckIDIn(v ...string) Query    { return q.Where(PackagesCheckID.In(v...)) }
+func (q Query) PackagesCheckIDNotIn(v ...string) Query { return q.Where(PackagesCheckID.NotIn(v...)) }
+func (q Query) PackagesCheckIDIsNull() Query           { return q.Where(PackagesCheckID.IsNull()) }
+func (q Query) PackagesCheckIDIsNotNull() Query        { return q.Where(PackagesCheckID.IsNotNull()) }
+func (q Query) PackagesCheckAtEq(v time.Time) Query    { return q.Where(PackagesCheckAt.Eq(v)) }
+func (q Query) PackagesCheckAtNotEq(v time.Time) Query { return q.Where(PackagesCheckAt.NotEq(v)) }
+func (q Query) PackagesCheckAtGt(v time.Time) Query    { return q.Where(PackagesCheckAt.Gt(v)) }
+func (q Query) PackagesCheckAtGte(v time.Time) Query   { return q.Where(PackagesCheckAt.Gte(v)) }
+func (q Query) PackagesCheckAtLt(v time.Time) Query    { return q.Where(PackagesCheckAt.Lt(v)) }
+func (q Query) PackagesCheckAtLte(v time.Time) Query   { return q.Where(PackagesCheckAt.Lte(v)) }
+func (q Query) PackagesCheckAtIsNull() Query           { return q.Where(PackagesCheckAt.IsNull()) }
+func (q Query) PackagesCheckAtIsNotNull() Query        { return q.Where(PackagesCheckAt.IsNotNull()) }
 func (q Query) UsageAtEq(v time.Time) Query            { return q.Where(UsageAt.Eq(v)) }
 func (q Query) UsageAtNotEq(v time.Time) Query         { return q.Where(UsageAt.NotEq(v)) }
 func (q Query) UsageAtGt(v time.Time) Query            { return q.Where(UsageAt.Gt(v)) }
@@ -1361,7 +1471,7 @@ func (q Query) UsageAtLte(v time.Time) Query           { return q.Where(UsageAt.
 func (q Query) UsageAtIsNull() Query                   { return q.Where(UsageAt.IsNull()) }
 func (q Query) UsageAtIsNotNull() Query                { return q.Where(UsageAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "usage_at" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1542,6 +1652,30 @@ var orderTable = [nCols][4]string{
 		"\"usage\" ASC NULLS FIRST",
 		"\"usage\" DESC NULLS LAST",
 	},
+	{ // packages
+		"\"packages\"",
+		"\"packages\" DESC",
+		"\"packages\" ASC NULLS FIRST",
+		"\"packages\" DESC NULLS LAST",
+	},
+	{ // packages_state
+		"\"packages_state\"",
+		"\"packages_state\" DESC",
+		"\"packages_state\" ASC NULLS FIRST",
+		"\"packages_state\" DESC NULLS LAST",
+	},
+	{ // packages_check_id
+		"\"packages_check_id\"",
+		"\"packages_check_id\" DESC",
+		"\"packages_check_id\" ASC NULLS FIRST",
+		"\"packages_check_id\" DESC NULLS LAST",
+	},
+	{ // packages_check_at
+		"\"packages_check_at\"",
+		"\"packages_check_at\" DESC",
+		"\"packages_check_at\" ASC NULLS FIRST",
+		"\"packages_check_at\" DESC NULLS LAST",
+	},
 	{ // usage_at
 		"\"usage_at\"",
 		"\"usage_at\" DESC",
@@ -1577,6 +1711,10 @@ var identTable = [nCols]string{
 	"\"applications\"",
 	"\"system\"",
 	"\"usage\"",
+	"\"packages\"",
+	"\"packages_state\"",
+	"\"packages_check_id\"",
+	"\"packages_check_at\"",
 	"\"usage_at\"",
 }
 
@@ -1610,7 +1748,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [25][28]runtime.Frag{
+var fragTable = [29][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2331,6 +2469,126 @@ var fragTable = [25][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // packages
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"packages\" @> $", B: ""},
+		{A: "\"packages\" <@ $", B: ""},
+		{A: "\"packages\" ?| $", B: ""},
+		{A: "\"packages\" ?& $", B: ""},
+		{A: "\"packages\" IS NULL", B: ""},
+		{A: "\"packages\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // packages_state
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"packages_state\" @> $", B: ""},
+		{A: "\"packages_state\" <@ $", B: ""},
+		{A: "\"packages_state\" ?| $", B: ""},
+		{A: "\"packages_state\" ?& $", B: ""},
+		{A: "\"packages_state\" IS NULL", B: ""},
+		{A: "\"packages_state\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // packages_check_id
+		{}, // opNone
+		{A: "\"packages_check_id\" = $", B: ""},
+		{A: "\"packages_check_id\" <> $", B: ""},
+		{A: "\"packages_check_id\" > $", B: ""},
+		{A: "\"packages_check_id\" >= $", B: ""},
+		{A: "\"packages_check_id\" < $", B: ""},
+		{A: "\"packages_check_id\" <= $", B: ""},
+		{A: "lower(\"packages_check_id\") = lower($", B: ")"},
+		{A: "\"packages_check_id\" LIKE $", B: ""},
+		{A: "\"packages_check_id\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"packages_check_id\" = ANY($", B: ")"},
+		{A: "\"packages_check_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"packages_check_id\" IS NULL", B: ""},
+		{A: "\"packages_check_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // packages_check_at
+		{}, // opNone
+		{A: "\"packages_check_at\" = $", B: ""},
+		{A: "\"packages_check_at\" <> $", B: ""},
+		{A: "\"packages_check_at\" > $", B: ""},
+		{A: "\"packages_check_at\" >= $", B: ""},
+		{A: "\"packages_check_at\" < $", B: ""},
+		{A: "\"packages_check_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"packages_check_at\" IS NULL", B: ""},
+		{A: "\"packages_check_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 	{ // usage_at
 		{}, // opNone
 		{A: "\"usage_at\" = $", B: ""},
@@ -2550,7 +2808,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Applications = runtime.NullJSON(rv[21], sl)
 	r.System = runtime.NullJSON(rv[22], sl)
 	r.Usage = runtime.NullJSON(rv[23], sl)
-	r.UsageAt = runtime.Nullable(rv[24], runtime.Timestamptz)
+	r.Packages = runtime.NullJSON(rv[24], sl)
+	r.PackagesState = runtime.NullJSON(rv[25], sl)
+	r.PackagesCheckID = runtime.NullText(rv[26], sl)
+	r.PackagesCheckAt = runtime.Nullable(rv[27], runtime.Timestamptz)
+	r.UsageAt = runtime.Nullable(rv[28], runtime.Timestamptz)
 	return decErr
 }
 
@@ -2689,6 +2951,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 24:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 25:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 26:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2778,6 +3052,22 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.jsns[njs])
 			njs++
 		case 24:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 25:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 26:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 27:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 28:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++

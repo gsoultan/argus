@@ -695,6 +695,11 @@ func TestDaemonOneRunAtATime(t *testing.T) {
 	if len(fp.launched) != 1 {
 		t.Fatalf("launched %d", len(fp.launched))
 	}
+	// The second is not failed in place of the first: the agent still
+	// follows, and reports, the run that is going.
+	if st := p.Beat().Run; st == nil || st.ID != "dddddddd-1" {
+		t.Fatalf("run = %+v", st)
+	}
 }
 
 // The helper is gone and the run never said it finished, on the same boot:
