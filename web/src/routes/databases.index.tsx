@@ -49,7 +49,7 @@ function describeAccess(acc: DBAccess | undefined): string {
 const LABEL_ORDER: DBLabel[] = ['production', 'staging', 'development']
 const LABEL_TITLE: Record<DBLabel, string> = { production: 'Production', staging: 'Staging', development: 'Development' }
 // RabbitMQ is a message broker and is listed under Brokers.
-const ENGINE_ORDER: DBEngine[] = ['postgres', 'mysql', 'redis']
+const ENGINE_ORDER: DBEngine[] = ['postgres', 'mysql', 'mongodb', 'redis']
 
 function displayName(d: Database): string {
   return d.engine === 'redis' ? `db ${d.dbname}` : d.dbname

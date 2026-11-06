@@ -44,6 +44,19 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       dba: 'Every privilege on this database, grant them to others, see all connections. Never SUPER, nothing on other databases.',
     },
   },
+  mongodb: {
+    label: 'MongoDB',
+    noun: 'database',
+    nameLabel: 'Database name',
+    nameHint: 'As MongoDB knows it. The agent signs in as MongoDB’s administrator with the admin file on the server.',
+    defaults: { dbname: '', host: '127.0.0.1', port: 27017, configPath: '/etc/argus/mongodb.conf' },
+    levels: {
+      read: 'Find, count and aggregate. MongoDB refuses every write.',
+      write: 'Insert, update and delete documents too.',
+      owner: 'Create and drop collections and indexes too. Not users.',
+      dba: 'Everything on this database, including its users, and see what the server is running.',
+    },
+  },
   redis: {
     label: 'Redis',
     noun: 'Redis',
@@ -78,7 +91,7 @@ export function engineOf(e: string | undefined): EngineInfo {
 
 /** A sessions-list protocol that is a database's statement recording. */
 export function isStatementProtocol(protocol: string | undefined): boolean {
-  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'redis' || protocol === 'rabbitmq'
+  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'mongodb' || protocol === 'redis' || protocol === 'rabbitmq'
 }
 
 /** An engine the SQL workspace opens: Postgres, or MySQL and MariaDB. */

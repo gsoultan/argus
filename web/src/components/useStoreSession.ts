@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DBLevel, Database } from '~/types/domain'
 
 /*
-One Redis or RabbitMQ session over the control plane's relay: the same socket
+One Redis, MongoDB or RabbitMQ session over the control plane's relay: the same socket
 and ticket as a Postgres session, with one JSON answer per request and no row
 batches. Requests made before the session is ready wait and go out on ready;
 every pending request is answered when the session ends, so nothing hangs.
@@ -18,7 +18,8 @@ export interface RedisValue {
   cut?: boolean
 }
 
-export interface RedisKey { name: string; q?: boolean; type: string; ttl: number }
+/** A Redis key, or a MongoDB collection with its document count. */
+export interface RedisKey { name: string; q?: boolean; type: string; ttl: number; count?: number }
 
 export interface StoreAnswer {
   id: number
@@ -34,6 +35,8 @@ export interface StoreAnswer {
   total?: number
   truncated?: boolean
   data?: unknown
+  /** What a MongoDB command did: "find 12", "update 3 matched 3 changed". */
+  tag?: string
   engine?: string
   user?: string
   level?: DBLevel

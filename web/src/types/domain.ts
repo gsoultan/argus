@@ -940,7 +940,7 @@ export interface ChangeApproval {
 }
 
 /** What a database entry is: a Postgres database, a Redis server or a RabbitMQ vhost. */
-export type DBEngine = 'postgres' | 'mysql' | 'redis' | 'rabbitmq'
+export type DBEngine = 'postgres' | 'mysql' | 'mongodb' | 'redis' | 'rabbitmq'
 
 /** One database on one server. */
 export interface Database {
