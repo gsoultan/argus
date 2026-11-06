@@ -331,6 +331,8 @@ func engineName(engine string) string {
 		return "Redis db"
 	case tunnel.EngineRabbitMQ:
 		return "RabbitMQ vhost"
+	case tunnel.EngineMySQL:
+		return "MySQL database"
 	}
 	return "database"
 }
