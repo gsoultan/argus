@@ -361,28 +361,17 @@ func (a *API) runWatch(ctx context.Context, conn *websocket.Conn, sess *liveSess
 		return write(websocket.MessageText, b)
 	}
 
+	if sess.protocol == "rdp" {
+		if a.watchDesktop(ctx, sess, write) {
+			_ = write(websocket.MessageBinary, rdp.EncodeControl(rdp.FrameClosed, 0, 0))
+			_ = conn.Close(websocket.StatusNormalClosure, "ended")
+		}
+		return
+	}
+
 	backlog, frames, cancel := sess.hub.Subscribe()
 	defer cancel()
 	width, height := sess.size()
-
-	if sess.protocol == "rdp" {
-		// Updates are deltas: a backlog would paint fragments of the recent
-		// past. The desktop is asked to repaint instead.
-		if write(websocket.MessageBinary, rdp.EncodeControl(rdp.FrameReady, width, height)) != nil {
-			return
-		}
-		if sess.refresh != nil {
-			sess.refresh()
-		}
-		for f := range frames {
-			if write(websocket.MessageBinary, f) != nil {
-				return
-			}
-		}
-		_ = write(websocket.MessageBinary, rdp.EncodeControl(rdp.FrameClosed, 0, 0))
-		_ = conn.Close(websocket.StatusNormalClosure, "ended")
-		return
-	}
 
 	if writeJSON(terminalMessage{Type: "ready", Session: sess.id}) != nil {
 		return
@@ -430,6 +419,64 @@ func (a *API) runWatch(ctx context.Context, conn *websocket.Conn, sess *liveSess
 	}
 	_ = writeJSON(terminalMessage{Type: "closed", Data: "the session ended"})
 	_ = conn.Close(websocket.StatusNormalClosure, "ended")
+}
+
+// watchDesktop streams a desktop to a viewer.
+//
+// Updates are deltas: a backlog would paint fragments of the recent past, so
+// the desktop is asked to repaint instead. A viewer whose link cannot keep up
+// is let go by the hub so the person working is never held up; rather than
+// ending the view, it is caught up the same way it started -- subscribed
+// afresh and repainted -- so it skips what it missed and carries on live.
+// That keeps the hub's rule: the viewer is never shown a picture with pieces
+// missing, because a repaint is the whole screen as it stands.
+//
+// It reports whether the session ended, as opposed to the viewer leaving.
+func (a *API) watchDesktop(ctx context.Context, sess *liveSession,
+	write func(websocket.MessageType, []byte) error) bool {
+	width, height := sess.size()
+	if write(websocket.MessageBinary, rdp.EncodeControl(rdp.FrameReady, width, height)) != nil {
+		return false
+	}
+	var last time.Time
+	for first := true; ; first = false {
+		// At most one repaint a second for a viewer that keeps falling
+		// behind: each is a whole screen, which is what it could not take.
+		if wait := time.Second - time.Since(last); !first && wait > 0 {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(wait):
+			}
+		}
+		last = time.Now()
+		_, frames, cancel := sess.hub.Subscribe()
+		if !first {
+			// The desktop may have changed size while this viewer was away.
+			w, h := sess.size()
+			if write(websocket.MessageBinary, rdp.EncodeControl(rdp.FrameResize, w, h)) != nil {
+				cancel()
+				return false
+			}
+		}
+		if sess.refresh != nil {
+			sess.refresh()
+		}
+		for f := range frames {
+			if write(websocket.MessageBinary, f) != nil {
+				cancel()
+				return false
+			}
+		}
+		cancel()
+		if ctx.Err() != nil {
+			return false
+		}
+		cur, ok := a.live.get(WithTenant(context.Background(), &Tenant{ID: sess.tenant}), sess.id)
+		if !ok || cur != sess {
+			return true
+		}
+	}
 }
 
 func sizeString(w, h int) string { return strconv.Itoa(w) + "x" + strconv.Itoa(h) }
