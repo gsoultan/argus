@@ -8,7 +8,7 @@ import { IconCheck, IconCircleDashed, IconPackage, IconRefresh, IconX } from '@t
 import { SectionCard } from '~/components/page'
 import { absTime, relTime, Stat } from '~/components/primitives'
 import {
-  isConfigured, runFinished,
+  isConfigured,
   type PackageReboot, type PackageRule, type PackageRun, type PackageUpdate, type PackagesView,
 } from '~/lib/live'
 import { run as notifyRun } from '~/lib/notify'
@@ -16,6 +16,7 @@ import {
   assetPackagesQuery, packageRunQuery, useCheckPackages, useDecidePackageRun, useStartPackageRun,
 } from '~/lib/packageQueries'
 import { meQuery } from '~/lib/queries'
+import { runFinished } from '~/lib/packageApi'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
 

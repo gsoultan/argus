@@ -3,7 +3,6 @@ import {
   assetPackages,
   checkPackages,
   decidePackageRun,
-  isConfigured,
   packageFleet,
   packagePolicy,
   packageRun,
@@ -11,15 +10,8 @@ import {
   savePackagePolicy,
   startPackageRun,
   startPackageRuns,
-  type PackagePolicy,
-  type PackageReboot,
-} from '~/lib/live'
-
-/*
- * Operating system updates. Live only: there is no sample of a server's
- * package list worth showing as if it were real, so against no control plane
- * these queries do not run and the views say they need one.
- */
+} from '~/lib/packageApi'
+import { isConfigured, type PackagePolicy, type PackageReboot } from '~/lib/live'
 
 const viewKey = (assetId: string) => ['packages', 'asset', assetId] as const
 const fleetKey = ['packages', 'fleet'] as const

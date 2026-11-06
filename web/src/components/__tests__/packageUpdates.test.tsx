@@ -26,6 +26,10 @@ const live = vi.hoisted(() => ({
 vi.mock('~/lib/live', async (orig) => ({
   ...(await orig<typeof import('~/lib/live')>()),
   isConfigured: () => true,
+}))
+
+vi.mock('~/lib/packageApi', async (orig) => ({
+  ...(await orig<typeof import('~/lib/packageApi')>()),
   ...live,
 }))
 

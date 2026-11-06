@@ -130,6 +130,9 @@ const BUDGET_KB = {
    * route pays is the entry's map of the two new chunks and what they need.
    * 399.5 kB with Brokers in the menu (397.9 before, same build), for the
    * shared weight given for the overview.
+   * Operating system updates add about 0.1 kB here: the server page's
+   * Updates tab name and the Settings entry. Its calls and views are in
+   * chunks of their own, kept out of the shared live module.
    */
   sessionDetail: 400,
 }

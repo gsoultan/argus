@@ -758,7 +758,7 @@ export async function removeAssetAssignment(id: string, email: string): Promise<
  * surfaced unchanged. A DELETE answers with a small JSON object rather than
  * 204, so there is always something to read.
  */
-async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
     credentials: 'include',
@@ -1043,7 +1043,7 @@ export async function rdpReplay(
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+export async function get<T>(path: string): Promise<T> {
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -2119,50 +2119,4 @@ export interface PackageFleetRow {
   rebootRequired: boolean
   mode: PackageMode
   run: PackageRun | null
-}
-
-export const runFinished = (s: PackageRunState) =>
-  s === 'done' || s === 'failed' || s === 'interrupted' || s === 'cancelled' || s === 'denied'
-
-export async function assetPackages(assetId: string): Promise<PackagesView> {
-  return get(`/api/v1/assets/${encodeURIComponent(assetId)}/packages`)
-}
-
-export async function checkPackages(assetId: string): Promise<{ checkId: string }> {
-  return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/packages/check`)
-}
-
-export async function startPackageRun(
-  assetId: string,
-  body: { mode: 'all' | 'security' | 'selected'; packages?: string[]; reboot: PackageReboot },
-): Promise<PackageRun> {
-  return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/packages/runs`, body)
-}
-
-export async function startPackageRuns(body: {
-  assetIds: string[]
-  mode: 'all' | 'security'
-  reboot: PackageReboot
-}): Promise<PackageRun[]> {
-  return send('POST', '/api/v1/package-runs', body)
-}
-
-export async function packageRun(id: string): Promise<PackageRun> {
-  return get(`/api/v1/package-runs/${encodeURIComponent(id)}`)
-}
-
-export async function decidePackageRun(id: string, action: 'approve' | 'deny' | 'cancel'): Promise<PackageRun> {
-  return send('POST', `/api/v1/package-runs/${encodeURIComponent(id)}/${action}`)
-}
-
-export async function packageFleet(): Promise<PackageFleetRow[]> {
-  return get('/api/v1/package-updates')
-}
-
-export async function packagePolicy(): Promise<PackagePolicy> {
-  return get('/api/v1/settings/package-updates')
-}
-
-export async function savePackagePolicy(p: PackagePolicy): Promise<PackagePolicy> {
-  return send('PUT', '/api/v1/settings/package-updates', p)
 }
