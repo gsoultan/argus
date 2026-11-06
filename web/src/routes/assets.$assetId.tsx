@@ -14,8 +14,11 @@ import { HostKeyChanged } from '~/components/server/hostKey'
 import { OverviewTab } from '~/components/server/OverviewTab'
 import { SessionsTab } from '~/components/server/SessionsTab'
 import { SettingsTab } from '~/components/server/SettingsTab'
+import { UpdatesTab } from '~/components/server/UpdatesTab'
 import { SERVER_TABS, SERVER_TAB_LABEL, parseServerTab, type ServerTab } from '~/components/server/tabs'
 import { assetQuery, meQuery, sessionsQuery } from '~/lib/queries'
+import { assetPackagesQuery } from '~/lib/packageQueries'
+import { isConfigured } from '~/lib/live'
 import { guard } from '~/lib/guard'
 import { SP } from '~/theme'
 
@@ -50,6 +53,10 @@ function AssetDetail() {
   const { data: me } = useQuery(meQuery())
 
   const canEdit = me?.role === 'admin' || me?.role === 'owner'
+  const seesUpdates = canEdit || me?.role === 'auditor'
+  const { data: pkgs } = useQuery({ ...assetPackagesQuery(assetId), enabled: isConfigured() && seesUpdates && asset?.protocol !== 'rdp' })
+  const waiting = pkgs?.report?.updates.length ?? 0
+  const securityWaiting = pkgs?.report?.updates.filter((u) => u.security).length ?? 0
   const [editing, setEditing] = useState(false)
 
   if (!asset) {
@@ -119,7 +126,7 @@ function AssetDetail() {
         tabs={
           <Tabs value={tab} onChange={(v) => v && setTab(v as ServerTab)} keepMounted={false}>
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
-              {SERVER_TABS.map((t) => (
+              {SERVER_TABS.filter((t) => t !== 'updates' || seesUpdates).map((t) => (
                 <Tabs.Tab
                   key={t}
                   value={t}
@@ -127,6 +134,8 @@ function AssetDetail() {
                   rightSection={
                     t === 'sessions' && sessions && sessions.length > 0 ? (
                       <Badge size="xs" variant="light" color="slate" circle={false}>{sessions.length}</Badge>
+                    ) : t === 'updates' && waiting > 0 ? (
+                      <Badge size="xs" variant="light" color={securityWaiting > 0 ? 'rose' : 'slate'} circle={false}>{waiting}</Badge>
                     ) : t === 'settings' && needsAttention ? (
                       <Box
                         component="span"
@@ -152,6 +161,7 @@ function AssetDetail() {
         {tab === 'access' && <AccessTab asset={asset} canEdit={canEdit} />}
         {tab === 'sessions' && <SessionsTab asset={asset} sessions={sessions} />}
         {tab === 'apps' && <AppsTab asset={asset} canEdit={canEdit} />}
+        {tab === 'updates' && seesUpdates && <UpdatesTab asset={asset} canEdit={canEdit} />}
         {tab === 'settings' && (
           <SettingsTab asset={asset} canEdit={canEdit} onEdit={() => setEditing(true)} />
         )}

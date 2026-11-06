@@ -1,5 +1,5 @@
 /** The tabs of a server's page, in order. The first is the default. */
-export const SERVER_TABS = ['overview', 'access', 'sessions', 'apps', 'settings'] as const
+export const SERVER_TABS = ['overview', 'access', 'sessions', 'apps', 'updates', 'settings'] as const
 export type ServerTab = (typeof SERVER_TABS)[number]
 
 export const SERVER_TAB_LABEL: Record<ServerTab, string> = {
@@ -7,6 +7,7 @@ export const SERVER_TAB_LABEL: Record<ServerTab, string> = {
   access: 'Access',
   sessions: 'Sessions',
   apps: 'What runs here',
+  updates: 'Updates',
   settings: 'Settings',
 }
 
