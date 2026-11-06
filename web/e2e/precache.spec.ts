@@ -28,9 +28,12 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * which index.html loads before the bundle and so must be stored for an
  * offline start, plus the dark tokens in the shared stylesheet and the theme
  * menu in the entry chunk.
+ * 717.8 kB with Brokers in the menu (715.4 before, same build): the item, the
+ * two broker routes' loaders and search rules, and the entry's map of the
+ * chunks they load. The workspace and its stylesheet are not stored.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 716
+const MAX_KB = 718
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
