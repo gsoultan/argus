@@ -758,7 +758,7 @@ export async function removeAssetAssignment(id: string, email: string): Promise<
  * surfaced unchanged. A DELETE answers with a small JSON object rather than
  * 204, so there is always something to read.
  */
-async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
     credentials: 'include',
@@ -1043,7 +1043,7 @@ export async function rdpReplay(
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+export async function get<T>(path: string): Promise<T> {
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -1998,4 +1998,125 @@ export async function alertPrefs(): Promise<AlertPrefs> {
 
 export async function saveAlertPrefs(p: AlertPrefs): Promise<AlertPrefs> {
   return send<AlertPrefs>('PUT', '/api/v1/alerts/preferences', p)
+}
+
+/* ── Operating system updates ──────────────────────────────────────────── */
+
+/** One package that can be upgraded, as the server's agent reported it. */
+export interface PackageUpdate {
+  name: string
+  installed?: string
+  available: string
+  security?: boolean
+  /** Where it comes from: a repository, or a security advisory and its severity. */
+  origin?: string
+  /** Pulled in new by an upgrade rather than upgraded itself. */
+  new?: boolean
+  /** Takes effect only after a reboot (a kernel, for one). */
+  reboot?: boolean
+}
+
+export interface PackageReport {
+  checked_at: string
+  manager?: 'apt' | 'dnf' | 'yum' | 'zypper' | string
+  supported: boolean
+  reason?: string
+  /** The last look failed; the updates are from the one before. */
+  error?: string
+  updates: PackageUpdate[]
+  security_patches?: number
+  reboot_required?: boolean
+  utc_offset_minutes: number
+}
+
+export type PackageMode = 'off' | 'notify' | 'security' | 'all'
+export type PackageReboot = 'never' | 'if_needed'
+
+export interface PackageRule {
+  id?: string
+  position: number
+  /** '' is every server no other rule names. */
+  tag: string
+  mode: PackageMode
+  /** 0 is Sunday, by the server's own clock. */
+  windowDays: number[]
+  windowStartMinute: number
+  windowMinutes: number
+  reboot: PackageReboot
+  needsApproval: boolean
+}
+
+export interface PackagePolicy {
+  rules: PackageRule[]
+  holds: string[]
+}
+
+export type PackageRunState =
+  | 'awaiting_approval' | 'waiting' | 'queued' | 'running' | 'rebooting'
+  | 'done' | 'failed' | 'interrupted' | 'cancelled' | 'denied'
+
+export interface PackageRun {
+  id: string
+  hostname: string
+  assetHostname: string
+  assetId?: string
+  mode: 'all' | 'security' | 'selected'
+  packages: string[]
+  holds: string[]
+  reboot: PackageReboot
+  trigger: 'manual' | 'automatic'
+  state: PackageRunState
+  requestedBy: string
+  requestedAt: string
+  decidedBy: string | null
+  decidedAt: string | null
+  sentAt: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  updatedAt: string
+  step: string
+  message: string
+  planned: number
+  upgraded: { name: string; from?: string; to: string }[]
+  restarted: string[]
+  rebootRequired: boolean
+  rebooted: boolean
+  log?: string
+  batchId: string | null
+  batchPosition: number | null
+}
+
+/** A server's Updates tab. */
+export interface PackagesView {
+  hostname: string
+  enrolled: boolean
+  /** Whether its agent has said anything about packages; an older agent never does. */
+  reported: boolean
+  supported: boolean
+  reason?: string
+  checking: boolean
+  checkAsked: boolean
+  report: PackageReport | null
+  rule: PackageRule
+  holds: string[]
+  nextWindow: string | null
+  runs: PackageRun[]
+}
+
+export interface PackageFleetRow {
+  assetId: string
+  hostname: string
+  tags: string[]
+  os: string
+  reported: boolean
+  supported: boolean
+  reason?: string
+  manager: string
+  checkedAt: string | null
+  error?: string
+  updates: number
+  security: number
+  rebootRequired: boolean
+  mode: PackageMode
+  run: PackageRun | null
 }

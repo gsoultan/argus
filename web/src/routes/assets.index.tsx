@@ -29,6 +29,10 @@ const AgentFleetCard = lazy(() =>
   import('~/components/AgentFleet').then((m) => ({ default: m.AgentFleetCard })),
 )
 
+const PackageFleetCard = lazy(() =>
+  import('~/components/PackageFleet').then((m) => ({ default: m.PackageFleetCard })),
+)
+
 export const Route = createFileRoute('/assets/')({
   // No role guard: this is the one page every role is sent to. The control
   // plane has already narrowed the list to what each person may reach.
@@ -72,6 +76,11 @@ function Servers() {
       <PageBody>
         {admin && <WaitingServers />}
         {whole && <Agents canEdit={admin} />}
+        {whole && isConfigured() && (
+          <Suspense fallback={null}>
+            <PackageFleetCard canEdit={admin} />
+          </Suspense>
+        )}
         <ServerCards />
       </PageBody>
     </Box>

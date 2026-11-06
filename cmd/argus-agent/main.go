@@ -84,6 +84,20 @@ func main() {
 		plan := fs.String("plan", "", "the update plan the daemon wrote")
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(agent.RunUpdateApply(*plan, os.Stdout))
+	case "packages-check":
+		// Run by the daemon outside its sandbox: refresh the package lists
+		// and print what can be upgraded.
+		os.Exit(agent.RunPackagesCheck(os.Stdout))
+	case "packages-apply":
+		// Run by the daemon in a unit of its own to install the operating
+		// system updates the console asked for.
+		fs := flag.NewFlagSet("packages-apply", flag.ExitOnError)
+		plan := fs.String("plan", "", "the run plan the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunPackagesApply(*plan))
+	case "packages-repair":
+		// Run by the daemon after an update run was cut short.
+		os.Exit(agent.RunPackagesRepair(os.Stdout))
 	case "pg-backup":
 		// Run by the backup service as the postgres account: one dump,
 		// restore or catalog, with the archive on stdout or stdin.
@@ -238,6 +252,10 @@ func runDaemon(args []string) int {
 		exe = resolved
 	}
 	updater := agent.NewUpdater(*stateDir, version, exe, log)
+	// Operating system updates: the helper runs from this binary, outside
+	// the agent's sandbox.
+	pkgs := agent.NewPackages(*stateDir, exe, log)
+	pkgs.Busy = func() bool { return updater.Restarting() }
 	updater.Marker = agent.UpdateMarkerPath(*socket)
 	var (
 		openStreams atomic.Int64
@@ -555,6 +573,7 @@ func runDaemon(args []string) int {
 				usageReport, usageSent = u, time.Now()
 			}
 		}
+		pkgBeat := pkgs.Beat()
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
@@ -569,7 +588,21 @@ func runDaemon(args []string) int {
 			"personal_accounts": personalStates,
 			"update":            updater.Status(),
 			"usage":             usageReport,
+			"packages":          pkgBeat,
 		})
+		// Like an update: only a delivered reply starts or stops anything.
+		if ok {
+			pkgs.Delivered(pkgBeat)
+			var orders *agent.PackageOrders
+			if len(reply.Packages) > 0 && string(reply.Packages) != "null" {
+				orders = &agent.PackageOrders{}
+				if err := json.Unmarshal(reply.Packages, orders); err != nil {
+					log.Error("packages: cannot read the console's orders", "error", err)
+					orders = nil
+				}
+			}
+			pkgs.Handle(ctx, orders)
+		}
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
 		if ok {
@@ -679,8 +712,14 @@ func runDaemon(args []string) int {
 			heartbeat()
 		}
 	}
+	pkgs.Changed = func() {
+		if rep.Enabled() {
+			heartbeat()
+		}
+	}
 	go loop(*beatEvery, stop, heartbeat)
 	go updater.Watch(ctx)
+	go pkgs.Watch(ctx)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what

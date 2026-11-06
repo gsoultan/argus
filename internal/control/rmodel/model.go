@@ -79,9 +79,16 @@ type Agent struct {
 	Applications *storm.JSON
 	// System is what kind of machine the host is; Usage how busy it was at
 	// UsageAt. Both as its agent last reported (migration 040).
-	System  *storm.JSON
-	Usage   *storm.JSON
-	UsageAt *time.Time
+	System *storm.JSON
+	Usage  *storm.JSON
+	// Packages is the operating system updates waiting, as the agent last
+	// reported them; PackagesState whether it can update this server
+	// (migration 050).
+	Packages        *storm.JSON
+	PackagesState   *storm.JSON
+	PackagesCheckID *string
+	PackagesCheckAt *time.Time
+	UsageAt         *time.Time
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -488,6 +495,8 @@ type GatewayPolicy struct {
 	// AgentAutoUpdate is whether the console updates agents on its own
 	// when a newer version is offered.
 	AgentAutoUpdate bool
+	// PackageHolds are packages nothing upgrades on its own (migration 050).
+	PackageHolds []string
 }
 
 func (m *GatewayPolicy) Schema(t *storm.Table) {
@@ -507,6 +516,7 @@ func (m *GatewayPolicy) Schema(t *storm.Table) {
 	t.CheckNamed("gateway_policy_direct_ssh_check",
 		"direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
 	t.Col(&m.AgentAutoUpdate).Default("false")
+	t.Col(&m.PackageHolds).Default("'{postgresql*,mysql-server*,mariadb-server*,docker-ce*,containerd.io}'::text[]")
 }
 
 // HostKeyPin is table host_key_pins.
@@ -1091,6 +1101,8 @@ func All() []any {
 		&DirectLoginRequest{},
 		&GatewayPolicy{},
 		&HostKeyPin{},
+		&PackageRun{},
+		&PackageUpdateRule{},
 		&RecoveryCode{},
 		&SavedQuery{},
 		&RedeemedTicket{},
@@ -1207,4 +1219,92 @@ func (m *DatabaseChange) Schema(t *storm.Table) {
 	t.Col(&m.ApprovalID).Default("''::text")
 	t.Index(&m.Database, &m.Seq).Named("database_changes_database")
 	t.Index(&m.At).Named("database_changes_at")
+}
+
+// PackageRun is table package_runs: an operating system update run on one
+// server (migration 050).
+type PackageRun struct {
+	ID             [16]byte
+	Hostname       string
+	AssetHostname  string
+	Mode           string
+	Packages       []string
+	Holds          []string
+	Reboot         string
+	Trigger        string
+	State          string
+	RequestedBy    string
+	RequestedAt    time.Time
+	DecidedBy      *string
+	DecidedAt      *time.Time
+	SentAt         *time.Time
+	StartedAt      *time.Time
+	FinishedAt     *time.Time
+	UpdatedAt      time.Time
+	Step           string
+	Message        string
+	Planned        int32
+	Upgraded       storm.JSON
+	Restarted      []string
+	RebootRequired bool
+	Rebooted       bool
+	Log            string
+	BatchID        *[16]byte
+	BatchPosition  *int32
+	WindowStart    *time.Time
+}
+
+func (m *PackageRun) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Packages).Default("'{}'::text[]")
+	t.Col(&m.Holds).Default("'{}'::text[]")
+	t.Col(&m.Reboot).Default("'never'::text")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.Col(&m.Step).Default("''::text")
+	t.Col(&m.Message).Default("''::text")
+	t.Col(&m.Planned).Default("0")
+	t.Col(&m.Upgraded).Default("'[]'::jsonb")
+	t.Col(&m.Restarted).Default("'{}'::text[]")
+	t.Col(&m.RebootRequired).Default("false")
+	t.Col(&m.Rebooted).Default("false")
+	t.Col(&m.Log).Default("''::text")
+	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text])")
+	t.CheckNamed("package_runs_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
+	t.CheckNamed("package_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'waiting'::text, 'queued'::text, 'running'::text, 'rebooting'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
+	t.CheckNamed("package_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")
+	t.Index(&m.BatchID, &m.BatchPosition).Where("batch_id IS NOT NULL").Named("package_runs_batch")
+	t.Index(storm.Lower(&m.Hostname), storm.Desc(&m.RequestedAt)).Named("package_runs_host")
+	t.Index(storm.Lower(&m.Hostname)).Unique().Where("state = ANY (ARRAY['queued'::text, 'running'::text, 'rebooting'::text])").Named("package_runs_one_active")
+	t.Index(storm.Lower(&m.Hostname), &m.WindowStart).Unique().Where("trigger = 'automatic'::text").Named("package_runs_one_per_window")
+}
+
+// PackageUpdateRule is table package_update_rules: when servers with a tag
+// are updated on their own (migration 050).
+type PackageUpdateRule struct {
+	ID                [16]byte
+	Position          int32
+	Tag               string
+	Mode              string
+	WindowDays        []int32
+	WindowStartMinute int32
+	WindowMinutes     int32
+	Reboot            string
+	NeedsApproval     bool
+}
+
+func (m *PackageUpdateRule) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.WindowDays).Default("'{0}'::integer[]")
+	t.Col(&m.WindowStartMinute).Default("120")
+	t.Col(&m.WindowMinutes).Default("120")
+	t.Col(&m.Reboot).Default("'never'::text")
+	t.Col(&m.NeedsApproval).Default("false")
+	t.UniqueNamed("package_update_rules_tag_key", &m.Tag)
+	t.CheckNamed("package_update_rules_mode_check", "mode = ANY (ARRAY['off'::text, 'notify'::text, 'security'::text, 'all'::text])")
+	t.CheckNamed("package_update_rules_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
+	t.CheckNamed("package_update_rules_window_minutes_check", "(window_minutes >= 30) AND (window_minutes <= 1440)")
+	t.CheckNamed("package_update_rules_window_start_minute_check", "(window_start_minute >= 0) AND (window_start_minute <= 1439)")
 }

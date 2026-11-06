@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
-  IconNetwork, IconShieldLock, IconTerminal2, type IconProps,
+  IconNetwork, IconPackage, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -21,6 +21,7 @@ import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/dire
 import { guard } from '~/lib/guard'
 import { EnrolledAgents } from '~/components/EnrolledAgents'
 import { Organizations } from '~/components/Organizations'
+import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
 import { ControlStatusSection, useStatusProblems } from '~/components/ControlStatus'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
@@ -67,7 +68,8 @@ const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
 type PlatformSectionId = 'organizations' | 'status'
-type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId
+type ServerSectionId = 'updates'
+type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId
 
 interface NavItem {
   id: SectionId
@@ -155,7 +157,12 @@ function Settings() {
           : {}),
       }]
     : []
-  const items = [...statusItems, ...policyItems, ...controlItems, ...platformItems]
+  // Operating system updates: read by whoever reads the fleet, changed by
+  // an admin or owner, and only against a real control plane.
+  const serverItems: NavItem[] = isConfigured() && me && (canEdit || me.role === 'auditor')
+    ? [{ id: 'updates', label: 'Updates', icon: IconPackage, changed: false }]
+    : []
+  const items = [...statusItems, ...policyItems, ...serverItems, ...controlItems, ...platformItems]
   const active: SectionId = items.find((i) => i.id === section)?.id ?? 'access'
   const open = (id: string | null) => {
     if (id) void navigate({ to: '/settings', search: { section: id }, replace: true })
@@ -255,6 +262,9 @@ function Settings() {
               <SectionNav title="Control plane" items={statusItems} active={active} onOpen={open} />
             )}
             <SectionNav title="Sessions" items={policyItems} active={active} onOpen={open} />
+            {serverItems.length > 0 && (
+              <SectionNav title="Servers" items={serverItems} active={active} onOpen={open} />
+            )}
             {controlItems.length > 0 && (
               <SectionNav title="Advanced" items={controlItems} active={active} onOpen={open} />
             )}
@@ -275,6 +285,9 @@ function Settings() {
                   ? [{ group: 'Control plane', items: statusItems.map(navOption) }]
                   : []),
                 { group: 'Sessions', items: policyItems.map(navOption) },
+                ...(serverItems.length > 0
+                  ? [{ group: 'Servers', items: serverItems.map(navOption) }]
+                  : []),
                 ...(controlItems.length > 0
                   ? [{ group: 'Advanced', items: controlItems.map(navOption) }]
                   : []),
@@ -340,6 +353,8 @@ function Settings() {
                 <HostsAndTrust />
               </>
             )}
+
+            {active === 'updates' && serverItems.length > 0 && <PackageUpdateSettings canEdit={canEdit} />}
 
             {active === 'organizations' && platformItems.length > 0 && <Organizations />}
 
