@@ -79,7 +79,9 @@ func berInteger(v int) []byte {
 		return berTag([]byte{0x02}, []byte{byte(v >> 8), byte(v)})
 	case v < 0x800000:
 		return berTag([]byte{0x02}, []byte{byte(v >> 16), byte(v >> 8), byte(v)})
-	case v < 0x80000000:
+	// Compared as int64: the app for Android is also built for 32-bit
+	// phones, where this constant does not fit an int.
+	case int64(v) < 0x80000000:
 		return berTag([]byte{0x02}, []byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
 	default:
 		return berTag([]byte{0x02}, []byte{0x00, byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
