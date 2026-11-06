@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -632,7 +633,9 @@ func TestDaemonStartsARunOnce(t *testing.T) {
 	}
 	// The plan is on disk for the helper, readable by root only.
 	fi, err := os.Stat(filepath.Join(p.StateDir, packagesDir, "plan-"+req.ID+".json"))
-	if err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits to check; the plan is only used
+	// on Linux.
+	if err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
 		t.Fatalf("plan: %v %v", fi, err)
 	}
 }
