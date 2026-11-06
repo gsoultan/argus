@@ -63,6 +63,10 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		// PersonalAccounts gives each member of the teams an account of
 		// their own on the server.
 		PersonalAccounts bool `json:"personalAccounts"`
+		// Kind "android" enrols the host as a device, with the two below.
+		Kind                 string `json:"kind"`
+		ControlMode          string `json:"controlMode"`
+		ControlNeedsApproval bool   `json:"controlNeedsApproval"`
 	}
 	if r.ContentLength != 0 {
 		if err := decode(r, &in); err != nil {
@@ -74,8 +78,19 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		in.People[i] = strings.ToLower(strings.TrimSpace(e))
 	}
 
-	id, err := a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams,
-		in.PersonalAccounts)
+	var id string
+	var err error
+	switch in.Kind {
+	case "", "server":
+		id, err = a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams,
+			in.PersonalAccounts)
+	case "android":
+		id, err = a.store.EnrolDevice(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams,
+			DeviceEnrol{ControlMode: in.ControlMode, ControlNeedsApproval: in.ControlNeedsApproval})
+	default:
+		writeErr(w, http.StatusBadRequest, "kind must be server or android")
+		return
+	}
 	if errors.Is(err, ErrAlreadyReviewed) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -99,7 +114,7 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		Severity:   "info",
 		ActorEmail: sess.Email,
 		Target:     hostname,
-		Detail:     enrolDetail(hostname, in.Principals, in.People),
+		Detail:     enrolDetail(hostname, in.Kind, in.Principals, in.People),
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
@@ -157,8 +172,19 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 }
 
 // enrolDetail says what an approval granted, in the words a reconstruction needs.
-func enrolDetail(hostname string, principals, people []string) string {
+func enrolDetail(hostname, kind string, principals, people []string) string {
 	principals, people = dedupe(principals), dedupe(people)
+	if kind == "android" {
+		d := "Enrolled " + hostname + " as an Android device, driven through the Argus app on it. "
+		if len(principals) == 0 {
+			return d + "Nobody but admins may open it."
+		}
+		d += "May be opened as: " + describePrincipals(principals) + "."
+		if len(people) == 0 {
+			return d + " Nobody is assigned to it yet."
+		}
+		return d + " Assigned to " + strings.Join(people, ", ") + "."
+	}
 	d := "Enrolled discovered host " + hostname + " as a managed asset. "
 	if len(principals) == 0 {
 		return d + "No login accounts were allowed and nobody is assigned to it."

@@ -6,7 +6,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
-  IconBrandWindows, IconClock, IconDeviceDesktop, IconLock, IconSearch, IconServer2,
+  IconBrandWindows, IconClock, IconDeviceDesktop, IconDeviceMobile, IconLock, IconSearch, IconServer2,
   IconServerOff, IconTerminal2,
 } from '@tabler/icons-react'
 import { EmptyState, Toolbar } from '~/components/page'
@@ -22,7 +22,13 @@ export { kindOf, reachOf, shortName, type Reach }
 import { FS, SP, INK } from '~/theme'
 
 type Show = 'all' | 'online' | 'offline'
-type Kind = 'all' | 'linux' | 'windows'
+type Kind = 'all' | 'linux' | 'windows' | 'android'
+
+/** What the Connect button opens: a phone's screen, a desktop or a terminal. */
+function OpenIcon({ kind, rdp }: { kind: ReturnType<typeof kindOf>; rdp: boolean }) {
+  if (kind === 'android') return <IconDeviceMobile size={16} />
+  return rdp ? <IconDeviceDesktop size={16} /> : <IconTerminal2 size={16} />
+}
 
 const REACH: Record<Reach, { label: string; color: string; hint: string }> = {
   online: {
@@ -79,7 +85,8 @@ function Dot({ color }: { color: string }) {
 export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: boolean }) {
   const reach = reachOf(a)
   const rdp = a.protocol === 'rdp'
-  const KindIcon = kindOf(a) === 'windows' ? IconBrandWindows : IconServer2
+  const kind = kindOf(a)
+  const KindIcon = kind === 'android' ? IconDeviceMobile : kind === 'windows' ? IconBrandWindows : IconServer2
   const name = shortName(a.hostname)
   const noAccount = a.principals.length === 0
   const disabled = reach === 'blocked' || noAccount
@@ -97,7 +104,7 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
                 {name}
               </Text>
               <Text size={FS.meta} c="dimmed" truncate>
-                {a.os} · {rdp ? 'Remote Desktop' : 'Terminal (SSH)'}
+                {a.os} · {kind === 'android' ? 'Android device' : rdp ? 'Remote Desktop' : 'Terminal (SSH)'}
               </Text>
             </Box>
           </Group>
@@ -175,7 +182,7 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
             </Text>
           )}
           {disabled ? (
-            <Button size="sm" disabled leftSection={rdp ? <IconDeviceDesktop size={16} /> : <IconTerminal2 size={16} />}>
+            <Button size="sm" disabled leftSection={<OpenIcon kind={kind} rdp={rdp} />}>
               Connect
             </Button>
           ) : (
@@ -185,7 +192,7 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
               size="sm"
               className="argus-stretch"
               variant={reach === 'offline' ? 'default' : 'filled'}
-              leftSection={rdp ? <IconDeviceDesktop size={16} /> : <IconTerminal2 size={16} />}
+              leftSection={<OpenIcon kind={kind} rdp={rdp} />}
               aria-label={`Connect to ${name}`}
             >
               Connect
@@ -310,10 +317,8 @@ export function ServerCards() {
       .filter((g) => !held.has(`${g.hostname}\u0000${g.principal}`))
   }, [approved, me, assets])
 
-  const hasBothKinds = useMemo(() => {
-    const kinds = new Set((assets ?? []).map(kindOf))
-    return kinds.size > 1
-  }, [assets])
+  const kinds = useMemo(() => new Set((assets ?? []).map(kindOf)), [assets])
+  const hasBothKinds = kinds.size > 1
 
   const counts = useMemo(() => {
     if (!assets) return undefined
@@ -406,7 +411,8 @@ export function ServerCards() {
               { value: 'all', label: 'Any' },
               { value: 'linux', label: 'Linux' },
               { value: 'windows', label: 'Windows' },
-            ]}
+              { value: 'android', label: 'Android' },
+            ].filter((k) => k.value === 'all' || kinds.has(k.value as 'linux' | 'windows' | 'android'))}
           />
         )}
       </Toolbar>

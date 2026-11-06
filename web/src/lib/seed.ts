@@ -155,7 +155,39 @@ const win01: Asset = {
   rotationIntervalDays: 30,
 }
 
-export const assets: Asset[] = [...generatedAssets, win01]
+/**
+ * One Android device, driven through the Argus app on it, so the fixture has
+ * a phone: a row with the phone icon, the device form, the connect page's
+ * view/control choice and the phone toolbar.
+ */
+const pixel01: Asset = {
+  ...generatedAssets[1]!,
+  id: uuid(),
+  hostname: 'rina-pixel-8',
+  address: '10.44.9.31',
+  port: 0,
+  os: 'Android 15',
+  tags: ['field', 'phones'],
+  protocol: 'rdp',
+  desktopMode: 'screen',
+  kind: 'android',
+  controlMode: 'attended',
+  controlNeedsApproval: true,
+  credentialMode: 'injected-password',
+  principals: ['view', 'control'],
+  agentState: 'healthy',
+  agentLastSeenAt: ago(0.3),
+  tunnelConnected: true,
+  bypassPosture: 'monitored',
+  unmanagedKeyCount: 0,
+  hostKeyState: 'unpinned',
+  hostKeyFingerprint: null,
+  hostKeyPinnedAt: null,
+  credentialRotatedAt: null,
+  rotationIntervalDays: null,
+}
+
+export const assets: Asset[] = [...generatedAssets, win01, pixel01]
 
 /* ── Sessions ────────────────────────────────────────────────────────────── */
 

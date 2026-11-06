@@ -28,9 +28,19 @@ export function reachOf(a: Asset): Reach {
   return 'offline'
 }
 
-/** "Windows" or "Linux", which is the distinction a person picking a server makes. */
-export function kindOf(a: Asset): 'windows' | 'linux' {
+/**
+ * "Android", "Windows" or "Linux", which is the distinction a person picking
+ * a server makes. A device says so in its kind; a server is told apart by
+ * how it opens and what it reports.
+ */
+export function kindOf(a: Asset): 'windows' | 'linux' | 'android' {
+  if (a.kind === 'android') return 'android'
   return a.protocol === 'rdp' || /windows/i.test(a.os) ? 'windows' : 'linux'
+}
+
+/** Whether this is an Android device driven through the Argus app on it. */
+export function isDevice(a: Asset | undefined): boolean {
+  return a?.kind === 'android'
 }
 
 /** The part of the hostname people say out loud. */

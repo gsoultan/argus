@@ -607,7 +607,15 @@ type Asset struct {
 	Domain string `json:"domain"`
 	// DesktopMode is how the console opens a Windows server's desktop: "rdp"
 	// through its own Remote Desktop, "screen" by sharing the console.
-	DesktopMode          string     `json:"desktopMode"`
+	DesktopMode string `json:"desktopMode"`
+	// Kind is "server", or "android" for a phone or tablet reached through
+	// the Argus app on it. ControlMode is how a session on a device is
+	// agreed to ("attended" asks whoever holds it, "unattended" asks
+	// nobody), and ControlNeedsApproval whether the "control" principal
+	// needs an approved access request first. See 051_android_devices.sql.
+	Kind                 string     `json:"kind"`
+	ControlMode          string     `json:"controlMode"`
+	ControlNeedsApproval bool       `json:"controlNeedsApproval"`
 	CredentialMode       string     `json:"credentialMode"`
 	CredentialRotatedAt  *time.Time `json:"credentialRotatedAt"`
 	RotationIntervalDays *int       `json:"rotationIntervalDays"`

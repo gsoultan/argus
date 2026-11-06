@@ -182,6 +182,46 @@ func (s *Store) EnrolHost(
 	ctx context.Context, hostname, actor string, principals, people, teams []string,
 	personal bool,
 ) (string, error) {
+	return s.enrol(ctx, hostname, actor, principals, people, teams, personal, nil)
+}
+
+// DeviceEnrol is what an Android device is enrolled with beyond a server:
+// how it is controlled. Its accounts are fixed (view and control), so the
+// admin picks which of those people get, not what exists.
+type DeviceEnrol struct {
+	// ControlMode is "attended" (the person holding it accepts each
+	// session) or "unattended".
+	ControlMode string
+	// ControlNeedsApproval makes "control" an elevated principal on it.
+	ControlNeedsApproval bool
+}
+
+// EnrolDevice is EnrolHost for an Android device: the asset is stored the
+// way a device opens (protocol rdp, desktop mode screen, kind android) with
+// the control mode the admin chose, and only view and control may be given.
+func (s *Store) EnrolDevice(
+	ctx context.Context, hostname, actor string, principals, people, teams []string,
+	dev DeviceEnrol,
+) (string, error) {
+	switch dev.ControlMode {
+	case "":
+		dev.ControlMode = "attended"
+	case "attended", "unattended":
+	default:
+		return "", ErrInvalidAsset{Reason: "control mode must be attended or unattended"}
+	}
+	for _, p := range dedupe(principals) {
+		if p != DeviceView && p != DeviceControl {
+			return "", ErrInvalidAsset{Reason: "a device has no accounts: give view, control or both"}
+		}
+	}
+	return s.enrol(ctx, hostname, actor, principals, people, teams, false, &dev)
+}
+
+func (s *Store) enrol(
+	ctx context.Context, hostname, actor string, principals, people, teams []string,
+	personal bool, dev *DeviceEnrol,
+) (string, error) {
 	principals = dedupe(principals)
 	if len(principals) > maxPrincipals {
 		return "", ErrInvalidAsset{Reason: fmt.Sprintf(
@@ -252,7 +292,8 @@ func (s *Store) EnrolHost(
 	// Owned by the console from here on. Enrolling is an administrator deciding
 	// this host is ours to manage, so a gateway publishing a file entry for the
 	// same name must not quietly write over what they do with it next.
-	err = tx.QueryRow(ctx, `
+	if dev == nil {
+		err = tx.QueryRow(ctx, `
 		INSERT INTO assets (hostname, address, port, os, agent_hostname,
 		                    agent_state, agent_last_seen_at, discovered_by,
 		                    host_key_state, principals, source)
@@ -263,7 +304,35 @@ func (s *Store) EnrolHost(
 			principals     = ARRAY(SELECT DISTINCT unnest(assets.principals || EXCLUDED.principals)),
 			updated_at     = now()
 		RETURNING id::text`,
-		assetName, address, port, os, hostname, actor, principals).Scan(&id)
+			assetName, address, port, os, hostname, actor, principals).Scan(&id)
+	} else {
+		// A device: stored the way it opens (see AssetInput.Kind), with the
+		// control mode chosen now. A row of the same name that was a server
+		// becomes the device, the agent of that name being the device now.
+		err = tx.QueryRow(ctx, `
+		INSERT INTO assets (hostname, address, port, os, agent_hostname,
+		                    agent_state, agent_last_seen_at, discovered_by,
+		                    host_key_state, principals, source,
+		                    protocol, desktop_mode, credential_mode, domain,
+		                    kind, control_mode, control_needs_approval)
+		VALUES ($1,$2,$3,$4,$5,'healthy',now(),$6,'unpinned',$7,'console',
+		        'rdp','screen','injected-password','','android',$8,$9)
+		ON CONFLICT (hostname) DO UPDATE SET
+			agent_hostname = EXCLUDED.agent_hostname,
+			source         = 'console',
+			principals     = EXCLUDED.principals,
+			protocol       = 'rdp',
+			desktop_mode   = 'screen',
+			credential_mode = 'injected-password',
+			domain         = '',
+			kind           = 'android',
+			control_mode   = EXCLUDED.control_mode,
+			control_needs_approval = EXCLUDED.control_needs_approval,
+			updated_at     = now()
+		RETURNING id::text`,
+			assetName, address, port, os, hostname, actor, principals,
+			dev.ControlMode, dev.ControlNeedsApproval).Scan(&id)
+	}
 	if err != nil {
 		return "", err
 	}

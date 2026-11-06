@@ -1,13 +1,16 @@
 import { Box, Group, ScrollArea, SegmentedControl, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { IconBrandWindows, IconSearch, IconTerminal2 } from '@tabler/icons-react'
+import { IconBrandWindows, IconDeviceMobile, IconSearch, IconTerminal2 } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { ReachBadge, kindOf, reachOf, shortName } from '~/components/myservers'
 import { assetsQuery } from '~/lib/queries'
 import { FS } from '~/theme'
 
 type Show = 'all' | 'online' | 'offline'
+
+/** What to call a server that has not said what it runs. */
+export const KIND_NAME = { linux: 'Linux', windows: 'Windows', android: 'Android' } as const
 
 /**
  * Every server, as a column of rows, for the left of a server's page. The
@@ -74,11 +77,12 @@ export function ServerList({ currentId }: { currentId: string }) {
               className="grid place-items-center shrink-0"
               style={{ borderRadius: 8, background: 'var(--color-raised)', color: 'var(--color-ink-soft)' }}
             >
-              {kindOf(a) === 'windows' ? <IconBrandWindows size={16} /> : <IconTerminal2 size={16} />}
+              {kindOf(a) === 'android' ? <IconDeviceMobile size={16} />
+                : kindOf(a) === 'windows' ? <IconBrandWindows size={16} /> : <IconTerminal2 size={16} />}
             </Box>
             <Box style={{ minWidth: 0, flex: 1 }}>
               <Text size="sm" fw={600} truncate>{shortName(a.hostname)}</Text>
-              <Text size={FS.micro} c="dimmed" truncate>{a.os || (kindOf(a) === 'windows' ? 'Windows' : 'Linux')}</Text>
+              <Text size={FS.micro} c="dimmed" truncate>{a.os || KIND_NAME[kindOf(a)]}</Text>
             </Box>
             <ReachBadge reach={reachOf(a)} />
           </Link>

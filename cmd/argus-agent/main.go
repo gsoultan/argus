@@ -159,6 +159,9 @@ func runDaemon(args []string) int {
 			"the control plane does not have. Unset, the console's Settings decide")
 	logLevel := fs.String("log-level", envOr("ARGUS_LOG_LEVEL", "info"),
 		"debug, info, warn or error; ARGUS_LOG_LEVEL in agent.env sets it too")
+	fakeAndroid := fs.Bool("fake-android", false,
+		"offer a drawn Android device on the tunnel, so the console can be tried without a phone; "+
+			"add this host under Servers as an Android device")
 	_ = fs.Parse(args)
 	// Given on the command line, the host's own choice beats the console's.
 	keepPinned := false
@@ -347,6 +350,20 @@ func runDaemon(args []string) int {
 				Verifier:  &tunnel.GrantVerifier{Host: hostname},
 				Hostname:  hostname,
 				Log:       log,
+			})
+		}
+		if *fakeAndroid {
+			// A drawn phone on the android service, the one the Argus app
+			// for Android offers: see internal/agent/android_fake.go.
+			log.Warn("offering a fake Android device on the tunnel; nothing on this host is shared")
+			services[agent.AndroidService] = agent.Android(agent.AndroidConfig{
+				DesktopConfig: agent.DesktopConfig{
+					Collector: col,
+					Verifier:  &tunnel.GrantVerifier{Host: hostname},
+					Hostname:  hostname,
+					Log:       log,
+				},
+				Device: func() (agent.AndroidDevice, error) { return agent.NewFakeAndroid(0, 0), nil },
 			})
 		}
 		go agent.RunTunnel(ctx, agent.TunnelConfig{

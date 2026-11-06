@@ -171,10 +171,10 @@ export function ApproveServer({
                 Add
               </Button>
             </Group>
-            {picked.some(isElevatedAccount) && (
+            {picked.some((a) => isElevatedAccount(a)) && (
               <Text size={FS.meta} c="dimmed" lh={1.5}>
                 Teammates who aren&rsquo;t admins still need an approved request for each{' '}
-                {picked.filter(isElevatedAccount).join(', ')} login.
+                {picked.filter((a) => isElevatedAccount(a)).join(', ')} login.
               </Text>
             )}
           </Stack>

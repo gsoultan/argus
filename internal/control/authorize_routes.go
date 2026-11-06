@@ -69,7 +69,7 @@ func (a *API) kernelEvidenceWaived(r *http.Request, target string) (bool, string
 // may reach a host live here, or the browser and ssh(1) drift into two products
 // with two different ideas of who is allowed.
 func (a *API) authorizePrincipal(r *http.Request, email, target, principal string) (Authorization, error) {
-	elevated := isElevated(principal)
+	elevated := a.elevatedOn(r.Context(), target, principal)
 
 	// Admins are exempt, as they are on the browser path, because someone has
 	// to be able to act when the approval chain itself is broken. Their

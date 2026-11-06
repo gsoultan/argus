@@ -36,7 +36,7 @@ const assetSelect = `
 	       a.agent_state, a.agent_last_seen_at, a.bypass_posture,
 	       a.unmanaged_key_count, a.agent_console_only,
 	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts, a.direct_ssh_accounts,
-	       a.desktop_mode,
+	       a.desktop_mode, a.kind, a.control_mode, a.control_needs_approval,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
@@ -51,7 +51,7 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.Health, &a.LastCheckedAt, &a.Principals,
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
 		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts, &a.DirectSSHAccounts,
-		&a.DesktopMode, &a.TunnelConnected)
+		&a.DesktopMode, &a.Kind, &a.ControlMode, &a.ControlNeedsApproval, &a.TunnelConnected)
 	return a, err
 }
 
@@ -89,9 +89,24 @@ type AssetInput struct {
 	// DesktopMode is how a Windows server's desktop opens: "rdp" through its
 	// own Remote Desktop, or "screen", sharing the console without it.
 	DesktopMode string `json:"desktopMode"`
+	// Kind is "server" or "android". A device is reached over the agent
+	// tunnel like a Windows server set to screen sharing, so it is stored
+	// as protocol rdp with desktop mode screen, whatever was sent.
+	Kind string `json:"kind"`
+	// ControlMode is "attended" or "unattended"; ControlNeedsApproval makes
+	// the "control" principal need an approved access request. Devices only.
+	ControlMode          string `json:"controlMode"`
+	ControlNeedsApproval bool   `json:"controlNeedsApproval"`
 
 	RotationIntervalDays *int `json:"rotationIntervalDays"`
 }
+
+// Device principals: a device has no accounts, so these two are fixed.
+// "view" watches the screen and plays nothing; "control" drives it.
+const (
+	DeviceView    = "view"
+	DeviceControl = "control"
+)
 
 var (
 	// A DNS name, and nothing that could be read as anything else.
@@ -132,6 +147,39 @@ func (in AssetInput) normalise() (AssetInput, error) {
 	in.DesktopMode = strings.ToLower(strings.TrimSpace(in.DesktopMode))
 	in.OS = strings.TrimSpace(in.OS)
 	in.GroupName = strings.TrimSpace(in.GroupName)
+	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
+	in.ControlMode = strings.ToLower(strings.TrimSpace(in.ControlMode))
+
+	switch in.Kind {
+	case "", "server":
+		in.Kind = "server"
+		if in.ControlMode != "" || in.ControlNeedsApproval {
+			return bad("control mode and approval apply to a device, not a server")
+		}
+		in.ControlMode = "attended"
+	case "android":
+		// A device opens the way a shared Windows console does, and the
+		// rest of the row says so, so every path that reads protocol and
+		// desktop mode treats it right without knowing about devices.
+		in.Protocol, in.DesktopMode, in.CredentialMode = "rdp", "screen", "injected-password"
+		in.Domain = ""
+		if in.ControlMode == "" {
+			in.ControlMode = "attended"
+		}
+		if in.ControlMode != "attended" && in.ControlMode != "unattended" {
+			return bad("control mode must be attended or unattended")
+		}
+		if len(dedupe(in.Principals)) == 0 {
+			in.Principals = []string{DeviceView, DeviceControl}
+		}
+		for _, p := range in.Principals {
+			if p = strings.TrimSpace(p); p != "" && p != DeviceView && p != DeviceControl {
+				return bad("a device has no accounts: its principals are %s and %s", DeviceView, DeviceControl)
+			}
+		}
+	default:
+		return bad("kind must be server or android")
+	}
 
 	if !reHostname.MatchString(in.Hostname) {
 		return bad("hostname must be a DNS name: letters, digits, dots and hyphens")
@@ -292,12 +340,13 @@ func (s *Store) CreateAsset(ctx context.Context, in AssetInput) (Asset, error) {
 	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO assets (hostname, address, port, protocol, os, tags, group_name,
 			principals, credential_mode, credential_ref, domain,
-			rotation_interval_days, desktop_mode, source, health, host_key_state)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'console','reachable','unpinned')
+			rotation_interval_days, desktop_mode, kind, control_mode, control_needs_approval,
+			source, health, host_key_state)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'console','reachable','unpinned')
 		RETURNING id::text`,
 		v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays, v.DesktopMode).Scan(&id)
+		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrInvalidAsset{
@@ -324,11 +373,12 @@ func (s *Store) UpdateAsset(ctx context.Context, id string, in AssetInput) (Asse
 			hostname = $2, address = $3, port = $4, protocol = $5, os = $6,
 			tags = $7, group_name = $8, principals = $9, credential_mode = $10,
 			credential_ref = $11, domain = $12, rotation_interval_days = $13,
-			desktop_mode = $14, source = 'console', updated_at = now()
+			desktop_mode = $14, kind = $15, control_mode = $16, control_needs_approval = $17,
+			source = 'console', updated_at = now()
 		WHERE id = $1::uuid AND archived_at IS NULL`,
 		id, v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays, v.DesktopMode)
+		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrInvalidAsset{
@@ -665,19 +715,36 @@ func (s *Store) AssetIsManaged(ctx context.Context, target string) (bool, error)
 	return ok, err
 }
 
-// AssetDesktopMode is how a target's desktop opens: "rdp" or "screen". A
-// target with no live asset is "rdp", which is how a desktop opened before
-// the setting existed.
-func (s *Store) AssetDesktopMode(ctx context.Context, target string) (string, error) {
-	var mode string
-	err := s.db(ctx).QueryRow(ctx, `
-		SELECT a.desktop_mode FROM assets a
+// AssetDesktopOpen is how a target's screen opens: its kind ("server" or
+// "android") and desktop mode ("rdp" or "screen"). A target with no live
+// asset is a server over "rdp", which is how a desktop opened before the
+// settings existed.
+func (s *Store) AssetDesktopOpen(ctx context.Context, target string) (kind, mode string, err error) {
+	err = s.db(ctx).QueryRow(ctx, `
+		SELECT a.kind, a.desktop_mode FROM assets a
 		WHERE a.archived_at IS NULL
 		  AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
 		ORDER BY (a.hostname = lower($1)) DESC
-		LIMIT 1`, target).Scan(&mode)
+		LIMIT 1`, target).Scan(&kind, &mode)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "rdp", nil
+		return "server", "rdp", nil
 	}
-	return mode, err
+	return kind, mode, err
+}
+
+// ControlNeedsApproval reports whether target is a device whose settings
+// make the "control" principal need an approved access request. A target
+// with no live asset needs none: it has no such setting to read.
+func (s *Store) ControlNeedsApproval(ctx context.Context, target string) (bool, error) {
+	var needs bool
+	err := s.db(ctx).QueryRow(ctx, `
+		SELECT a.kind = 'android' AND a.control_needs_approval FROM assets a
+		WHERE a.archived_at IS NULL
+		  AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
+		ORDER BY (a.hostname = lower($1)) DESC
+		LIMIT 1`, target).Scan(&needs)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return needs, err
 }

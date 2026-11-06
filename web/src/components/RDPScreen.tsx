@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Badge, Box, Button, Group, Loader, Stack, Text } from '@mantine/core'
+import { ActionIcon, Badge, Box, Button, Group, Loader, Stack, Text, TextInput, Tooltip } from '@mantine/core'
+import {
+  IconArrowBackUp, IconBell, IconCircle, IconLock, IconPower, IconSend, IconSquare, IconVolume,
+  IconVolume2,
+} from '@tabler/icons-react'
 import { canDecodeH264 } from '~/lib/gfx'
 import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
@@ -27,8 +31,26 @@ export interface RDPScreenProps {
    * only what changes from now on.
    */
   shadowSessionId?: string
+  /**
+   * An Android device rather than a desktop: the screen is a phone's, shown
+   * at its own aspect within the window, and the toolbar has the device's
+   * keys and a way to type into it instead of Ctrl+Alt+Del.
+   */
+  device?: boolean
   onStateChange?: (state: RDPState, detail?: string) => void
 }
+
+/** The device keys a phone has and a keyboard does not, as the agent names them. */
+const DEVICE_KEYS: { name: string; label: string; icon: typeof IconArrowBackUp }[] = [
+  { name: 'back', label: 'Back', icon: IconArrowBackUp },
+  { name: 'home', label: 'Home', icon: IconCircle },
+  { name: 'recents', label: 'Recent apps', icon: IconSquare },
+  { name: 'notifications', label: 'Notifications', icon: IconBell },
+  { name: 'volume_up', label: 'Volume up', icon: IconVolume },
+  { name: 'volume_down', label: 'Volume down', icon: IconVolume2 },
+  { name: 'power', label: 'Power', icon: IconPower },
+  { name: 'lock', label: 'Lock', icon: IconLock },
+]
 
 /**
  * The desktop size to ask for: what fits the window, within what Argus
@@ -77,6 +99,7 @@ export function RDPScreen({
   takePassword,
   readOnly = false,
   shadowSessionId,
+  device = false,
   onStateChange,
 }: RDPScreenProps) {
   // The canvas is made here rather than rendered by React. A canvas handed
@@ -133,7 +156,10 @@ export function RDPScreen({
         canvas.width = width
         canvas.height = height
       }
-      canvas.style.maxWidth = `${width}px`
+      // A phone is taller than it is wide: shown no taller than the window,
+      // or its top is all that is seen and every tap needs a scroll first.
+      const cap = device ? Math.min(width, Math.floor(((window.innerHeight - 240) * width) / height)) : width
+      canvas.style.maxWidth = `${Math.max(cap, 160)}px`
       canvas.style.aspectRatio = `${width} / ${height}`
     }
 
@@ -431,6 +457,30 @@ export function RDPScreen({
     canvasRef.current?.focus()
   }
 
+  /**
+   * A device key, which the app plays as the key itself: Back, Home and the
+   * rest are not on a keyboard, and Power and Lock are what a thumb does
+   * to the side of the phone.
+   */
+  const sendDeviceKey = (name: string) => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ type: 'device', name }))
+    canvasRef.current?.focus()
+  }
+
+  // Typed here and sent whole, into whatever has focus on the device. The
+  // canvas takes single keys too; a sentence is easier to see before it
+  // goes, and pasting works.
+  const [typed, setTyped] = useState('')
+  const sendText = () => {
+    const ws = wsRef.current
+    if (!typed || !ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ type: 'text', text: typed }))
+    setTyped('')
+    canvasRef.current?.focus()
+  }
+
   return (
     <Stack gap="xs">
       <Group justify="space-between">
@@ -458,13 +508,45 @@ export function RDPScreen({
               {detail}
             </Text>
           )}
-          {!readOnly && state === 'live' && (
+          {!readOnly && !device && state === 'live' && (
             <Button size="compact-xs" variant="default" onClick={sendCtrlAltDel}>
               Ctrl+Alt+Del
             </Button>
           )}
         </Group>
       </Group>
+      {device && !readOnly && state === 'live' && (
+        <Group gap="xs" wrap="wrap" aria-label="Device keys" data-testid="device-toolbar">
+          <Group gap={4} wrap="nowrap">
+            {DEVICE_KEYS.map((k) => (
+              <Tooltip key={k.name} label={k.label}>
+                <ActionIcon variant="default" size="lg" aria-label={k.label} onClick={() => sendDeviceKey(k.name)}>
+                  <k.icon size={16} />
+                </ActionIcon>
+              </Tooltip>
+            ))}
+          </Group>
+          <TextInput
+            size="xs"
+            placeholder="Type into the device"
+            aria-label="Type into the device"
+            value={typed}
+            onChange={(e) => setTyped(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                sendText()
+              }
+            }}
+            style={{ flex: '1 1 200px' }}
+            rightSection={
+              <ActionIcon variant="subtle" size="sm" aria-label="Send text" disabled={!typed} onClick={sendText}>
+                <IconSend size={14} />
+              </ActionIcon>
+            }
+          />
+        </Group>
+      )}
       <Box
         style={{
           background: '#05080c',
@@ -472,9 +554,13 @@ export function RDPScreen({
           borderRadius: 8,
           overflow: 'hidden',
           lineHeight: 0,
+          // A phone sits in the middle of the dark surface rather than
+          // against its left edge.
+          display: device ? 'flex' : undefined,
+          justifyContent: device ? 'center' : undefined,
         }}
       >
-        <div ref={boxRef} />
+        <div ref={boxRef} style={device ? { width: '100%', display: 'flex', justifyContent: 'center' } : undefined} />
       </Box>
     </Stack>
   )

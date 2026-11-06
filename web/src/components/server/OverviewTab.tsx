@@ -144,11 +144,9 @@ export function OverviewTab({ asset, sessions, onTab }: {
             <Stack gap="sm" mt="sm">
               <Fact label="Address"><Mono>{asset.address}{asset.port ? `:${asset.port}` : ''}</Mono></Fact>
               <Fact label="Connects by">
-                <Text size={FS.meta}>{asset.protocol === 'rdp'
-                  ? asset.desktopMode === 'screen' ? 'Screen sharing (no RDP)' : 'Remote Desktop (RDP)'
-                  : 'SSH'}</Text>
+                <Text size={FS.meta}>{connectsBy(asset)}</Text>
               </Fact>
-              <Fact label="Login accounts"><LoginAccounts asset={asset} /></Fact>
+              <Fact label={asset.kind === 'android' ? 'Opened as' : 'Login accounts'}><LoginAccounts asset={asset} /></Fact>
               {asset.protocol !== 'rdp' && (
                 <Fact label="Direct logins">
                   <Text size={FS.meta}>
@@ -180,6 +178,17 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </Group>
   )
+}
+
+/** How a session reaches it, in the words the Settings form uses. */
+export function connectsBy(a: Asset): string {
+  if (a.kind === 'android') {
+    return a.controlMode === 'unattended'
+      ? 'The Argus app, unattended'
+      : 'The Argus app, accepted on the device'
+  }
+  if (a.protocol === 'rdp') return a.desktopMode === 'screen' ? 'Screen sharing (no RDP)' : 'Remote Desktop (RDP)'
+  return 'SSH'
 }
 
 function reachLabel(a: Asset): string {

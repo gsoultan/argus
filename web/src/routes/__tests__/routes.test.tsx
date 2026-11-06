@@ -18,7 +18,7 @@ const HOME = /^Good (morning|afternoon|evening)/
 const ROUTES: Array<[path: string, heading: string | RegExp]> = [
   ['/', HOME],
   ['/assets', 'Servers'],
-  ['/assets/add', 'Add server'],
+  ['/assets/add', 'Add server or device'],
   ['/approvals', 'Approvals'],
   ['/teams', 'Teams'],
   ['/activity', 'Activity'],
@@ -189,7 +189,7 @@ describe('navigation', () => {
   /** Adding a server is part of Servers, so Servers stays lit while doing it. */
   it('lights exactly one item, and Servers while adding one', async () => {
     await renderRoute('/assets/add')
-    await screen.findByRole('heading', { name: 'Add server' })
+    await screen.findByRole('heading', { name: 'Add server or device' })
     const nav = screen.getByRole('navigation', { name: 'Main' })
     await within(nav).findByRole('link', { name: /^Servers/ })
     const current = within(nav)

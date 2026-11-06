@@ -13,7 +13,7 @@ import {
   assignmentsQuery, teamAssignmentsQuery, teamsQuery, useRemoveAssignment, useRemoveTeamAssignment,
   useSetAssignment, useSetTeamAssignment, usersQuery,
 } from '~/lib/queries'
-import { isElevatedAccount } from '~/lib/roles'
+import { isElevatedAccount, principalLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 import { SHARED_LOGIN_OWNER } from '~/types/domain'
 import type { Asset, AssetAssignment, PersonOwnSetting, TeamAssignment, TeamDirectSsh } from '~/types/domain'
@@ -52,7 +52,7 @@ export function WhoCanConnect({ asset, canEdit }: { asset: Asset; canEdit: boole
       <Row
         icon={<IconShieldCheck size={16} />}
         name="Admins"
-        sub="Always, as any account"
+        sub={asset.kind === 'android' ? 'Always, with control' : 'Always, as any account'}
       />
       {teams?.map((g) => (
         <Row
@@ -212,11 +212,14 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
   const [who, setWho] = useState<string | null>(
     editing ? (editing.kind === 'team' ? editing.g.teamId : editing.g.userEmail) : null,
   )
-  const plain = asset.principals.filter((p) => !isElevatedAccount(p))
+  // A device has no accounts to make, so nothing personal: only which of
+  // view and control they get.
+  const device = asset.kind === 'android'
+  const plain = asset.principals.filter((p) => !isElevatedAccount(p, asset))
   // A person's row with no setting of their own follows their teams; left
   // untouched, it keeps doing so.
   const followsTeams = editing?.kind === 'person' && editing.g.personalAccounts == null
-  const [personal, setPersonal] = useState(editing ? editing.g.personalAccounts === true : true)
+  const [personal, setPersonal] = useState(editing ? editing.g.personalAccounts === true : !device)
   const [sudo, setSudo] = useState(!!editing?.g.sudo)
   const [direct, setDirect] = useState<TeamDirectSsh>(editing?.g.directSsh ?? 'off')
   const [touched, setTouched] = useState(false)
@@ -315,14 +318,14 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
             nothingFoundMessage={kind === 'team' ? 'No teams yet. Make one on Teams.' : 'Nobody to add'}
           />
         )}
-        <Switch
+        {!device && <Switch
           checked={personal}
           onChange={(e) => change(setPersonal)(e.currentTarget.checked)}
           label={kind === 'team' ? 'Give each person their own account' : 'Give them their own account'}
           description={kind === 'team'
             ? `Argus makes a login on ${short} for everyone in the team, named after them, and locks it when they leave.`
             : `Argus makes a login on ${short} named after them, and locks it when they lose access.`}
-        />
+        />}
         {ownAccounts && (
           <Stack gap="sm" pl="xl">
             <Switch
@@ -361,7 +364,7 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
         )}
         {asset.principals.length > 0 && (
           <Checkbox.Group
-            label={ownAccounts ? 'Shared accounts too (optional)' : 'Log in as'}
+            label={device ? 'May' : ownAccounts ? 'Shared accounts too (optional)' : 'Log in as'}
             value={accounts}
             onChange={setAccounts}
           >
@@ -372,8 +375,8 @@ function AddAccessModal({ asset, opened, onClose, editing }: {
                   value={p}
                   label={
                     <Group gap={SP.snug}>
-                      <Text size="sm" ff="monospace">{p}</Text>
-                      {isElevatedAccount(p) && <Badge size="xs" color="rose">full control</Badge>}
+                      <Text size="sm" ff={device ? undefined : 'monospace'}>{principalLabel(p, asset)}</Text>
+                      {isElevatedAccount(p, asset) && <Badge size="xs" color="rose">{device ? 'approval' : 'full control'}</Badge>}
                     </Group>
                   }
                 />
