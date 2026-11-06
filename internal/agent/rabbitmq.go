@@ -265,6 +265,12 @@ func (e errRabbit) Error() string {
 // call makes one management API request as the person's user. path is
 // already escaped.
 func (s *rabbitSession) call(ctx context.Context, method, path string, body any, out any) (int, error) {
+	return s.callAs(ctx, method, path, body, out, "", tunnel.MaxStoreAnswer)
+}
+
+// callAs is call with the reason RabbitMQ is given (empty: who asked) and
+// the largest answer accepted.
+func (s *rabbitSession) callAs(ctx context.Context, method, path string, body any, out any, reason string, limit int) (int, error) {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -279,7 +285,10 @@ func (s *rabbitSession) call(ctx context.Context, method, path string, body any,
 	}
 	req.SetBasicAuth(s.user, s.pw)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Reason", "from Argus by "+s.g.Email)
+	if reason == "" {
+		reason = "from Argus by " + s.g.Email
+	}
+	req.Header.Set("X-Reason", reason)
 	resp, err := s.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -288,11 +297,11 @@ func (s *rabbitSession) call(ctx context.Context, method, path string, body any,
 		return 0, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, tunnel.MaxStoreAnswer+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return resp.StatusCode, err
 	}
-	if len(b) > tunnel.MaxStoreAnswer {
+	if len(b) > limit {
 		return resp.StatusCode, errors.New("RabbitMQ's answer is larger than Argus will carry; ask for fewer")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
@@ -317,11 +326,24 @@ func (s *rabbitSession) v() string { return url.PathEscape(s.vhost) }
 
 func esc(name string) string { return url.PathEscape(name) }
 
+// rabbitBrowse is what a person may look at without it being recorded, as
+// the Postgres object tree is not: names, counts and rates.
+var rabbitBrowse = map[string]bool{"overview": true, "queues": true, "exchanges": true, "exchange": true,
+	"bindings": true, "queue": true, "consumers": true, "connections": true, "channels": true}
+
+// rabbitNamed are the operations that act on one named thing.
+var rabbitNamed = map[string]bool{"exchange": true, "queue": true, "peek": true, "purge": true, "move": true,
+	"declare_queue": true, "delete_queue": true, "declare_exchange": true, "bind": true, "close_connection": true}
+
+// rabbitRates asks for ten minutes of samples, one every 30 seconds.
+const rabbitRates = "msg_rates_age=600&msg_rates_incr=30"
+
+// maxMove bounds the messages one move takes; the console asks again for more.
+const maxMove = 10_000
+
 func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmtRecorder) (tunnel.StoreAnswer, error) {
 	if !tunnel.RabbitOpAllowed(req.Op, s.db.Level) {
-		if _, known := map[string]bool{"queues": true, "exchanges": true, "queue": true, "peek": true,
-			"publish": true, "purge": true, "declare_queue": true, "delete_queue": true, "bind": true,
-			"connections": true, "close_connection": true}[req.Op]; known {
+		if tunnel.RabbitOpAllowed(req.Op, tunnel.LevelDBA) {
 			why := req.Op + " needs a higher level than " + s.db.Level
 			if err := rec.refused(req.ID, rabbitText(req), why); err != nil {
 				return tunnel.StoreAnswer{}, err
@@ -330,12 +352,11 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 		}
 		return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op}, nil
 	}
-	needsName := req.Op != "queues" && req.Op != "exchanges" && req.Op != "connections"
-	if needsName && (req.Name == "" && req.Op != "publish") {
+	if rabbitNamed[req.Op] && req.Name == "" {
 		return tunnel.StoreAnswer{Type: "error", Error: "no name given"}, nil
 	}
-	if len(req.Name) > 255 || len(req.Exchange) > 255 || len(req.RoutingKey) > 255 {
-		return tunnel.StoreAnswer{Type: "error", Error: "a name or routing key is longer than RabbitMQ allows"}, nil
+	if len(req.Name) > 255 || len(req.Exchange) > 255 || len(req.RoutingKey) > 255 || len(req.Target) > 255 || len(req.Reason) > 255 {
+		return tunnel.StoreAnswer{Type: "error", Error: "a name, routing key or reason is longer than RabbitMQ allows"}, nil
 	}
 	if len(req.Payload) > tunnel.MaxCommand {
 		return tunnel.StoreAnswer{Type: "error", Error: "the message is too long"}, nil
@@ -349,36 +370,9 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 	}
 	count = min(count, tunnel.MaxStoreItems)
 
-	// Browsing: not recorded, as the Postgres object tree is not.
-	switch req.Op {
-	case "queues", "exchanges":
-		q := url.Values{"page": {"1"}, "page_size": {strconv.Itoa(min(count, 500))}}
-		if p := strings.TrimSpace(req.Pattern); p != "" {
-			q.Set("name", p)
-			q.Set("use_regex", "false")
-		}
-		if req.Op == "queues" {
-			q.Set("columns", "name,type,durable,auto_delete,messages,messages_ready,messages_unacknowledged,consumers,state")
-		} else {
-			q.Set("columns", "name,type,durable,auto_delete,internal")
-		}
-		var data any
-		if _, err := s.call(ctx, http.MethodGet, "/api/"+req.Op+"/"+s.v()+"?"+q.Encode(), nil, &data); err != nil {
-			return s.failed(ctx, err)
-		}
-		return tunnel.StoreAnswer{Type: "result", Data: data}, nil
-	case "queue":
-		var queue, bindings any
-		if _, err := s.call(ctx, http.MethodGet, "/api/queues/"+s.v()+"/"+esc(req.Name), nil, &queue); err != nil {
-			return s.failed(ctx, err)
-		}
-		if _, err := s.call(ctx, http.MethodGet, "/api/queues/"+s.v()+"/"+esc(req.Name)+"/bindings", nil, &bindings); err != nil {
-			return s.failed(ctx, err)
-		}
-		return tunnel.StoreAnswer{Type: "result", Data: map[string]any{"queue": queue, "bindings": bindings}}, nil
-	case "connections":
-		var data any
-		if _, err := s.call(ctx, http.MethodGet, "/api/vhosts/"+s.v()+"/connections", nil, &data); err != nil {
+	if rabbitBrowse[req.Op] {
+		data, err := s.browse(ctx, req, count)
+		if err != nil {
 			return s.failed(ctx, err)
 		}
 		return tunnel.StoreAnswer{Type: "result", Data: data}, nil
@@ -418,12 +412,23 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 		if ex == "" {
 			ex = "amq.default"
 		}
-		props := map[string]any{"delivery_mode": 2}
+		props := map[string]any{}
 		if len(req.Headers) > 0 {
 			if len(req.Headers) > 64 {
 				return tunnel.StoreAnswer{Type: "error", Error: "too many headers"}, nil
 			}
 			props["headers"] = req.Headers
+		}
+		for k, v := range req.Properties {
+			if rabbitPublishProps[k] && v != "" {
+				props[k] = v
+			}
+		}
+		// Persistent unless the person chose transient.
+		if req.Properties["delivery_mode"] == "1" {
+			props["delivery_mode"] = 1
+		} else {
+			props["delivery_mode"] = 2
 		}
 		var out struct {
 			Routed bool `json:"routed"`
@@ -435,6 +440,10 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 	case "purge":
 		_, err = s.call(ctx, http.MethodDelete, "/api/queues/"+s.v()+"/"+esc(req.Name)+"/contents", nil, nil)
 		tag = "PURGE"
+	case "move":
+		var res moveResult
+		res, err = s.move(ctx, req.Name, req.Target, req.Count)
+		data, items, tag = res, int64(res.Moved), "MOVE "+strconv.Itoa(res.Moved)
 	case "declare_queue":
 		_, err = s.call(ctx, http.MethodPut, "/api/queues/"+s.v()+"/"+esc(req.Name),
 			map[string]any{"durable": req.Durable, "auto_delete": false, "arguments": map[string]any{}}, nil)
@@ -442,6 +451,15 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 	case "delete_queue":
 		_, err = s.call(ctx, http.MethodDelete, "/api/queues/"+s.v()+"/"+esc(req.Name), nil, nil)
 		tag = "DELETE QUEUE"
+	case "declare_exchange":
+		if !tunnel.RabbitExchangeKinds[req.Kind] {
+			err = errors.New("an exchange is direct, topic, fanout or headers")
+			break
+		}
+		_, err = s.call(ctx, http.MethodPut, "/api/exchanges/"+s.v()+"/"+esc(req.Name),
+			map[string]any{"type": req.Kind, "durable": req.Durable, "auto_delete": false, "internal": false,
+				"arguments": map[string]any{}}, nil)
+		tag = "DECLARE EXCHANGE"
 	case "bind":
 		if req.Exchange == "" {
 			err = errors.New("bind needs an exchange; the default exchange is bound to every queue already")
@@ -451,7 +469,13 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 			map[string]any{"routing_key": req.RoutingKey, "arguments": map[string]any{}}, nil)
 		tag = "BIND"
 	case "close_connection":
-		_, err = s.call(ctx, http.MethodDelete, "/api/connections/"+esc(req.Name), nil, nil)
+		// RabbitMQ sends X-Reason to the client in the close frame.
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = "closed"
+		}
+		_, err = s.callAs(ctx, http.MethodDelete, "/api/connections/"+esc(req.Name), nil, nil,
+			reason+" (from Argus by "+s.g.Email+")", tunnel.MaxStoreAnswer)
 		tag = "CLOSE CONNECTION"
 	}
 	elapsed := time.Since(start).Milliseconds()
@@ -465,6 +489,182 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 		return tunnel.StoreAnswer{}, err
 	}
 	return tunnel.StoreAnswer{Type: "result", Data: data, MS: elapsed}, nil
+}
+
+// rabbitPublishProps are the message properties a person may set besides
+// headers and delivery mode.
+var rabbitPublishProps = map[string]bool{"content_type": true, "content_encoding": true, "message_id": true,
+	"correlation_id": true, "reply_to": true, "type": true, "app_id": true, "expiration": true}
+
+// browse answers the read-only operations: names, counts and rates.
+func (s *rabbitSession) browse(ctx context.Context, req tunnel.StoreRequest, count int) (any, error) {
+	get := func(path string) (any, error) {
+		var data any
+		_, err := s.call(ctx, http.MethodGet, path, nil, &data)
+		return data, err
+	}
+	switch req.Op {
+	case "overview":
+		vhost, err := get("/api/vhosts/" + s.v() + "?" + rabbitRates)
+		if err != nil {
+			return nil, err
+		}
+		// The nodes need RabbitMQ's monitoring tag, which a read level does
+		// not have: without it the console shows no node panel, nothing else.
+		var nodes any
+		if _, err := s.call(ctx, http.MethodGet, "/api/nodes?columns=name,running,uptime,mem_used,mem_limit,mem_alarm,"+
+			"disk_free,disk_free_limit,disk_free_alarm,fd_used,fd_total,sockets_used,sockets_total", nil, &nodes); err != nil {
+			var re errRabbit
+			if !errors.As(err, &re) {
+				return nil, err
+			}
+			nodes = nil
+		}
+		return map[string]any{"vhost": vhost, "nodes": nodes}, nil
+	case "queues", "exchanges":
+		q := url.Values{"page": {"1"}, "page_size": {strconv.Itoa(min(count, 500))}}
+		if p := strings.TrimSpace(req.Pattern); p != "" {
+			q.Set("name", p)
+			q.Set("use_regex", "false")
+		}
+		if req.Op == "queues" {
+			q.Set("columns", "name,type,durable,auto_delete,exclusive,arguments,messages,messages_ready,"+
+				"messages_unacknowledged,consumers,state,idle_since,policy,"+
+				"message_stats.publish_details.rate,message_stats.deliver_get_details.rate,message_stats.ack_details.rate")
+		} else {
+			q.Set("columns", "name,type,durable,auto_delete,internal,arguments,"+
+				"message_stats.publish_in_details.rate,message_stats.publish_out_details.rate")
+		}
+		return get("/api/" + req.Op + "/" + s.v() + "?" + q.Encode())
+	case "queue":
+		queue, err := get("/api/queues/" + s.v() + "/" + esc(req.Name) + "?lengths_age=600&lengths_incr=30&" + rabbitRates)
+		if err != nil {
+			return nil, err
+		}
+		bindings, err := get("/api/queues/" + s.v() + "/" + esc(req.Name) + "/bindings")
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"queue": queue, "bindings": bindings}, nil
+	case "exchange":
+		name := req.Name
+		if name == "(default)" {
+			name = "amq.default"
+		}
+		ex, err := get("/api/exchanges/" + s.v() + "/" + esc(name) + "?" + rabbitRates)
+		if err != nil {
+			return nil, err
+		}
+		bindings, err := get("/api/exchanges/" + s.v() + "/" + esc(name) + "/bindings/source")
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"exchange": ex, "bindings": bindings}, nil
+	case "bindings":
+		return get("/api/bindings/" + s.v())
+	case "consumers":
+		return get("/api/consumers/" + s.v())
+	case "connections":
+		return get("/api/vhosts/" + s.v() + "/connections")
+	case "channels":
+		return get("/api/vhosts/" + s.v() + "/channels")
+	}
+	return nil, errors.New("unknown operation " + req.Op)
+}
+
+type moveResult struct {
+	Moved int `json:"moved"`
+	// Stopped says why the move ended before it ran out of messages.
+	Stopped string `json:"stopped,omitempty"`
+}
+
+// maxMoveMessage bounds one message a move carries. A message is taken off
+// the queue before the agent sees it, so the bound is far above anything
+// the console carries: losing a message to a size check is not an option.
+const maxMoveMessage = 256 << 20
+
+// move takes messages off one queue and publishes each to another through
+// the default exchange, one at a time. The management API acknowledges a
+// message as it hands it over, so a message that cannot be published to the
+// target is published back to the queue it came from, and the move stops.
+func (s *rabbitSession) move(ctx context.Context, from, to string, n int) (moveResult, error) {
+	var res moveResult
+	if to == "" || to == from {
+		return res, errors.New("move needs another queue to move the messages to")
+	}
+	var src, dst struct {
+		Ready int `json:"messages_ready"`
+	}
+	if _, err := s.call(ctx, http.MethodGet, "/api/queues/"+s.v()+"/"+esc(from)+"?columns=messages_ready", nil, &src); err != nil {
+		return res, err
+	}
+	if _, err := s.call(ctx, http.MethodGet, "/api/queues/"+s.v()+"/"+esc(to)+"?columns=messages_ready", nil, &dst); err != nil {
+		return res, fmt.Errorf("the queue %s: %w", to, err)
+	}
+	if n <= 0 || n > src.Ready {
+		n = src.Ready
+	}
+	n = min(n, maxMove)
+	type msg struct {
+		Payload    string         `json:"payload"`
+		Encoding   string         `json:"payload_encoding"`
+		Properties map[string]any `json:"properties"`
+	}
+	publish := func(queue string, m msg) (bool, error) {
+		props := m.Properties
+		if props == nil {
+			props = map[string]any{}
+		}
+		var out struct {
+			Routed bool `json:"routed"`
+		}
+		_, err := s.call(context.WithoutCancel(ctx), http.MethodPost, "/api/exchanges/"+s.v()+"/amq.default/publish",
+			map[string]any{"properties": props, "routing_key": queue, "payload": m.Payload,
+				"payload_encoding": m.Encoding}, &out)
+		return out.Routed, err
+	}
+	for res.Moved < n {
+		if ctx.Err() != nil {
+			res.Stopped = "cancelled"
+			return res, nil
+		}
+		var got []msg
+		if _, err := s.callAs(ctx, http.MethodPost, "/api/queues/"+s.v()+"/"+esc(from)+"/get",
+			map[string]any{"count": 1, "ackmode": "ack_requeue_false", "encoding": "auto"}, &got,
+			"", maxMoveMessage); err != nil {
+			if res.Moved == 0 {
+				return res, err
+			}
+			res.Stopped = err.Error()
+			return res, nil
+		}
+		if len(got) == 0 {
+			res.Stopped = "no more ready messages"
+			return res, nil
+		}
+		m := got[0]
+		if m.Encoding == "" {
+			m.Encoding = "string"
+		}
+		routed, err := publish(to, m)
+		if err == nil && routed {
+			res.Moved++
+			continue
+		}
+		why := "the queue " + to + " did not take it"
+		if err != nil {
+			why = err.Error()
+		}
+		if back, berr := publish(from, m); berr != nil || !back {
+			// The only copy left is this one: it goes into the recording with
+			// the error, so it can be published again by hand.
+			return res, fmt.Errorf("a message could not be moved (%s) nor put back on %s; it was %s payload %q properties %v",
+				why, from, m.Encoding, m.Payload, m.Properties)
+		}
+		res.Stopped = "a message could not be moved, so it was put back and the move stopped: " + why
+		return res, nil
+	}
+	return res, nil
 }
 
 // failed answers a browse that did not work. A user RabbitMQ no longer
@@ -498,11 +698,25 @@ func rabbitText(req tunnel.StoreRequest) string {
 		for _, k := range keys {
 			args = append(args, "header", k+"="+req.Headers[k])
 		}
+		pkeys := make([]string, 0, len(req.Properties))
+		for k := range req.Properties {
+			pkeys = append(pkeys, k)
+		}
+		sort.Strings(pkeys)
+		for _, k := range pkeys {
+			args = append(args, "property", k+"="+req.Properties[k])
+		}
 		args = append(args, "payload", req.Payload)
 	case "bind":
 		args = append(args, "exchange", req.Exchange, "queue", req.Name, "routing_key", req.RoutingKey)
 	case "declare_queue":
 		args = append(args, req.Name, "durable", strconv.FormatBool(req.Durable))
+	case "declare_exchange":
+		args = append(args, req.Name, "type", req.Kind, "durable", strconv.FormatBool(req.Durable))
+	case "move":
+		args = append(args, "from", req.Name, "to", req.Target, "count", strconv.Itoa(max(req.Count, 0)))
+	case "close_connection":
+		args = append(args, req.Name, "reason", req.Reason)
 	default:
 		args = append(args, req.Name)
 	}
