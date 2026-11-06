@@ -79,6 +79,10 @@ type config struct {
 	// beside it. Empty is the project's GitHub releases; set it to a mirror
 	// for servers that cannot reach GitHub.
 	AgentReleasesURL string `yaml:"agent_releases_url,omitempty"`
+	// AndroidAPK is a built Argus app for Android, signed with this
+	// deployment's key, handed to phones from the console's add-a-device
+	// page. Empty sends them to the project's release of this version.
+	AndroidAPK string `yaml:"android_apk,omitempty"`
 	// AgentReleaseCheck is whether the console asks every few hours for the
 	// newest release, to offer agents a version newer than its own. On
 	// unless set to false.
@@ -544,6 +548,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			"admins", api.SignInPolicy.Admins, "person", api.SignInPolicy.Person, "every", api.SignInPolicy.Every)
 	}
 	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
+	api.AndroidAPK = cfg.AndroidAPK
 	if (cfg.AgentReleaseCheck == nil || *cfg.AgentReleaseCheck) &&
 		(cfg.AgentReleasesURL == "" || cfg.AgentReleasesAPI != "") {
 		api.Releases = &control.ReleaseWatcher{API: cfg.AgentReleasesAPI, Log: log}

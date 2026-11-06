@@ -96,3 +96,12 @@ web/dist-live/
 web/dist-release/
 # Reference build for e2e/cascade.spec.ts -- never shipped, rebuilt per run.
 web/dist-monolith/
+
+# The Argus app for Android: the Go agent bound by gomobile, and Gradle's
+# own output. CI builds both; see "Agent on Android" in ci.yml.
+android/app/libs/*.aar
+android/app/libs/*.jar
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.kotlin/

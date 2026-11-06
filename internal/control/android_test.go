@@ -39,7 +39,7 @@ func (e *tunnelEnv) runAndroidAgent(t *testing.T, cred, host string, dev *agent.
 	services[agent.AndroidService] = agent.Android(agent.AndroidConfig{
 		DesktopConfig: agent.DesktopConfig{Collector: col, Verifier: &tunnel.GrantVerifier{Host: host},
 			Hostname: host, Log: log},
-		Device: func() (agent.AndroidDevice, error) { return dev, nil },
+		Device: func(agent.AndroidOpen) (agent.AndroidDevice, error) { return dev, nil },
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

@@ -4,7 +4,8 @@ An Android device is a managed asset whose agent is the Argus app on it:
 the console sees its screen and drives it, every session is recorded and
 replayed as a desktop recording. Design and mockups:
 `/mnt/project-files/plans/android-devices/` (design.md, mockups/). PR 1 built
-the control plane and console against a drawn stand-in; the app is PR 2.
+the control plane and console against a drawn stand-in; PR 2 the app in
+attended mode (`mobile/` + `android/`).
 
 ## How a device is stored
 
@@ -74,9 +75,41 @@ the control plane and console against a drawn stand-in; the app is PR 2.
   height and centred. `readOnly` for `view`.
 - Fixture: `rina-pixel-8` in `lib/seed.ts`.
 
+## The app (PR 2)
+
+- `mobile/` is the agent as the app embeds it, bound by gomobile (checked
+  with `gobind -lang=java ./mobile`; the exported surface keeps to what binds).
+  `Enroll(url, token, pin, hostname, stateDir)`, `ParseEnrolCode`, `Enrolled`,
+  `Forget`, `NewAgent(stateDir, Device, Logger, os, model, machineID)`,
+  `Agent.Start/Stop/PushFrame(rgba, w, h, stride)/EndSessions/Sessions/
+  Connected`. `Device` (Kotlin) = `Consent(person, principal) bool` (blocking),
+  `SessionStarted/Ended(open)`, `Play(json)`. Frames arrive RGBA and are kept
+  as one BGRX frame; each session copies the newest on `Frame(wait)`.
+  `openDevice` asks consent, then waits ≤10 s for the first frame.
+  `AndroidConfig.Device` now takes `AndroidOpen{Person, Principal}`;
+  `DesktopConfig.Connect` takes the `tunnel.Grant` (for the person's email).
+  `agent.SessionReport(rec)` moved from main.go so the app reports alike.
+  Tests run on Linux with a fake Device (`mobile/argus_test.go`).
+- `android/`: Gradle/Kotlin, package `com.gsoultan.argus`, minSdk 29,
+  AAR at `app/libs/argus.aar` (gitignored, built in CI job "Agent on Android"
+  with setup-android + NDK + gomobile; APK kept as an artifact, no emulator).
+  `AgentService` (foreground, specialUse|mediaProjection), `ScreenCapture`
+  (VirtualDisplay → ImageReader RGBA, ≤1280 on the long side, `scale` maps
+  input back), `DeviceBridge` (consent via `ConsentActivity` + the system
+  capture prompt, answers matched by question id, 45 s; plus a full-screen
+  notification), `InputService` (accessibility: taps/swipes/wheel, global
+  actions, ACTION_SET_TEXT on the focused field, red banner overlay with Stop),
+  `MainActivity` (ZXing scan or paste, enrol under the console's name).
+- The QR now carries `name` (`deviceEnrolPayload(t, name)`).
+- Control: `GET /api/v1/install/argus-android.apk` serves `AndroidAPK`
+  (`android_apk` in control.yaml) or redirects to
+  `{AgentReleasesURL}/v{offer}/argus-android.apk`; 404 for a dev build.
+- Console: `kindOfHost(h)` → 'android' from `os`; "Finish adding" carries
+  `kind=android`. `renderRoute(path, prepare?)` can seed the query cache.
+- go.mod now requires golang.org/x/mobile (kept by `mobile/bind.go`, tools tag).
+
 ## Not yet (later PRs)
 
-2. The app (gomobile agent, MediaProjection + MediaCodec, accessibility
-   input, IME, consent banner, APK served by control). 3. Unattended helper.
-4. Timeline events (app in front, lock, secure content, consent) and the
-   Apps tab. 5. Linux USB relay.
+3. Unattended helper. 4. Timeline events (app in front, lock, secure content,
+   consent) and the Apps tab. 5. Linux USB relay. Also: H.264 instead of
+   tiles, an IME for text beyond the focused field, an emulator smoke test.

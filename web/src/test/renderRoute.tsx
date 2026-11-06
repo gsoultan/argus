@@ -22,13 +22,16 @@ import { theme } from '~/theme'
  * `api.ts` the console uses with no control plane — no mocking, and therefore
  * nothing that can drift from what the app actually does.
  */
-export async function renderRoute(path: string) {
+export async function renderRoute(path: string, prepare?: (queryClient: QueryClient) => void) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
       mutations: { retry: false },
     },
   })
+  // For what the fixture cannot answer: a query the page only runs against a
+  // control plane can be given its data here.
+  prepare?.(queryClient)
 
   const router = createRouter({
     routeTree,

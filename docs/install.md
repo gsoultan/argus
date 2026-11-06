@@ -564,6 +564,35 @@ ends when the agent restarts; reconnect once the server shows connected again.
 SSH logins stay connected, and logins that arrive during the restart wait a
 few seconds for it rather than being refused.
 
+### Android devices
+
+An Android device is managed by the Argus app on it, not by a package: the
+app is the agent. In the console, **Servers > Add server or device**, pick
+**Android**, name the device and scan the code it shows from the app. The
+app enrols under that name, appears under **Enrolled agents** like a server,
+and the next step says how it is controlled: **attended** (whoever holds it
+accepts each session and sees a banner while it runs) and whether control
+needs an approval first.
+
+The app is handed out by the control plane at
+`/api/v1/install/argus-android.apk`, which the add page shows. Without
+anything configured, that address sends the phone to the project's release
+of the control plane's own version. A deployment that builds the app itself
+(the `android/` project in the repository, signed with its own key) names the
+file in `control.yaml`:
+
+```yaml
+android_apk: "/etc/argus/argus-android.apk"
+```
+
+On the device, the app asks for two things once: to run as an accessibility
+service (how it touches the screen for you) and to show a notification. Each
+session also goes through Android's own screen-capture prompt, which the
+holder sees with the person's name on the app's own question first; nothing
+is captured before they accept. The session is recorded on the device,
+sealed, and shipped like a server's; **Watch live** and the player show it
+as a desktop recording whose protocol is `android`.
+
 ### Uninstalling the agent
 
 **From the console:** open the server under **Servers** and choose **Remove

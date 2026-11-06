@@ -9,6 +9,7 @@ import { ServerCards } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
 import { agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
+import { kindOfHost } from '~/lib/reach'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 
@@ -110,7 +111,7 @@ function WaitingServers() {
       waiting.length === 1 ? '1 server is installed and waiting' : `${waiting.length} servers are installed and waiting`
     }>
       <Text size={FS.body} mb="sm">
-        Their agent is running. Say who can use them to finish adding them.
+        Their agent, or the Argus app, is running. Say who can use them to finish adding them.
       </Text>
       <Stack gap={SP.snug}>
         {waiting.map((h) => (
@@ -122,7 +123,7 @@ function WaitingServers() {
             <ButtonLink
               size="compact-sm"
               to="/assets/add"
-              search={{ host: h.hostname }}
+              search={{ host: h.hostname, ...(kindOfHost(h) ? { kind: kindOfHost(h) } : {}) }}
             >
               Finish adding
             </ButtonLink>

@@ -308,7 +308,7 @@ function ScanStep({ name, token, since, onBack, onFound }: {
         </Alert>
       ) : (
         <Group align="flex-start" gap="lg" wrap="wrap">
-          <DeviceQR token={token} />
+          <DeviceQR token={token} name={name} />
           <Stack gap="xs" style={{ flex: '1 1 240px' }}>
             <Text size="sm" fw={500}>Get the app</Text>
             <Text size={FS.meta} c="dimmed" lh={1.5}>
@@ -355,8 +355,8 @@ function ScanStep({ name, token, since, onBack, onFound }: {
 }
 
 /** The code the app scans, drawn here as SVG so the token leaves the page only on the phone. */
-function DeviceQR({ token }: { token: EnrollToken | null }) {
-  const text = token ? deviceEnrolPayload(token) : JSON.stringify({ argus: 'enrol', url: enrolBase(null) || 'https://argus.example.com', token: 'example' })
+function DeviceQR({ token, name }: { token: EnrollToken | null; name: string }) {
+  const text = token ? deviceEnrolPayload(token, name) : JSON.stringify({ argus: 'enrol', url: enrolBase(null) || 'https://argus.example.com', token: 'example', name: name.trim() })
   const svg = useMemo(() => {
     const q = qrcode(0, 'M')
     q.addData(text)

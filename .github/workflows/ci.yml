@@ -160,6 +160,54 @@ jobs:
             "./bin/$c$ext" -version
           done
 
+  # The Argus app for Android: the Go agent bound by gomobile into an AAR,
+  # then the Kotlin shell built around it. No emulator here yet: this proves
+  # the Go surface binds and the app compiles against it, and keeps the APK
+  # for a phone to try. Screen capture and touch are only testable on a
+  # device.
+  android-app:
+    name: Agent on Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 build-tools;34.0.0 ndk;26.3.11579264"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Build the agent for a 32-bit phone first
+        # The bind builds four ABIs and takes minutes; a constant that does
+        # not fit a 32-bit int shows up here in seconds.
+        run: GOOS=android GOARCH=arm CGO_ENABLED=0 go build ./mobile
+      - name: Bind the agent for Android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.3.11579264
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile
+          gomobile init
+          gomobile bind -target android -androidapi 29 \
+            -ldflags "-X github.com/gsoultan/argus/mobile.Version=0.0.0-ci" \
+            -o android/app/libs/argus.aar ./mobile
+          ls -l android/app/libs/argus.aar
+      - name: Build the app
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: argus-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
   # The Linux drill in Packaging, on a Mac: the agent installed as a launchd
   # daemon, enrolled, holding its tunnel, opening a browser session as a real
   # account and recording it on the host.

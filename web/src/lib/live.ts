@@ -864,8 +864,9 @@ export function installOneLiner(t: EnrollToken, version: string): string {
  * (a Cloudflare Tunnel, say) there is no pin and the app verifies it the
  * ordinary way; direct, the app pins the control plane's key.
  */
-export function deviceEnrolPayload(t: EnrollToken): string {
-  return JSON.stringify({ argus: 'enrol', url: enrolBase(t), token: t.token, pin: t.pin || 'off' })
+export function deviceEnrolPayload(t: EnrollToken, name = ''): string {
+  const n = name.trim()
+  return JSON.stringify({ argus: 'enrol', url: enrolBase(t), token: t.token, pin: t.pin || 'off', ...(n ? { name: n } : {}) })
 }
 
 /**

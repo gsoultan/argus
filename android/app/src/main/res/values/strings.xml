@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Argus</string>
+    <string name="input_service_label">Argus remote control</string>
+    <string name="input_service_description">Lets an administrator in your organisation\'s Argus console touch this device\'s screen during a session you accepted. Argus does not read the screen through this service.</string>
+
+    <string name="channel_status">Argus</string>
+    <string name="channel_session">Argus sessions</string>
+    <string name="notif_connected">Connected to Argus</string>
+    <string name="notif_connecting">Connecting to Argus…</string>
+    <string name="notif_session">%1$s is on this device</string>
+    <string name="notif_stop">Stop</string>
+
+    <string name="status_not_enrolled">Not linked to an Argus yet</string>
+    <string name="status_enrolled">Linked to %1$s as %2$s</string>
+    <string name="scan">Scan the code from the console</string>
+    <string name="paste_hint">Or paste the code</string>
+    <string name="link">Link</string>
+    <string name="forget">Unlink</string>
+    <string name="enable_input">Turn on the accessibility service</string>
+    <string name="input_on">Accessibility service is on: Argus can touch the screen</string>
+    <string name="input_off">Accessibility service is off: Argus can watch but not touch</string>
+    <string name="enrolled_ok">Linked. Finish adding the device in the console.</string>
+
+    <string name="consent_title">Argus session</string>
+    <string name="consent_control">%1$s wants to control this device.</string>
+    <string name="consent_view">%1$s wants to watch this device\'s screen.</string>
+    <string name="consent_detail">Everything on the screen is shared and recorded until the session ends. You can stop it at any time from the banner.</string>
+    <string name="consent_accept">Accept</string>
+    <string name="consent_decline">Decline</string>
+
+    <string name="banner_control">%1$s is controlling this device via Argus</string>
+    <string name="banner_view">%1$s is watching this device via Argus</string>
+    <string name="banner_stop">Stop</string>
+</resources>

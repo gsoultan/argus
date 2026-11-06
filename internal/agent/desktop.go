@@ -49,8 +49,9 @@ type DesktopConfig struct {
 	Log       *slog.Logger
 	// Address is the Remote Desktop listener. Empty is DefaultDesktopAddress.
 	Address string
-	// Connect opens the desktop. Nil dials Address; tests replace it.
-	Connect func(cfg DesktopConfig, principal string, open tunnel.DesktopOpen,
+	// Connect opens the desktop, for the grant's person as its principal.
+	// Nil dials Address; tests replace it.
+	Connect func(cfg DesktopConfig, g tunnel.Grant, open tunnel.DesktopOpen,
 		log *slog.Logger) (DesktopClient, DesktopInfo, error)
 	// ScreenHost is the console, for screen sharing. Nil is this platform's;
 	// tests replace it.
@@ -177,7 +178,7 @@ func desktopService(cfg DesktopConfig, service string) TunnelService {
 			open = *call.Header.Desktop
 		}
 		dlog := log.With("principal", g.Principal, "for", g.Email)
-		client, info, err := cfg.Connect(cfg, g.Principal, open, dlog)
+		client, info, err := cfg.Connect(cfg, g, open, dlog)
 		// Gone from memory as soon as the logon is done with it.
 		open.Password = ""
 		if call.Header.Desktop != nil {
@@ -306,8 +307,9 @@ func desktopFlags(info DesktopInfo) []string {
 // answer in the listener's place. Windows renews the listener's self-signed
 // certificate on its own, so a pin would refuse every session after that
 // for no gain.
-func connectDesktop(cfg DesktopConfig, principal string, open tunnel.DesktopOpen,
+func connectDesktop(cfg DesktopConfig, g tunnel.Grant, open tunnel.DesktopOpen,
 	log *slog.Logger) (DesktopClient, DesktopInfo, error) {
+	principal := g.Principal
 
 	addr := cfg.Address
 	if addr == "" {

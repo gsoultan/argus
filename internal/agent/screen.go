@@ -1268,7 +1268,7 @@ func (c *screenClient) Close() error {
 }
 
 // connectScreen opens the console for a session through the tunnel.
-func connectScreen(cfg DesktopConfig, _ string, open tunnel.DesktopOpen,
+func connectScreen(cfg DesktopConfig, _ tunnel.Grant, open tunnel.DesktopOpen,
 	log *slog.Logger) (DesktopClient, DesktopInfo, error) {
 	host := cfg.ScreenHost
 	if host == nil {
