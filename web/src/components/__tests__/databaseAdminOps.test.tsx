@@ -18,7 +18,9 @@ const sub: PGSubscription = {
   conninfo: 'host=eu-db-01 port=5432 dbname=orders user=replicator password=[redacted] sslmode=require',
   publications: ['orders_pub'], slot: 'orders_from_eu', owner: 'postgres', setUpBy: 'r.hakim@corp.example',
   workerPid: 48213, applyLagS: 1, tablesReady: 4, tablesSyncing: 0, tablesWaiting: 0, applyErrors: 0, syncErrors: 0,
+  syncCommit: 'off', binary: 'off', streaming: 'off', disableOnError: 'off',
 }
+const foreignPub = { name: 'legacy_pub', owner: 'postgres', allTables: true, publish: ['insert', 'update', 'delete', 'truncate'], viaRoot: false }
 
 function fakeAdmin(answers: (op: AdminOp) => unknown): { admin: Admin; ops: AdminOp[] } {
   const ops: AdminOp[] = []
@@ -69,6 +71,46 @@ describe('Extensions panel', () => {
 })
 
 describe('Replication panel', () => {
+  it('lists a publication made outside Argus and lets its options be changed, not its tables', async () => {
+    const { admin, ops } = fakeAdmin((op) => (op.kind === 'publication.list' ? [foreignPub] : []))
+    ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
+    await waitFor(() => expect(screen.getByText('legacy_pub')).toBeInTheDocument())
+    expect(screen.getByText('postgres · not through Argus')).toBeInTheDocument()
+    expect(screen.queryByText('Change tables')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Options'))
+    const button = await screen.findByRole('button', { name: 'Set options' })
+    expect(button).toBeDisabled() // nothing changed yet
+    fireEvent.click(screen.getByLabelText('truncate'))
+    await waitFor(() => expect(screen.getByText('-- preview of publication.options')).toBeInTheDocument())
+    expect(ops.at(-1)).toMatchObject({ kind: 'publication.options', name: 'legacy_pub', publish: ['insert', 'update', 'delete'], preview: true })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Set options' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Set options' }))
+    await waitFor(() => expect(ops.some((o) => o.kind === 'publication.options' && !o.preview)).toBe(true))
+  })
+
+  it('re-points a subscription at other publications and sends only the options that changed', async () => {
+    const { admin, ops } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [sub] : []))
+    ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
+    await waitFor(() => expect(screen.getByText('Subscriptions · 1')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Subscriptions · 1'))
+    await waitFor(() => expect(screen.getByLabelText('Actions for orders_from_eu')).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText('Actions for orders_from_eu'), { target: { value: 'publications' } })
+    const field = await screen.findByLabelText(/Publications on the publisher/)
+    expect(field).toHaveValue('orders_pub')
+    fireEvent.change(field, { target: { value: 'orders_pub, customers_pub' } })
+    await waitFor(() => expect(ops.at(-1)).toMatchObject({ kind: 'subscription.publications', publications: ['orders_pub', 'customers_pub'], refresh: true, copyData: true, preview: true }))
+    fireEvent.click(screen.getByText('Cancel'))
+    fireEvent.change(screen.getByLabelText('Actions for orders_from_eu'), { target: { value: 'options' } })
+    const button = await screen.findByRole('button', { name: 'Set options' })
+    expect(button).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(/binary/))
+    await waitFor(() => expect(ops.at(-1)).toMatchObject({ kind: 'subscription.options', name: 'orders_from_eu', binary: true, preview: true }))
+    const last = ops.at(-1)!
+    expect(last.syncCommit).toBeUndefined()
+    expect(last.slotName).toBeUndefined()
+    expect(last.streaming).toBeUndefined()
+  })
+
   it('shows a subscription with its status and lag and never a password', async () => {
     const { admin } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [sub] : []))
     const { container } = ui(<ReplicationPanel {...base} admin={admin} level="dba" />)

@@ -104,6 +104,12 @@ func TestPostgresAdminOps(t *testing.T) {
 	if a = h.admin(21, tunnel.PGAdminOp{Kind: tunnel.AdminPublicationTables, Name: "argus_t_pub_p", Tables: []string{"public.argus_t_pub"}}); a.Type != "admin" {
 		t.Fatalf("publication.tables: %+v", a)
 	}
+	// A publication made outside Argus is found and changed the same way.
+	superTry(t, dsn, "DROP PUBLICATION IF EXISTS argus_t_pub_foreign")
+	superQuery(t, dsn, "CREATE PUBLICATION argus_t_pub_foreign FOR ALL TABLES")
+	if a = h.admin(23, tunnel.PGAdminOp{Kind: tunnel.AdminPublicationOptions, Name: "argus_t_pub_foreign", Publish: []string{"insert"}, ViaRoot: bp(true)}); a.Type != "admin" || a.Tag != "ALTER PUBLICATION" {
+		t.Fatalf("publication.options: %+v", a)
+	}
 	var pubs []PGPublication
 	a = h.admin(22, tunnel.PGAdminOp{Kind: tunnel.AdminPublicationList})
 	if err := json.Unmarshal(a.Admin, &pubs); err != nil || a.Type != "admin" {
@@ -119,6 +125,16 @@ func TestPostgresAdminOps(t *testing.T) {
 		strings.Join(p.Publish, ",") != "insert,update" || p.SetUpBy != "ana.sari@corp.example" {
 		t.Fatalf("publication.list: %+v", p)
 	}
+	var foreign *PGPublication
+	for i := range pubs {
+		if pubs[i].Name == "argus_t_pub_foreign" {
+			foreign = &pubs[i]
+		}
+	}
+	if foreign == nil || !foreign.AllTables || strings.Join(foreign.Publish, ",") != "insert" || !foreign.ViaRoot || foreign.SetUpBy != "" {
+		t.Fatalf("a publication made outside Argus must be listed as it is, with no set-up-by: %+v", foreign)
+	}
+	superQuery(t, dsn, "DROP PUBLICATION argus_t_pub_foreign")
 
 	// Subscriptions: created without connecting, so the test needs no second
 	// server, and listed with the password gone.
@@ -177,6 +193,29 @@ func TestPostgresAdminOps(t *testing.T) {
 	}
 	if a = h.admin(33, tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionDisable, Name: "argus_t_sub"}); a.Type != "admin" {
 		t.Fatalf("subscription.disable: %+v", a)
+	}
+	// Re-pointed at other publications without refreshing (the publisher is
+	// not reachable here), and its apply options changed; the list shows
+	// both.
+	if a = h.admin(36, tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionPublications, Name: "argus_t_sub", Publications: []string{"argus_t_pub_p", "other_pub"}, Refresh: bp(false)}); a.Type != "admin" || a.Tag != "ALTER SUBSCRIPTION" {
+		t.Fatalf("subscription.publications: %+v", a)
+	}
+	if a = h.admin(37, tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionOptions, Name: "argus_t_sub", SyncCommit: "local", Binary: bp(true), DisableOnError: bp(true)}); a.Type != "admin" {
+		t.Fatalf("subscription.options: %+v", a)
+	}
+	a = h.admin(38, tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionList})
+	subs = nil
+	if err := json.Unmarshal(a.Admin, &subs); err != nil || a.Type != "admin" {
+		t.Fatalf("subscription.list: %+v %v", a, err)
+	}
+	s = nil
+	for i := range subs {
+		if subs[i].Name == "argus_t_sub" {
+			s = &subs[i]
+		}
+	}
+	if s == nil || strings.Join(s.Publications, ",") != "argus_t_pub_p,other_pub" || s.SyncCommit != "local" || s.Binary != "on" || s.DisableOnError != "on" || s.Streaming != "off" {
+		t.Fatalf("the list must show the changed publications and options: %+v", s)
 	}
 	if a = h.admin(34, tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionConnection, Name: "argus_t_sub",
 		Conn: &tunnel.PGConnInfo{Host: host, Port: port, DBName: dbname, User: "postgres", Password: secret + "-rotated"}}); a.Type != "admin" {
@@ -246,9 +285,9 @@ func TestPostgresAdminOps(t *testing.T) {
 		"admin done " + // create pgcrypto
 		"admin error " + // no such extension
 		"admin done " + // update
-		"admin done admin done " + // publication create, tables
+		"admin done admin done admin done " + // publication create, tables, foreign options
 		"admin done " + // subscription create
-		"admin done admin done admin done " + // disable, connection, drop
+		"admin done admin done admin done admin done admin done " + // disable, publications, options, connection, drop
 		"admin done admin error admin done " + // publication drop x2, extension drop
 		"close"
 	if got := strings.Join(kinds, " "); got != want {

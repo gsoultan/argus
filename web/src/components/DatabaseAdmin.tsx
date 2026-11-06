@@ -61,6 +61,12 @@ export interface AdminOp {
   enabled?: boolean
   connect?: boolean
   slotName?: string
+  viaRoot?: boolean
+  refresh?: boolean
+  syncCommit?: string
+  streaming?: string
+  binary?: boolean
+  disableOnError?: boolean
   publisherGone?: boolean
 }
 export interface AdminFailure { error?: string; code?: string; detail?: string; hint?: string }

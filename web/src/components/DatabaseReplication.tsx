@@ -53,15 +53,21 @@ export interface PGSubscription {
   applyErrors?: number | null
   syncErrors?: number | null
   syncCommit?: string
+  binary?: string
+  streaming?: string
+  disableOnError?: string
 }
 
 type Form =
   | { mode: 'new-publication' }
   | { mode: 'publication-tables'; pub: PGPublication }
+  | { mode: 'publication-options'; pub: PGPublication }
   | { mode: 'drop-publication'; pub: PGPublication }
   | { mode: 'new-subscription' }
   | { mode: 'subscription-connection'; sub: PGSubscription }
   | { mode: 'refresh-subscription'; sub: PGSubscription }
+  | { mode: 'subscription-publications'; sub: PGSubscription }
+  | { mode: 'subscription-options'; sub: PGSubscription }
   | { mode: 'drop-subscription'; sub: PGSubscription }
 
 const REFRESH_MS = 10_000
@@ -175,6 +181,7 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
                           <Table.Td ta="right">
                             <Group gap={4} justify="flex-end" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
                               {!p.allTables && <Button size="compact-xs" variant="default" onClick={() => setForm({ mode: 'publication-tables', pub: p })}>Change tables</Button>}
+                              <Button size="compact-xs" variant="default" onClick={() => setForm({ mode: 'publication-options', pub: p })}>Options</Button>
                               <Button size="compact-xs" variant="subtle" color="rose" onClick={() => setForm({ mode: 'drop-publication', pub: p })}>Drop</Button>
                             </Group>
                           </Table.Td>
@@ -184,7 +191,7 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
                   </Table>
                   {pubs.length === 0 && <Text size={FS.meta} c="dimmed" p="md">This database publishes nothing yet.</Text>}
                   <Text size={FS.micro} c="dimmed" p="md">
-                    A publication set up outside Argus is listed the same way and can be changed here; the change is recorded. Publishing all tables needs superuser, which the helper has.
+                    Every publication on this server is listed, whoever made it; one set up outside Argus can be changed here the same way, and the change is recorded. Which tables an all-tables publication covers cannot be changed, only what it publishes. Publishing all tables needs superuser, which the helper has.
                   </Text>
                 </>
               )}
@@ -238,6 +245,8 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
                                   if (v === 'disable') void act({ kind: 'subscription.disable', name: s.name }, `${s.name} disabled`)
                                   if (v === 'refresh') setForm({ mode: 'refresh-subscription', sub: s })
                                   if (v === 'connection') setForm({ mode: 'subscription-connection', sub: s })
+                                  if (v === 'publications') setForm({ mode: 'subscription-publications', sub: s })
+                                  if (v === 'options') setForm({ mode: 'subscription-options', sub: s })
                                   if (v === 'drop') setForm({ mode: 'drop-subscription', sub: s })
                                 }}
                                 style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--color-line)', background: 'var(--color-surface)', color: 'inherit', maxWidth: 160 }}>
@@ -245,6 +254,8 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
                                 {s.enabled ? <option value="disable">Disable</option> : <option value="enable">Enable</option>}
                                 <option value="refresh" disabled={!s.enabled}>Refresh publication</option>
                                 <option value="connection">Change connection…</option>
+                                <option value="publications">Change publications…</option>
+                                <option value="options">Options…</option>
                                 <option value="drop">Drop…</option>
                               </select>
                             </Table.Td>
@@ -255,7 +266,7 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
                   </Table>
                   {subs.length === 0 && <Text size={FS.meta} c="dimmed" p="md">This database subscribes to nothing yet.</Text>}
                   <Text size={FS.micro} c="dimmed" p="md">
-                    Status is the server’s: pg_stat_subscription and the state of each table. Lag is now minus the last applied transaction’s commit time. Error counts come from pg_stat_subscription_stats (Postgres 15 and later); the message itself is in the server log.
+                    Every subscription of this database is listed, whoever made it. Status is the server’s: pg_stat_subscription and the state of each table. Lag is now minus the last applied transaction’s commit time. Error counts come from pg_stat_subscription_stats (Postgres 15 and later); the message itself is in the server log.
                     The publisher’s password is never shown: the list strips it before anything leaves the server.
                   </Text>
                 </>
@@ -296,9 +307,16 @@ function ReplicationForm({ form, admin, pubs, onDone, onCancel }: {
   const [name, setName] = useState('')
   const [allTables, setAllTables] = useState(false)
   const [tables, setTables] = useState(form.mode === 'publication-tables' ? (form.pub.tables ?? []).join('\n') : '')
-  const [publish, setPublish] = useState<string[]>(['insert', 'update', 'delete', 'truncate'])
+  const [publish, setPublish] = useState<string[]>(form.mode === 'publication-options' ? form.pub.publish : ['insert', 'update', 'delete', 'truncate'])
+  const [viaRoot, setViaRoot] = useState(form.mode === 'publication-options' ? !!form.pub.viaRoot : false)
   const [conn, setConn] = useState<ConnInfo>({ host: '', port: 5432, dbname: '', user: '', password: '', sslmode: 'require' })
-  const [publications, setPublications] = useState('')
+  const [publications, setPublications] = useState(form.mode === 'subscription-publications' ? form.sub.publications.join(', ') : '')
+  const [refresh, setRefresh] = useState(form.mode === 'subscription-publications' ? form.sub.enabled : true)
+  const [slotName, setSlotName] = useState(form.mode === 'subscription-options' ? (form.sub.slot ?? '') : '')
+  const [syncCommit, setSyncCommit] = useState(form.mode === 'subscription-options' ? (form.sub.syncCommit || 'off') : 'off')
+  const [streaming, setStreaming] = useState(form.mode === 'subscription-options' ? (form.sub.streaming || 'off') : 'off')
+  const [binary, setBinary] = useState(form.mode === 'subscription-options' ? form.sub.binary === 'on' : false)
+  const [disableOnError, setDisableOnError] = useState(form.mode === 'subscription-options' ? form.sub.disableOnError === 'on' : false)
   const [copyData, setCopyData] = useState(true)
   const [createSlot, setCreateSlot] = useState(true)
   const [enabled, setEnabled] = useState(true)
@@ -323,6 +341,12 @@ function ReplicationForm({ form, admin, pubs, onDone, onCancel }: {
       title = `Change the tables of ${form.pub.name}`; verb = 'Set tables'
       op = tableList.length ? { kind: 'publication.tables', name: form.pub.name, tables: tableList } : null
       break
+    case 'publication-options': {
+      title = `Options of ${form.pub.name}`; verb = 'Set options'
+      const changed = publish.join() !== form.pub.publish.join() || viaRoot !== !!form.pub.viaRoot
+      op = changed && publish.length ? { kind: 'publication.options', name: form.pub.name, publish, viaRoot } : null
+      break
+    }
     case 'drop-publication':
       title = `Drop ${form.pub.name}`; verb = 'Drop publication'; confirmName = form.pub.name; danger = true
       op = { kind: 'publication.drop', name: form.pub.name }
@@ -341,6 +365,22 @@ function ReplicationForm({ form, admin, pubs, onDone, onCancel }: {
       title = `Refresh ${form.sub.name}`; verb = 'Refresh publication'
       op = { kind: 'subscription.refresh', name: form.sub.name, copyData }
       break
+    case 'subscription-publications':
+      title = `Change the publications of ${form.sub.name}`; verb = 'Set publications'
+      op = pubList.length ? { kind: 'subscription.publications', name: form.sub.name, publications: pubList, refresh, copyData: refresh ? copyData : undefined } : null
+      break
+    case 'subscription-options': {
+      title = `Options of ${form.sub.name}`; verb = 'Set options'
+      const o: AdminOp = { kind: 'subscription.options', name: form.sub.name }
+      const slot = slotName.trim()
+      if (slot !== (form.sub.slot ?? '')) o.slotName = slot || 'NONE'
+      if (syncCommit !== (form.sub.syncCommit || 'off')) o.syncCommit = syncCommit
+      if (form.sub.streaming && streaming !== form.sub.streaming) o.streaming = streaming
+      if (form.sub.binary && binary !== (form.sub.binary === 'on')) o.binary = binary
+      if (form.sub.disableOnError && disableOnError !== (form.sub.disableOnError === 'on')) o.disableOnError = disableOnError
+      op = Object.keys(o).length > 2 ? o : null
+      break
+    }
     case 'drop-subscription':
       title = `Drop ${form.sub.name}`; verb = 'Drop subscription'; confirmName = form.sub.name; danger = true
       op = { kind: 'subscription.drop', name: form.sub.name, publisherGone }
@@ -383,6 +423,19 @@ function ReplicationForm({ form, admin, pubs, onDone, onCancel }: {
         {form.mode === 'publication-tables' && (
           <Textarea size="xs" mt="sm" label="Tables, one per line, as schema.table. This replaces the list." value={tables} onChange={(e) => setTables(e.currentTarget.value)} autosize minRows={3} />
         )}
+        {form.mode === 'publication-options' && (
+          <>
+            <Group mt="sm" gap="md">
+              <Text size={FS.meta}>Publish:</Text>
+              {['insert', 'update', 'delete', 'truncate'].map((o) => (
+                <Checkbox key={o} size="xs" label={o} checked={publish.includes(o)} onChange={() => toggle(o)} />
+              ))}
+            </Group>
+            <Checkbox size="xs" mt="sm" checked={viaRoot} onChange={(e) => setViaRoot(e.currentTarget.checked)}
+              label="Publish partitioned tables as their root (publish_via_partition_root)" />
+            {form.pub.allTables && <Text size={FS.micro} c="dimmed" mt="xs">An all-tables publication keeps covering every table; only what it publishes can change.</Text>}
+          </>
+        )}
         {form.mode === 'drop-publication' && (
           <Text size={FS.meta} c="dimmed" mt="xs">Subscribers of this publication on other servers keep failing until someone drops their subscriptions there.</Text>
         )}
@@ -405,6 +458,25 @@ function ReplicationForm({ form, admin, pubs, onDone, onCancel }: {
             <Checkbox size="xs" mt="sm" checked={copyData} onChange={(e) => setCopyData(e.currentTarget.checked)} label="Copy the new tables’ existing rows (copy_data)" />
           </>
         )}
+        {form.mode === 'subscription-publications' && (
+          <>
+            <TextInput size="xs" mt="sm" label="Publications on the publisher, comma-separated. This replaces the list." value={publications} onChange={(e) => setPublications(e.currentTarget.value)} autoComplete="off" />
+            <Checkbox size="xs" mt="sm" checked={refresh} onChange={(e) => setRefresh(e.currentTarget.checked)} disabled={!form.sub.enabled}
+              label={form.sub.enabled ? 'Refresh now: pick up the new publications’ tables (refresh)' : 'Refresh now (refresh): needs the subscription enabled; refresh it after enabling'} />
+            {refresh && <Checkbox size="xs" mt="xs" checked={copyData} onChange={(e) => setCopyData(e.currentTarget.checked)} label="Copy the new tables’ existing rows (copy_data)" />}
+          </>
+        )}
+        {form.mode === 'subscription-options' && (
+          <>
+            <TextInput size="xs" mt="sm" label="Replication slot on the publisher (slot_name); empty forgets it, which needs the subscription disabled" value={slotName} onChange={(e) => setSlotName(e.currentTarget.value)} autoComplete="off" />
+            <Select size="xs" mt="sm" label="synchronous_commit" data={['off', 'local', 'remote_write', 'on', 'remote_apply']} value={syncCommit} onChange={(v) => setSyncCommit(v ?? 'off')} />
+            {form.sub.streaming
+              ? <Select size="xs" mt="sm" label="Stream large transactions before they commit (streaming)" data={['off', 'on', 'parallel']} value={streaming} onChange={(v) => setStreaming(v ?? 'off')} />
+              : <Text size={FS.micro} c="dimmed" mt="xs">Streaming and binary need Postgres 14; disable_on_error needs 15.</Text>}
+            {form.sub.binary && <Checkbox size="xs" mt="sm" checked={binary} onChange={(e) => setBinary(e.currentTarget.checked)} label="Receive data in binary form (binary)" />}
+            {form.sub.disableOnError && <Checkbox size="xs" mt="xs" checked={disableOnError} onChange={(e) => setDisableOnError(e.currentTarget.checked)} label="Disable the subscription when applying fails instead of retrying (disable_on_error)" />}
+          </>
+        )}
         {form.mode === 'drop-subscription' && (
           <Checkbox size="xs" mt="sm" checked={publisherGone} onChange={(e) => setPublisherGone(e.currentTarget.checked)}
             label="The publisher is gone: don’t try to remove its slot. The slot on the publisher is then yours to drop by hand, or it keeps WAL there." />
@@ -420,7 +492,7 @@ function ReplicationForm({ form, admin, pubs, onDone, onCancel }: {
             If the subscription cannot connect, check the publisher has wal_level = logical, a free replication slot, and a pg_hba.conf line letting this user in from this server.
           </Text>
         )}
-        {pubs.length > 0 && form.mode === 'new-subscription' && (
+        {pubs.length > 0 && (form.mode === 'new-subscription' || form.mode === 'subscription-publications') && (
           <Text size={FS.micro} c="dimmed" mt={4}>Publications must exist on the publisher, not here.</Text>
         )}
         {failure && <Box mt="sm"><AdminRefused error={failure} /></Box>}

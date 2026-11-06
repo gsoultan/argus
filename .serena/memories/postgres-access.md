@@ -183,6 +183,19 @@ left-bar entries, *Extensions* and *Replication*, in
   `SET (slot_name = NONE)` first or `DROP` fails trying to reach it;
   `PublisherGone` does that and the form says the slot is then theirs.
 
+### Changing what exists (2026-11, second PR)
+
+Lists read `pg_publication` / `pg_subscription` whole, so anything made
+outside Argus is found; `SetUpBy` is empty for those (the UI says "not
+through Argus"). Edits are more fixed kinds in `buildAdminSQL`:
+`publication.options` (`ALTER PUBLICATION SET (publish, publish_via_partition_root)`,
+the one change an all-tables publication allows), `subscription.publications`
+(`SET PUBLICATION … WITH (refresh, copy_data)`; refresh needs it enabled) and
+`subscription.options` (`SET (slot_name|NONE, synchronous_commit, streaming,
+binary, disable_on_error)`). The subscription list carries binary/streaming
+(PG14+) and disable_on_error (PG15+) as on/off strings, "" before; the
+options form only sends what changed and hides what the server lacks.
+
 ## Finding databases, query tabs, saved queries, plans, diagram
 
 - **Listing what a server has.** The agent's `dbdiscover` tunnel service
