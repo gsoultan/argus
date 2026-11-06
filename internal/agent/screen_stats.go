@@ -31,6 +31,19 @@ type screenStats struct {
 	WriteMS  float64 `json:"writeMs"`
 	// SlowestMS is the most a frame's work took, capture to sent.
 	SlowestMS float64 `json:"slowestMs"`
+	// Inputs counts the frames that followed a key or a click, and the two
+	// sums are how long after the input the screen was captured and the
+	// frame sent: the part of the time to answer a keystroke that is
+	// Windows drawing it, and the part that is this helper.
+	Inputs         int     `json:"inputs"`
+	InputCaptureMS float64 `json:"inputCaptureMs"`
+	InputSentMS    float64 `json:"inputSentMs"`
+	InputSlowestMS float64 `json:"inputSlowestMs"`
+	// CreditMS is the time spent waiting for the agent to have room for
+	// another frame (the browser acknowledging the ones before).
+	CreditMS float64 `json:"creditMs"`
+	// PaceMS is the time spent keeping to the frame rate.
+	PaceMS float64 `json:"paceMs"`
 
 	sent time.Time
 }
@@ -56,6 +69,14 @@ func (s *screenStats) frame(c screenCapturer, started, captured, found, coded, e
 	s.TilesMS += millis(encoded.Sub(coded))
 	s.WriteMS += millis(done.Sub(encoded))
 	s.SlowestMS = max(s.SlowestMS, millis(done.Sub(captured)))
+}
+
+// input counts a frame that went after an input made at in.
+func (s *screenStats) input(in, captured, done time.Time) {
+	s.Inputs++
+	s.InputCaptureMS += millis(captured.Sub(in))
+	s.InputSentMS += millis(done.Sub(in))
+	s.InputSlowestMS = max(s.InputSlowestMS, millis(done.Sub(in)))
 }
 
 // due says whether it is time to send what the frames cost.

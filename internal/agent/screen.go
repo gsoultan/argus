@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsoultan/argus/internal/rdp"
@@ -343,6 +344,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	refresh := make(chan struct{}, 1)
 	credit := make(chan struct{}, 64)
 	poke := make(chan struct{}, 1)
+	// lastInput is when the last key or click went in (UnixNano), until a
+	// frame captured after it is sent: see screenStats.input.
+	var lastInput atomic.Int64
 	done := make(chan error, 1)
 	stop := make(chan struct{})
 	defer close(stop)
@@ -412,6 +416,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				break
 			}
 			_ = player.Input(e)
+			if e.Kind != "mouse" {
+				lastInput.CompareAndSwap(0, time.Now().UnixNano())
+			}
 			signal(poke)
 		}
 	}()
@@ -432,6 +439,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	var last screenShot
 	for {
 		// A credit, first: the agent has room for another frame.
+		waited := time.Now()
 		for credits == 0 {
 			select {
 			case err := <-done:
@@ -442,8 +450,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				force = true
 			}
 		}
+		stats.CreditMS += millis(time.Since(waited))
 		// No faster than the frame rate allows.
 		if wait := pace.minGap - time.Since(lastSent); wait > 0 {
+			stats.PaceMS += millis(wait)
 			if err := sleepOr(wait, done); err != nil {
 				return endOf(err)
 			}
@@ -560,7 +570,11 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		if err := writeScreenMsg(out, scrFrame, nil); err != nil {
 			return err
 		}
-		stats.frame(c, started, captured, found, coded, encoded, time.Now(), sent)
+		finished := time.Now()
+		stats.frame(c, started, captured, found, coded, encoded, finished, sent)
+		if t := lastInput.Load(); t != 0 && t < captured.UnixNano() && lastInput.CompareAndSwap(t, 0) {
+			stats.input(time.Unix(0, t), captured, finished)
+		}
 		if stats.due() {
 			if err := writeScreenMsg(out, scrStats, stats.encode()); err != nil {
 				return err
