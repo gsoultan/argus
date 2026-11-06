@@ -307,6 +307,27 @@ func buildAdminSQL(op *tunnel.PGAdminOp, actor string) (adminSQL, error) {
 		}
 		return one("ALTER PUBLICATION " + n + " SET TABLE " + list), nil
 
+	case tunnel.AdminPublicationOptions:
+		n, err := quoteIdent(op.Name)
+		if err != nil {
+			return adminSQL{}, err
+		}
+		var set []string
+		if len(op.Publish) > 0 {
+			ops, err := publishList(op.Publish)
+			if err != nil {
+				return adminSQL{}, err
+			}
+			set = append(set, "publish = "+quoteLiteral(ops))
+		}
+		if op.ViaRoot != nil {
+			set = append(set, "publish_via_partition_root = "+strconv.FormatBool(*op.ViaRoot))
+		}
+		if len(set) == 0 {
+			return adminSQL{}, errors.New("nothing to change: choose what to publish")
+		}
+		return one("ALTER PUBLICATION " + n + " SET (" + strings.Join(set, ", ") + ")"), nil
+
 	case tunnel.AdminPublicationDrop:
 		n, err := quoteIdent(op.Name)
 		if err != nil {
@@ -396,6 +417,74 @@ func buildAdminSQL(op *tunnel.PGAdminOp, actor string) (adminSQL, error) {
 		}
 		return one(s), nil
 
+	case tunnel.AdminSubscriptionPublications:
+		n, err := quoteIdent(op.Name)
+		if err != nil {
+			return adminSQL{}, err
+		}
+		if len(op.Publications) == 0 {
+			return adminSQL{}, errors.New("at least one publication is required")
+		}
+		pubs := make([]string, 0, len(op.Publications))
+		for _, p := range op.Publications {
+			q, err := quoteIdent(p)
+			if err != nil {
+				return adminSQL{}, err
+			}
+			pubs = append(pubs, q)
+		}
+		s := "ALTER SUBSCRIPTION " + n + " SET PUBLICATION " + strings.Join(pubs, ", ")
+		var with []string
+		if op.Refresh != nil {
+			with = append(with, "refresh = "+strconv.FormatBool(*op.Refresh))
+		}
+		if op.CopyData != nil && (op.Refresh == nil || *op.Refresh) {
+			with = append(with, "copy_data = "+strconv.FormatBool(*op.CopyData))
+		}
+		if len(with) > 0 {
+			s += " WITH (" + strings.Join(with, ", ") + ")"
+		}
+		return one(s), nil
+
+	case tunnel.AdminSubscriptionOptions:
+		n, err := quoteIdent(op.Name)
+		if err != nil {
+			return adminSQL{}, err
+		}
+		var set []string
+		if op.SlotName != "" {
+			if strings.EqualFold(op.SlotName, "NONE") {
+				set = append(set, "slot_name = NONE")
+			} else {
+				if _, err := quoteIdent(op.SlotName); err != nil {
+					return adminSQL{}, err
+				}
+				set = append(set, "slot_name = "+quoteLiteral(op.SlotName))
+			}
+		}
+		if op.SyncCommit != "" {
+			if !syncCommits[op.SyncCommit] {
+				return adminSQL{}, fmt.Errorf("%q is not one of off, local, remote_write, on, remote_apply", op.SyncCommit)
+			}
+			set = append(set, "synchronous_commit = "+quoteLiteral(op.SyncCommit))
+		}
+		if op.Streaming != "" {
+			if !streamings[op.Streaming] {
+				return adminSQL{}, fmt.Errorf("%q is not one of off, on, parallel", op.Streaming)
+			}
+			set = append(set, "streaming = "+quoteLiteral(op.Streaming))
+		}
+		if op.Binary != nil {
+			set = append(set, "binary = "+strconv.FormatBool(*op.Binary))
+		}
+		if op.DisableOnError != nil {
+			set = append(set, "disable_on_error = "+strconv.FormatBool(*op.DisableOnError))
+		}
+		if len(set) == 0 {
+			return adminSQL{}, errors.New("nothing to change")
+		}
+		return one("ALTER SUBSCRIPTION " + n + " SET (" + strings.Join(set, ", ") + ")"), nil
+
 	case tunnel.AdminSubscriptionDrop:
 		n, err := quoteIdent(op.Name)
 		if err != nil {
@@ -419,6 +508,9 @@ func buildAdminSQL(op *tunnel.PGAdminOp, actor string) (adminSQL, error) {
 	}
 	return adminSQL{}, fmt.Errorf("unknown operation %q", op.Kind)
 }
+
+var syncCommits = map[string]bool{"off": true, "local": true, "remote_write": true, "on": true, "remote_apply": true}
+var streamings = map[string]bool{"off": true, "on": true, "parallel": true}
 
 func tableList(tables []string) (string, error) {
 	if len(tables) == 0 {
@@ -510,6 +602,11 @@ type PGSubscription struct {
 	ApplyErrors   *int64 `json:"applyErrors,omitempty"`
 	SyncErrors    *int64 `json:"syncErrors,omitempty"`
 	SyncCommit    string `json:"syncCommit,omitempty"`
+	// Binary and Streaming are Postgres 14 and later, DisableOnError 15 and
+	// later; empty before.
+	Binary         string `json:"binary,omitempty"`
+	Streaming      string `json:"streaming,omitempty"`
+	DisableOnError string `json:"disableOnError,omitempty"`
 }
 
 // PGAdminDone answers a mutation: the redacted statement and Postgres's tag.
@@ -647,13 +744,34 @@ FROM pg_publication p ORDER BY p.pubname`
 	return out, nil
 }
 
+// onOff turns a boolean column's text into on/off, and leaves "" alone.
+func onOff(b string) string {
+	switch b {
+	case "t", "true":
+		return "on"
+	case "f", "false":
+		return "off"
+	}
+	return b
+}
+
 func listSubscriptions(ctx context.Context, conn *pgconn.PgConn) ([]PGSubscription, error) {
-	stats := pgMajor(conn.ParameterStatus("server_version")) >= 15
+	major := pgMajor(conn.ParameterStatus("server_version"))
 	errs := "NULL::bigint, NULL::bigint"
 	join := ""
-	if stats {
+	if major >= 15 {
 		errs = "ss.apply_error_count, ss.sync_error_count"
 		join = "LEFT JOIN pg_stat_subscription_stats ss ON ss.subid = s.oid"
+	}
+	// How it applies: the columns arrived in 14 (binary, streaming) and 15
+	// (disable_on_error); streaming is a bool in 14 and a char in 16.
+	opts := "'', '', ''"
+	if major >= 16 {
+		opts = "s.subbinary::text, CASE s.substream WHEN 'f' THEN 'off' WHEN 't' THEN 'on' WHEN 'p' THEN 'parallel' ELSE s.substream::text END, s.subdisableonerr::text"
+	} else if major == 15 {
+		opts = "s.subbinary::text, CASE WHEN s.substream THEN 'on' ELSE 'off' END, s.subdisableonerr::text"
+	} else if major == 14 {
+		opts = "s.subbinary::text, CASE WHEN s.substream THEN 'on' ELSE 'off' END, ''"
 	}
 	sql := `SELECT s.subname, s.subenabled, s.subconninfo, array_to_string(s.subpublications, E'\n'),
   coalesce(s.subslotname, ''), pg_get_userbyid(s.subowner), coalesce(obj_description(s.oid, 'pg_subscription'), ''),
@@ -664,7 +782,7 @@ func listSubscriptions(ctx context.Context, conn *pgconn.PgConn) ([]PGSubscripti
   (SELECT count(*) FROM pg_subscription_rel r WHERE r.srsubid = s.oid AND r.srsubstate = 'r'),
   (SELECT count(*) FROM pg_subscription_rel r WHERE r.srsubid = s.oid AND r.srsubstate IN ('d', 's', 'f')),
   (SELECT count(*) FROM pg_subscription_rel r WHERE r.srsubid = s.oid AND r.srsubstate = 'i'),
-  ` + errs + `, coalesce(s.subsynccommit, '')
+  ` + errs + `, coalesce(s.subsynccommit, ''), ` + opts + `
 FROM pg_subscription s
 LEFT JOIN pg_stat_subscription st ON st.subid = s.oid AND st.relid IS NULL
 ` + join + `
@@ -691,7 +809,8 @@ ORDER BY s.subname`
 			Publisher: publisherOf(ci), Conninfo: redactConninfo(ci), Publications: []string{},
 			Slot: string(r[4]), Owner: string(r[5]), SetUpBy: setUpBy(string(r[6])),
 			ReceivedLSN: string(r[8]), LatestEndLSN: string(r[9]), LastMessageAt: string(r[10]),
-			LatestEndAt: string(r[11]), ApplyLagS: num(r[12]), SyncCommit: string(r[18])}
+			LatestEndAt: string(r[11]), ApplyLagS: num(r[12]), SyncCommit: string(r[18]),
+			Binary: onOff(string(r[19])), Streaming: string(r[20]), DisableOnError: onOff(string(r[21]))}
 		if p := string(r[3]); p != "" {
 			s.Publications = strings.Split(p, "\n")
 		}
