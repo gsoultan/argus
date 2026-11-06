@@ -1440,6 +1440,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
                 <TrashNotice key={result.id} items={result.done.trash} collect={collect} canRestore={level !== 'read'} busy={running !== null} />
               )}
               <ResultsGrid result={result} narrow={narrow} collect={collect}
+                level={level} canAsk={Boolean(access.approvable || onAskForAccess)}
                 onAddToQuery={(text, params) => { const k = openTab({ sql: text, params }); if (k) setView('query') }}
                 edit={level && level !== 'read' ? { allowed: true, busy: running !== null, inTransaction: txOpen.current, cut: result?.cut, save: saveEdits } : undefined}
                 onRows={(rows) => setResults((prev) => {
