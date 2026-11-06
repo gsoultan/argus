@@ -206,6 +206,17 @@ type updatePlatform interface {
 	launch(ctx context.Context, planPath string) error
 }
 
+// archiveInstall is a host whose release file is an archive holding the
+// agent, rather than a package that installs it: Windows, where the agent
+// is one executable the service runs. unpack takes the agent out of the
+// verified archive into dir, before anything stops, so an archive without
+// one is found while the old version is still serving. The binary is then
+// the whole install, so the copy of the running one is all a rollback needs
+// and the running version's archive is not downloaded.
+type archiveInstall interface {
+	unpack(archive, dir string) (string, error)
+}
+
 // Updater carries out update requests.
 type Updater struct {
 	StateDir string
@@ -573,10 +584,19 @@ func (u *Updater) prepare(ctx context.Context, req UpdateRequest) (UpdatePlan, e
 		return UpdatePlan{}, err
 	}
 	plan.Package = pkg
+	archive, isArchive := u.platform.(archiveInstall)
+	if isArchive {
+		bin, err := archive.unpack(pkg, dir)
+		_ = os.Remove(pkg)
+		if err != nil {
+			return UpdatePlan{}, fmt.Errorf("the release for %s: %w; nothing was changed", req.Version, err)
+		}
+		plan.Package = bin
+	}
 
 	// Something to go back to. A build from source has no release, and a
 	// release that cannot be had now still has the binary copied below.
-	if reReleaseVersion.MatchString(u.Version) {
+	if reReleaseVersion.MatchString(u.Version) && !isArchive {
 		if old, err := u.fetchVerified(ctx, base, u.Version, filepath.Join(dir, "previous")); err == nil {
 			plan.Rollback = old
 		} else if ctx.Err() == nil {
@@ -584,7 +604,7 @@ func (u *Updater) prepare(ctx context.Context, req UpdateRequest) (UpdatePlan, e
 				"going back would restore the binary alone", "error", err)
 		}
 	}
-	plan.Previous = filepath.Join(dir, "argus-agent.previous")
+	plan.Previous = filepath.Join(dir, "argus-agent.previous"+filepath.Ext(u.Executable))
 	if err := copyFile(u.Executable, plan.Previous, 0o755); err != nil {
 		return UpdatePlan{}, fmt.Errorf("cannot keep a copy of the running agent: %w", err)
 	}
@@ -746,6 +766,42 @@ func mustJSON(v any) []byte {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	return b
 }
+
+// awaitAgentReady waits until version says in ready.json, after since, that
+// it is serving: taking logins, and back on the tunnel when plan needs it.
+// crashes says how many times the service has exited on its own since the
+// wait began; crashLoop of them ends the wait early, because a binary that
+// cannot start would otherwise keep logins waiting for all of wait.
+func awaitAgentReady(plan UpdatePlan, version string, since time.Time, wait time.Duration,
+	crashes func() int) error {
+	deadline := time.Now().Add(wait)
+	var last AgentReady
+	for time.Now().Before(deadline) {
+		if n := crashes(); n >= crashLoop {
+			return fmt.Errorf("exited %d times as it started", n)
+		}
+		if r, ok := ReadReady(plan.StateDir); ok && r.At.After(since.Add(-time.Second)) {
+			last = r
+			if r.Version == version && r.Listening && (r.Tunnel || !plan.NeedTunnel) {
+				return nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	switch {
+	case last.Version == "":
+		return fmt.Errorf("did not start within %s", wait)
+	case last.Version != version:
+		return fmt.Errorf("did not start within %s (%s is running)", wait, last.Version)
+	case !last.Listening:
+		return fmt.Errorf("started but did not take logins within %s", wait)
+	}
+	return fmt.Errorf("started but did not reconnect to Argus within %s", wait)
+}
+
+// crashLoop is how many times a new version may exit on its own before the
+// helper stops waiting for it.
+const crashLoop = 3
 
 /* ── update.json ─────────────────────────────────────────────────────────── */
 
