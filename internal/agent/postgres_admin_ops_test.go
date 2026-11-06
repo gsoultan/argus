@@ -49,6 +49,28 @@ func TestAdminSQLBuilders(t *testing.T) {
 	if want := `CREATE PUBLICATION "p" FOR TABLE "public"."orders", "sales"."""a.b""" WITH (publish = E'insert, update')`; b.run[0] != want {
 		t.Fatalf("got %q, want %q", b.run[0], want)
 	}
+	// Changing what exists, found on the server or not: the same statements
+	// Postgres documents.
+	for _, c := range []struct {
+		op   *tunnel.PGAdminOp
+		want string
+	}{
+		{&tunnel.PGAdminOp{Kind: tunnel.AdminPublicationOptions, Name: "p", Publish: []string{"insert", "delete"}, ViaRoot: bp(true)},
+			`ALTER PUBLICATION "p" SET (publish = E'insert, delete', publish_via_partition_root = true)`},
+		{&tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionPublications, Name: "s", Publications: []string{"a", "B c"}, Refresh: bp(true), CopyData: bp(false)},
+			`ALTER SUBSCRIPTION "s" SET PUBLICATION "a", "B c" WITH (refresh = true, copy_data = false)`},
+		{&tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionPublications, Name: "s", Publications: []string{"a"}, Refresh: bp(false), CopyData: bp(true)},
+			`ALTER SUBSCRIPTION "s" SET PUBLICATION "a" WITH (refresh = false)`},
+		{&tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionOptions, Name: "s", SlotName: "none", SyncCommit: "remote_apply", Streaming: "parallel", Binary: bp(true), DisableOnError: bp(false)},
+			`ALTER SUBSCRIPTION "s" SET (slot_name = NONE, synchronous_commit = E'remote_apply', streaming = E'parallel', binary = true, disable_on_error = false)`},
+		{&tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionOptions, Name: "s", SlotName: "my_slot"},
+			`ALTER SUBSCRIPTION "s" SET (slot_name = E'my_slot')`},
+	} {
+		b, err := buildAdminSQL(c.op, "")
+		if err != nil || len(b.run) != 1 || b.run[0] != c.want {
+			t.Errorf("%s: got %q, %v; want %q", c.op.Kind, b.run, err, c.want)
+		}
+	}
 	b, _ = buildAdminSQL(&tunnel.PGAdminOp{Kind: tunnel.AdminSubscriptionDrop, Name: "s", PublisherGone: true}, "")
 	if len(b.run) != 3 || b.run[1] != `ALTER SUBSCRIPTION "s" SET (slot_name = NONE)` {
 		t.Fatalf("publisher-gone drop: %q", b.run)
@@ -66,6 +88,13 @@ func TestAdminSQLBuilders(t *testing.T) {
 		{Kind: tunnel.AdminSubscriptionCreate, Name: "s", Publications: []string{"p"}, Conn: &tunnel.PGConnInfo{Host: "h", DBName: "d", User: "u", SSLMode: "yes"}},
 		{Kind: tunnel.AdminSubscriptionCreate, Name: "s", Conn: &tunnel.PGConnInfo{Host: "h", DBName: "d", User: "u"}},
 		{Kind: tunnel.AdminExtensionDrop, Name: strings.Repeat("x", 64)},
+		{Kind: tunnel.AdminPublicationOptions, Name: "p"},
+		{Kind: tunnel.AdminPublicationOptions, Name: "p", Publish: []string{"select"}},
+		{Kind: tunnel.AdminSubscriptionPublications, Name: "s"},
+		{Kind: tunnel.AdminSubscriptionOptions, Name: "s"},
+		{Kind: tunnel.AdminSubscriptionOptions, Name: "s", SyncCommit: "off; DROP"},
+		{Kind: tunnel.AdminSubscriptionOptions, Name: "s", Streaming: "yes"},
+		{Kind: tunnel.AdminSubscriptionOptions, Name: "s", SlotName: strings.Repeat("x", 64)},
 	} {
 		if _, err := buildAdminSQL(bad, ""); err == nil {
 			t.Errorf("%+v was accepted", bad)

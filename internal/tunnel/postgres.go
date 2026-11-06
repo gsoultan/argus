@@ -194,7 +194,10 @@ const (
 	AdminPublicationList   = "publication.list"
 	AdminPublicationCreate = "publication.create"
 	AdminPublicationTables = "publication.tables"
-	AdminPublicationDrop   = "publication.drop"
+	// AdminPublicationOptions changes what a publication sends (publish,
+	// publish_via_partition_root); the one change an all-tables one allows.
+	AdminPublicationOptions = "publication.options"
+	AdminPublicationDrop    = "publication.drop"
 
 	AdminSubscriptionList       = "subscription.list"
 	AdminSubscriptionCreate     = "subscription.create"
@@ -202,7 +205,13 @@ const (
 	AdminSubscriptionEnable     = "subscription.enable"
 	AdminSubscriptionDisable    = "subscription.disable"
 	AdminSubscriptionRefresh    = "subscription.refresh"
-	AdminSubscriptionDrop       = "subscription.drop"
+	// AdminSubscriptionPublications re-points a subscription at another
+	// set of the publisher's publications; AdminSubscriptionOptions sets
+	// its slot and how it applies (synchronous_commit, binary, streaming,
+	// disable_on_error).
+	AdminSubscriptionPublications = "subscription.publications"
+	AdminSubscriptionOptions      = "subscription.options"
+	AdminSubscriptionDrop         = "subscription.drop"
 )
 
 // PGAdminOp is one administrative operation. Only the fields its Kind uses
@@ -226,6 +235,9 @@ type PGAdminOp struct {
 	AllTables bool     `json:"allTables,omitempty"`
 	Tables    []string `json:"tables,omitempty"`
 	Publish   []string `json:"publish,omitempty"`
+	// ViaRoot is publish_via_partition_root, for publication.options; nil
+	// leaves it.
+	ViaRoot *bool `json:"viaRoot,omitempty"`
 	// Subscription: the publisher and its publications.
 	Conn         *PGConnInfo `json:"conn,omitempty"`
 	Publications []string    `json:"publications,omitempty"`
@@ -234,6 +246,15 @@ type PGAdminOp struct {
 	Enabled      *bool       `json:"enabled,omitempty"`
 	Connect      *bool       `json:"connect,omitempty"`
 	SlotName     string      `json:"slotName,omitempty"`
+	// Refresh is whether subscription.publications also refreshes (the
+	// default, true, needs the subscription enabled); CopyData goes with it.
+	Refresh *bool `json:"refresh,omitempty"`
+	// For subscription.options. Each is left alone when empty or nil;
+	// SlotName "NONE" forgets the slot (the subscription must be disabled).
+	SyncCommit     string `json:"syncCommit,omitempty"`
+	Streaming      string `json:"streaming,omitempty"`
+	Binary         *bool  `json:"binary,omitempty"`
+	DisableOnError *bool  `json:"disableOnError,omitempty"`
 	// PublisherGone drops a subscription without contacting the publisher
 	// to remove its slot: the slot is then the publisher's to clean up.
 	PublisherGone bool `json:"publisherGone,omitempty"`
