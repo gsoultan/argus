@@ -9,6 +9,7 @@ import { assetsQuery, databasesQuery, meQuery, sessionsQuery, usersQuery } from 
 import { seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 import { pagesFor } from '~/components/nav'
+import { isBroker } from '~/lib/engines'
 
 /**
  * Jump to anything from anywhere.
@@ -91,7 +92,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
           label: d.dbname,
           hint: `${d.hostname.split('.')[0]} · ${d.label} · ${dbs?.access[d.id]?.level || 'ask for access'}`,
           kind: 'Database',
-          go: () => d.engine === 'rabbitmq'
+          go: () => isBroker(d.engine)
             ? navigate({ to: '/brokers/$brokerId', params: { brokerId: d.id } })
             : navigate({ to: '/databases/$dbId', params: { dbId: d.id } }),
         })

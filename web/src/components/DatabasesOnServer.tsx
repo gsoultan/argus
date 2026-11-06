@@ -13,7 +13,8 @@ import { bytes } from '~/components/primitives'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { databasesOnAssetQuery, useCreateDatabase } from '~/lib/queries'
 import { FS } from '~/theme'
-import { ENGINES, engineOf } from '~/lib/engines'
+import { ENGINES, engineOf, isBroker } from '~/lib/engines'
+import { kafkaCovered } from '~/lib/kafka'
 import type { Asset, DBEngine, DBLabel } from '~/types/domain'
 
 /**
@@ -52,7 +53,7 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
             {list.map((d) => (
               <Table.Tr key={d.id}>
                 <Table.Td>
-                  <Text size={FS.body} fw={600}>{d.engine === 'redis' ? `Redis · db ${d.dbname}` : d.engine === 'rabbitmq' ? `RabbitMQ · ${d.dbname}` : d.dbname}</Text>
+                  <Text size={FS.body} fw={600}>{d.engine === 'redis' ? `Redis · db ${d.dbname}` : d.engine === 'rabbitmq' ? `RabbitMQ · ${d.dbname}` : d.engine === 'kafka' ? `Kafka · ${d.dbname === '*' ? 'every topic' : d.dbname}` : d.dbname}</Text>
                   <Text size={FS.micro} c="dimmed" ff="monospace">{engineOf(d.engine).label} · {d.host}:{d.port}</Text>
                 </Table.Td>
                 <Table.Td>
@@ -66,7 +67,7 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
                         Who can connect
                       </ButtonLink>
                     )}
-                    <ButtonLink {...(d.engine === 'rabbitmq' ? { to: '/brokers/$brokerId', params: { brokerId: d.id } } as const : { to: '/databases/$dbId', params: { dbId: d.id } } as const)}
+                    <ButtonLink {...(isBroker(d.engine) ? { to: '/brokers/$brokerId', params: { brokerId: d.id } } as const : { to: '/databases/$dbId', params: { dbId: d.id } } as const)}
                       size="compact-xs" variant="default">Open</ButtonLink>
                   </Group>
                 </Table.Td>
@@ -121,6 +122,9 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const listing = !manual && ans?.state === 'ok'
   const failed = !manual && (found.isError || (ans !== undefined && ans.state !== 'ok'))
   const multi = engine !== 'redis'
+  // A Kafka entry is a scope of topics, typed, not one picked from a list;
+  // the agent's list of topics shows what the scope would cover.
+  const scoped = engine === 'kafka'
 
   const rows = useMemo(() => {
     const list = (ans?.databases ?? []).filter((d) => !(engine === 'postgres' && d.name === 'postgres'))
@@ -130,12 +134,13 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   // A Redis is one entry, whichever db it opens in; once added, it is added.
   const redisAdded = engine === 'redis' && (ans?.databases ?? []).some((d) => d.added)
 
-  const names = listing ? picked : [typed.trim() || info.defaults.dbname].filter(Boolean)
+  const names = listing && !scoped ? picked : [typed.trim() || info.defaults.dbname].filter(Boolean)
   const nameOk = (n: string) => engine === 'postgres' ? n.length > 0 && n.length <= 63 && !/["'\\\x00]/.test(n)
     : engine === 'mysql' ? n.length > 0 && n.length <= 63 && !/[/\\.\x00]/.test(n) && !/ $/.test(n)
       && !['mysql', 'sys', 'information_schema', 'performance_schema'].includes(n.toLowerCase())
     : engine === 'redis' ? /^\d{1,4}$/.test(n)
     : engine === 'mongodb' ? n.length > 0 && new TextEncoder().encode(n).length < 64 && !/[/\\. "$*<>:|?\x00]/.test(n) && !['admin', 'local', 'config'].includes(n)
+    : engine === 'kafka' ? /^(\*|[A-Za-z0-9._-]{1,63})$/.test(n) && n !== '.' && n !== '..'
     : n.length > 0 && n.length <= 255 && !/[\x00\n\r]/.test(n)
   const valid = names.length > 0 && names.every(nameOk) && !redisAdded
 
@@ -154,7 +159,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           ...(host.trim() ? { host: host.trim() } : {}),
           ...(engine === 'postgres' ? { poolerPort: Number(poolerPort) || 0 } : {}),
           ...(engine === 'redis' ? { configPath: configPath.trim() || info.defaults.configPath } : {}),
-          ...((engine === 'mysql' || engine === 'mongodb') && configPath.trim() ? { configPath: configPath.trim() } : {}),
+          ...((engine === 'mysql' || engine === 'mongodb' || engine === 'kafka') && configPath.trim() ? { configPath: configPath.trim() } : {}),
         })
         added.push(n)
       }
@@ -172,6 +177,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const why = found.isError ? (found.error as Error).message
     : ans?.state === 'offline' ? `The agent on ${asset.hostname} is offline, so it can't look. You can still add by name; it will connect once the agent is back.`
     : ans?.state === 'unsupported' ? `This server's agent is too old to list databases. Update the agent from the server's page, or type the name below.`
+    : ans?.error && scoped ? `${ans.error}. Check the port and the admin file; you can still add the topics.`
     : ans?.error ? `${ans.error}. Check the ${engine === 'rabbitmq' ? 'management port' : 'port'}, or type the name.`
     : ''
 
@@ -182,7 +188,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
         <SegmentedControl value={engine} onChange={(v) => pick(v as DBEngine)} fullWidth
           data={(Object.keys(ENGINES) as DBEngine[]).map((e) => ({ label: ENGINES[e].label, value: e }))} />
 
-        {!manual && (
+        {!manual && !scoped && (
           <Stack gap={6}>
             <Group gap="xs" wrap="nowrap">
               <Text size={FS.meta} fw={500}>{engine === 'rabbitmq' ? 'Vhosts' : engine === 'redis' ? 'Databases in this Redis' : 'Databases on this server'}</Text>
@@ -260,17 +266,31 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           </Stack>
         )}
 
-        {(manual || failed) && (
+        {scoped && (
+          <Stack gap={6}>
+            <TextInput label={info.nameLabel} placeholder="*" value={typed} onChange={(e) => setTyped(e.currentTarget.value)}
+              styles={{ input: { fontFamily: 'var(--font-mono)' } }} description={info.nameHint} />
+            {found.isFetching ? (
+              <Group gap={6}><Loader size={12} /><Text size={FS.micro} c="dimmed">Asking the agent for the cluster's topics…</Text></Group>
+            ) : listing ? (
+              <KafkaCoverage scope={typed.trim() || '*'} topics={(ans?.databases ?? []).map((d) => d.name)} truncated={ans?.truncated} />
+            ) : failed ? (
+              <Alert color={ans?.state === 'offline' ? 'rose' : 'amber'} variant="light" p="xs"><Text size={FS.meta}>{why}</Text></Alert>
+            ) : null}
+          </Stack>
+        )}
+
+        {(manual || failed) && !scoped && (
           <TextInput label={info.nameLabel} placeholder={info.defaults.dbname || 'orders'} value={typed}
             onChange={(e) => setTyped(e.currentTarget.value)}
             description={<>{info.nameHint}{manual && <> <Anchor component="button" type="button" size={FS.micro} onClick={() => { setManual(false); setTyped('') }}>Pick from the server instead</Anchor></>}</>} />
         )}
 
         {engine !== 'postgres' && (
-          <TextInput label={engine === 'rabbitmq' ? 'Management API address' : 'Address'} placeholder={info.defaults.host}
+          <TextInput label={engine === 'rabbitmq' ? 'Management API address' : engine === 'kafka' ? 'Listener address' : 'Address'} placeholder={info.defaults.host}
             value={host} onChange={(e) => setHost(e.currentTarget.value)}
-            description={engine !== 'rabbitmq'
-              ? 'On this server: 127.0.0.1, or the path of its unix socket.'
+            description={engine === 'kafka' ? 'On this server: a SASL listener with SCRAM, and an authorizer on the cluster.'
+              : engine !== 'rabbitmq' ? 'On this server: 127.0.0.1, or the path of its unix socket.'
               : 'On this server, with the management plugin on (rabbitmq-plugins enable rabbitmq_management).'} />
         )}
         <NumberInput label={engine === 'rabbitmq' ? 'Management port' : 'Port'} value={port} onChange={setPort} min={1} max={65535}
@@ -290,6 +310,11 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
             onChange={(e) => setConfigPath(e.currentTarget.value)}
             description="A file on the server, readable by root only, with user = and password = for an account that may create users in this database. The agent reads it there; the password never leaves the server and is never stored in Argus." />
+        )}
+        {engine === 'kafka' && (
+          <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
+            onChange={(e) => setConfigPath(e.currentTarget.value)} styles={{ input: { fontFamily: 'var(--font-mono)' } }}
+            description="On the server, readable by root only: user = and password = for a SCRAM account that may manage users and ACLs. The agent gives each person their own user with ACLs on these topics, for their session only. The password never leaves the server." />
         )}
         {engine === 'rabbitmq' && (
           <Text size={FS.micro} c="dimmed">
@@ -316,5 +341,19 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
         </Group>
       </Stack>
     </Modal>
+  )
+}
+
+/** Which of the cluster's topics a scope covers, so a prefix can be checked before it is saved. */
+function KafkaCoverage({ scope, topics, truncated }: { scope: string; topics: string[]; truncated?: boolean }) {
+  const covered = kafkaCovered(scope, topics)
+  const shown = covered.slice(0, 6)
+  return (
+    <Text size={FS.micro} c="dimmed">
+      {topics.length === 0 ? 'The agent found no topics on this cluster yet.'
+        : <>Covers {covered.length} of {truncated ? 'the first ' : ''}{topics.length} topics{shown.length ? ': ' : '.'}
+          {shown.length > 0 && <Text span ff="monospace" size={FS.micro}>{shown.join(', ')}{covered.length > shown.length ? ', …' : ''}</Text>}</>}
+      {' '}Internal topics such as __consumer_offsets are never shown.
+    </Text>
   )
 }

@@ -5,6 +5,7 @@ import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router'
 import { IconInfoCircle } from '@tabler/icons-react'
 import { useCallback } from 'react'
 import { BrokerWorkspace, type BrokerTab } from '~/components/broker/BrokerWorkspace'
+import { KafkaWorkspace, type KafkaTab } from '~/components/kafka/KafkaWorkspace'
 import { PageBody, PageHeader } from '~/components/page'
 import { notifyError } from '~/lib/notify'
 import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
@@ -14,19 +15,22 @@ import type { DBLevel } from '~/types/domain'
 import { AskModal } from '~/components/DatabaseAskModal'
 
 /**
- * One RabbitMQ vhost's workspace. As for a database, nothing here decides
+ * One RabbitMQ vhost's workspace, or one Kafka entry's. As for a database, nothing here decides
  * access: the ticket route does, and the agent checks the grant again. The
- * tab, queue and exchange are in the address, so a link opens the same view.
+ * tab, queue, exchange and topic are in the address, so a link opens the same view.
  */
-interface Search { tab?: BrokerTab; queue?: string; exchange?: string }
-const TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections']
+interface Search { tab?: BrokerTab | KafkaTab; queue?: string; exchange?: string; topic?: string }
+const TABS: (BrokerTab | KafkaTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups']
+const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups']
+const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections']
 
 export const Route = createFileRoute('/brokers/$brokerId')({
   component: BrokerPage,
   validateSearch: (s: Record<string, unknown>): Search => ({
-    ...(typeof s.tab === 'string' && (TABS as string[]).includes(s.tab) ? { tab: s.tab as BrokerTab } : {}),
+    ...(typeof s.tab === 'string' && (TABS as string[]).includes(s.tab) ? { tab: s.tab as BrokerTab | KafkaTab } : {}),
     ...(typeof s.queue === 'string' ? { queue: s.queue } : {}),
     ...(typeof s.exchange === 'string' ? { exchange: s.exchange } : {}),
+    ...(typeof s.topic === 'string' ? { topic: s.topic } : {}),
   }),
   loader: ({ context, params }) =>
     Promise.all([
@@ -69,16 +73,17 @@ function BrokerPage() {
   }
   if (!data) return null
   const { database, access } = data
-  if (database.engine !== 'rabbitmq') return <Navigate to="/databases/$dbId" params={{ dbId: brokerId }} replace />
+  const kafka = database.engine === 'kafka'
+  if (database.engine !== 'rabbitmq' && !kafka) return <Navigate to="/databases/$dbId" params={{ dbId: brokerId }} replace />
 
   if (!access.level) {
     return (
       <Box>
-        <PageHeader title={database.dbname} crumbs={crumbs} description={`RabbitMQ vhost on ${database.hostname} · ${database.label}`} />
+        <PageHeader title={database.dbname} crumbs={crumbs} description={`${kafka ? 'Kafka topics' : 'RabbitMQ vhost'} on ${database.hostname} · ${database.label}`} />
         <PageBody>
           <Stack gap="md" maw={560}>
             <Alert color="azure" variant="light" icon={<IconInfoCircle size={16} />}>
-              You can ask for <b>{access.approvable}</b> on this vhost. An approver gets it straight away, and you can open it as soon as
+              You can ask for <b>{access.approvable}</b> on {kafka ? 'these topics' : 'this vhost'}. An approver gets it straight away, and you can open it as soon as
               they say yes.
             </Alert>
             <Button onClick={ask.open} style={{ alignSelf: 'flex-start' }}>Ask for access</Button>
@@ -86,6 +91,26 @@ function BrokerPage() {
           <AskModal dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable ?? 'read'} />
         </PageBody>
       </Box>
+    )
+  }
+
+  if (kafka) {
+    const tab = (KAFKA_TABS as string[]).includes(search.tab ?? '') ? (search.tab as KafkaTab) : 'overview'
+    return (
+      <>
+        <KafkaWorkspace
+          database={database}
+          access={access}
+          getTicket={getTicket}
+          endpoint={postgresEndpoint}
+          onAskForAccess={access.approvable ? ask.open : undefined}
+          tab={tab}
+          topic={search.topic}
+          onNavigate={(s) => void navigate({ search: { tab: s.tab === 'overview' ? undefined : s.tab, topic: s.topic } })}
+          settingsLink={canSee(me?.role, 'admin')}
+        />
+        {access.approvable && <AskModal dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable} />}
+      </>
     )
   }
 
@@ -97,7 +122,7 @@ function BrokerPage() {
         getTicket={getTicket}
         endpoint={postgresEndpoint}
         onAskForAccess={access.approvable ? ask.open : undefined}
-        tab={search.tab ?? 'overview'}
+        tab={(RABBIT_TABS as string[]).includes(search.tab ?? '') ? (search.tab as BrokerTab) : 'overview'}
         queue={search.queue}
         exchange={search.exchange}
         onNavigate={(s) => void navigate({ search: { tab: s.tab === 'overview' ? undefined : s.tab, queue: s.queue, exchange: s.exchange } })}

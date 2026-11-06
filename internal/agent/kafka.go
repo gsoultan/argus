@@ -925,6 +925,9 @@ func discoverKafka(ctx context.Context, d tunnel.GrantDiscover) tunnel.DiscoverR
 	}
 	res := tunnel.DiscoverResult{OK: true}
 	for _, t := range td.Sorted() {
+		if t.IsInternal {
+			continue
+		}
 		res.Databases = append(res.Databases, tunnel.Discovered{Name: t.Topic})
 	}
 	if len(res.Databases) > 1000 {

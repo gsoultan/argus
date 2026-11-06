@@ -8,6 +8,7 @@ import { engineOf } from '~/lib/engines'
 import { databasesQuery } from '~/lib/queries'
 import { FS } from '~/theme'
 import type { DBLabel } from '~/types/domain'
+import { isBroker } from '~/lib/engines'
 
 const LABEL_COLOR: Record<DBLabel, string> = { production: 'rose', staging: 'amber', development: 'teal' }
 
@@ -22,7 +23,7 @@ export function DatabaseList({ currentId }: { currentId: string }) {
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return (data?.databases ?? [])
-      .filter((d) => d.engine !== 'rabbitmq')
+      .filter((d) => !isBroker(d.engine))
       .filter((d) => !needle || d.dbname.toLowerCase().includes(needle) || d.hostname.toLowerCase().includes(needle))
   }, [data, q])
 

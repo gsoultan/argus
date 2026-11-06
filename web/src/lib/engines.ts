@@ -83,6 +83,24 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       dba: 'See and close the vhost’s connections too.',
     },
   },
+  kafka: {
+    label: 'Kafka',
+    noun: 'topic scope',
+    nameLabel: 'Topics',
+    nameHint: 'Which topics this entry covers: * for every topic, or a prefix such as orders. for the topics that start with it.',
+    defaults: { dbname: '*', host: '127.0.0.1', port: 9092, configPath: '/etc/argus/kafka.conf' },
+    levels: {
+      read: 'See topics, partitions and consumer lag, and peek at messages. Nothing is committed for any group.',
+      write: 'Publish messages too.',
+      owner: 'Create and delete topics in the scope, and change their settings.',
+      dba: 'The same as owner. Nothing on the cluster itself: no brokers, no other users, no ACLs.',
+    },
+  },
+}
+
+/** Engines shown under Brokers instead of Databases. */
+export function isBroker(e: string | undefined): boolean {
+  return e === 'rabbitmq' || e === 'kafka'
 }
 
 export function engineOf(e: string | undefined): EngineInfo {
@@ -91,7 +109,7 @@ export function engineOf(e: string | undefined): EngineInfo {
 
 /** A sessions-list protocol that is a database's statement recording. */
 export function isStatementProtocol(protocol: string | undefined): boolean {
-  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'mongodb' || protocol === 'redis' || protocol === 'rabbitmq'
+  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'mongodb' || protocol === 'redis' || protocol === 'rabbitmq' || protocol === 'kafka'
 }
 
 /** An engine the SQL workspace opens: Postgres, or MySQL and MariaDB. */

@@ -14,7 +14,7 @@ import { relTime } from '~/components/primitives'
 import { databasesQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import { canSee } from '~/lib/roles'
-import { engineOf } from '~/lib/engines'
+import { engineOf, isBroker } from '~/lib/engines'
 import { FS, INK } from '~/theme'
 import { EngineMark } from '~/components/EngineMark'
 import { loadRecentDatabases } from '~/lib/recentDatabases'
@@ -67,7 +67,7 @@ function Databases() {
   const narrow = useMediaQuery('(max-width: 48em)')
 
   // Message brokers have their own page, so the databases are the rest.
-  const all = useMemo(() => (data?.databases ?? []).filter((d) => d.engine !== 'rabbitmq'), [data])
+  const all = useMemo(() => (data?.databases ?? []).filter((d) => !isBroker(d.engine)), [data])
 
   const rows = useMemo(() => {
     const list = all

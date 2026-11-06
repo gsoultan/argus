@@ -80,7 +80,7 @@ function DatabaseSettings() {
   const db = data.database
   const info = engineOf(db.engine)
   const LEVELS = levelsFor(db)
-  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'mongodb' ? `MongoDB · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.dbname
+  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'mongodb' ? `MongoDB · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.engine === 'kafka' ? `Kafka · ${db.dbname === '*' ? 'every topic' : db.dbname}` : db.dbname
   const names = new Map((users ?? []).map((u) => [u.email, u.displayName]))
 
   const onRemove = async (id: string, label: string) => {
@@ -283,16 +283,16 @@ function Connection({ db }: { db: Database }) {
 }
 
 /**
- * Where a MongoDB, a Redis or a RabbitMQ is, and how the agent signs in as
- * its admin there. Nothing here is a credential: for MongoDB and Redis it is
- * the path of the file on the server that holds one.
+ * Where a MongoDB, a Redis, a RabbitMQ or a Kafka is, and how the agent signs
+ * in as its admin there. Nothing here is a credential: for MongoDB, Redis and
+ * Kafka it is the path of the file on the server that holds one.
  */
 function StoreConnection({ db }: { db: Database }) {
   const update = useUpdateDatabase()
   const [host, setHost] = useState(db.host)
   const [port, setPort] = useState<number | string>(db.port)
   const [conf, setConf] = useState(db.configPath ?? '')
-  const withConf = db.engine === 'redis' || db.engine === 'mysql' || db.engine === 'mongodb'
+  const withConf = db.engine === 'redis' || db.engine === 'mysql' || db.engine === 'mongodb' || db.engine === 'kafka'
   const dirty = host.trim() !== db.host || Number(port) !== db.port || (withConf && conf.trim() !== (db.configPath ?? ''))
   const save = async () => {
     try {
@@ -305,9 +305,10 @@ function StoreConnection({ db }: { db: Database }) {
   }
   return (
     <Stack gap="md">
-      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : db.engine === 'mongodb' ? 'MongoDB' : 'RabbitMQ management API'}
-        description={db.engine !== 'rabbitmq'
+      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : db.engine === 'mongodb' ? 'MongoDB' : db.engine === 'kafka' ? 'Kafka listener' : 'RabbitMQ management API'}
+        description={db.engine !== 'rabbitmq' && db.engine !== 'kafka'
           ? 'On the server itself: a loopback address or the path of its unix socket. The agent refuses anything else.'
+          : db.engine === 'kafka' ? 'On the server itself, on loopback: a SASL listener with SCRAM. The agent refuses anything else, and a cluster with no authorizer.'
           : 'On the server itself, on loopback. The agent refuses anything else.'}>
         <Stack gap="sm">
           <Group align="flex-end" gap="sm">
@@ -327,6 +328,10 @@ function StoreConnection({ db }: { db: Database }) {
               placeholder="/etc/argus/mongodb.conf"
               description="A file on the server, readable by root only, with user = and password = for an account that may create users in this database. The agent reads it only to give and take each person’s user. Empty means /etc/argus/mongodb.conf." />
           )}
+          {db.engine === 'kafka' && (
+            <TextInput label="Admin file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420} placeholder="/etc/argus/kafka.conf"
+              description="On the server, readable by root only: user = and password = (and mechanism = SCRAM-SHA-256 if not 512) for an account that may manage SCRAM users and ACLs. Empty means /etc/argus/kafka.conf." />
+          )}
           <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
         </Stack>
       </SectionCard>
@@ -338,6 +343,8 @@ function StoreConnection({ db }: { db: Database }) {
             ? 'Each person gets a MongoDB user named argus-<login>-<level> in this database, with that level’s built-in roles on it and a one-time password for their session, and it is dropped when their last session closes. MongoDB 5.0 or later, with access control on: a server anyone can use without signing in is refused. Argus never touches a user whose name does not start with argus-.'
             : db.engine === 'redis'
             ? 'Each person gets a Redis ACL user named argus-<login>-<level> with a one-time password for their session, and it is deleted when their last session closes. Redis 6 or later, or Valkey. Argus never touches a user whose name does not start with argus-.'
+            : db.engine === 'kafka'
+            ? 'Each person gets a SCRAM user named argus-<login>-<level> with a one-time password, and ACLs for their level on this entry’s topics only; the user and its ACLs are deleted when their last session closes. Argus never touches a user whose name does not start with argus-, and never changes another ACL.'
             : 'The agent runs rabbitmqctl on the server to add a user named argus-<login>-<level> with its tag and permissions on this vhost, the password on standard input, and deletes it when the last session closes. Argus never touches a user whose name does not start with argus-.'}
         </Text>
       </SectionCard>
@@ -391,9 +398,9 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
           </Stack>
         ) : (
           <Stack gap="sm">
-            {num('statementTimeoutS', db.engine === 'mongodb' ? 'Stop a command after' : db.engine === 'redis' ? 'Stop waiting for a command after' : 'Stop waiting for RabbitMQ after',
+            {num('statementTimeoutS', db.engine === 'mongodb' ? 'Stop a command after' : db.engine === 'redis' ? 'Stop waiting for a command after' : db.engine === 'kafka' ? 'Stop waiting for Kafka after' : 'Stop waiting for RabbitMQ after',
               db.engine === 'mongodb' ? 'MongoDB stops it on the server, so a runaway query ends on its own.' : 'The session then starts a fresh connection.', 60, 's')}
-            {num('maxRows', db.engine === 'mongodb' ? 'Documents shown per command' : db.engine === 'redis' ? 'Items shown per value or reply' : 'Queues or messages shown at once', 'Larger answers are cut and say so.', db.engine === 'mongodb' ? 1000 : 10000, db.engine === 'mongodb' ? 'documents' : 'items')}
+            {num('maxRows', db.engine === 'mongodb' ? 'Documents shown per command' : db.engine === 'redis' ? 'Items shown per value or reply' : db.engine === 'kafka' ? 'Messages read at once, at most' : 'Queues or messages shown at once', 'Larger answers are cut and say so.', db.engine === 'mongodb' ? 1000 : 10000, db.engine === 'mongodb' ? 'documents' : 'items')}
             {db.engine === 'redis' && num('keysLimit', 'Run KEYS only on dbs up to', 'KEYS stops Redis while it walks every key; past this, people use the key browser, which uses SCAN.', 10000, 'keys')}
             {num('idleTimeoutS', 'End idle sessions after', '', 1800, 's')}
             {num('maxSessionS', 'Longest session', 'The person’s user is removed when it ends.', 28800, 's')}
@@ -406,6 +413,8 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
             ? 'Every command, and every collection opened in the browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'
             : db.engine === 'redis'
             ? 'Every command, and every value read in the key browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'
+            : db.engine === 'kafka'
+            ? 'Every read of messages, publish (with its key, headers and value), and topic created or deleted is recorded before it runs, in a hash chain the verifier checks.'
             : 'Every peek, publish (with its payload), purge and change is recorded before it is sent, in a hash chain the verifier checks.'}</Text></Box>
             <Badge variant="light" color="teal" radius="sm">Always on</Badge></Group>
           <Group justify="space-between" mt="sm"><Box><Text size={FS.body} fw={600}>Replies</Text><Text size={FS.micro} c="dimmed">Never recorded. A SHA-256 of each reply is kept, so a replay can prove what came back without holding it.</Text></Box>

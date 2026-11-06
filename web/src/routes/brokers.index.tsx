@@ -14,12 +14,14 @@ import { FS } from '~/theme'
 import type { DBLabel } from '~/types/domain'
 import { LevelBadge } from '~/components/LevelBadge'
 import { LABEL_COLOR } from '~/components/StoreChrome'
+import { EngineMark } from '~/components/EngineMark'
+import { isBroker } from '~/lib/engines'
 
 /**
- * Brokers: every RabbitMQ vhost this person may open, apart from the
+ * Brokers: every RabbitMQ vhost and Kafka entry this person may open, apart from the
  * databases, because a broker is not one: it is opened to see whether
  * messages keep moving, not to query rows. The entries are the same
- * `databases` rows with engine rabbitmq, so who may connect, approvals and
+ * `databases` rows with engine rabbitmq or kafka, so who may connect, approvals and
  * recordings work exactly as they do for a database.
  */
 export const Route = createFileRoute('/brokers/')({
@@ -39,14 +41,14 @@ function Brokers() {
   const [label, setLabel] = useState<'all' | DBLabel>('all')
   const [q, setQ] = useState('')
 
-  const all = useMemo(() => (data?.databases ?? []).filter((d) => d.engine === 'rabbitmq'), [data])
+  const all = useMemo(() => (data?.databases ?? []).filter((d) => isBroker(d.engine)), [data])
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return all.filter((d) => (label === 'all' || d.label === label) &&
       (!needle || d.dbname.toLowerCase().includes(needle) || d.hostname.toLowerCase().includes(needle)))
   }, [all, label, q])
 
-  const description = "Open a RabbitMQ vhost you've been given to see its queues, where messages go and who is connected. One row is one vhost. Everything you do is recorded."
+  const description = "Open a RabbitMQ vhost or Kafka topics you've been given to see whether messages keep moving: queues and routing, or topics, partitions and consumer lag. Everything you do is recorded."
   if (!isConfigured()) {
     return (
       <Box>
@@ -72,7 +74,7 @@ function Brokers() {
       <PageBody>
         <Stack gap="md">
           <Toolbar right={<Text size={FS.meta} c="dimmed">{data ? `${rows.length} of ${all.length}` : null}</Text>}>
-            <TextInput placeholder="Find a vhost or server" leftSection={<IconSearch size={14} />} value={q}
+            <TextInput placeholder="Find a vhost, topics or server" leftSection={<IconSearch size={14} />} value={q}
               onChange={(e) => setQ(e.currentTarget.value)} w={{ base: '100%', sm: 320 }} aria-label="Find a broker" />
             <SegmentedControl value={label} onChange={(v) => setLabel(v as 'all' | DBLabel)}
               data={[{ label: 'All', value: 'all' }, { label: 'Production', value: 'production' }, { label: 'Staging', value: 'staging' }, { label: 'Development', value: 'development' }]} />
@@ -87,11 +89,11 @@ function Brokers() {
                 icon={IconStack2}
                 title={admin ? 'No brokers yet' : 'No brokers for you yet'}
                 description={admin
-                  ? 'Add a RabbitMQ vhost from its server’s page. The agent on that server opens it through the management API; nothing else needs installing.'
-                  : 'When an admin gives you a RabbitMQ vhost it appears here.'}
+                  ? 'Add a RabbitMQ vhost or Kafka topics from the server’s page. The agent on that server opens them; nothing else needs installing.'
+                  : 'When an admin gives you a RabbitMQ vhost or Kafka topics they appear here.'}
               />
             }
-            columns={['Vhost', 'Label', 'Your access', 'Agent', { label: '', hidden: true }]}
+            columns={['Broker', 'Label', 'Your access', 'Agent', { label: '', hidden: true }]}
           >
             {rows.map((d) => {
               const acc = data?.access[d.id]
@@ -100,10 +102,10 @@ function Brokers() {
                 <Table.Tr key={d.id}>
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
-                      <IconStack2 size={16} color="var(--mantine-color-amber-6)" />
+                      <EngineMark engine={d.engine} size={28} />
                       <Box>
-                        <Text fw={600} size={FS.body} ff="monospace">{d.dbname}</Text>
-                        <Text size={FS.micro} c="dimmed">on <Text span ff="monospace" size={FS.micro}>{d.hostname}</Text> · management port {d.port}</Text>
+                        <Text fw={600} size={FS.body} ff="monospace">{d.engine === 'kafka' && d.dbname === '*' ? 'every topic' : d.dbname}</Text>
+                        <Text size={FS.micro} c="dimmed">{d.engine === 'kafka' ? 'Kafka' : 'RabbitMQ'} on <Text span ff="monospace" size={FS.micro}>{d.hostname}</Text> · {d.engine === 'kafka' ? 'port' : 'management port'} {d.port}</Text>
                       </Box>
                     </Group>
                   </Table.Td>
@@ -129,7 +131,7 @@ function Brokers() {
             })}
           </DataTable>
           <Text size={FS.micro} c="dimmed">
-            Queue counts, rates and health are shown when you open a vhost; this list does not open a session.
+            Queue counts, consumer lag and health are shown when you open one; this list does not open a session.
           </Text>
         </Stack>
       </PageBody>

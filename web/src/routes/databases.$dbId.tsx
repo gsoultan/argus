@@ -16,7 +16,7 @@ import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
 import { noteDatabaseOpened } from '~/lib/recentDatabases'
 import { databaseQuery, meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
-import { engineOf, isSQLEngine } from '~/lib/engines'
+import { engineOf, isBroker, isSQLEngine } from '~/lib/engines'
 import { FS, INK } from '~/theme'
 import type { DBLevel } from '~/types/domain'
 
@@ -78,9 +78,9 @@ function DatabasePage() {
   }
   if (!data) return null
   const { database, access } = data
-  // A RabbitMQ vhost is a message broker, not a database: it lives under
-  // Brokers, and an old link to it here goes there.
-  if (database.engine === 'rabbitmq') return <Navigate to="/brokers/$brokerId" params={{ brokerId: dbId }} replace />
+  // A RabbitMQ vhost or Kafka topics are a message broker, not a database:
+  // they live under Brokers, and an old link to one here goes there.
+  if (isBroker(database.engine)) return <Navigate to="/brokers/$brokerId" params={{ brokerId: dbId }} replace />
   const admin = canSee(me?.role, 'admin')
 
   if (!access.level) {
