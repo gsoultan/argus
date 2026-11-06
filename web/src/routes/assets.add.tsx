@@ -5,24 +5,32 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconBrandUbuntu, IconBrandWindows, IconCheck, IconCircleCheck, IconCopy, IconInfoCircle,
-  IconPlus,
+  IconBrandUbuntu, IconBrandWindows, IconCheck, IconCircleCheck, IconCopy, IconDeviceMobile,
+  IconInfoCircle, IconPlus,
 } from '@tabler/icons-react'
+import qrcode from 'qrcode-generator'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { PageBody, PageHeader } from '~/components/page'
-import { controlPlaneVersion, enrolBase, fleetURL, installOneLiner, isConfigured, type EnrollToken } from '~/lib/live'
+import {
+  controlPlaneVersion, deviceEnrolPayload, enrolBase, fakeDeviceCommand, fleetURL, installOneLiner,
+  isConfigured, type EnrollToken,
+} from '~/lib/live'
 import { notifyError, notifyOk, run } from '~/lib/notify'
 import {
   discoveredQuery, meQuery, teamsQuery, useCreateEnrollToken, useEnrolHost, useIgnoreHost, usersQuery,
 } from '~/lib/queries'
 import { guard } from '~/lib/guard'
 import { isElevatedAccount } from '~/lib/roles'
-import type { DiscoveredHost } from '~/types/domain'
+import { DEVICE_PRINCIPALS, type ControlMode, type DiscoveredHost } from '~/types/domain'
 import { FS, SP, INK } from '~/theme'
 
 /**
  * Adding a server, in three steps on one page: name it, install the agent
  * with one line, then say who can use it.
+ *
+ * An Android device is added the same way: the agent is the Argus app on
+ * it, installed by scanning a QR code rather than pasting a line, and the
+ * last step asks how it is controlled as well as who may use it.
  *
  * Argus never trusts a server by itself. The agent reports in on its own, and
  * the server is usable only once an admin finishes step 3 here, which is the
@@ -35,8 +43,10 @@ import { FS, SP, INK } from '~/theme'
  */
 export const Route = createFileRoute('/assets/add')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
-  validateSearch: (s: Record<string, unknown>): { host?: string } =>
-    typeof s.host === 'string' && s.host ? { host: s.host } : {},
+  validateSearch: (s: Record<string, unknown>): { host?: string; kind?: Kind } => ({
+    ...(typeof s.host === 'string' && s.host ? { host: s.host } : {}),
+    ...(s.kind === 'android' || s.kind === 'linux' || s.kind === 'windows' ? { kind: s.kind } : {}),
+  }),
   component: AddServer,
 })
 
@@ -47,14 +57,14 @@ export const Route = createFileRoute('/assets/add')({
  */
 const VERSION = controlPlaneVersion() ?? 'latest'
 
-type Kind = 'linux' | 'windows'
+type Kind = 'linux' | 'windows' | 'android'
 type Step = 1 | 2 | 3
 
 function AddServer() {
-  const { host: finishing } = Route.useSearch()
+  const { host: finishing, kind: finishingKind } = Route.useSearch()
   const [step, setStep] = useState<Step>(finishing ? 3 : 1)
   const [name, setName] = useState(finishing ?? '')
-  const [kind, setKind] = useState<Kind>('linux')
+  const [kind, setKind] = useState<Kind>(finishingKind ?? 'linux')
   const [token, setToken] = useState<EnrollToken | null>(null)
   const [mintedAt, setMintedAt] = useState(0)
   const [found, setFound] = useState<string | null>(finishing ?? null)
@@ -77,12 +87,12 @@ function AddServer() {
   return (
     <Box>
       <PageHeader
-        crumbs={[{ label: 'Servers', to: '/assets' }, { label: 'Add server' }]}
-        title="Add server"
+        crumbs={[{ label: 'Servers', to: '/assets' }, { label: 'Add server or device' }]}
+        title="Add server or device"
       />
       <PageBody>
         <Box maw={720} w="100%" mx="auto">
-          <Stepper step={step} />
+          <Stepper step={step} device={kind === 'android'} />
           <Box className="argus-panel" p={{ base: 'md', sm: 'xl' }} mt="lg">
             {step === 1 && (
               <NameStep
@@ -107,7 +117,9 @@ function AddServer() {
                 }}
               />
             )}
-            {step === 3 && found && <AccessStep hostname={found} />}
+            {step === 3 && found && (kind === 'android'
+              ? <DeviceAccessStep hostname={found} />
+              : <AccessStep hostname={found} />)}
           </Box>
         </Box>
       </PageBody>
@@ -116,11 +128,12 @@ function AddServer() {
 }
 
 const STEPS = ['Name', 'Install', 'Who can use it'] as const
+const DEVICE_STEPS = ['Name', 'Scan', 'How it is used'] as const
 
-function Stepper({ step }: { step: Step }) {
+function Stepper({ step, device }: { step: Step; device: boolean }) {
   return (
     <Group gap="xs" justify="center" wrap="nowrap" aria-label="Steps">
-      {STEPS.map((label, i) => {
+      {(device ? DEVICE_STEPS : STEPS).map((label, i) => {
         const n = (i + 1) as Step
         const state = n < step ? 'done' : n === step ? 'current' : 'todo'
         return (
@@ -165,13 +178,15 @@ function NameStep({ name, kind, onName, onKind, busy, onNext }: {
         onNext()
       }}
     >
-      <StepTitle title="Which server?" />
+      <StepTitle title="Which server or device?" />
       <Stack gap="lg">
         <TextInput
           size="md"
           label="Name"
-          description="So you can tell it apart, such as web-01. Argus shows the name the server reports for itself."
-          placeholder="web-01"
+          description={kind === 'android'
+            ? 'So you can tell it apart, such as rina-pixel-8. The app offers the device\u2019s own name.'
+            : 'So you can tell it apart, such as web-01. Argus shows the name the server reports for itself.'}
+          placeholder={kind === 'android' ? 'rina-pixel-8' : 'web-01'}
           data-autofocus
           value={name}
           onChange={(e) => onName(e.currentTarget.value)}
@@ -186,12 +201,13 @@ function NameStep({ name, kind, onName, onKind, busy, onNext }: {
             data={[
               { value: 'linux', label: <Group gap="xs" justify="center" wrap="nowrap"><IconBrandUbuntu size={18} />Linux</Group> },
               { value: 'windows', label: <Group gap="xs" justify="center" wrap="nowrap"><IconBrandWindows size={18} />Windows</Group> },
+              { value: 'android', label: <Group gap="xs" justify="center" wrap="nowrap"><IconDeviceMobile size={18} />Android</Group> },
             ]}
             aria-label="Operating system"
           />
         </Box>
         <Group justify="flex-end">
-          <Button size="md" type="submit" loading={busy}>Next: install</Button>
+          <Button size="md" type="submit" loading={busy}>{kind === 'android' ? 'Next: scan' : 'Next: install'}</Button>
         </Group>
       </Stack>
     </form>
@@ -208,6 +224,7 @@ function InstallStep({ name, kind, token, since, onBack, onFound }: {
   onBack: () => void
   onFound: (hostname: string) => void
 }) {
+  if (kind === 'android') return <ScanStep name={name} token={token} since={since} onBack={onBack} onFound={onFound} />
   const command = token
     ? kind === 'linux'
       ? installOneLiner(token, VERSION)
@@ -261,14 +278,121 @@ function InstallStep({ name, kind, token, since, onBack, onFound }: {
 }
 
 /**
+ * An Android device joins by scanning: the Argus app on it reads where the
+ * control plane is, the one-time token and how to trust the address, and
+ * enrols. Nothing is typed on the phone. The app's own setup (the screen
+ * capture and accessibility permissions it needs) is walked through on the
+ * device, and this page moves on when the device reports in.
+ */
+function ScanStep({ name, token, since, onBack, onFound }: {
+  name: string
+  token: EnrollToken | null
+  since: number
+  onBack: () => void
+  onFound: (hostname: string) => void
+}) {
+  const [standIn, setStandIn] = useState(false)
+  const apk = `${enrolBase(token) || 'https://argus.example.com'}/api/v1/install/argus-android.apk`
+  return (
+    <Box>
+      <StepTitle title={`Scan from ${name.trim() || 'the device'}`}>
+        Install the Argus app on the device, open it and scan this code. It links the device to
+        Argus; the app then asks for screen capture and the accessibility service, which is what
+        lets Argus see the screen and touch it.
+      </StepTitle>
+
+      {token?.addressProblem ? (
+        <Alert color="amber" icon={<IconInfoCircle size={16} />} title="Devices cannot reach Argus at this address">
+          <Text size="sm" mb="sm">{token.addressProblem}</Text>
+          <Anchor href="/settings" size="sm">Open Settings</Anchor>
+        </Alert>
+      ) : (
+        <Group align="flex-start" gap="lg" wrap="wrap">
+          <DeviceQR token={token} />
+          <Stack gap="xs" style={{ flex: '1 1 240px' }}>
+            <Text size="sm" fw={500}>Get the app</Text>
+            <Text size={FS.meta} c="dimmed" lh={1.5}>
+              On the device, open <Mono>{apk}</Mono> or have your device management push it. The
+              app is signed with this Argus&rsquo;s key.
+            </Text>
+            <Text size={FS.meta} c="dimmed" lh={1.5}>
+              {token
+                ? `The code works once, until ${new Date(token.expiresAt).toLocaleTimeString()}. If it runs out, go back and press Next again.`
+                : 'This console has no control plane behind it, so the code is only an example.'}
+            </Text>
+            <Anchor component="button" type="button" size={FS.meta} onClick={() => setStandIn((v) => !v)}>
+              {standIn ? 'Hide the stand-in' : 'No device at hand? Use a stand-in'}
+            </Anchor>
+          </Stack>
+        </Group>
+      )}
+      {standIn && !token?.addressProblem && (
+        <Box mt="md">
+          <Text size={FS.meta} c="dimmed" mb="xs" lh={1.5}>
+            On any Linux machine with the agent installed, this enrols it with the same code and
+            offers a drawn phone that answers touches and keys, so the rest can be tried.
+          </Text>
+          <Command text={fakeDeviceCommand(token, name)} />
+        </Box>
+      )}
+
+      <Box mt="xl">
+        {isConfigured() ? (
+          <WaitForServer name={name} since={since} onFound={onFound} device />
+        ) : (
+          <Alert color="amber" icon={<IconInfoCircle size={16} />}>
+            No app can check in to sample data. On a real Argus, this page moves on by itself
+            when the device reports in.
+          </Alert>
+        )}
+      </Box>
+
+      <Group justify="space-between" mt="xl">
+        <Button variant="default" onClick={onBack}>Back</Button>
+      </Group>
+    </Box>
+  )
+}
+
+/** The code the app scans, drawn here as SVG so the token leaves the page only on the phone. */
+function DeviceQR({ token }: { token: EnrollToken | null }) {
+  const text = token ? deviceEnrolPayload(token) : JSON.stringify({ argus: 'enrol', url: enrolBase(null) || 'https://argus.example.com', token: 'example' })
+  const svg = useMemo(() => {
+    const q = qrcode(0, 'M')
+    q.addData(text)
+    q.make()
+    return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true })
+  }, [text])
+  return (
+    <Box
+      w={208}
+      h={208}
+      bg="white"
+      p={4}
+      style={{ borderRadius: 8, flexShrink: 0 }}
+      aria-label="QR code for the Argus app to scan"
+      role="img"
+      data-testid="device-qr"
+      // Generated here from the token, never from anything a user typed.
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  )
+}
+
+function Mono({ children }: { children: ReactNode }) {
+  return <Text span ff="monospace" size={FS.meta} style={{ overflowWrap: 'anywhere' }}>{children}</Text>
+}
+
+/**
  * Watches for the server. The one wanted is the one with the name typed in
  * step 1; failing that, the first server that checked in after the command
  * was made, which is almost always the one just installed.
  */
-function WaitForServer({ name, since, onFound }: {
+function WaitForServer({ name, since, onFound, device = false }: {
   name: string
   since: number
   onFound: (hostname: string) => void
+  device?: boolean
 }) {
   const { data: hosts } = useQuery({ ...discoveredQuery('unreviewed'), refetchInterval: 3_000 })
   const want = name.trim().toLowerCase()
@@ -283,14 +407,18 @@ function WaitForServer({ name, since, onFound }: {
 
   return match ? (
     <Alert color="teal" icon={<IconCircleCheck size={18} />} title={`${match.hostname} is connected`}>
-      <Text size="sm" mb="md">The agent is running. Last step: say who can use it.</Text>
-      <Button size="md" onClick={() => onFound(match.hostname)}>Next: who can use it</Button>
+      <Text size="sm" mb="md">
+        {device ? 'The app is running. Last step: say how it is used.' : 'The agent is running. Last step: say who can use it.'}
+      </Text>
+      <Button size="md" onClick={() => onFound(match.hostname)}>{device ? 'Next: how it is used' : 'Next: who can use it'}</Button>
     </Alert>
   ) : (
     <Group gap="sm" wrap="nowrap" className="argus-listening">
       <Box className="argus-pulse" aria-hidden />
       <Text size="sm" c="dimmed">
-        Waiting for the server. This moves on by itself, usually within a minute of running the line.
+        {device
+          ? 'Waiting for the device. This moves on by itself once the app has scanned the code.'
+          : 'Waiting for the server. This moves on by itself, usually within a minute of running the line.'}
       </Text>
     </Group>
   )
@@ -517,6 +645,182 @@ function AccessStep({ hostname }: { hostname: string }) {
             <Button
               size="md"
               disabled={needShared || choosing === 0}
+              loading={enrol.isPending && choosing > 0}
+              onClick={() => void finish(true)}
+            >
+              Give access
+            </Button>
+          </Group>
+        </Group>
+      </Stack>
+
+      <IgnoreModal hostname={hostname} opened={ignoring} onClose={() => setIgnoring(false)} />
+    </Box>
+  )
+}
+
+/**
+ * The last step for a device: how it is controlled, and who may watch or
+ * drive it. A device has no accounts, so there is nothing to log in as; the
+ * two things a person can be given are to watch, and to control.
+ */
+function DeviceAccessStep({ hostname }: { hostname: string }) {
+  const navigate = useNavigate()
+  const { data: me } = useQuery(meQuery())
+  const { data: hosts, isPending } = useQuery(discoveredQuery('unreviewed'))
+  const { data: teams } = useQuery(teamsQuery())
+  const { data: users } = useQuery(usersQuery())
+  const enrol = useEnrolHost()
+  const host: DiscoveredHost | undefined = hosts?.find((h) => h.hostname === hostname)
+
+  const [mode, setMode] = useState<ControlMode>('attended')
+  const [approval, setApproval] = useState(false)
+  const [may, setMay] = useState<string[]>([...DEVICE_PRINCIPALS])
+  const [pickedTeams, setPickedTeams] = useState<string[]>([])
+  const [pickedPeople, setPickedPeople] = useState<string[]>([])
+  const [ignoring, setIgnoring] = useState(false)
+
+  const people = (users ?? []).filter(
+    (u) => !u.disabled && u.role !== 'admin' && u.role !== 'owner' && u.email !== me?.email,
+  )
+
+  const finish = async (giveAccess: boolean) => {
+    try {
+      const res = await enrol.mutateAsync({
+        hostname,
+        grant: {
+          kind: 'android',
+          controlMode: mode,
+          controlNeedsApproval: approval,
+          principals: giveAccess ? may : [...DEVICE_PRINCIPALS],
+          people: giveAccess ? pickedPeople : [],
+          teams: giveAccess ? pickedTeams : [],
+        },
+      })
+      notifyOk('Device added', giveAccess && (pickedTeams.length || pickedPeople.length)
+        ? `${res.assetHostname} is ready, and the people you picked can open it.`
+        : `${res.assetHostname} is ready. Only admins can open it for now.`)
+      void navigate({ to: '/assets/$assetId', params: { assetId: res.assetId } })
+    } catch (err) {
+      notifyError('Device not added', err)
+    }
+  }
+
+  if (isPending) {
+    return <Group gap="sm"><Loader size="sm" /><Text size="sm" c="dimmed">Loading…</Text></Group>
+  }
+  if (!host) {
+    return (
+      <Alert color="amber" icon={<IconInfoCircle size={16} />} title={`${hostname} is not waiting any more`}>
+        It may already be added, or someone ignored it. <Anchor href="/assets">Back to Servers</Anchor>
+      </Alert>
+    )
+  }
+
+  const choosing = pickedTeams.length + pickedPeople.length
+  const WHAT: Record<string, [string, string]> = {
+    view: ['Watch only', 'See the screen. Nothing they do reaches the device.'],
+    control: ['Control', 'Touch, type and press the device\u2019s keys, as whoever holds it.'],
+  }
+
+  return (
+    <Box>
+      <StepTitle title={`How is ${hostname} used?`}>
+        Admins can always open it. Pick how it is controlled, and the teams or people who may
+        watch or control it. You can change all of this later on the device&rsquo;s page.
+      </StepTitle>
+
+      <Stack gap="xl">
+        <Box>
+          <Text size="sm" fw={600} mb={SP.tight}>Controlled</Text>
+          <Text size={FS.meta} c="dimmed" mb="sm">
+            {mode === 'unattended'
+              ? 'The app opens the device with nobody there, through its helper. For company devices on a managed network; the app says what it turns on.'
+              : 'Whoever holds the device accepts each session on it, and sees that it is live. The recording says who accepted it and when.'}
+          </Text>
+          <SegmentedControl
+            size="md"
+            fullWidth
+            value={mode}
+            onChange={(v) => setMode(v as ControlMode)}
+            data={[
+              { value: 'attended', label: 'Attended' },
+              { value: 'unattended', label: 'Unattended' },
+            ]}
+            aria-label="Control mode"
+          />
+        </Box>
+
+        <Switch
+          checked={approval}
+          onChange={(e) => setApproval(e.currentTarget.checked)}
+          label="Controlling it needs an approval first"
+          description="Like root on a server: someone else approves it, for a set time. Watching never needs one."
+        />
+
+        <Box>
+          <Text size="sm" fw={600} mb={SP.tight}>They may</Text>
+          <Stack gap="xs">
+            {DEVICE_PRINCIPALS.map((p) => (
+              <Checkbox.Card
+                key={p}
+                className="argus-pick"
+                data-checked={may.includes(p) || undefined}
+                checked={may.includes(p)}
+                onClick={() => setMay((m) => (m.includes(p) ? m.filter((x) => x !== p) : [...m, p]))}
+              >
+                <Group gap="sm" wrap="nowrap">
+                  <Checkbox.Indicator />
+                  <Box style={{ minWidth: 0 }}>
+                    <Text size="sm" fw={500}>{WHAT[p]![0]}</Text>
+                    <Text size={FS.meta} c="dimmed">{WHAT[p]![1]}</Text>
+                  </Box>
+                  {p === 'control' && approval && <Badge size="xs" color="amber" variant="light">approval</Badge>}
+                </Group>
+              </Checkbox.Card>
+            ))}
+          </Stack>
+          {may.length === 0 && choosing > 0 && (
+            <Text size={FS.meta} c={INK.denied} mt="xs">Pick at least one, or they can do nothing with it.</Text>
+          )}
+        </Box>
+
+        <PickList
+          title="Teams"
+          empty="No teams yet. You can make them on Teams and give them this device later."
+          items={(teams ?? []).map((t) => ({
+            value: t.id,
+            label: t.name,
+            sub: `${t.members.length} ${t.members.length === 1 ? 'person' : 'people'}`,
+          }))}
+          value={pickedTeams}
+          onChange={setPickedTeams}
+        />
+
+        <PickList
+          title="People"
+          empty="Nobody else yet. Add people on Teams, under People."
+          items={people.map((u) => ({ value: u.email, label: u.displayName, sub: u.email }))}
+          value={pickedPeople}
+          onChange={setPickedPeople}
+        />
+
+        <Group justify="space-between" wrap="wrap" gap="sm">
+          <Button variant="subtle" color="slate" onClick={() => setIgnoring(true)}>
+            Not mine, ignore it
+          </Button>
+          <Group gap="sm">
+            <Button
+              size="md"
+              variant="default"
+              loading={enrol.isPending && choosing === 0}
+              onClick={() => void finish(false)}
+            >
+              Skip, only admins for now
+            </Button>
+            <Button
+              size="md"
+              disabled={may.length === 0 || choosing === 0}
               loading={enrol.isPending && choosing > 0}
               onClick={() => void finish(true)}
             >

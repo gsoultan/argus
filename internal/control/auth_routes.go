@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -233,7 +234,7 @@ func (a *API) handleTicket(w http.ResponseWriter, r *http.Request) {
 	// an audit opens with. Admins are exempt from the grant, because someone
 	// has to be able to act when the approval chain itself is broken, and the
 	// exemption is written down rather than left implicit.
-	if isElevated(in.Principal) {
+	if a.elevatedOn(r.Context(), in.Target, in.Principal) {
 		auth, err := a.authorizePrincipal(r, sess.Email, in.Target, in.Principal)
 		if err != nil {
 			a.log.Error("refusing a session: elevation could not be checked",
@@ -285,6 +286,26 @@ func isElevated(principal string) bool {
 		}
 	}
 	return false
+}
+
+// elevatedOn is isElevated for one target: the fixed list, plus "control"
+// on a device whose settings say control needs an approval. Not being able
+// to read the setting counts as needing one -- a check that fails open when
+// its data source is unreachable is no check.
+func (a *API) elevatedOn(ctx context.Context, target, principal string) bool {
+	if isElevated(principal) {
+		return true
+	}
+	if principal != DeviceControl {
+		return false
+	}
+	needs, err := a.store.ControlNeedsApproval(ctx, target)
+	if err != nil {
+		a.log.Error("could not read whether control of the device needs an approval; treating it as needed",
+			"target", target, "error", err)
+		return true
+	}
+	return needs
 }
 
 func (a *API) sessionTTL() time.Duration {

@@ -6,13 +6,13 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconCircleCheck, IconDeviceDesktop, IconFolders, IconHourglassHigh, IconLock,
+  IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconFolders, IconHourglassHigh, IconLock,
   IconPlugConnectedX, IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import { ButtonLink } from '~/components/links'
-import { ReachBadge, reachOf } from '~/components/myservers'
+import { ReachBadge, kindOf, reachOf } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
-import { isElevatedAccount, seesWholeFleet } from '~/lib/roles'
+import { isElevatedAccount, principalLabel, seesWholeFleet } from '~/lib/roles'
 import { PageBody, PageHeader } from '~/components/page'
 import type { TerminalState } from '~/components/LiveTerminal'
 import { assetsQuery, meQuery } from '~/lib/queries'
@@ -118,6 +118,9 @@ function Connect() {
   // A Windows server set to screen sharing opens its console as it is: no
   // Windows sign-in here, so no password to ask for.
   const isScreenTarget = isRDPTarget && selected?.desktopMode === 'screen'
+  // An Android device opens as a shared screen too, through the app on it:
+  // no password, and the account is what you may do (watch or control).
+  const isDeviceTarget = selected?.kind === 'android'
   // Everything opens through the server's own agent, and only through it: a
   // server whose agent is not connected has no way in until it reconnects.
   const viaAgent = selected?.tunnelConnected === true
@@ -175,12 +178,14 @@ function Connect() {
   if (session) {
     const isRDP = session.protocol === 'rdp'
     const isFiles = session.protocol === 'files'
-    const isScreen = isRDP && assets?.find((a) => a.hostname === session.target)?.desktopMode === 'screen'
+    const opened = assets?.find((a) => a.hostname === session.target)
+    const isDevice = isRDP && opened?.kind === 'android'
+    const isScreen = isRDP && !isDevice && opened?.desktopMode === 'screen'
     return (
       <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
           crumbs={[{ label: 'Servers', to: '/assets' }, { label: session.target.split('.')[0] ?? session.target }]}
-          title={`${session.principal} on ${session.target.split('.')[0] ?? session.target}`}
+          title={`${principalLabel(session.principal, opened)} on ${session.target.split('.')[0] ?? session.target}`}
           status={
             <Badge
               color={state === 'live' ? 'teal' : state === 'error' ? 'rose' : state === 'reconnecting' || state === 'lost' ? 'amber' : 'slate'}
@@ -190,7 +195,11 @@ function Connect() {
             </Badge>
           }
           description={
-            isScreen
+            isDevice
+              ? session.principal === 'view'
+                ? 'The device\u2019s screen, as whoever holds it sees it. Watching only. Everything on screen is recorded.'
+                : 'The device\u2019s screen, through the Argus app on it: whoever holds it sees what you do. Everything on screen is recorded.'
+              : isScreen
               ? 'The server\u2019s own screen, shared: anyone in front of it sees what you do. Everything on screen is recorded.'
               : isRDP
               ? 'Windows desktop. Everything on screen is recorded.'
@@ -285,6 +294,8 @@ function Connect() {
                 endpoint={desktopEndpoint()}
                 target={session.target}
                 principal={session.principal}
+                device={isDevice}
+                readOnly={isDevice && session.principal === 'view'}
                 getTicket={getTicket}
                 takePassword={() => {
                   const p = heldPassword.current
@@ -338,7 +349,7 @@ function Connect() {
     })
   }
 
-  const elevated = isElevatedAccount(principal)
+  const elevated = isElevatedAccount(principal, selected)
   const name = target ? (target.split('.')[0] ?? target) : ''
 
   // Asked for by name and not in your list: you were not given it.
@@ -349,7 +360,7 @@ function Connect() {
           icon={<IconLock size={26} />}
           tone="slate"
           title={`You can't connect to ${name} yet`}
-          body="Nobody has given you this server. Ask for access, and an approver decides. You get a note here when they do."
+          body="Nobody has given you this server or device. Ask for access, and an approver decides. You get a note here when they do."
         >
           <ButtonLink size="md" to="/approvals" search={{ ask: target }}>Ask for access</ButtonLink>
           <ButtonLink size="md" variant="default" to="/assets">Back to servers</ButtonLink>
@@ -366,7 +377,7 @@ function Connect() {
           icon={<IconPlugConnectedX size={26} />}
           tone="amber"
           title={`${name} is offline`}
-          body={`The Argus agent on it has not checked in${selected.agentLastSeenAt ? ` since ${relTime(selected.agentLastSeenAt)}` : ''}. It may be restarting. Try again in a minute, or tell an admin if it stays offline.`}
+          body={`The Argus ${isDeviceTarget ? 'app' : 'agent'} on it has not checked in${selected.agentLastSeenAt ? ` since ${relTime(selected.agentLastSeenAt)}` : ''}. It may be ${isDeviceTarget ? 'off or out of coverage' : 'restarting'}. Try again in a minute, or tell an admin if it stays offline.`}
         >
           <Button size="md" loading={assetsFetching} onClick={() => void refetchAssets()}>Try again</Button>
           <ButtonLink size="md" variant="default" to="/assets">Back to servers</ButtonLink>
@@ -382,7 +393,9 @@ function Connect() {
           icon={<Loader size={26} />}
           tone="azure"
           title={`Connecting to ${name}`}
-          body={`Checking you can log in as ${principal}, then opening it through the server’s agent. Everything you do is recorded.`}
+          body={isDeviceTarget
+            ? `Checking you may ${principal === 'view' ? 'watch' : 'control'} it, then opening its screen through the Argus app on it. Everything you do is recorded.`
+            : `Checking you can log in as ${principal}, then opening it through the server’s agent. Everything you do is recorded.`}
         />
       </Centered>
     )
@@ -394,13 +407,17 @@ function Connect() {
         <StateCard
           icon={<IconHourglassHigh size={26} />}
           tone="amber"
-          title={elevated ? `${principal} needs approval` : `You can't log in as ${principal} here`}
+          title={elevated
+            ? isDeviceTarget ? `Controlling ${name} needs approval` : `${principal} needs approval`
+            : isDeviceTarget ? `You can't ${principal === 'view' ? 'watch' : 'control'} ${name}` : `You can't log in as ${principal} here`}
           body={elevated
-            ? `${principal} has full control of ${name}, so someone else approves it first, for a set time. Ask, and you can connect as soon as they say yes.`
+            ? isDeviceTarget
+              ? `Control of ${name} is approved by someone else first, for a set time. Ask, and you can connect as soon as they say yes.`
+              : `${principal} has full control of ${name}, so someone else approves it first, for a set time. Ask, and you can connect as soon as they say yes.`
             : denied}
         >
           <ButtonLink size="md" to="/approvals" search={{ ask: selected.hostname, as: principal }}>
-            {elevated ? `Ask for ${principal}` : 'Ask for access'}
+            {elevated ? `Ask for ${isDeviceTarget ? 'control' : principal}` : 'Ask for access'}
           </ButtonLink>
           {principals.length > 1 && (
             <Button size="md" variant="default" onClick={() => setDenied(undefined)}>Pick another account</Button>
@@ -417,8 +434,8 @@ function Connect() {
         title={selected ? `Connect to ${name}` : 'Connect'}
         status={selected && <ReachBadge reach={reachOf(selected)} />}
         description={selected
-          ? `${selected.os || (isRDPTarget ? 'Windows' : 'Linux')} · opens here in your browser, recorded.`
-          : 'Pick a server. It opens here in your browser, and the session is recorded.'}
+          ? `${selected.os || { windows: 'Windows', linux: 'Linux', android: 'Android' }[kindOf(selected)]} · opens here in your browser, recorded.`
+          : 'Pick a server or device. It opens here in your browser, and the session is recorded.'}
       />
 
       <PageBody>
@@ -447,10 +464,12 @@ function Connect() {
 
               {target && (
                 <Box>
-                  <Text size="sm" fw={600} mb="sm">Log in as</Text>
+                  <Text size="sm" fw={600} mb="sm">{isDeviceTarget ? 'Open it to' : 'Log in as'}</Text>
                   {principals.length === 0 ? (
                     <Text size="sm" c="dimmed">
-                      You have no account on this server yet. Ask an admin to add one for you.
+                      {isDeviceTarget
+                        ? 'You may neither watch nor control this device yet. Ask an admin.'
+                        : 'You have no account on this server yet. Ask an admin to add one for you.'}
                     </Text>
                   ) : (
                     <Radio.Group value={principal} onChange={setPrincipal}>
@@ -465,12 +484,18 @@ function Connect() {
                             <Group gap="sm" wrap="nowrap">
                               <Radio.Indicator />
                               <Box style={{ flex: 1, minWidth: 0 }}>
-                                <Text size="sm" fw={600} ff="monospace">{p}</Text>
+                                <Text size="sm" fw={600} ff={isDeviceTarget ? undefined : 'monospace'}>{principalLabel(p, selected)}</Text>
                                 <Text size={FS.meta} c="dimmed">
-                                  {isElevatedAccount(p) ? 'Full control. Needs approval first.' : 'Your everyday account'}
+                                  {isDeviceTarget
+                                    ? p === 'view'
+                                      ? 'See the screen. Nothing you do reaches the device.'
+                                      : isElevatedAccount(p, selected)
+                                        ? 'Touch, type and press its keys. Needs approval first.'
+                                        : 'Touch, type and press its keys, as whoever holds it.'
+                                    : isElevatedAccount(p) ? 'Full control. Needs approval first.' : 'Your everyday account'}
                                 </Text>
                               </Box>
-                              {isElevatedAccount(p) && <Badge color="amber" variant="light">approval</Badge>}
+                              {isElevatedAccount(p, selected) && <Badge color="amber" variant="light">approval</Badge>}
                             </Group>
                           </Radio.Card>
                         ))}
@@ -483,7 +508,19 @@ function Connect() {
               {/* Windows asks for the account's own password before it shows
                   a desktop. It goes to the server's agent for this one sign-in
                   and is kept nowhere. */}
-              {target && isScreenTarget && principals.length > 0 && (
+              {target && isDeviceTarget && principals.length > 0 && (
+                <Alert color="azure" variant="light" icon={<IconDeviceMobile size={16} />}
+                  title={selected?.controlMode === 'unattended' ? 'Opens without anyone on the device' : 'Whoever holds it accepts first'}>
+                  <Text size={FS.body} lh={1.5}>
+                    {selected?.controlMode === 'unattended'
+                      ? 'You will see the device\u2019s screen as it is, locked or not. The app shows that a session is live while you are on it.'
+                      : 'The app asks the person holding the device to accept. Once they do, you see the screen as they do, and they see a banner naming you while you are on it.'}
+                    {' '}The recording keeps everything on screen; secure apps, such as banking, stay black.
+                  </Text>
+                </Alert>
+              )}
+
+              {target && isScreenTarget && !isDeviceTarget && principals.length > 0 && (
                 <Alert color="amber" variant="light" icon={<IconDeviceDesktop size={16} />}
                   title="Screen sharing, not Remote Desktop">
                   <Text size={FS.body} lh={1.5}>
@@ -521,18 +558,20 @@ function Connect() {
                 ) : <span />}
                 <Button
                   size="md"
-                  leftSection={isRDPTarget ? <IconDeviceDesktop size={18} /> : <IconTerminal2 size={18} />}
+                  leftSection={isDeviceTarget ? <IconDeviceMobile size={18} /> : isRDPTarget ? <IconDeviceDesktop size={18} /> : <IconTerminal2 size={18} />}
                   disabled={!target || principals.length === 0}
                   onClick={() => void onConnect()}
                 >
-                  Connect
+                  {isDeviceTarget ? (principal === 'view' ? 'Watch' : 'Open') : 'Connect'}
                 </Button>
               </Group>
             </Stack>
           </Box>
           <Text size={FS.meta} c="dimmed" mt="sm" lh={1.5}>
-            Argus checks you may use this account, then the server&rsquo;s own agent opens the
-            session and records it. No password or key of the server is shown to you.
+            {isDeviceTarget
+              ? 'Argus checks you may open this device, then the Argus app on it shares the screen and records the session. Argus never holds the device\u2019s PIN.'
+              : <>Argus checks you may use this account, then the server&rsquo;s own agent opens the
+            session and records it. No password or key of the server is shown to you.</>}
           </Text>
         </Box>
       </PageBody>

@@ -82,6 +82,9 @@ type DesktopInfo struct {
 	GraphicsChannel uint16
 	// Screen is a shared console rather than a Remote Desktop connection.
 	Screen bool
+	// Android is a device's screen through the Argus app on it; see
+	// android.go.
+	Android bool
 }
 
 // GraphicsSink holds graphics commands read but not yet sent, as display
@@ -208,6 +211,14 @@ func desktopService(cfg DesktopConfig, service string) TunnelService {
 				principal = console
 			}
 		}
+		if info.Android {
+			// The session acts as whoever holds the device; the grant's
+			// principal says whether the person may drive it or only watch.
+			protocol = androidProtocol
+			title = "device@" + cfg.Hostname
+			reason = "the device's screen, shared through the Argus tunnel on a session " +
+				"grant signed by the control plane, as " + g.Principal
+		}
 		d, err = cfg.Collector.StartDesktopRecording(SessionStart{
 			Type:         "start",
 			Principal:    principal,
@@ -252,6 +263,11 @@ func desktopService(cfg DesktopConfig, service string) TunnelService {
 
 // desktopFlags are what the console highlights about how a desktop opened.
 func desktopFlags(info DesktopInfo) []string {
+	if info.Android {
+		// Whoever holds the device sees what is done, and agreed to it
+		// when the device is attended.
+		return []string{"android"}
+	}
 	if info.Screen {
 		// Whoever is signed in at the console is who the session acts as,
 		// and anyone in front of the screen sees it.
@@ -428,6 +444,19 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 					// browser acknowledges no others.
 					if f, ok := client.(desktopFramer); ok {
 						f.Ack(m.Frame)
+					}
+					continue
+				}
+				if a, ok := client.(androidInputer); ok {
+					// A device takes the input as the browser sent it:
+					// touches, its own keys and typed text, none of which
+					// are Remote Desktop events.
+					var in AndroidInput
+					if json.Unmarshal(p, &in) != nil {
+						continue
+					}
+					if a.Play(in) != nil {
+						return
 					}
 					continue
 				}

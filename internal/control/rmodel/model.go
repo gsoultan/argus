@@ -213,6 +213,14 @@ type Asset struct {
 	// DesktopMode is how a Windows server's desktop opens: rdp through its
 	// own Remote Desktop, screen by sharing the console without it.
 	DesktopMode string
+	// Kind is server or android: a device driven through the Argus app on
+	// it, stored as protocol rdp with desktop mode screen.
+	Kind string
+	// ControlMode is how a device is controlled: attended (whoever holds it
+	// accepts each session) or unattended.
+	ControlMode string
+	// ControlNeedsApproval makes "control" an elevated principal on a device.
+	ControlNeedsApproval bool
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -244,6 +252,13 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.Col(&m.DesktopMode).Default("'rdp'::text")
 	t.CheckNamed("assets_desktop_mode_check",
 		"desktop_mode = ANY (ARRAY['rdp'::text, 'screen'::text])")
+	t.Col(&m.Kind).Default("'server'::text")
+	t.CheckNamed("assets_kind_check",
+		"kind = ANY (ARRAY['server'::text, 'android'::text])")
+	t.Col(&m.ControlMode).Default("'attended'::text")
+	t.CheckNamed("assets_control_mode_check",
+		"control_mode = ANY (ARRAY['attended'::text, 'unattended'::text])")
+	t.Col(&m.ControlNeedsApproval).Default("false")
 }
 
 // AssetAssignment is table asset_assignments: who may reach which host, as whom.

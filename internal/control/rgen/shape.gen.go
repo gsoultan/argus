@@ -152,6 +152,9 @@ func _assertAssetShape(m m0.Asset) {
 		m.AgentPersonalAccounts,
 		m.DirectSshAccounts,
 		m.DesktopMode,
+		m.Kind,
+		m.ControlMode,
+		m.ControlNeedsApproval,
 	}
 }
 

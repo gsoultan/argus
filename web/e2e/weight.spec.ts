@@ -101,8 +101,12 @@ const BUDGET_KB = {
    * workspace now uses them from a chunk of its own. The workspace is lazy. It first measured 301.6 kB: a NavLink in
    * the exchange list split Menu's shared chunk into 13 files, and Chip added
    * its stylesheet to every route. Both were replaced.
+   * 296.2 kB with Android devices: the device kind and its phone icon in
+   * the server lists, "Watch only" and "Control" in the shared roles
+   * module, and the device fields on the asset type. The wizard's QR code,
+   * the device form and the phone toolbar are in route or lazy chunks.
    */
-  overview: 296,
+  overview: 298,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -133,8 +137,10 @@ const BUDGET_KB = {
    * Operating system updates add about 0.1 kB here: the server page's
    * Updates tab name and the Settings entry. Its calls and views are in
    * chunks of their own, kept out of the shared live module.
+   * 400.7 kB with Android devices, the same shared weight as the overview
+   * plus the device toolbar in the desktop view, which Watch live loads.
    */
-  sessionDetail: 400,
+  sessionDetail: 402,
 }
 
 /**

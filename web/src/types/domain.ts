@@ -213,6 +213,21 @@ export interface Asset {
    * plane, which is `rdp`.
    */
   desktopMode?: DesktopMode
+  /**
+   * What this row is: a `server`, or an `android` device driven through the
+   * Argus app on it. A device opens the way a shared Windows console does
+   * (protocol `rdp`, desktop mode `screen`) and has no accounts: its
+   * principals are `view` and `control`. Absent from an older control
+   * plane, which is `server`.
+   */
+  kind?: AssetKind
+  /** How a device is controlled; see ControlMode. Devices only. */
+  controlMode?: ControlMode
+  /**
+   * Whether `control` on this device needs an approval first, the way root
+   * does on a server. `view` never does.
+   */
+  controlNeedsApproval?: boolean
   /** Null when credentialMode is 'ca-certificate' — nothing to rotate. */
   credentialRotatedAt: ISOTime | null
   rotationIntervalDays: number | null
@@ -533,11 +548,27 @@ export interface AssetInput {
   credentialRef?: string
   domain?: string
   desktopMode?: DesktopMode
+  kind?: AssetKind
+  controlMode?: ControlMode
+  controlNeedsApproval?: boolean
   rotationIntervalDays?: number | null
 }
 
 /** How a Windows server's desktop opens; see Asset.desktopMode. */
 export type DesktopMode = 'rdp' | 'screen'
+
+/** What an asset is; see Asset.kind. */
+export type AssetKind = 'server' | 'android'
+
+/**
+ * How an Android device is controlled: `attended`, where whoever holds it
+ * accepts each session on the device and sees that it is live; or
+ * `unattended`, where the app's helper opens it with nobody there.
+ */
+export type ControlMode = 'attended' | 'unattended'
+
+/** The two principals a device has: watch only, or drive it. */
+export const DEVICE_PRINCIPALS = ['view', 'control'] as const
 
 export interface AssetGroup {
   id: UUID

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  Box, Button, Group, Modal, NumberInput, SegmentedControl, Stack, TagsInput, Text, TextInput,
+  Box, Button, Group, Modal, NumberInput, SegmentedControl, Stack, Switch, TagsInput, Text, TextInput,
 } from '@mantine/core'
 import { useCreateAsset, useUpdateAsset } from '~/lib/queries'
 import { run } from '~/lib/notify'
 import { SP } from '~/theme'
-import type { Asset, AssetInput, AssetProtocol, DesktopMode } from '~/types/domain'
+import { DEVICE_PRINCIPALS, type Asset, type AssetInput, type AssetProtocol, type ControlMode, type DesktopMode } from '~/types/domain'
 
 /**
  * Adding a host to the inventory, and editing one.
@@ -46,6 +46,9 @@ function fromAsset(a: Asset): AssetInput {
     credentialRef: a.credentialRef ?? '',
     domain: a.domain ?? '',
     desktopMode: a.desktopMode ?? 'rdp',
+    kind: a.kind ?? 'server',
+    controlMode: a.controlMode,
+    controlNeedsApproval: a.controlNeedsApproval,
     rotationIntervalDays: a.rotationIntervalDays,
   }
 }
@@ -87,13 +90,22 @@ export function AssetForm({
     }))
 
   const isRDP = form.protocol === 'rdp'
+  // A device is added through the wizard, by the app enrolling; this form
+  // only edits one, and what it edits is the name, how it is controlled and
+  // the tags. The control plane fixes the rest.
+  const device = form.kind === 'android'
   const pending = create.isPending || update.isPending
   const submit = async () => {
+    // A device's principals are fixed; a row from before it was one, or one
+    // emptied by hand, gets both back rather than becoming unopenable.
+    const input: AssetInput = device && form.principals.length === 0
+      ? { ...form, principals: [...DEVICE_PRINCIPALS] }
+      : form
     const ok = await run(
       () =>
         asset
-          ? update.mutateAsync({ id: asset.id, input: form })
-          : create.mutateAsync(form),
+          ? update.mutateAsync({ id: asset.id, input })
+          : create.mutateAsync(input),
       {
         failure: asset ? 'Not saved' : 'Not added',
         success: asset
@@ -114,6 +126,58 @@ export function AssetForm({
       title={asset ? `Edit ${asset.hostname}` : 'Add a server by hand'}
       size="lg"
     >
+      {device ? (
+        <Stack gap="sm">
+          <TextInput
+            required
+            label="Name"
+            description="The name Argus knows this device by."
+            value={form.hostname}
+            onChange={(e) => set('hostname', e.currentTarget.value)}
+          />
+          <Box>
+            <Text size="sm" fw={500}>Controlled</Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              {form.controlMode === 'unattended'
+                ? 'The app opens the device with nobody there, through its helper. For company devices on a managed network.'
+                : 'Whoever holds the device accepts each session on it, and sees that it is live.'}
+            </Text>
+            <SegmentedControl
+              fullWidth
+              value={form.controlMode ?? 'attended'}
+              onChange={(v) => set('controlMode', v as ControlMode)}
+              data={[
+                { value: 'attended', label: 'Attended' },
+                { value: 'unattended', label: 'Unattended' },
+              ]}
+            />
+          </Box>
+          <Switch
+            checked={form.controlNeedsApproval === true}
+            onChange={(e) => set('controlNeedsApproval', e.currentTarget.checked)}
+            label="Controlling it needs an approval first"
+            description="Like root on a server: someone else approves it, for a set time. Watching never needs one."
+          />
+          <TagsInput
+            label="Tags"
+            placeholder="field, tablets"
+            value={form.tags ?? []}
+            onChange={(v) => set('tags', v)}
+          />
+          <Group justify="flex-end" gap={SP.cozy} mt="xs">
+            <Button variant="default" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void submit()}
+              loading={pending}
+              disabled={!form.hostname.trim()}
+            >
+              Save
+            </Button>
+          </Group>
+        </Stack>
+      ) : (
       <Stack gap="sm">
         <SegmentedControl
           fullWidth
@@ -223,6 +287,7 @@ export function AssetForm({
           </Button>
         </Group>
       </Stack>
+      )}
     </Modal>
   )
 }

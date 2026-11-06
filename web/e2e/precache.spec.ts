@@ -31,9 +31,12 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 717.8 kB with Brokers in the menu (715.4 before, same build): the item, the
  * two broker routes' loaders and search rules, and the entry's map of the
  * chunks they load. The workspace and its stylesheet are not stored.
+ * 718.5 kB with Android devices: the device kind in the shell's shared
+ * modules (lists, roles, the asset type). The wizard's QR code and the phone
+ * toolbar are in chunks that are not stored.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 718
+const MAX_KB = 720
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')

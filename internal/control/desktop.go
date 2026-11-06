@@ -41,6 +41,10 @@ const agentDesktopService = "desktop"
 // See agent.ScreenService. A grant for one cannot be spent on the other.
 const agentScreenService = "screen"
 
+// agentAndroidService is a device's screen through the Argus app on it;
+// see agent.AndroidService. A grant for it opens neither of the others.
+const agentAndroidService = "android"
+
 // desktopLogonWait bounds how long the browser has to send its logon.
 const desktopLogonWait = 2 * time.Minute
 
@@ -129,13 +133,20 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 
 	// The server's setting decides, not the browser: a console cannot ask
 	// for the console's screen on a server set to Remote Desktop.
-	mode, err := a.store.AssetDesktopMode(ctx, host)
+	kind, mode, err := a.store.AssetDesktopOpen(ctx, host)
 	if err != nil {
 		fail("could not read how this server's desktop opens: " + err.Error())
 		return
 	}
 	service, what := agentDesktopService, "Remote Desktop"
-	if mode == "screen" {
+	switch {
+	case kind == "android":
+		// A device's screen, through the Argus app on it: nobody is signed
+		// in by Argus, so there is no password, and none is passed on.
+		service, what = agentAndroidService, "The device's screen"
+		logon.Password = ""
+		logon.Graphics = logon.Video
+	case mode == "screen":
 		// Sharing the console signs nobody in, so there is no password to
 		// pass on, and none is.
 		service, what = agentScreenService, "Screen sharing of the console"
@@ -169,6 +180,10 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	case tunnel.IsRefused(err) && service == agentScreenService && answer.Error == "unknown service":
 		fail("the agent on " + host + " is too old to share its screen; update it, or set " +
 			"this server back to Remote Desktop")
+		return
+	case tunnel.IsRefused(err) && service == agentAndroidService && answer.Error == "unknown service":
+		fail("what is connected as " + host + " is not the Argus app for Android, so it has " +
+			"no screen to share; check the device and its app")
 		return
 	case tunnel.IsRefused(err):
 		a.log.Warn("desktop: the agent refused the session", "host", host,
@@ -302,6 +317,15 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 // signed in at the console rather than as the principal the grant names, and
 // the audit says so instead of naming an account that may not be the one.
 func desktopAuditDetail(what, service, principal, session string) string {
+	if service == agentAndroidService {
+		verb := "to drive it"
+		if principal == DeviceView {
+			verb = "to watch it, with no input"
+		}
+		return what + " opened in the browser through the Argus app's tunnel as " + principal +
+			", " + verb + "; it acts as whoever holds the device; session " + session +
+			", recorded on the device."
+	}
 	if service == agentScreenService {
 		return what + " opened in the browser through the agent's tunnel, acting as " +
 			"whoever is signed in at the console (requested as " + principal + "; the " +

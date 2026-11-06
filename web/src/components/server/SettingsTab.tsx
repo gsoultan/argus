@@ -6,6 +6,7 @@ import { AgentUpdateCard } from '~/components/AgentUpdate'
 import { Digest, HostKeyBadge, Mono, absTime, relTime } from '~/components/primitives'
 import { usePin } from '~/components/server/hostKey'
 import { SettingsSection, SettingsSections } from '~/components/server/layout'
+import { connectsBy } from '~/components/server/OverviewTab'
 import { isConfigured } from '~/lib/live'
 import { run } from '~/lib/notify'
 import { useArchiveAsset } from '~/lib/queries'
@@ -21,14 +22,29 @@ export function SettingsTab({ asset, canEdit, onEdit }: {
   canEdit: boolean
   onEdit: () => void
 }) {
+  const device = asset.kind === 'android'
   return (
     <SettingsSections>
-      <SettingsSection title="Details" description="Name, address, protocol and tags.">
+      <SettingsSection
+        title="Details"
+        description={device ? 'Name, how it is controlled, and tags.' : 'Name, address, protocol and tags.'}
+      >
         <Card padding="md">
           <Stack gap="sm">
             <Detail label="Name"><Text size={FS.meta} style={{ overflowWrap: 'anywhere' }}>{asset.hostname}</Text></Detail>
             <Detail label="Address"><Mono>{asset.address}{asset.port ? `:${asset.port}` : ''}</Mono></Detail>
-            <Detail label="Protocol"><Text size={FS.meta}>{asset.protocol === 'rdp' ? 'RDP' : 'SSH'}</Text></Detail>
+            <Detail label={device ? 'Connects by' : 'Protocol'}>
+              <Text size={FS.meta}>{device ? connectsBy(asset) : asset.protocol === 'rdp' ? 'RDP' : 'SSH'}</Text>
+            </Detail>
+            {device && (
+              <Detail label="Control">
+                <Text size={FS.meta}>
+                  {asset.controlNeedsApproval
+                    ? 'Needs an approval first, like root on a server. Watching never does.'
+                    : 'Anyone given it may control the device. Watching never needs an approval.'}
+                </Text>
+              </Detail>
+            )}
             <Detail label="Tags">
               {asset.tags.length === 0 ? <Text size={FS.meta} c="dimmed">None</Text> : (
                 <Group gap={SP.tight}>
@@ -50,21 +66,28 @@ export function SettingsTab({ asset, canEdit, onEdit }: {
         </Card>
       </SettingsSection>
 
-      <SettingsSection
-        title="Host key"
-        description="Argus checks the server's identity against this key on every connection."
-      >
-        <HostKey asset={asset} />
-      </SettingsSection>
+      {!device && (
+        <SettingsSection
+          title="Host key"
+          description="Argus checks the server's identity against this key on every connection."
+        >
+          <HostKey asset={asset} />
+        </SettingsSection>
+      )}
 
       {isConfigured() && (
-        <SettingsSection title="Agent" description="The Argus agent on this server, which opens and records every session here.">
+        <SettingsSection
+          title={device ? 'The app' : 'Agent'}
+          description={device
+            ? 'The Argus app on this device, which shares its screen and records every session on it.'
+            : 'The Argus agent on this server, which opens and records every session here.'}
+        >
           <AgentUpdateCard asset={asset} canEdit={canEdit} bare />
         </SettingsSection>
       )}
 
       {canEdit && (
-        <SettingsSection title="Remove server" description="Its recordings and activity are kept." danger>
+        <SettingsSection title={device ? 'Remove device' : 'Remove server'} description="Its recordings and activity are kept." danger>
           <RemoveServer asset={asset} />
         </SettingsSection>
       )}

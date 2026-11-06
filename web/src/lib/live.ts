@@ -6,6 +6,8 @@ import type {
   PersonOwnSetting,
   PersonServer,
   AssetInput,
+  AssetKind,
+  ControlMode,
   AuditEvent,
   DirectLogin,
   DirectSsh,
@@ -856,6 +858,28 @@ export function installOneLiner(t: EnrollToken, version: string): string {
 }
 
 /**
+ * What the QR code on the Add-a-device page says, for the Argus app to scan:
+ * where the control plane is, the one-time token, and how to trust the
+ * address. The same choice as installOneLiner: behind a public certificate
+ * (a Cloudflare Tunnel, say) there is no pin and the app verifies it the
+ * ordinary way; direct, the app pins the control plane's key.
+ */
+export function deviceEnrolPayload(t: EnrollToken): string {
+  return JSON.stringify({ argus: 'enrol', url: enrolBase(t), token: t.token, pin: t.pin || 'off' })
+}
+
+/**
+ * The same enrolment as a command, for an agent standing in for a device
+ * (`argus-agent daemon --fake-android`) when there is no phone at hand.
+ */
+export function fakeDeviceCommand(t: EnrollToken | null, name: string): string {
+  const url = enrolBase(t) || 'https://argus.example.com'
+  const pin = t?.pin ? ` --pin ${t.pin}` : ''
+  const as = name.trim() ? ` --hostname ${name.trim()}` : ''
+  return `sudo argus-agent enroll --control-url ${url}${pin} --token ${t?.token ?? '…'}${as}\nsudo argus-agent daemon --fake-android`
+}
+
+/**
  * Where an install command made with t points. The control plane's answer
  * wins over the setting this page loaded with, which is stale after a save in
  * Settings until the tab is reloaded.
@@ -930,6 +954,13 @@ export interface EnrolGrant {
   teams?: string[]
   /** Give each member of those teams an account of their own. */
   personalAccounts?: boolean
+  /**
+   * `android` enrols the host as a device, controlled as the two below say;
+   * its principals are then `view` and `control`. Absent means a server.
+   */
+  kind?: AssetKind
+  controlMode?: ControlMode
+  controlNeedsApproval?: boolean
 }
 
 /**

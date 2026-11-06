@@ -1,4 +1,4 @@
-import type { UserRole } from '~/types/domain'
+import type { Asset, UserRole } from '~/types/domain'
 
 /**
  * The control plane's read rule, mirrored: `seesWholeFleet` in
@@ -42,9 +42,22 @@ export function canSee(role: UserRole | undefined, audience: Audience | undefine
  * Accounts that never come for free: the console's copy of
  * `ElevatedPrincipals` in `internal/control/auth_routes.go`, used only to say
  * so before someone picks one. The control plane decides either way.
+ *
+ * On an Android device, `control` is one of them when the device's settings
+ * say so (`elevatedOn`, same file); `view` never is.
  */
-export function isElevatedAccount(name: string): boolean {
+export function isElevatedAccount(name: string, on?: Asset): boolean {
+  if (on?.kind === 'android') return name === 'control' && on.controlNeedsApproval === true
   return ['root', 'admin', 'administrator'].includes(name.toLowerCase())
+}
+
+/**
+ * A device's principal in words: it has no accounts, so `view` and `control`
+ * are what they do rather than who they are. A server's account is its name.
+ */
+export function principalLabel(name: string, on?: Asset): string {
+  if (on?.kind !== 'android') return name
+  return name === 'view' ? 'Watch only' : name === 'control' ? 'Control' : name
 }
 
 /**

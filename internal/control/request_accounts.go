@@ -70,12 +70,14 @@ func (s *Store) requestableAccountsFor(ctx context.Context, hostname string) (Re
 	var (
 		principals []string
 		reported   []byte
+		// A device whose settings make "control" need an approval.
+		controlApproval bool
 	)
 	// The agent is matched the way LoginAccountsFor matches it: by the
 	// asset's hostname, the hostname its agent enrolled under, or the short
 	// name.
 	err := s.db(ctx).QueryRow(ctx, `
-		SELECT a.principals, ag.posture -> 'login_accounts'
+		SELECT a.principals, a.kind = 'android' AND a.control_needs_approval, ag.posture -> 'login_accounts'
 		  FROM assets a
 		  LEFT JOIN LATERAL (
 		       SELECT posture FROM agents g
@@ -86,7 +88,7 @@ func (s *Store) requestableAccountsFor(ctx context.Context, hostname string) (Re
 		 WHERE a.archived_at IS NULL
 		   AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
 		 ORDER BY a.hostname = lower($1) DESC
-		 LIMIT 1`, hostname).Scan(&principals, &reported)
+		 LIMIT 1`, hostname).Scan(&principals, &controlApproval, &reported)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, nil
 	}
@@ -112,7 +114,7 @@ func (s *Store) requestableAccountsFor(ctx context.Context, hostname string) (Re
 	for _, p := range principals {
 		out.Accounts = append(out.Accounts, RequestableAccount{
 			Name:     p,
-			Elevated: isElevated(p),
+			Elevated: isElevated(p) || (controlApproval && p == DeviceControl),
 			OnServer: !out.AgentReported || onServer[p],
 		})
 	}

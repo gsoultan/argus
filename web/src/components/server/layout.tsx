@@ -1,6 +1,6 @@
 import { Badge, Box, Divider, Grid, Group, Stack, Text } from '@mantine/core'
 import type { ReactNode } from 'react'
-import { isElevatedAccount } from '~/lib/roles'
+import { isElevatedAccount, principalLabel } from '~/lib/roles'
 import { FS, SP, INK } from '~/theme'
 import type { Asset } from '~/types/domain'
 
@@ -59,12 +59,12 @@ export function LoginAccounts({ asset, empty }: { asset: Asset; empty?: ReactNod
         <Badge
           key={p}
           size="sm"
-          color={isElevatedAccount(p) ? 'rose' : 'slate'}
-          variant={isElevatedAccount(p) ? 'light' : 'outline'}
+          color={isElevatedAccount(p, asset) ? 'rose' : 'slate'}
+          variant={isElevatedAccount(p, asset) ? 'light' : 'outline'}
           tt="none"
-          ff="monospace"
+          ff={asset.kind === 'android' ? undefined : 'monospace'}
         >
-          {p}
+          {principalLabel(p, asset)}
         </Badge>
       ))}
     </Group>
