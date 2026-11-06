@@ -1505,7 +1505,10 @@ jobs:
           # msi <log name> <msiexec arguments...>: msiexec's exit code, with its log kept.
           msi() { local name=$1; shift
             powershell -NoProfile -Command "exit (Start-Process msiexec.exe -Wait -PassThru -ArgumentList '$* /qn /norestart /l*v $(cygpath -w "$tmp/$name.log")').ExitCode"; }
-          msifail() { echo "--- msiexec log ($1), the custom actions"; grep -a -iE 'WixQuietExec|argus-agent|error|return value 3' "$tmp/$1.log" | tail -60 || true; dump; }
+          # The log is UTF-16, which grep cannot read; PowerShell can.
+          msifail() { echo "--- msiexec log ($1), where it failed"
+            powershell -NoProfile -Command "\$l = Get-Content '$(cygpath -w "$tmp/$1.log")'; \$i = [array]::FindIndex([string[]]\$l, [Predicate[string]]{ param(\$x) \$x -match 'Return value 3' }); if (\$i -lt 0) { \$l | Select-Object -Last 120 } else { \$l[[math]::Max(0, \$i - 60)..\$i] }" || true
+            dump; }
           waitfor() {
             for i in $(seq 1 240); do
               s=$(status state)
@@ -1529,7 +1532,7 @@ jobs:
           msi install /i "$(cygpath -w "$msis/argus-agent_9.9.0_windows_amd64.msi")" \
             CONTROL_URL=https://localhost:8080 PIN=$pin TOKEN=$tok \
             || { msifail install; echo "::error::the installer failed"; exit 1; }
-          if grep -a -qF "$tok" "$tmp/install.log"; then
+          if powershell -NoProfile -Command "if (Select-String -SimpleMatch -Quiet '$tok' '$(cygpath -w "$tmp/install.log")') { exit 0 } else { exit 1 }"; then
             echo "::error::the enrollment token is in the installer's log"; exit 1
           fi
           sc.exe qc argus-agent
