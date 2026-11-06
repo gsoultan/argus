@@ -15,7 +15,7 @@ import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
 import { noteDatabaseOpened } from '~/lib/recentDatabases'
 import { databaseQuery, meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
-import { engineOf } from '~/lib/engines'
+import { engineOf, isSQLEngine } from '~/lib/engines'
 import { FS, INK } from '~/theme'
 import type { DBLevel } from '~/types/domain'
 
@@ -103,7 +103,7 @@ function DatabasePage() {
 
   return (
     <SplitView storageKey="databases" label="databases" list={<DatabaseList currentId={dbId} />}>
-      {database.engine !== 'postgres' && <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
+      {!isSQLEngine(database.engine) && <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
         <Text size={FS.micro} c="dimmed">
           <Link to="/databases" style={{ color: INK.brand }}>Databases</Link> / {engineOf(database.engine).label} · {database.dbname}
         </Text>

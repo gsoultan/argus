@@ -131,6 +131,8 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
 
   const names = listing ? picked : [typed.trim() || info.defaults.dbname].filter(Boolean)
   const nameOk = (n: string) => engine === 'postgres' ? n.length > 0 && n.length <= 63 && !/["'\\\x00]/.test(n)
+    : engine === 'mysql' ? n.length > 0 && n.length <= 63 && !/[/\\.\x00]/.test(n) && !/ $/.test(n)
+      && !['mysql', 'sys', 'information_schema', 'performance_schema'].includes(n.toLowerCase())
     : engine === 'redis' ? /^\d{1,4}$/.test(n)
     : n.length > 0 && n.length <= 255 && !/[\x00\n\r]/.test(n)
   const valid = names.length > 0 && names.every(nameOk) && !redisAdded
@@ -150,6 +152,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           ...(host.trim() ? { host: host.trim() } : {}),
           ...(engine === 'postgres' ? { poolerPort: Number(poolerPort) || 0 } : {}),
           ...(engine === 'redis' ? { configPath: configPath.trim() || info.defaults.configPath } : {}),
+          ...(engine === 'mysql' && configPath.trim() ? { configPath: configPath.trim() } : {}),
         })
         added.push(n)
       }
@@ -217,6 +220,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
                     const off = Boolean(d.added) || redisAdded
                     const meta = d.added ? null
                       : engine === 'postgres' ? [d.owner && `owner ${d.owner}`, d.bytes ? bytes(d.bytes) : ''].filter(Boolean).join(' · ')
+                      : engine === 'mysql' ? (d.bytes ? bytes(d.bytes) : '')
                       : engine === 'redis' ? `${(d.keys ?? 0).toLocaleString()} keys`
                       : ''
                     const Ctl = multi ? Checkbox : Radio
@@ -244,6 +248,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             {listing && (
               <Text size={FS.micro} c="dimmed">
                 {engine === 'postgres' && 'Template databases and the postgres maintenance database are left out. '}
+                {engine === 'mysql' && 'MySQL’s own schemas (mysql, sys, information_schema, performance_schema) are left out. '}
                 {engine === 'redis' && (redisAdded ? 'This Redis is already in Argus; one entry covers every db. ' : 'Pick the db sessions open in; SELECT moves between them. ')}
                 {ans?.truncated && 'Only the first 500 are listed. '}
                 Not listed? <Anchor component="button" type="button" size={FS.micro} onClick={() => setManual(true)}>Type a name instead</Anchor>
@@ -259,9 +264,9 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
         )}
 
         {engine !== 'postgres' && (
-          <TextInput label={engine === 'redis' ? 'Address' : 'Management API address'} placeholder={info.defaults.host}
+          <TextInput label={engine === 'redis' || engine === 'mysql' ? 'Address' : 'Management API address'} placeholder={info.defaults.host}
             value={host} onChange={(e) => setHost(e.currentTarget.value)}
-            description={engine === 'redis'
+            description={engine === 'redis' || engine === 'mysql'
               ? 'On this server: 127.0.0.1, or the path of its unix socket.'
               : 'On this server, with the management plugin on (rabbitmq-plugins enable rabbitmq_management).'} />
         )}
@@ -272,6 +277,11 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           <TextInput label="redis.conf" placeholder={info.defaults.configPath} value={configPath}
             onChange={(e) => setConfigPath(e.currentTarget.value)}
             description="The agent reads requirepass from it to sign in as admin. The password never leaves the server and is never stored in Argus." />
+        )}
+        {engine === 'mysql' && (
+          <TextInput label="Option file" placeholder="none: root over the socket" value={configPath}
+            onChange={(e) => setConfigPath(e.currentTarget.value)}
+            description="Only if root cannot sign in over the socket: a .cnf on the server, private to root, with a [client] user and password that may create users and grant. The agent reads it there; it is never sent or stored in Argus." />
         )}
         {engine === 'rabbitmq' && (
           <Text size={FS.micro} c="dimmed">

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { isSQLEngine } from '~/lib/engines'
 import {
   Alert, Anchor, Badge, Box, Button, Checkbox, Divider, Group, Modal, Paper, Radio, SegmentedControl, Select, Stack, Switch, Text,
   ThemeIcon,
@@ -53,7 +54,7 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
   const [touched, setTouched] = useState(false)
   const [approval, setApproval] = useState(false)
   const set = useSetDBAssignment()
-  const { data: changes } = useQuery({ ...changeApprovalQuery(dbId), enabled: opened && db.engine === 'postgres' })
+  const { data: changes } = useQuery({ ...changeApprovalQuery(dbId), enabled: opened && isSQLEngine(db.engine) })
   // Production defaults to approval for write and above, unless the admin
   // decided otherwise for this row.
   const effectiveApproval = touched ? approval : db.label === 'production' && level !== 'read'
@@ -97,19 +98,19 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
             <CanDo icon={<IconLogin2 size={14} />} title="Open a session" waits={effectiveApproval}
               detail={effectiveApproval ? 'An approver says yes first, and the session lasts as long as they allow.' : `No approval needed to open ${db.dbname}.`} />
             <CanDo icon={<IconEye size={14} />} title="Read data" waits={false}
-              detail={db.engine === 'postgres' ? 'SELECT and browsing never wait.' : 'Reading never waits.'} />
+              detail={isSQLEngine(db.engine) ? 'SELECT and browsing never wait.' : 'Reading never waits.'} />
             {level !== 'read' && (
-              db.engine === 'postgres' ? (
+              isSQLEngine(db.engine) ? (
                 <CanDo icon={<IconPencil size={14} />} title={changeWhat} waits={changesWait}
                   detail={changesWait
                     ? `Each change runs once ${deciders} approves it.`
-                    : 'Runs right away. Still recorded, and deleted rows go to the trash.'} />
+                    : db.engine === 'postgres' ? 'Runs right away. Still recorded, and deleted rows go to the trash.' : 'Runs right away, and is recorded.'} />
               ) : (
                 <CanDo icon={<IconPencil size={14} />} title="Change data" waits={false} detail="Runs right away, and is recorded." />
               )
             )}
           </Stack>
-          {db.engine === 'postgres' && (
+          {isSQLEngine(db.engine) && (
             <Text size={FS.micro} c="dimmed" mt={8}>
               Changes {changesWait ? 'wait for approval' : 'run right away'} on {db.dbname}{approvalIsDefault(db) ? `, as for every ${db.label} database` : ', set for this database'}.{' '}
               <Anchor component="button" type="button" size={FS.micro} onClick={() => { onClose(); onSafety() }}>Change it in Safety</Anchor>

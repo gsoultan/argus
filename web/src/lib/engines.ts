@@ -1,7 +1,7 @@
 import type { DBEngine, DBLevel } from '~/types/domain'
 
 /**
- * What differs between the three engines a database entry can be, in the
+ * What differs between the engines a database entry can be, in the
  * console's words. Levels mean the same thing everywhere -- read, write,
  * owner, DBA -- and each engine enforces them with its own permissions; these
  * blurbs say what that comes to on each.
@@ -29,6 +29,19 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       write: 'Read and change rows: INSERT, UPDATE, DELETE.',
       owner: 'Change tables, columns and indexes too.',
       dba: 'Manage roles and grants, end other people’s queries. Never a Postgres superuser.',
+    },
+  },
+  mysql: {
+    label: 'MySQL',
+    noun: 'database',
+    nameLabel: 'Database name',
+    nameHint: 'As MySQL or MariaDB knows it. The agent signs in as root over the server’s socket, or with an option file you name below.',
+    defaults: { dbname: '', host: '127.0.0.1', port: 3306 },
+    levels: {
+      read: 'SELECT and SHOW VIEW on this database. The default.',
+      write: 'Change rows too: INSERT, UPDATE, DELETE, and run procedures.',
+      owner: 'Create, alter and drop tables, views, indexes, routines and triggers.',
+      dba: 'Every privilege on this database, grant them to others, see all connections. Never SUPER, nothing on other databases.',
     },
   },
   redis: {
@@ -65,5 +78,10 @@ export function engineOf(e: string | undefined): EngineInfo {
 
 /** A sessions-list protocol that is a database's statement recording. */
 export function isStatementProtocol(protocol: string | undefined): boolean {
-  return protocol === 'postgres' || protocol === 'redis' || protocol === 'rabbitmq'
+  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'redis' || protocol === 'rabbitmq'
+}
+
+/** An engine the SQL workspace opens: Postgres, or MySQL and MariaDB. */
+export function isSQLEngine(e: string | undefined): boolean {
+  return e === undefined || e === '' || e === 'postgres' || e === 'mysql'
 }
