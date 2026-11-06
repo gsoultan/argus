@@ -8,7 +8,7 @@
   It installs:
     C:\Program Files\Argus\argus-agent.exe
     the argus-agent service: LocalSystem, starts at boot, restarted when it
-      fails, given 75 seconds at shutdown to seal open recordings -- what
+      fails, given 75 seconds at shutdown to seal open recordings, what
       `argus-agent service install` sets up.
 
   Public properties, all optional, for an unattended install:
@@ -25,9 +25,9 @@
   it, an upgrade keeps the enrollment it has, and a new install starts
   unenrolled until `argus-agent enroll` is run.
 
-  Removing it (Apps, or msiexec /x) runs `argus-agent uninstall --yes`: it
+  Removing it (Apps, or msiexec /x) runs `argus-agent uninstall -yes`: it
   ships what has not reached the control plane, revokes this server's
-  credential and deletes it, and refuses -- leaving the agent running -- when
+  credential and deletes it, and refuses, leaving the agent running, when
   recordings would be stranded, unless FORCE=1. Recordings in
   C:\ProgramData\Argus are never removed: removing the software must not
   destroy the evidence it produced. An upgrade does none of that; the
