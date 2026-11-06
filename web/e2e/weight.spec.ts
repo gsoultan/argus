@@ -95,8 +95,14 @@ const BUDGET_KB = {
    * who decides them, which share the eager queries and live modules. The
    * Safety card, the review, the banners and the impact views are all in
    * route or lazy chunks.
+   * 295.1 kB with Brokers in the menu (293.5 before, same build): the item
+   * and its icon, the two broker routes in the route map, and two more small
+   * shared chunks, the copy button and the lock icon, split out because the
+   * workspace now uses them from a chunk of its own. The workspace is lazy. It first measured 301.6 kB: a NavLink in
+   * the exchange list split Menu's shared chunk into 13 files, and Chip added
+   * its stylesheet to every route. Both were replaced.
    */
-  overview: 294,
+  overview: 296,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -122,8 +128,10 @@ const BUDGET_KB = {
    * badge and note.
    * 397.03 kB with the query builder and Summarize, both lazy: what this
    * route pays is the entry's map of the two new chunks and what they need.
+   * 399.5 kB with Brokers in the menu (397.9 before, same build), for the
+   * shared weight given for the overview.
    */
-  sessionDetail: 398,
+  sessionDetail: 400,
 }
 
 /**

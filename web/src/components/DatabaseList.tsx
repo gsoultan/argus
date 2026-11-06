@@ -22,6 +22,7 @@ export function DatabaseList({ currentId }: { currentId: string }) {
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return (data?.databases ?? [])
+      .filter((d) => d.engine !== 'rabbitmq')
       .filter((d) => !needle || d.dbname.toLowerCase().includes(needle) || d.hostname.toLowerCase().includes(needle))
   }, [data, q])
 

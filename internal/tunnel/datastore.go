@@ -82,9 +82,10 @@ const (
 // StoreRequest is one thing the browser asks of a Redis or RabbitMQ session.
 type StoreRequest struct {
 	ID uint32 `json:"id"`
-	// Op is cancel, or for Redis: run, scan, value; for RabbitMQ: queues,
-	// exchanges, queue, peek, publish, purge, declare_queue, delete_queue,
-	// bind, connections, close_connection.
+	// Op is cancel, or for Redis: run, scan, value; for RabbitMQ: overview,
+	// queues, exchanges, exchange, bindings, queue, consumers, peek, publish,
+	// purge, move, declare_queue, delete_queue, declare_exchange, bind,
+	// connections, channels, close_connection.
 	Op string `json:"op"`
 	// Command is one Redis command line, as redis-cli takes it.
 	Command string `json:"command,omitempty"`
@@ -107,8 +108,17 @@ type StoreRequest struct {
 	RoutingKey string            `json:"routingKey,omitempty"`
 	Payload    string            `json:"payload,omitempty"`
 	Headers    map[string]string `json:"headers,omitempty"`
-	// Declare a queue: durable or not.
+	// Properties are a published message's: content_type, message_id,
+	// correlation_id and the like, and delivery_mode "1" for transient.
+	Properties map[string]string `json:"properties,omitempty"`
+	// Declare a queue or an exchange: durable or not.
 	Durable bool `json:"durable,omitempty"`
+	// Move: the queue messages go to (Name is where they come from).
+	Target string `json:"target,omitempty"`
+	// Declare an exchange: direct, topic, fanout or headers.
+	Kind string `json:"kind,omitempty"`
+	// Close a connection: why, as the client is told.
+	Reason string `json:"reason,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.
@@ -446,16 +456,23 @@ func RabbitPermissions(level string) (RabbitLevel, bool) {
 // operations per level on top of the permissions, never the management API
 // itself.
 var rabbitOps = map[string]string{
+	"overview":         LevelRead,
 	"queues":           LevelRead,
 	"exchanges":        LevelRead,
+	"exchange":         LevelRead,
+	"bindings":         LevelRead,
 	"queue":            LevelRead,
+	"consumers":        LevelRead,
 	"peek":             LevelRead,
 	"publish":          LevelWrite,
 	"purge":            LevelOwner,
+	"move":             LevelOwner,
 	"declare_queue":    LevelOwner,
 	"delete_queue":     LevelOwner,
+	"declare_exchange": LevelOwner,
 	"bind":             LevelOwner,
 	"connections":      LevelDBA,
+	"channels":         LevelDBA,
 	"close_connection": LevelDBA,
 }
 
@@ -468,14 +485,18 @@ func RabbitOpAllowed(op, level string) bool {
 // RabbitOps lists what a level may ask for, in a fixed order.
 func RabbitOps(level string) []string {
 	var out []string
-	for _, op := range []string{"queues", "exchanges", "queue", "peek", "publish", "purge",
-		"declare_queue", "delete_queue", "bind", "connections", "close_connection"} {
+	for _, op := range []string{"overview", "queues", "exchanges", "exchange", "bindings", "queue", "consumers",
+		"peek", "publish", "purge", "move", "declare_queue", "delete_queue", "declare_exchange", "bind",
+		"connections", "channels", "close_connection"} {
 		if RabbitOpAllowed(op, level) {
 			out = append(out, op)
 		}
 	}
 	return out
 }
+
+// RabbitExchangeKinds are the exchange types an owner may declare.
+var RabbitExchangeKinds = map[string]bool{"direct": true, "topic": true, "fanout": true, "headers": true}
 
 // RabbitNeedsConfirm reports whether an operation destroys messages or cuts
 // someone off, so the person must type the entry's name first.

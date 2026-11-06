@@ -66,7 +66,8 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
                         Who can connect
                       </ButtonLink>
                     )}
-                    <ButtonLink to="/databases/$dbId" params={{ dbId: d.id }} size="compact-xs" variant="default">Open</ButtonLink>
+                    <ButtonLink {...(d.engine === 'rabbitmq' ? { to: '/brokers/$brokerId', params: { brokerId: d.id } } as const : { to: '/databases/$dbId', params: { dbId: d.id } } as const)}
+                      size="compact-xs" variant="default">Open</ButtonLink>
                   </Group>
                 </Table.Td>
               </Table.Tr>
