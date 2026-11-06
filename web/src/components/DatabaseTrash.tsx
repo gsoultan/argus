@@ -123,7 +123,7 @@ export function TrashPanel({ collect, level, narrow, onBack }: {
   collect: Collect
   level: DBLevel | ''
   narrow: boolean
-  onBack: () => void
+  onBack?: () => void
 }) {
   const [items, setItems] = useState<Listed[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -152,7 +152,7 @@ export function TrashPanel({ collect, level, narrow, onBack }: {
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
       <Group gap="xs" px="md" py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-        <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>
+        {onBack && <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>}
         <Box style={{ minWidth: 0, flex: 1 }}>
           <Text fw={650} size={FS.body}>Trash</Text>
           {!narrow && <Text size={FS.micro} c="dimmed" lineClamp={1}>Deleted rows are kept for 30 days; dropped tables and schemas, and emptied tables' rows, for 7.</Text>}

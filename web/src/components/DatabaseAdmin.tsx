@@ -82,7 +82,7 @@ export interface AdminPanelProps {
   /** The person's own role, to mark their own session. */
   self: string
   narrow: boolean
-  onBack: () => void
+  onBack?: () => void
   onAskForAccess?: () => void
 }
 
@@ -94,11 +94,11 @@ const ident = (n: string) => (SAFE.test(n) ? n : `"${n.replace(/"/g, '""')}"`)
 const literal = (s: string) => `'${s.replace(/'/g, "''")}'`
 
 function PanelHeader({ title, blurb, narrow, onBack, right }: {
-  title: string; blurb: string; narrow: boolean; onBack: () => void; right?: React.ReactNode
+  title: string; blurb: string; narrow: boolean; onBack?: () => void; right?: React.ReactNode
 }) {
   return (
     <Group gap="xs" px="md" py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-      <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>
+      {onBack && <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>}
       <Box style={{ minWidth: 0, flex: 1 }}>
         <Text fw={650} size={FS.body}>{title}</Text>
         {!narrow && <Text size={FS.micro} c="dimmed" lineClamp={1}>{blurb}</Text>}
@@ -109,7 +109,7 @@ function PanelHeader({ title, blurb, narrow, onBack, right }: {
 }
 
 export function PanelFrame({ title, blurb, narrow, onBack, right, children }: {
-  title: string; blurb: string; narrow: boolean; onBack: () => void; right?: React.ReactNode; children: React.ReactNode
+  title: string; blurb: string; narrow: boolean; onBack?: () => void; right?: React.ReactNode; children: React.ReactNode
 }) {
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>

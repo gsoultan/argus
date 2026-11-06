@@ -3,7 +3,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { IconInfoCircle } from '@tabler/icons-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { DatabaseList } from '~/components/DatabaseList'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
 import { SplitView } from '~/components/SplitView'
@@ -12,6 +12,7 @@ import { RedisWorkspace } from '~/components/RedisWorkspace'
 import { PageBody, PageHeader } from '~/components/page'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
+import { noteDatabaseOpened } from '~/lib/recentDatabases'
 import { databaseQuery, meQuery, useRequestDatabaseAccess } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { engineOf } from '~/lib/engines'
@@ -41,6 +42,9 @@ function DatabasePage() {
   const { data: me } = useQuery(meQuery())
   const { data, error } = useQuery(databaseQuery(dbId))
   const [asking, ask] = useDisclosure(false)
+  // Only a database the person may open counts as opened in this browser.
+  const canOpen = Boolean(data?.access.level)
+  useEffect(() => { if (canOpen) noteDatabaseOpened(dbId) }, [dbId, canOpen])
 
   const getTicket = useCallback(async (level?: DBLevel) => {
     const t = await databaseTicket(dbId, level)
@@ -96,7 +100,7 @@ function DatabasePage() {
 
   return (
     <SplitView storageKey="databases" label="databases" list={<DatabaseList currentId={dbId} />}>
-      <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
+      {database.engine !== 'postgres' && <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
         <Text size={FS.micro} c="dimmed">
           <Link to="/databases" style={{ color: INK.brand }}>Databases</Link> / {engineOf(database.engine).label} · {database.dbname}
         </Text>
@@ -105,7 +109,7 @@ function DatabasePage() {
             Who can connect &amp; settings
           </Link>
         )}
-      </Group>
+      </Group>}
       {database.engine === 'redis' ? (
         <RedisWorkspace database={database} access={access} getTicket={getTicket} endpoint={postgresEndpoint}
           onAskForAccess={access.approvable ? ask.open : undefined} />

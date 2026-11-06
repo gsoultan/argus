@@ -1,7 +1,8 @@
 import { Badge, Box, Group, ScrollArea, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { IconDatabase, IconSearch } from '@tabler/icons-react'
+import { IconSearch } from '@tabler/icons-react'
+import { EngineMark } from '~/components/EngineMark'
 import { useMemo, useState } from 'react'
 import { engineOf } from '~/lib/engines'
 import { databasesQuery } from '~/lib/queries'
@@ -46,7 +47,7 @@ export function DatabaseList({ currentId }: { currentId: string }) {
             data-active={d.id === currentId || undefined}
             aria-current={d.id === currentId ? 'page' : undefined}
           >
-            <IconDatabase size={16} color="var(--color-brand)" style={{ flexShrink: 0 }} />
+            <EngineMark engine={d.engine} size={26} />
             <Box style={{ minWidth: 0, flex: 1 }}>
               <Text size="sm" fw={600} truncate>{d.engine === 'redis' ? `db ${d.dbname}` : d.dbname}</Text>
               <Text size={FS.micro} c="dimmed" ff="monospace" truncate>{engineOf(d.engine).label} · {d.hostname}</Text>

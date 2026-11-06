@@ -205,7 +205,7 @@ describe('Editing rows in the results', () => {
   it('edits jsonb as text and adds a new row', async () => {
     const { save } = setup()
     await screen.findByText(/double-click a cell/)
-    fireEvent.doubleClick(screen.getAllByText('null')[0]!.closest('td')!)
+    fireEvent.doubleClick(screen.getAllByText('NULL')[0]!.closest('td')!)
     const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByText('Text'))
     const area = within(dialog).getByLabelText('JSON for meta')
