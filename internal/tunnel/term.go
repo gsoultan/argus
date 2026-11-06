@@ -33,10 +33,46 @@ const (
 	FrameTerminate byte = 'k'
 	// FrameRefresh asks a desktop to repaint, for a viewer who arrived late.
 	FrameRefresh byte = 'f'
+	// FrameHangup ends a held terminal now: the person closed it on purpose,
+	// or nobody came back in time. Without it, a stream opened with Hold
+	// that closes is a dropped connection, and the shell is kept.
+	FrameHangup byte = 'h'
+	// FrameRelease says whether anyone is watching a held terminal's
+	// stream: "1" nobody is, so hang up once its foreground command is done
+	// (within Hold.RunningS); "0" someone is back. The stream stays open
+	// either way, so the session can still be watched and ended.
+	FrameRelease byte = 'l'
 	// Toward the control plane.
 	FrameOutput byte = 'o' // terminal output
 	FrameExit   byte = 'x' // exit code int32, then the recording's chain head
+	// FrameNotice is something the person at the terminal should be told
+	// that is not the shell's output, such as the agent restarting. JSON
+	// Notice. A control plane that does not know it ignores it.
+	FrameNotice byte = 'n'
 )
+
+// Notice is a FrameNotice's payload.
+type Notice struct {
+	// Kind is "restarting" (the agent is stopping; EndsInS says when the
+	// session ends) or "info".
+	Kind    string `json:"kind"`
+	Text    string `json:"text"`
+	EndsInS int    `json:"ends_in_s,omitempty"`
+}
+
+// NoticePayload and ParseNotice carry a Notice.
+func NoticePayload(n Notice) []byte {
+	b, _ := json.Marshal(n)
+	return b
+}
+
+func ParseNotice(p []byte) (Notice, bool) {
+	var n Notice
+	if json.Unmarshal(p, &n) != nil || n.Text == "" {
+		return Notice{}, false
+	}
+	return n, true
+}
 
 // MaxFrame bounds a frame's payload. Output is read in 32 KB pieces and a
 // paste is chunked by the browser; anything larger is not a frame this

@@ -29,10 +29,33 @@ export type TerminalState = 'connecting' | 'live' | 'reconnecting' | 'lost' | 'c
 /** How soon to try again after each failed reconnect. */
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000]
 /**
- * How long to keep trying: a little under the five minutes the control plane
- * keeps a shell whose browser has gone, so the last try can still find it.
+ * How long to keep trying. The server keeps a shell for five minutes, and a
+ * shell still running a command for hours, so this tab keeps trying well past
+ * the first; only the server saying the session is over stops it sooner.
  */
-const RECONNECT_FOR_MS = 290_000
+const RECONNECT_FOR_MS = 30 * 60_000
+
+/**
+ * The session this tab last had open on a host as an account, so a reload, a
+ * crash of the tab, or going to another page and back picks the same shell up
+ * instead of starting a new one. Per tab: another tab opens its own.
+ */
+const resumeKey = (target: string, principal: string) => `argus.terminal:${principal}@${target}`
+function storedSession(target: string, principal: string): string | undefined {
+  try {
+    return sessionStorage.getItem(resumeKey(target, principal)) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+function storeSession(target: string, principal: string, id: string | undefined) {
+  try {
+    if (id) sessionStorage.setItem(resumeKey(target, principal), id)
+    else sessionStorage.removeItem(resumeKey(target, principal))
+  } catch {
+    // Private mode or storage off: a reload then opens a new shell.
+  }
+}
 
 /**
  * Closes the terminal on purpose: the server hangs the shell up now instead
@@ -67,12 +90,21 @@ export interface LiveTerminalProps {
   principal: string
   onStateChange?: (state: TerminalState, detail?: string) => void
   onSession?: (sessionId: string) => void
+  /**
+   * Filled with what ends the session on purpose, for a Disconnect button.
+   * Anything else that takes the terminal away -- another page, a reload, a
+   * closed tab -- leaves the shell running for this tab to come back to.
+   */
+  endRef?: { current: (() => void) | null }
 }
 
 interface ServerMessage {
-  type: 'output' | 'ready' | 'error' | 'closed' | 'gone' | 'moved'
+  type: 'output' | 'ready' | 'error' | 'closed' | 'gone' | 'moved' | 'retry' | 'notice'
   /** On ready: this is the shell that was already running, reattached. */
   resumed?: boolean
+  /** On notice: what it is about; see the control plane's terminalMessage. */
+  kind?: string
+  ends_in_s?: number
   data?: string
   session?: string
   chain_head?: string
@@ -86,6 +118,7 @@ export function LiveTerminal({
   principal,
   onStateChange,
   onSession,
+  endRef,
 }: LiveTerminalProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -98,6 +131,7 @@ export function LiveTerminal({
   const stateRef = useRef<TerminalState>('connecting')
   const [detail, setDetail] = useState<string>()
   const [sessionId, setSessionId] = useState<string>()
+  const sessionIdRef = useRef<string | undefined>(undefined)
 
   const setStatus = useCallback(
     (s: TerminalState, d?: string) => {
@@ -147,7 +181,11 @@ export function LiveTerminal({
 
     // The session this terminal is showing, once the server has said which.
     // A dropped connection comes back to it rather than opening a new shell.
-    let session: string | undefined
+    // A session this tab left running here comes first.
+    let session: string | undefined = storedSession(target, principal)
+    // Set while picking up a stored session after a reload, so a session
+    // that has ended since opens a fresh one instead of a dead end.
+    let fromStore = !!session
     // Set when the server has said the session is over, or is someone
     // else's now: nothing to come back to.
     let final = false
@@ -156,10 +194,19 @@ export function LiveTerminal({
     let retry: ReturnType<typeof setTimeout> | undefined
     let dialing = false
 
-    const lose = (why: string) => {
+    const lose = (why: string, forget = true) => {
       final = true
+      if (forget) storeSession(target, principal, undefined)
       setStatus('lost', why)
       term.writeln(`\r\n\x1b[2m${why}\x1b[0m`)
+    }
+    // Picking up a stored session found it over: start a new one, said so.
+    const startFresh = (why: string) => {
+      fromStore = false
+      session = undefined
+      storeSession(target, principal, undefined)
+      term.writeln(`\x1b[2m${why}; opening a new session\x1b[0m`)
+      void connect()
     }
 
     const connect = async (resume?: string) => {
@@ -215,7 +262,8 @@ export function LiveTerminal({
       if (retry) clearTimeout(retry)
       retry = undefined
       if (Date.now() - lostAt > RECONNECT_FOR_MS) {
-        lose('the connection was lost and could not be restored in time; the session was ended on the server')
+        // Kept for this tab: Connect picks the shell up if it is still there.
+        lose('the connection could not be restored for a long time; connect again to pick the session up if it is still running', false)
         return
       }
       void connect(session)
@@ -234,14 +282,27 @@ export function LiveTerminal({
     const onBack = () => {
       if (stateRef.current === 'reconnecting' && document.visibilityState === 'visible') reconnect()
     }
-    // Leaving the page is closing the terminal on purpose: say so, so the
-    // shell is hung up now rather than kept for a return that is not coming.
-    const onLeave = () => hangup(ws)
+    // Closing or reloading the tab while a session runs is asked about first;
+    // a slip of the hand there used to hang the shell up mid-command. Even
+    // when the person goes, the shell is held, and a reload picks it up.
+    const onLeave = (ev: BeforeUnloadEvent) => {
+      if (stateRef.current === 'live' || stateRef.current === 'reconnecting') {
+        ev.preventDefault()
+        ev.returnValue = ''
+      }
+    }
     window.addEventListener('online', onBack)
     document.addEventListener('visibilitychange', onBack)
-    window.addEventListener('pagehide', onLeave)
+    window.addEventListener('beforeunload', onLeave)
+    if (endRef) {
+      endRef.current = () => {
+        final = true
+        storeSession(target, principal, undefined)
+        hangup(ws)
+      }
+    }
 
-    void connect()
+    void connect(session)
 
     function attach(sock: WebSocket) {
       const current = () => !disposed && wsRef.current === sock
@@ -268,9 +329,12 @@ export function LiveTerminal({
             if (msg.resumed) term.reset()
             else term.clear()
             attempt = 0
+            fromStore = false
             setStatus('live')
-            if (msg.session && msg.session !== session) {
+            if (msg.session) storeSession(target, principal, msg.session)
+            if (msg.session && (msg.session !== session || !sessionIdRef.current)) {
               session = msg.session
+              sessionIdRef.current = msg.session
               setSessionId(msg.session)
               onSession?.(msg.session)
             }
@@ -293,13 +357,35 @@ export function LiveTerminal({
             term.writeln(`\r\n\x1b[31margus: ${msg.data ?? 'connection refused'}\x1b[0m`)
             break
           case 'gone':
-            lose(msg.data ? `could not reconnect: ${msg.data}` : 'could not reconnect: the session has ended')
+            if (fromStore) startFresh('the session this tab had open here has ended')
+            else lose(msg.data ? `could not reconnect: ${msg.data}` : 'could not reconnect: the session has ended')
+            break
+          case 'retry':
+            // Not an answer about the session: the control plane cannot
+            // reach the agent yet (it has just restarted, or the network is
+            // still out). The close that follows tries again.
+            if (stateRef.current !== 'reconnecting') {
+              lostAt = Date.now()
+              attempt = 0
+              setStatus('reconnecting', msg.data ?? 'waiting for the server')
+            }
+            break
+          case 'notice':
+            term.writeln(`\r\n\x1b[33margus: ${msg.data ?? ''}\x1b[0m`)
+            if (msg.kind === 'agent-reconnecting' || msg.kind === 'control-restarting') {
+              setStatus('reconnecting', msg.data)
+            } else if (msg.kind === 'agent-back') {
+              setStatus('live')
+            } else if (msg.kind === 'restarting') {
+              setStatus(stateRef.current, msg.data)
+            }
             break
           case 'moved':
             lose(msg.data ?? 'this session was opened in another window')
             break
           case 'closed':
             final = true
+            storeSession(target, principal, undefined)
             setStatus('closed', `exit ${msg.exit_code ?? 0}`)
             term.writeln(`\r\n\x1b[2msession ended (exit ${msg.exit_code ?? 0})\x1b[0m`)
             break
@@ -350,10 +436,13 @@ export function LiveTerminal({
       if (retry) clearTimeout(retry)
       window.removeEventListener('online', onBack)
       document.removeEventListener('visibilitychange', onBack)
-      window.removeEventListener('pagehide', onLeave)
+      window.removeEventListener('beforeunload', onLeave)
+      if (endRef) endRef.current = null
       observer.disconnect()
       onData.dispose()
-      hangup(ws)
+      // Not a hangup: going to another page leaves the shell running, held
+      // on the server, for this tab to pick up; Disconnect ends it.
+      ws?.close()
       term.dispose()
       termRef.current = null
       wsRef.current = null
@@ -408,6 +497,14 @@ function StatusBadge({ state }: { state: TerminalState }) {
       </Badge>
     )
   }
+  if (state === 'reconnecting') {
+    return (
+      <Badge size="xs" color="amber" leftSection={<Loader size={8} color="amber" />}>
+        reconnecting · shell kept running
+      </Badge>
+    )
+  }
+  if (state === 'lost') return <Badge size="xs" color="amber">connection lost</Badge>
   if (state === 'error') return <Badge size="xs" color="rose">error</Badge>
   return <Badge size="xs" color="slate">closed</Badge>
 }

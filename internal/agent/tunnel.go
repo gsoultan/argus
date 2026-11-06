@@ -40,6 +40,16 @@ func (c *Call) Accept(session string) error {
 	return c.Stream.SetDeadline(time.Time{})
 }
 
+// AcceptWith is Accept with a full answer.
+func (c *Call) AcceptWith(a tunnel.Answer) error {
+	c.answered = true
+	a.OK = true
+	if err := tunnel.WriteJSON(c.Stream, a); err != nil {
+		return err
+	}
+	return c.Stream.SetDeadline(time.Time{})
+}
+
 // Refuse tells the control plane why not, and closes the stream.
 func (c *Call) Refuse(reason string) {
 	c.answered = true
@@ -290,7 +300,10 @@ func handleStream(ctx context.Context, call *Call, cfg TunnelConfig, log *slog.L
 		call.Refuse("unknown service")
 		return
 	}
-	if call.Header.Service != "ping" {
+	// Picking a held terminal back up is not a new session: it is neither
+	// turned away by an update waiting for sessions to end, nor counted
+	// again -- the shell it reattaches is already counted, held or not.
+	if call.Header.Service != "ping" && call.Header.Service != tunnel.TerminalResumeService {
 		if cfg.Gate != nil {
 			if why := cfg.Gate(call.Header.Service); why != "" {
 				call.Refuse(why)

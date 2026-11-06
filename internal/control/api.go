@@ -92,6 +92,10 @@ type API struct {
 	// running after its connection drops, for the same person to come back
 	// to. Zero means five minutes; see terminal.go.
 	TerminalReattachWindow time.Duration
+	// TerminalKeepRunning is how long, past that window, a shell nobody came
+	// back to is still kept while a command runs in its foreground, on an
+	// agent that can hold shells. Zero means four hours; negative never.
+	TerminalKeepRunning time.Duration
 
 	// AgentKeepRecordings is how long an agent keeps its copy of a recording
 	// once it has been stored here, sent on every heartbeat reply. Zero sends

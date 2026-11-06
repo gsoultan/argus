@@ -89,7 +89,39 @@ type Header struct {
 	Grant string `json:"grant,omitempty"`
 	// Desktop is how a desktop session should open; see DesktopOpen.
 	Desktop *DesktopOpen `json:"desktop,omitempty"`
+	// Hold asks the agent to keep a terminal running when this stream drops
+	// without a FrameHangup, so it can be picked up again; see TermHold. An
+	// agent that does not know the field hangs up on a drop, as it always
+	// has, and says so by leaving Answer.Holds unset.
+	Hold *TermHold `json:"hold,omitempty"`
+	// Resume names the held terminal a "terminal.resume" stream picks up.
+	Resume *TermResume `json:"resume,omitempty"`
 }
+
+// TermHold is how long an agent keeps a terminal whose stream dropped.
+type TermHold struct {
+	// ForS is how long the shell waits for someone to come back.
+	ForS int `json:"for_s"`
+	// RunningS, when set, keeps it longer while a command is running in the
+	// foreground -- an upgrade, a migration, a long copy -- so a dropped
+	// connection does not hang it up halfway. The shell is hung up once it
+	// is back at its prompt with nobody attached, or when this runs out.
+	RunningS int `json:"running_s,omitempty"`
+}
+
+// TermResume picks up a held terminal.
+type TermResume struct {
+	Session string `json:"session"`
+	// From is how much of the session's output the caller already has, in
+	// bytes since the session began. Output from there on is sent first;
+	// 0 asks for the recent screen.
+	From int64 `json:"from,omitempty"`
+}
+
+// TerminalResumeService is the service name that picks up a held terminal.
+// A name of its own, so an agent too old to hold one refuses it as an
+// unknown service instead of opening a fresh shell in its place.
+const TerminalResumeService = "terminal.resume"
 
 // DesktopOpen is what a desktop session needs beyond its grant.
 type DesktopOpen struct {
@@ -116,6 +148,14 @@ type Answer struct {
 	Session string `json:"session,omitempty"`
 	// GrantKey answers a QUIC hello with the control plane's grant key.
 	GrantKey string `json:"grant_key,omitempty"`
+	// Holds is set when the agent took a terminal's Hold: it keeps the shell
+	// when the stream drops and offers TerminalResumeService for it.
+	Holds bool `json:"holds,omitempty"`
+	// From answers a resume: where the output that follows starts, in bytes
+	// since the session began. Less than what was asked for never happens;
+	// more means output in between is no longer held (Gap).
+	From int64 `json:"from,omitempty"`
+	Gap  bool  `json:"gap,omitempty"`
 }
 
 // Hello is the first message on a QUIC session, from the agent. The HTTPS

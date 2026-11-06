@@ -41,6 +41,7 @@ type terminalHost struct {
 	host     string
 	dir      string
 	sessions chan agent.SessionRecord
+	col      *agent.Collector
 }
 
 // withTerminal gives the hub a grant key and the API a ticket signer.
@@ -61,17 +62,28 @@ func (e *tunnelEnv) withTerminal(t *testing.T) *auth.Signer {
 // runTerminalAgent runs an agent offering the terminal service, recording
 // into a directory of its own.
 func (e *tunnelEnv) runTerminalAgent(t *testing.T, cred, host, dir string) *terminalHost {
+	return e.runTerminalAgentHolding(t, cred, host, dir, true)
+}
+
+// runTerminalAgentHolding is runTerminalAgent for an agent that keeps shells
+// across a dropped stream, or (holds false) one too old to.
+func (e *tunnelEnv) runTerminalAgentHolding(t *testing.T, cred, host, dir string, holds bool) *terminalHost {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	col := agent.NewCollector(dir, log)
-	th := &terminalHost{host: host, dir: dir, sessions: make(chan agent.SessionRecord, 4)}
+	th := &terminalHost{host: host, dir: dir, sessions: make(chan agent.SessionRecord, 4), col: col}
 	col.OnSession = func(r agent.SessionRecord) { th.sessions <- r }
 
 	services := agent.DefaultTunnelServices()
-	services[agent.TerminalService] = agent.Terminal(agent.TerminalConfig{
+	tcfg := agent.TerminalConfig{
 		Collector: col, Verifier: &tunnel.GrantVerifier{Host: host}, Hostname: host, Log: log,
 		Spawn: agent.SpawnDirect,
-	})
+	}
+	if holds {
+		tcfg.Held = agent.NewHeldTerminals()
+		services[agent.TerminalResumeService] = agent.TerminalResume(tcfg)
+	}
+	services[agent.TerminalService] = agent.Terminal(tcfg)
 	services[agent.WatchService] = agent.Watch(agent.WatchConfig{
 		Collector: col, Verifier: &tunnel.GrantVerifier{Host: host}, Log: log,
 	})
@@ -448,7 +460,9 @@ func TestADroppedBrowserIsHungUpOnlyAfterTheReattachWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	untilReady(t, c, "sleep 300\n")
+	// At its prompt: a shell running a command is kept longer; see
+	// TestARunningCommandOutlivesTheHoldAndAnIdleShellDoesNot.
+	untilReady(t, c)
 	time.Sleep(300 * time.Millisecond)
 	_ = c.CloseNow() // the network went, not the person
 

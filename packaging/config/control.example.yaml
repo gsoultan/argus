@@ -92,6 +92,16 @@ rate_limit:
 
 session_ttl: 8h
 ticket_ttl: 60s
+
+# A browser terminal survives its connection dropping: a closed laptop, a
+# reloaded tab, argus-control restarting, the agent's tunnel reconnecting. The
+# server's agent keeps the shell running, and recording, for this long for the
+# person to come back to; the console reconnects on its own.
+# terminal_reattach_window: 5m
+# Past that, a shell still running a command (an upgrade, a migration) is kept
+# until the command finishes, for at most this long, then hung up. A negative
+# duration hangs it up at the end of the window whatever it is doing.
+# terminal_keep_running: 4h
 agent_stale_after: 90s
 log_level: "info"
 

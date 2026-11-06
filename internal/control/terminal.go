@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -77,7 +78,7 @@ func (a *API) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(1 << 20)
 
 	if resume := r.URL.Query().Get("resume"); resume != "" {
-		a.reattachTerminal(r.Context(), conn, t.Email, target, principal, resume)
+		a.reattachTerminal(r.Context(), conn, t.Email, target, principal, resume, a.clientAddr(r))
 		return
 	}
 	a.relayTerminal(r.Context(), conn, t.Email, target, principal, a.clientAddr(r))
@@ -110,6 +111,11 @@ type terminalMessage struct {
 	// one that was already running, and the output that follows starts with
 	// the recent screen rather than a fresh prompt.
 	Resumed bool `json:"resumed,omitempty"`
+	// Kind says what a "notice" is about: "agent-reconnecting",
+	// "agent-back", "restarting" (the agent is stopping, EndsInS from now),
+	// "control-restarting", "output-missed".
+	Kind    string `json:"kind,omitempty"`
+	EndsInS int    `json:"ends_in_s,omitempty"`
 }
 
 /*
@@ -152,6 +158,27 @@ func (a *API) terminalReattachWindow() time.Duration {
 	return defaultTerminalReattachWindow
 }
 
+// defaultTerminalKeepRunning is how long a shell nobody came back to is still
+// kept while a command runs in its foreground. Long enough for a
+// distribution upgrade; bounded, because it is still a logged-in shell.
+const defaultTerminalKeepRunning = 4 * time.Hour
+
+func (a *API) terminalKeepRunning() time.Duration {
+	switch {
+	case a.TerminalKeepRunning < 0:
+		return 0
+	case a.TerminalKeepRunning > 0:
+		return a.TerminalKeepRunning
+	}
+	return defaultTerminalKeepRunning
+}
+
+// terminalHold is what the agent is asked to keep when its stream drops.
+func (a *API) terminalHold() *tunnel.TermHold {
+	return &tunnel.TermHold{ForS: int(a.terminalReattachWindow().Seconds()),
+		RunningS: int(a.terminalKeepRunning().Seconds())}
+}
+
 // attachmentQueue is how far a browser may fall behind before output waits
 // for it. Output waits rather than being dropped, as it always has: the shell
 // is held up by a slow browser, never shown to it with holes.
@@ -165,8 +192,25 @@ type termSession struct {
 	email     string
 	host      string
 	principal string
-	st        tunnel.Stream
-	stmu      sync.Mutex // frames to the agent are written whole
+	client    string
+	// tctx carries the organization the session is in, for signing the
+	// grant a reconnect to the agent needs; it is never cancelled.
+	tctx context.Context
+	st   tunnel.Stream
+	stmu sync.Mutex // frames to the agent are written whole; guards st
+	// agentHolds is set when the agent keeps the shell if the stream drops,
+	// so a lost stream is reconnected rather than the end of the session.
+	agentHolds bool
+	// received is how much output has come from the agent, which is where a
+	// reconnect asks it to carry on from. Only run touches it.
+	received int64
+	// hungUp is set once the shell was hung up on purpose: no reconnect.
+	hungUp atomic.Bool
+	// moved is set when the agent says another stream has the session now.
+	moved atomic.Bool
+	// released is set once the agent was told nobody is watching; see
+	// tunnel.FrameRelease. Guarded by mu.
+	released bool
 
 	mu       sync.Mutex
 	att      *termAttachment // the browser showing it, or nil
@@ -183,6 +227,12 @@ func (ts *termSession) writeStream(typ byte, p []byte) error {
 	ts.stmu.Lock()
 	defer ts.stmu.Unlock()
 	return tunnel.WriteFrame(ts.st, typ, p)
+}
+
+func (ts *termSession) stream() tunnel.Stream {
+	ts.stmu.Lock()
+	defer ts.stmu.Unlock()
+	return ts.st
 }
 
 // termOut is one message for a browser, in order.
@@ -277,7 +327,7 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 	}
 	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
 	st, answer, err := a.Tunnels.OpenWith(octx, host,
-		tunnel.Header{Service: agentTerminalService, Grant: grant})
+		tunnel.Header{Service: agentTerminalService, Grant: grant, Hold: a.terminalHold()})
 	cancel()
 	switch {
 	case errors.Is(err, ErrNoTunnel):
@@ -306,19 +356,25 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 		a.log.Error("audit append failed", "error", aerr)
 	}
 
-	ts := &termSession{a: a, email: email, host: host,
-		principal: principal, st: st, ended: make(chan struct{})}
-	ts.ls = &liveSession{tenant: tenantIDOf(ctx), id: answer.Session, protocol: "ssh", hub: live.NewHub(),
-		width: 80, height: 24, term: ts}
-	ts.ls.terminate = ts.terminate
-	a.live.add(ts.ls)
-
+	ts := a.newTermSession(ctx, email, host, principal, client, st, answer)
 	// The browser that opened it is attached before the agent's first
 	// output is read, so it misses none of it.
 	att := newAttachment(conn)
 	ts.attach(att, false)
 	go ts.run()
 	ts.serve(ctx, att)
+}
+
+func (a *API) newTermSession(ctx context.Context, email, host, principal, client string,
+	st tunnel.Stream, answer tunnel.Answer) *termSession {
+	ts := &termSession{a: a, email: email, host: host, principal: principal, client: client,
+		tctx: context.WithoutCancel(ctx), st: st, agentHolds: answer.Holds,
+		received: answer.From, ended: make(chan struct{})}
+	ts.ls = &liveSession{tenant: tenantIDOf(ctx), id: answer.Session, protocol: "ssh", hub: live.NewHub(),
+		width: 80, height: 24, term: ts}
+	ts.ls.terminate = ts.terminate
+	a.live.add(ts.ls)
+	return ts
 }
 
 // reattachTerminal puts a browser back on a session whose connection dropped.
@@ -328,7 +384,7 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 // kept by coming back. The session must also be this person's, on this host,
 // as this account: a session id is not a credential.
 func (a *API) reattachTerminal(ctx context.Context, conn *websocket.Conn,
-	email, host, principal, id string) {
+	email, host, principal, id, client string) {
 
 	gone := func(why string) {
 		b, _ := json.Marshal(terminalMessage{Type: "gone", Data: why})
@@ -339,7 +395,9 @@ func (a *API) reattachTerminal(ctx context.Context, conn *websocket.Conn,
 	}
 	ls, ok := a.live.get(ctx, id)
 	if !ok || ls.term == nil {
-		gone("the session has ended on the server, or another replica is relaying it")
+		// Not relayed here: this control plane restarted since, or another
+		// replica had it. The agent may still be holding the shell.
+		a.resumeFromAgent(ctx, conn, email, host, principal, id, client)
 		return
 	}
 	ts := ls.term
@@ -368,6 +426,73 @@ func (a *API) reattachTerminal(ctx context.Context, conn *websocket.Conn,
 	ts.serve(ctx, att)
 }
 
+// resumeFromAgent picks a terminal this control plane is not relaying back up
+// from the agent holding it, and puts the browser on it.
+//
+// The agent checks the fresh grant is for the person and account the shell
+// was opened for, so a session id here is no more a credential than it is
+// anywhere else.
+func (a *API) resumeFromAgent(ctx context.Context, conn *websocket.Conn,
+	email, host, principal, id, client string) {
+
+	say := func(typ, why string) {
+		b, _ := json.Marshal(terminalMessage{Type: typ, Data: why})
+		wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_ = conn.Write(wctx, websocket.MessageText, b)
+		cancel()
+		_ = conn.Close(websocket.StatusNormalClosure, typ)
+	}
+	st, answer, err := a.openResume(ctx, email, host, principal, client, id, 0)
+	switch {
+	case errors.Is(err, ErrNoTunnel):
+		// The agent has not reconnected yet -- this control plane has just
+		// started, or the network is still out. Not an answer about the
+		// session, so the browser tries again.
+		say("retry", "waiting for the agent on "+host+" to reconnect")
+		return
+	case tunnel.IsRefused(err) && answer.Error == "unknown service":
+		say("gone", "the agent on "+host+" is too old to keep a session through a "+
+			"reconnect; update it from the server's page so the next one is kept")
+		return
+	case tunnel.IsRefused(err):
+		say("gone", answer.Error)
+		return
+	case err != nil:
+		say("retry", "could not reach the agent on "+host+": "+err.Error())
+		return
+	}
+	ts := a.newTermSession(ctx, email, host, principal, client, st, answer)
+	a.log.Info("terminal resumed from the agent", "session", id, "email", email, "host", host)
+	if _, aerr := a.store.AppendAudit(ctx, AuditEvent{
+		Action:     "terminal.reattached",
+		Severity:   "notice",
+		ActorEmail: email,
+		Target:     host,
+		Detail: "Browser terminal reconnected to session " + id + " as " + principal +
+			" through a new connection to the agent, which kept the shell running and " +
+			"recording while argus-control could not reach it.",
+	}); aerr != nil {
+		a.log.Error("audit append failed", "error", aerr)
+	}
+	att := newAttachment(conn)
+	ts.attach(att, true)
+	go ts.run()
+	ts.serve(ctx, att)
+}
+
+// openResume asks host's agent for the held terminal id, from output byte from.
+func (a *API) openResume(ctx context.Context, email, host, principal, client, id string,
+	from int64) (tunnel.Stream, tunnel.Answer, error) {
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), tunnel.NewGrant(email, host, principal, client))
+	if err != nil {
+		return nil, tunnel.Answer{}, err
+	}
+	octx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return a.Tunnels.OpenWith(octx, host, tunnel.Header{Service: tunnel.TerminalResumeService,
+		Grant: grant, Resume: &tunnel.TermResume{Session: id, From: from}})
+}
+
 // attach makes att the browser showing the session, replacing any other.
 // It reports false once the shell has ended.
 func (ts *termSession) attach(att *termAttachment, resumed bool) bool {
@@ -382,6 +507,8 @@ func (ts *termSession) attach(att *termAttachment, resumed bool) bool {
 	}
 	old := ts.att
 	ts.att = att
+	unrelease := ts.released
+	ts.released = false
 	// Taken under the same lock run delivers under: every frame is either in
 	// this backlog or delivered to att afterwards, never both or neither.
 	ready, _ := json.Marshal(terminalMessage{Type: "ready", Session: ts.ls.id, Resumed: resumed})
@@ -394,6 +521,9 @@ func (ts *termSession) attach(att *termAttachment, resumed bool) bool {
 		}
 	}
 	ts.mu.Unlock()
+	if unrelease {
+		_ = ts.writeStream(tunnel.FrameRelease, []byte("0"))
+	}
 
 	if old != nil {
 		// Two windows typing into one shell is never what anyone meant. The
@@ -443,13 +573,20 @@ func (ts *termSession) serve(ctx context.Context, att *termAttachment) {
 			for in := []byte(m.Data); len(in) > 0; {
 				n := min(len(in), 32<<10)
 				if ts.writeStream(tunnel.FrameInput, in[:n]) != nil {
+					if ts.agentHolds {
+						// The link to the agent is being restored; the
+						// browser has been told, and typing is not sent
+						// until it is back.
+						break
+					}
 					return
 				}
 				in = in[n:]
 			}
 		case "resize":
 			if m.Cols > 0 && m.Rows > 0 {
-				if ts.writeStream(tunnel.FrameResize, tunnel.ResizePayload(m.Cols, m.Rows)) != nil {
+				if ts.writeStream(tunnel.FrameResize, tunnel.ResizePayload(m.Cols, m.Rows)) != nil &&
+					!ts.agentHolds {
 					return
 				}
 				ts.ls.setSize(m.Cols, m.Rows)
@@ -481,9 +618,24 @@ func (ts *termSession) detach(att *termAttachment) {
 	ts.timer = time.AfterFunc(window, func() {
 		ts.mu.Lock()
 		stale := ts.att != nil || ts.over
+		release := !stale && ts.agentHolds && ts.a.terminalKeepRunning() > 0
+		if release {
+			ts.released = true
+		}
 		ts.mu.Unlock()
 		if stale {
 			return
+		}
+		if release {
+			// The agent hangs it up now if it is at its prompt, and once the
+			// command running in it finishes otherwise. The stream stays,
+			// so the session can still be watched and ended from here.
+			ts.a.log.Info("terminal not reconnected in time; the shell goes once "+
+				"its running command, if any, finishes",
+				"session", ts.ls.id, "email", ts.email, "host", ts.host)
+			if ts.writeStream(tunnel.FrameRelease, []byte("1")) == nil {
+				return
+			}
 		}
 		ts.a.log.Info("terminal not reconnected in time; hanging up",
 			"session", ts.ls.id, "email", ts.email, "host", ts.host)
@@ -491,9 +643,16 @@ func (ts *termSession) detach(att *termAttachment) {
 	})
 }
 
-// hangup closes the stream, which hangs the shell up on the host. The
+// hangup ends the shell on the host. An agent that holds shells is told so
+// first -- a stream that merely closes is a dropped one, which it keeps. The
 // recording then reads as a closed browser, as it always has.
-func (ts *termSession) hangup() { _ = ts.st.Close() }
+func (ts *termSession) hangup() {
+	ts.hungUp.Store(true)
+	if ts.agentHolds {
+		_ = ts.writeStream(tunnel.FrameHangup, nil)
+	}
+	_ = ts.stream().Close()
+}
 
 // terminate asks the agent to end the session for by, for reason.
 func (ts *termSession) terminate(by, reason string) bool {
@@ -512,30 +671,57 @@ func (ts *termSession) terminate(by, reason string) bool {
 	if !first {
 		return true
 	}
-	if err := ts.writeStream(tunnel.FrameTerminate, tunnel.TerminatePayload(by, reason)); err != nil {
+	if err := ts.writeStream(tunnel.FrameTerminate, tunnel.TerminatePayload(by, reason)); err != nil &&
+		!ts.agentHolds {
 		// The agent is unreachable on this stream. Closing it hangs the
 		// shell up all the same; the recording then reads as dropped.
-		_ = ts.st.Close()
+		_ = ts.stream().Close()
 	}
+	// An agent that holds shells and is being reconnected to is sent the
+	// termination again once it is back; see reconnectAgent.
 	return true
 }
 
 // run relays the agent's output until the shell ends, whoever is attached.
 func (ts *termSession) run() {
-	defer ts.st.Close()
-	fr := tunnel.NewFrameReader(ts.st)
+	defer func() { _ = ts.stream().Close() }()
+	for {
+		if ts.relay(ts.stream()) {
+			return
+		}
+		// The agent went away without saying how the session ended.
+		switch {
+		case ts.moved.Load():
+			ts.end(websocket.StatusNormalClosure, "moved", terminalMessage{Type: "moved",
+				Data: "this session was opened in another window"})
+			return
+		case ts.agentHolds && !ts.hungUp.Load() && ts.reconnectAgent():
+			continue
+		case ts.agentHolds && !ts.hungUp.Load() && stopping(ts.a.Tunnels):
+			// This control plane is going away, not the session: the browser
+			// is left to reconnect, to the next one, which picks it up.
+			ts.end(websocket.StatusGoingAway, "restarting")
+			return
+		}
+		// Said as such: the recording is on the host, sealed or not, and the
+		// console must not invent an exit status for it.
+		ts.end(websocket.StatusGoingAway, "agent gone", terminalMessage{Type: "error",
+			Data: "the connection to the agent ended before the session did"})
+		return
+	}
+}
+
+// relay reads st until it ends. It reports true when the session is over.
+func (ts *termSession) relay(st tunnel.Stream) bool {
+	fr := tunnel.NewFrameReader(st)
 	for {
 		typ, p, err := fr.Next()
 		if err != nil {
-			// The agent went away without saying how the session ended. Said
-			// as such: the recording is on the host, sealed or not, and the
-			// console must not invent an exit status for it.
-			ts.end(websocket.StatusGoingAway, "agent gone", terminalMessage{Type: "error",
-				Data: "the connection to the agent ended before the session did"})
-			return
+			return false
 		}
 		switch typ {
 		case tunnel.FrameOutput:
+			ts.received += int64(len(p))
 			// The same bytes to whoever is watching; the hub never waits.
 			// Into the backlog and to the browser under one lock; see attach.
 			// The reader reuses p; the hub frame is a copy, and the browser
@@ -548,6 +734,16 @@ func (ts *termSession) run() {
 			if att != nil {
 				att.put(termOut{typ: websocket.MessageBinary, b: frame[1:]})
 			}
+		case tunnel.FrameNotice:
+			n, ok := tunnel.ParseNotice(p)
+			if !ok {
+				continue
+			}
+			if n.Kind == "moved" {
+				ts.moved.Store(true)
+				continue
+			}
+			ts.tell(terminalMessage{Type: "notice", Kind: n.Kind, Data: n.Text, EndsInS: n.EndsInS})
 		case tunnel.FrameExit:
 			code, head, _ := tunnel.ParseExit(p)
 			ts.stmu.Lock()
@@ -561,9 +757,98 @@ func (ts *termSession) run() {
 			msgs = append(msgs, terminalMessage{Type: "closed", ExitCode: code,
 				Session: ts.ls.id, ChainHead: head})
 			ts.end(websocket.StatusNormalClosure, "exit", msgs...)
-			return
+			return true
 		}
 	}
+}
+
+func stopping(h *TunnelHub) bool {
+	select {
+	case <-h.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// tell sends m to whichever browser is showing the session, if any.
+func (ts *termSession) tell(m terminalMessage) {
+	ts.mu.Lock()
+	att := ts.att
+	ts.mu.Unlock()
+	if att != nil {
+		att.json(m)
+	}
+}
+
+// agentReconnectDelays is how soon each try to get back to the agent comes.
+var agentReconnectDelays = []time.Duration{250 * time.Millisecond, 500 * time.Millisecond,
+	time.Second, 2 * time.Second, 3 * time.Second, 5 * time.Second}
+
+/*
+reconnectAgent gets back to the agent holding the shell after the stream to it
+dropped -- the tunnel reconnecting after a network blip, a proxy recycling the
+agent's WebSocket -- while the browser stays where it is. The agent carries on
+from the last byte this side had, so the screen neither repeats nor skips;
+typing in the meantime is not sent, and the browser is told why.
+
+It gives up when the agent says the session is not there, or when the agent's
+hold has run out, after which there is nothing left to reconnect to.
+*/
+func (ts *termSession) reconnectAgent() bool {
+	ts.tell(terminalMessage{Type: "notice", Kind: "agent-reconnecting",
+		Data: "lost the connection to the agent on " + ts.host + "; the shell is still " +
+			"running there, reconnecting…"})
+	ts.a.log.Info("terminal: the stream to the agent dropped; reconnecting",
+		"session", ts.ls.id, "host", ts.host)
+	deadline := time.Now().Add(ts.a.terminalReattachWindow())
+	for i := 0; time.Now().Before(deadline); i++ {
+		select {
+		case <-time.After(agentReconnectDelays[min(i, len(agentReconnectDelays)-1)]):
+		case <-ts.a.Tunnels.Done():
+			// This control plane is stopping; the browser reconnects to
+			// whichever answers next, and that one picks the shell up.
+			return false
+		}
+		if ts.hungUp.Load() {
+			return false
+		}
+		st, answer, err := ts.a.openResume(ts.tctx, ts.email, ts.host, ts.principal, ts.client,
+			ts.ls.id, ts.received)
+		if tunnel.IsRefused(err) {
+			ts.a.log.Info("terminal: the agent no longer has the session",
+				"session", ts.ls.id, "host", ts.host, "reason", answer.Error)
+			return false
+		}
+		if err != nil {
+			continue
+		}
+		ts.stmu.Lock()
+		ts.st = st
+		by, why := ts.endedBy, ts.endWhy
+		ts.stmu.Unlock()
+		ts.a.log.Info("terminal: reconnected to the agent", "session", ts.ls.id,
+			"host", ts.host, "after_tries", i+1)
+		if answer.Gap {
+			ts.tell(terminalMessage{Type: "notice", Kind: "output-missed",
+				Data: "some output from while the connection was down is no longer held; " +
+					"the session recording has all of it"})
+		}
+		ts.received = answer.From
+		if by != "" {
+			_ = ts.writeStream(tunnel.FrameTerminate, tunnel.TerminatePayload(by, why))
+		}
+		ts.mu.Lock()
+		released := ts.released
+		ts.mu.Unlock()
+		if released {
+			_ = ts.writeStream(tunnel.FrameRelease, []byte("1"))
+		}
+		ts.tell(terminalMessage{Type: "notice", Kind: "agent-back",
+			Data: "reconnected to the agent on " + ts.host})
+		return true
+	}
+	return false
 }
 
 // end marks the shell over, takes it off the registry before the browser
@@ -640,4 +925,27 @@ func (h *TunnelHub) grantKeyFor(ctx context.Context) ed25519.PrivateKey {
 	k := tunnel.DeriveGrantKey(h.GrantKey, id)
 	h.grantKeys[id] = k
 	return k
+}
+
+// WarnTerminalsRestarting tells every browser terminal this control plane is
+// relaying that it is about to restart. Their shells are held by agents that
+// can, and the browsers reconnect on their own; this is so the pause reads as
+// one. Safe to call more than once.
+func (a *API) WarnTerminalsRestarting() {
+	a.live.mu.Lock()
+	terms := make([]*termSession, 0, len(a.live.m))
+	for _, ls := range a.live.m {
+		if ls.term != nil {
+			terms = append(terms, ls.term)
+		}
+	}
+	a.live.mu.Unlock()
+	for _, ts := range terms {
+		msg := "argus-control is restarting; this session reconnects when it is back"
+		if !ts.agentHolds {
+			msg = "argus-control is restarting, and this server's agent is too old to keep " +
+				"the session through it: this session will end"
+		}
+		ts.tell(terminalMessage{Type: "notice", Kind: "control-restarting", Data: msg})
+	}
 }

@@ -115,6 +115,14 @@ type config struct {
 	// are already appropriate — a person never reaches them, a script does.
 	RateLimit  *rateLimitConfig `yaml:"rate_limit,omitempty"`
 	SessionTTL time.Duration    `yaml:"session_ttl,omitempty"`
+	// TerminalReattachWindow is how long a browser terminal's shell keeps
+	// running after its connection drops, for the person to come back to.
+	// 5m.
+	TerminalReattachWindow time.Duration `yaml:"terminal_reattach_window,omitempty"`
+	// TerminalKeepRunning is how long, past that, a shell nobody came back
+	// to is still kept while a command runs in it (an upgrade, a
+	// migration). 4h; a negative duration turns it off.
+	TerminalKeepRunning time.Duration `yaml:"terminal_keep_running,omitempty"`
 	// RequireMFA is which accounts must set up a second factor before they
 	// may do anything else in the console: "all" (the default),
 	// "privileged" (owners, admins and approvers), or "off".
@@ -588,6 +596,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	api.SetAuth(signer, cfg.ConsoleURL, secureCookies)
 	api.SessionTTL = cfg.SessionTTL
+	api.TerminalReattachWindow = cfg.TerminalReattachWindow
+	api.TerminalKeepRunning = cfg.TerminalKeepRunning
 	api.TicketTTL = cfg.TicketTTL
 	if !control.ValidMFAPolicy(cfg.RequireMFA) {
 		return fmt.Errorf("require_mfa is %q; use all, privileged or off", cfg.RequireMFA)
@@ -748,6 +758,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// for every handler: end them as it starts.
 	for _, l := range listeners {
 		l.srv.RegisterOnShutdown(api.StopAlertStreams)
+		// Browser terminals are told the control plane is restarting, so
+		// the reconnect that follows reads as the pause it is.
+		l.srv.RegisterOnShutdown(api.WarnTerminalsRestarting)
 	}
 
 	if cfg.TLS != nil {

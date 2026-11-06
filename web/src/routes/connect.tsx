@@ -110,6 +110,8 @@ function Connect() {
    * behaviour the single-use property requires.
    */
   const heldTicket = useRef<string | null>(null)
+  // Ends the terminal on purpose; set by LiveTerminal while one is open.
+  const endTerminal = useRef<(() => void) | null>(null)
 
   const selected = assets?.find((a) => a.hostname === target)
   const isRDPTarget = selected?.protocol === 'rdp'
@@ -202,6 +204,9 @@ function Connect() {
               color="rose"
               leftSection={<IconX size={14} />}
               onClick={() => {
+                if (endTerminal.current && (state === 'live' || state === 'reconnecting') &&
+                  !window.confirm('End this session? Anything still running in it, such as an update, is stopped. To leave it running, go to another page instead: it is kept for you to come back to.')) return
+                endTerminal.current?.()
                 heldTicket.current = null
                 setSession(null)
               }}
@@ -293,6 +298,7 @@ function Connect() {
               />
             ) : (
               <LiveTerminal
+                endRef={endTerminal}
                 endpoint={terminalEndpoint()}
                 getTicket={getTicket}
                 target={session.target}
