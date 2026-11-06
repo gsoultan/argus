@@ -1308,6 +1308,14 @@ jobs:
             echo "--- control.log"; tail -30 "$tmp/control.log"; sc.exe query argus-agent || true; }
           q() { psql "$PGURL" -tAc "$1" | tr -d '\r'; }
           status() { q "SELECT coalesce(update_status->>'$1', '') FROM agents WHERE lower(hostname) = lower('$host')"; }
+          # post <path> <body>: says what the control plane answered when it refuses.
+          post() {
+            code=$(command curl --ssl-no-revoke -sS --cacert "$tmp/ca.crt" -b "$tmp/jar" \
+              -H Content-Type:application/json -o "$tmp/post.out" -w '%{http_code}' \
+              -X POST "https://localhost:8080$1" -d "$2")
+            case "$code" in 2*) return 0 ;; esac
+            dump; echo "::error::POST $1 answered $code: $(cat "$tmp/post.out")"; exit 1
+          }
           for i in $(seq 1 60); do
             [ "$(status supported)" = true ] && break
             sleep 1
@@ -1320,10 +1328,11 @@ jobs:
           # was only discovered is added here.
           asset=$(q "SELECT id FROM assets WHERE lower(hostname) = lower('$host')")
           if [ -z "$asset" ]; then
-            asset=$($c -X POST "https://localhost:8080/api/v1/discovered/$host/enrol" \
-              -d '{"principals":["Administrator"],"people":["admin@ci.example"]}' | jq -r .assetId)
+            post "/api/v1/discovered/$host/enrol" '{"principals":["Administrator"],"people":["admin@ci.example"]}'
+            asset=$(jq -r .assetId "$tmp/post.out")
           fi
           [ -n "$asset" ] && [ "$asset" != null ] || { dump; echo "::error::no server for $host"; exit 1; }
+          echo "server $asset; the agent reports $(q "SELECT update_status FROM agents WHERE lower(hostname) = lower('$host')")"
 
           # waitfor <state...>: the update's outcome, within four minutes.
           waitfor() {
@@ -1339,8 +1348,7 @@ jobs:
           running() { sc.exe query argus-agent | grep -q RUNNING; }
 
           # 1. An update to 9.9.1.
-          $c -X POST "https://localhost:8080/api/v1/assets/$asset/agent/update" \
-            -d '{"version":"9.9.1","now":true}' >/dev/null
+          post "/api/v1/assets/$asset/agent/update" '{"version":"9.9.1","now":true}'
           waitfor done || { dump; echo "::error::the update to 9.9.1 ended '$(status state)': $(status message)"; exit 1; }
           echo "update: $(status message)"
           for i in $(seq 1 30); do [ "$(version)" = 9.9.1 ] && break; sleep 1; done
@@ -1352,8 +1360,7 @@ jobs:
 
           # 2. A version that cannot start goes back to 9.9.1 on its own.
           started=$(date +%s)
-          $c -X POST "https://localhost:8080/api/v1/assets/$asset/agent/update" \
-            -d '{"version":"9.9.2","now":true}' >/dev/null
+          post "/api/v1/assets/$asset/agent/update" '{"version":"9.9.2","now":true}'
           for i in $(seq 1 30); do [ "$(status target)" = 9.9.2 ] && break; sleep 1; done
           waitfor rolled_back || { dump; echo "::error::the broken update ended '$(status state)': $(status message)"; exit 1; }
           echo "rollback after $(( $(date +%s) - started ))s: $(status message)"
@@ -1362,7 +1369,7 @@ jobs:
           running || { dump; echo "::error::the service is not running after going back"; exit 1; }
 
           # 3. A restart on the version it runs.
-          $c -X POST "https://localhost:8080/api/v1/assets/$asset/agent/restart" -d '{"now":true}' >/dev/null
+          post "/api/v1/assets/$asset/agent/restart" '{"now":true}'
           for i in $(seq 1 30); do [ "$(status restart)" = true ] && break; sleep 1; done
           waitfor done || { dump; echo "::error::the restart ended '$(status state)': $(status message)"; exit 1; }
           echo "restart: $(status message)"
