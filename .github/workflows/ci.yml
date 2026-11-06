@@ -1332,6 +1332,12 @@ jobs:
             asset=$(jq -r .assetId "$tmp/post.out")
           fi
           [ -n "$asset" ] && [ "$asset" != null ] || { dump; echo "::error::no server for $host"; exit 1; }
+          # Adding the server reconnects the agent's tunnel; wait for the
+          # console to see its credential again.
+          for i in $(seq 1 60); do
+            [ "$($c "https://localhost:8080/api/v1/assets/$asset/agent/update" | jq -r .enrolled)" = true ] && break
+            sleep 1
+          done
           echo "server $asset; the agent reports $(q "SELECT update_status FROM agents WHERE lower(hostname) = lower('$host')")"
 
           # waitfor <state...>: the update's outcome, within four minutes.
