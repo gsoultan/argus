@@ -14,13 +14,14 @@ import (
 )
 
 /*
-What databases a Postgres, Redis or RabbitMQ on this server holds, for the
+What databases a Postgres, Redis, RabbitMQ or MySQL on this server holds, for the
 console's add form. See tunnel/discover.go.
 
 Each engine is asked the way the agent already signs in to it, and only
 read: Postgres through the pg-admin helper as the postgres account (peer
 authentication), Redis as its administrator with the redis.conf's
-requirepass, RabbitMQ through rabbitmqctl. Nothing is created and no
+requirepass, RabbitMQ through rabbitmqctl, MySQL as root over its socket or
+with the entry's option file. Nothing is created and no
 password leaves this process.
 */
 
@@ -42,6 +43,8 @@ type DiscoverDBConfig struct {
 	Ctl func(ctx context.Context, args []string, stdin string) ([]byte, error)
 	// Redis asks a Redis; nil dials it. Tests replace it.
 	Redis func(ctx context.Context, d tunnel.GrantDiscover) tunnel.DiscoverResult
+	// MySQLSockets replaces where MySQL's socket is looked for; tests.
+	MySQLSockets []string
 }
 
 const discoverTimeout = 20 * time.Second
@@ -116,6 +119,12 @@ func discover(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantDiscover,
 		return cfg.Redis(ctx, d)
 	case tunnel.EngineRabbitMQ:
 		return discoverRabbit(ctx, cfg.Ctl)
+	case tunnel.EngineMySQL:
+		socks := cfg.MySQLSockets
+		if socks == nil {
+			socks = mysqlSockets
+		}
+		return discoverMySQL(ctx, socks, d)
 	}
 	return tunnel.DiscoverResult{Error: "unknown engine " + d.Engine}
 }
