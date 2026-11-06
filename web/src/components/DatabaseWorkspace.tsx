@@ -21,6 +21,7 @@ import type { SaveResult } from '~/components/RowEdits'
 import type { Stmt } from '~/lib/rowEdit'
 import { TrashNotice, TrashPanel, type TrashItem } from '~/components/DatabaseTrash'
 import { QueryParams } from '~/components/QueryParams'
+import { engineVersion } from '~/lib/engines'
 import { SqlEditor, pgErrorOffset, type EditorError, type SqlEditorHandle } from '~/components/SqlEditor'
 import { bindParams, originalOffset, paramNames, type Bound } from '~/lib/sqlParams'
 import { catalogFrom, completeSQL, type SQLCatalog, type SQLColumn } from '~/lib/sqlComplete'
@@ -1759,13 +1760,6 @@ editor, the diagram, and Manage, which holds every administration panel that
 used to hang under the object tree.
 */
 /** The server's version as the header says it: "Postgres 16.4", "MySQL 8.0.46", "MariaDB 10.11.14". */
-export function engineVersion(engine: string | undefined, version: string): string {
-  const v = version.split(' ')[0] ?? ''
-  if (engine !== 'mysql') return `Postgres ${v}`
-  const n = v.split('-')[0]
-  return /mariadb/i.test(version) ? `MariaDB ${n}` : `MySQL ${n}`
-}
-
 function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, canAsk, onAskForAccess, settings, tab, onTab, onOpenTree }: {
   database: Database
   narrow: boolean

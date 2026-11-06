@@ -85,3 +85,13 @@ export function isStatementProtocol(protocol: string | undefined): boolean {
 export function isSQLEngine(e: string | undefined): boolean {
   return e === undefined || e === '' || e === 'postgres' || e === 'mysql'
 }
+
+// engineVersion names the server a session reached from the version its agent
+// reported: "Postgres 16.4", "MySQL 8.0.46" or "MariaDB 10.11.14" (MariaDB
+// reports itself as "10.11.14-MariaDB-…").
+export function engineVersion(engine: string | undefined, version: string): string {
+  const v = version.split(' ')[0] ?? ''
+  if (engine !== 'mysql') return `Postgres ${v}`
+  const n = v.split('-')[0]
+  return /mariadb/i.test(version) ? `MariaDB ${n}` : `MySQL ${n}`
+}
