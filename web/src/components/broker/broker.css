@@ -12,3 +12,12 @@
   font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
   margin: 0; padding: 10px 12px;
 }
+/* The exchange list beside the routing diagram. */
+.argus-broker-pick {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px;
+  border: 0; border-radius: var(--mantine-radius-sm); background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.argus-broker-pick:hover { background: var(--mantine-color-default-hover); }
+.argus-broker-pick[aria-current='true'] { background: var(--mantine-primary-color-light); color: var(--mantine-primary-color-light-color); }
+.argus-broker-pick:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: -2px; }

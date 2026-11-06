@@ -1,4 +1,4 @@
-import { Badge, Box, Button, Card, Checkbox, Chip, Group, Modal, SegmentedControl, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
+import { Badge, Box, Button, Card, Checkbox, Group, Modal, SegmentedControl, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { IconPlus, IconSearch } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import {
@@ -66,13 +66,13 @@ export function Queues() {
   return (
     <Stack gap="sm">
       <Group gap="xs" wrap="wrap">
-        <Chip.Group value={filter} onChange={(v) => setFilter(v as Filter)}>
-          <Group gap={6} wrap={narrow ? 'nowrap' : 'wrap'} style={narrow ? { overflowX: 'auto', maxWidth: '100%' } : undefined}>
-            {chips.filter(([k]) => k === 'all' || counts[k] > 0).map(([k, label]) => (
-              <Chip key={k} value={k} size="sm" variant="outline">{label} {counts[k]}</Chip>
-            ))}
-          </Group>
-        </Chip.Group>
+        <Group gap={6} wrap={narrow ? 'nowrap' : 'wrap'} style={narrow ? { overflowX: 'auto', maxWidth: '100%' } : undefined}
+          role="group" aria-label="Show queues">
+          {chips.filter(([k]) => k === 'all' || counts[k] > 0).map(([k, label]) => (
+            <Button key={k} size="compact-sm" radius="xl" fw={500} variant={filter === k ? 'light' : 'default'} aria-pressed={filter === k}
+              onClick={() => setFilter(k)} style={{ flexShrink: 0 }}>{label} {counts[k]}</Button>
+          ))}
+        </Group>
         <Group gap="xs" ml={narrow ? undefined : 'auto'} wrap="wrap">
           <TextInput size="xs" placeholder="Filter by name" leftSection={<IconSearch size={12} />} value={q}
             onChange={(e) => setQ(e.currentTarget.value)} aria-label="Filter queues by name" w={narrow ? '100%' : 200} />

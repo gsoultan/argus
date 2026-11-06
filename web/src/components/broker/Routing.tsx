@@ -1,5 +1,5 @@
 import {
-  Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, NavLink, ScrollArea, Select, Stack, Text, TextInput,
+  Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, ScrollArea, Select, Stack, Text, TextInput,
 } from '@mantine/core'
 import { IconCheck, IconMinus, IconPlus, IconSearch, IconX } from '@tabler/icons-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -77,9 +77,12 @@ export function Routing({ selected, onSelect }: { selected?: string; onSelect: (
             onChange={(e) => setFilter(e.currentTarget.value)} mb={6} aria-label="Filter exchanges" />
           <ScrollArea.Autosize mah={520} type="auto">
             {visible.map((x) => (
-              <NavLink key={x.name} active={x.name === current} onClick={() => onSelect(x.name)} py={6}
-                label={<Text size={FS.meta} ff="monospace" truncate>{x.name}</Text>}
-                rightSection={<Group gap={4} wrap="nowrap"><KindTag type={x.type} /><Text size={FS.micro} c="dimmed" w={18} ta="right">{counts.get(x.name) ?? 0}</Text></Group>} />
+              <button key={x.name} type="button" className="argus-broker-pick" aria-current={x.name === current ? 'true' : undefined}
+                onClick={() => onSelect(x.name)}>
+                <Text size={FS.meta} ff="monospace" truncate style={{ flex: 1, minWidth: 0 }}>{x.name}</Text>
+                <KindTag type={x.type} />
+                <Text size={FS.micro} c="dimmed" w={18} ta="right">{counts.get(x.name) ?? 0}</Text>
+              </button>
             ))}
           </ScrollArea.Autosize>
           {can('declare_exchange') && (
