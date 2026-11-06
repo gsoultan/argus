@@ -25,7 +25,7 @@ import type { Asset, DBEngine, Database, ServerApp, ServerAppListen } from '~/ty
 export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   const { data } = useQuery(applicationsQuery(asset.id))
   const { data: dbs } = useQuery(databasesOnAssetQuery(asset.id))
-  const [adding, setAdding] = useState<{ engine: DBEngine; port?: number; poolerPort?: number } | null>(null)
+  const [adding, setAdding] = useState<{ engine: DBEngine; port?: number; poolerPort?: number; configPath?: string } | null>(null)
   const phone = useMediaQuery('(max-width: 48em)') ?? false
 
   if (asset.protocol === 'rdp') return null
@@ -94,7 +94,8 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
                           {canEdit && isConfigured() && a.running && engineOfApp(a.kind) && (
                             <AddFound app={a} engine={engineOfApp(a.kind)!} added={addedOf(engineOfApp(a.kind)!)}
                               onAdd={(port) => setAdding({ engine: engineOfApp(a.kind)!, port,
-                                poolerPort: a.kind === 'postgres' ? pooler?.listen[0]?.port : undefined })} />
+                                poolerPort: a.kind === 'postgres' ? pooler?.listen[0]?.port : undefined,
+                                configPath: a.kind === 'valkey' ? VALKEY_CONF : undefined })} />
                           )}
                         </Table.Td>
                       </Table.Tr>
@@ -161,7 +162,7 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
       )}
       {adding && (
         <AddDatabase asset={asset} opened onClose={() => setAdding(null)} initialEngine={adding.engine}
-          initialPort={adding.port} initialPoolerPort={adding.poolerPort} />
+          initialPort={adding.port} initialPoolerPort={adding.poolerPort} initialConfigPath={adding.configPath} />
       )}
     </SectionCard>
   )
@@ -210,13 +211,18 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
   )
 }
 
-/** The engine a found application is added as: MariaDB is MySQL's. */
+/**
+ * The engine an app the agent found is added as. MariaDB is MySQL's. Valkey
+ * speaks Redis's protocol and ACLs, so it is a redis entry; the agent reads
+ * its admin password from Valkey's own config file.
+ */
 const APP_ENGINES: Record<string, DBEngine> = {
-  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', redis: 'redis', rabbitmq: 'rabbitmq',
+  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq',
 }
 function engineOfApp(kind: string): DBEngine | undefined {
   return APP_ENGINES[kind]
 }
+const VALKEY_CONF = '/etc/valkey/valkey.conf'
 
 /**
  * Adds a Postgres, MySQL, MariaDB, Redis or RabbitMQ the agent found. A containerised one is
@@ -232,7 +238,7 @@ function AddFound({ app, engine, added, onAdd }: {
   app: ServerApp; engine: DBEngine; added: Map<number, Database>; onAdd: (port?: number) => void
 }) {
   const what = engine === 'postgres' ? 'postgres account' : engine === 'mysql' ? 'MySQL root account'
-    : engine === 'redis' ? 'Redis admin' : 'rabbitmqctl'
+    : engine === 'redis' ? `${app.name} admin` : 'rabbitmqctl'
   if (app.container) {
     return (
       <Tooltip multiline w={260} label={`Argus opens this through the server's own ${what}. Inside a container that is not reachable, so it cannot be added from here yet.`}>

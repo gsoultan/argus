@@ -1530,6 +1530,8 @@ export interface DiscoverAnswer {
   state: 'ok' | 'offline' | 'unsupported' | 'failed'
   error?: string
   version?: string
+  /** 'valkey' when a Valkey answered on the redis engine. */
+  server?: string
   databases: DiscoveredDB[]
   configured?: number
   truncated?: boolean

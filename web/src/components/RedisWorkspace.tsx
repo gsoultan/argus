@@ -199,7 +199,7 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
         <StoreHeader database={database} access={access} level={level} status={s.status} narrow={narrow}
           onAskForAccess={onAskForAccess} icon={<IconBolt size={16} color="var(--color-brand)" />}
           title={`Redis · db ${database.dbname}`}
-          detail={`${database.hostname}${s.ready?.version ? ` · Redis ${s.ready.version}` : ''}${s.ready?.user ? ` · as ${s.ready.user}` : ''}`}
+          detail={`${database.hostname}${s.ready?.version ? ` · ${s.ready.server === 'valkey' ? 'Valkey' : 'Redis'} ${s.ready.version}` : ''}${s.ready?.user ? ` · as ${s.ready.user}` : ''}`}
           left={narrow ? <ActionIcon variant="subtle" onClick={keysDrawer.open} aria-label="Open the key browser"><IconMenu2 size={18} /></ActionIcon> : undefined} />
         <FatalBanner fatal={s.fatal} />
 

@@ -33,6 +33,8 @@ type DiscoverAnswer struct {
 	State   string `json:"state"`
 	Error   string `json:"error,omitempty"`
 	Version string `json:"version,omitempty"`
+	// Server is "valkey" when a Valkey answered on the redis engine.
+	Server string `json:"server,omitempty"`
 	// Databases are what the agent found; Added marks the ones this
 	// server already has an entry for, by name.
 	Databases  []DiscoveredDB `json:"databases"`
@@ -157,7 +159,7 @@ func (a *API) discoverDatabases(ctx context.Context, actor, hostname string, d t
 			ans.State, ans.Error = "failed", "the agent's answer could not be read"
 			return ans
 		}
-		ans.Version, ans.Configured, ans.Truncated = res.Version, res.Configured, res.Truncated
+		ans.Version, ans.Server, ans.Configured, ans.Truncated = res.Version, res.Server, res.Configured, res.Truncated
 		if !res.OK {
 			ans.State, ans.Error = "failed", res.Error
 			return ans

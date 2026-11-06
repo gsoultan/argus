@@ -132,10 +132,7 @@ func discover(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantDiscover,
 // discoverRedis lists a Redis's logical dbs: every one up to CONFIG GET
 // databases, with the keys INFO keyspace counts in it.
 func discoverRedis(ctx context.Context, d tunnel.GrantDiscover) tunnel.DiscoverResult {
-	conf := d.ConfigPath
-	if conf == "" {
-		conf = defaultRedisConf
-	}
+	conf := redisConf(d.ConfigPath)
 	s := &redisSession{db: tunnel.GrantDB{Host: d.Host, Port: d.Port}, host: d.Host, port: d.Port, conf: conf}
 	admin, err := s.adminConn(ctx)
 	if err != nil {
@@ -147,7 +144,8 @@ func discoverRedis(ctx context.Context, d tunnel.GrantDiscover) tunnel.DiscoverR
 	if err != nil {
 		return tunnel.DiscoverResult{Error: "Redis did not answer: " + err.Error()}
 	}
-	res := tunnel.DiscoverResult{OK: true, Version: infoField(info.V, "redis_version")}
+	server, version, _ := redisServerOf(info.V)
+	res := tunnel.DiscoverResult{OK: true, Version: version, Server: server}
 	if v, err := admin.do(ctx, 10*time.Second, lim, "CONFIG", "GET", "databases"); err == nil && v.T == "a" && len(v.A) == 2 {
 		res.Configured, _ = strconv.Atoi(v.A[1].V)
 	}

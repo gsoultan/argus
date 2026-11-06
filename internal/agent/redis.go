@@ -37,6 +37,42 @@ const RedisService = tunnel.RedisService
 // names no file.
 const defaultRedisConf = "/etc/redis/redis.conf"
 
+// defaultValkeyConf is Valkey's own place for it. When the entry has the
+// default and there is no redis.conf, the agent reads this one instead, so a
+// Valkey added with defaults works as it is installed.
+const defaultValkeyConf = "/etc/valkey/valkey.conf"
+
+// redisConf is the file the agent reads for an entry's config path: the path
+// itself, or Valkey's when the path is Redis's default and absent.
+func redisConf(path string) string {
+	if path == "" {
+		path = defaultRedisConf
+	}
+	if path == defaultRedisConf {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			if _, err := os.Stat(defaultValkeyConf); err == nil {
+				return defaultValkeyConf
+			}
+		}
+	}
+	return path
+}
+
+// redisServerOf reads who answered from INFO server: Valkey reports
+// server_name:valkey and its own valkey_version next to the redis_version it
+// stays compatible with. It returns the server's name ("" for Redis), the
+// version to show, and the Redis version it speaks, for the ACL check.
+func redisServerOf(info string) (server, version, compat string) {
+	compat = infoField(info, "redis_version")
+	if v := infoField(info, "valkey_version"); v != "" || infoField(info, "server_name") == "valkey" {
+		if v == "" {
+			v = compat
+		}
+		return "valkey", v, compat
+	}
+	return "", compat, compat
+}
+
 // Redis is the redis service.
 func Redis(cfg StoreConfig) TunnelService {
 	if cfg.Log == nil {
@@ -68,6 +104,7 @@ type redisSession struct {
 	conn     *respConn
 	index    int
 	version  string
+	server   string
 	timeout  time.Duration
 	maxItems int
 }
@@ -83,9 +120,7 @@ func (f *redisFactory) open(ctx context.Context, g tunnel.Grant, _ string) (stor
 	idx, _ := strconv.Atoi(db.Name)
 	s := &redisSession{f: f, g: g, db: db, host: db.Host, port: db.Port, conf: db.ConfigPath, index: idx,
 		timeout: ms(db.StatementTimeoutMS, defaultStmtTimeout), maxItems: db.MaxRows}
-	if s.conf == "" {
-		s.conf = defaultRedisConf
-	}
+	s.conf = redisConf(s.conf)
 	if s.maxItems <= 0 || s.maxItems > tunnel.MaxStoreItems {
 		s.maxItems = tunnel.MaxStoreItems
 	}
@@ -100,8 +135,9 @@ func (f *redisFactory) open(ctx context.Context, g tunnel.Grant, _ string) (stor
 	if err != nil {
 		return nil, fmt.Errorf("Redis did not answer: %w", err)
 	}
-	s.version = infoField(info.V, "redis_version")
-	if major, _ := strconv.Atoi(strings.SplitN(s.version, ".", 2)[0]); major > 0 && major < 6 {
+	var compat string
+	s.server, s.version, compat = redisServerOf(info.V)
+	if major, _ := strconv.Atoi(strings.SplitN(compat, ".", 2)[0]); major > 0 && major < 6 {
 		return nil, fmt.Errorf("Redis %s has no ACL users; Argus needs Redis 6 or later", s.version)
 	}
 	s.key = redisUseKey(db.Port, s.user)
@@ -272,7 +308,7 @@ func (s *redisSession) connect(ctx context.Context) error {
 }
 
 func (s *redisSession) ready() tunnel.StoreAnswer {
-	return tunnel.StoreAnswer{Engine: tunnel.EngineRedis, User: s.user, Version: s.version,
+	return tunnel.StoreAnswer{Engine: tunnel.EngineRedis, User: s.user, Version: s.version, Server: s.server,
 		Ops: []string{"run", "scan", "value"}}
 }
 

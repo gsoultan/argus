@@ -88,8 +88,9 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
  * `initialEngine`, `initialPort` and `initialPoolerPort` come from what the agent found
  * running, when it is opened from there.
  */
-export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort }: {
+export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath }: {
   asset: Asset; opened: boolean; onClose: () => void; initialEngine?: DBEngine; initialPort?: number; initialPoolerPort?: number
+  initialConfigPath?: string
 }) {
   const create = useCreateDatabase()
   const narrow = useMediaQuery('(max-width: 48em)')
@@ -101,7 +102,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const [filter, setFilter] = useState('')
   const [host, setHost] = useState('')
   const [port, setPort] = useState<number | string>(initialPort ?? '')
-  const [configPath, setConfigPath] = useState('')
+  const [configPath, setConfigPath] = useState(initialConfigPath ?? '')
   const [label, setLabel] = useState<DBLabel>('production')
   const [poolerPort, setPoolerPort] = useState<number | string>(initialPoolerPort ?? '')
   const [busy, setBusy] = useState(false)
@@ -188,7 +189,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
                 {found.isFetching ? (
                   <><Loader size={12} /><Text size={FS.micro} c="dimmed">Asking the agent…</Text></>
                 ) : listing ? (
-                  <Text size={FS.micro} c="dimmed" visibleFrom="xs">Found by the agent{ans?.version ? ` · ${info.label} ${ans.version.split(' ')[0]}` : ''}</Text>
+                  <Text size={FS.micro} c="dimmed" visibleFrom="xs">Found by the agent{ans?.version ? ` · ${ans.server === 'valkey' ? 'Valkey' : info.label} ${ans.version.split(' ')[0]}` : ''}</Text>
                 ) : null}
                 <Button size="compact-xs" variant="subtle" leftSection={<IconRefresh size={12} />}
                   onClick={() => void found.refetch()} disabled={found.isFetching}>Look again</Button>
@@ -274,9 +275,9 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           placeholder={String(info.defaults.port)}
           description={`Only if it is not ${info.defaults.port}. Changing it asks the agent again.`} />
         {engine === 'redis' && (
-          <TextInput label="redis.conf" placeholder={info.defaults.configPath} value={configPath}
+          <TextInput label="Config file" placeholder={info.defaults.configPath} value={configPath}
             onChange={(e) => setConfigPath(e.currentTarget.value)}
-            description="The agent reads requirepass from it to sign in as admin. The password never leaves the server and is never stored in Argus." />
+            description="The redis.conf or valkey.conf the agent reads requirepass from to sign in as admin. With the default and no redis.conf, it reads /etc/valkey/valkey.conf. The password never leaves the server and is never stored in Argus." />
         )}
         {engine === 'mysql' && (
           <TextInput label="Option file" placeholder="none: root over the socket" value={configPath}

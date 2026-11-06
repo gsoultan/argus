@@ -207,6 +207,14 @@ options form only sends what changed and hides what the server lacks.
   and marks entries already added; an agent too old to know the service is
   answered `state: "unsupported"` and the add form falls back to typing a
   name. Redis is one entry per server, so its picker is single-select.
+- **Valkey is the redis engine** (2026-11). Same ACL users and RESP, so no
+  new engine: the found app kind `valkey` adds a redis entry with config
+  `/etc/valkey/valkey.conf`, and the agent falls back to that file when the
+  entry has Redis's default path and no redis.conf exists (`redisConf`).
+  `redisServerOf` reads `server_name`/`valkey_version` from INFO; the ready
+  and discover answers carry `server: "valkey"` and the console names it
+  Valkey. `ARGUS_TEST_REDIS_SERVER=valkey-server` runs every Redis agent test
+  against Valkey.
 - **Query tabs** (`web/src/lib/workspaceTabs.ts`): up to 10 per database,
   text kept in localStorage per database, results never stored. The session
   runs one statement at a time, so other tabs queue ("Run after X"). Ctrl+T
