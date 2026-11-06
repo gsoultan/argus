@@ -335,6 +335,8 @@ func engineName(engine string) string {
 		return "MySQL database"
 	case tunnel.EngineMongoDB:
 		return "MongoDB database"
+	case tunnel.EngineKafka:
+		return "Kafka topics"
 	}
 	return "database"
 }

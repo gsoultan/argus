@@ -104,6 +104,8 @@ func discoverPlaceholder(engine string) string {
 		return "/"
 	case tunnel.EngineMySQL, tunnel.EngineMongoDB:
 		return "argus_probe"
+	case tunnel.EngineKafka:
+		return tunnel.KafkaAllTopics
 	}
 	return "postgres"
 }

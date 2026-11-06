@@ -136,9 +136,11 @@ func (d *Database) validate() error {
 		return d.validateMySQL()
 	case tunnel.EngineMongoDB:
 		return d.validateMongo()
+	case tunnel.EngineKafka:
+		return d.validateKafka()
 	case tunnel.EnginePostgres:
 	default:
-		return ErrInvalidDatabase{"the engine must be postgres, mysql, mongodb, redis or rabbitmq"}
+		return ErrInvalidDatabase{"the engine must be postgres, mysql, mongodb, redis, rabbitmq or kafka"}
 	}
 	if d.ConfigPath != "" {
 		return ErrInvalidDatabase{"a config file is only for Redis, MySQL and MongoDB"}
@@ -346,6 +348,35 @@ func (d *Database) validateRabbit() error {
 	}
 	if d.ConfigPath != "" {
 		return ErrInvalidDatabase{"a config file is only for Redis and MySQL"}
+	}
+	return d.validateCommon()
+}
+
+// validateKafka: the topics of a Kafka cluster that one scope names, "*" for
+// every topic or a prefix such as "orders.", through a SASL listener on this
+// asset. ConfigPath is the file on the server with the admin credentials the
+// agent signs in with; empty means tunnel.KafkaAdminFile.
+func (d *Database) validateKafka() error {
+	if d.Name == "" {
+		d.Name = tunnel.KafkaAllTopics
+	}
+	if !tunnel.ValidKafkaScope(d.Name) || len(d.Name) > 63 {
+		return ErrInvalidDatabase{"the topics must be * for every topic, or a prefix of 1 to 63 letters, digits, . _ or -"}
+	}
+	if d.Host == "" {
+		d.Host = "127.0.0.1"
+	}
+	if !tunnel.LocalLoopback(d.Host) {
+		return ErrInvalidDatabase{"Kafka's listener must be on the server itself: 127.0.0.1, ::1 or localhost, not " + d.Host}
+	}
+	if d.Port == 0 {
+		d.Port = 9092
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
+	}
+	if d.ConfigPath != "" && !tunnel.ValidKafkaAdminFile(d.ConfigPath) {
+		return ErrInvalidDatabase{"the admin file must be an absolute path to a .conf file on the server"}
 	}
 	return d.validateCommon()
 }
