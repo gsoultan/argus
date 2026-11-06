@@ -461,7 +461,9 @@ func (f *mysqlFactory) open(ctx context.Context, g tunnel.Grant, id string) (*my
 	return s, nil
 }
 
-func (s *mysqlSession) who() string { return tunnel.MySQLString(s.user) + "@" + tunnel.MySQLString(s.host) }
+func (s *mysqlSession) who() string {
+	return tunnel.MySQLString(s.user) + "@" + tunnel.MySQLString(s.host)
+}
 
 // giveUser makes the person's user for this level if it is new, sets its
 // privileges to exactly the level's, gives it this session's password and
