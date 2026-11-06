@@ -211,6 +211,16 @@ sudo systemctl enable --now argus-agent
 sudo argus-agent install    # prints the sshd_config lines; add them, then reload sshd
 ```
 
+**On Alpine, install OpenSSH with the CVE-2026-123158 fix first** (`apk update
+&& apk upgrade openssh`, then `rc-service sshd restart`): 10.6_p2-r0 on edge,
+10.3_p1-r2 on 3.24, 10.2_p1-r1 on 3.23, 10.0_p1-r11 on 3.22, 9.9_p2-r1 on 3.21.
+Before it, Alpine's sshd let any password of 257 bytes or more into an account
+whose shadow password is `*`. Argus no longer writes `*` for the accounts it
+makes (an upgraded agent rewrites them to `*NP*` on its first pass), but other
+accounts on the server may still have it; `awk -F: '$2=="*"{print $1}'
+/etc/shadow` lists them. `PasswordAuthentication no` in `sshd_config` closes
+it too. Distributions on glibc, and any sshd that uses PAM, were never affected.
+
 The token works once, expires within the hour, and can be bound to one
 hostname. The pin is the control plane's key, so the very first connection
 cannot be intercepted; if the control plane's certificate is from an internal

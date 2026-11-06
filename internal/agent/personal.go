@@ -261,6 +261,16 @@ func (p *Provisioner) reconcile(ctx context.Context, want []PersonalAccount, del
 	return states
 }
 
+// noPassword is the shadow(5) password field of a personal account: no
+// password can sign in, and it is not locked, so sshd still lets a key in
+// (OpenSSH on Linux treats only a leading "!" as locked).
+//
+// It is not the usual "*". musl's crypt() fails with the string "*" (or "x"),
+// so an sshd built without PAM on musl -- stock Alpine before OpenSSH 10.6p2 --
+// compared that failure to a stored "*" and let any password of 257 bytes or
+// more in (CVE-2026-123158). crypt() never returns this, on any libc.
+const noPassword = "*NP*"
+
 // keep creates or reopens one wanted account and writes its keys.
 func (p *Provisioner) keep(ctx context.Context, a PersonalAccount, existing map[string]passwdEntry) PersonalAccountState {
 	st := PersonalAccountState{Name: a.Name, Owner: a.Owner}
@@ -294,9 +304,9 @@ func (p *Provisioner) keep(ctx context.Context, a PersonalAccount, existing map[
 		p.state[a.Name] = ""
 	}
 	if p.state[a.Name] != "ready" {
-		// No password, which is not the same as a locked one: "*" lets a key
-		// in where sshd checks, and "" for the expiry undoes a lock.
-		if out, err := p.Run(ctx, "usermod", "--expiredate", "", "--password", "*", a.Name); err != nil {
+		// No password, which is not the same as a locked one: noPassword
+		// lets a key in where sshd checks, and "" for the expiry undoes a lock.
+		if out, err := p.Run(ctx, "usermod", "--expiredate", "", "--password", noPassword, a.Name); err != nil {
 			return fail("usermod failed: " + firstLine(out, err))
 		}
 	}
