@@ -51,8 +51,12 @@ export default defineConfig({
         // panels, the split list beside a server or database, the filter
         // rails on Activity and Audit, the broker workspace) arrive with those
         // chunks, so they are fetched on demand like the chunks themselves
-        // rather than pushed at every first visit.
-        globIgnores: ['assets/routes-*.css', 'assets/SplitView-*.css', 'assets/Rails-*.css', 'assets/brokers-*.css'],
+        // rather than pushed at every first visit. So do the file browser's
+        // and the server cards' own (FileBrowser, myservers).
+        globIgnores: [
+          'assets/routes-*.css', 'assets/SplitView-*.css', 'assets/Rails-*.css', 'assets/brokers-*.css',
+          'assets/FileBrowser-*.css', 'assets/myservers-*.css',
+        ],
         // Anything the control plane serves must reach the control plane.
         //
         // /auth/ is load-bearing and was missing: loginURL() navigates to

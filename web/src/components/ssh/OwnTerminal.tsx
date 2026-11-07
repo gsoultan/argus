@@ -1,3 +1,4 @@
+import './ssh.css'
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   Alert, Anchor, Badge, Box, Button, Code, CopyButton, Group, SegmentedControl, Stack, Text, Textarea, ThemeIcon,

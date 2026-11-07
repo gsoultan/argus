@@ -1,0 +1,33 @@
+/* Connect: the ways onto a server, ssh commands, the server card menu, and a live session's tabs. Loaded with the components that use it, so it is not in the
+   shell's stylesheet every first visit pays for. */
+
+/* Connect: the two ways onto a server, side by side. */
+.argus-ways { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }
+@media (max-width: 62em) { .argus-ways { grid-template-columns: 1fr; } }
+.argus-way { display: flex; flex-direction: column; gap: 24px; padding: 24px; background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 12px; box-shadow: var(--shadow-card); min-width: 0; }
+.argus-way[data-selected] { border-color: var(--color-brand); box-shadow: 0 0 0 3px var(--color-brand-wash), var(--shadow-card); }
+@media (max-width: 36em) { .argus-way { padding: 16px; gap: 16px; } }
+.argus-way-note { padding: 12px 16px; border-radius: 10px; background: var(--color-canvas, var(--mantine-color-body)); border: 1px solid var(--color-line); }
+.argus-way-pending { padding: 16px 24px; border-radius: 12px; background: var(--mantine-color-amber-light); border: 1px solid var(--mantine-color-amber-light-hover); }
+.argus-cmd { padding: 8px 8px 8px 16px; min-height: 48px; border-radius: 10px; background: #0f172a; }
+.argus-cmd[data-small] { min-height: 40px; padding: 6px 6px 6px 12px; border-radius: 8px; }
+.argus-cmd-prompt { color: #64748b; font-family: var(--mantine-font-family-monospace); font-size: 13px; }
+.argus-cmd-text { flex: 1; min-width: 0; background: transparent !important; color: #e2e8f0 !important; font-size: 13px; padding: 0 !important; overflow-x: auto; white-space: pre; }
+.argus-cmd[data-small] .argus-cmd-text { font-size: 12px; }
+.argus-cmd-copy { color: #cbd5e1 !important; background: rgba(255, 255, 255, 0.06) !important; flex-shrink: 0; align-self: flex-start; margin-top: 2px; }
+.argus-cmd-copy:hover { background: rgba(255, 255, 255, 0.12) !important; }
+
+/* Server card: Open terminal with the other ways onto the server beside it. */
+.argus-splitbtn > [data-split] { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.argus-splitbtn-more { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid rgba(255, 255, 255, 0.28); }
+/* A live session: Terminal / Files / Split. */
+.argus-session-tabs { display: flex; align-items: center; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--color-line); background: var(--color-surface); min-height: 44px; }
+@media (max-width: 36em) { .argus-session-tabs { padding: 0 16px; } }
+.argus-session-tab { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border: 0; background: none; color: var(--color-ink-muted); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.argus-session-tab:hover { color: var(--color-ink); }
+.argus-session-tab[aria-selected='true'] { color: var(--color-brand); border-bottom-color: var(--color-brand); }
+.argus-session-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 100%; min-height: 0; }
+.argus-session-split > * { min-width: 0; min-height: 0; }
+.argus-session-split > * + * { border-left: 1px solid var(--color-line); }
+.argus-session-pane { height: 100%; min-height: 0; overflow: auto; }
+.argus-session-pane[hidden] { display: none; }

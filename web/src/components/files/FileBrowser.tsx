@@ -1,3 +1,4 @@
+import './files.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ActionIcon, Alert, Anchor, Badge, Box, Button, Checkbox, CopyButton, Drawer, FileButton, Group, Loader,

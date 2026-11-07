@@ -1,3 +1,4 @@
+import './ssh/ssh.css'
 import { useMemo, useState, type ReactNode } from 'react'
 import {
   ActionIcon, Badge, Box, Button, Card, Group, Menu, SegmentedControl, Skeleton, Stack, Text, TextInput,
