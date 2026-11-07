@@ -13,6 +13,8 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
+	"github.com/gsoultan/argus/internal/control/rgen/cloudaccount"
+	"github.com/gsoultan/argus/internal/control/rgen/cloudresource"
 	"github.com/gsoultan/argus/internal/control/rgen/consolealert"
 	"github.com/gsoultan/argus/internal/control/rgen/consolealertread"
 	"github.com/gsoultan/argus/internal/control/rgen/database"
@@ -43,40 +45,42 @@ var FlushOrder = map[string]int{
 	"agents":                    1,
 	"assets":                    2,
 	"audit_events":              3,
-	"console_alert_prefs":       4,
-	"console_alerts":            5,
-	"databases":                 6,
-	"direct_login_requests":     7,
-	"gateway_policy":            8,
-	"host_key_pins":             9,
-	"log_cleanup_rules":         10,
-	"log_cleanup_runs":          11,
-	"package_runs":              12,
-	"package_update_rules":      13,
-	"redeemed_tickets":          14,
-	"revoked_sessions":          15,
-	"saved_queries":             16,
-	"schema_migrations":         17,
-	"server_logins":             18,
-	"sessions":                  19,
-	"sign_in_devices":           20,
-	"teams":                     21,
-	"users":                     22,
-	"access_requests":           23,
-	"agent_credentials":         24,
-	"asset_assignments":         25,
-	"asset_team_assignments":    26,
-	"console_alert_reads":       27,
-	"database_assignments":      28,
-	"database_backup_schedules": 29,
-	"database_backups":          30,
-	"database_changes":          31,
-	"database_restores":         32,
-	"database_statements":       33,
-	"recovery_codes":            34,
-	"team_members":              35,
-	"database_backup_tests":     36,
-	"database_statement_items":  37,
+	"cloud_accounts":            4,
+	"cloud_resources":           5,
+	"console_alert_prefs":       6,
+	"console_alerts":            7,
+	"databases":                 8,
+	"direct_login_requests":     9,
+	"gateway_policy":            10,
+	"host_key_pins":             11,
+	"log_cleanup_rules":         12,
+	"log_cleanup_runs":          13,
+	"package_runs":              14,
+	"package_update_rules":      15,
+	"redeemed_tickets":          16,
+	"revoked_sessions":          17,
+	"saved_queries":             18,
+	"schema_migrations":         19,
+	"server_logins":             20,
+	"sessions":                  21,
+	"sign_in_devices":           22,
+	"teams":                     23,
+	"users":                     24,
+	"access_requests":           25,
+	"agent_credentials":         26,
+	"asset_assignments":         27,
+	"asset_team_assignments":    28,
+	"console_alert_reads":       29,
+	"database_assignments":      30,
+	"database_backup_schedules": 31,
+	"database_backups":          32,
+	"database_changes":          33,
+	"database_restores":         34,
+	"database_statements":       35,
+	"recovery_codes":            36,
+	"team_members":              37,
+	"database_backup_tests":     38,
+	"database_statement_items":  39,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -679,6 +683,123 @@ func (p AssetTeamAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Ex
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "asset_team_assignments", "teams")
 		}
 		out[i].Team = targets[j]
+	}
+	return out, nil
+}
+
+// CloudResourceWithAccountRow is cloud_resources with its Account loaded.
+type CloudResourceWithAccountRow struct {
+	cloudresource.Row
+	Account cloudaccount.Row
+}
+
+type CloudResourceWithAccountQuery struct {
+	q cloudresource.Query
+}
+
+// CloudResourceWithAccount starts the plan.
+func CloudResourceWithAccount() CloudResourceWithAccountQuery {
+	return CloudResourceWithAccountQuery{q: cloudresource.New()}
+}
+
+func (p CloudResourceWithAccountQuery) Where(ps ...cloudresource.Pred) CloudResourceWithAccountQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CloudResourceWithAccountQuery) WhereIf(cond bool, pr cloudresource.Pred) CloudResourceWithAccountQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CloudResourceWithAccountQuery) Any(ps ...cloudresource.Pred) CloudResourceWithAccountQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CloudResourceWithAccountQuery) Not(pr cloudresource.Pred) CloudResourceWithAccountQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CloudResourceWithAccountQuery) NotAny(ps ...cloudresource.Pred) CloudResourceWithAccountQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CloudResourceWithAccountQuery) Order(ts ...cloudresource.Sort) CloudResourceWithAccountQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CloudResourceWithAccountQuery) Limit(n int64) CloudResourceWithAccountQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CloudResourceWithAccountQuery) Offset(n int64) CloudResourceWithAccountQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CloudResourceWithAccountQuery) After(r CloudResourceWithAccountRow) CloudResourceWithAccountQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CloudResourceWithAccountQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CloudResourceWithAccountQuery) All(ctx context.Context, ex runtime.Executor) ([]CloudResourceWithAccountRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CloudResourceWithAccountRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CloudResourceWithAccountRow{Row: r}
+		key := r.AccountID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := cloudaccount.New().Unordered().
+		Where(cloudaccount.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AccountID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "cloud_resources", "cloud_accounts")
+		}
+		out[i].Account = targets[j]
 	}
 	return out, nil
 }

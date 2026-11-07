@@ -1,0 +1,183 @@
+import { Badge, Group, SegmentedControl, Stack, Table, Text, Tooltip } from '@mantine/core'
+import { IconDeviceFloppy, IconNetwork, IconServer2 } from '@tabler/icons-react'
+import { useState } from 'react'
+import { DataTable, EmptyState } from '~/components/page'
+import { relTime, rowNav } from '~/components/primitives'
+import { openToInternet, type CloudItem } from '~/lib/cloud'
+import { FS, INK } from '~/theme'
+import { NameCell, ResourceDrawer, ServerCell, StateBadge, WhereCell } from './common'
+
+interface TableProps {
+  items?: CloudItem[]
+  loading: boolean
+  names: Map<string, string>
+  filtered: boolean
+}
+
+function useDrawer(names: Map<string, string>) {
+  const [open, setOpen] = useState<CloudItem | null>(null)
+  return { show: setOpen, drawer: <ResourceDrawer it={open} onClose={() => setOpen(null)} names={names} /> }
+}
+
+function emptyText(filtered: boolean, what: string) {
+  return filtered ? `No ${what} match the account or search.` : `Argus has not found any ${what} in the connected accounts.`
+}
+
+export function InstancesTable({ items, loading, names, filtered }: TableProps) {
+  const { show, drawer } = useDrawer(names)
+  return (
+    <>
+      <DataTable minWidth={900} loading={loading} isEmpty={(items?.length ?? 0) === 0}
+        empty={<EmptyState icon={IconServer2} title="No instances" description={emptyText(filtered, 'instances')} />}
+        columns={['Instance', 'Account and zone', 'Type', 'State', 'Addresses', 'Argus server', 'Launched']}>
+        {items?.map((it) => {
+          const r = it.resource
+          return (
+            <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+              <Table.Td maw={260}><NameCell r={r} /></Table.Td>
+              <Table.Td><WhereCell it={it} /></Table.Td>
+              <Table.Td><Text size={FS.meta} ff="monospace">{r.size}</Text></Table.Td>
+              <Table.Td><StateBadge state={r.state} /></Table.Td>
+              <Table.Td>
+                <Text size={FS.meta} ff="monospace">{r.addresses?.[0] ?? '—'}</Text>
+                {r.publicIp && <Text size={FS.micro} c="dimmed" ff="monospace">{r.publicIp} public</Text>}
+              </Table.Td>
+              <Table.Td><ServerCell it={it} /></Table.Td>
+              <Table.Td><Text size={FS.meta} c="dimmed">{relTime(r.createdAt ?? null)}</Text></Table.Td>
+            </Table.Tr>
+          )
+        })}
+      </DataTable>
+      {drawer}
+    </>
+  )
+}
+
+export function DisksTable({ items, loading, names, filtered }: TableProps) {
+  const { show, drawer } = useDrawer(names)
+  return (
+    <>
+      <DataTable minWidth={820} loading={loading} isEmpty={(items?.length ?? 0) === 0}
+        empty={<EmptyState icon={IconDeviceFloppy} title="No disks" description={emptyText(filtered, 'disks')} />}
+        columns={['Disk', 'Account and zone', 'Size', 'State', 'Attached to', 'Encrypted']}>
+        {items?.map((it) => {
+          const r = it.resource
+          const att = r.links?.find((l) => l.kind === 'instance')
+          return (
+            <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+              <Table.Td maw={260}><NameCell r={r} /></Table.Td>
+              <Table.Td><WhereCell it={it} /></Table.Td>
+              <Table.Td><Text size={FS.meta} ff="monospace">{r.size}</Text></Table.Td>
+              <Table.Td>
+                {r.state === 'available'
+                  ? <Tooltip label="Not attached to any instance, and still billed"><Badge variant="light" color="amber" radius="sm">Not attached</Badge></Tooltip>
+                  : <StateBadge state={r.state} />}
+              </Table.Td>
+              <Table.Td>
+                {att ? <><Text size={FS.meta}>{names.get(att.id) ?? att.id}</Text><Text size={FS.micro} c="dimmed" ff="monospace">{att.name}</Text></> : <Text size={FS.meta} c="dimmed">—</Text>}
+              </Table.Td>
+              <Table.Td>
+                <Text size={FS.meta} c={r.details?.encrypted === 'yes' ? undefined : INK.pending}>{r.details?.encrypted === 'yes' ? 'Yes' : 'No'}</Text>
+              </Table.Td>
+            </Table.Tr>
+          )
+        })}
+      </DataTable>
+      {drawer}
+    </>
+  )
+}
+
+type NetView = 'firewalls' | 'networks' | 'addresses'
+
+export function NetworkTables({ firewalls, networks, subnets, addresses, loading, names, filtered }: {
+  firewalls?: CloudItem[]
+  networks?: CloudItem[]
+  subnets?: CloudItem[]
+  addresses?: CloudItem[]
+  loading: boolean
+  names: Map<string, string>
+  filtered: boolean
+}) {
+  const [view, setView] = useState<NetView>('firewalls')
+  const { show, drawer } = useDrawer(names)
+  return (
+    <Stack gap="md">
+      <SegmentedControl value={view} onChange={(v) => setView(v as NetView)} w="fit-content"
+        data={[
+          { value: 'firewalls', label: `Firewalls${firewalls ? ` · ${firewalls.length}` : ''}` },
+          { value: 'networks', label: `Networks${networks ? ` · ${networks.length}` : ''}` },
+          { value: 'addresses', label: `Elastic IPs${addresses ? ` · ${addresses.length}` : ''}` },
+        ]} />
+      {view === 'firewalls' && (
+        <DataTable minWidth={760} loading={loading} isEmpty={(firewalls?.length ?? 0) === 0}
+          empty={<EmptyState icon={IconNetwork} title="No firewalls" description={emptyText(filtered, 'security groups')} />}
+          columns={['Security group', 'Account and region', 'Network', 'Rules', 'Exposure']}>
+          {firewalls?.map((it) => {
+            const r = it.resource
+            const open = openToInternet(r)
+            const inbound = r.rules?.filter((x) => x.inbound).length ?? 0
+            return (
+              <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+                <Table.Td maw={260}><NameCell r={r} /></Table.Td>
+                <Table.Td><WhereCell it={it} /></Table.Td>
+                <Table.Td><Text size={FS.meta} ff="monospace">{names.get(r.network ?? '') ?? r.network ?? '—'}</Text></Table.Td>
+                <Table.Td><Text size={FS.meta}>{inbound} in · {(r.rules?.length ?? 0) - inbound} out</Text></Table.Td>
+                <Table.Td>
+                  {open.length > 0
+                    ? <Badge variant="light" color="rose" radius="sm">{open.join(', ')} from anywhere</Badge>
+                    : <Text size={FS.meta} c="dimmed">Nothing risky from the internet</Text>}
+                </Table.Td>
+              </Table.Tr>
+            )
+          })}
+        </DataTable>
+      )}
+      {view === 'networks' && (
+        <DataTable minWidth={720} loading={loading} isEmpty={(networks?.length ?? 0) === 0}
+          empty={<EmptyState icon={IconNetwork} title="No networks" description={emptyText(filtered, 'VPCs')} />}
+          columns={['Network', 'Account and region', 'Address range', 'Subnets']}>
+          {networks?.map((it) => {
+            const r = it.resource
+            const subs = subnets?.filter((s) => s.accountId === it.accountId && s.resource.network === r.id) ?? []
+            return (
+              <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+                <Table.Td maw={260}>
+                  <Group gap={6} wrap="nowrap"><NameCell r={r} />{r.details?.default === 'yes' && <Badge variant="default" radius="sm" tt="none" fw={500}>Default</Badge>}</Group>
+                </Table.Td>
+                <Table.Td><WhereCell it={it} /></Table.Td>
+                <Table.Td><Text size={FS.meta} ff="monospace">{r.size}</Text></Table.Td>
+                <Table.Td>
+                  <Text size={FS.meta}>{subs.length}</Text>
+                  <Text size={FS.micro} c="dimmed" truncate maw={320}>{subs.map((s) => `${s.resource.name} ${s.resource.size}`).join(' · ')}</Text>
+                </Table.Td>
+              </Table.Tr>
+            )
+          })}
+        </DataTable>
+      )}
+      {view === 'addresses' && (
+        <DataTable minWidth={640} loading={loading} isEmpty={(addresses?.length ?? 0) === 0}
+          empty={<EmptyState icon={IconNetwork} title="No Elastic IPs" description={emptyText(filtered, 'Elastic IPs')} />}
+          columns={['Address', 'Account and region', 'Attached to']}>
+          {addresses?.map((it) => {
+            const r = it.resource
+            const to = r.links?.find((l) => l.kind === 'instance')
+            return (
+              <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+                <Table.Td><Text fw={600} size={FS.body} ff="monospace">{r.publicIp}</Text><Text size={FS.micro} c="dimmed">{r.name !== r.publicIp ? r.name : r.id}</Text></Table.Td>
+                <Table.Td><WhereCell it={it} /></Table.Td>
+                <Table.Td>
+                  {to ? <Text size={FS.meta}>{names.get(to.id) ?? to.id}</Text>
+                    : r.state === 'attached' ? <Text size={FS.meta} c="dimmed">A network interface</Text>
+                      : <Tooltip label="Billed while it is not attached"><Badge variant="light" color="amber" radius="sm">Not attached</Badge></Tooltip>}
+                </Table.Td>
+              </Table.Tr>
+            )
+          })}
+        </DataTable>
+      )}
+      {drawer}
+    </Stack>
+  )
+}
