@@ -10,6 +10,7 @@ import {
   cancelRequest,
   createRequest,
   decideDirectLogin,
+  ownDirectLogin,
   decideRequest,
   gatewayPolicy,
   isConfigured,
@@ -938,6 +939,19 @@ export const api = {
     d.decidedByEmail = currentUser.email
     d.decisionNote = note || null
     return d
+  },
+
+  async ownDirectLogin(id: string, act: 'withdraw' | 'remind'): Promise<void> {
+    if (isConfigured()) return ownDirectLogin(id, act)
+    await latency(200)
+    const d = db.directLogins.find((x) => x.id === id && x.state === 'pending')
+    if (!d) throw new Error('this login is no longer waiting')
+    if (act === 'withdraw') {
+      Object.assign(d, {
+        state: 'denied', decidedAt: new Date().toISOString(), decidedByEmail: currentUser.email,
+        decisionNote: 'Withdrawn by the person logging in',
+      })
+    }
   },
 
   async setAssetDirectSsh(id: string, mode: DirectSsh | null): Promise<Asset> {

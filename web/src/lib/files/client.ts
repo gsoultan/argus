@@ -62,11 +62,17 @@ export class FileOpError extends Error {
   get exists(): boolean {
     return /already exists/.test(this.message)
   }
+  /** Stopped on purpose with FilesClient.cancel. */
+  get cancelled(): boolean {
+    return this.message === CANCELLED
+  }
   /** An agent older than the console, asked for an operation it lacks. */
   get unsupported(): boolean {
     return /unknown operation/.test(this.message)
   }
 }
+
+const CANCELLED = 'cancelled'
 
 /** Matches the control plane's chunk, which is also its read limit. */
 export const CHUNK = 128 * 1024
@@ -139,6 +145,43 @@ export class FilesClient {
     }
   }
 
+  /**
+   * Stops the transfer that is moving. The files service does one thing at a
+   * time and has no "stop" message, so this ends the connection, which the
+   * agent takes as the transfer cut short: an upload is never written, a
+   * download stops arriving. Then it opens a fresh connection with a new
+   * ticket, and resolves when that is live. What was cancelled fails with a
+   * FileOpError whose `cancelled` is true.
+   */
+  async cancel(): Promise<void> {
+    if (this.disposed) return
+    const old = this.ws
+    this.ws = null
+    if (old) {
+      old.onmessage = null
+      old.onerror = null
+      old.onclose = null
+      old.close(1000, 'cancelled')
+    }
+    this.onBinary = null
+    const waiting = this.waiter
+    this.waiter = null
+    waiting?.({ type: 'error', data: CANCELLED })
+    this.setState('connecting')
+    await this.open()
+    if (this.disposed || !this.ws) return
+    const ws = this.ws
+    await new Promise<void>((resolve) => {
+      if (this.state === 'live' || this.state === 'error') return resolve()
+      const t = setInterval(() => {
+        if (this.disposed || this.ws !== ws || this.state === 'live' || this.state === 'error' || this.state === 'closed') {
+          clearInterval(t)
+          resolve()
+        }
+      }, 50)
+    })
+  }
+
   close() {
     this.disposed = true
     this.ws?.close()
@@ -207,6 +250,7 @@ export class FilesClient {
       const ws = this.ws
       await this.ask({ type: 'upload', path, overwrite }, ['upload-ready'])
       if (!ws) throw new FileOpError('not connected')
+      if (this.ws !== ws) throw new FileOpError(CANCELLED)
       const done = new Promise<Message>((resolve, reject) => {
         this.waiter = (m) => {
           if (m.type === 'error') {
@@ -222,12 +266,12 @@ export class FilesClient {
         while (ws.bufferedAmount > HIGH_WATER && ws.readyState === WebSocket.OPEN) {
           await new Promise((r) => setTimeout(r, 20))
         }
-        if (ws.readyState !== WebSocket.OPEN) break
+        if (ws.readyState !== WebSocket.OPEN || this.ws !== ws) break
         ws.send(await file.slice(off, off + CHUNK).arrayBuffer())
         // What has left this browser, less what is still queued in it.
         onProgress?.(Math.max(0, Math.min(off + CHUNK, file.size) - ws.bufferedAmount))
       }
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'upload-end' }))
+      if (ws.readyState === WebSocket.OPEN && this.ws === ws) ws.send(JSON.stringify({ type: 'upload-end' }))
       const r = await done
       onProgress?.(file.size)
       return { path: r.path ?? path, size: r.size ?? file.size, sha256: r.sha256 ?? '' }

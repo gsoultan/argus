@@ -91,6 +91,8 @@ export function FileBrowser({
   const [recent, setRecent] = useState<RecentFile[]>(() => recentFiles(target, principal))
   const pathRef = useRef(path)
   pathRef.current = path
+  /** Has been live: a later "connecting" is a reconnect, not the first open. */
+  const wasLive = useRef(false)
 
   // One connection for the life of this view.
   useEffect(() => {
@@ -103,6 +105,7 @@ export function FileBrowser({
       },
     })
     setClient(c)
+    wasLive.current = false
     setState('connecting')
     void c.open()
     return () => c.close()
@@ -130,9 +133,12 @@ export function FileBrowser({
     }
   }, [client])
 
+  // Listed when the connection opens: home the first time, and the folder in
+  // view when a cancelled transfer has replaced the connection.
   useEffect(() => {
-    if (state === 'live') void list('~', { push: false })
-    // Listed once when the connection opens.
+    if (state !== 'live') return
+    void list(wasLive.current ? pathRef.current : '~', { push: false })
+    wasLive.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state])
 
@@ -201,7 +207,7 @@ export function FileBrowser({
     else setSelected(new Set())
   }
 
-  if (state === 'connecting') {
+  if (state === 'connecting' && !wasLive.current) {
     return (
       <Group gap="xs" p="xl" justify="center">
         <Loader size="xs" />

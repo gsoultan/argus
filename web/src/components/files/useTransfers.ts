@@ -48,6 +48,8 @@ export function useTransfers(client: FilesClient | null, opts: {
   const [items, setItems] = useState<Transfer[]>([])
   const ref = useRef<Transfer[]>([])
   const running = useRef(false)
+  /** Set while a cancel replaces the connection. */
+  const cancelling = useRef<Promise<void> | null>(null)
   const optsRef = useRef(opts)
   optsRef.current = opts
 
@@ -103,6 +105,13 @@ export function useTransfers(client: FilesClient | null, opts: {
             patch(t.id, { status: 'done', bytes: before })
           }
         } catch (err) {
+          if (err instanceof FileOpError && err.cancelled) {
+            patch(t.id, { status: 'skipped', error: undefined, file: undefined })
+            // The connection is being replaced; carry on once it is back.
+            await cancelling.current
+            if (client.state !== 'live') break
+            continue
+          }
           if (err instanceof FileOpError && err.exists && t.kind === 'upload' && !t.overwrite) {
             patch(t.id, { status: 'conflict', error: err.message })
           } else {
@@ -166,11 +175,21 @@ export function useTransfers(client: FilesClient | null, opts: {
     if (t?.status === 'failed' && (t.kind !== 'upload' || t.file)) patch(id, { status: 'waiting', error: undefined })
   }, [patch])
 
-  /** Takes a waiting item out of the queue. One already moving cannot be stopped mid-file. */
+  /**
+   * Takes an item out of the queue. One already moving is stopped mid-file:
+   * an upload is not written, a download is not saved.
+   */
   const cancel = useCallback((id: number) => {
     const t = ref.current.find((x) => x.id === id)
-    if (t?.status === 'waiting' || t?.status === 'conflict') patch(id, { status: 'skipped', file: undefined })
-  }, [patch])
+    if (t?.status === 'waiting' || t?.status === 'conflict') {
+      patch(id, { status: 'skipped', file: undefined })
+    } else if (t?.status === 'active' && client && !cancelling.current) {
+      const done = client.cancel().finally(() => {
+        cancelling.current = null
+      })
+      cancelling.current = done
+    }
+  }, [patch, client])
 
   const clearFinished = useCallback(() => {
     commit(ref.current.filter((t) => t.status === 'waiting' || t.status === 'active' || t.status === 'conflict'))

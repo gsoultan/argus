@@ -259,6 +259,8 @@ func (a *API) download(ctx context.Context, st tunnel.Stream, fr *tunnel.FrameRe
 	_ = sendJSON(filesMessage{Type: "download-start", Path: start.Path})
 	h := sha256.New()
 	var n int64
+	// Set when the browser stopped taking the bytes: it left, or cancelled.
+	gone := false
 	for {
 		typ, p, err := fr.Next()
 		if err != nil {
@@ -269,7 +271,9 @@ func (a *API) download(ctx context.Context, st tunnel.Stream, fr *tunnel.FrameRe
 			n += int64(len(p))
 			// The browser going away mid-file must not desynchronise the
 			// stream: keep reading to the agent's end answer.
-			_ = send(websocket.MessageBinary, p)
+			if !gone && send(websocket.MessageBinary, p) != nil {
+				gone = true
+			}
 			continue
 		}
 		if typ != tunnel.FrameFileAnswer {
@@ -289,6 +293,9 @@ func (a *API) download(ctx context.Context, st tunnel.Stream, fr *tunnel.FrameRe
 		detail := fmt.Sprintf("Downloaded %s from %s as %s through the console: %d bytes, sha256 %s.",
 			start.Path, host, principal, n, sum)
 		severity := "notice"
+		if gone {
+			detail += " The browser left before all of it arrived, so it was cancelled or lost there."
+		}
 		if end.SHA256 != sum || end.Size != n {
 			severity = "warning"
 			detail += fmt.Sprintf(" The agent reported %d bytes, sha256 %s, which does not "+
@@ -324,8 +331,12 @@ func (a *API) upload(ctx context.Context, conn *websocket.Conn, st tunnel.Stream
 	for {
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
-			// The browser left mid-file. The agent writes through a temporary
-			// file, so ending the stream leaves the destination untouched.
+			// The browser left mid-file, or cancelled it. The agent writes
+			// through a temporary file, so ending the stream leaves the
+			// destination untouched.
+			a.auditFiles(ctx, "file.upload", "notice", email, host, fmt.Sprintf(
+				"Upload of %s as %s stopped after %d bytes: the browser cancelled it or "+
+					"went away, and nothing was written.", ready.Path, principal, n))
 			return false
 		}
 		if typ == websocket.MessageBinary {
@@ -441,6 +452,10 @@ var (
 )
 
 func (a *API) auditFiles(ctx context.Context, action, severity, email, host, detail string) {
+	// Written even when the browser has just gone: that is often what is
+	// being recorded.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	if _, err := a.store.AppendAudit(ctx, AuditEvent{
 		Action: action, Severity: severity, ActorEmail: email, Target: host, Detail: detail,
 	}); err != nil {

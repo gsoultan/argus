@@ -899,6 +899,11 @@ export async function decideDirectLogin(id: string, approve: boolean, note: stri
   return post<DirectLogin>(`/api/v1/direct-logins/${encodeURIComponent(id)}/decision`, { approve, note })
 }
 
+/** Withdraws your own waiting direct login, or reminds its approvers. */
+export async function ownDirectLogin(id: string, act: 'withdraw' | 'remind'): Promise<void> {
+  await post<unknown>(`/api/v1/direct-logins/${encodeURIComponent(id)}/${act}`, {})
+}
+
 /** Sets a server's own direct SSH choice; null follows Settings. */
 export async function setAssetDirectSsh(id: string, mode: DirectSsh | null): Promise<Asset> {
   return send<Asset>('PUT', `/api/v1/assets/${encodeURIComponent(id)}/direct-ssh`, { mode: mode ?? '' })
