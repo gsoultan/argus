@@ -245,6 +245,12 @@ func desktopService(cfg DesktopConfig, service string) TunnelService {
 			sc.note = d.Note
 			sc.record(map[string]any{"type": "console-account", "account": console})
 		}
+		if ac, ok := client.(*androidClient); ok {
+			// The device's activity -- app in front, lock, secure content --
+			// is chained into the same recording as its screen.
+			ac.note = d.Note
+			ac.startNotes()
+		}
 		// Recorded as it is read, before it is decoded or sent anywhere.
 		client.SetTap(func(pdu []byte) {
 			if rerr := d.Screen(pdu); rerr != nil {

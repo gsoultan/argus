@@ -290,3 +290,39 @@ func TestBitmapRecordingIsNotGraphics(t *testing.T) {
 		t.Error("a bitmap recording claims the graphics pipeline")
 	}
 }
+
+// TestReplayCarriesTheAndroidActivityTimeline checks that the device's
+// timeline, chained as Meta events, is decoded into ReplayInfo.Activity and
+// that notes of other kinds are left out.
+func TestReplayCarriesTheAndroidActivityTimeline(t *testing.T) {
+	var buf bytes.Buffer
+	rec, err := NewRecorder(&buf, Header{Width: 540, Height: 1200, Protocol: "android"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A shared-console note of another shape must not become a timeline event.
+	_ = rec.Event(map[string]any{"type": "console-account", "account": "rina"})
+	_ = rec.Event(map[string]any{"type": "android-activity", "kind": "app",
+		"package": "com.android.chrome", "title": "Chrome"})
+	_ = rec.Event(map[string]any{"type": "android-activity", "kind": "typed", "password": true})
+	_ = rec.Event(map[string]any{"type": "android-activity", "kind": "lock"})
+	if _, err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	info, err := DecodeRecording(bytes.NewReader(buf.Bytes()), &out)
+	if err != nil {
+		t.Fatalf("DecodeRecording: %v", err)
+	}
+	if len(info.Activity) != 3 {
+		t.Fatalf("got %d timeline events; want the three android ones, not the console note: %+v",
+			len(info.Activity), info.Activity)
+	}
+	if info.Activity[0].Kind != "app" || info.Activity[0].Package != "com.android.chrome" {
+		t.Errorf("first event %+v", info.Activity[0])
+	}
+	if !info.Activity[1].Password {
+		t.Errorf("the password-typed event lost its flag: %+v", info.Activity[1])
+	}
+}

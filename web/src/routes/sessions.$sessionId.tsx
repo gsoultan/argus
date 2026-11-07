@@ -51,6 +51,7 @@ import { buildCast } from '~/lib/cast'
 import { downloadText, stamp } from '~/lib/download'
 import { isStatementProtocol } from '~/lib/engines'
 import { notifyOk } from '~/lib/notify'
+import type { ReplayActivity } from '~/types/domain'
 import type { KernelExec } from '~/lib/castDecode'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
 import { live, rdpReplay, shadowTicket, watchEndpoint } from '~/lib/live'
@@ -87,6 +88,7 @@ function SessionDetail() {
     width: number
     height: number
     verified: string
+    activity?: ReplayActivity[]
   } | null>(null)
   const [rdpError, setRdpError] = useState<string>()
   // Why the control plane would not give us the recording, in its own words.
@@ -466,6 +468,7 @@ function SessionDetail() {
                       width={rdpFrames.width}
                       height={rdpFrames.height}
                       verified={rdpFrames.verified}
+                      activity={rdpFrames.activity}
                     />
                     </Suspense>
                   </Box>

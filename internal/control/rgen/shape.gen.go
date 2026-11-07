@@ -70,6 +70,7 @@ func _assertAgentShape(m m0.Agent) {
 		m.LogsState,
 		m.LogsScanID,
 		m.LogsScanAt,
+		m.AndroidApps,
 	}
 }
 

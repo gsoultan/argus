@@ -38,7 +38,29 @@ type ReplayInfo struct {
 	// commands the replay carries as they were sent, for the browser to
 	// decode as it did live.
 	Graphics bool `json:"graphics,omitempty"`
+	// Activity is the timeline an Android session chained alongside the
+	// screen: the app in front, locks, secure content, typed text. Empty for
+	// a Remote Desktop or shared-console recording, which carries none.
+	Activity []ReplayActivity `json:"activity,omitempty"`
 }
+
+// ReplayActivity is one point on the replay's timeline: something the device
+// did, decoded from the recording's Meta stream, Ms into the session.
+type ReplayActivity struct {
+	Ms       int    `json:"ms"`
+	Kind     string `json:"kind"`
+	Package  string `json:"package,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Hidden   bool   `json:"hidden,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Password bool   `json:"password,omitempty"`
+	By       string `json:"by,omitempty"`
+}
+
+// maxReplayActivity caps the timeline a recording can carry into the header,
+// so a session that somehow logged a flood of events does not make a header
+// too large to send. A real session has a handful an hour.
+const maxReplayActivity = 5000
 
 // DecodeRecording reads a recording and writes replay frames to w.
 //
@@ -82,6 +104,32 @@ func DecodeRecording(r io.Reader, w io.Writer) (ReplayInfo, error) {
 			break
 		}
 		stream, _ := frame[1].(string)
+		at, _ := frame[0].(float64)
+		ms := int(at * 1000)
+
+		// The device's timeline rides the Meta stream next to the screen. A
+		// recording from another kind of session has none, so this is skipped.
+		if Stream(stream) == Meta {
+			if payload, ok := frame[2].(string); ok && len(info.Activity) < maxReplayActivity {
+				var note struct {
+					Type     string `json:"type"`
+					Kind     string `json:"kind"`
+					Package  string `json:"package"`
+					Title    string `json:"title"`
+					Hidden   bool   `json:"hidden"`
+					Text     string `json:"text"`
+					Password bool   `json:"password"`
+					By       string `json:"by"`
+				}
+				if json.Unmarshal([]byte(payload), &note) == nil && note.Type == "android-activity" {
+					info.Activity = append(info.Activity, ReplayActivity{
+						Ms: ms, Kind: note.Kind, Package: note.Package, Title: note.Title,
+						Hidden: note.Hidden, Text: note.Text, Password: note.Password, By: note.By,
+					})
+				}
+			}
+			continue
+		}
 		if Stream(stream) != ServerOutput {
 			continue
 		}
@@ -91,8 +139,6 @@ func DecodeRecording(r io.Reader, w io.Writer) (ReplayInfo, error) {
 			continue
 		}
 
-		at, _ := frame[0].(float64)
-		ms := int(at * 1000)
 		if ms > info.DurationMS {
 			info.DurationMS = ms
 		}

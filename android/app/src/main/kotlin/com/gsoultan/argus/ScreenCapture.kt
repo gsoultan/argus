@@ -97,6 +97,10 @@ class ScreenCapture(private val ctx: Context, private val projection: MediaProje
             val n = bb.remaining()
             if (buf.size < n) buf = ByteArray(n)
             bb.get(buf, 0, n)
+            // A FLAG_SECURE window blanks the mirror; a run of near-black
+            // frames while the screen is on is secure content hidden, noticed
+            // here and sent to the timeline.
+            ArgusApp.instance.activity.frameDark(isDark(buf, n, stride))
             // Handed over by copy: the agent keeps its own.
             agent.pushFrame(buf, img.width.toLong(), img.height.toLong(), stride.toLong())
         } finally {
@@ -104,7 +108,37 @@ class ScreenCapture(private val ctx: Context, private val projection: MediaProje
         }
     }
 
+    /**
+     * Whether the frame is essentially black, from a cheap sample rather than
+     * every pixel. A handful of rows, a few pixels along each, is enough to
+     * tell a blanked screen from a real one without the cost of the whole
+     * buffer on every frame.
+     */
+    private fun isDark(buf: ByteArray, n: Int, stride: Int): Boolean {
+        if (n < 4) return false
+        val rows = height.coerceAtLeast(1)
+        var checked = 0
+        for (ry in 0 until SAMPLE_ROWS) {
+            val y = (rows.toLong() * ry / SAMPLE_ROWS).toInt()
+            val rowStart = y * stride
+            for (rx in 0 until SAMPLE_COLS) {
+                val x = (width.toLong() * rx / SAMPLE_COLS).toInt()
+                val i = rowStart + x * 4
+                if (i + 2 >= n) continue
+                checked++
+                val r = buf[i].toInt() and 0xff
+                val g = buf[i + 1].toInt() and 0xff
+                val b = buf[i + 2].toInt() and 0xff
+                if (r > DARK || g > DARK || b > DARK) return false
+            }
+        }
+        return checked > 0
+    }
+
     companion object {
         const val MAX_SIDE = 1280
+        const val SAMPLE_ROWS = 16
+        const val SAMPLE_COLS = 16
+        const val DARK = 16
     }
 }

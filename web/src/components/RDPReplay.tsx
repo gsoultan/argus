@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge, Box, Group, Loader, Text } from '@mantine/core'
 import { PlayerControls } from '~/components/PlayerControls'
+import { DeviceReplayTimeline } from '~/components/DeviceReplayTimeline'
 import { canDecodeH264 } from '~/lib/gfx'
 import type { ReplayResponse } from '~/workers/rdpreplay.worker'
+import type { ReplayActivity } from '~/types/domain'
 import { INK } from '~/theme'
 
 export interface RDPReplayProps {
@@ -12,6 +14,8 @@ export interface RDPReplayProps {
   height: number
   /** Chain verdict, shown rather than assumed. */
   verified?: string
+  /** A device session's timeline, chained next to the screen. Empty otherwise. */
+  activity?: ReplayActivity[]
 }
 
 /**
@@ -27,7 +31,7 @@ export interface RDPReplayProps {
  * as the protocol stream it already was; only the rectangles inside the current
  * window are turned into bitmaps, and each is closed the moment it is drawn.
  */
-export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
+export function RDPReplay({ buffer, width, height, verified, activity = [] }: RDPReplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const workerRef = useRef<Worker | null>(null)
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
@@ -247,6 +251,8 @@ export function RDPReplay({ buffer, width, height, verified }: RDPReplayProps) {
           {width}x{height}
         </Badge>
       </PlayerControls>
+
+      <DeviceReplayTimeline activity={activity} cursorMs={cursor} onSeek={(ms) => setCursor(Math.min(ms, durationMs))} />
     </Box>
   )
 }

@@ -36,9 +36,17 @@ type FakeAndroid struct {
 	picked  int // the row last tapped, -1 for none
 	typed   string
 	second  int
+	locked  bool
 	plays   []AndroidInput
 	changed chan struct{}
 	done    chan struct{}
+
+	// Activity the fake scripts from the input it is played, so the recording
+	// gets a timeline with no phone: the first look reports the app in front,
+	// then a lock, a type and so on follow what the console does.
+	announced bool
+	acts      []AndroidActivity
+	actCh     chan struct{}
 }
 
 // Fake phone geometry, in pixels.
@@ -57,7 +65,8 @@ func NewFakeAndroid(width, height int) *FakeAndroid {
 		width, height = 540, 1200
 	}
 	f := &FakeAndroid{width: width, height: height, picked: -1,
-		fb: make([]byte, width*height*4), changed: make(chan struct{}, 1), done: make(chan struct{})}
+		fb: make([]byte, width*height*4), changed: make(chan struct{}, 1), done: make(chan struct{}),
+		actCh: make(chan struct{}, 1)}
 	f.redraw()
 	go f.tick()
 	return f
@@ -128,6 +137,9 @@ func (f *FakeAndroid) Play(in AndroidInput) error {
 		if in.Down && in.Y >= fakeRowsTop {
 			if row := (in.Y - fakeRowsTop) / fakeRowHeight; row < fakeRows {
 				f.picked = row
+				// Opening a row is a different app in front.
+				f.emit(AndroidActivity{Kind: "app",
+					Package: "com.argus.fakephone.item", Title: "Item"})
 			}
 		}
 	case "device":
@@ -136,9 +148,17 @@ func (f *FakeAndroid) Play(in AndroidInput) error {
 			f.picked = -1
 		case "home":
 			f.picked, f.typed = -1, ""
+			f.emit(AndroidActivity{Kind: "app",
+				Package: "com.android.launcher", Title: "Home"})
+		case "lock":
+			if !f.locked {
+				f.locked = true
+				f.emit(AndroidActivity{Kind: "lock"})
+			}
 		}
 	case "text":
 		f.typed += in.Text
+		f.emit(AndroidActivity{Kind: "typed", Text: in.Text})
 	case "key":
 		if in.Down && in.Code == "Backspace" && f.typed != "" {
 			f.typed = f.typed[:len(f.typed)-1]
@@ -146,6 +166,61 @@ func (f *FakeAndroid) Play(in AndroidInput) error {
 	}
 	f.redraw()
 	return nil
+}
+
+// emit queues one activity event and wakes a waiting Activity. Called with
+// mu held.
+func (f *FakeAndroid) emit(a AndroidActivity) {
+	f.acts = append(f.acts, a)
+	select {
+	case f.actCh <- struct{}{}:
+	default:
+	}
+}
+
+// Activity reports what the fake is doing: the app in front at the start,
+// then whatever the input scripts. It satisfies androidActivitySource, so
+// the android client chains these into the recording.
+func (f *FakeAndroid) Activity(wait time.Duration) (AndroidActivity, bool) {
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	f.mu.Lock()
+	if !f.announced && !f.closed {
+		f.announced = true
+		f.mu.Unlock()
+		return AndroidActivity{Kind: "app", Package: "com.argus.fakephone", Title: "Argus Fake Phone"}, true
+	}
+	for len(f.acts) == 0 && !f.closed {
+		f.mu.Unlock()
+		select {
+		case <-f.actCh:
+		case <-f.done:
+		case <-deadline.C:
+			return AndroidActivity{}, false
+		}
+		f.mu.Lock()
+	}
+	if f.closed {
+		f.mu.Unlock()
+		return AndroidActivity{}, false
+	}
+	ev := f.acts[0]
+	f.acts = f.acts[1:]
+	f.mu.Unlock()
+	return ev, true
+}
+
+// Apps is a fixed list of installed apps, so the device page's Apps tab has
+// something to show with no phone.
+func (f *FakeAndroid) Apps() AndroidApps {
+	return AndroidApps{
+		CheckedAt: time.Now().UTC(),
+		Apps: []AndroidApp{
+			{Package: "com.android.chrome", Label: "Chrome", Version: "131.0", Source: "play"},
+			{Package: "com.android.settings", Label: "Settings", Version: "14", Source: "preinstalled"},
+			{Package: "com.argus.fakephone", Label: "Argus Fake Phone", Version: "1.0", Source: "sideloaded"},
+		},
+	}
 }
 
 func (f *FakeAndroid) Close() error {

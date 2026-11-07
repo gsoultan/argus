@@ -53,6 +53,7 @@ type Row struct {
 	LogsState       runtime.Null[runtime.JSON]
 	LogsScanID      runtime.Null[string]
 	LogsScanAt      runtime.Null[time.Time]
+	AndroidApps     runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -91,7 +92,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 33
+const nCols = 34
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -552,6 +553,7 @@ var (
 	LogsState       = NullJSONCol{30}
 	LogsScanID      = NullTextCol{31}
 	LogsScanAt      = NullTimeCol{32}
+	AndroidApps     = NullJSONCol{33}
 )
 
 // TextCol addresses a text column.
@@ -1080,6 +1082,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 33:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1299,6 +1308,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 33:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1574,8 +1590,16 @@ func (q Query) LogsScanAtLt(v time.Time) Query            { return q.Where(LogsS
 func (q Query) LogsScanAtLte(v time.Time) Query           { return q.Where(LogsScanAt.Lte(v)) }
 func (q Query) LogsScanAtIsNull() Query                   { return q.Where(LogsScanAt.IsNull()) }
 func (q Query) LogsScanAtIsNotNull() Query                { return q.Where(LogsScanAt.IsNotNull()) }
+func (q Query) AndroidAppsContains(v runtime.JSON) Query  { return q.Where(AndroidApps.Contains(v)) }
+func (q Query) AndroidAppsContainedBy(v runtime.JSON) Query {
+	return q.Where(AndroidApps.ContainedBy(v))
+}
+func (q Query) AndroidAppsHasAnyKey(v ...string) Query  { return q.Where(AndroidApps.HasAnyKey(v...)) }
+func (q Query) AndroidAppsHasAllKeys(v ...string) Query { return q.Where(AndroidApps.HasAllKeys(v...)) }
+func (q Query) AndroidAppsIsNull() Query                { return q.Where(AndroidApps.IsNull()) }
+func (q Query) AndroidAppsIsNotNull() Query             { return q.Where(AndroidApps.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at", "android_apps" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1810,6 +1834,12 @@ var orderTable = [nCols][4]string{
 		"\"logs_scan_at\" ASC NULLS FIRST",
 		"\"logs_scan_at\" DESC NULLS LAST",
 	},
+	{ // android_apps
+		"\"android_apps\"",
+		"\"android_apps\" DESC",
+		"\"android_apps\" ASC NULLS FIRST",
+		"\"android_apps\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1848,6 +1878,7 @@ var identTable = [nCols]string{
 	"\"logs_state\"",
 	"\"logs_scan_id\"",
 	"\"logs_scan_at\"",
+	"\"android_apps\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1880,7 +1911,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [33][28]runtime.Frag{
+var fragTable = [34][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2871,6 +2902,36 @@ var fragTable = [33][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // android_apps
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"android_apps\" @> $", B: ""},
+		{A: "\"android_apps\" <@ $", B: ""},
+		{A: "\"android_apps\" ?| $", B: ""},
+		{A: "\"android_apps\" ?& $", B: ""},
+		{A: "\"android_apps\" IS NULL", B: ""},
+		{A: "\"android_apps\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3069,6 +3130,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.LogsState = runtime.NullJSON(rv[30], sl)
 	r.LogsScanID = runtime.NullText(rv[31], sl)
 	r.LogsScanAt = runtime.Nullable(rv[32], runtime.Timestamptz)
+	r.AndroidApps = runtime.NullJSON(rv[33], sl)
 	return decErr
 }
 
@@ -3231,6 +3293,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 33:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3355,6 +3421,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 33:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v
