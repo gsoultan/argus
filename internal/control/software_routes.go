@@ -45,6 +45,7 @@ const (
 	// Package run modes for software, beside all, security and selected.
 	PackagesInstall = "install"
 	PackagesRemove  = "remove"
+	PackagesScript  = "script"
 
 	previewTTL = 15 * time.Minute
 	// A preview of an install may refresh the package lists first.
@@ -647,7 +648,7 @@ func (s *Store) softwarePreview(ctx context.Context, id string) (SoftwarePreview
 
 func (s *Store) softwareRunsFor(ctx context.Context, host string, limit int) ([]PackageRun, error) {
 	rows, err := s.db(ctx).Query(ctx, `SELECT `+packageRunCols+` FROM package_runs
-		WHERE lower(hostname) = lower($1) AND mode IN ('install', 'remove')
+		WHERE lower(hostname) = lower($1) AND mode IN ('install', 'remove', 'script')
 		ORDER BY requested_at DESC LIMIT $2`, host, limit)
 	if err != nil {
 		return nil, err

@@ -2099,7 +2099,7 @@ export interface PackageRun {
   hostname: string
   assetHostname: string
   assetId?: string
-  mode: 'all' | 'security' | 'selected' | 'install' | 'remove'
+  mode: 'all' | 'security' | 'selected' | 'install' | 'remove' | 'script'
   packages: string[]
   holds: string[]
   reboot: PackageReboot
@@ -2131,6 +2131,28 @@ export interface PackageRun {
   started?: string[]
   previewId?: string | null
   undoOf?: string | null
+  /** A script run: which version, which part, its plain values, and what changed. */
+  scriptVersionId?: string
+  scriptName?: string
+  scriptAction?: 'install' | 'uninstall'
+  scriptParams?: Record<string, string>
+  scriptReport?: ScriptReport
+}
+
+/** What changed on a server while a script ran. */
+export interface ScriptReport {
+  exit: number
+  packages?: { kind: 'add' | 'upgrade' | 'downgrade' | 'remove'; name: string; from?: string; to?: string }[]
+  services_added?: string[]
+  services_removed?: string[]
+  ports_opened?: number[]
+  ports_closed?: number[]
+  folders_added?: string[]
+  folders_removed?: string[]
+  checked?: boolean
+  installed?: boolean
+  check_version?: string
+  check_error?: string
 }
 
 /** A server's Updates tab. */

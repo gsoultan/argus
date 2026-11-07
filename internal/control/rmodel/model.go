@@ -1133,6 +1133,8 @@ func All() []any {
 		&PackageRun{},
 		&PackageUpdateRule{},
 		&SoftwarePreview{},
+		&SoftwareScript{},
+		&SoftwareScriptVersion{},
 		&RecoveryCode{},
 		&SavedQuery{},
 		&RedeemedTicket{},
@@ -1386,6 +1388,13 @@ type PackageRun struct {
 	PreviewID     *[16]byte
 	UndoOf        *[16]byte
 	Started       []string
+	// The library script version a script run executes, its part and
+	// parameters, and what it changed (migration 057).
+	ScriptVersionID *[16]byte
+	ScriptAction    string
+	ScriptParams    storm.JSON
+	ScriptSecrets   []byte
+	ScriptReport    *storm.JSON
 }
 
 func (m *PackageRun) Schema(t *storm.Table) {
@@ -1409,7 +1418,9 @@ func (m *PackageRun) Schema(t *storm.Table) {
 	t.Col(&m.StartServices).Default("false")
 	t.Col(&m.Expect).Default("''::text")
 	t.Col(&m.Started).Default("'{}'::text[]")
-	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text])")
+	t.Col(&m.ScriptAction).Default("''::text")
+	t.Col(&m.ScriptParams).Default("'{}'::jsonb")
+	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text, 'script'::text])")
 	t.CheckNamed("package_runs_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'waiting'::text, 'queued'::text, 'running'::text, 'rebooting'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
 	t.CheckNamed("package_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")
@@ -1475,4 +1486,79 @@ func (m *SoftwarePreview) Schema(t *storm.Table) {
 	t.Col(&m.CreatedAt).Default("now()")
 	t.CheckNamed("software_previews_action_check", "action = ANY (ARRAY['install'::text, 'remove'::text])")
 	t.Index(&m.CreatedAt).Named("software_previews_created")
+}
+
+// SoftwareScript is table software_scripts: an install script in the
+// Software library (migration 057).
+type SoftwareScript struct {
+	ID          [16]byte
+	Name        string
+	Platform    string
+	Description string
+	CreatedBy   string
+	CreatedAt   time.Time
+	ArchivedAt  *time.Time
+}
+
+func (m *SoftwareScript) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Description).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("software_scripts_platform_check", "platform = ANY (ARRAY['linux'::text, 'windows'::text])")
+	t.Index(storm.Lower(&m.Name)).Unique().Where("archived_at IS NULL").Named("software_scripts_name")
+}
+
+// SoftwareScriptVersion is table software_script_versions: one checked,
+// reviewed and signed version of a script (migration 057).
+type SoftwareScriptVersion struct {
+	ID             [16]byte
+	Script         SoftwareScript
+	Version        int32
+	Install        string
+	Uninstall      string
+	CheckText      string
+	Params         storm.JSON
+	RunAs          string
+	TimeoutSeconds int32
+	Reboot         string
+	InstallSha     string
+	UninstallSha   string
+	CheckSha       string
+	Findings       storm.JSON
+	Blocked        bool
+	Note           string
+	Author         string
+	CreatedAt      time.Time
+	ReviewedBy     *string
+	ReviewedAt     *time.Time
+	SelfReviewed   bool
+	Accepted       storm.JSON
+	Signature      string
+	TriedOn        *string
+	TriedAt        *time.Time
+	TriedRun       *[16]byte
+}
+
+func (m *SoftwareScriptVersion) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Script).ConstraintName("software_script_versions_script_id_fkey")
+	t.Col(&m.Uninstall).Default("''::text")
+	t.Col(&m.CheckText).Default("''::text")
+	t.Col(&m.Params).Default("'[]'::jsonb")
+	t.Col(&m.RunAs).Default("''::text")
+	t.Col(&m.TimeoutSeconds).Default("1800")
+	t.Col(&m.Reboot).Default("'never'::text")
+	t.Col(&m.UninstallSha).Default("''::text")
+	t.Col(&m.CheckSha).Default("''::text")
+	t.Col(&m.Findings).Default("'[]'::jsonb")
+	t.Col(&m.Blocked).Default("false")
+	t.Col(&m.Note).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.SelfReviewed).Default("false")
+	t.Col(&m.Accepted).Default("'[]'::jsonb")
+	t.Col(&m.Signature).Default("''::text")
+	t.UniqueNamed("software_script_versions_script_id_version_key", &m.Script, &m.Version)
+	t.CheckNamed("software_script_versions_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_asked'::text])")
 }

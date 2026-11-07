@@ -119,19 +119,20 @@ func (r PackageReport) securityCount() int {
 
 // PackageRunStatus is what the agent says about a run.
 type PackageRunStatus struct {
-	ID             string          `json:"id"`
-	State          string          `json:"state"`
-	Step           string          `json:"step,omitempty"`
-	Message        string          `json:"message,omitempty"`
-	Planned        int             `json:"planned,omitempty"`
-	Upgraded       []PackageChange `json:"upgraded,omitempty"`
-	Restarted      []string        `json:"restarted,omitempty"`
-	Started        []string        `json:"started,omitempty"`
-	RebootRequired bool            `json:"reboot_required,omitempty"`
-	Rebooted       bool            `json:"rebooted,omitempty"`
-	Log            string          `json:"log,omitempty"`
-	StartedAt      *time.Time      `json:"started_at,omitempty"`
-	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
+	ID             string               `json:"id"`
+	State          string               `json:"state"`
+	Step           string               `json:"step,omitempty"`
+	Message        string               `json:"message,omitempty"`
+	Planned        int                  `json:"planned,omitempty"`
+	Upgraded       []PackageChange      `json:"upgraded,omitempty"`
+	Restarted      []string             `json:"restarted,omitempty"`
+	Started        []string             `json:"started,omitempty"`
+	Script         *tunnel.ScriptReport `json:"script,omitempty"`
+	RebootRequired bool                 `json:"reboot_required,omitempty"`
+	Rebooted       bool                 `json:"rebooted,omitempty"`
+	Log            string               `json:"log,omitempty"`
+	StartedAt      *time.Time           `json:"started_at,omitempty"`
+	FinishedAt     *time.Time           `json:"finished_at,omitempty"`
 }
 
 // PackageChange is one package a run upgraded.
@@ -222,25 +223,39 @@ type PackageRun struct {
 	PreviewID     *string               `json:"previewId"`
 	UndoOf        *string               `json:"undoOf"`
 	expect        string
+	// A script run: the version, install or uninstall, the parameter
+	// values that are not secret, and what changed on the server.
+	ScriptVersionID *string              `json:"scriptVersionId,omitempty"`
+	ScriptName      string               `json:"scriptName,omitempty"`
+	ScriptAction    string               `json:"scriptAction,omitempty"`
+	ScriptParams    map[string]string    `json:"scriptParams,omitempty"`
+	ScriptReport    *tunnel.ScriptReport `json:"scriptReport,omitempty"`
 }
 
 const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
 	requested_by, requested_at, decided_by, decided_at, sent_at, started_at, finished_at, updated_at,
 	step, message, planned, upgraded, restarted, reboot_required, rebooted, log, batch_id::text, batch_position,
-	items, purge, start_services, started, preview_id::text, undo_of::text, expect`
+	items, purge, start_services, started, preview_id::text, undo_of::text, expect,
+	script_version_id::text, script_action, script_params, script_report,
+	(SELECT s.name || ' v' || v.version FROM software_script_versions v JOIN software_scripts s ON s.id = v.script_id
+	  WHERE v.id = package_runs.script_version_id)`
 
 func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	var (
 		r        PackageRun
 		upgraded []byte
 		items    []byte
+		params   []byte
+		report   []byte
+		label    *string
 		pos      *int32
 	)
 	err := row.Scan(&r.ID, &r.Hostname, &r.AssetHostname, &r.Mode, &r.Packages, &r.Holds, &r.Reboot,
 		&r.Trigger, &r.State, &r.RequestedBy, &r.RequestedAt, &r.DecidedBy, &r.DecidedAt, &r.SentAt,
 		&r.StartedAt, &r.FinishedAt, &r.UpdatedAt, &r.Step, &r.Message, &r.Planned, &upgraded,
 		&r.Restarted, &r.RebootRequired, &r.Rebooted, &r.Log, &r.BatchID, &pos,
-		&items, &r.Purge, &r.StartServices, &r.Started, &r.PreviewID, &r.UndoOf, &r.expect)
+		&items, &r.Purge, &r.StartServices, &r.Started, &r.PreviewID, &r.UndoOf, &r.expect,
+		&r.ScriptVersionID, &r.ScriptAction, &params, &report, &label)
 	if err != nil {
 		return r, err
 	}
@@ -250,6 +265,14 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	}
 	_ = json.Unmarshal(upgraded, &r.Upgraded)
 	_ = json.Unmarshal(items, &r.Items)
+	_ = json.Unmarshal(params, &r.ScriptParams)
+	if len(report) > 0 {
+		r.ScriptReport = &tunnel.ScriptReport{}
+		_ = json.Unmarshal(report, r.ScriptReport)
+	}
+	if label != nil {
+		r.ScriptName = *label
+	}
 	if r.Items == nil {
 		r.Items = []tunnel.SoftwareItem{}
 	}
@@ -637,6 +660,14 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 	if restarted == nil {
 		restarted = []string{}
 	}
+	var scriptReport []byte
+	if st.Script != nil {
+		bounded := *st.Script
+		if len(bounded.Packages) > 500 {
+			bounded.Packages = bounded.Packages[:500]
+		}
+		scriptReport, _ = json.Marshal(bounded)
+	}
 	started := st.Started
 	if len(started) > 200 {
 		started = started[:200]
@@ -648,6 +679,7 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 		UPDATE package_runs SET
 		       state = $3, step = $4, message = $5, planned = $6, upgraded = $7::jsonb,
 		       restarted = $8, reboot_required = $9, rebooted = $10, log = $11, started = $12,
+		       script_report = COALESCE($13::jsonb, script_report),
 		       started_at = COALESCE(started_at, now()),
 		       finished_at = CASE WHEN $3 IN ('done','failed','interrupted') THEN now() ELSE NULL END,
 		       updated_at = now()
@@ -659,7 +691,7 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 		   AND ((state, step, message, log, rebooted) IS DISTINCT FROM ($3, $4, $5, $11, $10)
 		        OR updated_at < now() - interval '5 minutes')
 		RETURNING `+packageRunCols, host, st.ID, state, st.Step, st.Message, st.Planned, up, restarted,
-		st.RebootRequired, st.Rebooted, st.Log, started)
+		st.RebootRequired, st.Rebooted, st.Log, started, scriptReport)
 	r, err := scanPackageRun(row, false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -692,6 +724,8 @@ type PackageRunOrder struct {
 	Purge         bool                  `json:"purge,omitempty"`
 	StartServices bool                  `json:"start_services,omitempty"`
 	Expect        string                `json:"expect,omitempty"`
+	// Script is a reviewed script to run, for mode script.
+	Script *ScriptRunOrder `json:"script,omitempty"`
 }
 
 // packageRunToSend is the run to put on host's heartbeat reply, marking it
@@ -776,6 +810,11 @@ type newRun struct {
 	BatchID                 *string
 	BatchPosition           *int
 	WindowStart             *time.Time
+	// A script run.
+	ScriptVersionID *string
+	ScriptAction    string
+	ScriptParams    map[string]string
+	ScriptSecrets   []byte
 	// An install or a removal.
 	Items                []tunnel.SoftwareItem
 	Purge, StartServices bool
@@ -816,15 +855,24 @@ func (s *Store) insertRun(ctx context.Context, q pgxQuerier, n newRun) (PackageR
 	if err != nil {
 		return PackageRun{}, err
 	}
+	if n.ScriptParams == nil {
+		n.ScriptParams = map[string]string{}
+	}
+	params, err := json.Marshal(n.ScriptParams)
+	if err != nil {
+		return PackageRun{}, err
+	}
 	row := q.QueryRow(ctx, `
 		INSERT INTO package_runs (hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
 		                          requested_by, batch_id, batch_position, window_start,
-		                          items, purge, start_services, expect, preview_id, undo_of)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11,$12,$13::jsonb,$14,$15,$16,$17::uuid,$18::uuid)
+		                          items, purge, start_services, expect, preview_id, undo_of,
+		                          script_version_id, script_action, script_params, script_secrets)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11,$12,$13::jsonb,$14,$15,$16,$17::uuid,$18::uuid,
+		        $19::uuid,$20,$21::jsonb,$22)
 		RETURNING `+packageRunCols,
 		n.Hostname, n.AssetHostname, n.Mode, n.Packages, n.Holds, n.Reboot, n.Trigger, n.State,
 		n.RequestedBy, n.BatchID, pos, n.WindowStart, items, n.Purge, n.StartServices, n.Expect,
-		n.PreviewID, n.UndoOf)
+		n.PreviewID, n.UndoOf, n.ScriptVersionID, n.ScriptAction, params, n.ScriptSecrets)
 	r, err := scanPackageRun(row, false)
 	if err != nil && isUniqueViolation(err) {
 		return r, ErrRunActive

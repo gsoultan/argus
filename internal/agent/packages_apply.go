@@ -117,7 +117,11 @@ func RunPackagesApply(planPath string) int {
 		return 2
 	}
 	a := &PackageApplier{Plan: plan, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))}
-	ctx, cancel := context.WithTimeout(context.Background(), packageRunTimeout)
+	timeout := packageRunTimeout
+	if plan.Script != nil && plan.Script.timeout()+10*time.Minute > timeout {
+		timeout = plan.Script.timeout() + 10*time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	st := a.Apply(ctx)
 	_ = os.Remove(planPath)
@@ -164,6 +168,9 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	a.save()
 	if a.Plan.Mode == PackagesInstall || a.Plan.Mode == PackagesRemove {
 		return a.applySoftware(ctx)
+	}
+	if a.Plan.Mode == PackagesScript {
+		return a.applyScript(ctx)
 	}
 
 	m := detectManager(a.Look)

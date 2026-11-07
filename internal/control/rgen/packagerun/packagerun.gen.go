@@ -20,41 +20,46 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID             [16]byte
-	Hostname       string
-	AssetHostname  string
-	Mode           string
-	Packages       []string
-	Holds          []string
-	Reboot         string
-	Trigger        string
-	State          string
-	RequestedBy    string
-	RequestedAt    time.Time
-	DecidedBy      runtime.Null[string]
-	DecidedAt      runtime.Null[time.Time]
-	SentAt         runtime.Null[time.Time]
-	StartedAt      runtime.Null[time.Time]
-	FinishedAt     runtime.Null[time.Time]
-	UpdatedAt      time.Time
-	Step           string
-	Message        string
-	Planned        int32
-	Upgraded       runtime.JSON
-	Restarted      []string
-	RebootRequired bool
-	Rebooted       bool
-	Log            string
-	BatchID        runtime.Null[[16]byte]
-	BatchPosition  runtime.Null[int32]
-	WindowStart    runtime.Null[time.Time]
-	Items          runtime.JSON
-	Purge          bool
-	StartServices  bool
-	Expect         string
-	PreviewID      runtime.Null[[16]byte]
-	UndoOf         runtime.Null[[16]byte]
-	Started        []string
+	ID              [16]byte
+	Hostname        string
+	AssetHostname   string
+	Mode            string
+	Packages        []string
+	Holds           []string
+	Reboot          string
+	Trigger         string
+	State           string
+	RequestedBy     string
+	RequestedAt     time.Time
+	DecidedBy       runtime.Null[string]
+	DecidedAt       runtime.Null[time.Time]
+	SentAt          runtime.Null[time.Time]
+	StartedAt       runtime.Null[time.Time]
+	FinishedAt      runtime.Null[time.Time]
+	UpdatedAt       time.Time
+	Step            string
+	Message         string
+	Planned         int32
+	Upgraded        runtime.JSON
+	Restarted       []string
+	RebootRequired  bool
+	Rebooted        bool
+	Log             string
+	BatchID         runtime.Null[[16]byte]
+	BatchPosition   runtime.Null[int32]
+	WindowStart     runtime.Null[time.Time]
+	Items           runtime.JSON
+	Purge           bool
+	StartServices   bool
+	Expect          string
+	PreviewID       runtime.Null[[16]byte]
+	UndoOf          runtime.Null[[16]byte]
+	Started         []string
+	ScriptVersionID runtime.Null[[16]byte]
+	ScriptAction    string
+	ScriptParams    runtime.JSON
+	ScriptSecrets   []byte
+	ScriptReport    runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -93,7 +98,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 35
+const nCols = 40
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -103,13 +108,14 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs                      [6]string
-	nums                      [6]int64
-	raws                      [4][16]byte
-	tims                      [4]time.Time
-	bools                     [4]bool
-	jsns                      [2]runtime.JSON
-	ns, nn, nr, ntm, nbo, njs uint8
+	strs                           [6]string
+	nums                           [6]int64
+	raws                           [4][16]byte
+	tims                           [4]time.Time
+	bools                          [4]bool
+	jsns                           [2]runtime.JSON
+	byts                           [2][]byte
+	ns, nn, nr, ntm, nbo, njs, nby uint8
 
 	anyRaw          [3][][16]byte
 	anyStr          [3][]string
@@ -412,6 +418,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.raws[q.nr] = r.UndoOf.V
 		q.nr++
+	case 35:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.ScriptVersionID.V
+		q.nr++
+	case 36:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.ScriptAction
+		q.ns++
+	case 38:
+		if int(q.nby) >= len(q.byts) {
+			q.over = true
+			return
+		}
+		q.byts[q.nby] = r.ScriptSecrets
+		q.nby++
 	}
 }
 
@@ -565,6 +592,7 @@ type Pred struct {
 	tim    time.Time
 	bol    bool
 	jsn    runtime.JSON
+	byt    []byte
 	anyRaw [][16]byte
 	anyStr []string
 	anyI32 []int32
@@ -581,41 +609,46 @@ func b2i(b bool) int64 {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID             = UUIDCol{0}
-	Hostname       = TextCol{1}
-	AssetHostname  = TextCol{2}
-	Mode           = TextCol{3}
-	Packages       = TextArrayCol{4}
-	Holds          = TextArrayCol{5}
-	Reboot         = TextCol{6}
-	Trigger        = TextCol{7}
-	State          = TextCol{8}
-	RequestedBy    = TextCol{9}
-	RequestedAt    = TimeCol{10}
-	DecidedBy      = NullTextCol{11}
-	DecidedAt      = NullTimeCol{12}
-	SentAt         = NullTimeCol{13}
-	StartedAt      = NullTimeCol{14}
-	FinishedAt     = NullTimeCol{15}
-	UpdatedAt      = TimeCol{16}
-	Step           = TextCol{17}
-	Message        = TextCol{18}
-	Planned        = Int32Col{19}
-	Upgraded       = JSONCol{20}
-	Restarted      = TextArrayCol{21}
-	RebootRequired = BoolCol{22}
-	Rebooted       = BoolCol{23}
-	Log            = TextCol{24}
-	BatchID        = NullUUIDCol{25}
-	BatchPosition  = NullInt32Col{26}
-	WindowStart    = NullTimeCol{27}
-	Items          = JSONCol{28}
-	Purge          = BoolCol{29}
-	StartServices  = BoolCol{30}
-	Expect         = TextCol{31}
-	PreviewID      = NullUUIDCol{32}
-	UndoOf         = NullUUIDCol{33}
-	Started        = TextArrayCol{34}
+	ID              = UUIDCol{0}
+	Hostname        = TextCol{1}
+	AssetHostname   = TextCol{2}
+	Mode            = TextCol{3}
+	Packages        = TextArrayCol{4}
+	Holds           = TextArrayCol{5}
+	Reboot          = TextCol{6}
+	Trigger         = TextCol{7}
+	State           = TextCol{8}
+	RequestedBy     = TextCol{9}
+	RequestedAt     = TimeCol{10}
+	DecidedBy       = NullTextCol{11}
+	DecidedAt       = NullTimeCol{12}
+	SentAt          = NullTimeCol{13}
+	StartedAt       = NullTimeCol{14}
+	FinishedAt      = NullTimeCol{15}
+	UpdatedAt       = TimeCol{16}
+	Step            = TextCol{17}
+	Message         = TextCol{18}
+	Planned         = Int32Col{19}
+	Upgraded        = JSONCol{20}
+	Restarted       = TextArrayCol{21}
+	RebootRequired  = BoolCol{22}
+	Rebooted        = BoolCol{23}
+	Log             = TextCol{24}
+	BatchID         = NullUUIDCol{25}
+	BatchPosition   = NullInt32Col{26}
+	WindowStart     = NullTimeCol{27}
+	Items           = JSONCol{28}
+	Purge           = BoolCol{29}
+	StartServices   = BoolCol{30}
+	Expect          = TextCol{31}
+	PreviewID       = NullUUIDCol{32}
+	UndoOf          = NullUUIDCol{33}
+	Started         = TextArrayCol{34}
+	ScriptVersionID = NullUUIDCol{35}
+	ScriptAction    = TextCol{36}
+	ScriptParams    = JSONCol{37}
+	ScriptSecrets   = NullBytesCol{38}
+	ScriptReport    = NullJSONCol{39}
 )
 
 // UUIDCol addresses a uuid column.
@@ -874,6 +907,44 @@ func (h NullInt32Col) In(v ...int32) Pred { return Pred{col: h.c, op: opIn, anyI
 func (h NullInt32Col) NotIn(v ...int32) Pred { return Pred{col: h.c, op: opNotIn, anyI32: v} }
 func (h NullInt32Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
 func (h NullInt32Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullBytesCol addresses a bytea column.
+type NullBytesCol struct{ c uint8 }
+
+func (h NullBytesCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullBytesCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullBytesCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullBytesCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullBytesCol) Eq(v []byte) Pred    { return Pred{col: h.c, op: opEq, byt: v} }
+func (h NullBytesCol) NotEq(v []byte) Pred { return Pred{col: h.c, op: opNotEq, byt: v} }
+func (h NullBytesCol) IsNull() Pred        { return Pred{col: h.c, op: opIsNull} }
+func (h NullBytesCol) IsNotNull() Pred     { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullJSONCol addresses a jsonb column.
+type NullJSONCol struct{ c uint8 }
+
+func (h NullJSONCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullJSONCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullJSONCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullJSONCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullJSONCol) Contains(v runtime.JSON) Pred { return Pred{col: h.c, op: opJSONContains, jsn: v} }
+func (h NullJSONCol) ContainedBy(v runtime.JSON) Pred {
+	return Pred{col: h.c, op: opJSONContainedBy, jsn: v}
+}
+func (h NullJSONCol) HasAnyKey(v ...string) Pred  { return Pred{col: h.c, op: opHasAnyKey, anyStr: v} }
+func (h NullJSONCol) HasAllKeys(v ...string) Pred { return Pred{col: h.c, op: opHasAllKeys, anyStr: v} }
+func (h NullJSONCol) IsNull() Pred                { return Pred{col: h.c, op: opIsNull} }
+func (h NullJSONCol) IsNotNull() Pred             { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -1184,6 +1255,34 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 35:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
+		case 36:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 37:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 39:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1410,267 +1509,341 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.raws[q.nr] = p.raw
 		q.nr++
+	case 35:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
+	case 36:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 37:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 38:
+		if int(q.nby) >= 2 {
+			q.over = true
+			return
+		}
+		q.byts[q.nby] = p.byt
+		q.nby++
+	case 39:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) IDEq(v [16]byte) Query                    { return q.Where(ID.Eq(v)) }
-func (q Query) IDNotEq(v [16]byte) Query                 { return q.Where(ID.NotEq(v)) }
-func (q Query) IDIn(v ...[16]byte) Query                 { return q.Where(ID.In(v...)) }
-func (q Query) IDNotIn(v ...[16]byte) Query              { return q.Where(ID.NotIn(v...)) }
-func (q Query) HostnameEq(v string) Query                { return q.Where(Hostname.Eq(v)) }
-func (q Query) HostnameNotEq(v string) Query             { return q.Where(Hostname.NotEq(v)) }
-func (q Query) HostnameGt(v string) Query                { return q.Where(Hostname.Gt(v)) }
-func (q Query) HostnameGte(v string) Query               { return q.Where(Hostname.Gte(v)) }
-func (q Query) HostnameLt(v string) Query                { return q.Where(Hostname.Lt(v)) }
-func (q Query) HostnameLte(v string) Query               { return q.Where(Hostname.Lte(v)) }
-func (q Query) HostnameEqLower(v string) Query           { return q.Where(Hostname.EqLower(v)) }
-func (q Query) HostnameLike(v string) Query              { return q.Where(Hostname.Like(v)) }
-func (q Query) HostnameILike(v string) Query             { return q.Where(Hostname.ILike(v)) }
-func (q Query) HostnameIn(v ...string) Query             { return q.Where(Hostname.In(v...)) }
-func (q Query) HostnameNotIn(v ...string) Query          { return q.Where(Hostname.NotIn(v...)) }
-func (q Query) AssetHostnameEq(v string) Query           { return q.Where(AssetHostname.Eq(v)) }
-func (q Query) AssetHostnameNotEq(v string) Query        { return q.Where(AssetHostname.NotEq(v)) }
-func (q Query) AssetHostnameGt(v string) Query           { return q.Where(AssetHostname.Gt(v)) }
-func (q Query) AssetHostnameGte(v string) Query          { return q.Where(AssetHostname.Gte(v)) }
-func (q Query) AssetHostnameLt(v string) Query           { return q.Where(AssetHostname.Lt(v)) }
-func (q Query) AssetHostnameLte(v string) Query          { return q.Where(AssetHostname.Lte(v)) }
-func (q Query) AssetHostnameEqLower(v string) Query      { return q.Where(AssetHostname.EqLower(v)) }
-func (q Query) AssetHostnameLike(v string) Query         { return q.Where(AssetHostname.Like(v)) }
-func (q Query) AssetHostnameILike(v string) Query        { return q.Where(AssetHostname.ILike(v)) }
-func (q Query) AssetHostnameIn(v ...string) Query        { return q.Where(AssetHostname.In(v...)) }
-func (q Query) AssetHostnameNotIn(v ...string) Query     { return q.Where(AssetHostname.NotIn(v...)) }
-func (q Query) ModeEq(v string) Query                    { return q.Where(Mode.Eq(v)) }
-func (q Query) ModeNotEq(v string) Query                 { return q.Where(Mode.NotEq(v)) }
-func (q Query) ModeGt(v string) Query                    { return q.Where(Mode.Gt(v)) }
-func (q Query) ModeGte(v string) Query                   { return q.Where(Mode.Gte(v)) }
-func (q Query) ModeLt(v string) Query                    { return q.Where(Mode.Lt(v)) }
-func (q Query) ModeLte(v string) Query                   { return q.Where(Mode.Lte(v)) }
-func (q Query) ModeEqLower(v string) Query               { return q.Where(Mode.EqLower(v)) }
-func (q Query) ModeLike(v string) Query                  { return q.Where(Mode.Like(v)) }
-func (q Query) ModeILike(v string) Query                 { return q.Where(Mode.ILike(v)) }
-func (q Query) ModeIn(v ...string) Query                 { return q.Where(Mode.In(v...)) }
-func (q Query) ModeNotIn(v ...string) Query              { return q.Where(Mode.NotIn(v...)) }
-func (q Query) PackagesContains(v ...string) Query       { return q.Where(Packages.Contains(v...)) }
-func (q Query) PackagesContainedBy(v ...string) Query    { return q.Where(Packages.ContainedBy(v...)) }
-func (q Query) PackagesOverlaps(v ...string) Query       { return q.Where(Packages.Overlaps(v...)) }
-func (q Query) HoldsContains(v ...string) Query          { return q.Where(Holds.Contains(v...)) }
-func (q Query) HoldsContainedBy(v ...string) Query       { return q.Where(Holds.ContainedBy(v...)) }
-func (q Query) HoldsOverlaps(v ...string) Query          { return q.Where(Holds.Overlaps(v...)) }
-func (q Query) RebootEq(v string) Query                  { return q.Where(Reboot.Eq(v)) }
-func (q Query) RebootNotEq(v string) Query               { return q.Where(Reboot.NotEq(v)) }
-func (q Query) RebootGt(v string) Query                  { return q.Where(Reboot.Gt(v)) }
-func (q Query) RebootGte(v string) Query                 { return q.Where(Reboot.Gte(v)) }
-func (q Query) RebootLt(v string) Query                  { return q.Where(Reboot.Lt(v)) }
-func (q Query) RebootLte(v string) Query                 { return q.Where(Reboot.Lte(v)) }
-func (q Query) RebootEqLower(v string) Query             { return q.Where(Reboot.EqLower(v)) }
-func (q Query) RebootLike(v string) Query                { return q.Where(Reboot.Like(v)) }
-func (q Query) RebootILike(v string) Query               { return q.Where(Reboot.ILike(v)) }
-func (q Query) RebootIn(v ...string) Query               { return q.Where(Reboot.In(v...)) }
-func (q Query) RebootNotIn(v ...string) Query            { return q.Where(Reboot.NotIn(v...)) }
-func (q Query) TriggerEq(v string) Query                 { return q.Where(Trigger.Eq(v)) }
-func (q Query) TriggerNotEq(v string) Query              { return q.Where(Trigger.NotEq(v)) }
-func (q Query) TriggerGt(v string) Query                 { return q.Where(Trigger.Gt(v)) }
-func (q Query) TriggerGte(v string) Query                { return q.Where(Trigger.Gte(v)) }
-func (q Query) TriggerLt(v string) Query                 { return q.Where(Trigger.Lt(v)) }
-func (q Query) TriggerLte(v string) Query                { return q.Where(Trigger.Lte(v)) }
-func (q Query) TriggerEqLower(v string) Query            { return q.Where(Trigger.EqLower(v)) }
-func (q Query) TriggerLike(v string) Query               { return q.Where(Trigger.Like(v)) }
-func (q Query) TriggerILike(v string) Query              { return q.Where(Trigger.ILike(v)) }
-func (q Query) TriggerIn(v ...string) Query              { return q.Where(Trigger.In(v...)) }
-func (q Query) TriggerNotIn(v ...string) Query           { return q.Where(Trigger.NotIn(v...)) }
-func (q Query) StateEq(v string) Query                   { return q.Where(State.Eq(v)) }
-func (q Query) StateNotEq(v string) Query                { return q.Where(State.NotEq(v)) }
-func (q Query) StateGt(v string) Query                   { return q.Where(State.Gt(v)) }
-func (q Query) StateGte(v string) Query                  { return q.Where(State.Gte(v)) }
-func (q Query) StateLt(v string) Query                   { return q.Where(State.Lt(v)) }
-func (q Query) StateLte(v string) Query                  { return q.Where(State.Lte(v)) }
-func (q Query) StateEqLower(v string) Query              { return q.Where(State.EqLower(v)) }
-func (q Query) StateLike(v string) Query                 { return q.Where(State.Like(v)) }
-func (q Query) StateILike(v string) Query                { return q.Where(State.ILike(v)) }
-func (q Query) StateIn(v ...string) Query                { return q.Where(State.In(v...)) }
-func (q Query) StateNotIn(v ...string) Query             { return q.Where(State.NotIn(v...)) }
-func (q Query) RequestedByEq(v string) Query             { return q.Where(RequestedBy.Eq(v)) }
-func (q Query) RequestedByNotEq(v string) Query          { return q.Where(RequestedBy.NotEq(v)) }
-func (q Query) RequestedByGt(v string) Query             { return q.Where(RequestedBy.Gt(v)) }
-func (q Query) RequestedByGte(v string) Query            { return q.Where(RequestedBy.Gte(v)) }
-func (q Query) RequestedByLt(v string) Query             { return q.Where(RequestedBy.Lt(v)) }
-func (q Query) RequestedByLte(v string) Query            { return q.Where(RequestedBy.Lte(v)) }
-func (q Query) RequestedByEqLower(v string) Query        { return q.Where(RequestedBy.EqLower(v)) }
-func (q Query) RequestedByLike(v string) Query           { return q.Where(RequestedBy.Like(v)) }
-func (q Query) RequestedByILike(v string) Query          { return q.Where(RequestedBy.ILike(v)) }
-func (q Query) RequestedByIn(v ...string) Query          { return q.Where(RequestedBy.In(v...)) }
-func (q Query) RequestedByNotIn(v ...string) Query       { return q.Where(RequestedBy.NotIn(v...)) }
-func (q Query) RequestedAtEq(v time.Time) Query          { return q.Where(RequestedAt.Eq(v)) }
-func (q Query) RequestedAtNotEq(v time.Time) Query       { return q.Where(RequestedAt.NotEq(v)) }
-func (q Query) RequestedAtGt(v time.Time) Query          { return q.Where(RequestedAt.Gt(v)) }
-func (q Query) RequestedAtGte(v time.Time) Query         { return q.Where(RequestedAt.Gte(v)) }
-func (q Query) RequestedAtLt(v time.Time) Query          { return q.Where(RequestedAt.Lt(v)) }
-func (q Query) RequestedAtLte(v time.Time) Query         { return q.Where(RequestedAt.Lte(v)) }
-func (q Query) DecidedByEq(v string) Query               { return q.Where(DecidedBy.Eq(v)) }
-func (q Query) DecidedByNotEq(v string) Query            { return q.Where(DecidedBy.NotEq(v)) }
-func (q Query) DecidedByGt(v string) Query               { return q.Where(DecidedBy.Gt(v)) }
-func (q Query) DecidedByGte(v string) Query              { return q.Where(DecidedBy.Gte(v)) }
-func (q Query) DecidedByLt(v string) Query               { return q.Where(DecidedBy.Lt(v)) }
-func (q Query) DecidedByLte(v string) Query              { return q.Where(DecidedBy.Lte(v)) }
-func (q Query) DecidedByEqLower(v string) Query          { return q.Where(DecidedBy.EqLower(v)) }
-func (q Query) DecidedByLike(v string) Query             { return q.Where(DecidedBy.Like(v)) }
-func (q Query) DecidedByILike(v string) Query            { return q.Where(DecidedBy.ILike(v)) }
-func (q Query) DecidedByIn(v ...string) Query            { return q.Where(DecidedBy.In(v...)) }
-func (q Query) DecidedByNotIn(v ...string) Query         { return q.Where(DecidedBy.NotIn(v...)) }
-func (q Query) DecidedByIsNull() Query                   { return q.Where(DecidedBy.IsNull()) }
-func (q Query) DecidedByIsNotNull() Query                { return q.Where(DecidedBy.IsNotNull()) }
-func (q Query) DecidedAtEq(v time.Time) Query            { return q.Where(DecidedAt.Eq(v)) }
-func (q Query) DecidedAtNotEq(v time.Time) Query         { return q.Where(DecidedAt.NotEq(v)) }
-func (q Query) DecidedAtGt(v time.Time) Query            { return q.Where(DecidedAt.Gt(v)) }
-func (q Query) DecidedAtGte(v time.Time) Query           { return q.Where(DecidedAt.Gte(v)) }
-func (q Query) DecidedAtLt(v time.Time) Query            { return q.Where(DecidedAt.Lt(v)) }
-func (q Query) DecidedAtLte(v time.Time) Query           { return q.Where(DecidedAt.Lte(v)) }
-func (q Query) DecidedAtIsNull() Query                   { return q.Where(DecidedAt.IsNull()) }
-func (q Query) DecidedAtIsNotNull() Query                { return q.Where(DecidedAt.IsNotNull()) }
-func (q Query) SentAtEq(v time.Time) Query               { return q.Where(SentAt.Eq(v)) }
-func (q Query) SentAtNotEq(v time.Time) Query            { return q.Where(SentAt.NotEq(v)) }
-func (q Query) SentAtGt(v time.Time) Query               { return q.Where(SentAt.Gt(v)) }
-func (q Query) SentAtGte(v time.Time) Query              { return q.Where(SentAt.Gte(v)) }
-func (q Query) SentAtLt(v time.Time) Query               { return q.Where(SentAt.Lt(v)) }
-func (q Query) SentAtLte(v time.Time) Query              { return q.Where(SentAt.Lte(v)) }
-func (q Query) SentAtIsNull() Query                      { return q.Where(SentAt.IsNull()) }
-func (q Query) SentAtIsNotNull() Query                   { return q.Where(SentAt.IsNotNull()) }
-func (q Query) StartedAtEq(v time.Time) Query            { return q.Where(StartedAt.Eq(v)) }
-func (q Query) StartedAtNotEq(v time.Time) Query         { return q.Where(StartedAt.NotEq(v)) }
-func (q Query) StartedAtGt(v time.Time) Query            { return q.Where(StartedAt.Gt(v)) }
-func (q Query) StartedAtGte(v time.Time) Query           { return q.Where(StartedAt.Gte(v)) }
-func (q Query) StartedAtLt(v time.Time) Query            { return q.Where(StartedAt.Lt(v)) }
-func (q Query) StartedAtLte(v time.Time) Query           { return q.Where(StartedAt.Lte(v)) }
-func (q Query) StartedAtIsNull() Query                   { return q.Where(StartedAt.IsNull()) }
-func (q Query) StartedAtIsNotNull() Query                { return q.Where(StartedAt.IsNotNull()) }
-func (q Query) FinishedAtEq(v time.Time) Query           { return q.Where(FinishedAt.Eq(v)) }
-func (q Query) FinishedAtNotEq(v time.Time) Query        { return q.Where(FinishedAt.NotEq(v)) }
-func (q Query) FinishedAtGt(v time.Time) Query           { return q.Where(FinishedAt.Gt(v)) }
-func (q Query) FinishedAtGte(v time.Time) Query          { return q.Where(FinishedAt.Gte(v)) }
-func (q Query) FinishedAtLt(v time.Time) Query           { return q.Where(FinishedAt.Lt(v)) }
-func (q Query) FinishedAtLte(v time.Time) Query          { return q.Where(FinishedAt.Lte(v)) }
-func (q Query) FinishedAtIsNull() Query                  { return q.Where(FinishedAt.IsNull()) }
-func (q Query) FinishedAtIsNotNull() Query               { return q.Where(FinishedAt.IsNotNull()) }
-func (q Query) UpdatedAtEq(v time.Time) Query            { return q.Where(UpdatedAt.Eq(v)) }
-func (q Query) UpdatedAtNotEq(v time.Time) Query         { return q.Where(UpdatedAt.NotEq(v)) }
-func (q Query) UpdatedAtGt(v time.Time) Query            { return q.Where(UpdatedAt.Gt(v)) }
-func (q Query) UpdatedAtGte(v time.Time) Query           { return q.Where(UpdatedAt.Gte(v)) }
-func (q Query) UpdatedAtLt(v time.Time) Query            { return q.Where(UpdatedAt.Lt(v)) }
-func (q Query) UpdatedAtLte(v time.Time) Query           { return q.Where(UpdatedAt.Lte(v)) }
-func (q Query) StepEq(v string) Query                    { return q.Where(Step.Eq(v)) }
-func (q Query) StepNotEq(v string) Query                 { return q.Where(Step.NotEq(v)) }
-func (q Query) StepGt(v string) Query                    { return q.Where(Step.Gt(v)) }
-func (q Query) StepGte(v string) Query                   { return q.Where(Step.Gte(v)) }
-func (q Query) StepLt(v string) Query                    { return q.Where(Step.Lt(v)) }
-func (q Query) StepLte(v string) Query                   { return q.Where(Step.Lte(v)) }
-func (q Query) StepEqLower(v string) Query               { return q.Where(Step.EqLower(v)) }
-func (q Query) StepLike(v string) Query                  { return q.Where(Step.Like(v)) }
-func (q Query) StepILike(v string) Query                 { return q.Where(Step.ILike(v)) }
-func (q Query) StepIn(v ...string) Query                 { return q.Where(Step.In(v...)) }
-func (q Query) StepNotIn(v ...string) Query              { return q.Where(Step.NotIn(v...)) }
-func (q Query) MessageEq(v string) Query                 { return q.Where(Message.Eq(v)) }
-func (q Query) MessageNotEq(v string) Query              { return q.Where(Message.NotEq(v)) }
-func (q Query) MessageGt(v string) Query                 { return q.Where(Message.Gt(v)) }
-func (q Query) MessageGte(v string) Query                { return q.Where(Message.Gte(v)) }
-func (q Query) MessageLt(v string) Query                 { return q.Where(Message.Lt(v)) }
-func (q Query) MessageLte(v string) Query                { return q.Where(Message.Lte(v)) }
-func (q Query) MessageEqLower(v string) Query            { return q.Where(Message.EqLower(v)) }
-func (q Query) MessageLike(v string) Query               { return q.Where(Message.Like(v)) }
-func (q Query) MessageILike(v string) Query              { return q.Where(Message.ILike(v)) }
-func (q Query) MessageIn(v ...string) Query              { return q.Where(Message.In(v...)) }
-func (q Query) MessageNotIn(v ...string) Query           { return q.Where(Message.NotIn(v...)) }
-func (q Query) PlannedEq(v int32) Query                  { return q.Where(Planned.Eq(v)) }
-func (q Query) PlannedNotEq(v int32) Query               { return q.Where(Planned.NotEq(v)) }
-func (q Query) PlannedGt(v int32) Query                  { return q.Where(Planned.Gt(v)) }
-func (q Query) PlannedGte(v int32) Query                 { return q.Where(Planned.Gte(v)) }
-func (q Query) PlannedLt(v int32) Query                  { return q.Where(Planned.Lt(v)) }
-func (q Query) PlannedLte(v int32) Query                 { return q.Where(Planned.Lte(v)) }
-func (q Query) PlannedIn(v ...int32) Query               { return q.Where(Planned.In(v...)) }
-func (q Query) PlannedNotIn(v ...int32) Query            { return q.Where(Planned.NotIn(v...)) }
-func (q Query) UpgradedContains(v runtime.JSON) Query    { return q.Where(Upgraded.Contains(v)) }
-func (q Query) UpgradedContainedBy(v runtime.JSON) Query { return q.Where(Upgraded.ContainedBy(v)) }
-func (q Query) UpgradedHasAnyKey(v ...string) Query      { return q.Where(Upgraded.HasAnyKey(v...)) }
-func (q Query) UpgradedHasAllKeys(v ...string) Query     { return q.Where(Upgraded.HasAllKeys(v...)) }
-func (q Query) RestartedContains(v ...string) Query      { return q.Where(Restarted.Contains(v...)) }
-func (q Query) RestartedContainedBy(v ...string) Query   { return q.Where(Restarted.ContainedBy(v...)) }
-func (q Query) RestartedOverlaps(v ...string) Query      { return q.Where(Restarted.Overlaps(v...)) }
-func (q Query) RebootRequiredEq(v bool) Query            { return q.Where(RebootRequired.Eq(v)) }
-func (q Query) RebootRequiredNotEq(v bool) Query         { return q.Where(RebootRequired.NotEq(v)) }
-func (q Query) RebootedEq(v bool) Query                  { return q.Where(Rebooted.Eq(v)) }
-func (q Query) RebootedNotEq(v bool) Query               { return q.Where(Rebooted.NotEq(v)) }
-func (q Query) LogEq(v string) Query                     { return q.Where(Log.Eq(v)) }
-func (q Query) LogNotEq(v string) Query                  { return q.Where(Log.NotEq(v)) }
-func (q Query) LogGt(v string) Query                     { return q.Where(Log.Gt(v)) }
-func (q Query) LogGte(v string) Query                    { return q.Where(Log.Gte(v)) }
-func (q Query) LogLt(v string) Query                     { return q.Where(Log.Lt(v)) }
-func (q Query) LogLte(v string) Query                    { return q.Where(Log.Lte(v)) }
-func (q Query) LogEqLower(v string) Query                { return q.Where(Log.EqLower(v)) }
-func (q Query) LogLike(v string) Query                   { return q.Where(Log.Like(v)) }
-func (q Query) LogILike(v string) Query                  { return q.Where(Log.ILike(v)) }
-func (q Query) LogIn(v ...string) Query                  { return q.Where(Log.In(v...)) }
-func (q Query) LogNotIn(v ...string) Query               { return q.Where(Log.NotIn(v...)) }
-func (q Query) BatchIDEq(v [16]byte) Query               { return q.Where(BatchID.Eq(v)) }
-func (q Query) BatchIDNotEq(v [16]byte) Query            { return q.Where(BatchID.NotEq(v)) }
-func (q Query) BatchIDIn(v ...[16]byte) Query            { return q.Where(BatchID.In(v...)) }
-func (q Query) BatchIDNotIn(v ...[16]byte) Query         { return q.Where(BatchID.NotIn(v...)) }
-func (q Query) BatchIDIsNull() Query                     { return q.Where(BatchID.IsNull()) }
-func (q Query) BatchIDIsNotNull() Query                  { return q.Where(BatchID.IsNotNull()) }
-func (q Query) BatchPositionEq(v int32) Query            { return q.Where(BatchPosition.Eq(v)) }
-func (q Query) BatchPositionNotEq(v int32) Query         { return q.Where(BatchPosition.NotEq(v)) }
-func (q Query) BatchPositionGt(v int32) Query            { return q.Where(BatchPosition.Gt(v)) }
-func (q Query) BatchPositionGte(v int32) Query           { return q.Where(BatchPosition.Gte(v)) }
-func (q Query) BatchPositionLt(v int32) Query            { return q.Where(BatchPosition.Lt(v)) }
-func (q Query) BatchPositionLte(v int32) Query           { return q.Where(BatchPosition.Lte(v)) }
-func (q Query) BatchPositionIn(v ...int32) Query         { return q.Where(BatchPosition.In(v...)) }
-func (q Query) BatchPositionNotIn(v ...int32) Query      { return q.Where(BatchPosition.NotIn(v...)) }
-func (q Query) BatchPositionIsNull() Query               { return q.Where(BatchPosition.IsNull()) }
-func (q Query) BatchPositionIsNotNull() Query            { return q.Where(BatchPosition.IsNotNull()) }
-func (q Query) WindowStartEq(v time.Time) Query          { return q.Where(WindowStart.Eq(v)) }
-func (q Query) WindowStartNotEq(v time.Time) Query       { return q.Where(WindowStart.NotEq(v)) }
-func (q Query) WindowStartGt(v time.Time) Query          { return q.Where(WindowStart.Gt(v)) }
-func (q Query) WindowStartGte(v time.Time) Query         { return q.Where(WindowStart.Gte(v)) }
-func (q Query) WindowStartLt(v time.Time) Query          { return q.Where(WindowStart.Lt(v)) }
-func (q Query) WindowStartLte(v time.Time) Query         { return q.Where(WindowStart.Lte(v)) }
-func (q Query) WindowStartIsNull() Query                 { return q.Where(WindowStart.IsNull()) }
-func (q Query) WindowStartIsNotNull() Query              { return q.Where(WindowStart.IsNotNull()) }
-func (q Query) ItemsContains(v runtime.JSON) Query       { return q.Where(Items.Contains(v)) }
-func (q Query) ItemsContainedBy(v runtime.JSON) Query    { return q.Where(Items.ContainedBy(v)) }
-func (q Query) ItemsHasAnyKey(v ...string) Query         { return q.Where(Items.HasAnyKey(v...)) }
-func (q Query) ItemsHasAllKeys(v ...string) Query        { return q.Where(Items.HasAllKeys(v...)) }
-func (q Query) PurgeEq(v bool) Query                     { return q.Where(Purge.Eq(v)) }
-func (q Query) PurgeNotEq(v bool) Query                  { return q.Where(Purge.NotEq(v)) }
-func (q Query) StartServicesEq(v bool) Query             { return q.Where(StartServices.Eq(v)) }
-func (q Query) StartServicesNotEq(v bool) Query          { return q.Where(StartServices.NotEq(v)) }
-func (q Query) ExpectEq(v string) Query                  { return q.Where(Expect.Eq(v)) }
-func (q Query) ExpectNotEq(v string) Query               { return q.Where(Expect.NotEq(v)) }
-func (q Query) ExpectGt(v string) Query                  { return q.Where(Expect.Gt(v)) }
-func (q Query) ExpectGte(v string) Query                 { return q.Where(Expect.Gte(v)) }
-func (q Query) ExpectLt(v string) Query                  { return q.Where(Expect.Lt(v)) }
-func (q Query) ExpectLte(v string) Query                 { return q.Where(Expect.Lte(v)) }
-func (q Query) ExpectEqLower(v string) Query             { return q.Where(Expect.EqLower(v)) }
-func (q Query) ExpectLike(v string) Query                { return q.Where(Expect.Like(v)) }
-func (q Query) ExpectILike(v string) Query               { return q.Where(Expect.ILike(v)) }
-func (q Query) ExpectIn(v ...string) Query               { return q.Where(Expect.In(v...)) }
-func (q Query) ExpectNotIn(v ...string) Query            { return q.Where(Expect.NotIn(v...)) }
-func (q Query) PreviewIDEq(v [16]byte) Query             { return q.Where(PreviewID.Eq(v)) }
-func (q Query) PreviewIDNotEq(v [16]byte) Query          { return q.Where(PreviewID.NotEq(v)) }
-func (q Query) PreviewIDIn(v ...[16]byte) Query          { return q.Where(PreviewID.In(v...)) }
-func (q Query) PreviewIDNotIn(v ...[16]byte) Query       { return q.Where(PreviewID.NotIn(v...)) }
-func (q Query) PreviewIDIsNull() Query                   { return q.Where(PreviewID.IsNull()) }
-func (q Query) PreviewIDIsNotNull() Query                { return q.Where(PreviewID.IsNotNull()) }
-func (q Query) UndoOfEq(v [16]byte) Query                { return q.Where(UndoOf.Eq(v)) }
-func (q Query) UndoOfNotEq(v [16]byte) Query             { return q.Where(UndoOf.NotEq(v)) }
-func (q Query) UndoOfIn(v ...[16]byte) Query             { return q.Where(UndoOf.In(v...)) }
-func (q Query) UndoOfNotIn(v ...[16]byte) Query          { return q.Where(UndoOf.NotIn(v...)) }
-func (q Query) UndoOfIsNull() Query                      { return q.Where(UndoOf.IsNull()) }
-func (q Query) UndoOfIsNotNull() Query                   { return q.Where(UndoOf.IsNotNull()) }
-func (q Query) StartedContains(v ...string) Query        { return q.Where(Started.Contains(v...)) }
-func (q Query) StartedContainedBy(v ...string) Query     { return q.Where(Started.ContainedBy(v...)) }
-func (q Query) StartedOverlaps(v ...string) Query        { return q.Where(Started.Overlaps(v...)) }
+func (q Query) IDEq(v [16]byte) Query                     { return q.Where(ID.Eq(v)) }
+func (q Query) IDNotEq(v [16]byte) Query                  { return q.Where(ID.NotEq(v)) }
+func (q Query) IDIn(v ...[16]byte) Query                  { return q.Where(ID.In(v...)) }
+func (q Query) IDNotIn(v ...[16]byte) Query               { return q.Where(ID.NotIn(v...)) }
+func (q Query) HostnameEq(v string) Query                 { return q.Where(Hostname.Eq(v)) }
+func (q Query) HostnameNotEq(v string) Query              { return q.Where(Hostname.NotEq(v)) }
+func (q Query) HostnameGt(v string) Query                 { return q.Where(Hostname.Gt(v)) }
+func (q Query) HostnameGte(v string) Query                { return q.Where(Hostname.Gte(v)) }
+func (q Query) HostnameLt(v string) Query                 { return q.Where(Hostname.Lt(v)) }
+func (q Query) HostnameLte(v string) Query                { return q.Where(Hostname.Lte(v)) }
+func (q Query) HostnameEqLower(v string) Query            { return q.Where(Hostname.EqLower(v)) }
+func (q Query) HostnameLike(v string) Query               { return q.Where(Hostname.Like(v)) }
+func (q Query) HostnameILike(v string) Query              { return q.Where(Hostname.ILike(v)) }
+func (q Query) HostnameIn(v ...string) Query              { return q.Where(Hostname.In(v...)) }
+func (q Query) HostnameNotIn(v ...string) Query           { return q.Where(Hostname.NotIn(v...)) }
+func (q Query) AssetHostnameEq(v string) Query            { return q.Where(AssetHostname.Eq(v)) }
+func (q Query) AssetHostnameNotEq(v string) Query         { return q.Where(AssetHostname.NotEq(v)) }
+func (q Query) AssetHostnameGt(v string) Query            { return q.Where(AssetHostname.Gt(v)) }
+func (q Query) AssetHostnameGte(v string) Query           { return q.Where(AssetHostname.Gte(v)) }
+func (q Query) AssetHostnameLt(v string) Query            { return q.Where(AssetHostname.Lt(v)) }
+func (q Query) AssetHostnameLte(v string) Query           { return q.Where(AssetHostname.Lte(v)) }
+func (q Query) AssetHostnameEqLower(v string) Query       { return q.Where(AssetHostname.EqLower(v)) }
+func (q Query) AssetHostnameLike(v string) Query          { return q.Where(AssetHostname.Like(v)) }
+func (q Query) AssetHostnameILike(v string) Query         { return q.Where(AssetHostname.ILike(v)) }
+func (q Query) AssetHostnameIn(v ...string) Query         { return q.Where(AssetHostname.In(v...)) }
+func (q Query) AssetHostnameNotIn(v ...string) Query      { return q.Where(AssetHostname.NotIn(v...)) }
+func (q Query) ModeEq(v string) Query                     { return q.Where(Mode.Eq(v)) }
+func (q Query) ModeNotEq(v string) Query                  { return q.Where(Mode.NotEq(v)) }
+func (q Query) ModeGt(v string) Query                     { return q.Where(Mode.Gt(v)) }
+func (q Query) ModeGte(v string) Query                    { return q.Where(Mode.Gte(v)) }
+func (q Query) ModeLt(v string) Query                     { return q.Where(Mode.Lt(v)) }
+func (q Query) ModeLte(v string) Query                    { return q.Where(Mode.Lte(v)) }
+func (q Query) ModeEqLower(v string) Query                { return q.Where(Mode.EqLower(v)) }
+func (q Query) ModeLike(v string) Query                   { return q.Where(Mode.Like(v)) }
+func (q Query) ModeILike(v string) Query                  { return q.Where(Mode.ILike(v)) }
+func (q Query) ModeIn(v ...string) Query                  { return q.Where(Mode.In(v...)) }
+func (q Query) ModeNotIn(v ...string) Query               { return q.Where(Mode.NotIn(v...)) }
+func (q Query) PackagesContains(v ...string) Query        { return q.Where(Packages.Contains(v...)) }
+func (q Query) PackagesContainedBy(v ...string) Query     { return q.Where(Packages.ContainedBy(v...)) }
+func (q Query) PackagesOverlaps(v ...string) Query        { return q.Where(Packages.Overlaps(v...)) }
+func (q Query) HoldsContains(v ...string) Query           { return q.Where(Holds.Contains(v...)) }
+func (q Query) HoldsContainedBy(v ...string) Query        { return q.Where(Holds.ContainedBy(v...)) }
+func (q Query) HoldsOverlaps(v ...string) Query           { return q.Where(Holds.Overlaps(v...)) }
+func (q Query) RebootEq(v string) Query                   { return q.Where(Reboot.Eq(v)) }
+func (q Query) RebootNotEq(v string) Query                { return q.Where(Reboot.NotEq(v)) }
+func (q Query) RebootGt(v string) Query                   { return q.Where(Reboot.Gt(v)) }
+func (q Query) RebootGte(v string) Query                  { return q.Where(Reboot.Gte(v)) }
+func (q Query) RebootLt(v string) Query                   { return q.Where(Reboot.Lt(v)) }
+func (q Query) RebootLte(v string) Query                  { return q.Where(Reboot.Lte(v)) }
+func (q Query) RebootEqLower(v string) Query              { return q.Where(Reboot.EqLower(v)) }
+func (q Query) RebootLike(v string) Query                 { return q.Where(Reboot.Like(v)) }
+func (q Query) RebootILike(v string) Query                { return q.Where(Reboot.ILike(v)) }
+func (q Query) RebootIn(v ...string) Query                { return q.Where(Reboot.In(v...)) }
+func (q Query) RebootNotIn(v ...string) Query             { return q.Where(Reboot.NotIn(v...)) }
+func (q Query) TriggerEq(v string) Query                  { return q.Where(Trigger.Eq(v)) }
+func (q Query) TriggerNotEq(v string) Query               { return q.Where(Trigger.NotEq(v)) }
+func (q Query) TriggerGt(v string) Query                  { return q.Where(Trigger.Gt(v)) }
+func (q Query) TriggerGte(v string) Query                 { return q.Where(Trigger.Gte(v)) }
+func (q Query) TriggerLt(v string) Query                  { return q.Where(Trigger.Lt(v)) }
+func (q Query) TriggerLte(v string) Query                 { return q.Where(Trigger.Lte(v)) }
+func (q Query) TriggerEqLower(v string) Query             { return q.Where(Trigger.EqLower(v)) }
+func (q Query) TriggerLike(v string) Query                { return q.Where(Trigger.Like(v)) }
+func (q Query) TriggerILike(v string) Query               { return q.Where(Trigger.ILike(v)) }
+func (q Query) TriggerIn(v ...string) Query               { return q.Where(Trigger.In(v...)) }
+func (q Query) TriggerNotIn(v ...string) Query            { return q.Where(Trigger.NotIn(v...)) }
+func (q Query) StateEq(v string) Query                    { return q.Where(State.Eq(v)) }
+func (q Query) StateNotEq(v string) Query                 { return q.Where(State.NotEq(v)) }
+func (q Query) StateGt(v string) Query                    { return q.Where(State.Gt(v)) }
+func (q Query) StateGte(v string) Query                   { return q.Where(State.Gte(v)) }
+func (q Query) StateLt(v string) Query                    { return q.Where(State.Lt(v)) }
+func (q Query) StateLte(v string) Query                   { return q.Where(State.Lte(v)) }
+func (q Query) StateEqLower(v string) Query               { return q.Where(State.EqLower(v)) }
+func (q Query) StateLike(v string) Query                  { return q.Where(State.Like(v)) }
+func (q Query) StateILike(v string) Query                 { return q.Where(State.ILike(v)) }
+func (q Query) StateIn(v ...string) Query                 { return q.Where(State.In(v...)) }
+func (q Query) StateNotIn(v ...string) Query              { return q.Where(State.NotIn(v...)) }
+func (q Query) RequestedByEq(v string) Query              { return q.Where(RequestedBy.Eq(v)) }
+func (q Query) RequestedByNotEq(v string) Query           { return q.Where(RequestedBy.NotEq(v)) }
+func (q Query) RequestedByGt(v string) Query              { return q.Where(RequestedBy.Gt(v)) }
+func (q Query) RequestedByGte(v string) Query             { return q.Where(RequestedBy.Gte(v)) }
+func (q Query) RequestedByLt(v string) Query              { return q.Where(RequestedBy.Lt(v)) }
+func (q Query) RequestedByLte(v string) Query             { return q.Where(RequestedBy.Lte(v)) }
+func (q Query) RequestedByEqLower(v string) Query         { return q.Where(RequestedBy.EqLower(v)) }
+func (q Query) RequestedByLike(v string) Query            { return q.Where(RequestedBy.Like(v)) }
+func (q Query) RequestedByILike(v string) Query           { return q.Where(RequestedBy.ILike(v)) }
+func (q Query) RequestedByIn(v ...string) Query           { return q.Where(RequestedBy.In(v...)) }
+func (q Query) RequestedByNotIn(v ...string) Query        { return q.Where(RequestedBy.NotIn(v...)) }
+func (q Query) RequestedAtEq(v time.Time) Query           { return q.Where(RequestedAt.Eq(v)) }
+func (q Query) RequestedAtNotEq(v time.Time) Query        { return q.Where(RequestedAt.NotEq(v)) }
+func (q Query) RequestedAtGt(v time.Time) Query           { return q.Where(RequestedAt.Gt(v)) }
+func (q Query) RequestedAtGte(v time.Time) Query          { return q.Where(RequestedAt.Gte(v)) }
+func (q Query) RequestedAtLt(v time.Time) Query           { return q.Where(RequestedAt.Lt(v)) }
+func (q Query) RequestedAtLte(v time.Time) Query          { return q.Where(RequestedAt.Lte(v)) }
+func (q Query) DecidedByEq(v string) Query                { return q.Where(DecidedBy.Eq(v)) }
+func (q Query) DecidedByNotEq(v string) Query             { return q.Where(DecidedBy.NotEq(v)) }
+func (q Query) DecidedByGt(v string) Query                { return q.Where(DecidedBy.Gt(v)) }
+func (q Query) DecidedByGte(v string) Query               { return q.Where(DecidedBy.Gte(v)) }
+func (q Query) DecidedByLt(v string) Query                { return q.Where(DecidedBy.Lt(v)) }
+func (q Query) DecidedByLte(v string) Query               { return q.Where(DecidedBy.Lte(v)) }
+func (q Query) DecidedByEqLower(v string) Query           { return q.Where(DecidedBy.EqLower(v)) }
+func (q Query) DecidedByLike(v string) Query              { return q.Where(DecidedBy.Like(v)) }
+func (q Query) DecidedByILike(v string) Query             { return q.Where(DecidedBy.ILike(v)) }
+func (q Query) DecidedByIn(v ...string) Query             { return q.Where(DecidedBy.In(v...)) }
+func (q Query) DecidedByNotIn(v ...string) Query          { return q.Where(DecidedBy.NotIn(v...)) }
+func (q Query) DecidedByIsNull() Query                    { return q.Where(DecidedBy.IsNull()) }
+func (q Query) DecidedByIsNotNull() Query                 { return q.Where(DecidedBy.IsNotNull()) }
+func (q Query) DecidedAtEq(v time.Time) Query             { return q.Where(DecidedAt.Eq(v)) }
+func (q Query) DecidedAtNotEq(v time.Time) Query          { return q.Where(DecidedAt.NotEq(v)) }
+func (q Query) DecidedAtGt(v time.Time) Query             { return q.Where(DecidedAt.Gt(v)) }
+func (q Query) DecidedAtGte(v time.Time) Query            { return q.Where(DecidedAt.Gte(v)) }
+func (q Query) DecidedAtLt(v time.Time) Query             { return q.Where(DecidedAt.Lt(v)) }
+func (q Query) DecidedAtLte(v time.Time) Query            { return q.Where(DecidedAt.Lte(v)) }
+func (q Query) DecidedAtIsNull() Query                    { return q.Where(DecidedAt.IsNull()) }
+func (q Query) DecidedAtIsNotNull() Query                 { return q.Where(DecidedAt.IsNotNull()) }
+func (q Query) SentAtEq(v time.Time) Query                { return q.Where(SentAt.Eq(v)) }
+func (q Query) SentAtNotEq(v time.Time) Query             { return q.Where(SentAt.NotEq(v)) }
+func (q Query) SentAtGt(v time.Time) Query                { return q.Where(SentAt.Gt(v)) }
+func (q Query) SentAtGte(v time.Time) Query               { return q.Where(SentAt.Gte(v)) }
+func (q Query) SentAtLt(v time.Time) Query                { return q.Where(SentAt.Lt(v)) }
+func (q Query) SentAtLte(v time.Time) Query               { return q.Where(SentAt.Lte(v)) }
+func (q Query) SentAtIsNull() Query                       { return q.Where(SentAt.IsNull()) }
+func (q Query) SentAtIsNotNull() Query                    { return q.Where(SentAt.IsNotNull()) }
+func (q Query) StartedAtEq(v time.Time) Query             { return q.Where(StartedAt.Eq(v)) }
+func (q Query) StartedAtNotEq(v time.Time) Query          { return q.Where(StartedAt.NotEq(v)) }
+func (q Query) StartedAtGt(v time.Time) Query             { return q.Where(StartedAt.Gt(v)) }
+func (q Query) StartedAtGte(v time.Time) Query            { return q.Where(StartedAt.Gte(v)) }
+func (q Query) StartedAtLt(v time.Time) Query             { return q.Where(StartedAt.Lt(v)) }
+func (q Query) StartedAtLte(v time.Time) Query            { return q.Where(StartedAt.Lte(v)) }
+func (q Query) StartedAtIsNull() Query                    { return q.Where(StartedAt.IsNull()) }
+func (q Query) StartedAtIsNotNull() Query                 { return q.Where(StartedAt.IsNotNull()) }
+func (q Query) FinishedAtEq(v time.Time) Query            { return q.Where(FinishedAt.Eq(v)) }
+func (q Query) FinishedAtNotEq(v time.Time) Query         { return q.Where(FinishedAt.NotEq(v)) }
+func (q Query) FinishedAtGt(v time.Time) Query            { return q.Where(FinishedAt.Gt(v)) }
+func (q Query) FinishedAtGte(v time.Time) Query           { return q.Where(FinishedAt.Gte(v)) }
+func (q Query) FinishedAtLt(v time.Time) Query            { return q.Where(FinishedAt.Lt(v)) }
+func (q Query) FinishedAtLte(v time.Time) Query           { return q.Where(FinishedAt.Lte(v)) }
+func (q Query) FinishedAtIsNull() Query                   { return q.Where(FinishedAt.IsNull()) }
+func (q Query) FinishedAtIsNotNull() Query                { return q.Where(FinishedAt.IsNotNull()) }
+func (q Query) UpdatedAtEq(v time.Time) Query             { return q.Where(UpdatedAt.Eq(v)) }
+func (q Query) UpdatedAtNotEq(v time.Time) Query          { return q.Where(UpdatedAt.NotEq(v)) }
+func (q Query) UpdatedAtGt(v time.Time) Query             { return q.Where(UpdatedAt.Gt(v)) }
+func (q Query) UpdatedAtGte(v time.Time) Query            { return q.Where(UpdatedAt.Gte(v)) }
+func (q Query) UpdatedAtLt(v time.Time) Query             { return q.Where(UpdatedAt.Lt(v)) }
+func (q Query) UpdatedAtLte(v time.Time) Query            { return q.Where(UpdatedAt.Lte(v)) }
+func (q Query) StepEq(v string) Query                     { return q.Where(Step.Eq(v)) }
+func (q Query) StepNotEq(v string) Query                  { return q.Where(Step.NotEq(v)) }
+func (q Query) StepGt(v string) Query                     { return q.Where(Step.Gt(v)) }
+func (q Query) StepGte(v string) Query                    { return q.Where(Step.Gte(v)) }
+func (q Query) StepLt(v string) Query                     { return q.Where(Step.Lt(v)) }
+func (q Query) StepLte(v string) Query                    { return q.Where(Step.Lte(v)) }
+func (q Query) StepEqLower(v string) Query                { return q.Where(Step.EqLower(v)) }
+func (q Query) StepLike(v string) Query                   { return q.Where(Step.Like(v)) }
+func (q Query) StepILike(v string) Query                  { return q.Where(Step.ILike(v)) }
+func (q Query) StepIn(v ...string) Query                  { return q.Where(Step.In(v...)) }
+func (q Query) StepNotIn(v ...string) Query               { return q.Where(Step.NotIn(v...)) }
+func (q Query) MessageEq(v string) Query                  { return q.Where(Message.Eq(v)) }
+func (q Query) MessageNotEq(v string) Query               { return q.Where(Message.NotEq(v)) }
+func (q Query) MessageGt(v string) Query                  { return q.Where(Message.Gt(v)) }
+func (q Query) MessageGte(v string) Query                 { return q.Where(Message.Gte(v)) }
+func (q Query) MessageLt(v string) Query                  { return q.Where(Message.Lt(v)) }
+func (q Query) MessageLte(v string) Query                 { return q.Where(Message.Lte(v)) }
+func (q Query) MessageEqLower(v string) Query             { return q.Where(Message.EqLower(v)) }
+func (q Query) MessageLike(v string) Query                { return q.Where(Message.Like(v)) }
+func (q Query) MessageILike(v string) Query               { return q.Where(Message.ILike(v)) }
+func (q Query) MessageIn(v ...string) Query               { return q.Where(Message.In(v...)) }
+func (q Query) MessageNotIn(v ...string) Query            { return q.Where(Message.NotIn(v...)) }
+func (q Query) PlannedEq(v int32) Query                   { return q.Where(Planned.Eq(v)) }
+func (q Query) PlannedNotEq(v int32) Query                { return q.Where(Planned.NotEq(v)) }
+func (q Query) PlannedGt(v int32) Query                   { return q.Where(Planned.Gt(v)) }
+func (q Query) PlannedGte(v int32) Query                  { return q.Where(Planned.Gte(v)) }
+func (q Query) PlannedLt(v int32) Query                   { return q.Where(Planned.Lt(v)) }
+func (q Query) PlannedLte(v int32) Query                  { return q.Where(Planned.Lte(v)) }
+func (q Query) PlannedIn(v ...int32) Query                { return q.Where(Planned.In(v...)) }
+func (q Query) PlannedNotIn(v ...int32) Query             { return q.Where(Planned.NotIn(v...)) }
+func (q Query) UpgradedContains(v runtime.JSON) Query     { return q.Where(Upgraded.Contains(v)) }
+func (q Query) UpgradedContainedBy(v runtime.JSON) Query  { return q.Where(Upgraded.ContainedBy(v)) }
+func (q Query) UpgradedHasAnyKey(v ...string) Query       { return q.Where(Upgraded.HasAnyKey(v...)) }
+func (q Query) UpgradedHasAllKeys(v ...string) Query      { return q.Where(Upgraded.HasAllKeys(v...)) }
+func (q Query) RestartedContains(v ...string) Query       { return q.Where(Restarted.Contains(v...)) }
+func (q Query) RestartedContainedBy(v ...string) Query    { return q.Where(Restarted.ContainedBy(v...)) }
+func (q Query) RestartedOverlaps(v ...string) Query       { return q.Where(Restarted.Overlaps(v...)) }
+func (q Query) RebootRequiredEq(v bool) Query             { return q.Where(RebootRequired.Eq(v)) }
+func (q Query) RebootRequiredNotEq(v bool) Query          { return q.Where(RebootRequired.NotEq(v)) }
+func (q Query) RebootedEq(v bool) Query                   { return q.Where(Rebooted.Eq(v)) }
+func (q Query) RebootedNotEq(v bool) Query                { return q.Where(Rebooted.NotEq(v)) }
+func (q Query) LogEq(v string) Query                      { return q.Where(Log.Eq(v)) }
+func (q Query) LogNotEq(v string) Query                   { return q.Where(Log.NotEq(v)) }
+func (q Query) LogGt(v string) Query                      { return q.Where(Log.Gt(v)) }
+func (q Query) LogGte(v string) Query                     { return q.Where(Log.Gte(v)) }
+func (q Query) LogLt(v string) Query                      { return q.Where(Log.Lt(v)) }
+func (q Query) LogLte(v string) Query                     { return q.Where(Log.Lte(v)) }
+func (q Query) LogEqLower(v string) Query                 { return q.Where(Log.EqLower(v)) }
+func (q Query) LogLike(v string) Query                    { return q.Where(Log.Like(v)) }
+func (q Query) LogILike(v string) Query                   { return q.Where(Log.ILike(v)) }
+func (q Query) LogIn(v ...string) Query                   { return q.Where(Log.In(v...)) }
+func (q Query) LogNotIn(v ...string) Query                { return q.Where(Log.NotIn(v...)) }
+func (q Query) BatchIDEq(v [16]byte) Query                { return q.Where(BatchID.Eq(v)) }
+func (q Query) BatchIDNotEq(v [16]byte) Query             { return q.Where(BatchID.NotEq(v)) }
+func (q Query) BatchIDIn(v ...[16]byte) Query             { return q.Where(BatchID.In(v...)) }
+func (q Query) BatchIDNotIn(v ...[16]byte) Query          { return q.Where(BatchID.NotIn(v...)) }
+func (q Query) BatchIDIsNull() Query                      { return q.Where(BatchID.IsNull()) }
+func (q Query) BatchIDIsNotNull() Query                   { return q.Where(BatchID.IsNotNull()) }
+func (q Query) BatchPositionEq(v int32) Query             { return q.Where(BatchPosition.Eq(v)) }
+func (q Query) BatchPositionNotEq(v int32) Query          { return q.Where(BatchPosition.NotEq(v)) }
+func (q Query) BatchPositionGt(v int32) Query             { return q.Where(BatchPosition.Gt(v)) }
+func (q Query) BatchPositionGte(v int32) Query            { return q.Where(BatchPosition.Gte(v)) }
+func (q Query) BatchPositionLt(v int32) Query             { return q.Where(BatchPosition.Lt(v)) }
+func (q Query) BatchPositionLte(v int32) Query            { return q.Where(BatchPosition.Lte(v)) }
+func (q Query) BatchPositionIn(v ...int32) Query          { return q.Where(BatchPosition.In(v...)) }
+func (q Query) BatchPositionNotIn(v ...int32) Query       { return q.Where(BatchPosition.NotIn(v...)) }
+func (q Query) BatchPositionIsNull() Query                { return q.Where(BatchPosition.IsNull()) }
+func (q Query) BatchPositionIsNotNull() Query             { return q.Where(BatchPosition.IsNotNull()) }
+func (q Query) WindowStartEq(v time.Time) Query           { return q.Where(WindowStart.Eq(v)) }
+func (q Query) WindowStartNotEq(v time.Time) Query        { return q.Where(WindowStart.NotEq(v)) }
+func (q Query) WindowStartGt(v time.Time) Query           { return q.Where(WindowStart.Gt(v)) }
+func (q Query) WindowStartGte(v time.Time) Query          { return q.Where(WindowStart.Gte(v)) }
+func (q Query) WindowStartLt(v time.Time) Query           { return q.Where(WindowStart.Lt(v)) }
+func (q Query) WindowStartLte(v time.Time) Query          { return q.Where(WindowStart.Lte(v)) }
+func (q Query) WindowStartIsNull() Query                  { return q.Where(WindowStart.IsNull()) }
+func (q Query) WindowStartIsNotNull() Query               { return q.Where(WindowStart.IsNotNull()) }
+func (q Query) ItemsContains(v runtime.JSON) Query        { return q.Where(Items.Contains(v)) }
+func (q Query) ItemsContainedBy(v runtime.JSON) Query     { return q.Where(Items.ContainedBy(v)) }
+func (q Query) ItemsHasAnyKey(v ...string) Query          { return q.Where(Items.HasAnyKey(v...)) }
+func (q Query) ItemsHasAllKeys(v ...string) Query         { return q.Where(Items.HasAllKeys(v...)) }
+func (q Query) PurgeEq(v bool) Query                      { return q.Where(Purge.Eq(v)) }
+func (q Query) PurgeNotEq(v bool) Query                   { return q.Where(Purge.NotEq(v)) }
+func (q Query) StartServicesEq(v bool) Query              { return q.Where(StartServices.Eq(v)) }
+func (q Query) StartServicesNotEq(v bool) Query           { return q.Where(StartServices.NotEq(v)) }
+func (q Query) ExpectEq(v string) Query                   { return q.Where(Expect.Eq(v)) }
+func (q Query) ExpectNotEq(v string) Query                { return q.Where(Expect.NotEq(v)) }
+func (q Query) ExpectGt(v string) Query                   { return q.Where(Expect.Gt(v)) }
+func (q Query) ExpectGte(v string) Query                  { return q.Where(Expect.Gte(v)) }
+func (q Query) ExpectLt(v string) Query                   { return q.Where(Expect.Lt(v)) }
+func (q Query) ExpectLte(v string) Query                  { return q.Where(Expect.Lte(v)) }
+func (q Query) ExpectEqLower(v string) Query              { return q.Where(Expect.EqLower(v)) }
+func (q Query) ExpectLike(v string) Query                 { return q.Where(Expect.Like(v)) }
+func (q Query) ExpectILike(v string) Query                { return q.Where(Expect.ILike(v)) }
+func (q Query) ExpectIn(v ...string) Query                { return q.Where(Expect.In(v...)) }
+func (q Query) ExpectNotIn(v ...string) Query             { return q.Where(Expect.NotIn(v...)) }
+func (q Query) PreviewIDEq(v [16]byte) Query              { return q.Where(PreviewID.Eq(v)) }
+func (q Query) PreviewIDNotEq(v [16]byte) Query           { return q.Where(PreviewID.NotEq(v)) }
+func (q Query) PreviewIDIn(v ...[16]byte) Query           { return q.Where(PreviewID.In(v...)) }
+func (q Query) PreviewIDNotIn(v ...[16]byte) Query        { return q.Where(PreviewID.NotIn(v...)) }
+func (q Query) PreviewIDIsNull() Query                    { return q.Where(PreviewID.IsNull()) }
+func (q Query) PreviewIDIsNotNull() Query                 { return q.Where(PreviewID.IsNotNull()) }
+func (q Query) UndoOfEq(v [16]byte) Query                 { return q.Where(UndoOf.Eq(v)) }
+func (q Query) UndoOfNotEq(v [16]byte) Query              { return q.Where(UndoOf.NotEq(v)) }
+func (q Query) UndoOfIn(v ...[16]byte) Query              { return q.Where(UndoOf.In(v...)) }
+func (q Query) UndoOfNotIn(v ...[16]byte) Query           { return q.Where(UndoOf.NotIn(v...)) }
+func (q Query) UndoOfIsNull() Query                       { return q.Where(UndoOf.IsNull()) }
+func (q Query) UndoOfIsNotNull() Query                    { return q.Where(UndoOf.IsNotNull()) }
+func (q Query) StartedContains(v ...string) Query         { return q.Where(Started.Contains(v...)) }
+func (q Query) StartedContainedBy(v ...string) Query      { return q.Where(Started.ContainedBy(v...)) }
+func (q Query) StartedOverlaps(v ...string) Query         { return q.Where(Started.Overlaps(v...)) }
+func (q Query) ScriptVersionIDEq(v [16]byte) Query        { return q.Where(ScriptVersionID.Eq(v)) }
+func (q Query) ScriptVersionIDNotEq(v [16]byte) Query     { return q.Where(ScriptVersionID.NotEq(v)) }
+func (q Query) ScriptVersionIDIn(v ...[16]byte) Query     { return q.Where(ScriptVersionID.In(v...)) }
+func (q Query) ScriptVersionIDNotIn(v ...[16]byte) Query  { return q.Where(ScriptVersionID.NotIn(v...)) }
+func (q Query) ScriptVersionIDIsNull() Query              { return q.Where(ScriptVersionID.IsNull()) }
+func (q Query) ScriptVersionIDIsNotNull() Query           { return q.Where(ScriptVersionID.IsNotNull()) }
+func (q Query) ScriptActionEq(v string) Query             { return q.Where(ScriptAction.Eq(v)) }
+func (q Query) ScriptActionNotEq(v string) Query          { return q.Where(ScriptAction.NotEq(v)) }
+func (q Query) ScriptActionGt(v string) Query             { return q.Where(ScriptAction.Gt(v)) }
+func (q Query) ScriptActionGte(v string) Query            { return q.Where(ScriptAction.Gte(v)) }
+func (q Query) ScriptActionLt(v string) Query             { return q.Where(ScriptAction.Lt(v)) }
+func (q Query) ScriptActionLte(v string) Query            { return q.Where(ScriptAction.Lte(v)) }
+func (q Query) ScriptActionEqLower(v string) Query        { return q.Where(ScriptAction.EqLower(v)) }
+func (q Query) ScriptActionLike(v string) Query           { return q.Where(ScriptAction.Like(v)) }
+func (q Query) ScriptActionILike(v string) Query          { return q.Where(ScriptAction.ILike(v)) }
+func (q Query) ScriptActionIn(v ...string) Query          { return q.Where(ScriptAction.In(v...)) }
+func (q Query) ScriptActionNotIn(v ...string) Query       { return q.Where(ScriptAction.NotIn(v...)) }
+func (q Query) ScriptParamsContains(v runtime.JSON) Query { return q.Where(ScriptParams.Contains(v)) }
+func (q Query) ScriptParamsContainedBy(v runtime.JSON) Query {
+	return q.Where(ScriptParams.ContainedBy(v))
+}
+func (q Query) ScriptParamsHasAnyKey(v ...string) Query { return q.Where(ScriptParams.HasAnyKey(v...)) }
+func (q Query) ScriptParamsHasAllKeys(v ...string) Query {
+	return q.Where(ScriptParams.HasAllKeys(v...))
+}
+func (q Query) ScriptSecretsEq(v []byte) Query            { return q.Where(ScriptSecrets.Eq(v)) }
+func (q Query) ScriptSecretsNotEq(v []byte) Query         { return q.Where(ScriptSecrets.NotEq(v)) }
+func (q Query) ScriptSecretsIsNull() Query                { return q.Where(ScriptSecrets.IsNull()) }
+func (q Query) ScriptSecretsIsNotNull() Query             { return q.Where(ScriptSecrets.IsNotNull()) }
+func (q Query) ScriptReportContains(v runtime.JSON) Query { return q.Where(ScriptReport.Contains(v)) }
+func (q Query) ScriptReportContainedBy(v runtime.JSON) Query {
+	return q.Where(ScriptReport.ContainedBy(v))
+}
+func (q Query) ScriptReportHasAnyKey(v ...string) Query { return q.Where(ScriptReport.HasAnyKey(v...)) }
+func (q Query) ScriptReportHasAllKeys(v ...string) Query {
+	return q.Where(ScriptReport.HasAllKeys(v...))
+}
+func (q Query) ScriptReportIsNull() Query    { return q.Where(ScriptReport.IsNull()) }
+func (q Query) ScriptReportIsNotNull() Query { return q.Where(ScriptReport.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started" FROM "package_runs"`
+const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report" FROM "package_runs"`
 const countPrefix = `SELECT count(*) FROM "package_runs"`
 const existsPrefix = `SELECT 1 FROM "package_runs"`
 const existsSuffix = ` LIMIT 1`
@@ -1917,6 +2090,36 @@ var orderTable = [nCols][4]string{
 		"\"started\" ASC NULLS FIRST",
 		"\"started\" DESC NULLS LAST",
 	},
+	{ // script_version_id
+		"\"script_version_id\"",
+		"\"script_version_id\" DESC",
+		"\"script_version_id\" ASC NULLS FIRST",
+		"\"script_version_id\" DESC NULLS LAST",
+	},
+	{ // script_action
+		"\"script_action\"",
+		"\"script_action\" DESC",
+		"\"script_action\" ASC NULLS FIRST",
+		"\"script_action\" DESC NULLS LAST",
+	},
+	{ // script_params
+		"\"script_params\"",
+		"\"script_params\" DESC",
+		"\"script_params\" ASC NULLS FIRST",
+		"\"script_params\" DESC NULLS LAST",
+	},
+	{ // script_secrets
+		"\"script_secrets\"",
+		"\"script_secrets\" DESC",
+		"\"script_secrets\" ASC NULLS FIRST",
+		"\"script_secrets\" DESC NULLS LAST",
+	},
+	{ // script_report
+		"\"script_report\"",
+		"\"script_report\" DESC",
+		"\"script_report\" ASC NULLS FIRST",
+		"\"script_report\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1957,6 +2160,11 @@ var identTable = [nCols]string{
 	"\"preview_id\"",
 	"\"undo_of\"",
 	"\"started\"",
+	"\"script_version_id\"",
+	"\"script_action\"",
+	"\"script_params\"",
+	"\"script_secrets\"",
+	"\"script_report\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1989,7 +2197,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [35][28]runtime.Frag{
+var fragTable = [40][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -3040,6 +3248,156 @@ var fragTable = [35][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // script_version_id
+		{}, // opNone
+		{A: "\"script_version_id\" = $", B: ""},
+		{A: "\"script_version_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"script_version_id\" = ANY($", B: ")"},
+		{A: "\"script_version_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"script_version_id\" IS NULL", B: ""},
+		{A: "\"script_version_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // script_action
+		{}, // opNone
+		{A: "\"script_action\" = $", B: ""},
+		{A: "\"script_action\" <> $", B: ""},
+		{A: "\"script_action\" > $", B: ""},
+		{A: "\"script_action\" >= $", B: ""},
+		{A: "\"script_action\" < $", B: ""},
+		{A: "\"script_action\" <= $", B: ""},
+		{A: "lower(\"script_action\") = lower($", B: ")"},
+		{A: "\"script_action\" LIKE $", B: ""},
+		{A: "\"script_action\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"script_action\" = ANY($", B: ")"},
+		{A: "\"script_action\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // script_params
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"script_params\" @> $", B: ""},
+		{A: "\"script_params\" <@ $", B: ""},
+		{A: "\"script_params\" ?| $", B: ""},
+		{A: "\"script_params\" ?& $", B: ""},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // script_secrets
+		{}, // opNone
+		{A: "\"script_secrets\" = $", B: ""},
+		{A: "\"script_secrets\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"script_secrets\" IS NULL", B: ""},
+		{A: "\"script_secrets\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // script_report
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"script_report\" @> $", B: ""},
+		{A: "\"script_report\" <@ $", B: ""},
+		{A: "\"script_report\" ?| $", B: ""},
+		{A: "\"script_report\" ?& $", B: ""},
+		{A: "\"script_report\" IS NULL", B: ""},
+		{A: "\"script_report\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3244,6 +3602,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	if decErr != nil {
 		return decErr
 	}
+	r.ScriptVersionID = runtime.Nullable(rv[35], runtime.UUID)
+	r.ScriptAction = sl.Str(rv[36])
+	r.ScriptParams = runtime.JSON(runtime.JSONB(rv[37], sl))
+	r.ScriptSecrets = runtime.Bytes(rv[38])
+	r.ScriptReport = runtime.NullJSON(rv[39], sl)
 	return decErr
 }
 
@@ -3255,6 +3618,7 @@ type binder struct {
 	tims   [4]time.Time
 	bools  [4]bool
 	jsns   [2]runtime.JSON
+	byts   [2][]byte
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	anyI32 [3][]int32
@@ -3299,7 +3663,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nn, nr, ntm, nbo, njs, nar, nas, nai32 uint8
+	var ns, nn, nr, ntm, nbo, njs, nby, nar, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -3408,6 +3772,22 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyRaw[nar])
 				nar++
 			case 34:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 35:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
+			case 36:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 37:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 39:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -3539,6 +3919,26 @@ func (q Query) bindPreds(b *binder) []any {
 			b.raws[nr] = q.raws[nr]
 			v = append(v, &b.raws[nr])
 			nr++
+		case 35:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
+		case 36:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 37:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 38:
+			b.byts[nby] = q.byts[nby]
+			v = append(v, &b.byts[nby])
+			nby++
+		case 39:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v
@@ -3676,7 +4076,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started"`
+const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report"`
 
 const updatePrefix = `UPDATE "package_runs" SET `
 const deletePrefix = `DELETE FROM "package_runs"`
@@ -3684,80 +4084,90 @@ const deletePrefix = `DELETE FROM "package_runs"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dHostname       uint64 = 1 << 0
-	dAssetHostname  uint64 = 1 << 1
-	dMode           uint64 = 1 << 2
-	dPackages       uint64 = 1 << 3
-	dHolds          uint64 = 1 << 4
-	dReboot         uint64 = 1 << 5
-	dTrigger        uint64 = 1 << 6
-	dState          uint64 = 1 << 7
-	dRequestedBy    uint64 = 1 << 8
-	dRequestedAt    uint64 = 1 << 9
-	dDecidedBy      uint64 = 1 << 10
-	dDecidedAt      uint64 = 1 << 11
-	dSentAt         uint64 = 1 << 12
-	dStartedAt      uint64 = 1 << 13
-	dFinishedAt     uint64 = 1 << 14
-	dUpdatedAt      uint64 = 1 << 15
-	dStep           uint64 = 1 << 16
-	dMessage        uint64 = 1 << 17
-	dPlanned        uint64 = 1 << 18
-	dUpgraded       uint64 = 1 << 19
-	dRestarted      uint64 = 1 << 20
-	dRebootRequired uint64 = 1 << 21
-	dRebooted       uint64 = 1 << 22
-	dLog            uint64 = 1 << 23
-	dBatchID        uint64 = 1 << 24
-	dBatchPosition  uint64 = 1 << 25
-	dWindowStart    uint64 = 1 << 26
-	dItems          uint64 = 1 << 27
-	dPurge          uint64 = 1 << 28
-	dStartServices  uint64 = 1 << 29
-	dExpect         uint64 = 1 << 30
-	dPreviewID      uint64 = 1 << 31
-	dUndoOf         uint64 = 1 << 32
-	dStarted        uint64 = 1 << 33
+	dHostname        uint64 = 1 << 0
+	dAssetHostname   uint64 = 1 << 1
+	dMode            uint64 = 1 << 2
+	dPackages        uint64 = 1 << 3
+	dHolds           uint64 = 1 << 4
+	dReboot          uint64 = 1 << 5
+	dTrigger         uint64 = 1 << 6
+	dState           uint64 = 1 << 7
+	dRequestedBy     uint64 = 1 << 8
+	dRequestedAt     uint64 = 1 << 9
+	dDecidedBy       uint64 = 1 << 10
+	dDecidedAt       uint64 = 1 << 11
+	dSentAt          uint64 = 1 << 12
+	dStartedAt       uint64 = 1 << 13
+	dFinishedAt      uint64 = 1 << 14
+	dUpdatedAt       uint64 = 1 << 15
+	dStep            uint64 = 1 << 16
+	dMessage         uint64 = 1 << 17
+	dPlanned         uint64 = 1 << 18
+	dUpgraded        uint64 = 1 << 19
+	dRestarted       uint64 = 1 << 20
+	dRebootRequired  uint64 = 1 << 21
+	dRebooted        uint64 = 1 << 22
+	dLog             uint64 = 1 << 23
+	dBatchID         uint64 = 1 << 24
+	dBatchPosition   uint64 = 1 << 25
+	dWindowStart     uint64 = 1 << 26
+	dItems           uint64 = 1 << 27
+	dPurge           uint64 = 1 << 28
+	dStartServices   uint64 = 1 << 29
+	dExpect          uint64 = 1 << 30
+	dPreviewID       uint64 = 1 << 31
+	dUndoOf          uint64 = 1 << 32
+	dStarted         uint64 = 1 << 33
+	dScriptVersionID uint64 = 1 << 34
+	dScriptAction    uint64 = 1 << 35
+	dScriptParams    uint64 = 1 << 36
+	dScriptSecrets   uint64 = 1 << 37
+	dScriptReport    uint64 = 1 << 38
 )
 
-const nUpdatable = 34
+const nUpdatable = 39
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"hostname\" = $", B: ""},        // hostname
-	{A: "\"asset_hostname\" = $", B: ""},  // asset_hostname
-	{A: "\"mode\" = $", B: ""},            // mode
-	{A: "\"packages\" = $", B: ""},        // packages
-	{A: "\"holds\" = $", B: ""},           // holds
-	{A: "\"reboot\" = $", B: ""},          // reboot
-	{A: "\"trigger\" = $", B: ""},         // trigger
-	{A: "\"state\" = $", B: ""},           // state
-	{A: "\"requested_by\" = $", B: ""},    // requested_by
-	{A: "\"requested_at\" = $", B: ""},    // requested_at
-	{A: "\"decided_by\" = $", B: ""},      // decided_by
-	{A: "\"decided_at\" = $", B: ""},      // decided_at
-	{A: "\"sent_at\" = $", B: ""},         // sent_at
-	{A: "\"started_at\" = $", B: ""},      // started_at
-	{A: "\"finished_at\" = $", B: ""},     // finished_at
-	{A: "\"updated_at\" = $", B: ""},      // updated_at
-	{A: "\"step\" = $", B: ""},            // step
-	{A: "\"message\" = $", B: ""},         // message
-	{A: "\"planned\" = $", B: ""},         // planned
-	{A: "\"upgraded\" = $", B: ""},        // upgraded
-	{A: "\"restarted\" = $", B: ""},       // restarted
-	{A: "\"reboot_required\" = $", B: ""}, // reboot_required
-	{A: "\"rebooted\" = $", B: ""},        // rebooted
-	{A: "\"log\" = $", B: ""},             // log
-	{A: "\"batch_id\" = $", B: ""},        // batch_id
-	{A: "\"batch_position\" = $", B: ""},  // batch_position
-	{A: "\"window_start\" = $", B: ""},    // window_start
-	{A: "\"items\" = $", B: ""},           // items
-	{A: "\"purge\" = $", B: ""},           // purge
-	{A: "\"start_services\" = $", B: ""},  // start_services
-	{A: "\"expect\" = $", B: ""},          // expect
-	{A: "\"preview_id\" = $", B: ""},      // preview_id
-	{A: "\"undo_of\" = $", B: ""},         // undo_of
-	{A: "\"started\" = $", B: ""},         // started
+	{A: "\"hostname\" = $", B: ""},          // hostname
+	{A: "\"asset_hostname\" = $", B: ""},    // asset_hostname
+	{A: "\"mode\" = $", B: ""},              // mode
+	{A: "\"packages\" = $", B: ""},          // packages
+	{A: "\"holds\" = $", B: ""},             // holds
+	{A: "\"reboot\" = $", B: ""},            // reboot
+	{A: "\"trigger\" = $", B: ""},           // trigger
+	{A: "\"state\" = $", B: ""},             // state
+	{A: "\"requested_by\" = $", B: ""},      // requested_by
+	{A: "\"requested_at\" = $", B: ""},      // requested_at
+	{A: "\"decided_by\" = $", B: ""},        // decided_by
+	{A: "\"decided_at\" = $", B: ""},        // decided_at
+	{A: "\"sent_at\" = $", B: ""},           // sent_at
+	{A: "\"started_at\" = $", B: ""},        // started_at
+	{A: "\"finished_at\" = $", B: ""},       // finished_at
+	{A: "\"updated_at\" = $", B: ""},        // updated_at
+	{A: "\"step\" = $", B: ""},              // step
+	{A: "\"message\" = $", B: ""},           // message
+	{A: "\"planned\" = $", B: ""},           // planned
+	{A: "\"upgraded\" = $", B: ""},          // upgraded
+	{A: "\"restarted\" = $", B: ""},         // restarted
+	{A: "\"reboot_required\" = $", B: ""},   // reboot_required
+	{A: "\"rebooted\" = $", B: ""},          // rebooted
+	{A: "\"log\" = $", B: ""},               // log
+	{A: "\"batch_id\" = $", B: ""},          // batch_id
+	{A: "\"batch_position\" = $", B: ""},    // batch_position
+	{A: "\"window_start\" = $", B: ""},      // window_start
+	{A: "\"items\" = $", B: ""},             // items
+	{A: "\"purge\" = $", B: ""},             // purge
+	{A: "\"start_services\" = $", B: ""},    // start_services
+	{A: "\"expect\" = $", B: ""},            // expect
+	{A: "\"preview_id\" = $", B: ""},        // preview_id
+	{A: "\"undo_of\" = $", B: ""},           // undo_of
+	{A: "\"started\" = $", B: ""},           // started
+	{A: "\"script_version_id\" = $", B: ""}, // script_version_id
+	{A: "\"script_action\" = $", B: ""},     // script_action
+	{A: "\"script_params\" = $", B: ""},     // script_params
+	{A: "\"script_secrets\" = $", B: ""},    // script_secrets
+	{A: "\"script_report\" = $", B: ""},     // script_report
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3798,6 +4208,11 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                                        // preview_id has no server-side form
 	{},                                                        // undo_of has no server-side form
 	{},                                                        // started has no server-side form
+	{},                                                        // script_version_id has no server-side form
+	{},                                                        // script_action has no server-side form
+	{},                                                        // script_params has no server-side form
+	{},                                                        // script_secrets has no server-side form
+	{},                                                        // script_report has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3809,44 +4224,49 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID             uint64 = 1 << 0
-	iHostname       uint64 = 1 << 1
-	iAssetHostname  uint64 = 1 << 2
-	iMode           uint64 = 1 << 3
-	iPackages       uint64 = 1 << 4
-	iHolds          uint64 = 1 << 5
-	iReboot         uint64 = 1 << 6
-	iTrigger        uint64 = 1 << 7
-	iState          uint64 = 1 << 8
-	iRequestedBy    uint64 = 1 << 9
-	iRequestedAt    uint64 = 1 << 10
-	iDecidedBy      uint64 = 1 << 11
-	iDecidedAt      uint64 = 1 << 12
-	iSentAt         uint64 = 1 << 13
-	iStartedAt      uint64 = 1 << 14
-	iFinishedAt     uint64 = 1 << 15
-	iUpdatedAt      uint64 = 1 << 16
-	iStep           uint64 = 1 << 17
-	iMessage        uint64 = 1 << 18
-	iPlanned        uint64 = 1 << 19
-	iUpgraded       uint64 = 1 << 20
-	iRestarted      uint64 = 1 << 21
-	iRebootRequired uint64 = 1 << 22
-	iRebooted       uint64 = 1 << 23
-	iLog            uint64 = 1 << 24
-	iBatchID        uint64 = 1 << 25
-	iBatchPosition  uint64 = 1 << 26
-	iWindowStart    uint64 = 1 << 27
-	iItems          uint64 = 1 << 28
-	iPurge          uint64 = 1 << 29
-	iStartServices  uint64 = 1 << 30
-	iExpect         uint64 = 1 << 31
-	iPreviewID      uint64 = 1 << 32
-	iUndoOf         uint64 = 1 << 33
-	iStarted        uint64 = 1 << 34
+	iID              uint64 = 1 << 0
+	iHostname        uint64 = 1 << 1
+	iAssetHostname   uint64 = 1 << 2
+	iMode            uint64 = 1 << 3
+	iPackages        uint64 = 1 << 4
+	iHolds           uint64 = 1 << 5
+	iReboot          uint64 = 1 << 6
+	iTrigger         uint64 = 1 << 7
+	iState           uint64 = 1 << 8
+	iRequestedBy     uint64 = 1 << 9
+	iRequestedAt     uint64 = 1 << 10
+	iDecidedBy       uint64 = 1 << 11
+	iDecidedAt       uint64 = 1 << 12
+	iSentAt          uint64 = 1 << 13
+	iStartedAt       uint64 = 1 << 14
+	iFinishedAt      uint64 = 1 << 15
+	iUpdatedAt       uint64 = 1 << 16
+	iStep            uint64 = 1 << 17
+	iMessage         uint64 = 1 << 18
+	iPlanned         uint64 = 1 << 19
+	iUpgraded        uint64 = 1 << 20
+	iRestarted       uint64 = 1 << 21
+	iRebootRequired  uint64 = 1 << 22
+	iRebooted        uint64 = 1 << 23
+	iLog             uint64 = 1 << 24
+	iBatchID         uint64 = 1 << 25
+	iBatchPosition   uint64 = 1 << 26
+	iWindowStart     uint64 = 1 << 27
+	iItems           uint64 = 1 << 28
+	iPurge           uint64 = 1 << 29
+	iStartServices   uint64 = 1 << 30
+	iExpect          uint64 = 1 << 31
+	iPreviewID       uint64 = 1 << 32
+	iUndoOf          uint64 = 1 << 33
+	iStarted         uint64 = 1 << 34
+	iScriptVersionID uint64 = 1 << 35
+	iScriptAction    uint64 = 1 << 36
+	iScriptParams    uint64 = 1 << 37
+	iScriptSecrets   uint64 = 1 << 38
+	iScriptReport    uint64 = 1 << 39
 )
 
-const nInsertable = 35
+const nInsertable = 40
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3885,6 +4305,11 @@ var insCols = [nInsertable]string{
 	"\"preview_id\"",
 	"\"undo_of\"",
 	"\"started\"",
+	"\"script_version_id\"",
+	"\"script_action\"",
+	"\"script_params\"",
+	"\"script_secrets\"",
+	"\"script_report\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3893,7 +4318,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"package_runs\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3912,7 +4337,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -4341,6 +4766,52 @@ func (m *Mut) SetStarted(v []string) {
 	m.expr &^= dStarted
 }
 
+func (m *Mut) SetScriptVersionID(v [16]byte) {
+	m.row.ScriptVersionID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dScriptVersionID
+	m.expr &^= dScriptVersionID
+}
+
+// SetScriptVersionIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetScriptVersionIDNull() {
+	m.row.ScriptVersionID = runtime.Null[[16]byte]{}
+	m.dirty |= dScriptVersionID
+	m.expr &^= dScriptVersionID
+}
+
+func (m *Mut) SetScriptAction(v string) {
+	m.row.ScriptAction = v
+	m.dirty |= dScriptAction
+	m.expr &^= dScriptAction
+}
+
+func (m *Mut) SetScriptParams(v runtime.JSON) {
+	m.row.ScriptParams = v
+	m.dirty |= dScriptParams
+	m.expr &^= dScriptParams
+}
+
+func (m *Mut) SetScriptSecrets(v []byte) {
+	m.row.ScriptSecrets = v
+	m.dirty |= dScriptSecrets
+	m.expr &^= dScriptSecrets
+}
+
+func (m *Mut) SetScriptReport(v runtime.JSON) {
+	m.row.ScriptReport = runtime.Null[runtime.JSON]{V: v, Valid: true}
+	m.dirty |= dScriptReport
+	m.expr &^= dScriptReport
+}
+
+// SetScriptReportNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetScriptReportNull() {
+	m.row.ScriptReport = runtime.Null[runtime.JSON]{}
+	m.dirty |= dScriptReport
+	m.expr &^= dScriptReport
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -4631,6 +5102,45 @@ func (n *Ins) SetStarted(v []string) {
 	n.set |= iStarted
 }
 
+func (n *Ins) SetScriptVersionID(v [16]byte) {
+	n.row.ScriptVersionID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iScriptVersionID
+}
+
+// SetScriptVersionIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetScriptVersionIDNull() {
+	n.row.ScriptVersionID = runtime.Null[[16]byte]{}
+	n.set |= iScriptVersionID
+}
+
+func (n *Ins) SetScriptAction(v string) {
+	n.row.ScriptAction = v
+	n.set |= iScriptAction
+}
+
+func (n *Ins) SetScriptParams(v runtime.JSON) {
+	n.row.ScriptParams = v
+	n.set |= iScriptParams
+}
+
+func (n *Ins) SetScriptSecrets(v []byte) {
+	n.row.ScriptSecrets = v
+	n.set |= iScriptSecrets
+}
+
+func (n *Ins) SetScriptReport(v runtime.JSON) {
+	n.row.ScriptReport = runtime.Null[runtime.JSON]{V: v, Valid: true}
+	n.set |= iScriptReport
+}
+
+// SetScriptReportNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetScriptReportNull() {
+	n.row.ScriptReport = runtime.Null[runtime.JSON]{}
+	n.set |= iScriptReport
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4682,7 +5192,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 34)
+	set := make([]string, 0, 39)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -4787,6 +5297,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<34) != 0 {
 			set = append(set, "started")
 		}
+		if mask&(1<<35) != 0 {
+			set = append(set, "script_version_id")
+		}
+		if mask&(1<<36) != 0 {
+			set = append(set, "script_action")
+		}
+		if mask&(1<<37) != 0 {
+			set = append(set, "script_params")
+		}
+		if mask&(1<<38) != 0 {
+			set = append(set, "script_secrets")
+		}
+		if mask&(1<<39) != 0 {
+			set = append(set, "script_report")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -4890,6 +5415,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<34) != 0 {
 			set = append(set, "started")
 		}
+		if mask&(1<<35) != 0 {
+			set = append(set, "script_version_id")
+		}
+		if mask&(1<<36) != 0 {
+			set = append(set, "script_action")
+		}
+		if mask&(1<<37) != 0 {
+			set = append(set, "script_params")
+		}
+		if mask&(1<<38) != 0 {
+			set = append(set, "script_secrets")
+		}
+		if mask&(1<<39) != 0 {
+			set = append(set, "script_report")
+		}
 	case 2:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -4990,6 +5530,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<34) != 0 {
 			set = append(set, "started")
 		}
+		if mask&(1<<35) != 0 {
+			set = append(set, "script_version_id")
+		}
+		if mask&(1<<36) != 0 {
+			set = append(set, "script_action")
+		}
+		if mask&(1<<37) != 0 {
+			set = append(set, "script_params")
+		}
+		if mask&(1<<38) != 0 {
+			set = append(set, "script_secrets")
+		}
+		if mask&(1<<39) != 0 {
+			set = append(set, "script_report")
+		}
 	}
 	return set
 }
@@ -5074,40 +5629,45 @@ func assignAdded(c string, add uint64) (string, bool) {
 }
 
 var assignFor = map[string]string{
-	"hostname":        "\"hostname\" = EXCLUDED.\"hostname\"",
-	"asset_hostname":  "\"asset_hostname\" = EXCLUDED.\"asset_hostname\"",
-	"mode":            "\"mode\" = EXCLUDED.\"mode\"",
-	"packages":        "\"packages\" = EXCLUDED.\"packages\"",
-	"holds":           "\"holds\" = EXCLUDED.\"holds\"",
-	"reboot":          "\"reboot\" = EXCLUDED.\"reboot\"",
-	"trigger":         "\"trigger\" = EXCLUDED.\"trigger\"",
-	"state":           "\"state\" = EXCLUDED.\"state\"",
-	"requested_by":    "\"requested_by\" = EXCLUDED.\"requested_by\"",
-	"requested_at":    "\"requested_at\" = EXCLUDED.\"requested_at\"",
-	"decided_by":      "\"decided_by\" = EXCLUDED.\"decided_by\"",
-	"decided_at":      "\"decided_at\" = EXCLUDED.\"decided_at\"",
-	"sent_at":         "\"sent_at\" = EXCLUDED.\"sent_at\"",
-	"started_at":      "\"started_at\" = EXCLUDED.\"started_at\"",
-	"finished_at":     "\"finished_at\" = EXCLUDED.\"finished_at\"",
-	"updated_at":      "\"updated_at\" = EXCLUDED.\"updated_at\"",
-	"step":            "\"step\" = EXCLUDED.\"step\"",
-	"message":         "\"message\" = EXCLUDED.\"message\"",
-	"planned":         "\"planned\" = EXCLUDED.\"planned\"",
-	"upgraded":        "\"upgraded\" = EXCLUDED.\"upgraded\"",
-	"restarted":       "\"restarted\" = EXCLUDED.\"restarted\"",
-	"reboot_required": "\"reboot_required\" = EXCLUDED.\"reboot_required\"",
-	"rebooted":        "\"rebooted\" = EXCLUDED.\"rebooted\"",
-	"log":             "\"log\" = EXCLUDED.\"log\"",
-	"batch_id":        "\"batch_id\" = EXCLUDED.\"batch_id\"",
-	"batch_position":  "\"batch_position\" = EXCLUDED.\"batch_position\"",
-	"window_start":    "\"window_start\" = EXCLUDED.\"window_start\"",
-	"items":           "\"items\" = EXCLUDED.\"items\"",
-	"purge":           "\"purge\" = EXCLUDED.\"purge\"",
-	"start_services":  "\"start_services\" = EXCLUDED.\"start_services\"",
-	"expect":          "\"expect\" = EXCLUDED.\"expect\"",
-	"preview_id":      "\"preview_id\" = EXCLUDED.\"preview_id\"",
-	"undo_of":         "\"undo_of\" = EXCLUDED.\"undo_of\"",
-	"started":         "\"started\" = EXCLUDED.\"started\"",
+	"hostname":          "\"hostname\" = EXCLUDED.\"hostname\"",
+	"asset_hostname":    "\"asset_hostname\" = EXCLUDED.\"asset_hostname\"",
+	"mode":              "\"mode\" = EXCLUDED.\"mode\"",
+	"packages":          "\"packages\" = EXCLUDED.\"packages\"",
+	"holds":             "\"holds\" = EXCLUDED.\"holds\"",
+	"reboot":            "\"reboot\" = EXCLUDED.\"reboot\"",
+	"trigger":           "\"trigger\" = EXCLUDED.\"trigger\"",
+	"state":             "\"state\" = EXCLUDED.\"state\"",
+	"requested_by":      "\"requested_by\" = EXCLUDED.\"requested_by\"",
+	"requested_at":      "\"requested_at\" = EXCLUDED.\"requested_at\"",
+	"decided_by":        "\"decided_by\" = EXCLUDED.\"decided_by\"",
+	"decided_at":        "\"decided_at\" = EXCLUDED.\"decided_at\"",
+	"sent_at":           "\"sent_at\" = EXCLUDED.\"sent_at\"",
+	"started_at":        "\"started_at\" = EXCLUDED.\"started_at\"",
+	"finished_at":       "\"finished_at\" = EXCLUDED.\"finished_at\"",
+	"updated_at":        "\"updated_at\" = EXCLUDED.\"updated_at\"",
+	"step":              "\"step\" = EXCLUDED.\"step\"",
+	"message":           "\"message\" = EXCLUDED.\"message\"",
+	"planned":           "\"planned\" = EXCLUDED.\"planned\"",
+	"upgraded":          "\"upgraded\" = EXCLUDED.\"upgraded\"",
+	"restarted":         "\"restarted\" = EXCLUDED.\"restarted\"",
+	"reboot_required":   "\"reboot_required\" = EXCLUDED.\"reboot_required\"",
+	"rebooted":          "\"rebooted\" = EXCLUDED.\"rebooted\"",
+	"log":               "\"log\" = EXCLUDED.\"log\"",
+	"batch_id":          "\"batch_id\" = EXCLUDED.\"batch_id\"",
+	"batch_position":    "\"batch_position\" = EXCLUDED.\"batch_position\"",
+	"window_start":      "\"window_start\" = EXCLUDED.\"window_start\"",
+	"items":             "\"items\" = EXCLUDED.\"items\"",
+	"purge":             "\"purge\" = EXCLUDED.\"purge\"",
+	"start_services":    "\"start_services\" = EXCLUDED.\"start_services\"",
+	"expect":            "\"expect\" = EXCLUDED.\"expect\"",
+	"preview_id":        "\"preview_id\" = EXCLUDED.\"preview_id\"",
+	"undo_of":           "\"undo_of\" = EXCLUDED.\"undo_of\"",
+	"started":           "\"started\" = EXCLUDED.\"started\"",
+	"script_version_id": "\"script_version_id\" = EXCLUDED.\"script_version_id\"",
+	"script_action":     "\"script_action\" = EXCLUDED.\"script_action\"",
+	"script_params":     "\"script_params\" = EXCLUDED.\"script_params\"",
+	"script_secrets":    "\"script_secrets\" = EXCLUDED.\"script_secrets\"",
+	"script_report":     "\"script_report\" = EXCLUDED.\"script_report\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -5228,6 +5788,16 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.UndoOf.Arg())
 		case 34:
 			args = append(args, n.row.Started)
+		case 35:
+			args = append(args, n.row.ScriptVersionID.Arg())
+		case 36:
+			args = append(args, n.row.ScriptAction)
+		case 37:
+			args = append(args, n.row.ScriptParams)
+		case 38:
+			args = append(args, n.row.ScriptSecrets)
+		case 39:
+			args = append(args, n.row.ScriptReport.Arg())
 		}
 	}
 	var out Row
@@ -5265,7 +5835,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 35)
+	args := make([]any, 0, 40)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -5301,6 +5871,11 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.PreviewID.Arg())
 	args = append(args, r.UndoOf.Arg())
 	args = append(args, r.Started)
+	args = append(args, r.ScriptVersionID.Arg())
+	args = append(args, r.ScriptAction)
+	args = append(args, r.ScriptParams)
+	args = append(args, r.ScriptSecrets)
+	args = append(args, r.ScriptReport.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -5362,13 +5937,18 @@ var copyCols = []string{
 	"preview_id",
 	"undo_of",
 	"started",
+	"script_version_id",
+	"script_action",
+	"script_params",
+	"script_secrets",
+	"script_report",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [35]any
+	buf  [40]any
 }
 
 func (s *rowSource) Next() bool {
@@ -5421,6 +6001,11 @@ func (s *rowSource) Values() []any {
 	s.buf[32] = r.PreviewID.Ptr()
 	s.buf[33] = r.UndoOf.Ptr()
 	s.buf[34] = &r.Started
+	s.buf[35] = r.ScriptVersionID.Ptr()
+	s.buf[36] = &r.ScriptAction
+	s.buf[37] = &r.ScriptParams
+	s.buf[38] = &r.ScriptSecrets
+	s.buf[39] = r.ScriptReport.Ptr()
 	return s.buf[:]
 }
 
@@ -5486,8 +6071,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 32
 	mask |= 1 << 33
 	mask |= 1 << 34
+	mask |= 1 << 35
+	mask |= 1 << 36
+	mask |= 1 << 37
+	mask |= 1 << 38
+	mask |= 1 << 39
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 35)
+	args := make([]any, 0, 40)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -5523,6 +6113,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.PreviewID.Arg())
 	args = append(args, r.UndoOf.Arg())
 	args = append(args, r.Started)
+	args = append(args, r.ScriptVersionID.Arg())
+	args = append(args, r.ScriptAction)
+	args = append(args, r.ScriptParams)
+	args = append(args, r.ScriptSecrets)
+	args = append(args, r.ScriptReport.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -5626,6 +6221,16 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.UndoOf.Arg())
 		case 34:
 			args = append(args, n.row.Started)
+		case 35:
+			args = append(args, n.row.ScriptVersionID.Arg())
+		case 36:
+			args = append(args, n.row.ScriptAction)
+		case 37:
+			args = append(args, n.row.ScriptParams)
+		case 38:
+			args = append(args, n.row.ScriptSecrets)
+		case 39:
+			args = append(args, n.row.ScriptReport.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -5749,6 +6354,16 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.UndoOf.Arg())
 		case 33:
 			args = append(args, m.row.Started)
+		case 34:
+			args = append(args, m.row.ScriptVersionID.Arg())
+		case 35:
+			args = append(args, m.row.ScriptAction)
+		case 36:
+			args = append(args, m.row.ScriptParams)
+		case 37:
+			args = append(args, m.row.ScriptSecrets)
+		case 38:
+			args = append(args, m.row.ScriptReport.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5899,6 +6514,16 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.UndoOf.Arg())
 		case 33:
 			args = append(args, m.row.Started)
+		case 34:
+			args = append(args, m.row.ScriptVersionID.Arg())
+		case 35:
+			args = append(args, m.row.ScriptAction)
+		case 36:
+			args = append(args, m.row.ScriptParams)
+		case 37:
+			args = append(args, m.row.ScriptSecrets)
+		case 38:
+			args = append(args, m.row.ScriptReport.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6115,6 +6740,16 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.UndoOf.Arg())
 		case 33:
 			args = append(args, m.row.Started)
+		case 34:
+			args = append(args, m.row.ScriptVersionID.Arg())
+		case 35:
+			args = append(args, m.row.ScriptAction)
+		case 36:
+			args = append(args, m.row.ScriptParams)
+		case 37:
+			args = append(args, m.row.ScriptSecrets)
+		case 38:
+			args = append(args, m.row.ScriptReport.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ActionIcon, Alert, Badge, Box, Button, Checkbox, Drawer, Group, Loader, Menu, Modal, ScrollArea, Select, Skeleton,
+  ActionIcon, Alert, Badge, Box, Button, Checkbox, Drawer, Group, Loader, Menu, Modal, ScrollArea, SegmentedControl, Select, Skeleton,
   Stack, Switch, Table, Text, TextInput, UnstyledButton,
 } from '@mantine/core'
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks'
@@ -8,8 +8,9 @@ import { useQuery } from '@tanstack/react-query'
 import { IconArrowDown, IconArrowUp, IconCheck, IconDots, IconMinus, IconPlus, IconSearch, IconX } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
+import { ScriptInstall } from '~/components/server/ScriptInstall'
 import { RunState } from '~/components/server/UpdatesTab'
-import type { PackageRun } from '~/lib/live'
+import type { PackageRun, ScriptReport } from '~/lib/live'
 import { run as notifyRun } from '~/lib/notify'
 import { runFinished } from '~/lib/packageApi'
 import { useDecidePackageRun } from '~/lib/packageQueries'
@@ -218,6 +219,7 @@ function InstallDrawer({ asset, manager, onClose }: { asset: Asset; manager?: st
   const ask = usePreviewSoftware(asset.id)
   const [preview, setPreview] = useState<SoftwarePreview | null>(null)
   const go = useStartSoftwareRun(asset.id)
+  const [source, setSource] = useState<'repo' | 'script'>('repo')
 
   const choose = (p: FoundPackage, v: string | null, s: boolean) => {
     setPicked(p)
@@ -233,7 +235,14 @@ function InstallDrawer({ asset, manager, onClose }: { asset: Asset; manager?: st
   return (
     <Drawer opened onClose={onClose} position={narrow ? 'bottom' : 'right'} size={narrow ? '90%' : 760} padding={0}
       title={<Box><Text fw={600}>Install on {asset.hostname}</Text>
-        <Text size={FS.micro} c="dimmed">From the repositories this server already uses{manager ? ` · ${manager}` : ''}</Text></Box>}>
+        <Text size={FS.micro} c="dimmed">{source === 'repo'
+          ? `From the repositories this server already uses${manager ? ` · ${manager}` : ''}`
+          : 'From the reviewed scripts in Settings › Software'}</Text></Box>}>
+      <Box px="sm" pb="sm">
+        <SegmentedControl size="xs" value={source} onChange={(v) => setSource(v as 'repo' | 'script')}
+          data={[{ value: 'repo', label: 'Repositories' }, { value: 'script', label: 'Script' }]} />
+      </Box>
+      {source === 'script' ? <ScriptInstall asset={asset} onClose={onClose} /> : <>
       <Group align="stretch" gap={0} wrap={narrow ? 'wrap' : 'nowrap'} style={{ minHeight: 480 }}>
         <Box w={narrow ? '100%' : 300} style={{ borderRight: narrow ? undefined : '1px solid var(--mantine-color-default-border)' }}>
           <Box p="sm">
@@ -309,6 +318,7 @@ function InstallDrawer({ asset, manager, onClose }: { asset: Asset; manager?: st
           </Button>
         </Group>
       </Group>
+      </>}
     </Drawer>
   )
 }
@@ -484,6 +494,7 @@ function ChangeRow({ run: r, canEdit, onPreview }: { run: PackageRun; canEdit: b
         <Text size="sm">{r.requestedBy} {softwareRunText(r)}</Text>
         {r.message && r.state !== 'done' && <Text size={FS.micro} c={runFinished(r.state) ? 'rose' : 'dimmed'}>{r.message}</Text>}
         {(r.started?.length ?? 0) > 0 && <Text size={FS.micro} c="dimmed">Started {r.started!.join(', ')}</Text>}
+        {r.scriptReport && <ScriptReportLines report={r.scriptReport} />}
       </Table.Td>
       <Table.Td ta="right">
         {canEdit && (
@@ -518,4 +529,20 @@ function ChangeRow({ run: r, canEdit, onPreview }: { run: PackageRun; canEdit: b
       </Table.Td>
     </Table.Tr>
   )
+}
+
+/** What a script changed, as the server saw it before and after. */
+export function ScriptReportLines({ report: s }: { report: ScriptReport }) {
+  const lines: string[] = []
+  const pk = s.packages ?? []
+  if (pk.length) lines.push(`Packages: ${pk.map((p) => p.kind === 'remove' ? `−${p.name}` : `${p.name} ${p.to ?? ''}`.trim()).join(', ')}`)
+  if (s.services_added?.length) lines.push(`New services: ${s.services_added.join(', ')}`)
+  if (s.services_removed?.length) lines.push(`Services gone: ${s.services_removed.join(', ')}`)
+  if (s.ports_opened?.length) lines.push(`Now listening on ${s.ports_opened.join(', ')}`)
+  if (s.ports_closed?.length) lines.push(`No longer listening on ${s.ports_closed.join(', ')}`)
+  if (s.folders_added?.length) lines.push(`New folders: ${s.folders_added.join(', ')}`)
+  if (s.folders_removed?.length) lines.push(`Folders gone: ${s.folders_removed.join(', ')}`)
+  if (s.checked) lines.push(s.installed ? `Check: installed${s.check_version ? ` ${s.check_version}` : ''}` : `Check: not installed${s.check_error ? ` (${s.check_error})` : ''}`)
+  if (!lines.length) lines.push('Nothing it changed was seen.')
+  return <>{lines.map((l) => <Text key={l} size={FS.micro} c="dimmed">{l}</Text>)}</>
 }

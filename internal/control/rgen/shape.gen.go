@@ -614,6 +614,11 @@ func _assertPackageRunShape(m m0.PackageRun) {
 		m.PreviewID,
 		m.UndoOf,
 		m.Started,
+		m.ScriptVersionID,
+		m.ScriptAction,
+		m.ScriptParams,
+		m.ScriptSecrets,
+		m.ScriptReport,
 	}
 }
 
@@ -775,6 +780,55 @@ func _assertSoftwarePreviewShape(m m0.SoftwarePreview) {
 		m.UndoOf,
 		m.CreatedBy,
 		m.CreatedAt,
+	}
+}
+
+// _assertSoftwareScriptShape fails to compile if m0.SoftwareScript gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwareScriptShape(m m0.SoftwareScript) {
+	type shape m0.SoftwareScript
+	_ = shape{
+		m.ID,
+		m.Name,
+		m.Platform,
+		m.Description,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.ArchivedAt,
+	}
+}
+
+// _assertSoftwareScriptVersionShape fails to compile if m0.SoftwareScriptVersion gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwareScriptVersionShape(m m0.SoftwareScriptVersion) {
+	type shape m0.SoftwareScriptVersion
+	_ = shape{
+		m.ID,
+		m.Script,
+		m.Version,
+		m.Install,
+		m.Uninstall,
+		m.CheckText,
+		m.Params,
+		m.RunAs,
+		m.TimeoutSeconds,
+		m.Reboot,
+		m.InstallSha,
+		m.UninstallSha,
+		m.CheckSha,
+		m.Findings,
+		m.Blocked,
+		m.Note,
+		m.Author,
+		m.CreatedAt,
+		m.ReviewedBy,
+		m.ReviewedAt,
+		m.SelfReviewed,
+		m.Accepted,
+		m.Signature,
+		m.TriedOn,
+		m.TriedAt,
+		m.TriedRun,
 	}
 }
 

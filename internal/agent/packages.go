@@ -130,6 +130,8 @@ const (
 	// previewed (software_apply.go).
 	PackagesInstall = "install"
 	PackagesRemove  = "remove"
+	// PackagesScript runs a reviewed install script (software_script.go).
+	PackagesScript = "script"
 )
 
 // PackageRunRequest is an install the console asked for.
@@ -153,6 +155,8 @@ type PackageRunRequest struct {
 	Purge         bool                  `json:"purge,omitempty"`
 	StartServices bool                  `json:"start_services,omitempty"`
 	Expect        string                `json:"expect,omitempty"`
+	// Script is a reviewed script to run, for mode script.
+	Script *ScriptOrder `json:"script,omitempty"`
 }
 
 // Package run states.
@@ -186,6 +190,8 @@ type PackageRunStatus struct {
 	Restarted []string        `json:"restarted,omitempty"`
 	// Started are the services an install started, for install runs.
 	Started []string `json:"started,omitempty"`
+	// Script is what changed while a script ran, for mode script.
+	Script *tunnel.ScriptReport `json:"script,omitempty"`
 	// RebootRequired is the server still wanting a reboot when the run
 	// ended without one.
 	RebootRequired bool `json:"reboot_required,omitempty"`
@@ -403,6 +409,11 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 		}
 		if !reHash.MatchString(req.Expect) {
 			fail("the run does not say which preview it was approved from")
+			return
+		}
+	case PackagesScript:
+		if err := req.Script.validate(); err != nil {
+			fail(err.Error())
 			return
 		}
 	default:

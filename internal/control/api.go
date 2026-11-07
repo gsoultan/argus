@@ -364,6 +364,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
 	a.registerPackageRoutes(mux)
 	a.registerSoftwareRoutes(mux)
+	a.registerScriptRoutes(mux)
 	a.registerLogCleanupRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)

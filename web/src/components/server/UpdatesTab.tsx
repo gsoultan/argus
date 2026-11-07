@@ -376,6 +376,7 @@ const STEPS: { key: string; label: string; detail: string }[] = [
 ]
 
 export function runTitle(r: PackageRun): string {
+  if (r.mode === 'script') return `Script · ${r.scriptName ?? ''}`
   if (r.mode === 'install' || r.mode === 'remove') {
     const names = (r.items ?? []).map((i) => i.name)
     return `${r.mode === 'install' ? 'Install' : 'Remove'} · ${names.length <= 3 ? names.join(', ') : `${names.length} packages`}`

@@ -9,6 +9,17 @@ import {
   softwareRuns,
   startSoftwareRun,
   undoSoftwareRun,
+  checkScript,
+  createScript,
+  removeScript,
+  reviewScript,
+  runScript,
+  saveScriptVersion,
+  script,
+  scriptRules,
+  scripts,
+  type ScriptPlatform,
+  type ScriptVersionInput,
   type SoftwareItem,
 } from '~/lib/softwareApi'
 
@@ -73,3 +84,40 @@ export function useRefreshSoftware() {
     void qc.invalidateQueries({ queryKey: ['packages'] })
   }, [qc])
 }
+
+/* ── Install scripts ─────────────────────────────────────────────────────── */
+
+export const scriptsQuery = (enabled = true) =>
+  queryOptions({ queryKey: ['software', 'scripts'] as const, queryFn: scripts, enabled: isConfigured() && enabled })
+
+export const scriptQuery = (id: string) =>
+  queryOptions({ queryKey: ['software', 'scripts', id] as const, queryFn: () => script(id), enabled: isConfigured() && id !== '' })
+
+export const scriptRulesQuery = (platform: ScriptPlatform) =>
+  queryOptions({ queryKey: ['software', 'script-rules', platform] as const, queryFn: () => scriptRules(platform),
+    enabled: isConfigured(), staleTime: Infinity })
+
+function useScriptMutation<V, R>(fn: (v: V) => Promise<R>) {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: (v: V) => fn(v), onSettled: () => void qc.invalidateQueries({ queryKey: ['software'] }) })
+}
+
+export const useCreateScript = () => useScriptMutation(createScript)
+export const useSaveScriptVersion = () =>
+  useScriptMutation((v: { id: string; body: ScriptVersionInput }) => saveScriptVersion(v.id, v.body))
+export const useRemoveScript = () => useScriptMutation((id: string) => removeScript(id))
+export const useReviewScript = () =>
+  useScriptMutation((v: { versionId: string; accepted: { key: string; reason: string }[]; confirmSelf?: string }) =>
+    reviewScript(v.versionId, { accepted: v.accepted, confirmSelf: v.confirmSelf }))
+export const useRunScript = (assetId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { versionId: string; action: 'install' | 'uninstall'; params: Record<string, string> }) => runScript(assetId, v),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['software'] })
+      void qc.invalidateQueries({ queryKey: ['packages'] })
+    },
+  })
+}
+export const useCheckScript = () =>
+  useMutation({ mutationFn: (v: Parameters<typeof checkScript>[0]) => checkScript(v) })

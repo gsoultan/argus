@@ -71,6 +71,9 @@ func (a *API) heartbeatPackages(ctx context.Context, host string, b *PackageBeat
 		a.log.Error("heartbeat: cannot read the update run to send", "error", err)
 		return nil
 	}
+	if !a.attachScript(ctx, host, run) {
+		run = nil
+	}
 	o.Run = run
 	return o
 }
@@ -177,6 +180,9 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 		changed = "installed or changed"
 	case PackagesRemove:
 		changed = "removed"
+	case PackagesScript:
+		changed = "changed"
+		a.scriptRunEnded(ctx, r)
 	}
 	detail := fmt.Sprintf("The %s on %s (%s, %s) %s: %s %d package%s", runNoun(r), r.AssetHostname,
 		describeMode(r), who, strings.ReplaceAll(r.State, "_", " "), changed, len(r.Upgraded), plural(len(r.Upgraded)))
@@ -201,7 +207,8 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	}
 	switch {
 	case r.State == RunFailed || r.State == RunInterrupted:
-		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from "}[r.Mode]
+		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from ",
+			PackagesScript: "A script on "}[r.Mode]
 		if verb == "" {
 			verb = "Updating "
 		}
@@ -236,6 +243,12 @@ func describeMode(r PackageRun) string {
 		return "security updates"
 	case PackagesInstall, PackagesRemove:
 		return describeSoftware(r.Mode, r.Items, r.Purge)
+	case PackagesScript:
+		name := r.ScriptName
+		if name == "" {
+			name = "a script"
+		}
+		return r.ScriptAction + " script of " + name
 	}
 	return "selected: " + strings.Join(r.Packages, ", ")
 }
@@ -248,6 +261,8 @@ func runPhrase(r PackageRun) string {
 		return "installing " + describeMode(r)
 	case PackagesRemove:
 		return "removing " + describeMode(r)
+	case PackagesScript:
+		return "running the " + describeMode(r)
 	}
 	return "installing " + describeMode(r)
 }
@@ -259,13 +274,15 @@ func runNoun(r PackageRun) string {
 		return "install"
 	case PackagesRemove:
 		return "removal"
+	case PackagesScript:
+		return "script run"
 	}
 	return "update run"
 }
 
 // runTab is the server tab a run is shown on.
 func runTab(r PackageRun) string {
-	if r.Mode == PackagesInstall || r.Mode == PackagesRemove {
+	if r.Mode == PackagesInstall || r.Mode == PackagesRemove || r.Mode == PackagesScript {
 		return "apps"
 	}
 	return "updates"
