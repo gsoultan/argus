@@ -154,6 +154,9 @@ type StoreAnswer struct {
 	User    string `json:"user,omitempty"`
 	Level   string `json:"level,omitempty"`
 	Version string `json:"version,omitempty"`
+	// Server names what answered when one engine covers several: "valkey"
+	// for a Valkey on the redis engine. Empty means the engine's own name.
+	Server  string `json:"server,omitempty"`
 	Session string `json:"session,omitempty"`
 	// Ops are the operations this level may ask for, so the console offers
 	// only those.

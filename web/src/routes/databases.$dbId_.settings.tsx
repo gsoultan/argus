@@ -319,8 +319,8 @@ function StoreConnection({ db }: { db: Database }) {
               description="Empty: the agent signs in as root over the server’s socket, as Debian, Ubuntu and MariaDB 10.4+ allow root to. Otherwise a .cnf on the server, private to root, whose [client] user and password may create users and grant. It is read there and never sent or stored." />
           )}
           {db.engine === 'redis' && (
-            <TextInput label="redis.conf" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
-              description="The agent reads requirepass from this file on the server to sign in as admin, only to give and take each person’s ACL user. If the default user has no password, nothing is read." />
+            <TextInput label="Config file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
+              description="The redis.conf or valkey.conf the agent reads requirepass from on the server to sign in as admin, only to give and take each person’s ACL user. If the default user has no password, nothing is read." />
           )}
           <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
         </Stack>
@@ -330,7 +330,7 @@ function StoreConnection({ db }: { db: Database }) {
           {db.engine === 'mysql'
             ? 'Each person gets a MySQL user named argus-<login>-<level> with only the level’s privileges on this database. Between sessions it is locked; a session unlocks it with a one-time password, and the last one to close locks it again and ends its connections. Users are kept so views and routines they define keep working. MySQL 5.7 or MariaDB 10.4 and later. Argus never touches a user whose name does not start with argus-.'
             : db.engine === 'redis'
-            ? 'Each person gets a Redis ACL user named argus-<login>-<level> with a one-time password for their session, and it is deleted when their last session closes. Redis 6 or later. Argus never touches a user whose name does not start with argus-.'
+            ? 'Each person gets a Redis ACL user named argus-<login>-<level> with a one-time password for their session, and it is deleted when their last session closes. Redis 6 or later, or Valkey. Argus never touches a user whose name does not start with argus-.'
             : 'The agent runs rabbitmqctl on the server to add a user named argus-<login>-<level> with its tag and permissions on this vhost, the password on standard input, and deletes it when the last session closes. Argus never touches a user whose name does not start with argus-.'}
         </Text>
       </SectionCard>

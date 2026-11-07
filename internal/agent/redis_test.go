@@ -21,7 +21,8 @@ import (
 /*
 Against a real Redis: the test starts redis-server on a unix socket in a temp
 directory, with a requirepass in its redis.conf, when redis-server is on PATH,
-and skips otherwise.
+and skips otherwise. ARGUS_TEST_REDIS_SERVER names another binary, such as
+valkey-server, to run every Redis test against that instead.
 */
 
 type redisServer struct {
@@ -30,9 +31,18 @@ type redisServer struct {
 
 func startRedis(t *testing.T) redisServer {
 	t.Helper()
-	bin, err := exec.LookPath("redis-server")
+	name := os.Getenv("ARGUS_TEST_REDIS_SERVER")
+	if name == "" {
+		name = "redis-server"
+	}
+	return startRedisBin(t, name)
+}
+
+func startRedisBin(t *testing.T, name string) redisServer {
+	t.Helper()
+	bin, err := exec.LookPath(name)
 	if err != nil {
-		t.Skip("redis-server is not on PATH")
+		t.Skip(name + " is not on PATH")
 	}
 	dir, err := os.MkdirTemp("", "argus-redis-")
 	if err != nil {
@@ -57,7 +67,7 @@ func startRedis(t *testing.T) redisServer {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatal("redis-server did not start")
+	t.Fatal(name + " did not start")
 	return redisServer{}
 }
 
@@ -388,5 +398,50 @@ func TestRedisRefusesARemoteHost(t *testing.T) {
 		Name: "0", Host: "127.0.0.1", Port: 6379, Level: tunnel.LevelRead}, dir)
 	if err == nil || !strings.Contains(err.Error(), "not for redis") {
 		t.Fatalf("a postgres grant opened redis: %v", err)
+	}
+}
+
+func TestValkeyNamesItself(t *testing.T) {
+	srv := startRedisBin(t, "valkey-server")
+	dir := t.TempDir()
+	svc := Redis(StoreConfig{Verifier: &tunnel.GrantVerifier{Host: "cache-01"}, RecordDir: dir})
+	srv.admin(t, "SET", "greeting", "hello")
+
+	h := openRedis(t, srv, svc, tunnel.LevelRead, dir)
+	if h.ready.Server != "valkey" || h.ready.Engine != "redis" || h.ready.Version == "" {
+		t.Fatalf("ready: %+v", h.ready)
+	}
+	if a := h.run("GET greeting"); a.Value == nil || a.Value.V != "hello" {
+		t.Fatalf("GET at read: %+v", a)
+	}
+	if a := h.run("SET greeting bye"); a.Value == nil || a.Value.T != "e" || !strings.Contains(a.Value.V, "NOPERM") {
+		t.Fatalf("SET at read should be refused by Valkey's ACL, got %+v", a)
+	}
+	h.close()
+	for _, u := range srv.users(t) {
+		if tunnel.IsStoreUser(u) {
+			t.Fatalf("user %s is still there after its session closed", u)
+		}
+	}
+
+	res := discoverRedis(context.Background(), tunnel.GrantDiscover{Engine: tunnel.EngineRedis, Host: srv.sock, Port: 6399, ConfigPath: srv.conf})
+	if !res.OK || res.Server != "valkey" {
+		t.Fatalf("discover: %+v", res)
+	}
+}
+
+func TestRedisServerOf(t *testing.T) {
+	for _, c := range []struct{ info, server, version, compat string }{
+		{"# Server\r\nredis_version:7.2.4\r\nredis_mode:standalone\r\n", "", "7.2.4", "7.2.4"},
+		{"# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:8.1.1\r\n", "valkey", "8.1.1", "7.2.4"},
+		{"# Server\r\nredis_version:7.2.13\r\nserver_name:valkey\r\n", "valkey", "7.2.13", "7.2.13"},
+	} {
+		s, v, compat := redisServerOf(c.info)
+		if s != c.server || v != c.version || compat != c.compat {
+			t.Errorf("%q: got %q %q %q", c.info, s, v, compat)
+		}
+	}
+	if got := redisConf("/srv/cache/redis.conf"); got != "/srv/cache/redis.conf" {
+		t.Errorf("a named file is read as named, got %s", got)
 	}
 }

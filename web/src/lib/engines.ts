@@ -48,7 +48,7 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
     label: 'Redis',
     noun: 'Redis',
     nameLabel: 'Logical db',
-    nameHint: 'The db sessions open in; SELECT moves between them. One entry covers the whole Redis server.',
+    nameHint: 'The db sessions open in; SELECT moves between them. One entry covers the whole Redis or Valkey server.',
     defaults: { dbname: '0', host: '127.0.0.1', port: 6379, configPath: '/etc/redis/redis.conf' },
     levels: {
       read: 'Look at keys and values. Redis refuses every write.',

@@ -38,6 +38,8 @@ export interface StoreAnswer {
   user?: string
   level?: DBLevel
   version?: string
+  /** 'valkey' when a Valkey answered on the redis engine. */
+  server?: string
   session?: string
   ops?: string[]
 }

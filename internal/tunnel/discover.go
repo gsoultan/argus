@@ -93,6 +93,8 @@ type DiscoverResult struct {
 	OK      bool   `json:"ok"`
 	Error   string `json:"error,omitempty"`
 	Version string `json:"version,omitempty"`
+	// Server is StoreAnswer.Server: "valkey" for a Valkey.
+	Server string `json:"server,omitempty"`
 	// Databases is what was found, in the engine's order: by name, or by
 	// Redis db number.
 	Databases []Discovered `json:"databases,omitempty"`
