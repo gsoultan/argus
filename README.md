@@ -40,6 +40,7 @@ This page is the overview and the reference behind it.
 - [Measured capacity](#measured-capacity)
 - [Not done yet](#not-done-yet)
 - [Running locally](#running-locally)
+- [License](#license)
 
 ## How people get in
 
@@ -668,3 +669,25 @@ docs/admin-recovery.md  what to do when no administrator can sign in to the cons
 packaging/            systemd units, launchd job, packaged config
 scripts/              setup · dev · deps · check · build
 ```
+
+## License
+
+Argus is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+It is free to use, change and share for any noncommercial purpose. That
+includes, whatever their funding:
+
+- nonprofit and charitable organizations
+- schools, universities and public research organizations
+- public safety, health and environmental organizations
+- government institutions
+- personal use, study and hobby projects
+
+Using Argus for a commercial purpose, such as running it inside a business or
+offering it to customers, needs a separate commercial license. To get one,
+open an issue on this repository asking for a commercial license.
+
+Argus is source-available, not open source in the OSI sense, because the
+license restricts commercial use.
+
+Contributions are welcome. By sending one you agree that it can be released
+under this license and under the commercial license as well.
