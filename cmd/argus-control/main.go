@@ -16,6 +16,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	awscloud "github.com/gsoultan/argus/internal/control/cloud/aws"
 	"github.com/gsoultan/argus/internal/control/confexpand"
 	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
@@ -83,6 +84,10 @@ type config struct {
 	// deployment's key, handed to phones from the console's add-a-device
 	// page. Empty sends them to the project's release of this version.
 	AndroidAPK string `yaml:"android_apk,omitempty"`
+	// Cloud says how argus-control reaches cloud accounts under Cloud in
+	// the console. There are no keys here: each account is reached by
+	// assuming a role in it from this host's own identity.
+	Cloud *cloudConfig `yaml:"cloud,omitempty"`
 	// AgentReleaseCheck is whether the console asks every few hours for the
 	// newest release, to offer agents a version newer than its own. On
 	// unless set to false.
@@ -587,6 +592,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	// After the store is set: the archive reads and writes it.
 	go api.RunRecordingArchive(ctx, time.Hour)
+	api.SetCloudProvider(awscloud.New(cfg.Cloud.awsOptions()))
+	go api.RunCloudSync(ctx, control.CloudSyncInterval)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process
 	// only ever sees plain HTTP.
@@ -1169,4 +1176,27 @@ func runAuditVerify(configPath string) error {
 	fmt.Println("  treat this as an incident.")
 	os.Exit(1)
 	return nil
+}
+
+// cloudConfig is the cloud block of the config.
+type cloudConfig struct {
+	AWS struct {
+		// Profile is a named profile in the shared AWS config, for example
+		// one whose credential_process is IAM Roles Anywhere's helper.
+		Profile string `yaml:"profile,omitempty"`
+		// CredentialsFile is a shared credentials file for a control plane
+		// that is not on AWS. Refused unless only its owner can read it.
+		CredentialsFile string `yaml:"credentials_file,omitempty"`
+		// HomeRegion is where STS is asked; us-east-1 when empty.
+		HomeRegion string `yaml:"home_region,omitempty"`
+	} `yaml:"aws"`
+}
+
+// awsOptions is the AWS provider's options; a missing block is the SDK's
+// default chain.
+func (c *cloudConfig) awsOptions() awscloud.Options {
+	if c == nil {
+		return awscloud.Options{}
+	}
+	return awscloud.Options{Profile: c.AWS.Profile, CredentialsFile: c.AWS.CredentialsFile, HomeRegion: c.AWS.HomeRegion}
 }
