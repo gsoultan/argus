@@ -305,3 +305,59 @@ func TestEnrollRefusesAPlainAddress(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// activitySource is what the android client reads a device's timeline through;
+// the session implements it.
+type activitySource interface {
+	Activity(wait time.Duration) (agent.AndroidActivity, bool)
+}
+
+func TestASessionReadsTheActivityTheAppPushes(t *testing.T) {
+	app := &fakeApp{accept: true}
+	a := NewAgent(t.TempDir(), app, nil, "Android 14", "Pixel 8", "m1")
+	a.PushFrame(make([]byte, 4*4*4), 4, 4, 16)
+
+	// Pushed before the session opens: it should not see this one, only what
+	// happens after it starts.
+	a.PushActivity(`{"kind":"app","package":"com.before"}`)
+
+	dev, err := a.openDevice(agent.AndroidOpen{Person: "dana@example.com", Principal: agent.DeviceControlPrincipal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dev.Close()
+	src, ok := dev.(activitySource)
+	if !ok {
+		t.Fatalf("the session %T does not report activity", dev)
+	}
+
+	a.PushActivity(`{"kind":"app","package":"com.after","title":"After"}`)
+	a.PushActivity(`{"kind":"lock"}`)
+
+	ev, ok := src.Activity(time.Second)
+	if !ok || ev.Kind != "app" || ev.Package != "com.after" {
+		t.Fatalf("first event %+v ok=%v; want the app that opened after the session", ev, ok)
+	}
+	ev, ok = src.Activity(time.Second)
+	if !ok || ev.Kind != "lock" {
+		t.Fatalf("second event %+v ok=%v; want the lock", ev, ok)
+	}
+	// Nothing more: it waits and says so.
+	if ev, ok := src.Activity(10 * time.Millisecond); ok {
+		t.Fatalf("a quiet device reported %+v", ev)
+	}
+}
+
+func TestPushAppsIsReportedInTheFacts(t *testing.T) {
+	a := NewAgent(t.TempDir(), &fakeApp{}, nil, "Android 14", "Pixel 8", "m1")
+	a.PushApps(`{"checked_at":"2026-01-01T00:00:00Z","apps":[{"package":"com.android.chrome","label":"Chrome","version":"131","source":"play"}]}`)
+	a.mu.Lock()
+	got := string(a.appsJSON)
+	a.mu.Unlock()
+	if got == "" {
+		t.Fatal("the pushed apps were not kept for the facts report")
+	}
+	if want := `"com.android.chrome"`; !strings.Contains(got, want) {
+		t.Errorf("kept %q; want it to carry %s", got, want)
+	}
+}

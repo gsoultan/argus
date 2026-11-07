@@ -159,9 +159,56 @@ session opens with no consent prompt because there is no one to ask.
   app depends on `project(":helper")`. CI: `:helper:test :helper:jar` + d8
   before assembleDebug.
 
+## PR 4 — activity timeline + Apps tab
+
+- Timeline: the device's activity is chained into the recording as Meta notes
+  tagged `android-activity`, next to the frames, so a replay shows the context
+  not only the pixels. `AndroidActivity{Kind,Package,Title,Hidden,Text,Password,
+  By}` (`internal/agent/android.go`); Kind ∈ app/lock/unlock/secure/typed/
+  consent/ended. `androidClient.startNotes()` drains `src.Activity(wait)`,
+  drops invalid kinds, and **blanks a password's text** (`if ev.Password {Text=""}`)
+  before chaining via `desktop.Note`. Wired in `desktop.go` after the screen
+  client. Tests: `TestTheDeviceActivityIsChainedIntoTheRecording`,
+  `TestAPasswordIsNeverTypedIntoTheRecording`.
+- Replay: `internal/rdp/replay.go` parses `android-activity` Meta notes (and
+  only those, not `console-account`) into `ReplayInfo.Activity []ReplayActivity`
+  (bounded 5000), carried in the `X-Argus-Replay-Info` header, not the frame
+  buffer. Password flag kept, text already absent. Test:
+  `TestReplayCarriesTheAndroidActivityTimeline`.
+- mobile: `Agent.PushActivity(json)` appends to `acts` (bounded 1024, `actBase`
+  offset), signalled via `nextAct`; `session.Activity(wait)` reads from
+  `actSeen` set to the head at open. `Agent.PushApps(json)` stores `appsJSON`,
+  added to facts as `android_apps`. Tests: `TestASessionReadsTheActivityTheApp
+  Pushes`, `TestPushAppsIsReportedInTheFacts`.
+- Installed apps: facts `android_apps` → `agents.android_apps` JSONB (migration
+  056) → `AndroidAppsFor` (LEFT JOIN LATERAL by hostname) → `GET /api/v1/assets/
+  {id}/android-apps` (`getAndroidApps`, needs seesWholeFleet). `bounded()` caps
+  1000 apps, 256-char text, validates source ∈ play/preinstalled/sideloaded.
+  `internal/control/android_apps.go` + `_test.go`
+  (`TestADevicesInstalledAppsReachTheAppsTab`, `TestAndroidAppsReportIsBounded`).
+  Distinct from host `AppInventory` (databases/listeners/containers).
+- Console: `DeviceReplayTimeline.tsx` (beside `RDPReplay`, click seeks, current
+  event highlighted; `describe()` says "Typed into a password field" with no
+  text). `AndroidAppsOnDevice.tsx` (Apps tab for `kind==='android'`: source
+  filter, search, per-row action-column placeholder + top-right button room for
+  the app-install thread; `fixtureAndroidApps` for the dev build). `live.
+  androidApps(id)`; `rdpReplay` returns `activity`. Tests:
+  `androidApps.test.tsx`, `deviceReplayTimeline.test.tsx` (7 total).
+- Kotlin (device-only, compiles in CI): `ActivityReporter.kt` — `onEvent`
+  reads TYPE_WINDOW_STATE_CHANGED (app in front, skipping Argus's own windows)
+  and TYPE_VIEW_TEXT_CHANGED (**`event.isPassword` → kind typed, password:true,
+  no text**); a screen-on/off/USER_PRESENT receiver → lock/unlock;
+  `frameDark(bool)` → secure (ignored while locked). `consentGiven`/
+  `endedOnDevice` from `DeviceBridge.consent` and the banner Stop button.
+  `InstalledApps.kt` — PackageManager list (FLAG_SYSTEM→preinstalled, installer
+  com.android.vending→play, else sideloaded), pushed on `onServiceConnected`.
+  `ScreenCapture.onImage` samples a 16×16 grid for near-black (FLAG_SECURE
+  blanks the mirror) → `frameDark`. `input_service.xml` now subscribes
+  typeWindowStateChanged|typeViewTextChanged. `ArgusApp` holds `activity:
+  ActivityReporter`, registered in onCreate.
+
 ## Not yet (later PRs)
 
-4. Timeline events (app in front, lock, secure content, consent) and the Apps
-   tab. 5. Linux USB relay. Also: H.264 instead of tiles, an IME for text
-   beyond the focused field, an emulator smoke test, and the ADB pairing
-   handshake proven on a real device.
+5. Linux USB relay. Also: H.264 instead of tiles, an IME for text beyond the
+   focused field, an emulator smoke test, the ADB pairing handshake proven on a
+   real device, and the fake-android daemon reporting the stand-in's apps.

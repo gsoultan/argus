@@ -46,6 +46,9 @@ class InputService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Log.i(ArgusApp.TAG, "accessibility service on")
+        // The service being on is the moment the device is set up to be
+        // watched: a good time to report what is installed.
+        InstalledApps.report(ArgusApp.instance)
     }
 
     override fun onDestroy() {
@@ -54,7 +57,10 @@ class InputService : AccessibilityService() {
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // The device's activity timeline, chained beside the recorded frames.
+        event?.let { ArgusApp.instance.activity.onEvent(it) }
+    }
 
     override fun onInterrupt() {}
 
@@ -213,7 +219,12 @@ class InputService : AccessibilityService() {
         bar.addView(
             Button(this).apply {
                 this.text = getString(R.string.banner_stop)
-                setOnClickListener { ArgusApp.instance.agent.endSessions() }
+                setOnClickListener {
+                    // Ended on the device by whoever holds it, recorded in the
+                    // timeline before the sessions close.
+                    ArgusApp.instance.activity.endedOnDevice(ArgusApp.instance.bridge.who())
+                    ArgusApp.instance.agent.endSessions()
+                }
             },
         )
         val lp = WindowManager.LayoutParams(

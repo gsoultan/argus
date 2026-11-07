@@ -30,6 +30,10 @@ class ArgusApp : Application() {
     lateinit var unattended: UnattendedEngine
         private set
 
+    /** The device's activity timeline, chained beside the recording. */
+    lateinit var activity: ActivityReporter
+        private set
+
     val stateDir: String get() = File(filesDir, "agent").absolutePath
 
     /** The last lines of the agent's log, for the main screen. */
@@ -48,6 +52,8 @@ class ArgusApp : Application() {
         )
         unattended = UnattendedEngine(this, agent)
         bridge.unattended = unattended
+        activity = ActivityReporter(this)
+        activity.register()
         channels()
     }
 

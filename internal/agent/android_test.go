@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/binary"
+	"sync"
 	"testing"
 	"time"
 )
@@ -119,4 +120,134 @@ func TestTheFakePhoneAnswersTextAndKeys(t *testing.T) {
 	if _, _, changed, err := dev.Frame(10 * time.Millisecond); err != nil || changed {
 		t.Errorf("a still screen reported changed=%v err=%v", changed, err)
 	}
+}
+
+// scriptedActivity is a device whose only purpose is to hand the client one
+// activity event, to check what the client does with it.
+type scriptedActivity struct {
+	*FakeAndroid
+	once sync.Once
+	ev   AndroidActivity
+}
+
+func (s *scriptedActivity) Activity(wait time.Duration) (AndroidActivity, bool) {
+	var ev AndroidActivity
+	got := false
+	s.once.Do(func() { ev, got = s.ev, true })
+	if got {
+		return ev, true
+	}
+	time.Sleep(wait)
+	return AndroidActivity{}, false
+}
+
+func TestTheDeviceActivityIsChainedIntoTheRecording(t *testing.T) {
+	dev := NewFakeAndroid(256, 512)
+	c, _ := connectAndroid(dev, DeviceControlPrincipal)
+	defer c.Close()
+
+	var mu sync.Mutex
+	var notes []androidActivityNote
+	c.note = func(v any) error {
+		n, ok := v.(androidActivityNote)
+		if !ok {
+			t.Errorf("a note of type %T was written; want an android-activity note", v)
+			return nil
+		}
+		mu.Lock()
+		notes = append(notes, n)
+		mu.Unlock()
+		return nil
+	}
+	c.startNotes()
+
+	// The fake announces the app in front first, then follows the input: a
+	// lock, then a typed event.
+	if err := c.Play(AndroidInput{Type: "device", Name: "lock"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Play(AndroidInput{Type: "text", Text: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+
+	kinds := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		var ks []string
+		for _, n := range notes {
+			ks = append(ks, n.Kind)
+		}
+		return ks
+	}
+	waitFor(t, time.Second, func() bool {
+		ks := kinds()
+		return len(ks) >= 3 && ks[0] == "app" && hasStr(ks, "lock") && hasStr(ks, "typed")
+	}, "the app, lock and typed events were chained")
+
+	mu.Lock()
+	for _, n := range notes {
+		if n.Type != "android-activity" {
+			t.Errorf("a note was tagged %q; want android-activity", n.Type)
+		}
+		if n.Kind == "typed" && n.Text != "hello" {
+			t.Errorf("the typed event carried %q; want the text", n.Text)
+		}
+	}
+	mu.Unlock()
+}
+
+func TestAPasswordIsNeverTypedIntoTheRecording(t *testing.T) {
+	dev := &scriptedActivity{FakeAndroid: NewFakeAndroid(256, 512),
+		ev: AndroidActivity{Kind: "typed", Password: true, Text: "hunter2"}}
+	c, _ := connectAndroid(dev, DeviceControlPrincipal)
+	defer c.Close()
+
+	var mu sync.Mutex
+	var got *androidActivityNote
+	c.note = func(v any) error {
+		n := v.(androidActivityNote)
+		if n.Kind == "typed" {
+			mu.Lock()
+			got = &n
+			mu.Unlock()
+		}
+		return nil
+	}
+	c.startNotes()
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return got != nil
+	}, "the typed-into-a-password event was chained")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !got.Password {
+		t.Error("the event lost that it was a password field")
+	}
+	if got.Text != "" {
+		t.Errorf("the password text %q reached the recording", got.Text)
+	}
+}
+
+func waitFor(t *testing.T, d time.Duration, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting: %s", what)
+}
+
+func hasStr(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }

@@ -94,6 +94,8 @@ class DeviceBridge(private val app: ArgusApp) : Device {
             }
             main.post { ConsentNotification.clear(app) }
             if (!p.accepted) return false
+            // Accepted on the device: recorded in the timeline as who said yes.
+            app.activity.consentGiven(person)
             p.projection?.let { AgentService.capture(app, it) }
             return true
         } finally {
