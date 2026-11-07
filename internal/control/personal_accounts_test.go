@@ -494,3 +494,51 @@ func TestPersonSettingThroughTheAPI(t *testing.T) {
 		t.Fatalf("an operator read someone's servers: %d", w.Code)
 	}
 }
+
+// Someone asking what they may do with their own ssh client gets their own
+// access and nobody else's, and a server where they hold only shared accounts
+// says off rather than borrowing a team-mate's setting.
+func TestMyServersIsOnlyMine(t *testing.T) {
+	a, s, h, _ := enrollAPI(t)
+	direct := testAsset(t, s, "ops")
+	shared := testAsset(t, s, "ops")
+	budi, _ := newAccount(t, s, "operator")
+	citra, _ := newAccount(t, s, "operator")
+	a.UserTokens["budi-token"] = budi
+	a.UserTokens["citra-token"] = citra
+
+	for _, put := range []struct{ asset, body string }{
+		{direct.ID, `{"email":"` + budi + `","principals":[],"personalAccounts":true,"directSsh":"approve","sudo":true}`},
+		{shared.ID, `{"email":"` + budi + `","principals":["ops"],"personalAccounts":false}`},
+		{shared.ID, `{"email":"` + citra + `","principals":[],"personalAccounts":true,"directSsh":"allow"}`},
+	} {
+		if w := do(t, h, http.MethodPut, "/api/v1/assets/"+put.asset+"/assignments", "admin-token", put.body); w.Code != http.StatusOK {
+			t.Fatalf("assign: %d %s", w.Code, w.Body)
+		}
+	}
+
+	if w := do(t, h, http.MethodGet, "/api/v1/me/servers", "", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous: %d", w.Code)
+	}
+	w := do(t, h, http.MethodGet, "/api/v1/me/servers", "budi-token", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("mine: %d %s", w.Code, w.Body)
+	}
+	var mine []MyServer
+	if err := json.Unmarshal(w.Body.Bytes(), &mine); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]MyServer{}
+	for _, m := range mine {
+		got[m.Hostname] = m
+	}
+	if len(got) != 2 {
+		t.Fatalf("want my two servers, got %+v", mine)
+	}
+	if m := got[direct.Hostname]; !m.PersonalAccount || !m.Sudo || m.DirectSSH != DirectSSHApprove {
+		t.Errorf("direct server: %+v", m)
+	}
+	if m := got[shared.Hostname]; m.PersonalAccount || m.DirectSSH != DirectSSHOff {
+		t.Errorf("a shared-only server took someone else's direct SSH: %+v", m)
+	}
+}

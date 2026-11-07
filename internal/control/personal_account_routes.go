@@ -148,3 +148,37 @@ func (a *API) getPersonServers(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, list)
 }
+
+// MyServer is what the signed-in person may do on one server with their own
+// account: whether they have one there, and whether they may SSH straight to
+// it. It is the console's answer to "can I use my own ssh client here?".
+type MyServer struct {
+	Hostname        string `json:"hostname"`
+	PersonalAccount bool   `json:"personalAccount"`
+	Sudo            bool   `json:"sudo"`
+	// DirectSSH is off, approve or allow, by the same rule the agent is given:
+	// their own setting on the server if they have one, else the most open of
+	// their teams.
+	DirectSSH string `json:"directSsh"`
+}
+
+// getMyServers lists the signed-in person's own access, for themselves only.
+// It is the same computation as an admin's view of them, narrowed to the
+// fields that answer their question, so the two cannot disagree.
+func (a *API) getMyServers(w http.ResponseWriter, r *http.Request, email string) {
+	list, err := a.store.PersonServers(r.Context(), normaliseEmail(email))
+	if err != nil {
+		a.fail(w, "my servers", err)
+		return
+	}
+	out := make([]MyServer, 0, len(list))
+	for _, p := range list {
+		direct := p.DirectSSH
+		if !p.PersonalAccount || direct == "" {
+			direct = DirectSSHOff
+		}
+		out = append(out, MyServer{Hostname: p.Hostname, PersonalAccount: p.PersonalAccount,
+			Sudo: p.PersonalAccount && p.Sudo, DirectSSH: direct})
+	}
+	writeJSON(w, http.StatusOK, out)
+}

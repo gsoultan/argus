@@ -27,6 +27,10 @@ and keeps the record.
 	file-op list     PATH         → JSON listing on stdout
 	file-op download PATH         → the file's bytes on stdout
 	file-op upload   PATH [-f]    → stdin written to PATH; -f replaces a file
+	file-op mkdir    PATH         → a new folder; JSON answer on stdout
+	file-op rename   PATH NEWPATH → moved, never over something that exists
+	file-op delete   PATH         → a file, link or empty folder removed
+	file-op preview  PATH start|end → up to MaxPreview bytes, as JSON
 
 A failure is one line on stderr and exit status 1.
 */
@@ -38,7 +42,7 @@ func RunFileOp(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if len(args) < 2 {
-		return fail(errors.New("usage: file-op list|download|upload PATH [-f]"))
+		return fail(errors.New("usage: file-op list|download|upload|mkdir|rename|delete|preview PATH [ARG]"))
 	}
 	path, err := resolvePath(args[1])
 	if err != nil {
@@ -74,10 +78,128 @@ func RunFileOp(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err := writeFile(path, stdin, overwrite); err != nil {
 			return fail(err)
 		}
+	case "mkdir", "rename", "delete", "preview":
+		ans, err := simpleOp(args[0], path, args[2:])
+		if err != nil {
+			return fail(err)
+		}
+		if err := json.NewEncoder(stdout).Encode(ans); err != nil {
+			return fail(err)
+		}
 	default:
 		return fail(fmt.Errorf("unknown operation %q", args[0]))
 	}
 	return 0
+}
+
+// simpleOp is one of the operations whose whole answer is one JSON line.
+func simpleOp(op, path string, rest []string) (tunnel.FileAnswer, error) {
+	ans := tunnel.FileAnswer{OK: true, Path: path}
+	switch op {
+	case "mkdir":
+		if err := os.Mkdir(path, 0o755); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return ans, fmt.Errorf("%s already exists", path)
+			}
+			return ans, plainFileError(err)
+		}
+	case "rename":
+		if len(rest) < 1 || rest[0] == "" {
+			return ans, errors.New("rename needs the new name")
+		}
+		to, err := resolvePath(rest[0])
+		if err != nil {
+			return ans, err
+		}
+		if err := renameNoReplace(path, to); err != nil {
+			return ans, err
+		}
+		ans.To = to
+	case "delete":
+		if isRootish(path) {
+			return ans, fmt.Errorf("%s is not deleted from the console", path)
+		}
+		fi, err := os.Lstat(path)
+		if err != nil {
+			return ans, plainFileError(err)
+		}
+		if err := os.Remove(path); err != nil {
+			if fi.IsDir() {
+				// Only an empty folder goes: a recursive delete from a browser
+				// click is a mistake nobody can take back.
+				return ans, fmt.Errorf("%s is not empty; delete what is in it first", path)
+			}
+			return ans, plainFileError(err)
+		}
+	case "preview":
+		from := "start"
+		if len(rest) > 0 {
+			from = rest[0]
+		}
+		return previewFile(path, from)
+	}
+	return ans, nil
+}
+
+// renameNoReplace moves from to to, refusing when to already exists: a
+// rename that silently replaced a file would be a delete nobody asked for.
+// The check and the move are two steps, so a file appearing between them is
+// replaced; where the platform offers it, the move itself refuses.
+func renameNoReplace(from, to string) error {
+	if _, err := os.Lstat(from); err != nil {
+		return plainFileError(err)
+	}
+	if _, err := os.Lstat(to); err == nil {
+		return fmt.Errorf("%s already exists", to)
+	}
+	if err := renameExclusive(from, to); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%s already exists", to)
+		}
+		return plainFileError(err)
+	}
+	return nil
+}
+
+// isRootish is a path whose deletion the console never asks for.
+func isRootish(p string) bool {
+	clean := filepath.Clean(p)
+	if clean == "/" || clean == "." {
+		return true
+	}
+	home, _ := os.UserHomeDir()
+	return home != "" && clean == filepath.Clean(home)
+}
+
+// previewFile reads the start or the end of a regular file, at most
+// MaxPreview bytes, for the console to show without a download.
+func previewFile(path, from string) (tunnel.FileAnswer, error) {
+	ans := tunnel.FileAnswer{OK: true, Path: path}
+	f, err := os.Open(path)
+	if err != nil {
+		return ans, plainFileError(err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return ans, err
+	}
+	if !fi.Mode().IsRegular() {
+		return ans, fmt.Errorf("%s is not a regular file", path)
+	}
+	ans.Size = fi.Size()
+	var off int64
+	if from == "end" && fi.Size() > tunnel.MaxPreview {
+		off = fi.Size() - tunnel.MaxPreview
+	}
+	buf := make([]byte, tunnel.MaxPreview)
+	n, err := f.ReadAt(buf, off)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return ans, err
+	}
+	ans.Content = buf[:n]
+	ans.Truncated = fi.Size() > int64(n)
+	return ans, nil
 }
 
 // resolvePath makes p absolute against the account's home.

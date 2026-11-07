@@ -251,3 +251,107 @@ func TestFilesMoveThroughTheTunnelAndAreAudited(t *testing.T) {
 		t.Errorf("audit chain: upload %v, download %v", up, down)
 	}
 }
+
+// A new folder, a rename, a delete and a preview change or read the server
+// as the account, each answer says what happened, and each is in the audit
+// chain. The refusals that protect people from a click: a rename never
+// replaces a file, a folder with things in it is not deleted, and a preview
+// stops at MaxPreview.
+func TestFileChangesAreDoneAsTheAccountAndAudited(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("files-change")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	e.runFilesAgent(t, cred, host)
+
+	dir := t.TempDir()
+	ticket, _ := signer.IssueTicket("ana@example.com", host, me(t), time.Minute)
+	c := e.openFiles(t, host, me(t), ticket)
+	if m, _ := readMsg(t, c); m.Type != "ready" {
+		t.Fatalf("not ready: %+v", m)
+	}
+
+	folder := filepath.Join(dir, "releases")
+	writeMsg(t, c, filesMessage{Type: "mkdir", Path: folder})
+	if m, _ := readMsg(t, c); m.Type != "done" || m.Op != "mkdir" || m.Path != folder {
+		t.Fatalf("mkdir: %+v", m)
+	}
+	if fi, err := os.Stat(folder); err != nil || !fi.IsDir() {
+		t.Fatalf("no folder on the host: %v", err)
+	}
+	writeMsg(t, c, filesMessage{Type: "mkdir", Path: folder})
+	if m, _ := readMsg(t, c); m.Type != "error" || !strings.Contains(m.Data, "already exists") {
+		t.Fatalf("mkdir twice: %+v", m)
+	}
+
+	a, b := filepath.Join(dir, "a.log"), filepath.Join(dir, "b.log")
+	log := strings.Repeat("0123456789abcdef", 20000) + "THE-END"
+	if err := os.WriteFile(a, []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeMsg(t, c, filesMessage{Type: "rename", Path: a, To: b})
+	if m, _ := readMsg(t, c); m.Type != "error" || !strings.Contains(m.Data, "already exists") {
+		t.Fatalf("a rename replaced a file: %+v", m)
+	}
+	if got, _ := os.ReadFile(b); string(got) != "keep me" {
+		t.Fatal("the refused rename changed the file it would have replaced")
+	}
+	moved := filepath.Join(folder, "a.log")
+	writeMsg(t, c, filesMessage{Type: "rename", Path: a, To: moved})
+	if m, _ := readMsg(t, c); m.Type != "done" || m.To != moved {
+		t.Fatalf("rename: %+v", m)
+	}
+
+	writeMsg(t, c, filesMessage{Type: "preview", Path: moved, From: "end"})
+	pv, _ := readMsg(t, c)
+	if pv.Type != "preview" || !pv.Truncated || pv.Size != int64(len(log)) ||
+		len(pv.Content) != tunnel.MaxPreview || !strings.HasSuffix(string(pv.Content), "THE-END") {
+		t.Fatalf("preview from the end: type %s (%s), %d bytes of %d, truncated %v", pv.Type, pv.Data, len(pv.Content), pv.Size, pv.Truncated)
+	}
+	writeMsg(t, c, filesMessage{Type: "preview", Path: b})
+	if m, _ := readMsg(t, c); m.Type != "preview" || string(m.Content) != "keep me" || m.Truncated {
+		t.Fatalf("preview of a small file: %+v", m)
+	}
+
+	writeMsg(t, c, filesMessage{Type: "delete", Path: folder})
+	if m, _ := readMsg(t, c); m.Type != "error" || !strings.Contains(m.Data, "not empty") {
+		t.Fatalf("a folder with a file in it was deleted: %+v", m)
+	}
+	writeMsg(t, c, filesMessage{Type: "delete", Path: moved})
+	if m, _ := readMsg(t, c); m.Type != "done" || m.Op != "delete" {
+		t.Fatalf("delete: %+v", m)
+	}
+	if _, err := os.Stat(moved); !os.IsNotExist(err) {
+		t.Fatalf("the file is still there: %v", err)
+	}
+	writeMsg(t, c, filesMessage{Type: "delete", Path: "~"})
+	if m, _ := readMsg(t, c); m.Type != "error" {
+		t.Fatalf("the home folder was offered for deletion: %+v", m)
+	}
+
+	events, err := e.store.AuditEvents(context.Background(), 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, ev := range events {
+		if ev.Target != host || ev.ActorEmail != "ana@example.com" || ev.Severity != "notice" {
+			continue
+		}
+		switch {
+		case ev.Action == "file.mkdir" && strings.Contains(ev.Detail, folder),
+			ev.Action == "file.rename" && strings.Contains(ev.Detail, moved),
+			ev.Action == "file.delete" && strings.Contains(ev.Detail, moved),
+			ev.Action == "file.preview" && strings.Contains(ev.Detail, moved) && strings.Contains(ev.Detail, "end"):
+			seen[ev.Action] = true
+		}
+	}
+	for _, want := range []string{"file.mkdir", "file.rename", "file.delete", "file.preview"} {
+		if !seen[want] {
+			t.Errorf("no %s in the audit chain", want)
+		}
+	}
+}

@@ -38,7 +38,15 @@ To the browser, JSON control messages and binary file data:
 	→ {type:download, path}            ← {type:download-start, path}, binary…, {type:download-end, size, sha256}
 	→ {type:upload, path, overwrite}   ← {type:upload-ready, path}; → binary…, {type:upload-end}
 	                                   ← {type:upload-done, path, size, sha256}
+	→ {type:mkdir, path}               ← {type:done, op, path}
+	→ {type:rename, path, to}          ← {type:done, op, path, to}
+	→ {type:delete, path}              ← {type:done, op, path}
+	→ {type:preview, path, from}       ← {type:preview, path, size, truncated, content}
 	                                   ← {type:error, data} ends only that operation
+
+A new folder, a rename and a delete change the server, so each is in the
+audit chain like a transfer. A preview reads a file's contents into the
+console, which is a download of part of it, and is recorded as one.
 */
 
 type filesMessage struct {
@@ -50,6 +58,10 @@ type filesMessage struct {
 	Truncated bool               `json:"truncated,omitempty"`
 	Size      int64              `json:"size,omitempty"`
 	SHA256    string             `json:"sha256,omitempty"`
+	Op        string             `json:"op,omitempty"`
+	To        string             `json:"to,omitempty"`
+	From      string             `json:"from,omitempty"`
+	Content   []byte             `json:"content,omitempty"`
 }
 
 // handleFiles serves GET /api/v1/files.
@@ -214,6 +226,15 @@ func (a *API) relayFiles(ctx context.Context, conn *websocket.Conn,
 				agentGone()
 				return
 			}
+
+		case "mkdir", "rename", "delete", "preview":
+			if !a.fileChange(ctx, request, agentAnswer, sendJSON, m, email, host, principal) {
+				agentGone()
+				return
+			}
+
+		default:
+			_ = sendJSON(filesMessage{Type: "error", Data: "unknown operation " + m.Type})
 		}
 	}
 }
@@ -357,6 +378,67 @@ func (a *API) upload(ctx context.Context, conn *websocket.Conn, st tunnel.Stream
 	_ = sendJSON(filesMessage{Type: "upload-done", Path: ready.Path, Size: n, SHA256: sum})
 	return true
 }
+
+// fileChange relays a new folder, a rename, a delete or a preview, and
+// records it. False means the stream is lost.
+func (a *API) fileChange(ctx context.Context,
+	request func(tunnel.FileRequest) error, agentAnswer func() (tunnel.FileAnswer, error),
+	sendJSON func(filesMessage) error, m filesMessage, email, host, principal string) bool {
+
+	if m.Path == "" || (m.Type == "rename" && m.To == "") {
+		_ = sendJSON(filesMessage{Type: "error", Data: m.Type + " needs a path"})
+		return true
+	}
+	req := tunnel.FileRequest{Op: m.Type, Path: m.Path, To: m.To}
+	if m.Type == "preview" {
+		req.From = "start"
+		if m.From == "end" {
+			req.From = "end"
+		}
+	}
+	if request(req) != nil {
+		return false
+	}
+	ans, err := agentAnswer()
+	if err != nil {
+		return false
+	}
+	if !ans.OK {
+		if m.Type != "preview" {
+			a.auditFiles(ctx, "file."+m.Type, "warning", email, host, fmt.Sprintf(
+				"%s of %s as %s was refused on the server: %s", changeVerb[m.Type], m.Path, principal, ans.Error))
+		}
+		_ = sendJSON(filesMessage{Type: "error", Op: m.Type, Path: ans.Path, Data: ans.Error})
+		return true
+	}
+	switch m.Type {
+	case "preview":
+		if len(ans.Content) > tunnel.MaxPreview {
+			ans.Content = ans.Content[:tunnel.MaxPreview]
+		}
+		sum := sha256.Sum256(ans.Content)
+		a.auditFiles(ctx, "file.preview", "notice", email, host, fmt.Sprintf(
+			"Previewed %s on %s as %s through the console: %d bytes from the %s of a %d-byte file, sha256 %s.",
+			ans.Path, host, principal, len(ans.Content), req.From, ans.Size, hex.EncodeToString(sum[:])))
+		_ = sendJSON(filesMessage{Type: "preview", Path: ans.Path, Size: ans.Size,
+			Truncated: ans.Truncated, Content: ans.Content, From: req.From})
+	case "rename":
+		a.auditFiles(ctx, "file.rename", "notice", email, host, fmt.Sprintf(
+			"Renamed %s to %s on %s as %s through the console.", ans.Path, ans.To, host, principal))
+		_ = sendJSON(filesMessage{Type: "done", Op: m.Type, Path: ans.Path, To: ans.To})
+	default:
+		a.auditFiles(ctx, "file."+m.Type, "notice", email, host, fmt.Sprintf(
+			"%s %s on %s as %s through the console.", changeDone[m.Type], ans.Path, host, principal))
+		_ = sendJSON(filesMessage{Type: "done", Op: m.Type, Path: ans.Path})
+	}
+	return true
+}
+
+var (
+	changeVerb = map[string]string{"mkdir": "Creating the folder", "rename": "Renaming",
+		"delete": "Deleting"}
+	changeDone = map[string]string{"mkdir": "Created the folder", "delete": "Deleted"}
+)
 
 func (a *API) auditFiles(ctx context.Context, action, severity, email, host, detail string) {
 	if _, err := a.store.AppendAudit(ctx, AuditEvent{

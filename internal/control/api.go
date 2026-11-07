@@ -385,6 +385,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/users/{email}/login-name", a.putLoginName)
 	mux.HandleFunc("GET /api/v1/users/{email}/servers", a.getPersonServers)
 	mux.HandleFunc("GET /api/v1/me/server-account", a.getMyServerAccount)
+	mux.HandleFunc("GET /api/v1/me/servers", a.user(a.getMyServers))
 	mux.HandleFunc("PUT /api/v1/me/ssh-key", a.putMySSHKey)
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
