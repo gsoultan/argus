@@ -392,6 +392,48 @@ export interface ServerApplications {
   sources: string[]
 }
 
+/** One app installed on an Android device. */
+export interface ServerAndroidApp {
+  /** The application id, com.example.app. */
+  package: string
+  /** What the launcher shows. */
+  label: string
+  /** The versionName the package reports. */
+  version: string
+  /** Where it came from: 'play', 'preinstalled' or 'sideloaded' (or ''). */
+  source: string
+}
+
+/** What is installed on an Android device, from the app's last report. */
+export interface ServerAndroidApps {
+  /** False when the app has not sent a list: too old, or not checked in. */
+  reported: boolean
+  checkedAt: ISOTime | null
+  apps: ServerAndroidApp[]
+}
+
+/**
+ * One point on a device replay's timeline: something the device did, chained
+ * into the recording next to the screen. `ms` is milliseconds into the
+ * session.
+ */
+export interface ReplayActivity {
+  ms: number
+  /** 'app' | 'lock' | 'unlock' | 'secure' | 'typed' | 'consent' | 'ended'. */
+  kind: string
+  /** The foreground app, for 'app'. */
+  package?: string
+  title?: string
+  /** Whether secure content is now hidden, for 'secure'. */
+  hidden?: boolean
+  /** What was typed, for 'typed' and never for a password. */
+  text?: string
+  /** Whether the field was a password, for 'typed'. */
+  password?: boolean
+  /** Who, for 'consent' and 'ended'. */
+  by?: string
+}
+
 /** What kind of machine a server is, from its agent's host facts. */
 export interface ServerSystemFacts {
   kernel: string

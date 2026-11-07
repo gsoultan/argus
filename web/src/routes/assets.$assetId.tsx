@@ -133,7 +133,12 @@ function AssetDetail() {
         tabs={
           <Tabs value={tab} onChange={(v) => v && setTab(v as ServerTab)} keepMounted={false}>
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
-              {SERVER_TABS.filter((t) => (t !== 'updates' && t !== 'logs') || seesUpdates).map((t) => (
+              {SERVER_TABS.filter((t) => {
+                // A device has no OS packages to update and no host logs to
+                // free: its tabs are Overview, Access, Sessions, Apps, Settings.
+                if (asset.kind === 'android' && (t === 'updates' || t === 'logs')) return false
+                return (t !== 'updates' && t !== 'logs') || seesUpdates
+              }).map((t) => (
                 <Tabs.Tab
                   key={t}
                   value={t}

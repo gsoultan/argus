@@ -398,6 +398,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/assets/{id}/server-logins", a.postServerLogin)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/server-logins/{name}", a.deleteServerLogin)
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
+	mux.HandleFunc("GET /api/v1/assets/{id}/android-apps", a.getAndroidApps)
 	mux.HandleFunc("GET /api/v1/assets/{id}/system", a.getSystem)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)

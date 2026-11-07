@@ -27,6 +27,9 @@ type HostFacts struct {
 	// System is what kind of machine the host is. Nil from an agent older
 	// than system details, which leaves what the row holds.
 	System *HostSystem `json:"system,omitempty"`
+	// AndroidApps is what is installed on a device. Nil from a server or an
+	// app older than app reporting, which leaves what the row holds.
+	AndroidApps *AndroidApps `json:"android_apps,omitempty"`
 }
 
 // DiscoveredHost is an agent reporting from somewhere the inventory has no
@@ -107,9 +110,17 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 		}
 		system = b
 	}
+	var androidApps []byte // nil keeps what the row holds, as for apps
+	if aa := f.AndroidApps.bounded(); aa != nil {
+		b, err := json.Marshal(aa)
+		if err != nil {
+			return err
+		}
+		androidApps = b
+	}
 	_, err := s.db(ctx).Exec(ctx, `
-		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, system, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,now())
+		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, system, android_apps, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,now())
 		ON CONFLICT (hostname) DO UPDATE SET
 			fqdn       = COALESCE(NULLIF(EXCLUDED.fqdn,''), agents.fqdn),
 			machine_id = COALESCE(NULLIF(EXCLUDED.machine_id,''), agents.machine_id),
@@ -119,9 +130,10 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 			accounts   = EXCLUDED.accounts,
 			applications = COALESCE(EXCLUDED.applications, agents.applications),
 			system     = COALESCE(EXCLUDED.system, agents.system),
+			android_apps = COALESCE(EXCLUDED.android_apps, agents.android_apps),
 			updated_at = now()`,
 		hostname, f.FQDN, f.MachineID, f.OS,
-		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system)
+		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system, androidApps)
 	return err
 }
 

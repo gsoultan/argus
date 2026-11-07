@@ -1,0 +1,12 @@
+-- The apps installed on an Android device, its "what runs here".
+--
+-- A device reports the packages its package manager lists -- id, label,
+-- version and where it came from (Play, preinstalled, sideloaded) -- the way
+-- a server reports the databases and brokers it runs. Rides the facts report,
+-- so it changes when the device's apps do.
+--
+-- NULL until an app new enough to report it does, so the console can say "not
+-- reported" rather than show an empty list. A package id, a label and a
+-- version are visible to any app on the device already; nothing here is a
+-- secret.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS android_apps JSONB;

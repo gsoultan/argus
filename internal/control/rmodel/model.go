@@ -95,6 +95,9 @@ type Agent struct {
 	LogsState  *storm.JSON
 	LogsScanID *string
 	LogsScanAt *time.Time
+	// AndroidApps is the apps installed on a device, as its agent last
+	// reported them (migration 056).
+	AndroidApps *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
