@@ -22,11 +22,13 @@ const WEEK = 7 * 24 * 60 * 60 * 1000
  * Whether this server is all right, at a glance: four facts, what the
  * machine is and how busy it is, the last few sessions and the essentials. Each tile opens the tab that owns its detail.
  */
-export function OverviewTab({ asset, sessions, onTab }: {
+export function OverviewTab({ asset, sessions, onTab, canFreeSpace = false }: {
   asset: Asset
   /** This server's sessions, newest first; undefined while loading. */
   sessions: Session[] | undefined
   onTab: (t: ServerTab) => void
+  /** Whether a filling disk links to the Logs tab. */
+  canFreeSpace?: boolean
 }) {
   const navigate = useNavigate()
   const { data: people } = useQuery(assignmentsQuery(asset.id))
@@ -87,7 +89,7 @@ export function OverviewTab({ asset, sessions, onTab }: {
         />
       </SimpleGrid>
 
-      <SystemCard asset={asset} onTab={onTab} />
+      <SystemCard asset={asset} onTab={onTab} canFreeSpace={canFreeSpace} />
 
       <Grid gap="md">
         <Grid.Col span={{ base: 12, lg: 8 }}>

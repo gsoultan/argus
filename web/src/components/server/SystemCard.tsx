@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
+import { Alert, Anchor, Box, Button, Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { Mono, absTime, now as clockNow, relTime } from '~/components/primitives'
 import type { ServerTab } from '~/components/server/tabs'
@@ -83,7 +83,12 @@ const QUIET_AFTER = 3 * 60 * 1000
  *
  * Fleet roles only, like what runs on a server; anyone else sees no card.
  */
-export function SystemCard({ asset, onTab }: { asset: Asset; onTab: (t: ServerTab) => void }) {
+export function SystemCard({ asset, onTab, canFreeSpace = false }: {
+  asset: Asset
+  onTab: (t: ServerTab) => void
+  /** Whether a filling disk offers the Logs tab. */
+  canFreeSpace?: boolean
+}) {
   const { data, isError } = useQuery(systemQuery(asset))
   if (isError) return null
   if (!data) {
@@ -94,13 +99,14 @@ export function SystemCard({ asset, onTab }: { asset: Asset; onTab: (t: ServerTa
       </Card>
     )
   }
-  return <SystemCardBody asset={asset} data={data} onTab={onTab} now={clockNow()} />
+  return <SystemCardBody asset={asset} data={data} onTab={onTab} now={clockNow()} canFreeSpace={canFreeSpace} />
 }
 
-export function SystemCardBody({ asset, data, onTab, now }: {
+export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false }: {
   asset: Asset
   data: ServerSystem
   onTab: (t: ServerTab) => void
+  canFreeSpace?: boolean
   /** The moment "how old" is measured against; a prop so tests can fix it. */
   now: number
 }) {
@@ -156,7 +162,8 @@ export function SystemCardBody({ asset, data, onTab, now }: {
         <Facts rows={factRows(os, data.system, now)} />
         <Box className="system-usage">
           {data.usage
-            ? <UsageMeters usage={data.usage} cpus={data.system?.cpus ?? 0} />
+            ? <UsageMeters usage={data.usage} cpus={data.system?.cpus ?? 0}
+                onFree={canFreeSpace ? () => onTab('logs') : undefined} />
             : <Text size={FS.meta} c="dimmed" p="md">Waiting for the agent&apos;s first report of how busy this server is.</Text>}
         </Box>
       </SimpleGrid>
@@ -258,7 +265,7 @@ function Network({ ifaces }: { ifaces: ServerInterface[] }) {
   )
 }
 
-function UsageMeters({ usage: u, cpus }: { usage: ServerUsage; cpus: number }) {
+function UsageMeters({ usage: u, cpus, onFree }: { usage: ServerUsage; cpus: number; onFree?: () => void }) {
   const memUsed = u.memTotal - u.memAvailable
   const loadLine = `Load ${u.load[0].toFixed(2)} now · ${u.load[1].toFixed(2)} over 5 min · ${u.load[2].toFixed(2)} over 15 min${cpus ? `, on ${plural(cpus, 'CPU')}` : ''}`
   const cpuPct = u.cpuBusy ?? (cpus ? Math.min(100, (u.load[0] / cpus) * 100) : null)
@@ -290,7 +297,7 @@ function UsageMeters({ usage: u, cpus }: { usage: ServerUsage; cpus: number }) {
       {u.disks.length > 0 && (
         <Text size={FS.micro} c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.05em' }}>Disks</Text>
       )}
-      {u.disks.map((d) => <DiskMeter key={d.mount} disk={d} />)}
+      {u.disks.map((d) => <DiskMeter key={d.mount} disk={d} onFree={onFree} />)}
     </Stack>
   )
 }
@@ -305,7 +312,7 @@ export function diskTone(pct: number): 'rose' | 'amber' | undefined {
   return pct >= 95 ? 'rose' : pct >= 90 ? 'amber' : undefined
 }
 
-function DiskMeter({ disk: d }: { disk: ServerDisk }) {
+function DiskMeter({ disk: d, onFree }: { disk: ServerDisk; onFree?: () => void }) {
   const pct = diskFull(d)
   const tone = diskTone(pct)
   return (
@@ -316,7 +323,12 @@ function DiskMeter({ disk: d }: { disk: ServerDisk }) {
         : <><b>{gb(d.used)}</b> of {bytes(d.total)} used</>}
       pct={pct}
       tone={tone}
-      sub={<Text span inherit c={tone ? `${tone}.6` : undefined}>{bytes(d.avail)} free</Text>}
+      sub={<>
+        <Text span inherit c={tone ? `${tone}.6` : undefined}>{bytes(d.avail)} free</Text>
+        {tone && onFree && (
+          <> · <Anchor component="button" type="button" inherit onClick={onFree}>Free space…</Anchor></>
+        )}
+      </>}
       testId={`disk-${d.mount}`}
     />
   )

@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
-  IconNetwork, IconPackage, IconShieldLock, IconTerminal2, type IconProps,
+  IconFileText, IconNetwork, IconPackage, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -22,6 +22,7 @@ import { guard } from '~/lib/guard'
 import { EnrolledAgents } from '~/components/EnrolledAgents'
 import { Organizations } from '~/components/Organizations'
 import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
+import { LogCleanupSettings } from '~/components/LogCleanupSettings'
 import { ControlStatusSection, useStatusProblems } from '~/components/ControlStatus'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
@@ -68,7 +69,7 @@ const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
 type PlatformSectionId = 'organizations' | 'status'
-type ServerSectionId = 'updates'
+type ServerSectionId = 'updates' | 'logs'
 type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId
 
 interface NavItem {
@@ -160,7 +161,10 @@ function Settings() {
   // Operating system updates: read by whoever reads the fleet, changed by
   // an admin or owner, and only against a real control plane.
   const serverItems: NavItem[] = isConfigured() && me && (canEdit || me.role === 'auditor')
-    ? [{ id: 'updates', label: 'Updates', icon: IconPackage, changed: false }]
+    ? [
+      { id: 'updates', label: 'Updates', icon: IconPackage, changed: false },
+      { id: 'logs', label: 'Log cleanup', icon: IconFileText, changed: false },
+    ]
     : []
   const items = [...statusItems, ...policyItems, ...serverItems, ...controlItems, ...platformItems]
   const active: SectionId = items.find((i) => i.id === section)?.id ?? 'access'
@@ -355,6 +359,7 @@ function Settings() {
             )}
 
             {active === 'updates' && serverItems.length > 0 && <PackageUpdateSettings canEdit={canEdit} />}
+            {active === 'logs' && serverItems.length > 0 && <LogCleanupSettings canEdit={canEdit} />}
 
             {active === 'organizations' && platformItems.length > 0 && <Organizations />}
 
