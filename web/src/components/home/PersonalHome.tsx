@@ -14,6 +14,7 @@ import { Label } from '~/components/home/parts'
 import { assetsQuery, databasesQuery, requestsQuery, sessionsQuery } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 import type { AccessRequest, User } from '~/types/domain'
+import { isBroker } from '~/lib/engines'
 
 /**
  * Home for someone who is given servers: theirs, with Connect and Open, what
@@ -98,7 +99,7 @@ export default function PersonalHome({ me }: { me: User | undefined }) {
                       <AnchorLink to="/approvals" size={FS.meta} fw={650}>{waitingOn(d.id)} waiting for you</AnchorLink>
                     )}
                   </Box>
-                  <ButtonLink {...(d.engine === 'rabbitmq' ? { to: '/brokers/$brokerId', params: { brokerId: d.id } } as const : { to: '/databases/$dbId', params: { dbId: d.id } } as const)}
+                  <ButtonLink {...(isBroker(d.engine) ? { to: '/brokers/$brokerId', params: { brokerId: d.id } } as const : { to: '/databases/$dbId', params: { dbId: d.id } } as const)}
                     size="compact-sm" style={{ flexShrink: 0 }}>
                     Open
                   </ButtonLink>
@@ -208,5 +209,5 @@ function YourSessions() {
 
 
 function engineName(e: string): string {
-  return e === 'postgres' ? 'PostgreSQL' : e === 'mysql' ? 'MySQL' : e === 'mongodb' ? 'MongoDB' : e === 'redis' ? 'Redis' : e === 'rabbitmq' ? 'RabbitMQ' : e
+  return e === 'postgres' ? 'PostgreSQL' : e === 'mysql' ? 'MySQL' : e === 'mongodb' ? 'MongoDB' : e === 'redis' ? 'Redis' : e === 'rabbitmq' ? 'RabbitMQ' : e === 'kafka' ? 'Kafka' : e
 }

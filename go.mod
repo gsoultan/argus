@@ -21,6 +21,9 @@ require (
 	github.com/klauspost/compress v1.19.2
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/quic-go/quic-go v0.64.1
+	github.com/twmb/franz-go v1.20.5
+	github.com/twmb/franz-go/pkg/kadm v1.17.1
+	github.com/twmb/franz-go/pkg/kmsg v1.12.0
 	go.mongodb.org/mongo-driver/v2 v2.3.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.58.0
@@ -63,6 +66,7 @@ require (
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect

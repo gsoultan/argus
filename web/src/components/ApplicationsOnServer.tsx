@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Badge, Box, Button, Group, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core'
 import { ButtonLink } from '~/components/links'
+import { isBroker } from '~/lib/engines'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconApps, IconDatabasePlus } from '@tabler/icons-react'
@@ -217,7 +218,7 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
  * its admin password from Valkey's own config file.
  */
 const APP_ENGINES: Record<string, DBEngine> = {
-  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', mongodb: 'mongodb', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq',
+  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', mongodb: 'mongodb', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq', kafka: 'kafka',
 }
 function engineOfApp(kind: string): DBEngine | undefined {
   return APP_ENGINES[kind]
@@ -225,20 +226,21 @@ function engineOfApp(kind: string): DBEngine | undefined {
 const VALKEY_CONF = '/etc/valkey/valkey.conf'
 
 /**
- * Adds a Postgres, MySQL, MariaDB, Redis or RabbitMQ the agent found. A containerised one is
+ * Adds a Postgres, MySQL, MariaDB, Redis, RabbitMQ or Kafka the agent found. A containerised one is
  * not offered: Argus opens it as the host's own admin over a local socket or
  * the server's own tools, which a container does not share.
  *
  * Which port the form starts from: Postgres and Redis each one they listen
  * on. RabbitMQ is reached through its management API, so 15672 when it
  * listens there and otherwise the form's default; its AMQP port is not it.
+ * Kafka from the first port it listens on; 9092 when it listens there.
  * A Redis is one entry per server, so one already in Argus is not offered again.
  */
 function AddFound({ app, engine, added, onAdd }: {
   app: ServerApp; engine: DBEngine; added: Map<number, Database>; onAdd: (port?: number) => void
 }) {
   const what = engine === 'postgres' ? 'postgres account' : engine === 'mysql' ? 'MySQL root account'
-    : engine === 'mongodb' ? 'MongoDB admin file' : engine === 'redis' ? `${app.name} admin` : 'rabbitmqctl'
+    : engine === 'mongodb' ? 'MongoDB admin file' : engine === 'redis' ? `${app.name} admin` : engine === 'kafka' ? 'Kafka admin' : 'rabbitmqctl'
   if (app.container) {
     return (
       <Tooltip multiline w={260} label={`Argus opens this through the server's own ${what}. Inside a container that is not reachable, so it cannot be added from here yet.`}>
@@ -249,9 +251,10 @@ function AddFound({ app, engine, added, onAdd }: {
   const listening = [...new Set(app.listen.map((l) => l.port))].sort((a, b) => a - b)
   const ports: (number | undefined)[] = engine === 'rabbitmq'
     ? [listening.includes(15672) ? 15672 : undefined]
+    : engine === 'kafka' ? [listening.includes(9092) ? 9092 : listening[0]]
     : listening.length ? listening : [undefined]
   const inArgus = (p: number | undefined) =>
-    engine === 'redis' || engine === 'rabbitmq' ? [...added.values()][0]
+    engine === 'redis' || isBroker(engine) ? [...added.values()][0]
       : added.get(p ?? (engine === 'mysql' ? 3306 : engine === 'mongodb' ? 27017 : 5432))
   return (
     <Stack gap={4} align="flex-end">
@@ -261,7 +264,7 @@ function AddFound({ app, engine, added, onAdd }: {
         return (
           <Group key={p ?? 'default'} gap={SP.tight} justify="flex-end" wrap="wrap">
             {db && (
-              <ButtonLink {...(db.engine === 'rabbitmq' ? { to: '/brokers/$brokerId', params: { brokerId: db.id } } as const : { to: '/databases/$dbId', params: { dbId: db.id } } as const)}
+              <ButtonLink {...(isBroker(db.engine) ? { to: '/brokers/$brokerId', params: { brokerId: db.id } } as const : { to: '/databases/$dbId', params: { dbId: db.id } } as const)}
                 size="compact-xs" variant="light" color="teal">
                 In Argus{engine === 'redis' ? '' : ` as ${db.dbname}`}
               </ButtonLink>
@@ -269,7 +272,7 @@ function AddFound({ app, engine, added, onAdd }: {
             {(!db || again) && (
               <Button size="compact-xs" variant={db ? 'subtle' : 'default'}
                 leftSection={<IconDatabasePlus size={12} />} onClick={() => onAdd(p)}>
-                {db ? 'Add another' : engine === 'rabbitmq' ? 'Add a vhost' : 'Add as database'}{ports.length > 1 && p ? ` · ${p}` : ''}
+                {db ? 'Add another' : engine === 'rabbitmq' ? 'Add a vhost' : engine === 'kafka' ? 'Add topics' : 'Add as database'}{ports.length > 1 && p ? ` · ${p}` : ''}
               </Button>
             )}
           </Group>
