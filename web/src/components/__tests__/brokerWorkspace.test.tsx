@@ -98,6 +98,18 @@ describe('BrokerWorkspace', () => {
     expect(ws.sent.find((r) => r.op === 'move')).toMatchObject({ name: 'orders.failed', target: 'orders.created', count: 0 })
   })
 
+  it('refreshes on its poll, not on every answer', async () => {
+    const ws = await open('overview')()
+    await screen.findByText('invoice.render has no consumers')
+    // Answering whatever was asked again must not set off another round:
+    // the agent allows a session so many requests a minute.
+    for (let i = 0; i < 5; i++) {
+      ws.serve(DATA)
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    expect(ws.sent.filter((r) => r.op === 'queues')).toHaveLength(1)
+  })
+
   it('offers no move without the operation', async () => {
     const ws = await open('queues', 'orders.failed', ['overview', 'queues', 'exchanges', 'bindings', 'queue', 'peek'])()
     await waitFor(() => expect(ws.sent.some((r) => r.op === 'queue')).toBe(true))
