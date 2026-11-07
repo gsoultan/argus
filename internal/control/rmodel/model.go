@@ -1116,6 +1116,8 @@ func All() []any {
 		&AssetAssignment{},
 		&AssetTeamAssignment{},
 		&AuditEvent{},
+		&CloudAccount{},
+		&CloudResource{},
 		&Database{},
 		&DatabaseAssignment{},
 		&DatabaseBackup{},
@@ -1431,4 +1433,59 @@ func (m *PackageUpdateRule) Schema(t *storm.Table) {
 	t.CheckNamed("package_update_rules_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_update_rules_window_minutes_check", "(window_minutes >= 30) AND (window_minutes <= 1440)")
 	t.CheckNamed("package_update_rules_window_start_minute_check", "(window_start_minute >= 0) AND (window_start_minute <= 1439)")
+}
+
+// CloudAccount is table cloud_accounts: an account Argus reaches by
+// assuming a role, with no credential stored (migration 056).
+type CloudAccount struct {
+	ID          [16]byte
+	Provider    string
+	Name        string
+	AccountID   string
+	RoleArn     string
+	Access      string
+	Environment string
+	IdentityArn string
+	Regions     []string
+	ConnectedBy string
+	ConnectedAt time.Time
+	SyncedAt    *time.Time
+	SyncErrors  storm.JSON
+	ArchivedAt  *time.Time
+	ArchivedBy  *string
+}
+
+func (m *CloudAccount) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Access).Default("'read'::text")
+	t.Col(&m.Environment).Default("'production'::text")
+	t.Col(&m.IdentityArn).Default("''::text")
+	t.Col(&m.Regions).Default("'{}'::text[]")
+	t.Col(&m.ConnectedAt).Default("now()")
+	t.Col(&m.SyncErrors).Default("'{}'::jsonb")
+	t.CheckNamed("cloud_accounts_access_check", "access = ANY (ARRAY['read'::text, 'manage'::text])")
+	t.CheckNamed("cloud_accounts_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
+	t.CheckNamed("cloud_accounts_provider_check", "provider = 'aws'::text")
+	t.Index(&m.Provider, &m.AccountID).Unique().Where("archived_at IS NULL").Named("cloud_accounts_one_active")
+}
+
+// CloudResource is table cloud_resources: what Argus last read in a cloud
+// account; gone_at marks one that disappeared (migration 056).
+type CloudResource struct {
+	Account    CloudAccount
+	Region     string
+	Kind       string
+	ProviderID string
+	Data       storm.JSON
+	FirstSeen  time.Time
+	SeenAt     time.Time
+	GoneAt     *time.Time
+}
+
+func (m *CloudResource) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Account, &m.Region, &m.Kind, &m.ProviderID)
+	t.Col(&m.Account).ConstraintName("cloud_resources_account_id_fkey")
+	t.Col(&m.FirstSeen).Default("now()")
+	t.Index(&m.Kind, &m.Account).Where("gone_at IS NULL").Named("cloud_resources_present")
 }

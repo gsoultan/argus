@@ -212,6 +212,45 @@ func _assertAuditEventShape(m m0.AuditEvent) {
 	}
 }
 
+// _assertCloudAccountShape fails to compile if m0.CloudAccount gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudAccountShape(m m0.CloudAccount) {
+	type shape m0.CloudAccount
+	_ = shape{
+		m.ID,
+		m.Provider,
+		m.Name,
+		m.AccountID,
+		m.RoleArn,
+		m.Access,
+		m.Environment,
+		m.IdentityArn,
+		m.Regions,
+		m.ConnectedBy,
+		m.ConnectedAt,
+		m.SyncedAt,
+		m.SyncErrors,
+		m.ArchivedAt,
+		m.ArchivedBy,
+	}
+}
+
+// _assertCloudResourceShape fails to compile if m0.CloudResource gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudResourceShape(m m0.CloudResource) {
+	type shape m0.CloudResource
+	_ = shape{
+		m.Account,
+		m.Region,
+		m.Kind,
+		m.ProviderID,
+		m.Data,
+		m.FirstSeen,
+		m.SeenAt,
+		m.GoneAt,
+	}
+}
+
 // _assertConsoleAlertShape fails to compile if m0.ConsoleAlert gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertConsoleAlertShape(m m0.ConsoleAlert) {
