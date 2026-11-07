@@ -363,6 +363,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
 	a.registerPackageRoutes(mux)
+	a.registerLogCleanupRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)
@@ -892,6 +893,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Packages is what the agent found to upgrade and how a run it was
 		// sent is going. Absent from an agent older than package updates.
 		Packages *PackageBeat `json:"packages"`
+		Logs     *LogBeat     `json:"logs"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -992,6 +994,10 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		if o := a.heartbeatPackages(r.Context(), in.Hostname, in.Packages); o != nil {
 			reply["packages"] = o
+		}
+		// Log cleanup, likewise.
+		if o := a.heartbeatLogs(r.Context(), in.Hostname, in.Logs); o != nil {
+			reply["logs"] = o
 		}
 	}
 	if errors.Is(err, ErrAgentUnmatched) {

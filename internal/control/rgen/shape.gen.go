@@ -66,6 +66,10 @@ func _assertAgentShape(m m0.Agent) {
 		m.PackagesCheckID,
 		m.PackagesCheckAt,
 		m.UsageAt,
+		m.Logs,
+		m.LogsState,
+		m.LogsScanID,
+		m.LogsScanAt,
 	}
 }
 
@@ -498,6 +502,8 @@ func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
 		m.DirectSsh,
 		m.AgentAutoUpdate,
 		m.PackageHolds,
+		m.LogCleanPaths,
+		m.LogProtectPaths,
 	}
 }
 
@@ -511,6 +517,60 @@ func _assertHostKeyPinShape(m m0.HostKeyPin) {
 		m.KeyType,
 		m.PinnedAt,
 		m.PinnedBy,
+	}
+}
+
+// _assertLogCleanupRuleShape fails to compile if m0.LogCleanupRule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertLogCleanupRuleShape(m m0.LogCleanupRule) {
+	type shape m0.LogCleanupRule
+	_ = shape{
+		m.ID,
+		m.Position,
+		m.Tag,
+		m.Mode,
+		m.DiskPercent,
+		m.WindowStartMinute,
+		m.WindowMinutes,
+		m.RotatedKeepDays,
+		m.JournalKeepDays,
+		m.JournalMaxMb,
+		m.ActiveOverMb,
+		m.ActiveKeepMb,
+		m.NeedsApproval,
+	}
+}
+
+// _assertLogCleanupRunShape fails to compile if m0.LogCleanupRun gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertLogCleanupRunShape(m m0.LogCleanupRun) {
+	type shape m0.LogCleanupRun
+	_ = shape{
+		m.ID,
+		m.Hostname,
+		m.AssetHostname,
+		m.Trigger,
+		m.State,
+		m.Actions,
+		m.Items,
+		m.Summary,
+		m.PlannedBytes,
+		m.Reason,
+		m.RequestedBy,
+		m.RequestedAt,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.SentAt,
+		m.StartedAt,
+		m.FinishedAt,
+		m.UpdatedAt,
+		m.Step,
+		m.Message,
+		m.Freed,
+		m.Removed,
+		m.RemovedMore,
+		m.Skipped,
+		m.AutoDay,
 	}
 }
 
