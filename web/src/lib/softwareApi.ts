@@ -1,4 +1,4 @@
-import { get, send, upload, type PackageRun } from '~/lib/live'
+import { BASE, TOKEN, get, readReply, send, type PackageRun } from '~/lib/live'
 
 /*
  * Installing and removing software on a Linux server. Here rather than in
@@ -293,6 +293,21 @@ export async function runScript(assetId: string, body: {
   versionId: string; action: 'install' | 'uninstall'; params: Record<string, string>
 }): Promise<PackageRun> {
   return send('POST', `${base(assetId)}/script-runs`, body)
+}
+
+/**
+ * A file sent as multipart/form-data, with the same contract as send(). The
+ * browser sets the boundary, so no Content-Type is given here. Kept out of
+ * live.ts, which every route loads, because only the library uploads.
+ */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    body: form,
+  })
+  return readReply<T>(res)
 }
 
 /** A file as base64, for an upload the control plane checks is a script. */

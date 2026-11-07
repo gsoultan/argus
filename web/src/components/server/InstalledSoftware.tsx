@@ -5,7 +5,7 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconArrowDown, IconArrowUp, IconCheck, IconDots, IconMinus, IconPlus, IconSearch, IconX } from '@tabler/icons-react'
+import { IconArrowDown, IconArrowUp, IconCheck, IconDots, IconPlus, IconSearch, IconX } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
 import { FileInstall } from '~/components/server/FileInstall'
@@ -348,7 +348,7 @@ const KIND: Record<SoftwareChange['kind'], { icon: typeof IconPlus; color: strin
   add: { icon: IconPlus, color: 'teal', label: 'added' },
   upgrade: { icon: IconArrowUp, color: 'azure', label: 'upgraded' },
   downgrade: { icon: IconArrowDown, color: 'amber', label: 'downgraded' },
-  remove: { icon: IconMinus, color: 'rose', label: 'removed' },
+  remove: { icon: IconX, color: 'rose', label: 'removed' },
 }
 
 /** What a preview would change, line by line, and why it cannot go ahead. */

@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
-  IconCode, IconFileText, IconNetwork, IconPackage, IconShieldLock, IconTerminal2, type IconProps,
+  IconFileText, IconNetwork, IconPackage, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -164,7 +164,7 @@ function Settings() {
   const serverItems: NavItem[] = isConfigured() && me && (canEdit || me.role === 'auditor')
     ? [
       { id: 'updates', label: 'Updates', icon: IconPackage, changed: false },
-      { id: 'software', label: 'Software', icon: IconCode, changed: false },
+      { id: 'software', label: 'Software', icon: IconTerminal2, changed: false },
       { id: 'logs', label: 'Log cleanup', icon: IconFileText, changed: false },
     ]
     : []

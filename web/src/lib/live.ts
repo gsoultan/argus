@@ -48,8 +48,8 @@ import type { MyServer,
 // '/' means same-origin; anything else is an absolute base. Same-origin is the
 // supported shape, because the session cookie depends on it.
 const RAW_BASE = import.meta.env.VITE_CONTROL_URL ?? ''
-const BASE = RAW_BASE === '/' ? '' : RAW_BASE.replace(/\/$/, '')
-const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
+export const BASE = RAW_BASE === '/' ? '' : RAW_BASE.replace(/\/$/, '')
+export const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
 
 interface RuntimeConfig { version?: string; fleetUrl?: string }
 
@@ -473,7 +473,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
  * An empty or non-JSON body is read as nothing, and a refusal still carries
  * the server's own message when it sent one.
  */
-async function readReply<T>(res: Response): Promise<T> {
+export async function readReply<T>(res: Response): Promise<T> {
   const text = res.status === 204 ? '' : await res.text()
   let parsed: (T & { error?: string }) | undefined
   if (text.trim() !== '') {
@@ -771,20 +771,6 @@ export async function send<T>(method: string, path: string, body?: unknown): Pro
       ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  })
-  return readReply<T>(res)
-}
-
-/**
- * A file sent as multipart/form-data, with the same contract as send(). The
- * browser sets the boundary, so no Content-Type is given here.
- */
-export async function upload<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
-    body: form,
   })
   return readReply<T>(res)
 }

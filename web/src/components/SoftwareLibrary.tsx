@@ -5,7 +5,7 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconBrandAndroid, IconCode, IconPackage, IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
+import { IconBrandAndroid, IconPackage, IconTerminal2, IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
 import { BatchInstall, type BatchTarget } from '~/components/BatchInstall'
 import { EmptyState, SectionCard } from '~/components/page'
 import { relTime } from '~/components/primitives'
@@ -37,7 +37,7 @@ export function SoftwareLibrary({ canEdit }: { canEdit: boolean }) {
   const [open, setOpen] = useState<string | null>(null)
   return (
     <Stack gap="md">
-      <SectionCard title="Install scripts" icon={IconCode} flush
+      <SectionCard title="Install scripts" icon={IconTerminal2} flush
         description="Scripts for software that is in no repository. Each version is checked automatically, reviewed by someone other than its author, and tried outside production before it runs there."
         action={canEdit ? (
           <Button size="compact-sm" leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>New script</Button>
@@ -45,7 +45,7 @@ export function SoftwareLibrary({ canEdit }: { canEdit: boolean }) {
         {error ? (
           <Alert color="rose" m="md"><Text size={FS.body}>{error instanceof Error ? error.message : String(error)}</Text></Alert>
         ) : isLoading || !data ? <Skeleton h={120} m="md" /> : data.length === 0 ? (
-          <EmptyState compact icon={IconCode} title="No scripts yet."
+          <EmptyState compact icon={IconTerminal2} title="No scripts yet."
             description="Add one for a vendor's installer, an agent with an enrolment token, or a tarball unpacked into /opt." />
         ) : (
           <Table verticalSpacing={8} fz="sm">
