@@ -53,6 +53,23 @@ afterEach(() => {
 })
 
 describe('Home over the stream', () => {
+  it('does not draw an answer that is not a dashboard', async () => {
+    // A catch-all that answers [] used to reach the components and take Home
+    // down with "cannot read count of undefined".
+    vi.spyOn(api, 'home').mockResolvedValue([] as unknown as HomeSnapshot)
+    let release = () => {}
+    act(() => { release = retainHome() })
+    // Reads a field as the cards do, trusting the dashboard's shape.
+    function Count() {
+      const count = useHome((s) => s.live.count)
+      return <div data-testid="count">{count ?? 'none'}</div>
+    }
+    render(<Count />)
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(screen.getByTestId('count').textContent).toBe('none')
+    act(() => release())
+  })
+
   it('applies the whole dashboard, then each change in order, and asks again after a gap', async () => {
     let release = () => {}
     act(() => { release = retainHome() })

@@ -95,6 +95,9 @@ let resync: (() => void) | null = null
 async function fetchWhole(first = false) {
   try {
     const snap = await api.home()
+    // Anything else (an older control plane's catch-all, a proxy's page) is
+    // not a dashboard, and drawing it would take the page down.
+    if (!snap || typeof snap !== 'object' || Array.isArray(snap) || !snap.servers) return
     if (first && state.snap) return
     version = -1
     set({ snap, heardAt: Date.now() })
