@@ -191,6 +191,20 @@ func (s *Signer) ForTenant(id string) *Signer {
 	return &Signer{key: m.Sum(nil), tenant: id, root: root}
 }
 
+// Derive returns HMAC-SHA256(root key, label): a value only this control
+// plane can compute, for something that must be stable across restarts and
+// never stored, such as a cloud role's external id. The label names its use
+// and version, so no two uses can collide.
+func (s *Signer) Derive(label string) []byte {
+	root := s
+	if s.root != nil {
+		root = s.root
+	}
+	m := hmac.New(sha256.New, root.key)
+	m.Write([]byte("argus derive v1:" + label))
+	return m.Sum(nil)
+}
+
 // Tenant is the organization this signer mints for; "" is the default.
 func (s *Signer) Tenant() string { return s.tenant }
 

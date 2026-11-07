@@ -78,6 +78,9 @@ type API struct {
 	// jobs is the backups and restores running through this replica.
 	jobs backupJobs
 
+	// cloud is the cloud providers and the syncs in flight; see cloud_routes.go.
+	cloud cloudState
+
 	signer        *auth.Signer
 	consoleURL    string
 	secureCookies bool
@@ -364,6 +367,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
 	a.registerPackageRoutes(mux)
 	a.registerLogCleanupRoutes(mux)
+	a.registerCloudRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)
