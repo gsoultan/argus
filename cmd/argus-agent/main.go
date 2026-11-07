@@ -95,6 +95,19 @@ func main() {
 		plan := fs.String("plan", "", "the run plan the daemon wrote")
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(agent.RunPackagesApply(*plan))
+	case "logs-scan":
+		// Run by the daemon outside its sandbox: what logs use the disk.
+		fs := flag.NewFlagSet("logs-scan", flag.ExitOnError)
+		req := fs.String("req", "", "the scan request the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunLogsScan(*req, os.Stdout))
+	case "logs-clean":
+		// Run by the daemon in a unit of its own to clean the logs the
+		// console asked for.
+		fs := flag.NewFlagSet("logs-clean", flag.ExitOnError)
+		plan := fs.String("plan", "", "the cleanup plan the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunLogsClean(*plan))
 	case "packages-repair":
 		// Run by the daemon after an update run was cut short.
 		os.Exit(agent.RunPackagesRepair(os.Stdout))
@@ -259,6 +272,8 @@ func runDaemon(args []string) int {
 	// the agent's sandbox.
 	pkgs := agent.NewPackages(*stateDir, exe, log)
 	pkgs.Busy = func() bool { return updater.Restarting() }
+	// Log cleanup: the same, from the same binary.
+	logs := agent.NewLogs(*stateDir, exe, log)
 	updater.Marker = agent.UpdateMarkerPath(*socket)
 	var (
 		openStreams atomic.Int64
@@ -620,6 +635,7 @@ func runDaemon(args []string) int {
 			}
 		}
 		pkgBeat := pkgs.Beat()
+		logBeat := logs.Beat()
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
@@ -635,6 +651,7 @@ func runDaemon(args []string) int {
 			"update":            updater.Status(),
 			"usage":             usageReport,
 			"packages":          pkgBeat,
+			"logs":              logBeat,
 		})
 		// Like an update: only a delivered reply starts or stops anything.
 		if ok {
@@ -648,6 +665,16 @@ func runDaemon(args []string) int {
 				}
 			}
 			pkgs.Handle(ctx, orders)
+			logs.Delivered(logBeat)
+			var logOrders *agent.LogOrders
+			if len(reply.Logs) > 0 && string(reply.Logs) != "null" {
+				logOrders = &agent.LogOrders{}
+				if err := json.Unmarshal(reply.Logs, logOrders); err != nil {
+					log.Error("logs: cannot read the console's orders", "error", err)
+					logOrders = nil
+				}
+			}
+			logs.Handle(ctx, logOrders)
 		}
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
@@ -766,6 +793,12 @@ func runDaemon(args []string) int {
 	go loop(*beatEvery, stop, heartbeat)
 	go updater.Watch(ctx)
 	go pkgs.Watch(ctx)
+	logs.Changed = func() {
+		if rep.Enabled() {
+			heartbeat()
+		}
+	}
+	go logs.Watch(ctx)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what
