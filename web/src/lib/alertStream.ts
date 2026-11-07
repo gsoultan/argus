@@ -1,9 +1,19 @@
-import { alertStreamURL, isConfigured, type ConsoleAlert } from '~/lib/live'
+import { alertStreamURL, isConfigured, streamHome, type ConsoleAlert } from '~/lib/live'
 import type { StreamEvent, StreamStatus } from '~/lib/alerts'
+import type { HomeFrame } from '~/types/domain'
 
 // Loaded after the first paint: the bell's count needs none of this.
 
-type Message = { event: StreamEvent } | { status: StreamStatus } | { hello: true }
+type Message =
+  | { event: StreamEvent }
+  | { status: StreamStatus }
+  | { hello: true }
+  /** Home's dashboard, heard by the tab that holds the stream. */
+  | { home: HomeFrame }
+  /** A tab saying whether it is showing Home; `force` asks for all of it again. */
+  | { homeWant: { tab: string; on: boolean; force?: boolean } }
+  /** A new stream asking every tab whether it is showing Home. */
+  | { homeAsk: true }
 
 /**
  * One stream for every tab of the console in this browser.
@@ -23,6 +33,15 @@ class AlertStream {
   private retry: ReturnType<typeof setTimeout> | null = null
   private stopped = true
 
+  // Home rides this stream. Each tab says whether it shows Home; the tab
+  // holding the stream switches Home on while any does, and off when none.
+  private readonly tab = Math.random().toString(36).slice(2)
+  private myWant = false
+  private wants = new Map<string, boolean>()
+  private streamId: string | null = null
+  private homeOn = false
+  private homeListeners = new Set<(f: HomeFrame) => void>()
+
   subscribe(fn: (m: Message) => void): () => void {
     this.listeners.add(fn)
     fn({ status: this.status })
@@ -34,6 +53,22 @@ class AlertStream {
   }
 
   private emit(m: Message, share: boolean) {
+    if ('home' in m) {
+      for (const fn of this.homeListeners) fn(m.home)
+      if (share) this.bc?.postMessage(m)
+      return
+    }
+    if ('homeWant' in m) {
+      if (this.es) {
+        this.wants.set(m.homeWant.tab, m.homeWant.on)
+        this.syncHome(m.homeWant.on && Boolean(m.homeWant.force))
+      }
+      return
+    }
+    if ('homeAsk' in m) {
+      if (!this.es && this.myWant) this.bc?.postMessage({ homeWant: { tab: this.tab, on: true, force: true } })
+      return
+    }
     if ('hello' in m) {
       // A tab that just started asks how the stream stands; whoever holds it
       // answers.
@@ -96,6 +131,20 @@ class AlertStream {
         try { data = JSON.parse((e as MessageEvent<string>).data) } catch { /* empty event */ }
         this.emit({ event: fn(data) }, true)
       })
+    es.addEventListener('ready', (e) => {
+      let id: string | null = null
+      try { id = (JSON.parse((e as MessageEvent<string>).data) as { stream?: string }).stream ?? null } catch { /* older control plane */ }
+      // A new stream: Home is off on it until someone asks again.
+      this.streamId = id
+      this.homeOn = false
+      this.wants.clear()
+      if (this.myWant) this.wants.set(this.tab, true)
+      this.bc?.postMessage({ homeAsk: true })
+      this.syncHome(true)
+    })
+    es.addEventListener('home', (e) => {
+      try { this.emit({ home: JSON.parse((e as MessageEvent<string>).data) as HomeFrame }, true) } catch { /* not ours */ }
+    })
     on('ready', () => ({ type: 'ready' }))
     on('read', () => ({ type: 'read' }))
     on('alert', (d) => ({ type: 'alert', alert: d as ConsoleAlert }))
@@ -107,7 +156,40 @@ class AlertStream {
     })
   }
 
+  /** Says whether this tab shows Home; `force` asks for the whole of it again. */
+  wantHome(on: boolean, force = false) {
+    this.myWant = on
+    if (this.es) {
+      this.wants.set(this.tab, on)
+      this.syncHome(on && force)
+    } else {
+      this.bc?.postMessage({ homeWant: { tab: this.tab, on, force } })
+    }
+  }
+
+  onHome(fn: (f: HomeFrame) => void): () => void {
+    this.homeListeners.add(fn)
+    return () => this.homeListeners.delete(fn)
+  }
+
+  /** Held by the tab with the stream: tells the control plane what the tabs want. */
+  private syncHome(force: boolean) {
+    const id = this.streamId
+    if (!id) return
+    const want = [...this.wants.values()].some(Boolean)
+    if (want && (force || !this.homeOn)) {
+      this.homeOn = true
+      streamHome(id, true).catch(() => { this.homeOn = false })
+    } else if (!want && this.homeOn) {
+      this.homeOn = false
+      streamHome(id, false).catch(() => { /* the stream closed; nothing is on */ })
+    }
+  }
+
   private stop() {
+    this.streamId = null
+    this.homeOn = false
+    this.wants.clear()
     this.stopped = true
     if (this.retry) clearTimeout(this.retry)
     this.es?.close()
@@ -131,6 +213,27 @@ export function subscribeAlertStream(
     if ('status' in m) onStatus(m.status)
     else if ('event' in m) onEvent(m.event)
   })
+}
+
+/**
+ * Listens to Home's dashboard on the shared stream while this tab shows it.
+ * `want(true)` switches it on (and with `force`, asks for all of it again);
+ * `want(false)` lets it go when no other tab shows Home either.
+ */
+export function subscribeHome(
+  onFrame: (f: HomeFrame) => void,
+  onStatus: (s: StreamStatus) => void,
+): { want: (on: boolean, force?: boolean) => void; stop: () => void } {
+  const offFrames = stream.onHome(onFrame)
+  const offStream = stream.subscribe((m) => { if ('status' in m) onStatus(m.status) })
+  return {
+    want: (on, force) => stream.wantHome(on, force),
+    stop: () => {
+      stream.wantHome(false)
+      offFrames()
+      offStream()
+    },
+  }
 }
 
 /* ── Desktop notifications and sound ─────────────────────────────────────── */

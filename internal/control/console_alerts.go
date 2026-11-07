@@ -703,4 +703,7 @@ func (h *alertHub) closeAll() {
 
 // StopAlertStreams ends every open alert stream; register it with
 // http.Server.RegisterOnShutdown.
-func (a *API) StopAlertStreams() { a.alertHub.closeAll() }
+func (a *API) StopAlertStreams() {
+	a.alertHub.closeAll()
+	a.homeHub.closeAll()
+}
