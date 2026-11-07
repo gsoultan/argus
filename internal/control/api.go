@@ -154,6 +154,11 @@ type API struct {
 	// alertHub is the console alert streams open on this replica; see
 	// console_alerts.go.
 	alertHub alertHub
+	// homeHub builds Home's live dashboard once per organization; see
+	// home_hub.go. homeStreams are the alert streams that can carry it, by
+	// the id each was given, so a console can switch it on and off.
+	homeHub     homeHub
+	homeStreams sync.Map // string -> *homeControl
 
 	// setup is the first-run page's one-time token; see setup.go.
 	setup setupGate
@@ -203,6 +208,11 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 	a := &API{store: store, log: log, UserTokens: map[string]string{},
 		startedAt: time.Now()}
 	a.alertHub.store, a.alertHub.logErr = store, log.Error
+	// Only a real store: a nil *Store in an interface is not a nil interface.
+	if store != nil {
+		a.homeHub.src, a.homeHub.logErr = store, log.Error
+		store.changed = a.homeHub.nudge
+	}
 	return a
 }
 
@@ -413,6 +423,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	// The bell in the console header; see console_alert_routes.go.
 	mux.HandleFunc("GET /api/v1/alerts", a.getConsoleAlerts)
 	mux.HandleFunc("GET /api/v1/alerts/stream", a.getConsoleAlertStream)
+	mux.HandleFunc("POST /api/v1/alerts/stream/{id}/home", a.postStreamHome)
+	mux.HandleFunc("GET /api/v1/home", a.getHome)
 	mux.HandleFunc("POST /api/v1/alerts/read", a.postConsoleAlertsRead)
 	mux.HandleFunc("GET /api/v1/alerts/preferences", a.getAlertPrefs)
 	mux.HandleFunc("PUT /api/v1/alerts/preferences", a.putAlertPrefs)

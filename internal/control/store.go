@@ -55,6 +55,18 @@ type Store struct {
 	// of running it against the default one. On in production, off for
 	// the tests written before organizations existed.
 	Strict bool
+
+	// changed, when set, is told the organization whenever a session is
+	// reported or an audit entry written, so Home's live dashboard can
+	// rebuild without waiting for its tick. Set once, before serving.
+	changed func(tenantID string)
+}
+
+// notifyChanged tells changed, if anyone listens.
+func (s *Store) notifyChanged(ctx context.Context) {
+	if s != nil && s.changed != nil {
+		s.changed(tenantIDOf(ctx))
+	}
 }
 
 // Open connects and applies migrations.
@@ -429,6 +441,11 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 		in.TerminatedBy, in.TerminationReason, in.Kind, in.DatabaseID).Scan(&created)
 	if err != nil {
 		return false, fmt.Errorf("upsert session: %w", err)
+	}
+	// A session starting or ending changes Live now; a report that it is
+	// still running does not.
+	if created || in.State != "active" {
+		s.notifyChanged(ctx)
 	}
 	return created, nil
 }
@@ -860,6 +877,14 @@ type AuditEvent struct {
 // organization's own connection, so two organizations' events never share a
 // transaction, a head or a lock.
 func (s *Store) AppendAudit(ctx context.Context, e AuditEvent) (AuditEvent, error) {
+	out, err := s.appendAudit(ctx, e)
+	if err == nil {
+		s.notifyChanged(ctx)
+	}
+	return out, err
+}
+
+func (s *Store) appendAudit(ctx context.Context, e AuditEvent) (AuditEvent, error) {
 	d := s.tdb(ctx)
 	r := &auditAppend{in: e, done: make(chan struct{})}
 	d.auditMu.Lock()
