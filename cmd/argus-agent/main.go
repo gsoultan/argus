@@ -277,6 +277,8 @@ func runDaemon(args []string) int {
 	// the agent's sandbox.
 	pkgs := agent.NewPackages(*stateDir, exe, log)
 	pkgs.Busy = func() bool { return updater.Restarting() }
+	// A library file (MSI, EXE) is fetched on the agent's own credential.
+	pkgs.Fetch = rep.Download
 	// Log cleanup: the same, from the same binary.
 	logs := agent.NewLogs(*stateDir, exe, log)
 	updater.Marker = agent.UpdateMarkerPath(*socket)

@@ -2123,7 +2123,7 @@ export interface PackageRun {
   assetHostname: string
   assetId?: string
   mode: 'all' | 'security' | 'selected' | 'install' | 'remove' | 'script'
-    | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore'
+    | 'file_install' | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore'
   packages: string[]
   holds: string[]
   reboot: PackageReboot
@@ -2148,7 +2148,7 @@ export interface PackageRun {
   batchId: string | null
   batchPosition: number | null
   /** An install or a removal: what it was asked for, and how. */
-  items?: { name: string; version?: string }[]
+  items?: { name: string; version?: string; label?: string }[]
   purge?: boolean
   startServices?: boolean
   /** The services an install started. */

@@ -96,6 +96,32 @@ plus install/remove fields on package runs in `package_updates.go`. Migration
 - Stacked on PR #182 (Android Apps tab, 056_android_apps.sql) by a merge;
   this branch's migrations are 057, 058, 059.
 
+## Part 4: Windows servers (migration 060)
+
+- Agent (`internal/agent/winsoft.go`, no build tag, tested anywhere;
+  `winsoft_windows.go` reads HKLM Uninstall in both views and launches the
+  helper detached with a pid file). Programs get ids `msi-<guid>` or
+  `app-<hash>` (valid package names) and a `label` (display name); labels
+  ride SoftwareItem/SoftwareChange/InstalledPackage. Removal runs only
+  `msiexec /x {GUID} /qn /norestart` or the program's own
+  QuietUninstallString (never cmd/PowerShell); no quiet uninstaller means
+  protected. Protected: Argus, Edge/WebView2, .NET, VC++ redistributables,
+  "Windows ...", OpenSSH.
+- PackageBeat.Installs (agent and control): modes a non-updatable host still
+  runs; Windows says remove, script, file_install. softwareReady accepts a
+  host with Installs. scriptPlatformFor picks windows scripts for them.
+- Mode `file_install`: library MSI/EXE (software_files platform windows,
+  meta FileWindows{args, signer, subject}). EXE needs silent switches; EXE
+  Authenticode signer read via debug/pe + apk.PKCS7Certificates; MSI
+  signature not read (warned). The daemon downloads before launching (the
+  helper never talks to the control plane). Production needs a done run
+  outside production first. Route POST /assets/{id}/software/file-runs.
+- PowerShell scripts: powershell.exe -NoProfile -NonInteractive
+  -ExecutionPolicy Bypass -File, prelude `$ErrorActionPreference='Stop'`,
+  UTF-8 BOM, params in env, runs as LocalSystem (run-as refused).
+- Console: a Windows (rdp) server's What runs here is the Installed list;
+  the Install drawer offers Library file | PowerShell script.
+
 ## The storm model
 
 `internal/control/rmodel/model.go` must follow every migration: CI runs

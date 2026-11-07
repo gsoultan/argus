@@ -54,7 +54,17 @@ const (
 type SoftwareItem struct {
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
+	// Label is what the console shows for it, on Windows where Name is an
+	// id; never passed to anything that runs.
+	Label string `json:"label,omitempty"`
 }
+
+// ManagerWindows is the "package manager" a Windows server answers with:
+// the Uninstall keys of its registry.
+const ManagerWindows = "windows"
+
+// maxLabel bounds a label.
+const maxLabel = 200
 
 // GrantSoftware is the question a software grant may ask; nil on every
 // other grant.
@@ -136,6 +146,9 @@ func ValidateSoftwareChange(action string, items []SoftwareItem, purge bool) err
 			return fmt.Errorf("%s is named twice", it.Name)
 		}
 		seen[it.Name] = true
+		if len(it.Label) > maxLabel || strings.ContainsAny(it.Label, "\x00\r\n") {
+			return fmt.Errorf("the label of %s cannot be shown", it.Name)
+		}
 		if it.Version != "" {
 			if action == SoftwareRemove {
 				return errors.New("a removal takes no version")
@@ -150,7 +163,9 @@ func ValidateSoftwareChange(action string, items []SoftwareItem, purge bool) err
 
 // InstalledPackage is one package on the server.
 type InstalledPackage struct {
-	Name    string `json:"name"`
+	Name string `json:"name"`
+	// Label is the program's name on Windows, where Name is an id.
+	Label   string `json:"label,omitempty"`
 	Version string `json:"version"`
 	Arch    string `json:"arch,omitempty"`
 	// Origin is the repository the installed version came from, when the
@@ -192,10 +207,11 @@ const (
 
 // SoftwareChange is one package a simulation says would change.
 type SoftwareChange struct {
-	Kind string `json:"kind"`
-	Name string `json:"name"`
-	From string `json:"from,omitempty"`
-	To   string `json:"to,omitempty"`
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+	From  string `json:"from,omitempty"`
+	To    string `json:"to,omitempty"`
 	// Asked is one of the packages the person picked; the rest come with
 	// them.
 	Asked bool `json:"asked,omitempty"`

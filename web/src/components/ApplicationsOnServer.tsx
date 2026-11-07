@@ -31,7 +31,17 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
   const phone = useMediaQuery('(max-width: 48em)') ?? false
   const [tab, setTab] = useState<string | null>('apps')
 
-  if (asset.protocol === 'rdp') return null
+  if (asset.protocol === 'rdp') {
+    // A Windows server: the programs Windows lists, and installing from the
+    // library or a reviewed PowerShell script.
+    if (!isConfigured()) return null
+    return (
+      <SectionCard title="What runs here" icon={IconApps}
+        description="The programs Windows lists under Apps, as the agent read them from the registry. Removing one runs its own quiet uninstaller.">
+        <InstalledSoftware asset={asset} canEdit={canEdit} apps={[]} active />
+      </SectionCard>
+    )
+  }
   const apps = data?.applications ?? []
   const listeners = data?.listeners ?? []
   const containers = data?.containers ?? []

@@ -77,17 +77,19 @@ var protectedApps = map[string]string{
 
 // SoftwareFile is a library file as the console reads it.
 type SoftwareFile struct {
-	ID        string    `json:"id"`
-	Platform  string    `json:"platform"`
-	Kind      string    `json:"kind"`
-	Name      string    `json:"name"`
-	FileName  string    `json:"fileName"`
-	SHA256    string    `json:"sha256"`
-	Size      int64     `json:"size"`
-	App       *FileApp  `json:"app,omitempty"`
-	Note      string    `json:"note"`
-	CreatedBy string    `json:"createdBy"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID       string   `json:"id"`
+	Platform string   `json:"platform"`
+	Kind     string   `json:"kind"`
+	Name     string   `json:"name"`
+	FileName string   `json:"fileName"`
+	SHA256   string   `json:"sha256"`
+	Size     int64    `json:"size"`
+	App      *FileApp `json:"app,omitempty"`
+	// Windows is what an MSI or EXE runs with, and who signed it.
+	Windows   *FileWindows `json:"windows,omitempty"`
+	Note      string       `json:"note"`
+	CreatedBy string       `json:"createdBy"`
+	CreatedAt time.Time    `json:"createdAt"`
 	// Warnings are said once, when the file is added.
 	Warnings   []string `json:"warnings,omitempty"`
 	storageKey string
@@ -132,6 +134,7 @@ func (a *API) registerSoftwareFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/software/files", a.postSoftwareFile)
 	mux.HandleFunc("DELETE /api/v1/software/files/{id}", a.deleteSoftwareFile)
 	mux.HandleFunc("POST /api/v1/assets/{id}/android-apps/runs", a.postAndroidAppRun)
+	mux.HandleFunc("POST /api/v1/assets/{id}/software/file-runs", a.postSoftwareFileRun)
 	mux.HandleFunc("GET /api/v1/report/software-file/{run}", a.agentReporter(a.getRunSoftwareFile))
 }
 
@@ -240,10 +243,11 @@ func (a *API) postSoftwareFile(w http.ResponseWriter, r *http.Request) {
 	switch ext {
 	case ".apk":
 	case ".msi", ".exe":
-		writeErr(w, http.StatusBadRequest, "MSI and EXE files come with installing on Windows, which is not built yet")
+		a.addWindowsFile(w, r, sess.Email, store, tmp, name, ext, size, sum)
 		return
 	default:
-		writeErr(w, http.StatusBadRequest, "the library takes Android packages (.apk); scripts go under Install scripts")
+		writeErr(w, http.StatusBadRequest, "the library takes Android packages (.apk) and Windows installers (.msi, .exe); "+
+			"scripts go under Install scripts")
 		return
 	}
 	info, err := apk.Read(tmp, size)
@@ -278,7 +282,12 @@ func (a *API) postSoftwareFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.storageKey = key
-	if err := a.store.insertSoftwareFile(r.Context(), &f, info); err != nil {
+	meta, err := json.Marshal(info)
+	if err != nil {
+		a.fail(w, "software file", err)
+		return
+	}
+	if err := a.store.insertSoftwareFile(r.Context(), &f, meta); err != nil {
 		a.fail(w, "software file", err)
 		return
 	}
@@ -589,7 +598,7 @@ func (a *API) getRunSoftwareFile(w http.ResponseWriter, r *http.Request) {
 	case !strings.EqualFold(run.Hostname, host):
 		writeErr(w, http.StatusNotFound, "no such run for this device")
 		return
-	case run.Mode != AppInstall || run.SoftwareFileID == nil:
+	case (run.Mode != AppInstall && run.Mode != PackagesFileInstall) || run.SoftwareFileID == nil:
 		writeErr(w, http.StatusBadRequest, "that run installs no file")
 		return
 	case run.State != RunQueued && run.State != RunRunning:
@@ -607,7 +616,11 @@ func (a *API) getRunSoftwareFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	ct := "application/octet-stream"
+	if f.Kind == "apk" {
+		ct = "application/vnd.android.package-archive"
+	}
+	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Length", strconv.FormatInt(f.Size, 10))
 	w.Header().Set("X-Argus-SHA256", f.SHA256)
 	w.WriteHeader(http.StatusOK)
@@ -636,10 +649,19 @@ func scanSoftwareFile(row pgx.Row) (softwareFileRow, error) {
 	if err != nil {
 		return f, err
 	}
-	if f.Kind == "apk" {
+	switch f.Kind {
+	case "apk":
 		var i apk.Info
 		if json.Unmarshal(meta, &i) == nil && i.Package != "" {
 			f.App = fileApp(i)
+		}
+	case "msi", "exe":
+		var m FileWindows
+		if json.Unmarshal(meta, &m) == nil {
+			if m.Args == nil {
+				m.Args = []string{}
+			}
+			f.Windows = &m
 		}
 	}
 	return f, nil
@@ -687,11 +709,7 @@ func (s *Store) softwareFileBySHA(ctx context.Context, sum string) (SoftwareFile
 	return f.SoftwareFile, err
 }
 
-func (s *Store) insertSoftwareFile(ctx context.Context, f *SoftwareFile, info apk.Info) error {
-	meta, err := json.Marshal(info)
-	if err != nil {
-		return err
-	}
+func (s *Store) insertSoftwareFile(ctx context.Context, f *SoftwareFile, meta []byte) error {
 	return s.db(ctx).QueryRow(ctx, `
 		INSERT INTO software_files (platform, kind, name, file_name, sha256, size_bytes, storage_key, meta, note, created_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)

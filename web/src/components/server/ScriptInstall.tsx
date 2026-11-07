@@ -23,7 +23,8 @@ export function isProductionAsset(asset: Asset): boolean {
  */
 export function ScriptInstall({ asset, onClose }: { asset: Asset; onClose: () => void }) {
   const { data, error } = useQuery(scriptsQuery())
-  const usable = (data ?? []).filter((s) => s.platform === 'linux' && s.reviewed)
+  const platform = asset.protocol === 'rdp' ? 'windows' : 'linux'
+  const usable = (data ?? []).filter((s) => s.platform === platform && s.reviewed)
   const [picked, setPicked] = useState<SoftwareScript | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const go = useRunScript(asset.id)

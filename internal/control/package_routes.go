@@ -71,7 +71,7 @@ func (a *API) heartbeatPackages(ctx context.Context, host string, b *PackageBeat
 		a.log.Error("heartbeat: cannot read the update run to send", "error", err)
 		return nil
 	}
-	if !a.attachScript(ctx, host, run) || !a.attachApp(ctx, host, run) {
+	if !a.attachScript(ctx, host, run) || !a.attachApp(ctx, host, run) || !a.attachFile(ctx, host, run) {
 		run = nil
 	}
 	o.Run = run
@@ -183,7 +183,7 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	case PackagesScript:
 		changed = "changed"
 		a.scriptRunEnded(ctx, r)
-	case AppInstall, AppUninstall, AppDisable, AppRestore:
+	case AppInstall, AppUninstall, AppDisable, AppRestore, PackagesFileInstall:
 		changed = "changed"
 	}
 	detail := fmt.Sprintf("The %s on %s (%s, %s) %s: %s %d package%s", runNoun(r), r.AssetHostname,
@@ -210,7 +210,7 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	switch {
 	case r.State == RunFailed || r.State == RunInterrupted:
 		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from ",
-			PackagesScript: "A script on "}[r.Mode]
+			PackagesScript: "A script on ", PackagesFileInstall: "Installing on "}[r.Mode]
 		if verb == "" {
 			verb = "Updating "
 		}
@@ -253,6 +253,12 @@ func describeMode(r PackageRun) string {
 		return r.ScriptAction + " script of " + name
 	case AppInstall, AppUninstall, AppDisable, AppRestore:
 		return describeApp(r)
+	case PackagesFileInstall:
+		name := r.SoftwareFileName
+		if name == "" {
+			name = "a library file"
+		}
+		return name
 	}
 	return "selected: " + strings.Join(r.Packages, ", ")
 }
@@ -267,7 +273,7 @@ func runPhrase(r PackageRun) string {
 		return "removing " + describeMode(r)
 	case PackagesScript:
 		return "running the " + describeMode(r)
-	case AppInstall:
+	case AppInstall, PackagesFileInstall:
 		return "installing " + describeMode(r)
 	case AppUninstall:
 		return "uninstalling " + describeMode(r)
@@ -290,6 +296,8 @@ func runNoun(r PackageRun) string {
 		return "script run"
 	case AppInstall:
 		return "app install"
+	case PackagesFileInstall:
+		return "install"
 	case AppUninstall:
 		return "app uninstall"
 	case AppDisable, AppRestore:
@@ -300,7 +308,8 @@ func runNoun(r PackageRun) string {
 
 // runTab is the server tab a run is shown on.
 func runTab(r PackageRun) string {
-	if r.Mode == PackagesInstall || r.Mode == PackagesRemove || r.Mode == PackagesScript || isAppMode(r.Mode) {
+	if r.Mode == PackagesInstall || r.Mode == PackagesRemove || r.Mode == PackagesScript || isAppMode(r.Mode) ||
+		r.Mode == PackagesFileInstall {
 		return "apps"
 	}
 	return "updates"
@@ -365,7 +374,7 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 		return t, err
 	}
 	if st != nil {
-		v.Reported, v.Supported, v.Reason, v.Checking = true, st.Supported, st.Reason, st.Checking
+		v.Reported, v.Supported, v.Reason, v.Checking, v.Installs = true, st.Supported, st.Reason, st.Checking, st.Installs
 	}
 	v.Report = report
 	policy, err := a.store.PackagePolicy(ctx)

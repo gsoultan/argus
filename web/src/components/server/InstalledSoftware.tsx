@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { IconArrowDown, IconArrowUp, IconCheck, IconDots, IconMinus, IconPlus, IconSearch, IconX } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
+import { FileInstall } from '~/components/server/FileInstall'
 import { ScriptInstall } from '~/components/server/ScriptInstall'
 import { RunState } from '~/components/server/UpdatesTab'
 import type { PackageRun, ScriptReport } from '~/lib/live'
@@ -53,17 +54,22 @@ export function InstalledSoftware({ asset, canEdit, apps, active }: {
   const { data: runs } = useQuery(softwareRunsQuery(asset.id, active))
   const askPreview = usePreviewSoftware(asset.id)
   const busy = (runs?.runs ?? []).some((r) => !runFinished(r.state))
+  // A Windows server lists programs (by id, with their names) and installs
+  // from library files or scripts, not repositories.
+  const windows = data?.manager === 'windows' || asset.protocol === 'rdp'
+  const nameOf = (p: InstalledPackage) => p.label || p.name
 
   const running = useMemo(() => runningIndex(apps), [apps])
   const rows = useMemo(() => {
     const f = filter.trim().toLowerCase()
-    return (data?.installed ?? []).filter((p) => !f || p.name.toLowerCase().includes(f) || (p.summary ?? '').toLowerCase().includes(f))
+    return (data?.installed ?? []).filter((p) => !f || p.name.toLowerCase().includes(f) || (p.label ?? '').toLowerCase().includes(f) ||
+      (p.summary ?? '').toLowerCase().includes(f))
   }, [data, filter])
   const shown = rows.slice(0, 300)
 
   const remove = (p: InstalledPackage) => void notifyRun(async () => {
-    setPreview(await askPreview.mutateAsync({ action: 'remove', items: [{ name: p.name }] }))
-  }, { failure: `Could not preview removing ${p.name}` })
+    setPreview(await askPreview.mutateAsync({ action: 'remove', items: [{ name: p.name, ...(p.label ? { label: p.label } : {}) }] }))
+  }, { failure: `Could not preview removing ${nameOf(p)}` })
   const reinstall = (p: InstalledPackage) => void notifyRun(async () => {
     setPreview(await askPreview.mutateAsync({ action: 'install', items: [{ name: p.name, version: p.version }] }))
   }, { failure: `Could not preview reinstalling ${p.name}` })
@@ -72,8 +78,10 @@ export function InstalledSoftware({ asset, canEdit, apps, active }: {
     <Group justify="space-between" wrap="wrap" gap="xs" mb="xs">
       <Text size={FS.micro} c="dimmed">
         {data?.state === 'ok'
-          ? `${data.manager ?? ''} · ${data.manual ?? 0} asked for, ${data.total ?? 0} with libraries`
-          : 'Read from the server’s package database'}
+          ? windows
+            ? `Windows · ${data.total ?? 0} programs, as Apps lists them`
+            : `${data.manager ?? ''} · ${data.manual ?? 0} asked for, ${data.total ?? 0} with libraries`
+          : windows ? 'Read from the Uninstall keys of the registry' : 'Read from the server’s package database'}
       </Text>
       {canEdit && (
         <Button size="compact-sm" leftSection={<IconPlus size={14} />} disabled={busy}
@@ -99,15 +107,17 @@ export function InstalledSoftware({ asset, canEdit, apps, active }: {
           <TextInput size="xs" placeholder="Filter installed software" value={filter} w={260}
             leftSection={<IconSearch size={12} />} onChange={(e) => setFilter(e.currentTarget.value)}
             aria-label="Filter installed software" />
-          <Switch size="xs" label="Show libraries and dependencies" checked={all} onChange={(e) => setAll(e.currentTarget.checked)} />
+          {!windows && (
+            <Switch size="xs" label="Show libraries and dependencies" checked={all} onChange={(e) => setAll(e.currentTarget.checked)} />
+          )}
         </Group>
         <Table.ScrollContainer minWidth={640} type="native">
           <Table verticalSpacing={6} fz="sm">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Package</Table.Th>
+                <Table.Th>{windows ? 'Program' : 'Package'}</Table.Th>
                 <Table.Th>Version</Table.Th>
-                <Table.Th visibleFrom="sm">From</Table.Th>
+                <Table.Th visibleFrom="sm">{windows ? 'Publisher' : 'From'}</Table.Th>
                 <Table.Th visibleFrom="sm">Size</Table.Th>
                 <Table.Th visibleFrom="sm">Installed</Table.Th>
                 <Table.Th>State</Table.Th>
@@ -118,7 +128,7 @@ export function InstalledSoftware({ asset, canEdit, apps, active }: {
               {shown.map((p) => (
                 <Table.Tr key={p.name + (p.arch ?? '')}>
                   <Table.Td>
-                    <Text size="sm" fw={600}>{p.name}</Text>
+                    <Text size="sm" fw={600}>{nameOf(p)}</Text>
                     {p.summary && <Text size={FS.micro} c="dimmed" lineClamp={1} maw={260}>{p.summary}</Text>}
                   </Table.Td>
                   <Table.Td><Text size={FS.meta} ff="monospace" c="dimmed">{p.version}</Text></Table.Td>
@@ -135,13 +145,13 @@ export function InstalledSoftware({ asset, canEdit, apps, active }: {
                       {!p.protected && (
                         <Menu position="bottom-end" withinPortal>
                           <Menu.Target>
-                            <ActionIcon variant="default" size="sm" aria-label={`Actions for ${p.name}`} disabled={busy}>
+                            <ActionIcon variant="default" size="sm" aria-label={`Actions for ${nameOf(p)}`} disabled={busy}>
                               <IconDots size={14} />
                             </ActionIcon>
                           </Menu.Target>
                           <Menu.Dropdown>
                             <Menu.Item onClick={() => remove(p)}>Remove…</Menu.Item>
-                            <Menu.Item onClick={() => reinstall(p)}>Reinstall</Menu.Item>
+                            {!windows && <Menu.Item onClick={() => reinstall(p)}>Reinstall</Menu.Item>}
                           </Menu.Dropdown>
                         </Menu>
                       )}
@@ -168,7 +178,7 @@ export function InstalledSoftware({ asset, canEdit, apps, active }: {
       </Box>
       <RecentChanges assetId={asset.id} runs={runs?.runs ?? []} canEdit={canEdit} onPreview={setPreview} />
       {installing && (
-        <InstallDrawer asset={asset} manager={data?.manager} onClose={() => setInstalling(false)} />
+        <InstallDrawer asset={asset} manager={data?.manager} windows={windows} onClose={() => setInstalling(false)} />
       )}
       {preview && (
         <ConfirmPreview asset={asset} preview={preview} apps={apps} onClose={() => setPreview(null)} />
@@ -208,7 +218,7 @@ function PackageState({ p, running }: { p: InstalledPackage; running?: ServerApp
 
 /* ── Install ─────────────────────────────────────────────────────────────── */
 
-function InstallDrawer({ asset, manager, onClose }: { asset: Asset; manager?: string; onClose: () => void }) {
+function InstallDrawer({ asset, manager, windows = false, onClose }: { asset: Asset; manager?: string; windows?: boolean; onClose: () => void }) {
   const narrow = useMediaQuery('(max-width: 48em)') ?? false
   const [q, setQ] = useState('')
   const [debounced] = useDebouncedValue(q.trim(), 400)
@@ -219,7 +229,7 @@ function InstallDrawer({ asset, manager, onClose }: { asset: Asset; manager?: st
   const ask = usePreviewSoftware(asset.id)
   const [preview, setPreview] = useState<SoftwarePreview | null>(null)
   const go = useStartSoftwareRun(asset.id)
-  const [source, setSource] = useState<'repo' | 'script'>('repo')
+  const [source, setSource] = useState<'repo' | 'script' | 'file'>(windows ? 'file' : 'repo')
 
   const choose = (p: FoundPackage, v: string | null, s: boolean) => {
     setPicked(p)
@@ -237,12 +247,15 @@ function InstallDrawer({ asset, manager, onClose }: { asset: Asset; manager?: st
       title={<Box><Text fw={600}>Install on {asset.hostname}</Text>
         <Text size={FS.micro} c="dimmed">{source === 'repo'
           ? `From the repositories this server already uses${manager ? ` · ${manager}` : ''}`
+          : source === 'file' ? 'An MSI or EXE from Settings › Software, run quietly'
           : 'From the reviewed scripts in Settings › Software'}</Text></Box>}>
       <Box px="sm" pb="sm">
-        <SegmentedControl size="xs" value={source} onChange={(v) => setSource(v as 'repo' | 'script')}
-          data={[{ value: 'repo', label: 'Repositories' }, { value: 'script', label: 'Script' }]} />
+        <SegmentedControl size="xs" value={source} onChange={(v) => setSource(v as 'repo' | 'script' | 'file')}
+          data={windows
+            ? [{ value: 'file', label: 'Library file' }, { value: 'script', label: 'PowerShell script' }]
+            : [{ value: 'repo', label: 'Repositories' }, { value: 'script', label: 'Script' }]} />
       </Box>
-      {source === 'script' ? <ScriptInstall asset={asset} onClose={onClose} /> : <>
+      {source === 'file' ? <FileInstall asset={asset} onClose={onClose} /> : source === 'script' ? <ScriptInstall asset={asset} onClose={onClose} /> : <>
       <Group align="stretch" gap={0} wrap={narrow ? 'wrap' : 'nowrap'} style={{ minHeight: 480 }}>
         <Box w={narrow ? '100%' : 300} style={{ borderRight: narrow ? undefined : '1px solid var(--mantine-color-default-border)' }}>
           <Box p="sm">
@@ -364,7 +377,7 @@ export function Changes({ preview: pv, hostname }: { preview: SoftwarePreview; h
                   style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
                   <Group gap={SP.snug} wrap="nowrap">
                     <Icon size={14} color={`var(--mantine-color-${k.color}-6)`} aria-label={k.label} />
-                    <Text size="sm" fw={c.asked ? 600 : 400}>{c.name}</Text>
+                    <Text size="sm" fw={c.asked ? 600 : 400}>{c.label || c.name}</Text>
                   </Group>
                   <Text size={FS.micro} ff="monospace" c="dimmed">
                     {c.kind === 'add' ? c.to : c.kind === 'remove' ? c.from : `${c.from} → ${c.to}`}
@@ -397,7 +410,7 @@ function ConfirmPreview({ asset, preview, apps, onClose }: {
   const ask = usePreviewSoftware(asset.id)
   const go = useStartSoftwareRun(asset.id)
   const removing = pv.action === 'remove'
-  const names = pv.items.map((i) => i.name).join(', ')
+  const names = pv.items.map((i) => i.label || i.name).join(', ')
   const short = asset.hostname.split('.')[0] ?? asset.hostname
   const confirmed = !removing || typed.trim() === short || typed.trim() === asset.hostname
   // What runs here knows what is listening; say it before it stops.

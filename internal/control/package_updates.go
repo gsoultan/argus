@@ -151,14 +151,19 @@ type PackageBeat struct {
 	CheckID   string            `json:"check_id,omitempty"`
 	Checking  bool              `json:"checking,omitempty"`
 	Run       *PackageRunStatus `json:"run,omitempty"`
+	// Installs are the software run modes a server that cannot be updated
+	// from the console still does: a Windows server's remove, script and
+	// file_install.
+	Installs []string `json:"installs,omitempty"`
 }
 
 // packagesState is agents.packages_state: what the agent last said about
 // being able to update its server.
 type packagesState struct {
-	Supported bool   `json:"supported"`
-	Reason    string `json:"reason,omitempty"`
-	Checking  bool   `json:"checking,omitempty"`
+	Supported bool     `json:"supported"`
+	Reason    string   `json:"reason,omitempty"`
+	Checking  bool     `json:"checking,omitempty"`
+	Installs  []string `json:"installs,omitempty"`
 }
 
 // Run states.
@@ -586,7 +591,8 @@ func (s *Store) assetForAgent(ctx context.Context, agentHost string) (id, hostna
 // new.
 func (s *Store) recordPackageBeat(ctx context.Context, host string, b PackageBeat) (prev *PackageReport,
 	err error) {
-	st, err := json.Marshal(packagesState{Supported: b.Supported, Reason: b.Reason, Checking: b.Checking})
+	st, err := json.Marshal(packagesState{Supported: b.Supported, Reason: b.Reason, Checking: b.Checking,
+		Installs: validInstalls(b.Installs)})
 	if err != nil {
 		return nil, err
 	}
@@ -738,6 +744,8 @@ type PackageRunOrder struct {
 	// App is what a device needs for an app_* run: the file to fetch for an
 	// install, what it must say about itself, and the package.
 	App *AppRunOrder `json:"app,omitempty"`
+	// File is the library file a file_install run fetches and installs.
+	File *FileRunOrder `json:"file,omitempty"`
 }
 
 // packageRunToSend is the run to put on host's heartbeat reply, marking it
@@ -1150,7 +1158,10 @@ type PackagesView struct {
 	Reported  bool   `json:"reported"`
 	Supported bool   `json:"supported"`
 	Reason    string `json:"reason,omitempty"`
-	Checking  bool   `json:"checking"`
+	// Installs are what a server that cannot be updated here still does
+	// (Windows): remove, script, file_install.
+	Installs []string `json:"installs,omitempty"`
+	Checking bool     `json:"checking"`
 	// CheckAsked is a check the console asked for, not yet answered.
 	CheckAsked bool           `json:"checkAsked"`
 	Report     *PackageReport `json:"report"`

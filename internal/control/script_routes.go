@@ -644,8 +644,9 @@ func (a *API) postScriptRun(w http.ResponseWriter, r *http.Request) {
 	case v.signature == "":
 		writeErr(w, http.StatusConflict, fmt.Sprintf("%s v%d has not been reviewed; it runs nowhere until someone other than its author approves it", v.scriptName, v.Version))
 		return
-	case v.platform != tunnel.ScriptLinux:
-		writeErr(w, http.StatusConflict, "this Argus runs install scripts on Linux servers; Windows scripts run once Windows servers can install software")
+	case v.platform != scriptPlatformFor(t):
+		writeErr(w, http.StatusConflict, fmt.Sprintf("%s v%d is a %s script; this server runs %s scripts",
+			v.scriptName, v.Version, v.platform, scriptPlatformFor(t)))
 		return
 	case in.Action == tunnel.ScriptUninstall && v.Uninstall == "":
 		writeErr(w, http.StatusConflict, fmt.Sprintf("%s v%d has no uninstall script", v.scriptName, v.Version))
@@ -718,6 +719,15 @@ func (a *API) postScriptRun(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusAccepted, run)
+}
+
+// scriptPlatformFor is the scripts a server runs: PowerShell on a Windows
+// server (one that installs without updating), bash on Linux.
+func scriptPlatformFor(t packageTarget) string {
+	if !t.view.Supported && hasMode(t.view.Installs, PackagesScript) {
+		return tunnel.ScriptWindows
+	}
+	return tunnel.ScriptLinux
 }
 
 // isProduction says whether a server's tags make it production, where a

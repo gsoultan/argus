@@ -5,7 +5,7 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconBrandAndroid, IconCode, IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
+import { IconBrandAndroid, IconCode, IconPackage, IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
 import { EmptyState, SectionCard } from '~/components/page'
 import { relTime } from '~/components/primitives'
 import { run as notifyRun } from '~/lib/notify'
@@ -465,39 +465,54 @@ function FilesCard({ canEdit }: { canEdit: boolean }) {
   const add = useUploadSoftwareFile()
   const remove = useRemoveSoftwareFile()
   const [added, setAdded] = useState<SoftwareFile | null>(null)
+  const [winFile, setWinFile] = useState<File | null>(null)
   const pick = (file: File | null) => {
     if (!file) return
     setAdded(null)
+    if (/\.(msi|exe)$/i.test(file.name)) {
+      setWinFile(file)
+      return
+    }
     void notifyRun(async () => setAdded(await add.mutateAsync({ file, note: '' })), { failure: `${file.name} was not added` })
   }
   return (
-    <SectionCard title="Apps for devices" icon={IconBrandAndroid} flush
-      description="Android packages Argus can install on devices from their Apps tab. Each is read before it is kept: the app, its version and whose signature it carries. Removing one removes the file only, never the app from devices."
+    <SectionCard title="Installers" icon={IconPackage} flush
+      description="Android packages for devices, and MSI or EXE installers for Windows servers, installed from their Apps tab. Each is read before it is kept: what it is and who signed it, pinned by its SHA-256. Removing one removes the file only, never what was installed with it."
       action={canEdit ? (
-        <FileButton onChange={pick} accept=".apk">
-          {(props) => <Button {...props} size="compact-sm" loading={add.isPending} leftSection={<IconUpload size={14} />}>Add an APK</Button>}
+        <FileButton onChange={pick} accept=".apk,.msi,.exe">
+          {(props) => <Button {...props} size="compact-sm" loading={add.isPending} leftSection={<IconUpload size={14} />}>Add a file</Button>}
         </FileButton>
       ) : undefined}>
+      {winFile && (
+        <WindowsFileForm file={winFile} onClose={() => setWinFile(null)}
+          onAdded={(f) => { setAdded(f); setWinFile(null) }} />
+      )}
       {added && (
         <Alert color={added.warnings?.length ? 'amber' : 'teal'} m="md" withCloseButton onClose={() => setAdded(null)}>
           <Text size={FS.body} fw={600}>Added {added.name} {added.app?.versionName}</Text>
-          <Text size={FS.micro} c="dimmed" ff="monospace">
-            {added.app?.package} · version code {added.app?.versionCode} · signed {added.app?.scheme} by {added.app && signerShort(added.app.signer)}
-          </Text>
+          {added.app ? (
+            <Text size={FS.micro} c="dimmed" ff="monospace">
+              {added.app.package} · version code {added.app.versionCode} · signed {added.app.scheme} by {signerShort(added.app.signer)}
+            </Text>
+          ) : (
+            <Text size={FS.micro} c="dimmed" ff="monospace">
+              {added.fileName} · runs with {added.windows?.args.join(' ') || 'no arguments'}{added.windows?.subject ? ` · signed by ${added.windows.subject}` : ''}
+            </Text>
+          )}
           {added.warnings?.map((w) => <Text key={w} size={FS.body} mt={4}>{w}</Text>)}
         </Alert>
       )}
       {error ? (
         <Alert color="rose" m="md"><Text size={FS.body}>{error instanceof Error ? error.message : String(error)}</Text></Alert>
       ) : !data ? <Skeleton h={80} m="md" /> : data.length === 0 ? (
-        <EmptyState compact icon={IconBrandAndroid} title="No APKs yet."
-          description="Add a company app's APK; devices install it from their Apps tab, and the person holding the device confirms." />
+        <EmptyState compact icon={IconBrandAndroid} title="No installers yet."
+          description="Add a company app's APK for devices, or an MSI or EXE for Windows servers, with the switches that install it quietly." />
       ) : (
         <Table verticalSpacing={8} fz="sm">
           <Table.Thead>
             <Table.Tr>
               <Table.Th>App</Table.Th>
-              <Table.Th>Version</Table.Th>
+              <Table.Th>Version or switches</Table.Th>
               <Table.Th>Signed by</Table.Th>
               <Table.Th>Size</Table.Th>
               <Table.Th />
@@ -509,9 +524,18 @@ function FilesCard({ canEdit }: { canEdit: boolean }) {
                 <Table.Td>
                   <Text size="sm" fw={600}>{f.name}</Text>
                   <Text size={FS.micro} c="dimmed" ff="monospace">{f.app?.package ?? f.fileName}</Text>
+                  <Badge size="xs" variant="light" color="slate" mt={2}>{f.platform === 'windows' ? `Windows · ${f.kind.toUpperCase()}` : 'Android'}</Badge>
                 </Table.Td>
-                <Table.Td><Text size={FS.meta}>{f.app?.versionName} <Text span c="dimmed" size={FS.micro}>({f.app?.versionCode})</Text></Text></Table.Td>
-                <Table.Td><Text size={FS.micro} ff="monospace" title={f.app?.signer}>{f.app && signerShort(f.app.signer)}</Text></Table.Td>
+                <Table.Td>
+                  {f.app
+                    ? <Text size={FS.meta}>{f.app.versionName} <Text span c="dimmed" size={FS.micro}>({f.app.versionCode})</Text></Text>
+                    : <Text size={FS.micro} ff="monospace">{f.windows?.args.join(' ') || '—'}</Text>}
+                </Table.Td>
+                <Table.Td>
+                  {f.app
+                    ? <Text size={FS.micro} ff="monospace" title={f.app.signer}>{signerShort(f.app.signer)}</Text>
+                    : <Text size={FS.micro} title={f.windows?.signer}>{f.windows?.subject || (f.kind === 'msi' ? 'not read' : 'not signed')}</Text>}
+                </Table.Td>
                 <Table.Td><Text size={FS.meta}>{sizeOf(f.size)}</Text></Table.Td>
                 <Table.Td ta="right">
                   {canEdit && (
@@ -528,5 +552,34 @@ function FilesCard({ canEdit }: { canEdit: boolean }) {
         </Table>
       )}
     </SectionCard>
+  )
+}
+
+/** The name and quiet switches an MSI or EXE is kept with. */
+function WindowsFileForm({ file, onClose, onAdded }: { file: File; onClose: () => void; onAdded: (f: SoftwareFile) => void }) {
+  const add = useUploadSoftwareFile()
+  const exe = /\.exe$/i.test(file.name)
+  const [name, setName] = useState(file.name.replace(/\.(msi|exe)$/i, ''))
+  const [args, setArgs] = useState('')
+  const [note, setNote] = useState('')
+  const save = () => void notifyRun(async () => onAdded(await add.mutateAsync({ file, note, name, args })),
+    { failure: `${file.name} was not added` })
+  return (
+    <Modal opened onClose={onClose} title={`Add ${file.name}`}>
+      <Stack gap={SP.cozy}>
+        <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={120} />
+        <TextInput label={exe ? 'Silent switches' : 'MSI properties (optional)'} ff="monospace"
+          placeholder={exe ? '/S  or  /quiet /norestart  or  /VERYSILENT' : 'ALLUSERS=1 SERVER=reports.internal'}
+          description={exe
+            ? "Required: nobody is there to click Next. The vendor's documentation names them."
+            : 'Argus runs msiexec /i with /qn /norestart; these are added, NAME=value each.'}
+          value={args} onChange={(e) => setArgs(e.currentTarget.value)} />
+        <TextInput label="Note (optional)" value={note} onChange={(e) => setNote(e.currentTarget.value)} maxLength={500} />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button loading={add.isPending} disabled={!name.trim() || (exe && !args.trim())} onClick={save}>Add</Button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }

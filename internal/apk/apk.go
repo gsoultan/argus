@@ -551,3 +551,39 @@ func firstCertPKCS7(b []byte) ([]byte, error) {
 	}
 	return first.FullBytes, nil
 }
+
+// PKCS7Certificates returns every certificate a PKCS#7 SignedData carries,
+// in the order it carries them: an Authenticode signature's (a Windows
+// installer's) as well as a v1 APK signature's.
+func PKCS7Certificates(b []byte) ([][]byte, error) {
+	var ci struct {
+		Type    asn1.ObjectIdentifier
+		Content asn1.RawValue `asn1:"explicit,tag:0"`
+	}
+	if _, err := asn1.Unmarshal(b, &ci); err != nil {
+		return nil, err
+	}
+	var sd struct {
+		Version      int
+		Digests      asn1.RawValue
+		Content      asn1.RawValue
+		Certificates asn1.RawValue `asn1:"optional,tag:0"`
+	}
+	if _, err := asn1.Unmarshal(ci.Content.Bytes, &sd); err != nil {
+		return nil, err
+	}
+	var out [][]byte
+	rest := sd.Certificates.Bytes
+	for len(rest) > 0 {
+		var c asn1.RawValue
+		var err error
+		if rest, err = asn1.Unmarshal(rest, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c.FullBytes)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no certificates")
+	}
+	return out, nil
+}

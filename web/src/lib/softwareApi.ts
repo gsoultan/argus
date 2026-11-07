@@ -10,7 +10,9 @@ import { get, send, upload, type PackageRun } from '~/lib/live'
  */
 
 export interface InstalledPackage {
+  /** On Windows an id (msi-…, app-…); label is the program's name. */
   name: string
+  label?: string
   version: string
   arch?: string
   origin?: string
@@ -38,6 +40,7 @@ export interface FoundPackage {
 export interface SoftwareChange {
   kind: 'add' | 'upgrade' | 'downgrade' | 'remove'
   name: string
+  label?: string
   from?: string
   to?: string
   asked?: boolean
@@ -46,6 +49,8 @@ export interface SoftwareChange {
 export interface SoftwareItem {
   name: string
   version?: string
+  /** What to call it, on Windows where name is an id. */
+  label?: string
 }
 
 export interface SoftwareAnswer {
@@ -139,10 +144,14 @@ export function softwareRunText(r: PackageRun): string {
     const what = item ? `${item.name}${r.mode === 'app_install' && item.version ? ` ${item.version}` : ''}` : 'an app'
     return `${r.state === 'done' ? app[1] : app[0]} ${what}`
   }
+  if (r.mode === 'file_install') {
+    const what = r.softwareFileName ?? r.items?.[0]?.label ?? 'a library file'
+    return `${r.state === 'done' ? 'installed' : 'install'} ${what}`
+  }
   if (r.mode === 'script') {
     return `${r.state === 'done' ? 'ran' : 'run'} the ${r.scriptAction ?? 'install'} script of ${r.scriptName ?? 'a script'}`
   }
-  const items = (r.items ?? []).map((i) => i.name)
+  const items = (r.items ?? []).map((i) => i.label || i.name)
   const what = items.length <= 3 ? items.join(', ') : `${items.length} packages`
   const verb = r.mode === 'remove' ? (r.state === 'done' ? 'removed' : 'remove') : (r.state === 'done' ? 'installed' : 'install')
   const deps = r.state === 'done' ? r.upgraded.filter((u) => !items.includes(u.name)).length : 0
@@ -318,6 +327,13 @@ export interface SoftwareFile {
   note: string
   createdBy: string
   createdAt: string
+  /** What an MSI or EXE runs with, and who signed it. */
+  windows?: {
+    args: string[]
+    /** SHA-256 of the signing certificate; absent when unsigned or an MSI. */
+    signer?: string
+    subject?: string
+  }
   /** Said once, when the file is added. */
   warnings?: string[]
 }
@@ -335,10 +351,18 @@ export async function softwareFiles(platform?: 'android' | 'windows'): Promise<S
   return get(`/api/v1/software/files${platform ? `?platform=${platform}` : ''}`)
 }
 
-export async function uploadSoftwareFile(file: File, note: string): Promise<SoftwareFile> {
+export async function uploadSoftwareFile(file: File, note: string, opts: { name?: string; args?: string } = {}): Promise<SoftwareFile> {
   const form = new FormData()
   form.append('file', file, file.name)
-  return upload(`/api/v1/software/files?note=${encodeURIComponent(note)}`, form)
+  const q = new URLSearchParams({ note })
+  if (opts.name) q.set('name', opts.name)
+  if (opts.args) q.set('args', opts.args)
+  return upload(`/api/v1/software/files?${q.toString()}`, form)
+}
+
+/** Installs a library MSI or EXE on a Windows server. */
+export async function runSoftwareFile(assetId: string, fileId: string): Promise<PackageRun> {
+  return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/software/file-runs`, { fileId })
 }
 
 export async function removeSoftwareFile(id: string): Promise<void> {

@@ -1426,7 +1426,7 @@ func (m *PackageRun) Schema(t *storm.Table) {
 	t.Col(&m.Started).Default("'{}'::text[]")
 	t.Col(&m.ScriptAction).Default("''::text")
 	t.Col(&m.ScriptParams).Default("'{}'::jsonb")
-	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text, 'script'::text, 'app_install'::text, 'app_uninstall'::text, 'app_disable'::text, 'app_restore'::text])")
+	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text, 'script'::text, 'file_install'::text, 'app_install'::text, 'app_uninstall'::text, 'app_disable'::text, 'app_restore'::text])")
 	t.CheckNamed("package_runs_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'waiting'::text, 'queued'::text, 'running'::text, 'rebooting'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
 	t.CheckNamed("package_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")

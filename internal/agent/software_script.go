@@ -210,8 +210,12 @@ func (a *PackageApplier) verifyScript(o *ScriptOrder) (tunnel.ScriptApproval, er
 	if err != nil {
 		return appr, errors.New(strings.TrimSuffix(err.Error(), ".") + ".")
 	}
-	if appr.Platform != tunnel.ScriptLinux {
-		return appr, errors.New("this script is for " + appr.Platform + ", not Linux.")
+	want, os := tunnel.ScriptLinux, "Linux"
+	if a.Windows {
+		want, os = tunnel.ScriptWindows, "Windows"
+	}
+	if appr.Platform != want {
+		return appr, errors.New("this script is for " + appr.Platform + ", not " + os + ".")
 	}
 	want, ok := appr.SHAFor(o.Action)
 	if !ok {

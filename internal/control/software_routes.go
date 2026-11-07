@@ -46,6 +46,9 @@ const (
 	PackagesInstall = "install"
 	PackagesRemove  = "remove"
 	PackagesScript  = "script"
+	// PackagesFileInstall installs an MSI or EXE from the library on a
+	// Windows server.
+	PackagesFileInstall = "file_install"
 
 	previewTTL = 15 * time.Minute
 	// A preview of an install may refresh the package lists first.
@@ -118,7 +121,10 @@ func (a *API) softwareAsset(w http.ResponseWriter, r *http.Request) (packageTarg
 // softwareReady is packagesReady in the words of installing software.
 func softwareReady(w http.ResponseWriter, t packageTarget) bool {
 	switch v := t.view; {
-	case t.asset.Protocol != "ssh":
+	case len(v.Installs) > 0 && v.Enrolled:
+		// A Windows server: no updates, but it installs and removes.
+		return true
+	case t.asset.Protocol != "ssh" && !isWindowsAsset(t.asset):
 		writeErr(w, http.StatusConflict, "installing software from the console is for Linux servers reached over SSH")
 	case !v.Enrolled:
 		writeErr(w, http.StatusConflict, "this server has no enrolled agent; add it from Servers, Add a server")
@@ -648,7 +654,7 @@ func (s *Store) softwarePreview(ctx context.Context, id string) (SoftwarePreview
 
 func (s *Store) softwareRunsFor(ctx context.Context, host string, limit int) ([]PackageRun, error) {
 	rows, err := s.db(ctx).Query(ctx, `SELECT `+packageRunCols+` FROM package_runs
-		WHERE lower(hostname) = lower($1) AND mode IN ('install', 'remove', 'script', 'app_install', 'app_uninstall', 'app_disable', 'app_restore')
+		WHERE lower(hostname) = lower($1) AND mode IN ('install', 'remove', 'script', 'file_install', 'app_install', 'app_uninstall', 'app_disable', 'app_restore')
 		ORDER BY requested_at DESC LIMIT $2`, host, limit)
 	if err != nil {
 		return nil, err

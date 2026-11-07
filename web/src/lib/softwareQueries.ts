@@ -14,7 +14,7 @@ import {
   removeScript,
   reviewScript,
   runScript,
-  runAndroidApp,
+  runAndroidApp, runSoftwareFile,
   softwareFiles,
   uploadSoftwareFile,
   removeSoftwareFile,
@@ -135,8 +135,20 @@ export const softwareFilesQuery = (platform?: 'android' | 'windows') =>
   queryOptions({ queryKey: ['software', 'files', platform ?? 'all'] as const, queryFn: () => softwareFiles(platform) })
 
 export const useUploadSoftwareFile = () =>
-  useScriptMutation((v: { file: File; note: string }) => uploadSoftwareFile(v.file, v.note))
+  useScriptMutation((v: { file: File; note: string; name?: string; args?: string }) =>
+    uploadSoftwareFile(v.file, v.note, { name: v.name, args: v.args }))
 export const useRemoveSoftwareFile = () => useScriptMutation((id: string) => removeSoftwareFile(id))
+
+export const useFileInstall = (assetId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (fileId: string) => runSoftwareFile(assetId, fileId),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['software'] })
+      void qc.invalidateQueries({ queryKey: ['packages'] })
+    },
+  })
+}
 
 export const useAndroidAppRun = (assetId: string) => {
   const qc = useQueryClient()
