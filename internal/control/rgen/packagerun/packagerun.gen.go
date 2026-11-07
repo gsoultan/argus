@@ -48,6 +48,13 @@ type Row struct {
 	BatchID        runtime.Null[[16]byte]
 	BatchPosition  runtime.Null[int32]
 	WindowStart    runtime.Null[time.Time]
+	Items          runtime.JSON
+	Purge          bool
+	StartServices  bool
+	Expect         string
+	PreviewID      runtime.Null[[16]byte]
+	UndoOf         runtime.Null[[16]byte]
+	Started        []string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -86,7 +93,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 28
+const nCols = 35
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -370,6 +377,41 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.WindowStart.V
 		q.ntm++
+	case 29:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.Purge
+		q.nbo++
+	case 30:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.StartServices
+		q.nbo++
+	case 31:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Expect
+		q.ns++
+	case 32:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.PreviewID.V
+		q.nr++
+	case 33:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.UndoOf.V
+		q.nr++
 	}
 }
 
@@ -567,6 +609,13 @@ var (
 	BatchID        = NullUUIDCol{25}
 	BatchPosition  = NullInt32Col{26}
 	WindowStart    = NullTimeCol{27}
+	Items          = JSONCol{28}
+	Purge          = BoolCol{29}
+	StartServices  = BoolCol{30}
+	Expect         = TextCol{31}
+	PreviewID      = NullUUIDCol{32}
+	UndoOf         = NullUUIDCol{33}
+	Started        = TextArrayCol{34}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1100,6 +1149,41 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyI32[q.nai32] = p.anyI32
 			q.nai32++
+		case 28:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 31:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 32:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
+		case 33:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
+		case 34:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1284,6 +1368,48 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 28:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 29:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 30:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 31:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 32:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
+	case 33:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1509,8 +1635,42 @@ func (q Query) WindowStartLt(v time.Time) Query          { return q.Where(Window
 func (q Query) WindowStartLte(v time.Time) Query         { return q.Where(WindowStart.Lte(v)) }
 func (q Query) WindowStartIsNull() Query                 { return q.Where(WindowStart.IsNull()) }
 func (q Query) WindowStartIsNotNull() Query              { return q.Where(WindowStart.IsNotNull()) }
+func (q Query) ItemsContains(v runtime.JSON) Query       { return q.Where(Items.Contains(v)) }
+func (q Query) ItemsContainedBy(v runtime.JSON) Query    { return q.Where(Items.ContainedBy(v)) }
+func (q Query) ItemsHasAnyKey(v ...string) Query         { return q.Where(Items.HasAnyKey(v...)) }
+func (q Query) ItemsHasAllKeys(v ...string) Query        { return q.Where(Items.HasAllKeys(v...)) }
+func (q Query) PurgeEq(v bool) Query                     { return q.Where(Purge.Eq(v)) }
+func (q Query) PurgeNotEq(v bool) Query                  { return q.Where(Purge.NotEq(v)) }
+func (q Query) StartServicesEq(v bool) Query             { return q.Where(StartServices.Eq(v)) }
+func (q Query) StartServicesNotEq(v bool) Query          { return q.Where(StartServices.NotEq(v)) }
+func (q Query) ExpectEq(v string) Query                  { return q.Where(Expect.Eq(v)) }
+func (q Query) ExpectNotEq(v string) Query               { return q.Where(Expect.NotEq(v)) }
+func (q Query) ExpectGt(v string) Query                  { return q.Where(Expect.Gt(v)) }
+func (q Query) ExpectGte(v string) Query                 { return q.Where(Expect.Gte(v)) }
+func (q Query) ExpectLt(v string) Query                  { return q.Where(Expect.Lt(v)) }
+func (q Query) ExpectLte(v string) Query                 { return q.Where(Expect.Lte(v)) }
+func (q Query) ExpectEqLower(v string) Query             { return q.Where(Expect.EqLower(v)) }
+func (q Query) ExpectLike(v string) Query                { return q.Where(Expect.Like(v)) }
+func (q Query) ExpectILike(v string) Query               { return q.Where(Expect.ILike(v)) }
+func (q Query) ExpectIn(v ...string) Query               { return q.Where(Expect.In(v...)) }
+func (q Query) ExpectNotIn(v ...string) Query            { return q.Where(Expect.NotIn(v...)) }
+func (q Query) PreviewIDEq(v [16]byte) Query             { return q.Where(PreviewID.Eq(v)) }
+func (q Query) PreviewIDNotEq(v [16]byte) Query          { return q.Where(PreviewID.NotEq(v)) }
+func (q Query) PreviewIDIn(v ...[16]byte) Query          { return q.Where(PreviewID.In(v...)) }
+func (q Query) PreviewIDNotIn(v ...[16]byte) Query       { return q.Where(PreviewID.NotIn(v...)) }
+func (q Query) PreviewIDIsNull() Query                   { return q.Where(PreviewID.IsNull()) }
+func (q Query) PreviewIDIsNotNull() Query                { return q.Where(PreviewID.IsNotNull()) }
+func (q Query) UndoOfEq(v [16]byte) Query                { return q.Where(UndoOf.Eq(v)) }
+func (q Query) UndoOfNotEq(v [16]byte) Query             { return q.Where(UndoOf.NotEq(v)) }
+func (q Query) UndoOfIn(v ...[16]byte) Query             { return q.Where(UndoOf.In(v...)) }
+func (q Query) UndoOfNotIn(v ...[16]byte) Query          { return q.Where(UndoOf.NotIn(v...)) }
+func (q Query) UndoOfIsNull() Query                      { return q.Where(UndoOf.IsNull()) }
+func (q Query) UndoOfIsNotNull() Query                   { return q.Where(UndoOf.IsNotNull()) }
+func (q Query) StartedContains(v ...string) Query        { return q.Where(Started.Contains(v...)) }
+func (q Query) StartedContainedBy(v ...string) Query     { return q.Where(Started.ContainedBy(v...)) }
+func (q Query) StartedOverlaps(v ...string) Query        { return q.Where(Started.Overlaps(v...)) }
 
-const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start" FROM "package_runs"`
+const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started" FROM "package_runs"`
 const countPrefix = `SELECT count(*) FROM "package_runs"`
 const existsPrefix = `SELECT 1 FROM "package_runs"`
 const existsSuffix = ` LIMIT 1`
@@ -1715,6 +1875,48 @@ var orderTable = [nCols][4]string{
 		"\"window_start\" ASC NULLS FIRST",
 		"\"window_start\" DESC NULLS LAST",
 	},
+	{ // items
+		"\"items\"",
+		"\"items\" DESC",
+		"\"items\" ASC NULLS FIRST",
+		"\"items\" DESC NULLS LAST",
+	},
+	{ // purge
+		"\"purge\"",
+		"\"purge\" DESC",
+		"\"purge\" ASC NULLS FIRST",
+		"\"purge\" DESC NULLS LAST",
+	},
+	{ // start_services
+		"\"start_services\"",
+		"\"start_services\" DESC",
+		"\"start_services\" ASC NULLS FIRST",
+		"\"start_services\" DESC NULLS LAST",
+	},
+	{ // expect
+		"\"expect\"",
+		"\"expect\" DESC",
+		"\"expect\" ASC NULLS FIRST",
+		"\"expect\" DESC NULLS LAST",
+	},
+	{ // preview_id
+		"\"preview_id\"",
+		"\"preview_id\" DESC",
+		"\"preview_id\" ASC NULLS FIRST",
+		"\"preview_id\" DESC NULLS LAST",
+	},
+	{ // undo_of
+		"\"undo_of\"",
+		"\"undo_of\" DESC",
+		"\"undo_of\" ASC NULLS FIRST",
+		"\"undo_of\" DESC NULLS LAST",
+	},
+	{ // started
+		"\"started\"",
+		"\"started\" DESC",
+		"\"started\" ASC NULLS FIRST",
+		"\"started\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1748,6 +1950,13 @@ var identTable = [nCols]string{
 	"\"batch_id\"",
 	"\"batch_position\"",
 	"\"window_start\"",
+	"\"items\"",
+	"\"purge\"",
+	"\"start_services\"",
+	"\"expect\"",
+	"\"preview_id\"",
+	"\"undo_of\"",
+	"\"started\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1780,7 +1989,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [28][28]runtime.Frag{
+var fragTable = [35][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2621,6 +2830,216 @@ var fragTable = [28][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // items
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"items\" @> $", B: ""},
+		{A: "\"items\" <@ $", B: ""},
+		{A: "\"items\" ?| $", B: ""},
+		{A: "\"items\" ?& $", B: ""},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // purge
+		{}, // opNone
+		{A: "\"purge\" = $", B: ""},
+		{A: "\"purge\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // start_services
+		{}, // opNone
+		{A: "\"start_services\" = $", B: ""},
+		{A: "\"start_services\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // expect
+		{}, // opNone
+		{A: "\"expect\" = $", B: ""},
+		{A: "\"expect\" <> $", B: ""},
+		{A: "\"expect\" > $", B: ""},
+		{A: "\"expect\" >= $", B: ""},
+		{A: "\"expect\" < $", B: ""},
+		{A: "\"expect\" <= $", B: ""},
+		{A: "lower(\"expect\") = lower($", B: ")"},
+		{A: "\"expect\" LIKE $", B: ""},
+		{A: "\"expect\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"expect\" = ANY($", B: ")"},
+		{A: "\"expect\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // preview_id
+		{}, // opNone
+		{A: "\"preview_id\" = $", B: ""},
+		{A: "\"preview_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"preview_id\" = ANY($", B: ")"},
+		{A: "\"preview_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"preview_id\" IS NULL", B: ""},
+		{A: "\"preview_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // undo_of
+		{}, // opNone
+		{A: "\"undo_of\" = $", B: ""},
+		{A: "\"undo_of\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"undo_of\" = ANY($", B: ")"},
+		{A: "\"undo_of\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"undo_of\" IS NULL", B: ""},
+		{A: "\"undo_of\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // started
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"started\" @> $", B: ""},
+		{A: "\"started\" <@ $", B: ""},
+		{A: "\"started\" && $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2815,6 +3234,16 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.BatchID = runtime.Nullable(rv[25], runtime.UUID)
 	r.BatchPosition = runtime.Nullable(rv[26], runtime.Int4)
 	r.WindowStart = runtime.Nullable(rv[27], runtime.Timestamptz)
+	r.Items = runtime.JSON(runtime.JSONB(rv[28], sl))
+	r.Purge = runtime.Bool(rv[29])
+	r.StartServices = runtime.Bool(rv[30])
+	r.Expect = sl.Str(rv[31])
+	r.PreviewID = runtime.Nullable(rv[32], runtime.UUID)
+	r.UndoOf = runtime.Nullable(rv[33], runtime.UUID)
+	r.Started, decErr = runtime.TextArray(rv[34], sl)
+	if decErr != nil {
+		return decErr
+	}
 	return decErr
 }
 
@@ -2962,6 +3391,26 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyI32[nai32] = q.anyI32[nai32]
 				v = append(v, &b.anyI32[nai32])
 				nai32++
+			case 28:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 31:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 32:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
+			case 33:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
+			case 34:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3066,6 +3515,30 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 28:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 29:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 30:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 31:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 32:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
+		case 33:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
 		}
 	}
 	b.vals = v
@@ -3203,7 +3676,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start"`
+const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started"`
 
 const updatePrefix = `UPDATE "package_runs" SET `
 const deletePrefix = `DELETE FROM "package_runs"`
@@ -3238,9 +3711,16 @@ const (
 	dBatchID        uint64 = 1 << 24
 	dBatchPosition  uint64 = 1 << 25
 	dWindowStart    uint64 = 1 << 26
+	dItems          uint64 = 1 << 27
+	dPurge          uint64 = 1 << 28
+	dStartServices  uint64 = 1 << 29
+	dExpect         uint64 = 1 << 30
+	dPreviewID      uint64 = 1 << 31
+	dUndoOf         uint64 = 1 << 32
+	dStarted        uint64 = 1 << 33
 )
 
-const nUpdatable = 27
+const nUpdatable = 34
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3271,6 +3751,13 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"batch_id\" = $", B: ""},        // batch_id
 	{A: "\"batch_position\" = $", B: ""},  // batch_position
 	{A: "\"window_start\" = $", B: ""},    // window_start
+	{A: "\"items\" = $", B: ""},           // items
+	{A: "\"purge\" = $", B: ""},           // purge
+	{A: "\"start_services\" = $", B: ""},  // start_services
+	{A: "\"expect\" = $", B: ""},          // expect
+	{A: "\"preview_id\" = $", B: ""},      // preview_id
+	{A: "\"undo_of\" = $", B: ""},         // undo_of
+	{A: "\"started\" = $", B: ""},         // started
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3304,6 +3791,13 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{}, // batch_id has no server-side form
 	{A: "\"batch_position\" = \"batch_position\" + 1", B: ""}, // batch_position = its own value plus one
 	{A: "\"window_start\" = now()", B: ""},                    // window_start = the database's clock
+	{},                                                        // items has no server-side form
+	{},                                                        // purge has no server-side form
+	{},                                                        // start_services has no server-side form
+	{},                                                        // expect has no server-side form
+	{},                                                        // preview_id has no server-side form
+	{},                                                        // undo_of has no server-side form
+	{},                                                        // started has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3343,9 +3837,16 @@ const (
 	iBatchID        uint64 = 1 << 25
 	iBatchPosition  uint64 = 1 << 26
 	iWindowStart    uint64 = 1 << 27
+	iItems          uint64 = 1 << 28
+	iPurge          uint64 = 1 << 29
+	iStartServices  uint64 = 1 << 30
+	iExpect         uint64 = 1 << 31
+	iPreviewID      uint64 = 1 << 32
+	iUndoOf         uint64 = 1 << 33
+	iStarted        uint64 = 1 << 34
 )
 
-const nInsertable = 28
+const nInsertable = 35
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3377,6 +3878,13 @@ var insCols = [nInsertable]string{
 	"\"batch_id\"",
 	"\"batch_position\"",
 	"\"window_start\"",
+	"\"items\"",
+	"\"purge\"",
+	"\"start_services\"",
+	"\"expect\"",
+	"\"preview_id\"",
+	"\"undo_of\"",
+	"\"started\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3385,7 +3893,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"package_runs\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3404,7 +3912,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3775,6 +4283,64 @@ func (m *Mut) SetWindowStartNull() {
 	m.expr &^= dWindowStart
 }
 
+func (m *Mut) SetItems(v runtime.JSON) {
+	m.row.Items = v
+	m.dirty |= dItems
+	m.expr &^= dItems
+}
+
+func (m *Mut) SetPurge(v bool) {
+	m.row.Purge = v
+	m.dirty |= dPurge
+	m.expr &^= dPurge
+}
+
+func (m *Mut) SetStartServices(v bool) {
+	m.row.StartServices = v
+	m.dirty |= dStartServices
+	m.expr &^= dStartServices
+}
+
+func (m *Mut) SetExpect(v string) {
+	m.row.Expect = v
+	m.dirty |= dExpect
+	m.expr &^= dExpect
+}
+
+func (m *Mut) SetPreviewID(v [16]byte) {
+	m.row.PreviewID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dPreviewID
+	m.expr &^= dPreviewID
+}
+
+// SetPreviewIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetPreviewIDNull() {
+	m.row.PreviewID = runtime.Null[[16]byte]{}
+	m.dirty |= dPreviewID
+	m.expr &^= dPreviewID
+}
+
+func (m *Mut) SetUndoOf(v [16]byte) {
+	m.row.UndoOf = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dUndoOf
+	m.expr &^= dUndoOf
+}
+
+// SetUndoOfNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetUndoOfNull() {
+	m.row.UndoOf = runtime.Null[[16]byte]{}
+	m.dirty |= dUndoOf
+	m.expr &^= dUndoOf
+}
+
+func (m *Mut) SetStarted(v []string) {
+	m.row.Started = v
+	m.dirty |= dStarted
+	m.expr &^= dStarted
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -4016,6 +4582,55 @@ func (n *Ins) SetWindowStartNull() {
 	n.set |= iWindowStart
 }
 
+func (n *Ins) SetItems(v runtime.JSON) {
+	n.row.Items = v
+	n.set |= iItems
+}
+
+func (n *Ins) SetPurge(v bool) {
+	n.row.Purge = v
+	n.set |= iPurge
+}
+
+func (n *Ins) SetStartServices(v bool) {
+	n.row.StartServices = v
+	n.set |= iStartServices
+}
+
+func (n *Ins) SetExpect(v string) {
+	n.row.Expect = v
+	n.set |= iExpect
+}
+
+func (n *Ins) SetPreviewID(v [16]byte) {
+	n.row.PreviewID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iPreviewID
+}
+
+// SetPreviewIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetPreviewIDNull() {
+	n.row.PreviewID = runtime.Null[[16]byte]{}
+	n.set |= iPreviewID
+}
+
+func (n *Ins) SetUndoOf(v [16]byte) {
+	n.row.UndoOf = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iUndoOf
+}
+
+// SetUndoOfNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetUndoOfNull() {
+	n.row.UndoOf = runtime.Null[[16]byte]{}
+	n.set |= iUndoOf
+}
+
+func (n *Ins) SetStarted(v []string) {
+	n.row.Started = v
+	n.set |= iStarted
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4067,7 +4682,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 27)
+	set := make([]string, 0, 34)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -4151,6 +4766,27 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<27) != 0 {
 			set = append(set, "window_start")
 		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "items")
+		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "purge")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "start_services")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "expect")
+		}
+		if mask&(1<<32) != 0 {
+			set = append(set, "preview_id")
+		}
+		if mask&(1<<33) != 0 {
+			set = append(set, "undo_of")
+		}
+		if mask&(1<<34) != 0 {
+			set = append(set, "started")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -4233,6 +4869,27 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<27) != 0 {
 			set = append(set, "window_start")
 		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "items")
+		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "purge")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "start_services")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "expect")
+		}
+		if mask&(1<<32) != 0 {
+			set = append(set, "preview_id")
+		}
+		if mask&(1<<33) != 0 {
+			set = append(set, "undo_of")
+		}
+		if mask&(1<<34) != 0 {
+			set = append(set, "started")
+		}
 	case 2:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -4311,6 +4968,27 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<26) != 0 {
 			set = append(set, "batch_position")
+		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "items")
+		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "purge")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "start_services")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "expect")
+		}
+		if mask&(1<<32) != 0 {
+			set = append(set, "preview_id")
+		}
+		if mask&(1<<33) != 0 {
+			set = append(set, "undo_of")
+		}
+		if mask&(1<<34) != 0 {
+			set = append(set, "started")
 		}
 	}
 	return set
@@ -4423,6 +5101,13 @@ var assignFor = map[string]string{
 	"batch_id":        "\"batch_id\" = EXCLUDED.\"batch_id\"",
 	"batch_position":  "\"batch_position\" = EXCLUDED.\"batch_position\"",
 	"window_start":    "\"window_start\" = EXCLUDED.\"window_start\"",
+	"items":           "\"items\" = EXCLUDED.\"items\"",
+	"purge":           "\"purge\" = EXCLUDED.\"purge\"",
+	"start_services":  "\"start_services\" = EXCLUDED.\"start_services\"",
+	"expect":          "\"expect\" = EXCLUDED.\"expect\"",
+	"preview_id":      "\"preview_id\" = EXCLUDED.\"preview_id\"",
+	"undo_of":         "\"undo_of\" = EXCLUDED.\"undo_of\"",
+	"started":         "\"started\" = EXCLUDED.\"started\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4529,6 +5214,20 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.BatchPosition.Arg())
 		case 27:
 			args = append(args, n.row.WindowStart.Arg())
+		case 28:
+			args = append(args, n.row.Items)
+		case 29:
+			args = append(args, n.row.Purge)
+		case 30:
+			args = append(args, n.row.StartServices)
+		case 31:
+			args = append(args, n.row.Expect)
+		case 32:
+			args = append(args, n.row.PreviewID.Arg())
+		case 33:
+			args = append(args, n.row.UndoOf.Arg())
+		case 34:
+			args = append(args, n.row.Started)
 		}
 	}
 	var out Row
@@ -4566,7 +5265,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 28)
+	args := make([]any, 0, 35)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -4595,6 +5294,13 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.BatchID.Arg())
 	args = append(args, r.BatchPosition.Arg())
 	args = append(args, r.WindowStart.Arg())
+	args = append(args, r.Items)
+	args = append(args, r.Purge)
+	args = append(args, r.StartServices)
+	args = append(args, r.Expect)
+	args = append(args, r.PreviewID.Arg())
+	args = append(args, r.UndoOf.Arg())
+	args = append(args, r.Started)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4649,13 +5355,20 @@ var copyCols = []string{
 	"batch_id",
 	"batch_position",
 	"window_start",
+	"items",
+	"purge",
+	"start_services",
+	"expect",
+	"preview_id",
+	"undo_of",
+	"started",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [28]any
+	buf  [35]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4701,6 +5414,13 @@ func (s *rowSource) Values() []any {
 	s.buf[25] = r.BatchID.Ptr()
 	s.buf[26] = r.BatchPosition.Ptr()
 	s.buf[27] = r.WindowStart.Ptr()
+	s.buf[28] = &r.Items
+	s.buf[29] = &r.Purge
+	s.buf[30] = &r.StartServices
+	s.buf[31] = &r.Expect
+	s.buf[32] = r.PreviewID.Ptr()
+	s.buf[33] = r.UndoOf.Ptr()
+	s.buf[34] = &r.Started
 	return s.buf[:]
 }
 
@@ -4759,8 +5479,15 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 25
 	mask |= 1 << 26
 	mask |= 1 << 27
+	mask |= 1 << 28
+	mask |= 1 << 29
+	mask |= 1 << 30
+	mask |= 1 << 31
+	mask |= 1 << 32
+	mask |= 1 << 33
+	mask |= 1 << 34
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 28)
+	args := make([]any, 0, 35)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -4789,6 +5516,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.BatchID.Arg())
 	args = append(args, r.BatchPosition.Arg())
 	args = append(args, r.WindowStart.Arg())
+	args = append(args, r.Items)
+	args = append(args, r.Purge)
+	args = append(args, r.StartServices)
+	args = append(args, r.Expect)
+	args = append(args, r.PreviewID.Arg())
+	args = append(args, r.UndoOf.Arg())
+	args = append(args, r.Started)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4878,6 +5612,20 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.BatchPosition.Arg())
 		case 27:
 			args = append(args, n.row.WindowStart.Arg())
+		case 28:
+			args = append(args, n.row.Items)
+		case 29:
+			args = append(args, n.row.Purge)
+		case 30:
+			args = append(args, n.row.StartServices)
+		case 31:
+			args = append(args, n.row.Expect)
+		case 32:
+			args = append(args, n.row.PreviewID.Arg())
+		case 33:
+			args = append(args, n.row.UndoOf.Arg())
+		case 34:
+			args = append(args, n.row.Started)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4987,6 +5735,20 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.BatchPosition.Arg())
 		case 26:
 			args = append(args, m.row.WindowStart.Arg())
+		case 27:
+			args = append(args, m.row.Items)
+		case 28:
+			args = append(args, m.row.Purge)
+		case 29:
+			args = append(args, m.row.StartServices)
+		case 30:
+			args = append(args, m.row.Expect)
+		case 31:
+			args = append(args, m.row.PreviewID.Arg())
+		case 32:
+			args = append(args, m.row.UndoOf.Arg())
+		case 33:
+			args = append(args, m.row.Started)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5123,6 +5885,20 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.BatchPosition.Arg())
 		case 26:
 			args = append(args, m.row.WindowStart.Arg())
+		case 27:
+			args = append(args, m.row.Items)
+		case 28:
+			args = append(args, m.row.Purge)
+		case 29:
+			args = append(args, m.row.StartServices)
+		case 30:
+			args = append(args, m.row.Expect)
+		case 31:
+			args = append(args, m.row.PreviewID.Arg())
+		case 32:
+			args = append(args, m.row.UndoOf.Arg())
+		case 33:
+			args = append(args, m.row.Started)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5325,6 +6101,20 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.BatchPosition.Arg())
 		case 26:
 			args = append(args, m.row.WindowStart.Arg())
+		case 27:
+			args = append(args, m.row.Items)
+		case 28:
+			args = append(args, m.row.Purge)
+		case 29:
+			args = append(args, m.row.StartServices)
+		case 30:
+			args = append(args, m.row.Expect)
+		case 31:
+			args = append(args, m.row.PreviewID.Arg())
+		case 32:
+			args = append(args, m.row.UndoOf.Arg())
+		case 33:
+			args = append(args, m.row.Started)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

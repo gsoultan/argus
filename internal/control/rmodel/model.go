@@ -1132,6 +1132,7 @@ func All() []any {
 		&LogCleanupRule{},
 		&PackageRun{},
 		&PackageUpdateRule{},
+		&SoftwarePreview{},
 		&RecoveryCode{},
 		&SavedQuery{},
 		&RedeemedTicket{},
@@ -1376,6 +1377,15 @@ type PackageRun struct {
 	BatchID        *[16]byte
 	BatchPosition  *int32
 	WindowStart    *time.Time
+	// Items to install or remove, as the preview named them, and how
+	// (migration 056).
+	Items         storm.JSON
+	Purge         bool
+	StartServices bool
+	Expect        string
+	PreviewID     *[16]byte
+	UndoOf        *[16]byte
+	Started       []string
 }
 
 func (m *PackageRun) Schema(t *storm.Table) {
@@ -1394,7 +1404,12 @@ func (m *PackageRun) Schema(t *storm.Table) {
 	t.Col(&m.RebootRequired).Default("false")
 	t.Col(&m.Rebooted).Default("false")
 	t.Col(&m.Log).Default("''::text")
-	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text])")
+	t.Col(&m.Items).Default("'[]'::jsonb")
+	t.Col(&m.Purge).Default("false")
+	t.Col(&m.StartServices).Default("false")
+	t.Col(&m.Expect).Default("''::text")
+	t.Col(&m.Started).Default("'{}'::text[]")
+	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text])")
 	t.CheckNamed("package_runs_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'waiting'::text, 'queued'::text, 'running'::text, 'rebooting'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
 	t.CheckNamed("package_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")
@@ -1431,4 +1446,33 @@ func (m *PackageUpdateRule) Schema(t *storm.Table) {
 	t.CheckNamed("package_update_rules_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_update_rules_window_minutes_check", "(window_minutes >= 30) AND (window_minutes <= 1440)")
 	t.CheckNamed("package_update_rules_window_start_minute_check", "(window_start_minute >= 0) AND (window_start_minute <= 1439)")
+}
+
+// SoftwarePreview is table software_previews: what installing or removing
+// would change on one server, as its package manager simulated it (migration 056).
+type SoftwarePreview struct {
+	ID            [16]byte
+	Hostname      string
+	AssetHostname string
+	Action        string
+	Items         storm.JSON
+	Purge         bool
+	StartServices bool
+	Result        storm.JSON
+	Hash          string
+	Blocked       string
+	UndoOf        *[16]byte
+	CreatedBy     string
+	CreatedAt     time.Time
+}
+
+func (m *SoftwarePreview) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Purge).Default("false")
+	t.Col(&m.StartServices).Default("false")
+	t.Col(&m.Blocked).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("software_previews_action_check", "action = ANY (ARRAY['install'::text, 'remove'::text])")
+	t.Index(&m.CreatedAt).Named("software_previews_created")
 }

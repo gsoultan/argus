@@ -607,6 +607,13 @@ func _assertPackageRunShape(m m0.PackageRun) {
 		m.BatchID,
 		m.BatchPosition,
 		m.WindowStart,
+		m.Items,
+		m.Purge,
+		m.StartServices,
+		m.Expect,
+		m.PreviewID,
+		m.UndoOf,
+		m.Started,
 	}
 }
 
@@ -747,6 +754,27 @@ func _assertSignInDeviceShape(m m0.SignInDevice) {
 		m.Fingerprint,
 		m.FirstSeenAt,
 		m.LastSeenAt,
+	}
+}
+
+// _assertSoftwarePreviewShape fails to compile if m0.SoftwarePreview gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwarePreviewShape(m m0.SoftwarePreview) {
+	type shape m0.SoftwarePreview
+	_ = shape{
+		m.ID,
+		m.Hostname,
+		m.AssetHostname,
+		m.Action,
+		m.Items,
+		m.Purge,
+		m.StartServices,
+		m.Result,
+		m.Hash,
+		m.Blocked,
+		m.UndoOf,
+		m.CreatedBy,
+		m.CreatedAt,
 	}
 }
 
