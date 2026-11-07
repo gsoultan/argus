@@ -109,7 +109,17 @@ func (f *fileSession) serve(ctx context.Context, st tunnel.Stream) {
 		var opErr error
 		switch req.Op {
 		case "list":
-			opErr = f.list(ctx, st, req)
+			opErr = f.jsonOp(ctx, st, []string{"list", req.Path})
+		case "mkdir", "delete":
+			opErr = f.jsonOp(ctx, st, []string{req.Op, req.Path})
+		case "rename":
+			opErr = f.jsonOp(ctx, st, []string{"rename", req.Path, req.To})
+		case "preview":
+			from := "start"
+			if req.From == "end" {
+				from = "end"
+			}
+			opErr = f.jsonOp(ctx, st, []string{"preview", req.Path, from})
 		case "download":
 			opErr = f.download(ctx, st, req)
 		case "upload":
@@ -123,14 +133,21 @@ func (f *fileSession) serve(ctx context.Context, st tunnel.Stream) {
 	}
 }
 
-func (f *fileSession) list(ctx context.Context, st tunnel.Stream, req tunnel.FileRequest) error {
+// jsonOp runs one operation whose helper prints its whole answer as JSON --
+// a listing, a new folder, a rename, a delete, a preview -- and passes it on.
+func (f *fileSession) jsonOp(ctx context.Context, st tunnel.Stream, args []string) error {
 	var out bytes.Buffer
-	if err := f.run(ctx, []string{"list", req.Path}, nil, &out); err != nil {
-		return answer(st, tunnel.FileAnswer{Error: err.Error()})
+	if err := f.run(ctx, args, nil, &out); err != nil {
+		path, _ := f.resolve(args[1])
+		return answer(st, tunnel.FileAnswer{Error: err.Error(), Path: path})
 	}
 	var ans tunnel.FileAnswer
 	if json.Unmarshal(out.Bytes(), &ans) != nil {
-		return answer(st, tunnel.FileAnswer{Error: "the listing could not be read"})
+		return answer(st, tunnel.FileAnswer{Error: "the agent could not read the answer to " + args[0]})
+	}
+	if args[0] != "list" && args[0] != "preview" {
+		f.log.Info("tunnel: file "+args[0], "path", ans.Path, "to", ans.To,
+			"principal", f.acct.name, "for", f.actor)
 	}
 	return answer(st, ans)
 }

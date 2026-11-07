@@ -32,14 +32,14 @@ describe('opening a terminal', () => {
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
     expect(await screen.findByText(/server.s own agent opens the\s+session/i)).toBeInTheDocument()
     expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^open (terminal|desktop)$/i })).toBeEnabled()
   }, 15_000)
 
   it('does not open at all when the agent is not connected', async () => {
     withHost(false)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
     expect(await screen.findByRole('heading', { name: /is offline/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^connect$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^open (terminal|desktop)$/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/through the gateway/i)).not.toBeInTheDocument()
     expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
   })
@@ -55,11 +55,11 @@ describe('opening a desktop', () => {
     withHost(true, rdp)
     await renderRoute(`/connect?host=${encodeURIComponent(rdp.hostname)}`)
     expect(await screen.findByLabelText(/windows password for/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^open (terminal|desktop)$/i })).toBeEnabled()
     expect(screen.queryByText(/through the gateway/i)).not.toBeInTheDocument()
     expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
     // Files are the terminal's; a desktop has none to offer yet.
-    expect(screen.queryByRole('button', { name: /files only/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /open files/i })).not.toBeInTheDocument()
   }, 15_000)
 
   it('shares the screen without asking for a password when the server is set to', async () => {
@@ -68,14 +68,14 @@ describe('opening a desktop', () => {
     expect(await screen.findByText(/screen sharing, not remote desktop/i)).toBeInTheDocument()
     expect(screen.getByText(/anyone in front of the server sees what you do/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/windows password for/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^connect$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^open (terminal|desktop)$/i })).toBeEnabled()
   }, 15_000)
 
   it('does not open when the agent is not connected', async () => {
     withHost(false, rdp)
     await renderRoute(`/connect?host=${encodeURIComponent(rdp.hostname)}`)
     expect(await screen.findByRole('heading', { name: /is offline/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^connect$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^open (terminal|desktop)$/i })).not.toBeInTheDocument()
   })
 })
 
@@ -83,7 +83,7 @@ describe('console-only', () => {
   it('offers file transfer through the agent, and no native client', async () => {
     withHost(true)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByRole('button', { name: /files only/i })).toBeEnabled()
+    expect(await screen.findByRole('button', { name: /open files/i })).toBeEnabled()
     expect(screen.queryByText(/prefer your own client/i)).not.toBeInTheDocument()
   }, 15_000)
 
@@ -91,7 +91,7 @@ describe('console-only', () => {
     withHost(false)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
     expect(await screen.findByRole('heading', { name: /is offline/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /files only/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /open files/i })).not.toBeInTheDocument()
   })
 })
 
@@ -124,7 +124,7 @@ describe('opening straight from a server card', () => {
     withHost(true)
     const calls = ticketCalls()
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}`)
-    expect(await screen.findByRole('button', { name: /^connect$/i })).toBeEnabled()
+    expect(await screen.findByRole('button', { name: /^open (terminal|desktop)$/i })).toBeEnabled()
     expect(calls()).toHaveLength(0)
   })
 

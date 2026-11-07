@@ -1,0 +1,55 @@
+/* The file browser. Loaded with the components that use it, so it is not in the
+   shell's stylesheet every first visit pays for. */
+
+/* ── File browser (components/files) ─────────────────────────────────────
+   Spacing on the 4/8/12/16/24 scale: 24px gutters on desktop, 12–16 on a
+   phone, 10px row padding so a long listing stays scannable. */
+.argus-files { position: relative; display: flex; height: 100%; min-height: 0; background: var(--color-surface); }
+.argus-files-places { width: 232px; flex: none; border-right: 1px solid var(--color-line); padding: 16px 12px; overflow-y: auto; }
+.argus-files-places-h { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--mantine-color-dimmed); padding: 16px 12px 8px; }
+.argus-files-places-h:first-child { padding-top: 0; }
+.argus-files-place { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; border-radius: 8px; color: inherit; }
+.argus-files-place:hover { background: var(--color-raised); }
+.argus-files-place[data-active] { background: var(--color-brand-wash); color: var(--color-brand-ink); font-weight: 600; }
+.argus-files-place.subtle { color: var(--mantine-color-dimmed); }
+.argus-files-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.argus-files-bar { border-bottom: 1px solid var(--color-line); background: var(--color-surface); }
+.argus-files-crumbs { border: 1px solid var(--color-line); border-radius: 8px; padding: 4px 8px; min-height: 34px; background: var(--color-raised); cursor: text; overflow: hidden; }
+.argus-files-crumb { padding: 2px 6px; border-radius: 6px; font-size: 13px; white-space: nowrap; color: var(--mantine-color-dimmed); }
+.argus-files-crumb:hover { background: var(--color-surface); color: inherit; }
+.argus-files-crumb[data-last] { color: inherit; font-weight: 600; }
+.argus-files-crumb-edit { margin-left: auto; padding: 2px 6px; font-size: 11px; color: var(--mantine-color-dimmed); white-space: nowrap; }
+.argus-files-scroll { flex: 1; min-height: 0; }
+.argus-files-table th:first-child, .argus-files-table td:first-child { padding-left: 24px; }
+.argus-files-table th:last-child, .argus-files-table td:last-child { padding-right: 24px; }
+.argus-files[data-compact] .argus-files-table th:first-child, .argus-files[data-compact] .argus-files-table td:first-child { padding-left: 16px; }
+.argus-files[data-compact] .argus-files-table th:last-child, .argus-files[data-compact] .argus-files-table td:last-child { padding-right: 16px; }
+.argus-files-sort { display: inline-flex; align-items: center; gap: 4px; font: inherit; color: inherit; }
+.argus-files-row[data-selected] td, .argus-files-row[data-active] td { background: var(--color-brand-wash); }
+.argus-files-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; }
+.argus-files-name:hover { color: var(--color-brand-ink); text-decoration: underline; }
+.argus-files-actions { opacity: 0; transition: opacity .1s; }
+.argus-files-row:hover .argus-files-actions, .argus-files-row:focus-within .argus-files-actions, .argus-files-row[data-active] .argus-files-actions { opacity: 1; }
+@media (hover: none) { .argus-files-actions { opacity: 1; } }
+.argus-files-follow { background: var(--mantine-color-sky-light); border-bottom: 1px solid var(--color-line); }
+.argus-files-selbar { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5; padding: 8px 12px 8px 20px; border-radius: 12px; background: var(--color-surface); border: 1px solid var(--color-line); box-shadow: var(--shadow-lift); }
+.argus-files-drop { position: absolute; inset: 12px; z-index: 6; border: 2px dashed var(--mantine-color-azure-5); border-radius: 14px; background: color-mix(in srgb, var(--color-surface) 88%, transparent); pointer-events: none; }
+.argus-files-tray { position: absolute; right: 24px; bottom: 24px; z-index: 7; width: 380px; max-width: calc(100% - 32px); border-radius: 12px; overflow: hidden; background: var(--color-surface); border: 1px solid var(--color-line); box-shadow: var(--shadow-lift); }
+.argus-files-tray.docked { position: fixed; left: 0; right: 0; bottom: 0; width: auto; max-width: none; border-radius: 16px 16px 0 0; }
+.argus-files-tray-head { border-bottom: 1px solid var(--color-line); }
+.argus-files-tray-list { max-height: 320px; overflow-y: auto; }
+.argus-files-tray-row + .argus-files-tray-row { border-top: 1px solid var(--color-line); }
+.argus-files-tray-row[data-status='conflict'] { background: var(--mantine-color-amber-light); }
+.argus-files-side { width: min(520px, 45%); flex: none; border-left: 1px solid var(--color-line); min-height: 0; }
+.argus-files-preview { background: var(--color-surface); }
+.argus-files-preview-head, .argus-files-preview-tools { border-bottom: 1px solid var(--color-line); }
+.argus-files-code { background: #0b1220; overflow: auto; }
+.argus-files-pre { margin: 0; padding: 12px 0; font-family: var(--mantine-font-family-monospace); font-size: 12px; line-height: 1.6; color: #cbd5e1; }
+.argus-files-pre > div { padding: 0 16px 0 0; white-space: pre; }
+.argus-files-pre.wrap > div { white-space: pre-wrap; word-break: break-all; }
+.argus-files-pre .ln { display: inline-block; width: 52px; padding-right: 12px; text-align: right; color: #475569; user-select: none; }
+.argus-files-pre .err { color: #fca5a5; }
+.argus-files-pre .hit { background: rgba(250, 204, 21, .18); }
+.argus-files-prow { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--color-line); width: 100%; }
+.argus-files-prow:active { background: var(--color-raised); }
+.argus-files-fab { position: absolute; right: 16px; bottom: 24px; z-index: 4; box-shadow: 0 8px 20px rgba(37, 99, 235, .35); }

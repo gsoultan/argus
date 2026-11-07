@@ -96,6 +96,13 @@ export interface LiveTerminalProps {
    * closed tab -- leaves the shell running for this tab to come back to.
    */
   endRef?: { current: (() => void) | null }
+  /**
+   * The shell's current folder, whenever it says so: OSC 7 (file://host/path)
+   * where the shell reports it, or the "user@host: ~/path" window title most
+   * Linux bash prompts set. Best effort: a shell that reports neither is
+   * simply never followed.
+   */
+  onCwd?: (path: string) => void
 }
 
 interface ServerMessage {
@@ -119,7 +126,11 @@ export function LiveTerminal({
   onStateChange,
   onSession,
   endRef,
+  onCwd,
 }: LiveTerminalProps) {
+  // Read through a ref so a new callback does not reconnect the shell.
+  const onCwdRef = useRef(onCwd)
+  onCwdRef.current = onCwd
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -178,6 +189,16 @@ export function LiveTerminal({
 
     termRef.current = term
     fitRef.current = fit
+
+    const cwd7 = term.parser.registerOscHandler(7, (data) => {
+      const p = cwdFromOsc7(data)
+      if (p) onCwdRef.current?.(p)
+      return false
+    })
+    const cwdTitle = term.onTitleChange((title) => {
+      const p = cwdFromTitle(title)
+      if (p) onCwdRef.current?.(p)
+    })
 
     // The session this terminal is showing, once the server has said which.
     // A dropped connection comes back to it rather than opening a new shell.
@@ -420,6 +441,10 @@ export function LiveTerminal({
     // Keep the remote pty in step with the browser window, or full-screen tools
     // like top and vim draw into the wrong geometry.
     const observer = new ResizeObserver(() => {
+      // Hidden behind the Files tab: keep the size it had rather than
+      // shrinking the remote pty to nothing.
+      const box = hostRef.current
+      if (!box || box.clientWidth === 0 || box.clientHeight === 0) return
       try {
         fit.fit()
       } catch {
@@ -439,6 +464,8 @@ export function LiveTerminal({
       window.removeEventListener('beforeunload', onLeave)
       if (endRef) endRef.current = null
       observer.disconnect()
+      cwd7.dispose()
+      cwdTitle.dispose()
       onData.dispose()
       // Not a hangup: going to another page leaves the shell running, held
       // on the server, for this tab to pick up; Disconnect ends it.
@@ -507,4 +534,21 @@ function StatusBadge({ state }: { state: TerminalState }) {
   if (state === 'lost') return <Badge size="xs" color="amber">connection lost</Badge>
   if (state === 'error') return <Badge size="xs" color="rose">error</Badge>
   return <Badge size="xs" color="slate">closed</Badge>
+}
+
+/** The path in an OSC 7 report: file://host/path, percent-encoded. */
+export function cwdFromOsc7(data: string): string | null {
+  const m = /^file:\/\/[^/]*(\/.*)$/.exec(data.trim())
+  if (!m) return null
+  try {
+    return decodeURIComponent(m[1]!)
+  } catch {
+    return null
+  }
+}
+
+/** The path in a "user@host: path" title, as Debian and Ubuntu's bash set it. */
+export function cwdFromTitle(title: string): string | null {
+  const m = /^[\w.-]+@[\w.-]+:\s*((?:~|\/)[^\s]*)\s*$/.exec(title)
+  return m ? m[1]! : null
 }

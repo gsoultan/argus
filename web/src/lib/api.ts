@@ -32,6 +32,7 @@ import {
   setAssetTeamAssignment,
   removeAssetTeamAssignment,
   myServerAccount,
+  myServers as liveMyServers,
   setMySshKey,
   setLoginName,
   setAccountRole,
@@ -47,7 +48,7 @@ import type { AuditPage } from '~/lib/live'
 import { isElevatedAccount } from '~/lib/roles'
 import type {
   AuditEvent,
-  AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh,
+  AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh, MyServer,
   ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost, ServerLogin,
   FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, TemporaryPasswordOutcome, User,
@@ -296,6 +297,19 @@ export const api = {
     if (isConfigured()) return myServerAccount()
     await latency(100)
     return { ...db.serverAccount }
+  },
+
+  async myServers(): Promise<MyServer[]> {
+    if (isConfigured()) return liveMyServers()
+    await latency(100)
+    // The fixture: a personal account on every Linux server, let straight in
+    // on most, held for approval on a few, and browser only on the databases.
+    return db.assets.filter((a) => a.protocol !== 'rdp').map((a, i) => ({
+      hostname: a.hostname,
+      personalAccount: true,
+      sudo: true,
+      directSsh: /db|pg|sql/i.test(a.hostname) ? 'off' : i % 4 === 2 ? 'approve' : 'allow',
+    }))
   },
 
   async setMySshKey(key: string): Promise<ServerAccount> {

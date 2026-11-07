@@ -1,20 +1,24 @@
+import './ssh/ssh.css'
 import { useMemo, useState, type ReactNode } from 'react'
 import {
-  Badge, Box, Button, Card, Group, SegmentedControl, Skeleton, Stack, Text, TextInput,
+  ActionIcon, Badge, Box, Button, Card, Group, Menu, SegmentedControl, Skeleton, Stack, Text, TextInput,
   ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import {
-  IconBrandWindows, IconClock, IconDeviceDesktop, IconDeviceMobile, IconLock, IconSearch, IconServer2,
-  IconServerOff, IconTerminal2,
+  IconAppWindow, IconBrandWindows, IconChevronDown, IconClock, IconDeviceDesktop, IconDeviceLaptop, IconDeviceMobile, IconFolder,
+  IconLock, IconSearch, IconServer2, IconServerOff, IconSettings, IconTerminal2,
 } from '@tabler/icons-react'
+import { DownloadSshConfigButton } from '~/components/ssh/OwnTerminal'
+import { shortCommand } from '~/lib/sshConfig'
+import { notifyOk } from '~/lib/notify'
 import { EmptyState, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { now, relTime } from '~/components/primitives'
-import { assetsQuery, meQuery, requestsQuery } from '~/lib/queries'
+import { assetsQuery, meQuery, myServersQuery, requestsQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
-import type { Asset } from '~/types/domain'
+import type { Asset, MyServer } from '~/types/domain'
 import { kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
 
 // Re-exported: every page that shows a server's status imports them from here.
@@ -82,7 +86,8 @@ function Dot({ color }: { color: string }) {
  * one question, "can I get on it, and how", and the answer is the status, the
  * accounts they were given, and a button.
  */
-export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: boolean }) {
+export function ServerCard({ asset: a, admin = false, mine }: { asset: Asset; admin?: boolean; mine?: MyServer }) {
+  const navigate = useNavigate()
   const reach = reachOf(a)
   const rdp = a.protocol === 'rdp'
   const kind = kindOf(a)
@@ -90,6 +95,14 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
   const name = shortName(a.hostname)
   const noAccount = a.principals.length === 0
   const disabled = reach === 'blocked' || noAccount
+  // How this person may reach it from their own terminal, when they may.
+  const direct = !rdp && mine?.personalAccount ? mine.directSsh : 'off'
+  const tag = kind === 'android' ? { label: 'Android device', color: 'slate' }
+    : rdp ? { label: 'Remote Desktop', color: 'slate' }
+    : direct === 'allow' ? { label: 'SSH ready', color: 'teal' }
+      : direct === 'approve' ? { label: 'SSH needs approval', color: 'amber' }
+        : mine ? { label: 'Browser only', color: 'slate' } : null
+  const openLabel = kind === 'android' ? 'Open device' : rdp ? 'Open desktop' : 'Open terminal'
 
   return (
     <Card padding="lg" className="argus-server" data-reach={reach} h="100%">
@@ -110,6 +123,12 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
           </Group>
           <ReachBadge reach={reach} />
         </Group>
+
+        {tag && reach !== 'blocked' && !noAccount && (
+          <Group gap={SP.snug}>
+            <Badge color={tag.color} variant="light" size="sm" radius="sm" tt="none" fw={600}>{tag.label}</Badge>
+          </Group>
+        )}
 
         {reach === 'blocked' ? (
           <Group gap={SP.snug} wrap="nowrap" align="flex-start">
@@ -172,9 +191,9 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
               params={{ assetId: a.id }}
               className="argus-above"
               aria-label={`Manage ${name}`}
-              style={{ color: INK.brand, fontSize: 13, fontWeight: 500, textDecoration: 'none' }}
+              style={{ color: INK.brand, fontSize: 13, fontWeight: 500, textDecoration: 'none', whiteSpace: 'nowrap' }}
             >
-              Who can connect, settings
+              Manage
             </Link>
           ) : (
             <Text size={FS.micro} c="dimmed">
@@ -183,24 +202,73 @@ export function ServerCard({ asset: a, admin = false }: { asset: Asset; admin?: 
           )}
           {disabled ? (
             <Button size="sm" disabled leftSection={<OpenIcon kind={kind} rdp={rdp} />}>
-              Connect
+              {openLabel}
             </Button>
           ) : (
-            <ButtonLink
-              to="/connect"
-              search={{ host: a.hostname, as: a.principals[0], open: true }}
-              size="sm"
-              className="argus-stretch"
-              variant={reach === 'offline' ? 'default' : 'filled'}
-              leftSection={<OpenIcon kind={kind} rdp={rdp} />}
-              aria-label={`Connect to ${name}`}
-            >
-              Connect
-            </ButtonLink>
+            <Group gap={0} wrap="nowrap" className="argus-splitbtn">
+              <ButtonLink
+                to="/connect"
+                search={{ host: a.hostname, as: a.principals[0], open: true }}
+                size="sm"
+                className="argus-stretch"
+                variant={reach === 'offline' ? 'default' : 'filled'}
+                leftSection={<OpenIcon kind={kind} rdp={rdp} />}
+                aria-label={`Connect to ${name}`}
+                data-split={!rdp || undefined}
+              >
+                {openLabel}
+              </ButtonLink>
+              {!rdp && (
+                <Menu position="bottom-end" width={280} shadow="md" withinPortal>
+                  <Menu.Target>
+                    <ActionIcon size={36} variant={reach === 'offline' ? 'default' : 'filled'}
+                      className="argus-above argus-splitbtn-more" aria-label={`More ways onto ${name}`}>
+                      <IconChevronDown size={16} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item leftSection={<IconAppWindow size={18} color={INK.brand} />}
+                      onClick={() => void navigate({ to: '/connect', search: { host: a.hostname, as: a.principals[0], open: true } })}>
+                      <MenuText title="Open terminal in browser" sub={`As ${a.principals[0]}${a.principals.length > 1 ? ' · or pick another account' : ''}`} />
+                    </Menu.Item>
+                    {direct !== 'off' && (
+                      <Menu.Item leftSection={<IconDeviceLaptop size={18} color="var(--mantine-color-violet-6)" />}
+                        onClick={() => {
+                          const cmd = shortCommand({ hostname: a.hostname, address: a.address })
+                          void navigator.clipboard?.writeText(cmd).then(
+                            () => notifyOk('Copied', `${cmd} works once your SSH config has the Argus entries.`),
+                            () => undefined,
+                          )
+                        }}>
+                        <MenuText title="Copy SSH command" sub={shortCommand({ hostname: a.hostname, address: a.address })} mono />
+                      </Menu.Item>
+                    )}
+                    <Menu.Item leftSection={<IconFolder size={18} />}
+                      onClick={() => void navigate({ to: '/connect', search: { host: a.hostname, as: a.principals[0], open: true, view: 'files' } })}>
+                      <MenuText title="Open files" sub="Browse, upload and download, recorded" />
+                    </Menu.Item>
+                    <Menu.Divider />
+                    <Menu.Item leftSection={<IconSettings size={18} />}
+                      onClick={() => void navigate({ to: '/connect', search: { host: a.hostname } })}>
+                      <MenuText title="All connect options…" sub="Opens the connect page" />
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+            </Group>
           )}
         </Group>
       </Stack>
     </Card>
+  )
+}
+
+function MenuText({ title, sub, mono }: { title: string; sub: string; mono?: boolean }) {
+  return (
+    <Box>
+      <Text size="sm" fw={500}>{title}</Text>
+      <Text size={FS.micro} c="dimmed" ff={mono ? 'monospace' : undefined} lh={1.4}>{sub}</Text>
+    </Box>
   )
 }
 
@@ -287,6 +355,8 @@ export function ServerCards() {
   const { data: me } = useQuery(meQuery())
   const { data: assets } = useQuery(assetsQuery({}))
   const { data: approved } = useQuery(requestsQuery('approved'))
+  const { data: mine } = useQuery({ ...myServersQuery(), retry: false })
+  const mineBy = useMemo(() => new Map((mine ?? []).map((m) => [m.hostname, m])), [mine])
   const whole = seesWholeFleet(me?.role)
   const canAdmin = me?.role === 'admin' || me?.role === 'owner'
 
@@ -377,10 +447,13 @@ export function ServerCards() {
       <Toolbar
         right={
           assets && (
-            <Text size={FS.micro} c="dimmed">
-              {filtering ? `${visible.length} of ${assets.length}` : assets.length}{' '}
-              {assets.length === 1 ? 'server' : 'servers'}
-            </Text>
+            <Group gap="md" wrap="nowrap">
+              <Text size={FS.micro} c="dimmed">
+                {filtering ? `${visible.length} of ${assets.length}` : assets.length}{' '}
+                {assets.length === 1 ? 'server' : 'servers'}
+              </Text>
+              <DownloadSshConfigButton size="sm" />
+            </Group>
           )
         }
       >
@@ -449,7 +522,7 @@ export function ServerCards() {
         />
       ) : (
         <CardGrid>
-          {visible.map((a) => <ServerCard key={a.id} asset={a} admin={canAdmin} />)}
+          {visible.map((a) => <ServerCard key={a.id} asset={a} admin={canAdmin} mine={mineBy.get(a.hostname)} />)}
         </CardGrid>
       )}
     </>

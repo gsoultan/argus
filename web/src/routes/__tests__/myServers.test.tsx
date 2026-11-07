@@ -64,7 +64,7 @@ describe('the servers someone can reach', () => {
     signedInAs('operator')
     await renderRoute('/mine')
     const card = (await screen.findByRole('heading', { name: 'pay-03' })).closest('.argus-server')!
-    expect(within(card as HTMLElement).getByRole('button', { name: 'Connect' })).toBeDisabled()
+    expect(within(card as HTMLElement).getByRole('button', { name: 'Open terminal' })).toBeDisabled()
     expect(card).toHaveTextContent(/identity changed/i)
     expect(screen.getByRole('link', { name: 'Connect to web-01' })).toBeInTheDocument()
   })

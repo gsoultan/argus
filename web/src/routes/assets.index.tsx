@@ -57,8 +57,8 @@ function Servers() {
         title="Servers"
         description={
           !whole
-            ? 'The servers you were given. Press Connect to open one in this browser.'
-            : 'Every server in Argus. Press Connect to open one, or open its page to choose who can connect.'
+            ? 'The servers you were given. Open a terminal in this browser, or reach them from your own.'
+            : 'Every server in Argus. Open a terminal on one, or Manage it to choose who can connect.'
         }
         actions={
           admin ? (
