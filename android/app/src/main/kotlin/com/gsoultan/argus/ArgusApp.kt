@@ -26,6 +26,10 @@ class ArgusApp : Application() {
     lateinit var bridge: DeviceBridge
         private set
 
+    /** The unattended engine, for a company device set up for it. */
+    lateinit var unattended: UnattendedEngine
+        private set
+
     val stateDir: String get() = File(filesDir, "agent").absolutePath
 
     /** The last lines of the agent's log, for the main screen. */
@@ -42,6 +46,8 @@ class ArgusApp : Application() {
             "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
             Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "",
         )
+        unattended = UnattendedEngine(this, agent)
+        bridge.unattended = unattended
         channels()
     }
 

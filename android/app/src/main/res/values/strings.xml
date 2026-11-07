@@ -32,4 +32,13 @@
     <string name="banner_control">%1$s is controlling this device via Argus</string>
     <string name="banner_view">%1$s is watching this device via Argus</string>
     <string name="banner_stop">Stop</string>
+    <string name="unattended_title">Unattended control</string>
+    <string name="unattended_off">Attended: someone accepts each session on the device.</string>
+    <string name="unattended_on">Unattended: sessions open with nobody here. Wireless debugging is on.</string>
+    <string name="unattended_setup">Set up unattended control</string>
+    <string name="unattended_disable">Turn off unattended control</string>
+    <string name="unattended_explain">For a company device with nobody holding it. Turn on Wireless debugging in Developer options, then enter the pairing address and code it shows. This leaves wireless debugging on, which listens on the network; use it only on devices you own.</string>
+    <string name="pair_host">Pairing address (host:port)</string>
+    <string name="pair_code">Pairing code</string>
+    <string name="pair">Pair and arm</string>
 </resources>

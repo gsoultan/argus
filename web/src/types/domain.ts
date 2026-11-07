@@ -395,6 +395,18 @@ export interface ServerSystemFacts {
   bootedAt: ISOTime | null
   timeZone: string
   utcOffsetSeconds: number
+  /**
+   * How an Android device is driven: 'attended' (someone accepts each
+   * session) or 'unattended' (the helper over local ADB, nobody there).
+   * Absent for a server, or an app older than the unattended engine.
+   */
+  engine?: 'attended' | 'unattended'
+  /**
+   * Whether wireless debugging is on, which the unattended engine needs and
+   * which listens on every interface on Android 11+. Shown on the device so
+   * nobody finds it by surprise.
+   */
+  wirelessDebugging?: boolean
 }
 
 export interface ServerDisk {

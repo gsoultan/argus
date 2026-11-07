@@ -31,6 +31,14 @@ class DeviceBridge(private val app: ArgusApp) : Device {
     @Volatile
     private var capture: ScreenCapture? = null
 
+    /**
+     * The unattended engine, when the device is set up for it. Armed, it is
+     * the screen and the finger instead of the capture and the accessibility
+     * service, and a session opens without asking anyone.
+     */
+    @Volatile
+    var unattended: UnattendedEngine? = null
+
     @Volatile
     private var person = ""
 
@@ -48,6 +56,10 @@ class DeviceBridge(private val app: ArgusApp) : Device {
     fun who(): String = person.ifBlank { "Someone" }
 
     override fun consent(person: String, principal: String): Boolean {
+        // A company device with nobody there: the helper is the screen, and
+        // the Go agent has already decided this is unattended, so there is no
+        // one to ask. The grant still named the person, recorded as the actor.
+        if (unattended?.armed == true) return true
         val p = Pending(asked.incrementAndGet(), CountDownLatch(1))
         if (!pending.compareAndSet(null, p)) {
             // One question at a time; a second session waits for the first
@@ -120,9 +132,10 @@ class DeviceBridge(private val app: ArgusApp) : Device {
         if (open > 0) return
         person = ""
         principal = ""
+        val unattended = unattended?.armed == true
         main.post {
             InputService.instance?.banner(null)
-            AgentService.stopCapture(app)
+            if (!unattended) AgentService.stopCapture(app)
         }
     }
 
@@ -131,6 +144,7 @@ class DeviceBridge(private val app: ArgusApp) : Device {
     }
 
     override fun play(inputJSON: String) {
+        unattended?.let { if (it.armed) { it.play(inputJSON); return } }
         val input = InputService.instance
             ?: throw IllegalStateException("the accessibility service is off on the device; it can be watched but not touched")
         val c = capture

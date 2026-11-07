@@ -199,6 +199,22 @@ jobs:
             -ldflags "-X github.com/gsoultan/argus/mobile.Version=0.0.0-ci" \
             -o android/app/libs/argus.aar ./mobile
           ls -l android/app/libs/argus.aar
+      - name: Build and test the unattended helper, then dex it
+        working-directory: android
+        run: |
+          set -euo pipefail
+          # The helper's pure parts (the wire protocol) are unit-tested on the
+          # JVM here; its framework reflection is only testable on a device.
+          gradle --no-daemon :helper:test :helper:jar
+          # app_process on the device loads a dex, so dex the helper and the
+          # Kotlin stdlib it uses into the app's assets. The app pushes it.
+          ks=$(find ~/.gradle /root/.gradle -name 'kotlin-stdlib-2*.jar' 2>/dev/null | head -1)
+          mkdir -p app/src/main/assets
+          "$ANDROID_HOME/build-tools/34.0.0/d8" --min-api 29 --release \
+            --output app/src/main/assets \
+            helper/build/libs/helper.jar "$ks"
+          mv app/src/main/assets/classes.dex app/src/main/assets/argus-helper.dex
+          ls -l app/src/main/assets/argus-helper.dex
       - name: Build the app
         working-directory: android
         run: gradle --no-daemon assembleDebug

@@ -61,6 +61,21 @@
             android:layout_height="wrap_content"
             android:text="@string/enable_input" />
 
+        <TextView
+            android:id="@+id/unattendedState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/unattended_off"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <Button
+            android:id="@+id/unattended"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/unattended_setup" />
+
         <Button
             android:id="@+id/forget"
             style="?attr/borderlessButtonStyle"

@@ -164,6 +164,16 @@ type Agent struct {
 	connected   atomic.Bool
 	sessions    atomic.Int64
 	endRequests atomic.Int64
+	// unattended is set while the device runs the unattended engine: a
+	// company device with nobody to accept a session, opened by the helper
+	// over local ADB. The agent then opens a session without asking, which
+	// is what unattended means, so the "nobody accepts" is enforced here and
+	// not only in the app.
+	unattended atomic.Bool
+	// wirelessDebugging is what the console shows as a fact: unattended needs
+	// it on, and on Android 11+ it listens on every interface, so nobody
+	// should discover it later.
+	wirelessDebugging atomic.Bool
 }
 
 // NewAgent makes the agent for stateDir, with the device the app provides.
@@ -260,11 +270,20 @@ func (a *Agent) Start() error {
 		})
 	}
 	facts := func() {
+		engine := "attended"
+		if a.unattended.Load() {
+			engine = "unattended"
+		}
 		rep.Facts(ctx, map[string]any{
 			"hostname":   hostname,
 			"machine_id": a.machineID,
 			"os":         a.osName,
-			"system":     map[string]any{"model": a.model, "virtual": false},
+			"system": map[string]any{
+				"model":              a.model,
+				"virtual":            false,
+				"engine":             engine,
+				"wireless_debugging": a.wirelessDebugging.Load(),
+			},
 		})
 	}
 	go func() {
@@ -318,6 +337,20 @@ func (a *Agent) Connected() bool { return a.connected.Load() }
 // Sessions is how many sessions are open on the device now.
 func (a *Agent) Sessions() int { return int(a.sessions.Load()) }
 
+// SetUnattended tells the agent the device runs the unattended engine (true)
+// or the attended one (false). Unattended opens a session without asking, so
+// the app sets this only once its helper is armed, and clears it the moment
+// the helper is not. The console's control mode is still what gates approval.
+func (a *Agent) SetUnattended(on bool) { a.unattended.Store(on) }
+
+// Unattended reports the engine the agent is opening sessions with.
+func (a *Agent) Unattended() bool { return a.unattended.Load() }
+
+// SetWirelessDebugging tells the agent whether wireless debugging is on, which
+// the console shows as a fact on the device: unattended needs it, and it is a
+// shell-level door nobody should find by surprise.
+func (a *Agent) SetWirelessDebugging(on bool) { a.wirelessDebugging.Store(on) }
+
 // EndSessions ends every open session: the Stop button on the banner.
 func (a *Agent) EndSessions() {
 	a.endRequests.Add(1)
@@ -362,7 +395,11 @@ func (a *Agent) openDevice(open agent.AndroidOpen) (agent.AndroidDevice, error) 
 	if a.device == nil {
 		return nil, errors.New("the app has no device to share")
 	}
-	if !a.device.Consent(open.Person, open.Principal) {
+	// Attended asks whoever holds the device; unattended is a company device
+	// with nobody there, so the session opens without a prompt. The console's
+	// control mode decided which, and it still signed a grant for a named
+	// person, recorded as the actor.
+	if !a.unattended.Load() && !a.device.Consent(open.Person, open.Principal) {
 		return nil, errors.New("whoever holds the device did not accept the session")
 	}
 	a.mu.Lock()

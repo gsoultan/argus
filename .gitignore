@@ -105,3 +105,6 @@ android/.gradle/
 android/**/build/
 android/local.properties
 android/.kotlin/
+
+# The unattended helper dex is built in CI (d8) into the app assets.
+android/app/src/main/assets/argus-helper.dex

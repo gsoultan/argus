@@ -45,6 +45,11 @@ dependencies {
     //   gomobile bind -target android -androidapi 29 -o android/app/libs/argus.aar ./mobile
     implementation(files("libs/argus.aar"))
 
+    // The unattended helper, for its wire protocol (Protocol): the app talks
+    // to the helper over a local socket in this framing. The helper's own
+    // dex is pushed to the device separately (assets/argus-helper.dex).
+    implementation(project(":helper"))
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
