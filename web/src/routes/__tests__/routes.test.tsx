@@ -26,6 +26,8 @@ const ROUTES: Array<[path: string, heading: string | RegExp]> = [
   ['/audit', 'Activity'],
   ['/settings', 'Settings'],
   ['/connect', 'Connect'],
+  ['/cloud', 'Cloud'],
+  ['/cloud/connect', 'Connect an AWS account'],
   ['/about', 'About Argus'],
   // Old addresses, kept so a bookmark lands somewhere sensible.
   ['/mine', 'Servers'],
