@@ -1,14 +1,17 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Center, Group, Loader, PasswordInput, Radio, Select,
+  Alert, Badge, Box, Button, Center, Group, Loader, PasswordInput, Radio, SegmentedControl, Select,
   Stack, Text, ThemeIcon,
 } from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconFolders, IconHourglassHigh, IconLock,
+  IconAppWindow, IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconFolders, IconHourglassHigh, IconLayoutColumns, IconLock,
   IconPlugConnectedX, IconTerminal2, IconX,
 } from '@tabler/icons-react'
+import { OwnTerminalCard, PendingDirectLogin, useOwnTerminal } from '~/components/ssh/OwnTerminal'
+import type { FilesState } from '~/components/FileBrowser'
 import { ButtonLink } from '~/components/links'
 import { ReachBadge, kindOf, reachOf } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
@@ -59,14 +62,20 @@ export const Route = createFileRoute('/connect')({
   // page knows the server, so clicking a server on Servers lands in a terminal
   // rather than on a form that asks again what was just clicked. It is still
   // only a request: the ticket is asked for exactly as the button asks.
+  // `?view=files` (or `split`) says which view a session opens on, so "Open
+  // files" on a server card lands in the file browser rather than a terminal.
   validateSearch: (
     s: Record<string, unknown>,
-  ): { host?: string; as?: string; open?: boolean } => ({
+  ): { host?: string; as?: string; open?: boolean; view?: SessionView } => ({
     ...(typeof s.host === 'string' && s.host ? { host: s.host } : {}),
     ...(typeof s.as === 'string' && s.as ? { as: s.as } : {}),
     ...(s.open === true || s.open === 'true' || s.open === 1 ? { open: true } : {}),
+    ...(s.view === 'files' || s.view === 'split' || s.view === 'terminal' ? { view: s.view } : {}),
   }),
 })
+
+/** What a Linux session shows: its terminal, its files, or both side by side. */
+export type SessionView = 'terminal' | 'files' | 'split'
 
 /** Stable identity, so the principal-reset effect is not re-armed every render. */
 const DEFAULT_PRINCIPALS = ['ops', 'deploy']
@@ -75,15 +84,23 @@ function Connect() {
   const { data: assets, refetch: refetchAssets, isFetching: assetsFetching } = useQuery(assetsQuery({}))
   const { data: me } = useQuery(meQuery())
   const whole = seesWholeFleet(me?.role)
+  const phone = useMediaQuery('(max-width: 36em)') ?? false
 
   const [requesting, setRequesting] = useState(false)
   const [denied, setDenied] = useState<string>()
-  const { host, as, open } = Route.useSearch()
+  const { host, as, open, view: askedView } = Route.useSearch()
   const [target, setTarget] = useState<string | null>(host ?? null)
   const [principal, setPrincipal] = useState(as ?? 'ops')
   const [session, setSession] = useState<
-    { target: string; principal: string; protocol: 'ssh' | 'rdp' | 'files' } | null
+    { target: string; principal: string; protocol: 'ssh' | 'rdp' } | null
   >(null)
+  /** Which view is in front, and which have been opened (and so stay mounted). */
+  const [view, setView] = useState<SessionView>('terminal')
+  const [opened, setOpened] = useState<Set<'terminal' | 'files'>>(new Set())
+  /** The folder the terminal is in, as far as its shell says; Split follows it. */
+  const [cwd, setCwd] = useState<string | null>(null)
+  /** Phone: which way onto the server is showing. */
+  const [way, setWay] = useState<'browser' | 'own'>('browser')
   /**
    * The Windows account's password, for a desktop's sign-in. Held only until
    * the desktop takes it -- it goes to the server's agent for this one logon
@@ -91,23 +108,27 @@ function Connect() {
    */
   const [password, setPassword] = useState('')
   const heldPassword = useRef('')
-  const [state, setState] = useState<TerminalState>('connecting')
-  const [detail, setDetail] = useState<string>()
+  const [termState, setTermState] = useState<TerminalState>('connecting')
+  const [termDetail, setTermDetail] = useState<string>()
+  const [filesState, setFilesState] = useState<FilesState>('connecting')
+  const [filesDetail, setFilesDetail] = useState<string>()
+  /** The last session's failure, kept to show on the form after it closes. */
+  const [lastError, setLastError] = useState<string>()
 
   /**
-   * The ticket minted when the user pressed Connect, held for the terminal to
+   * The ticket minted when the user pressed Connect, held for the first view to
    * consume.
    *
    * Pressing Connect has to ask the control plane whether this is allowed, and
-   * that answer *is* a ticket. Throwing it away and letting the terminal mint a
+   * that answer *is* a ticket. Throwing it away and letting the view mint a
    * second one burned two single-use tickets per session and wrote an audit
    * entry for a session that never opened — in a product whose whole claim is
    * that the audit log means something.
    *
-   * A ref rather than state: consuming it must not re-render, and the terminal
-   * reads it exactly once. Any later call (a reconnect, or StrictMode's second
-   * mount in development) finds it empty and mints a fresh one, which is the
-   * behaviour the single-use property requires.
+   * A ref rather than state: consuming it must not re-render, and it is read
+   * exactly once. Any later call (a second view, a reconnect, or StrictMode's
+   * second mount in development) finds it empty and mints a fresh one, which is
+   * the behaviour the single-use property requires.
    */
   const heldTicket = useRef<string | null>(null)
   // Ends the terminal on purpose; set by LiveTerminal while one is open.
@@ -126,6 +147,7 @@ function Connect() {
   const viaAgent = selected?.tunnelConnected === true
   const agentDown = !!selected && !viaAgent
   useEffect(() => setPassword(''), [target, principal])
+  const own = useOwnTerminal(selected && !isRDPTarget ? selected.hostname : undefined)
 
   // Memoised so the effect below depends on the contents rather than on a fresh
   // array identity, which the `??` default produced on every single render.
@@ -170,22 +192,65 @@ function Connect() {
     if (!open || autoOpened.current || !loaded || !selected || session) return
     autoOpened.current = true
     if (!viaAgent || (isRDPTarget && !isScreenTarget) || !principals.includes(principal)) return
-    void onConnect()
+    void onConnect(askedView ?? 'terminal')
     // onConnect is recreated every render and reads the same state this
     // effect already gates on.
   }, [open, loaded, selected, viaAgent, isRDPTarget, isScreenTarget, principals, principal])
 
+  const show = (v: SessionView) => {
+    setView(v)
+    setOpened((o) => {
+      const next = new Set(o)
+      if (v !== 'files') next.add('terminal')
+      if (v !== 'terminal') next.add('files')
+      return next.size === o.size ? o : next
+    })
+  }
+  const endSession = (err?: string) => {
+    heldTicket.current = null
+    setLastError(err)
+    setSession(null)
+    setOpened(new Set())
+    setCwd(null)
+    setTermState('connecting')
+    setFilesState('connecting')
+  }
+
   if (session) {
     const isRDP = session.protocol === 'rdp'
-    const isFiles = session.protocol === 'files'
-    const opened = assets?.find((a) => a.hostname === session.target)
-    const isDevice = isRDP && opened?.kind === 'android'
-    const isScreen = isRDP && !isDevice && opened?.desktopMode === 'screen'
+    const openedAsset = assets?.find((a) => a.hostname === session.target)
+    const isDevice = isRDP && openedAsset?.kind === 'android'
+    const isScreen = isRDP && !isDevice && openedAsset?.desktopMode === 'screen'
+    const short = session.target.split('.')[0] ?? session.target
+    // The banner and badge speak for the view in front: the terminal's when it
+    // shows, the files' when only they do.
+    const filesFront = !isRDP && view === 'files'
+    const state = filesFront ? filesState : termState
+    const detail = filesFront ? filesDetail : termDetail
+    const recordedHere = isDevice
+      ? session.principal === 'view'
+        ? 'The device\u2019s screen, as whoever holds it sees it. Watching only. Everything on screen is recorded.'
+        : 'The device\u2019s screen, through the Argus app on it: whoever holds it sees what you do. Everything on screen is recorded.'
+      : isScreen
+      ? 'The server’s own screen, shared: anyone in front of it sees what you do. Everything on screen is recorded.'
+      : isRDP
+        ? 'Windows desktop. Everything on screen is recorded.'
+        : view === 'files'
+          ? 'Files on the server. Every upload, download, change and preview is recorded.'
+          : view === 'split'
+            ? 'Terminal and files side by side. Everything is recorded.'
+            : 'Terminal. Everything you type and see is recorded.'
+    const tab = (v: SessionView, label: string, icon: React.ReactNode) => (
+      <button type="button" role="tab" className="argus-session-tab" aria-selected={view === v}
+        onClick={() => show(v)}>
+        {icon}{label}
+      </button>
+    )
     return (
       <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
-          crumbs={[{ label: 'Servers', to: '/assets' }, { label: session.target.split('.')[0] ?? session.target }]}
-          title={`${principalLabel(session.principal, opened)} on ${session.target.split('.')[0] ?? session.target}`}
+          crumbs={[{ label: 'Servers', to: '/assets' }, { label: short }]}
+          title={`${principalLabel(session.principal, openedAsset)} on ${short}`}
           status={
             <Badge
               color={state === 'live' ? 'teal' : state === 'error' ? 'rose' : state === 'reconnecting' || state === 'lost' ? 'amber' : 'slate'}
@@ -194,102 +259,60 @@ function Connect() {
               {{ connecting: 'Connecting', live: 'Recording', reconnecting: 'Reconnecting', lost: 'Connection lost', closed: 'Ended', error: 'Failed' }[state]}
             </Badge>
           }
-          description={
-            isDevice
-              ? session.principal === 'view'
-                ? 'The device\u2019s screen, as whoever holds it sees it. Watching only. Everything on screen is recorded.'
-                : 'The device\u2019s screen, through the Argus app on it: whoever holds it sees what you do. Everything on screen is recorded.'
-              : isScreen
-              ? 'The server\u2019s own screen, shared: anyone in front of it sees what you do. Everything on screen is recorded.'
-              : isRDP
-              ? 'Windows desktop. Everything on screen is recorded.'
-              : isFiles
-                ? 'Files on the server. Every upload and download is recorded.'
-                : 'Terminal. Everything you type and see is recorded.'
-          }
+          description={recordedHere}
           actions={
-            <Button
-              variant="light"
-              color="rose"
-              leftSection={<IconX size={14} />}
-              onClick={() => {
-                if (endTerminal.current && (state === 'live' || state === 'reconnecting') &&
-                  !window.confirm('End this session? Anything still running in it, such as an update, is stopped. To leave it running, go to another page instead: it is kept for you to come back to.')) return
-                endTerminal.current?.()
-                heldTicket.current = null
-                setSession(null)
-              }}
-            >
+            <Button variant="light" color="rose" leftSection={<IconX size={14} />} onClick={() => {
+              if (endTerminal.current && (termState === 'live' || termState === 'reconnecting') &&
+                !window.confirm('End this session? Anything still running in it, such as an update, is stopped. To leave it running, go to another page instead: it is kept for you to come back to.')) return
+              endTerminal.current?.()
+              endSession()
+            }}>
               Disconnect
             </Button>
           }
         />
+        {!isRDP && (
+          <div className="argus-session-tabs" role="tablist" aria-label="Session view">
+            {tab('terminal', 'Terminal', <IconTerminal2 size={16} />)}
+            {tab('files', 'Files', <IconFolders size={16} />)}
+            {!phone && tab('split', 'Split', <IconLayoutColumns size={16} />)}
+          </div>
+        )}
         {state === 'lost' && (
-          <Alert
-            color="amber"
-            radius={0}
-            icon={<IconPlugConnectedX size={18} />}
-            title="Connection lost"
-          >
+          <Alert color="amber" radius={0} icon={<IconPlugConnectedX size={18} />} title="Connection lost">
             <Group justify="space-between" wrap="wrap" gap="sm">
               <Text size={FS.body}>
                 {detail ?? 'The connection to the server dropped.'} What ran until then was recorded.
               </Text>
               <Group gap="xs">
-                <Button
-                  size="xs"
-                  onClick={() => {
-                    heldTicket.current = null
-                    setState('connecting')
-                    setSession(null)
-                  }}
-                >
-                  Connect again
-                </Button>
+                <Button size="xs" onClick={() => endSession()}>Connect again</Button>
                 <ButtonLink size="xs" variant="default" to="/assets">Back to servers</ButtonLink>
               </Group>
             </Group>
           </Alert>
         )}
         {state === 'closed' && (
-          <Alert
-            color="teal"
-            radius={0}
-            icon={<IconCircleCheck size={18} />}
-            title="Session ended"
-          >
+          <Alert color="teal" radius={0} icon={<IconCircleCheck size={18} />} title="Session ended">
             <Group justify="space-between" wrap="wrap" gap="sm">
               <Text size={FS.body}>It was recorded. You can find it under {whole ? 'Activity' : 'My activity'}.</Text>
               <Group gap="xs">
-                <Button
-                  size="xs"
-                  onClick={() => {
-                    heldTicket.current = null
-                    setState('connecting')
-                    setSession(null)
-                  }}
-                >
-                  Connect again
-                </Button>
+                <Button size="xs" onClick={() => endSession()}>Connect again</Button>
                 <ButtonLink size="xs" variant="default" to="/assets">Back to servers</ButtonLink>
               </Group>
             </Group>
           </Alert>
         )}
-        <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} p={isRDP ? 'md' : undefined}>
+        {state === 'error' && detail && (
+          <Alert color="rose" radius={0} icon={<IconX size={18} />} title="It could not open">
+            <Group justify="space-between" wrap="wrap" gap="sm">
+              <Text size={FS.body}>{detail}</Text>
+              <Button size="xs" onClick={() => endSession(detail)}>Back</Button>
+            </Group>
+          </Alert>
+        )}
+        <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden' }} p={isRDP ? 'md' : undefined}>
           <Suspense fallback={<TerminalLoading />}>
-            {isFiles ? (
-              <FileBrowser
-                endpoint={filesEndpoint()}
-                getTicket={getTicket}
-                target={session.target}
-                principal={session.principal}
-                onStateChange={(s, d) => {
-                  setState(s)
-                  setDetail(d)
-                }}
-              />
-            ) : isRDP ? (
+            {isRDP ? (
               <RDPScreen
                 endpoint={desktopEndpoint()}
                 target={session.target}
@@ -303,22 +326,47 @@ function Connect() {
                   return p
                 }}
                 onStateChange={(s, d) => {
-                  setState(s === 'live' ? 'live' : s === 'error' ? 'error' : 'closed')
-                  setDetail(d)
+                  setTermState(s === 'live' ? 'live' : s === 'error' ? 'error' : 'closed')
+                  setTermDetail(d)
                 }}
               />
             ) : (
-              <LiveTerminal
-                endRef={endTerminal}
-                endpoint={terminalEndpoint()}
-                getTicket={getTicket}
-                target={session.target}
-                principal={session.principal}
-                onStateChange={(s, d) => {
-                  setState(s)
-                  setDetail(d)
-                }}
-              />
+              // Each view keeps its own connection once opened, so moving
+              // between them does not drop a shell or a folder.
+              <div className={view === 'split' ? 'argus-session-split' : 'argus-session-pane'}>
+                {opened.has('terminal') && (
+                  <div className="argus-session-pane" hidden={view === 'files'}>
+                    <LiveTerminal
+                      endRef={endTerminal}
+                      endpoint={terminalEndpoint()}
+                      getTicket={getTicket}
+                      target={session.target}
+                      principal={session.principal}
+                      onCwd={setCwd}
+                      onStateChange={(s, d) => {
+                        setTermState(s)
+                        setTermDetail(d)
+                      }}
+                    />
+                  </div>
+                )}
+                {opened.has('files') && (
+                  <div className="argus-session-pane" hidden={view === 'terminal'}>
+                    <FileBrowser
+                      endpoint={filesEndpoint()}
+                      getTicket={getTicket}
+                      target={session.target}
+                      principal={session.principal}
+                      compact={view === 'split'}
+                      follow={view === 'split' ? cwd : null}
+                      onStateChange={(s, d) => {
+                        setFilesState(s)
+                        setFilesDetail(d)
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
             )}
           </Suspense>
         </Box>
@@ -326,9 +374,10 @@ function Connect() {
     )
   }
 
-  const onConnect = async (mode: 'session' | 'files' = 'session') => {
+  const onConnect = async (first: SessionView = 'terminal') => {
     if (!target) return
     setDenied(undefined)
+    setLastError(undefined)
     setRequesting(true)
     const res = await terminalTicket(target, principal)
     setRequesting(false)
@@ -338,15 +387,18 @@ function Connect() {
       setDenied(res.error)
       return
     }
-    // Handed to the terminal rather than discarded — this ticket is the
+    // Handed to the first view rather than discarded — this ticket is the
     // authorisation the user just obtained.
     heldTicket.current = res.ticket
     heldPassword.current = password
     setPassword('')
-    setSession({
-      target, principal,
-      protocol: mode === 'files' ? 'files' : (selected?.protocol ?? 'ssh'),
-    })
+    const protocol = selected?.protocol === 'rdp' ? 'rdp' : 'ssh'
+    const v: SessionView = protocol === 'rdp' ? 'terminal' : phone && first === 'split' ? 'terminal' : first
+    setView(v)
+    setOpened(new Set(v === 'split' ? ['terminal', 'files'] : [v === 'files' ? 'files' : 'terminal']))
+    setTermState('connecting')
+    setFilesState('connecting')
+    setSession({ target, principal, protocol })
   }
 
   const elevated = isElevatedAccount(principal, selected)
@@ -427,6 +479,150 @@ function Connect() {
     )
   }
 
+  const noAccounts = principals.length === 0
+  const canFiles = !!selected && viaAgent && !isRDPTarget && !noAccounts
+  const showOwn = !!selected && !isRDPTarget
+  const browserCard = (
+    <Box className="argus-way" data-selected={(showOwn && !phone) || undefined}>
+      <Group gap="md" align="flex-start" wrap="nowrap">
+        <ThemeIcon size={44} radius="md" variant="light" color="azure">
+          {isDeviceTarget ? <IconDeviceMobile size={22} /> : isRDPTarget ? <IconDeviceDesktop size={22} /> : <IconAppWindow size={22} />}
+        </ThemeIcon>
+        <Box style={{ minWidth: 0 }}>
+          <Group gap="xs">
+            <Text component="h2" fw={650} size="lg" m={0}>In this browser</Text>
+            {showOwn && <Badge color="azure" variant="light">Easiest</Badge>}
+          </Group>
+          <Text size={FS.body} c="dimmed" mt={4} lh={1.5}>
+            {isDeviceTarget
+              ? 'Nothing to install. The device\u2019s screen opens on this page, through the Argus app on it.'
+              : isRDPTarget
+              ? 'Nothing to install. The desktop opens on this page, through the server’s Argus agent.'
+              : 'Nothing to install or set up. A terminal opens on this page, through the server’s Argus agent.'}
+          </Text>
+        </Box>
+      </Group>
+
+      {!host && (
+        <Select
+          size="md"
+          label="Server"
+          placeholder={assets ? 'Type a server name' : 'Loading servers…'}
+          disabled={!assets}
+          searchable
+          nothingFoundMessage="You have no server by that name"
+          value={target}
+          onChange={setTarget}
+          data={assets?.map((a) => ({ value: a.hostname, label: a.hostname })) ?? []}
+        />
+      )}
+
+      {target && !selected && <Text size={FS.meta} c="dimmed">Loading your accounts…</Text>}
+
+      {selected && (
+        <Box>
+          <Text size="sm" fw={600} mb="sm">{isDeviceTarget ? 'Open it to' : 'Log in as'}</Text>
+          {noAccounts ? (
+            <Text size="sm" c="dimmed">
+              {isDeviceTarget
+                ? 'You may neither watch nor control this device yet. Ask an admin.'
+                : 'You have no account on this server yet. Ask an admin to add one for you.'}
+            </Text>
+          ) : (
+            <Radio.Group value={principal} onChange={setPrincipal}>
+              <Stack gap="xs">
+                {principals.map((p) => (
+                  <Radio.Card key={p} value={p} className="argus-pick" data-checked={p === principal || undefined}>
+                    <Group gap="sm" wrap="nowrap">
+                      <Radio.Indicator />
+                      <Box style={{ flex: 1, minWidth: 0 }}>
+                        <Text size="sm" fw={600} ff={isDeviceTarget ? undefined : 'monospace'}>{principalLabel(p, selected)}</Text>
+                        <Text size={FS.meta} c="dimmed">
+                          {isDeviceTarget
+                            ? p === 'view'
+                              ? 'See the screen. Nothing you do reaches the device.'
+                              : isElevatedAccount(p, selected)
+                                ? 'Touch, type and press its keys. Needs approval first.'
+                                : 'Touch, type and press its keys, as whoever holds it.'
+                            : isElevatedAccount(p) ? 'Full control. Someone approves it first, for a set time.' : 'Your everyday account'}
+                        </Text>
+                      </Box>
+                      {isElevatedAccount(p, selected) && <Badge color="amber" variant="light">approval</Badge>}
+                    </Group>
+                  </Radio.Card>
+                ))}
+              </Stack>
+            </Radio.Group>
+          )}
+        </Box>
+      )}
+
+      {/* Windows asks for the account's own password before it shows
+          a desktop. It goes to the server's agent for this one sign-in
+          and is kept nowhere. */}
+      {target && isDeviceTarget && !noAccounts && (
+        <Alert color="azure" variant="light" icon={<IconDeviceMobile size={16} />}
+          title={selected?.controlMode === 'unattended' ? 'Opens without anyone on the device' : 'Whoever holds it accepts first'}>
+          <Text size={FS.body} lh={1.5}>
+            {selected?.controlMode === 'unattended'
+              ? 'You will see the device\u2019s screen as it is, locked or not. The app shows that a session is live while you are on it.'
+              : 'The app asks the person holding the device to accept. Once they do, you see the screen as they do, and they see a banner naming you while you are on it.'}
+            {' '}The recording keeps everything on screen; secure apps, such as banking, stay black.
+          </Text>
+        </Alert>
+      )}
+
+      {target && isScreenTarget && !isDeviceTarget && !noAccounts && (
+        <Alert color="amber" variant="light" icon={<IconDeviceDesktop size={16} />}
+          title="Screen sharing, not Remote Desktop">
+          <Text size={FS.body} lh={1.5}>
+            You will see the server&rsquo;s screen as it is: whoever is signed in there, or
+            the Windows sign-in screen. Anyone in front of the server sees what you do. The
+            recording notes which Windows account was signed in.
+          </Text>
+        </Alert>
+      )}
+
+      {target && isRDPTarget && !isScreenTarget && !isDeviceTarget && !noAccounts && (
+        <PasswordInput
+          size="md"
+          label={`Windows password for ${principal}`}
+          description="Used once to sign in on the server. Argus does not keep it."
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void onConnect()
+          }}
+        />
+      )}
+
+      <Group gap="md" wrap="wrap" mt="auto">
+        <Button
+          size="md"
+          fullWidth={phone}
+          leftSection={isDeviceTarget ? <IconDeviceMobile size={18} /> : isRDPTarget ? <IconDeviceDesktop size={18} /> : <IconTerminal2 size={18} />}
+          disabled={!target || noAccounts}
+          onClick={() => void onConnect()}
+        >
+          {isDeviceTarget ? (principal === 'view' ? 'Watch' : 'Open') : isRDPTarget ? 'Open desktop' : 'Open terminal'}
+        </Button>
+        {phone && canFiles && (
+          <Button size="md" fullWidth variant="default" leftSection={<IconFolders size={18} />}
+            onClick={() => void onConnect('files')}>
+            Open files
+          </Button>
+        )}
+        <Group gap={8} wrap="nowrap">
+          <Box w={8} h={8} style={{ borderRadius: '50%', background: 'var(--mantine-color-rose-6)', flexShrink: 0 }} />
+          <Text size={FS.meta} c="dimmed">
+            {isRDPTarget ? 'Everything on screen is recorded' : 'Everything you type and see is recorded'}
+          </Text>
+        </Group>
+      </Group>
+    </Box>
+  )
+
   return (
     <Box>
       <PageHeader
@@ -434,146 +630,54 @@ function Connect() {
         title={selected ? `Connect to ${name}` : 'Connect'}
         status={selected && <ReachBadge reach={reachOf(selected)} />}
         description={selected
-          ? `${selected.os || { windows: 'Windows', linux: 'Linux', android: 'Android' }[kindOf(selected)]} · opens here in your browser, recorded.`
+          ? [selected.os || { windows: 'Windows', linux: 'Linux', android: 'Android' }[kindOf(selected)], selected.address]
+            .filter(Boolean).join(' · ') + (showOwn ? '. Two ways in, both recorded.' : '. Opens here in your browser, recorded.')
           : 'Pick a server or device. It opens here in your browser, and the session is recorded.'}
+        actions={canFiles && !phone ? (
+          <Button variant="default" leftSection={<IconFolders size={16} />} onClick={() => void onConnect('files')}>
+            Open files
+          </Button>
+        ) : undefined}
       />
 
       <PageBody>
-        <Box maw={560} w="100%">
-          {state === 'error' && detail && (
-            <Alert color="rose" icon={<IconX size={16} />} title="The last session could not open" mb="md">
-              <Text size={FS.body} lh={1.5}>{detail}</Text>
+        <Stack gap="lg" w="100%">
+          {(lastError || (termState === 'error' && termDetail)) && (
+            <Alert color="rose" icon={<IconX size={16} />} title="The last session could not open"
+              withCloseButton onClose={() => {
+                setLastError(undefined)
+                setTermDetail(undefined)
+              }}>
+              <Text size={FS.body} lh={1.5}>{lastError ?? termDetail}</Text>
             </Alert>
           )}
 
-          <Box className="argus-panel" p={{ base: 'md', sm: 'xl' }}>
-            <Stack gap="lg">
-              {!host && (
-                <Select
-                  size="md"
-                  label="Server"
-                  placeholder={assets ? 'Type a server name' : 'Loading servers…'}
-                  disabled={!assets}
-                  searchable
-                  nothingFoundMessage="You have no server by that name"
-                  value={target}
-                  onChange={setTarget}
-                  data={assets?.map((a) => ({ value: a.hostname, label: a.hostname })) ?? []}
-                />
-              )}
+          {showOwn && <PendingDirectLogin hostname={selected.hostname} login={own.account?.loginName} />}
 
-              {target && (
-                <Box>
-                  <Text size="sm" fw={600} mb="sm">{isDeviceTarget ? 'Open it to' : 'Log in as'}</Text>
-                  {principals.length === 0 ? (
-                    <Text size="sm" c="dimmed">
-                      {isDeviceTarget
-                        ? 'You may neither watch nor control this device yet. Ask an admin.'
-                        : 'You have no account on this server yet. Ask an admin to add one for you.'}
-                    </Text>
-                  ) : (
-                    <Radio.Group value={principal} onChange={setPrincipal}>
-                      <Stack gap="xs">
-                        {principals.map((p) => (
-                          <Radio.Card
-                            key={p}
-                            value={p}
-                            className="argus-pick"
-                            data-checked={p === principal || undefined}
-                          >
-                            <Group gap="sm" wrap="nowrap">
-                              <Radio.Indicator />
-                              <Box style={{ flex: 1, minWidth: 0 }}>
-                                <Text size="sm" fw={600} ff={isDeviceTarget ? undefined : 'monospace'}>{principalLabel(p, selected)}</Text>
-                                <Text size={FS.meta} c="dimmed">
-                                  {isDeviceTarget
-                                    ? p === 'view'
-                                      ? 'See the screen. Nothing you do reaches the device.'
-                                      : isElevatedAccount(p, selected)
-                                        ? 'Touch, type and press its keys. Needs approval first.'
-                                        : 'Touch, type and press its keys, as whoever holds it.'
-                                    : isElevatedAccount(p) ? 'Full control. Needs approval first.' : 'Your everyday account'}
-                                </Text>
-                              </Box>
-                              {isElevatedAccount(p, selected) && <Badge color="amber" variant="light">approval</Badge>}
-                            </Group>
-                          </Radio.Card>
-                        ))}
-                      </Stack>
-                    </Radio.Group>
-                  )}
-                </Box>
-              )}
+          {showOwn && phone && (
+            <SegmentedControl fullWidth value={way} onChange={(v) => setWay(v as 'browser' | 'own')}
+              data={[{ value: 'browser', label: 'In this browser' }, { value: 'own', label: 'Your terminal' }]}
+              aria-label="Way in" />
+          )}
 
-              {/* Windows asks for the account's own password before it shows
-                  a desktop. It goes to the server's agent for this one sign-in
-                  and is kept nowhere. */}
-              {target && isDeviceTarget && principals.length > 0 && (
-                <Alert color="azure" variant="light" icon={<IconDeviceMobile size={16} />}
-                  title={selected?.controlMode === 'unattended' ? 'Opens without anyone on the device' : 'Whoever holds it accepts first'}>
-                  <Text size={FS.body} lh={1.5}>
-                    {selected?.controlMode === 'unattended'
-                      ? 'You will see the device\u2019s screen as it is, locked or not. The app shows that a session is live while you are on it.'
-                      : 'The app asks the person holding the device to accept. Once they do, you see the screen as they do, and they see a banner naming you while you are on it.'}
-                    {' '}The recording keeps everything on screen; secure apps, such as banking, stay black.
-                  </Text>
-                </Alert>
-              )}
+          {showOwn ? (
+            phone ? (way === 'browser' ? browserCard : <OwnTerminalCard asset={selected} />) : (
+              <div className="argus-ways">
+                {browserCard}
+                <OwnTerminalCard asset={selected} />
+              </div>
+            )
+          ) : (
+            <Box maw={640} w="100%">{browserCard}</Box>
+          )}
 
-              {target && isScreenTarget && !isDeviceTarget && principals.length > 0 && (
-                <Alert color="amber" variant="light" icon={<IconDeviceDesktop size={16} />}
-                  title="Screen sharing, not Remote Desktop">
-                  <Text size={FS.body} lh={1.5}>
-                    You will see the server&rsquo;s screen as it is: whoever is signed in there, or
-                    the Windows sign-in screen. Anyone in front of the server sees what you do. The
-                    recording notes which Windows account was signed in.
-                  </Text>
-                </Alert>
-              )}
-
-              {target && isRDPTarget && !isScreenTarget && principals.length > 0 && (
-                <PasswordInput
-                  size="md"
-                  label={`Windows password for ${principal}`}
-                  description="Used once to sign in on the server. Argus does not keep it."
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void onConnect()
-                  }}
-                />
-              )}
-
-              <Group justify="space-between" wrap="wrap" gap="sm">
-                {viaAgent && !isRDPTarget ? (
-                  <Button
-                    variant="default"
-                    leftSection={<IconFolders size={16} />}
-                    disabled={!target || principals.length === 0}
-                    onClick={() => void onConnect('files')}
-                  >
-                    Files only
-                  </Button>
-                ) : <span />}
-                <Button
-                  size="md"
-                  leftSection={isDeviceTarget ? <IconDeviceMobile size={18} /> : isRDPTarget ? <IconDeviceDesktop size={18} /> : <IconTerminal2 size={18} />}
-                  disabled={!target || principals.length === 0}
-                  onClick={() => void onConnect()}
-                >
-                  {isDeviceTarget ? (principal === 'view' ? 'Watch' : 'Open') : 'Connect'}
-                </Button>
-              </Group>
-            </Stack>
-          </Box>
-          <Text size={FS.meta} c="dimmed" mt="sm" lh={1.5}>
+          <Text size={FS.meta} c="dimmed" lh={1.5} maw={720}>
             {isDeviceTarget
               ? 'Argus checks you may open this device, then the Argus app on it shares the screen and records the session. Argus never holds the device\u2019s PIN.'
               : <>Argus checks you may use this account, then the server&rsquo;s own agent opens the
             session and records it. No password or key of the server is shown to you.</>}
           </Text>
-        </Box>
+        </Stack>
       </PageBody>
     </Box>
   )

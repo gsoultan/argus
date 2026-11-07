@@ -22,6 +22,8 @@ vi.mock('@xterm/xterm', () => ({
     reset() {}
     dispose() {}
     onData() { return { dispose() {} } }
+    onTitleChange() { return { dispose() {} } }
+    parser = { registerOscHandler() { return { dispose() {} } } }
   },
 }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))

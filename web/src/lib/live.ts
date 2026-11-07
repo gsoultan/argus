@@ -1,5 +1,5 @@
 import type { ChainInput } from '~/workers/chain.worker'
-import type {
+import type { MyServer,
   AccessRequest,
   Asset,
   AssetAssignment,
@@ -823,6 +823,11 @@ export async function setAssetTeamAssignment(
 /** The signed-in person's own server account and SSH key. */
 export async function myServerAccount(): Promise<ServerAccount> {
   return get<ServerAccount>('/api/v1/me/server-account')
+}
+
+/** The signed-in person's own access per server: personal account and direct SSH. */
+export async function myServers(): Promise<MyServer[]> {
+  return get<MyServer[]>('/api/v1/me/servers')
 }
 
 /** Sets or, with an empty string, removes the signed-in person's SSH key. */

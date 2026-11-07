@@ -500,6 +500,9 @@ export function useSetRole() {
   })
 }
 
+export const myServersQuery = () =>
+  queryOptions({ queryKey: ['me', 'servers'] as const, queryFn: () => api.myServers(), staleTime: 60_000 })
+
 export const myServerAccountQuery = () =>
   queryOptions({ queryKey: ['me', 'server-account'] as const, queryFn: () => api.myServerAccount() })
 

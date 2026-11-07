@@ -77,6 +77,17 @@ export interface ServerAccount {
   directSsh: boolean
 }
 
+/**
+ * What the signed-in person may do on one server with their own account:
+ * whether they have one there, and whether they may SSH straight to it.
+ */
+export interface MyServer {
+  hostname: string
+  personalAccount: boolean
+  sudo: boolean
+  directSsh: TeamDirectSsh
+}
+
 /** What the agent last said about one personal account on a server. */
 export interface PersonalAccountState {
   name: string
