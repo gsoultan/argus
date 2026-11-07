@@ -146,8 +146,12 @@ const BUDGET_KB = {
    * plus the device toolbar in the desktop view, which Watch live loads.
    * 402.3 kB with the live Home (401.8 before): its two calls and types in
    * the shared live and api modules.
+   * CLOUD_SD with Cloud in the menu: the item and its icon, the two cloud
+   * routes and their role guards in the route map, and the tab names the
+   * page's search rule checks. The pages, the wizard and the cloud queries
+   * are in route chunks.
    */
-  sessionDetail: 403,
+  sessionDetail: 405,
 }
 
 /**
