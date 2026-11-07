@@ -5,4 +5,4 @@
 -- engine migrations runs last. Widening a CHECK never fails on rows that exist.
 ALTER TABLE databases DROP CONSTRAINT IF EXISTS databases_engine_check;
 ALTER TABLE databases ADD CONSTRAINT databases_engine_check
-    CHECK (engine IN ('postgres', 'redis', 'rabbitmq', 'mysql', 'mongodb'));
+    CHECK (engine IN ('postgres', 'redis', 'rabbitmq', 'mysql', 'mongodb', 'kafka'));
