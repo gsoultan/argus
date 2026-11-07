@@ -6,6 +6,7 @@ import {
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconBrandAndroid, IconCode, IconPackage, IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
+import { BatchInstall, type BatchTarget } from '~/components/BatchInstall'
 import { EmptyState, SectionCard } from '~/components/page'
 import { relTime } from '~/components/primitives'
 import { run as notifyRun } from '~/lib/notify'
@@ -320,6 +321,7 @@ function ScriptDetail({ id, canEdit, onClose, onEdit }: {
 }) {
   const { data: s } = useQuery(scriptQuery(id))
   const [picked, setPicked] = useState<string | null>(null)
+  const [batch, setBatch] = useState(false)
   const remove = useRemoveScript()
   const v = s?.versions?.find((x) => x.id === picked) ?? s?.versions?.[0]
   return (
@@ -334,6 +336,9 @@ function ScriptDetail({ id, canEdit, onClose, onEdit }: {
               data={(s.versions ?? []).map((x) => ({ value: x.id, label: `v${x.version} · ${x.author} · ${relTime(x.createdAt)}` }))} />
             {canEdit && (
               <Group gap="xs">
+                {s.reviewed && (
+                  <Button size="compact-sm" onClick={() => setBatch(true)}>Run on servers…</Button>
+                )}
                 <Button size="compact-sm" variant="default" onClick={() => onEdit(s)}>New version</Button>
                 <Button size="compact-sm" variant="subtle" color="rose" loading={remove.isPending}
                   onClick={() => void notifyRun(() => remove.mutateAsync(s.id), {
@@ -379,6 +384,7 @@ function ScriptDetail({ id, canEdit, onClose, onEdit }: {
           )}
         </Stack>
       )}
+      {batch && s?.reviewed && <BatchInstall target={{ kind: 'script', script: s }} onClose={() => setBatch(false)} />}
     </Drawer>
   )
 }
@@ -466,6 +472,7 @@ function FilesCard({ canEdit }: { canEdit: boolean }) {
   const remove = useRemoveSoftwareFile()
   const [added, setAdded] = useState<SoftwareFile | null>(null)
   const [winFile, setWinFile] = useState<File | null>(null)
+  const [batch, setBatch] = useState<BatchTarget | null>(null)
   const pick = (file: File | null) => {
     if (!file) return
     setAdded(null)
@@ -483,6 +490,7 @@ function FilesCard({ canEdit }: { canEdit: boolean }) {
           {(props) => <Button {...props} size="compact-sm" loading={add.isPending} leftSection={<IconUpload size={14} />}>Add a file</Button>}
         </FileButton>
       ) : undefined}>
+      {batch && <BatchInstall target={batch} onClose={() => setBatch(null)} />}
       {winFile && (
         <WindowsFileForm file={winFile} onClose={() => setWinFile(null)}
           onAdded={(f) => { setAdded(f); setWinFile(null) }} />
@@ -538,6 +546,11 @@ function FilesCard({ canEdit }: { canEdit: boolean }) {
                 </Table.Td>
                 <Table.Td><Text size={FS.meta}>{sizeOf(f.size)}</Text></Table.Td>
                 <Table.Td ta="right">
+                  {canEdit && (
+                    <Button size="compact-xs" variant="default" mr={4} onClick={() => setBatch({ kind: 'file', file: f })}>
+                      {f.platform === 'android' ? 'Install on devices…' : 'Install on servers…'}
+                    </Button>
+                  )}
                   {canEdit && (
                     <ActionIcon variant="subtle" color="slate" aria-label={`Remove ${f.name}`} loading={remove.isPending}
                       onClick={() => void notifyRun(() => remove.mutateAsync(f.id),

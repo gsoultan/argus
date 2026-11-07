@@ -135,6 +135,7 @@ func (a *API) registerSoftwareFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/software/files/{id}", a.deleteSoftwareFile)
 	mux.HandleFunc("POST /api/v1/assets/{id}/android-apps/runs", a.postAndroidAppRun)
 	mux.HandleFunc("POST /api/v1/assets/{id}/software/file-runs", a.postSoftwareFileRun)
+	mux.HandleFunc("POST /api/v1/software/batches", a.postSoftwareBatch)
 	mux.HandleFunc("GET /api/v1/report/software-file/{run}", a.agentReporter(a.getRunSoftwareFile))
 }
 

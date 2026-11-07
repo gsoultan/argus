@@ -369,6 +369,19 @@ export async function removeSoftwareFile(id: string): Promise<void> {
   await send('DELETE', `/api/v1/software/files/${encodeURIComponent(id)}`)
 }
 
+/** A library item put on many servers, one at a time. */
+export interface BatchResult {
+  runs: PackageRun[]
+  skipped: { assetId: string; hostname: string; reason: string }[]
+}
+
+export async function startSoftwareBatch(body: {
+  kind: 'script' | 'file'; versionId?: string; action?: 'install' | 'uninstall'; params?: Record<string, string>
+  fileId?: string; assetIds: string[]
+}): Promise<BatchResult> {
+  return send('POST', '/api/v1/software/batches', body)
+}
+
 export type AppAction = 'install' | 'uninstall' | 'disable' | 'restore'
 
 export async function runAndroidApp(assetId: string, body: { action: AppAction; fileId?: string; package?: string }): Promise<PackageRun> {

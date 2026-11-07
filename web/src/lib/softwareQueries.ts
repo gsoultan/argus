@@ -14,7 +14,7 @@ import {
   removeScript,
   reviewScript,
   runScript,
-  runAndroidApp, runSoftwareFile,
+  runAndroidApp, runSoftwareFile, startSoftwareBatch,
   softwareFiles,
   uploadSoftwareFile,
   removeSoftwareFile,
@@ -138,6 +138,17 @@ export const useUploadSoftwareFile = () =>
   useScriptMutation((v: { file: File; note: string; name?: string; args?: string }) =>
     uploadSoftwareFile(v.file, v.note, { name: v.name, args: v.args }))
 export const useRemoveSoftwareFile = () => useScriptMutation((id: string) => removeSoftwareFile(id))
+
+export const useSoftwareBatch = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: Parameters<typeof startSoftwareBatch>[0]) => startSoftwareBatch(v),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['software'] })
+      void qc.invalidateQueries({ queryKey: ['packages'] })
+    },
+  })
+}
 
 export const useFileInstall = (assetId: string) => {
   const qc = useQueryClient()

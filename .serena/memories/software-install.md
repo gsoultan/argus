@@ -122,6 +122,19 @@ plus install/remove fields on package runs in `package_updates.go`. Migration
 - Console: a Windows (rdp) server's What runs here is the Installed list;
   the Install drawer offers Library file | PowerShell script.
 
+## Part 5: many servers at once
+
+- POST /api/v1/software/batches {kind script|file, versionId, action,
+  params, fileId, assetIds ≤100} (software_batch.go). One batch through
+  CreatePackageRuns: one at a time, a failure cancels the rest
+  (advanceBatch). Non-production servers sorted first; production-only
+  batches need a prior success outside production. Servers that cannot take
+  it are skipped with reasons (batchReady), not failed. Audit
+  software.batch_requested. Repository packages are not batched (each needs
+  its own preview).
+- Console: components/BatchInstall.tsx, opened from a reviewed script's
+  drawer ("Run on servers…") and each library file row.
+
 ## The storm model
 
 `internal/control/rmodel/model.go` must follow every migration: CI runs

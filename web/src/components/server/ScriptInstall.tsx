@@ -101,7 +101,7 @@ export function ScriptInstall({ asset, onClose }: { asset: Asset; onClose: () =>
   )
 }
 
-function clean(params: ScriptParam[], values: Record<string, string>): Record<string, string> {
+export function clean(params: ScriptParam[], values: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
   for (const p of params) {
     const val = values[p.name]
@@ -110,7 +110,7 @@ function clean(params: ScriptParam[], values: Record<string, string>): Record<st
   return out
 }
 
-function ParamInput({ p, value, onChange }: { p: ScriptParam; value?: string; onChange: (v: string) => void }) {
+export function ParamInput({ p, value, onChange }: { p: ScriptParam; value?: string; onChange: (v: string) => void }) {
   const label = <>{p.label || p.name} <Badge size="xs" variant="light" color="slate" ml={4}>{p.name}</Badge></>
   if (p.kind === 'choice') {
     return <Select size="xs" w={320} label={label} required={p.required} value={value ?? p.default ?? null}
