@@ -317,6 +317,13 @@ func runDaemon(args []string) int {
 			RecordDir: *dir,
 			Log:       log,
 		})
+		// MongoDB the same way: a user in the entry's database for the
+		// session, every command recorded before it runs.
+		services[agent.MongoDBService] = agent.MongoDB(agent.StoreConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
+		})
 		services[agent.RabbitMQService] = agent.RabbitMQ(agent.RabbitConfig{StoreConfig: agent.StoreConfig{
 			Verifier:  &tunnel.GrantVerifier{Host: hostname},
 			RecordDir: *dir,

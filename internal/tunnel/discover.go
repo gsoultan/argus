@@ -60,6 +60,13 @@ func (d *GrantDiscover) Validate() error {
 		if !LocalPGHost(d.Host) {
 			return fmt.Errorf("Redis must be on this server; %s is not", d.Host)
 		}
+	case EngineMongoDB:
+		if !LocalPGHost(d.Host) {
+			return fmt.Errorf("MongoDB must be on this server; %s is not", d.Host)
+		}
+		if d.ConfigPath != "" && !ValidMongoAdminFile(d.ConfigPath) {
+			return errors.New("the admin file must be an absolute path to a .conf file on the server")
+		}
 	case EngineRabbitMQ:
 		if !LocalLoopback(d.Host) {
 			return fmt.Errorf("the RabbitMQ management API must be on this server; %s is not", d.Host)

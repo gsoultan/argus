@@ -102,7 +102,7 @@ func discoverPlaceholder(engine string) string {
 		return "0"
 	case tunnel.EngineRabbitMQ:
 		return "/"
-	case tunnel.EngineMySQL:
+	case tunnel.EngineMySQL, tunnel.EngineMongoDB:
 		return "argus_probe"
 	}
 	return "postgres"

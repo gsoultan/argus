@@ -46,6 +46,8 @@ func ServiceForEngine(engine string) string {
 		return RabbitMQService
 	case EngineMySQL:
 		return MySQLService
+	case EngineMongoDB:
+		return MongoDBService
 	}
 	return PostgresService
 }
@@ -147,8 +149,11 @@ type StoreAnswer struct {
 	Total int64 `json:"total,omitempty"`
 	// Truncated says the answer holds fewer items or bytes than there were.
 	Truncated bool `json:"truncated,omitempty"`
-	// Data is a RabbitMQ management API answer, as JSON.
+	// Data is a RabbitMQ management API answer, as JSON, or the documents a
+	// MongoDB command answered, each as relaxed Extended JSON.
 	Data any `json:"data,omitempty"`
+	// Tag says what a command did, in a few words: "find 12", "update 3".
+	Tag string `json:"tag,omitempty"`
 	// Ready carries what the session opened as.
 	Engine  string `json:"engine,omitempty"`
 	User    string `json:"user,omitempty"`
@@ -186,6 +191,9 @@ type RedisKey struct {
 	Q    bool   `json:"q,omitempty"`
 	Type string `json:"type"`
 	TTL  int64  `json:"ttl"`
+	// Count is how many documents a MongoDB collection holds, as the server
+	// estimates it.
+	Count int64 `json:"count,omitempty"`
 }
 
 // RedisText is how a bulk string is shown: as it is when it is text, quoted

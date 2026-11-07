@@ -125,6 +125,8 @@ func discover(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantDiscover,
 			socks = mysqlSockets
 		}
 		return discoverMySQL(ctx, socks, d)
+	case tunnel.EngineMongoDB:
+		return discoverMongo(ctx, d)
 	}
 	return tunnel.DiscoverResult{Error: "unknown engine " + d.Engine}
 }

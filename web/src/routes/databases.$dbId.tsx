@@ -9,6 +9,7 @@ import { DatabaseList } from '~/components/DatabaseList'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
 import { SplitView } from '~/components/SplitView'
 import { RedisWorkspace } from '~/components/RedisWorkspace'
+import { MongoWorkspace } from '~/components/MongoWorkspace'
 import { PageBody, PageHeader } from '~/components/page'
 import { notifyError } from '~/lib/notify'
 import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
@@ -115,6 +116,9 @@ function DatabasePage() {
       </Group>}
       {database.engine === 'redis' ? (
         <RedisWorkspace database={database} access={access} getTicket={getTicket} endpoint={postgresEndpoint}
+          onAskForAccess={access.approvable ? ask.open : undefined} />
+      ) : database.engine === 'mongodb' ? (
+        <MongoWorkspace database={database} access={access} getTicket={getTicket} endpoint={postgresEndpoint}
           onAskForAccess={access.approvable ? ask.open : undefined} />
       ) : (
         <DatabaseWorkspace

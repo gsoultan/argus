@@ -135,6 +135,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
     : engine === 'mysql' ? n.length > 0 && n.length <= 63 && !/[/\\.\x00]/.test(n) && !/ $/.test(n)
       && !['mysql', 'sys', 'information_schema', 'performance_schema'].includes(n.toLowerCase())
     : engine === 'redis' ? /^\d{1,4}$/.test(n)
+    : engine === 'mongodb' ? n.length > 0 && new TextEncoder().encode(n).length < 64 && !/[/\\. "$*<>:|?\x00]/.test(n) && !['admin', 'local', 'config'].includes(n)
     : n.length > 0 && n.length <= 255 && !/[\x00\n\r]/.test(n)
   const valid = names.length > 0 && names.every(nameOk) && !redisAdded
 
@@ -153,7 +154,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           ...(host.trim() ? { host: host.trim() } : {}),
           ...(engine === 'postgres' ? { poolerPort: Number(poolerPort) || 0 } : {}),
           ...(engine === 'redis' ? { configPath: configPath.trim() || info.defaults.configPath } : {}),
-          ...(engine === 'mysql' && configPath.trim() ? { configPath: configPath.trim() } : {}),
+          ...((engine === 'mysql' || engine === 'mongodb') && configPath.trim() ? { configPath: configPath.trim() } : {}),
         })
         added.push(n)
       }
@@ -223,6 +224,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
                       : engine === 'postgres' ? [d.owner && `owner ${d.owner}`, d.bytes ? bytes(d.bytes) : ''].filter(Boolean).join(' · ')
                       : engine === 'mysql' ? (d.bytes ? bytes(d.bytes) : '')
                       : engine === 'redis' ? `${(d.keys ?? 0).toLocaleString()} keys`
+                      : engine === 'mongodb' && d.bytes ? bytes(d.bytes)
                       : ''
                     const Ctl = multi ? Checkbox : Radio
                     return (
@@ -265,9 +267,9 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
         )}
 
         {engine !== 'postgres' && (
-          <TextInput label={engine === 'redis' || engine === 'mysql' ? 'Address' : 'Management API address'} placeholder={info.defaults.host}
+          <TextInput label={engine === 'rabbitmq' ? 'Management API address' : 'Address'} placeholder={info.defaults.host}
             value={host} onChange={(e) => setHost(e.currentTarget.value)}
-            description={engine === 'redis' || engine === 'mysql'
+            description={engine !== 'rabbitmq'
               ? 'On this server: 127.0.0.1, or the path of its unix socket.'
               : 'On this server, with the management plugin on (rabbitmq-plugins enable rabbitmq_management).'} />
         )}
@@ -283,6 +285,11 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           <TextInput label="Option file" placeholder="none: root over the socket" value={configPath}
             onChange={(e) => setConfigPath(e.currentTarget.value)}
             description="Only if root cannot sign in over the socket: a .cnf on the server, private to root, with a [client] user and password that may create users and grant. The agent reads it there; it is never sent or stored in Argus." />
+        )}
+        {engine === 'mongodb' && (
+          <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
+            onChange={(e) => setConfigPath(e.currentTarget.value)}
+            description="A file on the server, readable by root only, with user = and password = for an account that may create users in this database. The agent reads it there; the password never leaves the server and is never stored in Argus." />
         )}
         {engine === 'rabbitmq' && (
           <Text size={FS.micro} c="dimmed">

@@ -80,7 +80,7 @@ function DatabaseSettings() {
   const db = data.database
   const info = engineOf(db.engine)
   const LEVELS = levelsFor(db)
-  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.dbname
+  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'mongodb' ? `MongoDB · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.dbname
   const names = new Map((users ?? []).map((u) => [u.email, u.displayName]))
 
   const onRemove = async (id: string, label: string) => {
@@ -283,16 +283,16 @@ function Connection({ db }: { db: Database }) {
 }
 
 /**
- * Where a Redis or a RabbitMQ is, and how the agent signs in as its admin
- * there. Nothing here is a credential: for Redis it is the path of the file
- * on the server that holds one.
+ * Where a MongoDB, a Redis or a RabbitMQ is, and how the agent signs in as
+ * its admin there. Nothing here is a credential: for MongoDB and Redis it is
+ * the path of the file on the server that holds one.
  */
 function StoreConnection({ db }: { db: Database }) {
   const update = useUpdateDatabase()
   const [host, setHost] = useState(db.host)
   const [port, setPort] = useState<number | string>(db.port)
   const [conf, setConf] = useState(db.configPath ?? '')
-  const withConf = db.engine === 'redis' || db.engine === 'mysql'
+  const withConf = db.engine === 'redis' || db.engine === 'mysql' || db.engine === 'mongodb'
   const dirty = host.trim() !== db.host || Number(port) !== db.port || (withConf && conf.trim() !== (db.configPath ?? ''))
   const save = async () => {
     try {
@@ -305,8 +305,8 @@ function StoreConnection({ db }: { db: Database }) {
   }
   return (
     <Stack gap="md">
-      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : 'RabbitMQ management API'}
-        description={db.engine === 'redis' || db.engine === 'mysql'
+      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : db.engine === 'mongodb' ? 'MongoDB' : 'RabbitMQ management API'}
+        description={db.engine !== 'rabbitmq'
           ? 'On the server itself: a loopback address or the path of its unix socket. The agent refuses anything else.'
           : 'On the server itself, on loopback. The agent refuses anything else.'}>
         <Stack gap="sm">
@@ -322,6 +322,11 @@ function StoreConnection({ db }: { db: Database }) {
             <TextInput label="Config file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
               description="The redis.conf or valkey.conf the agent reads requirepass from on the server to sign in as admin, only to give and take each person’s ACL user. If the default user has no password, nothing is read." />
           )}
+          {db.engine === 'mongodb' && (
+            <TextInput label="Admin file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
+              placeholder="/etc/argus/mongodb.conf"
+              description="A file on the server, readable by root only, with user = and password = for an account that may create users in this database. The agent reads it only to give and take each person’s user. Empty means /etc/argus/mongodb.conf." />
+          )}
           <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
         </Stack>
       </SectionCard>
@@ -329,6 +334,8 @@ function StoreConnection({ db }: { db: Database }) {
         <Text size={FS.meta} c="dimmed">
           {db.engine === 'mysql'
             ? 'Each person gets a MySQL user named argus-<login>-<level> with only the level’s privileges on this database. Between sessions it is locked; a session unlocks it with a one-time password, and the last one to close locks it again and ends its connections. Users are kept so views and routines they define keep working. MySQL 5.7 or MariaDB 10.4 and later. Argus never touches a user whose name does not start with argus-.'
+            : db.engine === 'mongodb'
+            ? 'Each person gets a MongoDB user named argus-<login>-<level> in this database, with that level’s built-in roles on it and a one-time password for their session, and it is dropped when their last session closes. MongoDB 5.0 or later, with access control on: a server anyone can use without signing in is refused. Argus never touches a user whose name does not start with argus-.'
             : db.engine === 'redis'
             ? 'Each person gets a Redis ACL user named argus-<login>-<level> with a one-time password for their session, and it is deleted when their last session closes. Redis 6 or later, or Valkey. Argus never touches a user whose name does not start with argus-.'
             : 'The agent runs rabbitmqctl on the server to add a user named argus-<login>-<level> with its tag and permissions on this vhost, the password on standard input, and deletes it when the last session closes. Argus never touches a user whose name does not start with argus-.'}
@@ -384,8 +391,9 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
           </Stack>
         ) : (
           <Stack gap="sm">
-            {num('statementTimeoutS', db.engine === 'redis' ? 'Stop waiting for a command after' : 'Stop waiting for RabbitMQ after', 'The session then starts a fresh connection.', 60, 's')}
-            {num('maxRows', db.engine === 'redis' ? 'Items shown per value or reply' : 'Queues or messages shown at once', 'Larger answers are cut and say so.', 10000, 'items')}
+            {num('statementTimeoutS', db.engine === 'mongodb' ? 'Stop a command after' : db.engine === 'redis' ? 'Stop waiting for a command after' : 'Stop waiting for RabbitMQ after',
+              db.engine === 'mongodb' ? 'MongoDB stops it on the server, so a runaway query ends on its own.' : 'The session then starts a fresh connection.', 60, 's')}
+            {num('maxRows', db.engine === 'mongodb' ? 'Documents shown per command' : db.engine === 'redis' ? 'Items shown per value or reply' : 'Queues or messages shown at once', 'Larger answers are cut and say so.', db.engine === 'mongodb' ? 1000 : 10000, db.engine === 'mongodb' ? 'documents' : 'items')}
             {db.engine === 'redis' && num('keysLimit', 'Run KEYS only on dbs up to', 'KEYS stops Redis while it walks every key; past this, people use the key browser, which uses SCAN.', 10000, 'keys')}
             {num('idleTimeoutS', 'End idle sessions after', '', 1800, 's')}
             {num('maxSessionS', 'Longest session', 'The person’s user is removed when it ends.', 28800, 's')}
@@ -394,7 +402,9 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
       </SectionCard>
       {!isSQLEngine(db.engine) ? (
         <SectionCard title="Recording">
-          <Group justify="space-between"><Box><Text size={FS.body} fw={600}>Commands</Text><Text size={FS.micro} c="dimmed">{db.engine === 'redis'
+          <Group justify="space-between"><Box><Text size={FS.body} fw={600}>Commands</Text><Text size={FS.micro} c="dimmed">{db.engine === 'mongodb'
+            ? 'Every command, and every collection opened in the browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'
+            : db.engine === 'redis'
             ? 'Every command, and every value read in the key browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'
             : 'Every peek, publish (with its payload), purge and change is recorded before it is sent, in a hash chain the verifier checks.'}</Text></Box>
             <Badge variant="light" color="teal" radius="sm">Always on</Badge></Group>

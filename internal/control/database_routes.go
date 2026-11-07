@@ -333,6 +333,8 @@ func engineName(engine string) string {
 		return "RabbitMQ vhost"
 	case tunnel.EngineMySQL:
 		return "MySQL database"
+	case tunnel.EngineMongoDB:
+		return "MongoDB database"
 	}
 	return "database"
 }

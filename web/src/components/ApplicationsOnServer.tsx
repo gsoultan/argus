@@ -217,7 +217,7 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
  * its admin password from Valkey's own config file.
  */
 const APP_ENGINES: Record<string, DBEngine> = {
-  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq',
+  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', mongodb: 'mongodb', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq',
 }
 function engineOfApp(kind: string): DBEngine | undefined {
   return APP_ENGINES[kind]
@@ -238,7 +238,7 @@ function AddFound({ app, engine, added, onAdd }: {
   app: ServerApp; engine: DBEngine; added: Map<number, Database>; onAdd: (port?: number) => void
 }) {
   const what = engine === 'postgres' ? 'postgres account' : engine === 'mysql' ? 'MySQL root account'
-    : engine === 'redis' ? `${app.name} admin` : 'rabbitmqctl'
+    : engine === 'mongodb' ? 'MongoDB admin file' : engine === 'redis' ? `${app.name} admin` : 'rabbitmqctl'
   if (app.container) {
     return (
       <Tooltip multiline w={260} label={`Argus opens this through the server's own ${what}. Inside a container that is not reachable, so it cannot be added from here yet.`}>
@@ -252,7 +252,7 @@ function AddFound({ app, engine, added, onAdd }: {
     : listening.length ? listening : [undefined]
   const inArgus = (p: number | undefined) =>
     engine === 'redis' || engine === 'rabbitmq' ? [...added.values()][0]
-      : added.get(p ?? (engine === 'mysql' ? 3306 : 5432))
+      : added.get(p ?? (engine === 'mysql' ? 3306 : engine === 'mongodb' ? 27017 : 5432))
   return (
     <Stack gap={4} align="flex-end">
       {ports.map((p) => {
