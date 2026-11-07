@@ -14,6 +14,8 @@ import type { MyServer,
   ServerLoginAccounts,
   RequestableHost,
   ServerLogin,
+  ReplayActivity,
+  ServerAndroidApps,
   ServerApplications,
   ServerSystem,
   Coverage,
@@ -943,6 +945,11 @@ export async function system(id: string): Promise<ServerSystem> {
   return get<ServerSystem>(`/api/v1/assets/${encodeURIComponent(id)}/system`)
 }
 
+/** What is installed on an Android device, from the app's last report. */
+export async function androidApps(id: string): Promise<ServerAndroidApps> {
+  return get<ServerAndroidApps>(`/api/v1/assets/${encodeURIComponent(id)}/android-apps`)
+}
+
 /** Sets what one login account on a server does; null follows the server. */
 export async function setAssetDirectSshAccount(id: string, account: string, mode: DirectSsh | null): Promise<Asset> {
   return send<Asset>(
@@ -1057,7 +1064,7 @@ export async function ignoreHost(hostname: string, note: string): Promise<void> 
  */
 export async function rdpReplay(
   sessionId: string,
-): Promise<{ buffer: ArrayBuffer; width: number; height: number; verified: string } | null> {
+): Promise<{ buffer: ArrayBuffer; width: number; height: number; verified: string; activity: ReplayActivity[] } | null> {
   if (!isConfigured()) return null
   const res = await fetch(`${BASE}/api/v1/sessions/${sessionId}/rdp-replay`, {
     credentials: 'include',
@@ -1065,7 +1072,7 @@ export async function rdpReplay(
   })
   if (!res.ok) return null
 
-  let info: { width?: number; height?: number } = {}
+  let info: { width?: number; height?: number; activity?: ReplayActivity[] } = {}
   try {
     info = JSON.parse(res.headers.get('X-Argus-Replay-Info') ?? '{}')
   } catch {
@@ -1077,6 +1084,7 @@ export async function rdpReplay(
     width: info.width ?? 1024,
     height: info.height ?? 768,
     verified: res.headers.get('X-Argus-Chain-Verified') ?? 'unverified',
+    activity: Array.isArray(info.activity) ? info.activity : [],
   }
 }
 
@@ -1346,6 +1354,7 @@ export const live = {
   removeServerLogin,
   applications,
   system,
+  androidApps,
 
   /**
    * The accounts that exist, for deciding who to assign a host to.

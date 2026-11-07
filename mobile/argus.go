@@ -154,12 +154,22 @@ type Agent struct {
 	running bool
 	// The last frame the app pushed, as BGRX, and a channel closed when the
 	// next arrives so a session waiting for a change wakes.
-	frame       []byte
-	width       int
-	height      int
-	stride      int
-	seq         uint64
-	nextFrame   chan struct{}
+	frame     []byte
+	width     int
+	height    int
+	stride    int
+	seq       uint64
+	nextFrame chan struct{}
+	// Activity the app pushes as it happens -- the app in front, a lock,
+	// secure content -- kept in a small queue each open session drains into
+	// its recording. acts[0] is event number actBase.
+	acts    []agent.AndroidActivity
+	actBase uint64
+	nextAct chan struct{}
+	// appsJSON is the installed-apps list the app last pushed, reported to the
+	// control plane with the device's facts for the Apps tab. Empty until the
+	// app pushes one.
+	appsJSON    []byte
 	open        int
 	connected   atomic.Bool
 	sessions    atomic.Int64
@@ -190,7 +200,7 @@ func NewAgent(stateDir string, device Device, log Logger, osName, model, machine
 	return &Agent{
 		stateDir: stateDir, device: device, log: slog.New(h),
 		osName: osName, model: model, machineID: machineID,
-		nextFrame: make(chan struct{}),
+		nextFrame: make(chan struct{}), nextAct: make(chan struct{}),
 	}
 }
 
@@ -274,7 +284,7 @@ func (a *Agent) Start() error {
 		if a.unattended.Load() {
 			engine = "unattended"
 		}
-		rep.Facts(ctx, map[string]any{
+		f := map[string]any{
 			"hostname":   hostname,
 			"machine_id": a.machineID,
 			"os":         a.osName,
@@ -284,7 +294,16 @@ func (a *Agent) Start() error {
 				"engine":             engine,
 				"wireless_debugging": a.wirelessDebugging.Load(),
 			},
-		})
+		}
+		a.mu.Lock()
+		apps := a.appsJSON
+		a.mu.Unlock()
+		if len(apps) > 0 {
+			// Carried as-is so the control plane decodes it into AndroidApps;
+			// the app already shaped it with PushApps.
+			f["android_apps"] = json.RawMessage(apps)
+		}
+		rep.Facts(ctx, f)
 	}
 	go func() {
 		facts()
@@ -387,6 +406,53 @@ func (a *Agent) PushFrame(rgba []byte, width, height, stride int) {
 	a.nextFrame = make(chan struct{})
 }
 
+// maxPushedActivity bounds the activity queue, so a flood of events from the
+// app cannot grow it without limit. The oldest fall off; a session reading
+// slower than that misses them, which is far better than the app running out
+// of memory.
+const maxPushedActivity = 1024
+
+// PushActivity gives the agent one thing that happened on the device, as
+// agent.AndroidActivity JSON: the app in front, the screen locked, secure
+// content hidden, text typed. Each open session chains it into its recording.
+// The app calls this from the accessibility service.
+func (a *Agent) PushActivity(activityJSON string) {
+	var ev agent.AndroidActivity
+	if err := json.Unmarshal([]byte(activityJSON), &ev); err != nil {
+		a.log.Warn("android: a bad activity event was dropped", "error", err)
+		return
+	}
+	a.mu.Lock()
+	a.acts = append(a.acts, ev)
+	if len(a.acts) > maxPushedActivity {
+		drop := len(a.acts) - maxPushedActivity
+		a.acts = append(a.acts[:0], a.acts[drop:]...)
+		a.actBase += uint64(drop)
+	}
+	close(a.nextAct)
+	a.nextAct = make(chan struct{})
+	a.mu.Unlock()
+}
+
+// PushApps gives the agent the device's installed apps, as agent.AndroidApps
+// JSON. It is reported to the control plane with the device's facts and shown
+// on the device page's Apps tab. The app calls this after reading the package
+// manager.
+func (a *Agent) PushApps(appsJSON string) {
+	var apps agent.AndroidApps
+	if err := json.Unmarshal([]byte(appsJSON), &apps); err != nil {
+		a.log.Warn("android: a bad apps list was dropped", "error", err)
+		return
+	}
+	b, err := json.Marshal(apps)
+	if err != nil {
+		return
+	}
+	a.mu.Lock()
+	a.appsJSON = b
+	a.mu.Unlock()
+}
+
 func (a *Agent) recordingsDir() string { return filepath.Join(a.stateDir, "recordings") }
 
 // openDevice is AndroidConfig.Device: one session's view of the device,
@@ -409,7 +475,10 @@ func (a *Agent) openDevice(open agent.AndroidOpen) (agent.AndroidDevice, error) 
 	a.sessions.Store(int64(n))
 	a.device.SessionStarted(open.Person, open.Principal, n)
 
-	d := &session{a: a, endsAt: a.endRequests.Load()}
+	a.mu.Lock()
+	actHead := a.actBase + uint64(len(a.acts))
+	a.mu.Unlock()
+	d := &session{a: a, endsAt: a.endRequests.Load(), actSeen: actHead}
 	// The capture starts on SessionStarted; the first frame tells the
 	// session its size.
 	if _, _, _, err := d.Frame(10 * time.Second); err != nil {
@@ -426,10 +495,11 @@ func (a *Agent) openDevice(open agent.AndroidOpen) (agent.AndroidDevice, error) 
 // session is one session's device: it reads frames as they are pushed and
 // plays input through the app.
 type session struct {
-	a      *Agent
-	seen   uint64
-	buf    []byte
-	closed atomic.Bool
+	a       *Agent
+	seen    uint64
+	actSeen uint64
+	buf     []byte
+	closed  atomic.Bool
 	// endsAt is the number of EndSessions calls when this one opened; one
 	// more ends it.
 	endsAt int64
@@ -474,6 +544,44 @@ func (s *session) Play(in agent.AndroidInput) error {
 		return err
 	}
 	return s.a.device.Play(string(b))
+}
+
+// Activity hands the recording the next thing the app reported, waiting up to
+// wait for one. It satisfies the android client's activity source, so the app
+// in front, locks and typed text are chained into this session's recording.
+// Only events from after the session opened are returned.
+func (s *session) Activity(wait time.Duration) (agent.AndroidActivity, bool) {
+	if s.closed.Load() {
+		return agent.AndroidActivity{}, false
+	}
+	s.a.mu.Lock()
+	head := s.a.actBase + uint64(len(s.a.acts))
+	if s.actSeen < s.a.actBase {
+		// Events fell off the queue before this session read them; skip to
+		// what is still here rather than reading past the start of the slice.
+		s.actSeen = s.a.actBase
+	}
+	if s.actSeen >= head {
+		next := s.a.nextAct
+		s.a.mu.Unlock()
+		select {
+		case <-next:
+		case <-time.After(wait):
+			return agent.AndroidActivity{}, false
+		}
+		s.a.mu.Lock()
+	}
+	if s.actSeen < s.a.actBase {
+		s.actSeen = s.a.actBase
+	}
+	if s.actSeen >= s.a.actBase+uint64(len(s.a.acts)) {
+		s.a.mu.Unlock()
+		return agent.AndroidActivity{}, false
+	}
+	ev := s.a.acts[s.actSeen-s.a.actBase]
+	s.actSeen++
+	s.a.mu.Unlock()
+	return ev, true
 }
 
 func (s *session) Close() error {
