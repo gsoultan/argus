@@ -5,7 +5,8 @@ the console sees its screen and drives it, every session is recorded and
 replayed as a desktop recording. Design and mockups:
 `/mnt/project-files/plans/android-devices/` (design.md, mockups/). PR 1 built
 the control plane and console against a drawn stand-in; PR 2 the app in
-attended mode (`mobile/` + `android/`).
+attended mode (`mobile/` + `android/`); PR 3 the unattended engine (shell
+helper over ADB, re-arm after reboot) — draft PR #178.
 
 ## How a device is stored
 
@@ -108,8 +109,59 @@ attended mode (`mobile/` + `android/`).
   `kind=android`. `renderRoute(path, prepare?)` can seed the query cache.
 - go.mod now requires golang.org/x/mobile (kept by `mobile/bind.go`, tools tag).
 
+## PR 3 — the unattended engine (draft #178)
+
+A company phone with nobody to accept a session: the screen is mirrored and
+touch injected by a shell-privileged helper (scrcpy/Shizuku pattern), and a
+session opens with no consent prompt because there is no one to ask.
+
+- Agent (`mobile/argus.go`): `unattended`/`wirelessDebugging` atomic.Bool;
+  `SetUnattended`/`Unattended`/`SetWirelessDebugging`. `openDevice` skips
+  `device.Consent` when unattended. facts report
+  `system.engine` ("attended"|"unattended") and `system.wireless_debugging`.
+  Test: `TestUnattendedOpensWithNobodyToAccept`.
+- Control (`internal/control/system.go`): `HostSystem` + `SystemFacts` carry
+  `Engine` + `WirelessDebugging`; `bounded()` keeps engine to the two values;
+  `SystemFor` passes them through. Test:
+  `TestADeviceReportsItsEngineAndWirelessDebugging`.
+- Console: `ServerSystemFacts.engine`/`wirelessDebugging`
+  (`web/src/types/domain.ts`); `SystemCard` exports `systemQuery`; device
+  Overview "About" card shows the engine + amber warning when wireless
+  debugging listens on every interface (`OverviewTab.tsx` `DeviceSecurity`).
+  Test: `web/src/components/__tests__/deviceOverview.test.tsx`.
+- `android/helper/` (new java/kotlin.jvm module, compileOnly android.jar):
+  - `Protocol.kt` — pure-JVM wire: INPUT=1, STOP=2, SIZE=16, FRAME=17,
+    MAX_MESSAGE=64MB. JVM unit tests in `ProtocolTest.kt`.
+  - `ArgusHelper.kt` — `main()` opens `LocalServerSocket("argus-helper")`;
+    Mirror (ImageReader + Reflect display, MAX_SIDE 1280) + Injector.
+  - `Reflect.kt` — hidden-API reflection: DisplayManagerGlobal, SurfaceControl
+    createDisplay/setDisplaySurface/setDisplayProjection, InputManager
+    injectInputEvent, MotionEvent/KeyEvent. **Device bring-up — untested here.**
+  Dexed in CI (`d8 --min-api 29`) to `app/src/main/assets/argus-helper.dex`
+  (gitignored; `.gitkeep` keeps the dir), run as shell user via `app_process`.
+- `android/app/.../UnattendedEngine.kt`: `arm()`/`disarm()`/`setUp(host,port,
+  code)`/`paired()`/`play(json)`. Connects to the helper's abstract socket
+  "argus-helper"; `pump()` reads FRAME → `agent.pushFrame`. `arm()` →
+  `adb.startHelper()`, `agent.setUnattended(true)`, `setWirelessDebugging(true)`.
+- `AdbClient.kt` (paired/pair/startHelper/stopHelper, copies helper dex from
+  assets) + `AdbTransport.kt` (`AdbPairing.pair`/`AdbExec.run` throw
+  `NotYetOnDevice`). **ADB wireless-debugging pairing = SPAKE2 over TLS 1.3 +
+  RSA-auth ADB message pump — the one un-validatable seam; the first on-device
+  run must prove it.**
+- `BootReceiver.kt`: on BOOT_COMPLETED/LOCKED_BOOT_COMPLETED, if enrolled →
+  `AgentService.start` (pairing kept, so the device re-arms itself).
+  `AgentService` arms off-thread when `unattended.paired() && !armed`.
+  `DeviceBridge`: consent returns true when armed, play routes to
+  `unattended.play`, sessionEnded skips stopCapture when unattended.
+  `MainActivity` adds the unattended button + `unattendedDialog()`.
+- Manifest: RECEIVE_BOOT_COMPLETED + BootReceiver. `settings.gradle.kts`
+  includes `:helper`; root build adds `kotlin.jvm` 2.0.21 apply false;
+  app depends on `project(":helper")`. CI: `:helper:test :helper:jar` + d8
+  before assembleDebug.
+
 ## Not yet (later PRs)
 
-3. Unattended helper. 4. Timeline events (app in front, lock, secure content,
-   consent) and the Apps tab. 5. Linux USB relay. Also: H.264 instead of
-   tiles, an IME for text beyond the focused field, an emulator smoke test.
+4. Timeline events (app in front, lock, secure content, consent) and the Apps
+   tab. 5. Linux USB relay. Also: H.264 instead of tiles, an IME for text
+   beyond the focused field, an emulator smoke test, and the ADB pairing
+   handshake proven on a real device.
