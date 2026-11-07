@@ -208,5 +208,5 @@ function YourSessions() {
 
 
 function engineName(e: string): string {
-  return e === 'postgres' ? 'PostgreSQL' : e === 'redis' ? 'Redis' : e === 'rabbitmq' ? 'RabbitMQ' : e
+  return e === 'postgres' ? 'PostgreSQL' : e === 'mysql' ? 'MySQL' : e === 'redis' ? 'Redis' : e === 'rabbitmq' ? 'RabbitMQ' : e
 }

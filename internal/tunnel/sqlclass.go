@@ -163,13 +163,15 @@ func lexSQL(s string) []sqlToken {
 			}
 		case c == '\'':
 			i = skipQuoted(s, i, '\'', i > 0 && (s[i-1] == 'e' || s[i-1] == 'E'))
-		case c == '"':
+		case c == '"' || c == '`':
+			// "name" in Postgres, `name` in MySQL; Postgres has no use for
+			// a backtick, so reading one as a quote changes nothing there.
 			j := i + 1
 			var b strings.Builder
 			for j < len(s) {
-				if s[j] == '"' {
-					if j+1 < len(s) && s[j+1] == '"' {
-						b.WriteByte('"')
+				if s[j] == c {
+					if j+1 < len(s) && s[j+1] == c {
+						b.WriteByte(c)
 						j += 2
 						continue
 					}

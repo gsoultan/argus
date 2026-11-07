@@ -21,7 +21,7 @@ import {
 } from '~/lib/queries'
 import { guard } from '~/lib/guard'
 import { FS } from '~/theme'
-import { engineOf } from '~/lib/engines'
+import { engineOf, isSQLEngine } from '~/lib/engines'
 import type { DBLabel, DBLevel, DBPolicy, Database } from '~/types/domain'
 
 /**
@@ -80,7 +80,7 @@ function DatabaseSettings() {
   const db = data.database
   const info = engineOf(db.engine)
   const LEVELS = levelsFor(db)
-  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.dbname
+  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.dbname
   const names = new Map((users ?? []).map((u) => [u.email, u.displayName]))
 
   const onRemove = async (id: string, label: string) => {
@@ -292,11 +292,12 @@ function StoreConnection({ db }: { db: Database }) {
   const [host, setHost] = useState(db.host)
   const [port, setPort] = useState<number | string>(db.port)
   const [conf, setConf] = useState(db.configPath ?? '')
-  const dirty = host.trim() !== db.host || Number(port) !== db.port || (db.engine === 'redis' && conf.trim() !== (db.configPath ?? ''))
+  const withConf = db.engine === 'redis' || db.engine === 'mysql'
+  const dirty = host.trim() !== db.host || Number(port) !== db.port || (withConf && conf.trim() !== (db.configPath ?? ''))
   const save = async () => {
     try {
       await update.mutateAsync({ id: db.id, host: host.trim(), port: Number(port) || db.port,
-        ...(db.engine === 'redis' ? { configPath: conf.trim() } : {}) })
+        ...(withConf ? { configPath: conf.trim() } : {}) })
       notifyOk('Saved', 'New sessions go to the new address; open ones keep theirs.')
     } catch (err) {
       notifyError('Not saved', err)
@@ -304,8 +305,8 @@ function StoreConnection({ db }: { db: Database }) {
   }
   return (
     <Stack gap="md">
-      <SectionCard title={db.engine === 'redis' ? 'Redis' : 'RabbitMQ management API'}
-        description={db.engine === 'redis'
+      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : 'RabbitMQ management API'}
+        description={db.engine === 'redis' || db.engine === 'mysql'
           ? 'On the server itself: a loopback address or the path of its unix socket. The agent refuses anything else.'
           : 'On the server itself, on loopback. The agent refuses anything else.'}>
         <Stack gap="sm">
@@ -313,6 +314,10 @@ function StoreConnection({ db }: { db: Database }) {
             <TextInput label="Address" value={host} onChange={(e) => setHost(e.currentTarget.value)} w={280} aria-label="Address" />
             <NumberInput label="Port" value={port} onChange={setPort} min={1} max={65535} w={120} aria-label="Port" />
           </Group>
+          {db.engine === 'mysql' && (
+            <TextInput label="Option file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420} placeholder="none: root over the socket"
+              description="Empty: the agent signs in as root over the server’s socket, as Debian, Ubuntu and MariaDB 10.4+ allow root to. Otherwise a .cnf on the server, private to root, whose [client] user and password may create users and grant. It is read there and never sent or stored." />
+          )}
           {db.engine === 'redis' && (
             <TextInput label="redis.conf" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
               description="The agent reads requirepass from this file on the server to sign in as admin, only to give and take each person’s ACL user. If the default user has no password, nothing is read." />
@@ -322,7 +327,9 @@ function StoreConnection({ db }: { db: Database }) {
       </SectionCard>
       <SectionCard title="How people sign in">
         <Text size={FS.meta} c="dimmed">
-          {db.engine === 'redis'
+          {db.engine === 'mysql'
+            ? 'Each person gets a MySQL user named argus-<login>-<level> with only the level’s privileges on this database. Between sessions it is locked; a session unlocks it with a one-time password, and the last one to close locks it again and ends its connections. Users are kept so views and routines they define keep working. MySQL 5.7 or MariaDB 10.4 and later. Argus never touches a user whose name does not start with argus-.'
+            : db.engine === 'redis'
             ? 'Each person gets a Redis ACL user named argus-<login>-<level> with a one-time password for their session, and it is deleted when their last session closes. Redis 6 or later. Argus never touches a user whose name does not start with argus-.'
             : 'The agent runs rabbitmqctl on the server to add a user named argus-<login>-<level> with its tag and permissions on this vhost, the password on standard input, and deletes it when the last session closes. Argus never touches a user whose name does not start with argus-.'}
         </Text>
@@ -357,23 +364,23 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
         Every value has a safe default. A new database is safe the moment it is added; change these only if this
         one needs something different.
       </Alert>
-      <SectionCard title="Label" description={db.engine === 'postgres'
+      <SectionCard title="Label" description={isSQLEngine(db.engine)
         ? 'Production starts with changes needing approval, and with session approval for Write and above when you give access.'
         : 'Production starts with session approval for Write and above when you give access.'}>
         <SegmentedControl value={label} onChange={(v) => setLabel(v as DBLabel)}
           data={[{ label: 'Production', value: 'production' }, { label: 'Staging', value: 'staging' }, { label: 'Development', value: 'development' }]} />
       </SectionCard>
-      {db.engine === 'postgres' && (
+      {isSQLEngine(db.engine) && (
         <ApprovalsCard db={db} policy={policy} label={label} setPolicy={setPolicy} assignments={assignments} onAccess={onAccess} />
       )}
       <SectionCard title="Limits">
-        {db.engine === 'postgres' ? (
+        {isSQLEngine(db.engine) ? (
           <Stack gap="sm">
             {num('statementTimeoutS', 'Stop a statement after', 'A runaway query ends on its own.', 60, 's')}
-            {num('idleTxTimeoutS', 'End a transaction left idle after', 'So a forgotten BEGIN does not hold locks.', 120, 's')}
+            {db.engine === 'postgres' && num('idleTxTimeoutS', 'End a transaction left idle after', 'So a forgotten BEGIN does not hold locks.', 120, 's')}
             {num('maxRows', 'Rows a person can see per statement', 'They can always narrow with LIMIT.', 100000, 'rows')}
             {num('idleTimeoutS', 'End idle sessions after', '', 1800, 's')}
-            {num('maxSessionS', 'Longest session', 'The role’s one-time password expires with it.', 28800, 's')}
+            {num('maxSessionS', 'Longest session', db.engine === 'mysql' ? 'The person’s user is locked again when it ends.' : 'The role’s one-time password expires with it.', 28800, 's')}
           </Stack>
         ) : (
           <Stack gap="sm">
@@ -385,7 +392,7 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
           </Stack>
         )}
       </SectionCard>
-      {db.engine !== 'postgres' ? (
+      {!isSQLEngine(db.engine) ? (
         <SectionCard title="Recording">
           <Group justify="space-between"><Box><Text size={FS.body} fw={600}>Commands</Text><Text size={FS.micro} c="dimmed">{db.engine === 'redis'
             ? 'Every command, and every value read in the key browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'

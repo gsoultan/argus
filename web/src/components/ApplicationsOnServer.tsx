@@ -91,9 +91,9 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
                         </Table.Td>
                         {!phone && <Table.Td><Listens listen={a.listen} /></Table.Td>}
                         <Table.Td ta="right">
-                          {canEdit && isConfigured() && a.running && isEngine(a.kind) && (
-                            <AddFound app={a} engine={a.kind} added={addedOf(a.kind)}
-                              onAdd={(port) => setAdding({ engine: a.kind as DBEngine, port,
+                          {canEdit && isConfigured() && a.running && engineOfApp(a.kind) && (
+                            <AddFound app={a} engine={engineOfApp(a.kind)!} added={addedOf(engineOfApp(a.kind)!)}
+                              onAdd={(port) => setAdding({ engine: engineOfApp(a.kind)!, port,
                                 poolerPort: a.kind === 'postgres' ? pooler?.listen[0]?.port : undefined })} />
                           )}
                         </Table.Td>
@@ -210,13 +210,16 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
   )
 }
 
-const ENGINE_KINDS: readonly string[] = ['postgres', 'redis', 'rabbitmq']
-function isEngine(kind: string): kind is DBEngine {
-  return ENGINE_KINDS.includes(kind)
+/** The engine a found application is added as: MariaDB is MySQL's. */
+const APP_ENGINES: Record<string, DBEngine> = {
+  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', redis: 'redis', rabbitmq: 'rabbitmq',
+}
+function engineOfApp(kind: string): DBEngine | undefined {
+  return APP_ENGINES[kind]
 }
 
 /**
- * Adds a Postgres, Redis or RabbitMQ the agent found. A containerised one is
+ * Adds a Postgres, MySQL, MariaDB, Redis or RabbitMQ the agent found. A containerised one is
  * not offered: Argus opens it as the host's own admin over a local socket or
  * the server's own tools, which a container does not share.
  *
@@ -228,7 +231,8 @@ function isEngine(kind: string): kind is DBEngine {
 function AddFound({ app, engine, added, onAdd }: {
   app: ServerApp; engine: DBEngine; added: Map<number, Database>; onAdd: (port?: number) => void
 }) {
-  const what = engine === 'postgres' ? 'postgres account' : engine === 'redis' ? 'Redis admin' : 'rabbitmqctl'
+  const what = engine === 'postgres' ? 'postgres account' : engine === 'mysql' ? 'MySQL root account'
+    : engine === 'redis' ? 'Redis admin' : 'rabbitmqctl'
   if (app.container) {
     return (
       <Tooltip multiline w={260} label={`Argus opens this through the server's own ${what}. Inside a container that is not reachable, so it cannot be added from here yet.`}>
@@ -241,7 +245,8 @@ function AddFound({ app, engine, added, onAdd }: {
     ? [listening.includes(15672) ? 15672 : undefined]
     : listening.length ? listening : [undefined]
   const inArgus = (p: number | undefined) =>
-    engine === 'redis' || engine === 'rabbitmq' ? [...added.values()][0] : added.get(p ?? 5432)
+    engine === 'redis' || engine === 'rabbitmq' ? [...added.values()][0]
+      : added.get(p ?? (engine === 'mysql' ? 3306 : 5432))
   return (
     <Stack gap={4} align="flex-end">
       {ports.map((p) => {

@@ -44,6 +44,8 @@ func ServiceForEngine(engine string) string {
 		return RedisService
 	case EngineRabbitMQ:
 		return RabbitMQService
+	case EngineMySQL:
+		return MySQLService
 	}
 	return PostgresService
 }

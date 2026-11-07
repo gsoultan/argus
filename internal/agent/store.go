@@ -372,6 +372,17 @@ func (r *stmtRecorder) send(a tunnel.StoreAnswer) error {
 	return tunnel.WriteFrame(r.stream, tunnel.FramePGAnswer, b)
 }
 
+// frame sends one frame on the session's stream, in order with the
+// recording's lines: a MySQL session's answers and row batches.
+func (r *stmtRecorder) frame(typ byte, b []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stream == nil {
+		return errors.New("no stream")
+	}
+	return tunnel.WriteFrame(r.stream, typ, b)
+}
+
 func (r *stmtRecorder) close(reason string) {
 	_ = r.write(tunnel.PGRecord{Kind: "close", Error: reason})
 	r.mu.Lock()

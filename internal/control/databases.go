@@ -132,12 +132,14 @@ func (d *Database) validate() error {
 		return d.validateRedis()
 	case tunnel.EngineRabbitMQ:
 		return d.validateRabbit()
+	case tunnel.EngineMySQL:
+		return d.validateMySQL()
 	case tunnel.EnginePostgres:
 	default:
-		return ErrInvalidDatabase{"the engine must be postgres, redis or rabbitmq"}
+		return ErrInvalidDatabase{"the engine must be postgres, mysql, redis or rabbitmq"}
 	}
 	if d.ConfigPath != "" {
-		return ErrInvalidDatabase{"a config file is only for Redis"}
+		return ErrInvalidDatabase{"a config file is only for Redis and MySQL"}
 	}
 	switch {
 	case d.Name == "" || len(d.Name) > 63 || strings.ContainsAny(d.Name, "\x00\"'\\"):
@@ -213,7 +215,9 @@ func (d *Database) validateCommon() error {
 		// Nothing of Postgres's means anything here; keep it empty so a
 		// Redis never shows a PgBouncer.
 		d.PoolerHost, d.PoolerPort, d.AdminUser = "", 0, ""
-		// Only Postgres statements wait for approval; see statementGate.
+	}
+	if !d.SQL() {
+		// Only SQL statements wait for approval; see statementGate.
 		p.WriteApproval, p.WriteApprovers = nil, ""
 		if p.MaxRows > tunnel.MaxStoreItems {
 			p.MaxRows = tunnel.MaxStoreItems
@@ -252,6 +256,42 @@ func (d *Database) validateRedis() error {
 	return d.validateCommon()
 }
 
+// SQL says the entry speaks SQL through the Postgres session's frames:
+// Postgres and MySQL. Its statements can wait for approval and its sessions
+// open the SQL workspace.
+func (d Database) SQL() bool {
+	return d.Engine == "" || d.Engine == tunnel.EnginePostgres || d.Engine == tunnel.EngineMySQL
+}
+
+// validateMySQL: one database of a MySQL or MariaDB on this asset, reached
+// over its unix socket or loopback; dbname is the database. ConfigPath, when
+// set, is an option file the agent signs in to MySQL with.
+func (d *Database) validateMySQL() error {
+	switch {
+	case !tunnel.ValidMySQLDB(d.Name) || len(d.Name) > 63:
+		return ErrInvalidDatabase{"the database name must be 1 to 63 characters, not one of MySQL's own " +
+			"(mysql, sys, information_schema, performance_schema), with no / \\ or ."}
+	case strings.HasPrefix(d.Name, tunnel.TestDBPrefix):
+		return ErrInvalidDatabase{tunnel.TestDBPrefix + " databases are the throwaway copies test restores make; Argus does not add them"}
+	}
+	if d.Host == "" {
+		d.Host = "127.0.0.1"
+	}
+	if !tunnel.LocalPGHost(d.Host) {
+		return ErrInvalidDatabase{"MySQL must be on the server itself: a loopback address or its unix socket, not " + d.Host}
+	}
+	if d.Port == 0 {
+		d.Port = 3306
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
+	}
+	if d.ConfigPath != "" && !tunnel.ValidMySQLOptionFile(d.ConfigPath) {
+		return ErrInvalidDatabase{"the option file must be an absolute path to a .cnf file on the server"}
+	}
+	return d.validateCommon()
+}
+
 // validateRabbit: one vhost of a RabbitMQ on this asset, through its
 // management API on loopback.
 func (d *Database) validateRabbit() error {
@@ -274,7 +314,7 @@ func (d *Database) validateRabbit() error {
 		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
 	}
 	if d.ConfigPath != "" {
-		return ErrInvalidDatabase{"a config file is only for Redis"}
+		return ErrInvalidDatabase{"a config file is only for Redis and MySQL"}
 	}
 	return d.validateCommon()
 }

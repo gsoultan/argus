@@ -322,6 +322,13 @@ func runDaemon(args []string) int {
 			RecordDir: *dir,
 			Log:       log,
 		}})
+		// MySQL and MariaDB on this server, as the person's own user for the
+		// level, every statement recorded before it runs.
+		services[agent.MySQLService] = agent.MySQL(agent.MySQLConfig{StoreConfig: agent.StoreConfig{
+			Verifier:  &tunnel.GrantVerifier{Host: hostname},
+			RecordDir: *dir,
+			Log:       log,
+		}})
 		// Backups of those databases, as the postgres account, encrypted
 		// here before they touch a disk; see internal/agent/backup.go.
 		services[agent.BackupService] = agent.Backup(agent.BackupConfig{

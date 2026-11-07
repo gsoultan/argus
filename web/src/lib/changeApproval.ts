@@ -15,7 +15,7 @@ approver sees what the asker saw, and the run stops if it would change more.
 
 /** Whether a statement that changes db waits for someone else's approval. */
 export function writesNeedApproval(db: Pick<Database, 'engine' | 'label' | 'policy'>): boolean {
-  if (db.engine !== 'postgres') return false
+  if (db.engine !== 'postgres' && db.engine !== 'mysql') return false
   return db.policy?.writeApproval ?? db.label === 'production'
 }
 

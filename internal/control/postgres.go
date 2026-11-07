@@ -230,6 +230,9 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 	}
 
 	pg := db.Engine == "" || db.Engine == tunnel.EnginePostgres
+	// sqlish is an engine that speaks the Postgres session's frames: its
+	// requests are PGRequests, checked and gated the same way.
+	sqlish := db.SQL()
 	protocol := tunnel.EnginePostgres
 	if !pg {
 		protocol = db.Engine
@@ -400,13 +403,19 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 			// Decoded into the engine's own request and encoded again, so
 			// only fields the agent knows cross the tunnel.
 			var b []byte
-			if pg {
+			if sqlish {
 				var req tunnel.PGRequest
 				if json.Unmarshal(m.Req, &req) != nil {
 					continue
 				}
 				if !tunnel.RecordedTextFits(req.SQL) {
 					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: tunnel.ErrRecordTooLong.Error()})
+					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+					continue
+				}
+				if req.Op == "admin" && !pg {
+					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error",
+						Error: "extensions and replication are Postgres's"})
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
@@ -424,7 +433,9 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
-				changes.statement(req)
+				if changes != nil {
+					changes.statement(req)
+				}
 				b, _ = json.Marshal(req)
 			} else {
 				var req tunnel.StoreRequest

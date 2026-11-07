@@ -41,7 +41,8 @@ type GrantDiscover struct {
 	// AdminUser is the account Postgres's peer authentication signs in as;
 	// empty is "postgres".
 	AdminUser string `json:"adminUser,omitempty"`
-	// ConfigPath is a Redis's redis.conf, where the agent reads requirepass.
+	// ConfigPath is a Redis's redis.conf, where the agent reads requirepass,
+	// or a MySQL option file the agent signs in with.
 	ConfigPath string `json:"configPath,omitempty"`
 }
 
@@ -62,6 +63,13 @@ func (d *GrantDiscover) Validate() error {
 	case EngineRabbitMQ:
 		if !LocalLoopback(d.Host) {
 			return fmt.Errorf("the RabbitMQ management API must be on this server; %s is not", d.Host)
+		}
+	case EngineMySQL:
+		if !LocalPGHost(d.Host) {
+			return fmt.Errorf("MySQL must be on this server; %s is not", d.Host)
+		}
+		if d.ConfigPath != "" && !ValidMySQLOptionFile(d.ConfigPath) {
+			return errors.New("the option file must be an absolute path to a .cnf file")
 		}
 	default:
 		return errors.New("unknown engine " + d.Engine)

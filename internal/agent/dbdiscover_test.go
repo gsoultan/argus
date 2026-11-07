@@ -125,7 +125,7 @@ func TestDiscoverRefusesOtherGrantsAndOtherHosts(t *testing.T) {
 		{Engine: tunnel.EnginePostgres, Host: "10.0.0.9", Port: 5432},
 		{Engine: tunnel.EngineRedis, Host: "redis.internal", Port: 6379},
 		{Engine: tunnel.EngineRabbitMQ, Host: "/var/run", Port: 15672},
-		{Engine: "mysql", Host: "127.0.0.1", Port: 3306},
+		{Engine: "oracle", Host: "127.0.0.1", Port: 1521},
 		{Engine: tunnel.EnginePostgres, Host: "127.0.0.1", Port: 0},
 	} {
 		if ans, _ := askDiscover(t, svc, key, discoverGrant(d)); ans.OK {

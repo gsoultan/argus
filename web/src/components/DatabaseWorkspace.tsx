@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { meQuery } from '~/lib/queries'
 import {
@@ -21,6 +21,7 @@ import type { SaveResult } from '~/components/RowEdits'
 import type { Stmt } from '~/lib/rowEdit'
 import { TrashNotice, TrashPanel, type TrashItem } from '~/components/DatabaseTrash'
 import { QueryParams } from '~/components/QueryParams'
+import { engineVersion } from '~/lib/engines'
 import { SqlEditor, pgErrorOffset, type EditorError, type SqlEditorHandle } from '~/components/SqlEditor'
 import { bindParams, originalOffset, paramNames, type Bound } from '~/lib/sqlParams'
 import { catalogFrom, completeSQL, type SQLCatalog, type SQLColumn } from '~/lib/sqlComplete'
@@ -224,7 +225,18 @@ type Job =
 
 const DEFAULT_H = { wide: 170, narrow: 110 }
 
+/*
+MySQL and MariaDB open this workspace too: the session speaks the same frames.
+What is Postgres's alone -- explain plans, the diagram, Manage, generating
+SQL from the tree, the query builder, dry runs -- reads Postgres's catalogue
+or writes Postgres's dialect, so it is left out for MySQL rather than shown
+working wrongly. The tree quotes names with backticks there.
+*/
+const MySQLDialect = createContext(false)
+
 export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, orgAdmin, initialPanel }: WorkspaceProps) {
+  const mysql = database.engine === 'mysql'
+  const engineName = mysql ? 'MySQL' : 'Postgres'
   const narrow = useMediaQuery('(max-width: 48em)')
   const [treeOpen, tree] = useDisclosure(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -241,7 +253,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>(initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' ? initialPanel : 'query')
+  const [panel, setPanel] = useState<Panel>(!mysql && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups') ? initialPanel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
   // The three tabs under the header. Manage is any administration panel;
   // it reopens the one last looked at.
@@ -464,7 +476,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }), [send])
   const { data: me } = useQuery(meQuery())
   const { ask: askApproval, dialog: approvalDialog } = useStatementApproval(database.id, database.dbname,
-    { label: database.label, me: me?.email, check: checkForApproval })
+    { label: database.label, me: me?.email, check: mysql ? undefined : checkForApproval })
 
   // collect runs one statement for a panel and resolves with everything it
   // returned. Recorded like any other statement; it is one. onId hears the
@@ -504,7 +516,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // TRUNCATE what it would take with it, read as the person's role.
   const openGuard = useCallback((stmt: string, key: string, guard: PGGuard) => {
     setWriteCheck({ kind: 'guard', sql: stmt, tab: key, guard, facts: guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete' ? null : undefined })
-    if (guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete') return
+    if (guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete' || mysql) return
     const q = dropFactsSQL(guard)
     void (async () => {
       const facts: NonNullable<Extract<WriteCheckState, { kind: 'guard' }>['facts']> = { dependents: [] }
@@ -579,7 +591,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         setResults((prev) => ({ ...prev, [key]: { ...r } }))
         if (a.type === 'error' && a.position) {
           const from = pgErrorOffset(b.sql, a.position, at, (o) => originalOffset(b, o))
-          setMarks((m) => ({ ...m, [key]: { from, message: a.error ?? 'Postgres refused this' } }))
+          setMarks((m) => ({ ...m, [key]: { from, message: a.error ?? `${engineName} refused this` } }))
         }
         txOpen.current = txAfter(txOpen.current, stmt, a.type === 'done')
         setHistory((h) => [{ sql: stmt, at: Date.now(), ok: a.type === 'done' }, ...h].slice(0, 100))
@@ -699,7 +711,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         if (res.a.type !== 'done') {
           const left = total - n
           const rest = left ? ` The ${left === 1 ? 'statement' : `${left} statements`} after it did not run.` : ''
-          const why = scriptStop.current.has(key) ? 'cancelled' : res.a.type === 'closed' ? 'the session ended' : 'Postgres refused it'
+          const why = scriptStop.current.has(key) ? 'cancelled' : res.a.type === 'closed' ? 'the session ended' : `${engineName} refused it`
           sc.note = `Stopped at statement ${n} of ${total}: ${why}.${rest}${open()}`
           break
         }
@@ -1011,7 +1023,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     if (!s.text.trim()) return
     void import('sql-formatter').then(({ format: fmt }) => {
       try {
-        editorRef.current?.replaceSelectionOrAll(fmt(s.text, { language: 'postgresql', keywordCase: 'preserve', paramTypes: { named: [':'], positional: true, numbered: ['$'] } }))
+        editorRef.current?.replaceSelectionOrAll(fmt(s.text, { language: mysql ? 'mysql' : 'postgresql', keywordCase: 'preserve', paramTypes: { named: [':'], positional: true, numbered: ['$'] } }))
       } catch (e) {
         notifyWarn('Format could not read this statement', e instanceof Error ? (e.message.split('\n')[0] ?? '') : String(e))
       }
@@ -1158,7 +1170,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const gen: GenContext = useMemo(() => ({ act: (a) => void genAct(a), canWrite: Boolean(level) && level !== 'read' }), [genAct, level])
 
   const bar = (
-    <GenerateContext.Provider value={gen}><LeftBar
+    <MySQLDialect.Provider value={mysql}><GenerateContext.Provider value={mysql ? null : gen}><LeftBar
       database={database}
       schema={schema}
       onPick={(q) => { setView('query'); insert(q); if (narrow) tree.close() }}
@@ -1166,7 +1178,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       history={history}
       onOpenSaved={openSaved}
       orgAdmin={Boolean(orgAdmin)}
-    /></GenerateContext.Provider>
+    /></GenerateContext.Provider></MySQLDialect.Provider>
   )
   const adminProps = {
     collect, admin, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
@@ -1273,7 +1285,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         styles={{ label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}>
         {runLabel}
       </Button>
-      {explainMenu}
+      {!mysql && explainMenu}
       {narrow ? (
         <>
           <ActionIcon size={30} variant="default" onClick={() => setSaving(true)} disabled={!sql.trim()} aria-label="Save query">
@@ -1286,7 +1298,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             <Menu.Dropdown>
               <Menu.Item leftSection={<IconPlayerStop size={14} />} onClick={cancel} disabled={!runningHere && !waitingHere}>Cancel</Menu.Item>
               <Menu.Item leftSection={<IconIndentIncrease size={14} />} onClick={format} disabled={!sql.trim()}>Format</Menu.Item>
-              <Menu.Item leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setBuilding({})}>Build a query</Menu.Item>
+              {!mysql && <Menu.Item leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setBuilding({})}>Build a query</Menu.Item>}
               <Menu.Item leftSection={<IconDownload size={14} />} onClick={exportCsv} disabled={!result || result.rows.length === 0}>Export CSV</Menu.Item>
               <Menu.Divider />
               <Box px="sm" py={6}><Group gap={6}><Text size={FS.micro} c="dimmed">Show up to</Text>{rowLimit}</Group></Box>
@@ -1307,11 +1319,13 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
               <IconIndentIncrease size={15} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Build a query by picking tables and columns" withinPortal>
-            <ActionIcon size={30} variant="subtle" color="slate" onClick={() => setBuilding({})} aria-label="Build">
-              <IconAdjustmentsHorizontal size={15} />
-            </ActionIcon>
-          </Tooltip>
+          {!mysql && (
+            <Tooltip label="Build a query by picking tables and columns" withinPortal>
+              <ActionIcon size={30} variant="subtle" color="slate" onClick={() => setBuilding({})} aria-label="Build">
+                <IconAdjustmentsHorizontal size={15} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <Tooltip label="Cancel the running statement" withinPortal>
             <ActionIcon size={30} variant="subtle" color="slate" onClick={cancel} disabled={!runningHere && !waitingHere} aria-label="Cancel">
               <IconPlayerStop size={15} />
@@ -1590,7 +1604,8 @@ function SchemaNode({ s, schema, onPick, onRun }: {
   onPick: (t: string) => void
   onRun: (q: string) => void
 }) {
-  const [open, setOpen] = useState(s.name === 'public')
+  const mysql = useContext(MySQLDialect)
+  const [open, setOpen] = useState(s.name === 'public' || mysql)
   const [objs, setObjs] = useState<Obj[] | null>(null)
   useEffect(() => {
     if (open && objs === null) void schema('objects', s.name).then(setObjs)
@@ -1684,8 +1699,10 @@ function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
   const [open, setOpen] = useState(false)
   const [cols, setCols] = useState<Obj[] | null>(null)
   const Icon = KIND_ICON[o.kind] ?? IconTable
-  const q = (n: string) => (/^[a-z_][a-z0-9_]*$/.test(n) ? n : `"${n.replace(/"/g, '""')}"`)
-  const qualified = `${q(schemaName)}.${q(o.name)}`
+  const mysql = useContext(MySQLDialect)
+  const q = (n: string) => (/^[a-z_][a-z0-9_]*$/.test(n) ? n : mysql ? `\`${n.replace(/`/g, '``')}\`` : `"${n.replace(/"/g, '""')}"`)
+  // A MySQL session is in its database already; the name alone is enough.
+  const qualified = mysql ? q(o.name) : `${q(schemaName)}.${q(o.name)}`
   const expandable = o.kind === 'table' || o.kind === 'view' || o.kind === 'matview'
   useEffect(() => {
     if (open && expandable && cols === null) void schema('columns', schemaName, o.name).then(setCols)
@@ -1742,6 +1759,7 @@ statement lands in is visible before it is read. Under it, three tabs: the
 editor, the diagram, and Manage, which holds every administration panel that
 used to hang under the object tree.
 */
+/** The server's version as the header says it: "Postgres 16.4", "MySQL 8.0.46", "MariaDB 10.11.14". */
 function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, canAsk, onAskForAccess, settings, tab, onTab, onOpenTree }: {
   database: Database
   narrow: boolean
@@ -1758,13 +1776,15 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
   onOpenTree: () => void
 }) {
   const prod = database.label === 'production'
-  const where = `${database.hostname}${version ? ` · Postgres ${version.split(' ')[0]}` : ''}${viaPooler ? ' · via PgBouncer' : ''}`
+  const where = `${database.hostname}${version ? ` · ${engineVersion(database.engine, version)}` : ''}${viaPooler ? ' · via PgBouncer' : ''}`
   const recorded = status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'
-  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = [
-    { key: 'query', label: 'Query', hint: 'Write and run statements' },
-    { key: 'diagram', label: 'Diagram', hint: 'Tables and how they link' },
-    { key: 'manage', label: 'Manage', hint: 'Activity, backups, data changes, trash, roles, extensions, replication' },
-  ]
+  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = database.engine === 'mysql'
+    ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' }]
+    : [
+      { key: 'query', label: 'Query', hint: 'Write and run statements' },
+      { key: 'diagram', label: 'Diagram', hint: 'Tables and how they link' },
+      { key: 'manage', label: 'Manage', hint: 'Activity, backups, data changes, trash, roles, extensions, replication' },
+    ]
   return (
     <Box data-env={database.label} style={{ borderBottom: '1px solid var(--color-line)', background: 'var(--color-surface)',
       boxShadow: prod ? 'inset 0 3px 0 var(--mantine-color-rose-6)' : undefined, paddingTop: prod ? 3 : 0 }}>
