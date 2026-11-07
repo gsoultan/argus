@@ -79,6 +79,18 @@ class UnattendedEngine(private val ctx: Context, private val agent: Agent) {
         return null
     }
 
+    /** Runs one shell command through the helper's ADB channel, for app changes. */
+    fun shell(command: String) {
+        if (!armed) throw Exception("the unattended engine is not on")
+        adb.shell(command)
+    }
+
+    /** As shell, with file on the command's standard input (pm install -S). */
+    fun shellWithInput(command: String, file: java.io.File) {
+        if (!armed) throw Exception("the unattended engine is not on")
+        adb.shell(command, file)
+    }
+
     @Synchronized
     fun disarm() {
         armed = false

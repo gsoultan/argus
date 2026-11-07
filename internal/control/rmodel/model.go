@@ -1135,6 +1135,7 @@ func All() []any {
 		&LogCleanupRule{},
 		&PackageRun{},
 		&PackageUpdateRule{},
+		&SoftwareFile{},
 		&SoftwarePreview{},
 		&SoftwareScript{},
 		&SoftwareScriptVersion{},
@@ -1398,6 +1399,8 @@ type PackageRun struct {
 	ScriptParams    storm.JSON
 	ScriptSecrets   []byte
 	ScriptReport    *storm.JSON
+	// The library file an app install on a device hands it (migration 059).
+	SoftwareFileID *[16]byte
 }
 
 func (m *PackageRun) Schema(t *storm.Table) {
@@ -1423,7 +1426,7 @@ func (m *PackageRun) Schema(t *storm.Table) {
 	t.Col(&m.Started).Default("'{}'::text[]")
 	t.Col(&m.ScriptAction).Default("''::text")
 	t.Col(&m.ScriptParams).Default("'{}'::jsonb")
-	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text, 'script'::text])")
+	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text, 'script'::text, 'app_install'::text, 'app_uninstall'::text, 'app_disable'::text, 'app_restore'::text])")
 	t.CheckNamed("package_runs_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'waiting'::text, 'queued'::text, 'running'::text, 'rebooting'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
 	t.CheckNamed("package_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")
@@ -1564,4 +1567,34 @@ func (m *SoftwareScriptVersion) Schema(t *storm.Table) {
 	t.Col(&m.Signature).Default("''::text")
 	t.UniqueNamed("software_script_versions_script_id_version_key", &m.Script, &m.Version)
 	t.CheckNamed("software_script_versions_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_asked'::text])")
+}
+
+// SoftwareFile is table software_files: an APK (and, with Windows, an MSI
+// or EXE) in the Software library (migration 059).
+type SoftwareFile struct {
+	ID         [16]byte
+	Platform   string
+	Kind       string
+	Name       string
+	FileName   string
+	Sha256     string
+	SizeBytes  int64
+	StorageKey string
+	Meta       storm.JSON
+	Note       string
+	CreatedBy  string
+	CreatedAt  time.Time
+	ArchivedAt *time.Time
+}
+
+func (m *SoftwareFile) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Meta).Default("'{}'::jsonb")
+	t.Col(&m.Note).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("software_files_kind_check", "kind = ANY (ARRAY['apk'::text, 'msi'::text, 'exe'::text])")
+	t.CheckNamed("software_files_platform_check", "platform = ANY (ARRAY['android'::text, 'windows'::text])")
+	t.CheckNamed("software_files_size_bytes_check", "size_bytes > 0")
+	t.Index(&m.Sha256).Unique().Where("archived_at IS NULL").Named("software_files_sha256")
 }

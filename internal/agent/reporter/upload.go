@@ -3,6 +3,7 @@ package reporter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,4 +115,44 @@ func extOf(path string) string {
 		return path[i:]
 	}
 	return ""
+}
+
+// Download fetches path from the control plane into dst on this agent's own
+// credential, at most limit bytes, and returns how many it wrote. A library
+// file an install was told to fetch comes this way; the caller checks its
+// hash before using it. No overall timeout, only ctx's, like an upload.
+func (c *Client) Download(ctx context.Context, path string, dst io.Writer, limit int64) (int64, error) {
+	if !c.Enabled() {
+		return 0, errors.New("no control plane is configured")
+	}
+	if !strings.HasPrefix(path, "/api/v1/report/") {
+		return 0, fmt.Errorf("refusing to fetch %q: not a report path", path)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	hc := *c.http
+	hc.Timeout = 0
+	resp, err := hc.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		var e struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(msg, &e) == nil && e.Error != "" {
+			msg = []byte(e.Error)
+		}
+		return 0, &UploadError{Status: resp.StatusCode, Message: strings.TrimSpace(string(msg))}
+	}
+	n, err := io.Copy(dst, io.LimitReader(resp.Body, limit+1))
+	if err == nil && n > limit {
+		err = fmt.Errorf("the file is larger than the %d bytes expected", limit)
+	}
+	return n, err
 }

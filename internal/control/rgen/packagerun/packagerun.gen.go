@@ -60,6 +60,7 @@ type Row struct {
 	ScriptParams    runtime.JSON
 	ScriptSecrets   []byte
 	ScriptReport    runtime.Null[runtime.JSON]
+	SoftwareFileID  runtime.Null[[16]byte]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -98,7 +99,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 40
+const nCols = 41
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -439,6 +440,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.byts[q.nby] = r.ScriptSecrets
 		q.nby++
+	case 40:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.SoftwareFileID.V
+		q.nr++
 	}
 }
 
@@ -649,6 +657,7 @@ var (
 	ScriptParams    = JSONCol{37}
 	ScriptSecrets   = NullBytesCol{38}
 	ScriptReport    = NullJSONCol{39}
+	SoftwareFileID  = NullUUIDCol{40}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1283,6 +1292,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 40:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1544,6 +1560,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.jsns[q.njs] = p.jsn
 		q.njs++
+	case 40:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1840,10 +1863,16 @@ func (q Query) ScriptReportHasAnyKey(v ...string) Query { return q.Where(ScriptR
 func (q Query) ScriptReportHasAllKeys(v ...string) Query {
 	return q.Where(ScriptReport.HasAllKeys(v...))
 }
-func (q Query) ScriptReportIsNull() Query    { return q.Where(ScriptReport.IsNull()) }
-func (q Query) ScriptReportIsNotNull() Query { return q.Where(ScriptReport.IsNotNull()) }
+func (q Query) ScriptReportIsNull() Query               { return q.Where(ScriptReport.IsNull()) }
+func (q Query) ScriptReportIsNotNull() Query            { return q.Where(ScriptReport.IsNotNull()) }
+func (q Query) SoftwareFileIDEq(v [16]byte) Query       { return q.Where(SoftwareFileID.Eq(v)) }
+func (q Query) SoftwareFileIDNotEq(v [16]byte) Query    { return q.Where(SoftwareFileID.NotEq(v)) }
+func (q Query) SoftwareFileIDIn(v ...[16]byte) Query    { return q.Where(SoftwareFileID.In(v...)) }
+func (q Query) SoftwareFileIDNotIn(v ...[16]byte) Query { return q.Where(SoftwareFileID.NotIn(v...)) }
+func (q Query) SoftwareFileIDIsNull() Query             { return q.Where(SoftwareFileID.IsNull()) }
+func (q Query) SoftwareFileIDIsNotNull() Query          { return q.Where(SoftwareFileID.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report" FROM "package_runs"`
+const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id" FROM "package_runs"`
 const countPrefix = `SELECT count(*) FROM "package_runs"`
 const existsPrefix = `SELECT 1 FROM "package_runs"`
 const existsSuffix = ` LIMIT 1`
@@ -2120,6 +2149,12 @@ var orderTable = [nCols][4]string{
 		"\"script_report\" ASC NULLS FIRST",
 		"\"script_report\" DESC NULLS LAST",
 	},
+	{ // software_file_id
+		"\"software_file_id\"",
+		"\"software_file_id\" DESC",
+		"\"software_file_id\" ASC NULLS FIRST",
+		"\"software_file_id\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -2165,6 +2200,7 @@ var identTable = [nCols]string{
 	"\"script_params\"",
 	"\"script_secrets\"",
 	"\"script_report\"",
+	"\"software_file_id\"",
 }
 
 var lowering = runtime.Lowering{
@@ -2197,7 +2233,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [40][28]runtime.Frag{
+var fragTable = [41][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -3398,6 +3434,36 @@ var fragTable = [40][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // software_file_id
+		{}, // opNone
+		{A: "\"software_file_id\" = $", B: ""},
+		{A: "\"software_file_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"software_file_id\" = ANY($", B: ")"},
+		{A: "\"software_file_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"software_file_id\" IS NULL", B: ""},
+		{A: "\"software_file_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3607,6 +3673,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ScriptParams = runtime.JSON(runtime.JSONB(rv[37], sl))
 	r.ScriptSecrets = runtime.Bytes(rv[38])
 	r.ScriptReport = runtime.NullJSON(rv[39], sl)
+	r.SoftwareFileID = runtime.Nullable(rv[40], runtime.UUID)
 	return decErr
 }
 
@@ -3791,6 +3858,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 40:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
 			}
 			continue
 		}
@@ -3939,6 +4010,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.jsns[njs] = q.jsns[njs]
 			v = append(v, &b.jsns[njs])
 			njs++
+		case 40:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
 		}
 	}
 	b.vals = v
@@ -4076,7 +4151,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report"`
+const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id"`
 
 const updatePrefix = `UPDATE "package_runs" SET `
 const deletePrefix = `DELETE FROM "package_runs"`
@@ -4123,9 +4198,10 @@ const (
 	dScriptParams    uint64 = 1 << 36
 	dScriptSecrets   uint64 = 1 << 37
 	dScriptReport    uint64 = 1 << 38
+	dSoftwareFileID  uint64 = 1 << 39
 )
 
-const nUpdatable = 39
+const nUpdatable = 40
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -4168,6 +4244,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"script_params\" = $", B: ""},     // script_params
 	{A: "\"script_secrets\" = $", B: ""},    // script_secrets
 	{A: "\"script_report\" = $", B: ""},     // script_report
+	{A: "\"software_file_id\" = $", B: ""},  // software_file_id
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -4213,6 +4290,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                                        // script_params has no server-side form
 	{},                                                        // script_secrets has no server-side form
 	{},                                                        // script_report has no server-side form
+	{},                                                        // software_file_id has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -4264,9 +4342,10 @@ const (
 	iScriptParams    uint64 = 1 << 37
 	iScriptSecrets   uint64 = 1 << 38
 	iScriptReport    uint64 = 1 << 39
+	iSoftwareFileID  uint64 = 1 << 40
 )
 
-const nInsertable = 40
+const nInsertable = 41
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -4310,6 +4389,7 @@ var insCols = [nInsertable]string{
 	"\"script_params\"",
 	"\"script_secrets\"",
 	"\"script_report\"",
+	"\"software_file_id\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -4318,7 +4398,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"package_runs\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\", \"software_file_id\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -4337,7 +4417,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\", \"software_file_id\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -4812,6 +4892,20 @@ func (m *Mut) SetScriptReportNull() {
 	m.expr &^= dScriptReport
 }
 
+func (m *Mut) SetSoftwareFileID(v [16]byte) {
+	m.row.SoftwareFileID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dSoftwareFileID
+	m.expr &^= dSoftwareFileID
+}
+
+// SetSoftwareFileIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetSoftwareFileIDNull() {
+	m.row.SoftwareFileID = runtime.Null[[16]byte]{}
+	m.dirty |= dSoftwareFileID
+	m.expr &^= dSoftwareFileID
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -5141,6 +5235,18 @@ func (n *Ins) SetScriptReportNull() {
 	n.set |= iScriptReport
 }
 
+func (n *Ins) SetSoftwareFileID(v [16]byte) {
+	n.row.SoftwareFileID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iSoftwareFileID
+}
+
+// SetSoftwareFileIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetSoftwareFileIDNull() {
+	n.row.SoftwareFileID = runtime.Null[[16]byte]{}
+	n.set |= iSoftwareFileID
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -5192,7 +5298,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 39)
+	set := make([]string, 0, 40)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -5312,6 +5418,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<39) != 0 {
 			set = append(set, "script_report")
 		}
+		if mask&(1<<40) != 0 {
+			set = append(set, "software_file_id")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -5430,6 +5539,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<39) != 0 {
 			set = append(set, "script_report")
 		}
+		if mask&(1<<40) != 0 {
+			set = append(set, "software_file_id")
+		}
 	case 2:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -5544,6 +5656,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<39) != 0 {
 			set = append(set, "script_report")
+		}
+		if mask&(1<<40) != 0 {
+			set = append(set, "software_file_id")
 		}
 	}
 	return set
@@ -5668,6 +5783,7 @@ var assignFor = map[string]string{
 	"script_params":     "\"script_params\" = EXCLUDED.\"script_params\"",
 	"script_secrets":    "\"script_secrets\" = EXCLUDED.\"script_secrets\"",
 	"script_report":     "\"script_report\" = EXCLUDED.\"script_report\"",
+	"software_file_id":  "\"software_file_id\" = EXCLUDED.\"software_file_id\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -5798,6 +5914,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.ScriptSecrets)
 		case 39:
 			args = append(args, n.row.ScriptReport.Arg())
+		case 40:
+			args = append(args, n.row.SoftwareFileID.Arg())
 		}
 	}
 	var out Row
@@ -5835,7 +5953,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 40)
+	args := make([]any, 0, 41)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -5876,6 +5994,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ScriptParams)
 	args = append(args, r.ScriptSecrets)
 	args = append(args, r.ScriptReport.Arg())
+	args = append(args, r.SoftwareFileID.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -5942,13 +6061,14 @@ var copyCols = []string{
 	"script_params",
 	"script_secrets",
 	"script_report",
+	"software_file_id",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [40]any
+	buf  [41]any
 }
 
 func (s *rowSource) Next() bool {
@@ -6006,6 +6126,7 @@ func (s *rowSource) Values() []any {
 	s.buf[37] = &r.ScriptParams
 	s.buf[38] = &r.ScriptSecrets
 	s.buf[39] = r.ScriptReport.Ptr()
+	s.buf[40] = r.SoftwareFileID.Ptr()
 	return s.buf[:]
 }
 
@@ -6076,8 +6197,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 37
 	mask |= 1 << 38
 	mask |= 1 << 39
+	mask |= 1 << 40
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 40)
+	args := make([]any, 0, 41)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -6118,6 +6240,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ScriptParams)
 	args = append(args, r.ScriptSecrets)
 	args = append(args, r.ScriptReport.Arg())
+	args = append(args, r.SoftwareFileID.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -6231,6 +6354,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.ScriptSecrets)
 		case 39:
 			args = append(args, n.row.ScriptReport.Arg())
+		case 40:
+			args = append(args, n.row.SoftwareFileID.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -6364,6 +6489,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.ScriptSecrets)
 		case 38:
 			args = append(args, m.row.ScriptReport.Arg())
+		case 39:
+			args = append(args, m.row.SoftwareFileID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6524,6 +6651,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.ScriptSecrets)
 		case 38:
 			args = append(args, m.row.ScriptReport.Arg())
+		case 39:
+			args = append(args, m.row.SoftwareFileID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6750,6 +6879,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.ScriptSecrets)
 		case 38:
 			args = append(args, m.row.ScriptReport.Arg())
+		case 39:
+			args = append(args, m.row.SoftwareFileID.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

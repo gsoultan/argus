@@ -168,6 +168,9 @@ type AndroidApp struct {
 	Version string `json:"version,omitempty"`
 	// Source is where it came from: "play", "preinstalled" or "sideloaded".
 	Source string `json:"source,omitempty"`
+	// Disabled is a preinstalled app disabled for the device's user, which
+	// the console can restore.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // androidFrameWait is how long one look at the screen waits for a change

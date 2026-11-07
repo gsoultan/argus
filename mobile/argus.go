@@ -58,6 +58,25 @@ type Device interface {
 	Play(inputJSON string) error
 }
 
+// Installer is how the app changes apps on the device, for the console's
+// Apps tab. Each call blocks until Android has answered, and returns an
+// error when it did not install or remove: refused, or the person holding
+// the device said no, or nobody answered in time. With the attended engine
+// Android asks the person; with the unattended engine the shell helper
+// does it without asking. The agent has already checked an install's file
+// is the one the console showed before Install is called.
+type Installer interface {
+	// Install installs the package file at path, which is pkg.
+	Install(path, pkg string) error
+	// Uninstall uninstalls pkg.
+	Uninstall(pkg string) error
+	// Disable disables a preinstalled pkg for the device's user, never
+	// removing it from the device (unattended only).
+	Disable(pkg string) error
+	// Restore undoes Disable.
+	Restore(pkg string) error
+}
+
 // Logger receives the agent's log lines, for the app's log.
 type Logger interface {
 	Log(level, msg string)
@@ -184,6 +203,14 @@ type Agent struct {
 	// it on, and on Android 11+ it listens on every interface, so nobody
 	// should discover it later.
 	wirelessDebugging atomic.Bool
+	// installer is how the app changes apps, nil until SetInstaller; an app
+	// without one does not tell the control plane it can, so the console
+	// asks for the app to be updated instead of sending it orders.
+	installer Installer
+	// canInstall is Android's "Install unknown apps" for this app, which the
+	// person allows once; reported so the console says it is not set up.
+	canInstall atomic.Int32
+	apps       *agent.AppRuns
 }
 
 // NewAgent makes the agent for stateDir, with the device the app provides.
@@ -272,14 +299,40 @@ func (a *Agent) Start() error {
 		OnConnected: func() { a.connected.Store(true) },
 	})
 
+	var apps *agent.AppRuns
+	if a.installer != nil {
+		apps = &agent.AppRuns{
+			Dir: agent.AppRunsDir(a.stateDir), Fetch: rep.Download, Installer: a.installer, Log: log,
+			Attended: func() bool { return !a.unattended.Load() },
+		}
+	}
+	a.apps = apps
+	var facts func()
 	heartbeat := func() {
-		rep.Heartbeat(ctx, map[string]any{
+		beat := map[string]any{
 			"hostname":        hostname,
 			"version":         Version,
 			"active_sessions": col.ActiveCount(),
-		})
+		}
+		if apps != nil {
+			// Not supported as a server's updates are: the control plane
+			// sends this device app runs only, and only from its Apps tab.
+			beat["packages"] = agent.PackageBeat{Reason: "an Android device changes apps from its Apps tab",
+				Run: apps.Status()}
+		}
+		reply, ok := rep.HeartbeatWithReply(ctx, beat)
+		if !ok || apps == nil || len(reply.Packages) == 0 {
+			return
+		}
+		var o agent.PackageOrders
+		if err := json.Unmarshal(reply.Packages, &o); err != nil || o.Run == nil || !agent.IsAppMode(o.Run.Mode) {
+			return
+		}
+		// What is installed changed: the app reads the list again and the
+		// facts carry it, so the Apps tab shows it without waiting an hour.
+		apps.Start(ctx, *o.Run, func() { go facts() })
 	}
-	facts := func() {
+	facts = func() {
 		engine := "attended"
 		if a.unattended.Load() {
 			engine = "unattended"
@@ -294,6 +347,9 @@ func (a *Agent) Start() error {
 				"engine":             engine,
 				"wireless_debugging": a.wirelessDebugging.Load(),
 			},
+		}
+		if c := a.canInstall.Load(); c != 0 {
+			f["system"].(map[string]any)["can_install_apps"] = c == 1
 		}
 		a.mu.Lock()
 		apps := a.appsJSON
@@ -369,6 +425,23 @@ func (a *Agent) Unattended() bool { return a.unattended.Load() }
 // the console shows as a fact on the device: unattended needs it, and it is a
 // shell-level door nobody should find by surprise.
 func (a *Agent) SetWirelessDebugging(on bool) { a.wirelessDebugging.Store(on) }
+
+// SetInstaller gives the agent the app's Installer. Called before Start.
+func (a *Agent) SetInstaller(i Installer) {
+	a.mu.Lock()
+	a.installer = i
+	a.mu.Unlock()
+}
+
+// SetCanInstallApps says whether Android lets this app install apps
+// ("Install unknown apps"), reported in the device's facts.
+func (a *Agent) SetCanInstallApps(on bool) {
+	if on {
+		a.canInstall.Store(1)
+	} else {
+		a.canInstall.Store(2)
+	}
+}
 
 // EndSessions ends every open session: the Stop button on the banner.
 func (a *Agent) EndSessions() {

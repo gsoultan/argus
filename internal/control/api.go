@@ -365,6 +365,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerPackageRoutes(mux)
 	a.registerSoftwareRoutes(mux)
 	a.registerScriptRoutes(mux)
+	a.registerSoftwareFileRoutes(mux)
 	a.registerLogCleanupRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)

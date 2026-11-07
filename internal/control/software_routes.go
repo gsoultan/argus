@@ -648,7 +648,7 @@ func (s *Store) softwarePreview(ctx context.Context, id string) (SoftwarePreview
 
 func (s *Store) softwareRunsFor(ctx context.Context, host string, limit int) ([]PackageRun, error) {
 	rows, err := s.db(ctx).Query(ctx, `SELECT `+packageRunCols+` FROM package_runs
-		WHERE lower(hostname) = lower($1) AND mode IN ('install', 'remove', 'script')
+		WHERE lower(hostname) = lower($1) AND mode IN ('install', 'remove', 'script', 'app_install', 'app_uninstall', 'app_disable', 'app_restore')
 		ORDER BY requested_at DESC LIMIT $2`, host, limit)
 	if err != nil {
 		return nil, err

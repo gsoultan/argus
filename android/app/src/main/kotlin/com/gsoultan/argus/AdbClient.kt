@@ -79,6 +79,13 @@ class AdbClient(private val ctx: Context) {
         }
     }
 
+    /** Runs a shell command, with input on its standard input when given. */
+    fun shell(command: String, input: File? = null) {
+        if (!paired()) throw Exception("this device has not paired for wireless debugging yet")
+        val exec = AdbExec(ctx, pairingFile())
+        if (input == null) exec.run(command) else exec.runWithInput(command, input)
+    }
+
     private fun pairingFile(): File = File(ctx.filesDir, "adb-pairing.key")
 
     private fun copyHelperDex() {

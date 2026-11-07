@@ -70,6 +70,32 @@ plus install/remove fields on package runs in `package_updates.go`. Migration
 - Windows scripts can be stored and reviewed but the run endpoint refuses
   them until PR4.
 
+## Part 3: apps on Android devices (migration 059)
+
+- `internal/apk` (shared package, in the layering list) reads an APK: the
+  binary manifest (package, version code/name, label, min SDK) and the
+  signer (SHA-256 of the first cert from the v3.1/v3/v2 signing block, else
+  the v1 PKCS7). `apk/apktest` builds signed test APKs.
+- Library files: table `software_files` (android|windows, apk|msi|exe),
+  object at `software/<sha>.apk` in the backup store. Routes in
+  `internal/control/software_files.go`: GET/POST/DELETE
+  /api/v1/software/files, POST /api/v1/assets/{id}/android-apps/runs
+  {action install|uninstall|disable|restore}, and the device fetches
+  /api/v1/report/software-file/{run} (only its own queued/running install).
+- Runs are package_runs with modes app_install/app_uninstall/app_disable/
+  app_restore and `software_file_id`. protectedApps (Argus, Settings, System
+  UI, Play, GMS, installer, phone, android) are refused on both ends.
+  Disable/restore only with the unattended engine; preinstalled apps are
+  never uninstalled.
+- Device: `internal/agent/android_install.go` (AppRuns) downloads, checks
+  size, SHA-256, package, version code and signer, then calls the Kotlin
+  `AppInstaller` (PackageInstaller session when attended, so the person can
+  say no; `pm` via the helper when unattended).
+- Console: Settings, Software, "Apps for devices" card; the device Apps tab
+  has Install app…, a per-row menu, a waiting banner and Recent changes.
+- Stacked on PR #182 (Android Apps tab, 056_android_apps.sql) by a merge;
+  this branch's migrations are 057, 058, 059.
+
 ## The storm model
 
 `internal/control/rmodel/model.go` must follow every migration: CI runs

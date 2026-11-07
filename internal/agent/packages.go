@@ -157,6 +157,9 @@ type PackageRunRequest struct {
 	Expect        string                `json:"expect,omitempty"`
 	// Script is a reviewed script to run, for mode script.
 	Script *ScriptOrder `json:"script,omitempty"`
+	// App is an app to change on an Android device, for the app_* modes
+	// (android_install.go).
+	App *AppOrder `json:"app,omitempty"`
 }
 
 // Package run states.

@@ -11,7 +11,7 @@ import type { Asset } from '~/types/domain'
  */
 export function AppsTab({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   if (asset.kind === 'android') {
-    return <AndroidAppsOnDevice asset={asset} />
+    return <AndroidAppsOnDevice asset={asset} canEdit={canEdit} />
   }
   return (
     <Stack gap="md">

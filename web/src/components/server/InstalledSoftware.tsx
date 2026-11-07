@@ -447,7 +447,7 @@ function ConfirmPreview({ asset, preview, apps, onClose }: {
 
 /* ── Recent changes ──────────────────────────────────────────────────────── */
 
-function RecentChanges({ assetId, runs, canEdit, onPreview }: {
+export function RecentChanges({ assetId, runs, canEdit, onPreview }: {
   assetId: string
   runs: PackageRun[]
   canEdit: boolean
@@ -485,7 +485,7 @@ function ChangeRow({ run: r, canEdit, onPreview }: { run: PackageRun; canEdit: b
   const canTakeBack = r.state === 'awaiting_approval' || (r.state === 'queued' && !r.sentAt)
   const added = r.upgraded.some((u) => !u.from && (r.items ?? []).some((i) => i.name === u.name))
   const took = r.upgraded.some((u) => !u.to && (r.items ?? []).some((i) => i.name === u.name))
-  const undoLabel = r.mode === 'install' ? (added ? 'Remove what this installed' : '') : took ? 'Reinstall' : ''
+  const undoLabel = r.mode === 'install' ? (added ? 'Remove what this installed' : '') : r.mode === 'remove' && took ? 'Reinstall' : ''
   return (
     <Table.Tr>
       <Table.Td w={150}><Text size={FS.meta} title={absTime(r.requestedAt)}>{relTime(r.finishedAt ?? r.requestedAt)}</Text></Table.Td>

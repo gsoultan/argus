@@ -230,6 +230,10 @@ type PackageRun struct {
 	ScriptAction    string               `json:"scriptAction,omitempty"`
 	ScriptParams    map[string]string    `json:"scriptParams,omitempty"`
 	ScriptReport    *tunnel.ScriptReport `json:"scriptReport,omitempty"`
+	// An app run on a device: the library file an install hands it, by id
+	// and by the name the library shows.
+	SoftwareFileID   *string `json:"softwareFileId,omitempty"`
+	SoftwareFileName string  `json:"softwareFileName,omitempty"`
 }
 
 const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
@@ -238,7 +242,8 @@ const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, hold
 	items, purge, start_services, started, preview_id::text, undo_of::text, expect,
 	script_version_id::text, script_action, script_params, script_report,
 	(SELECT s.name || ' v' || v.version FROM software_script_versions v JOIN software_scripts s ON s.id = v.script_id
-	  WHERE v.id = package_runs.script_version_id)`
+	  WHERE v.id = package_runs.script_version_id),
+	software_file_id::text, (SELECT f.name FROM software_files f WHERE f.id = package_runs.software_file_id)`
 
 func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	var (
@@ -248,6 +253,7 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 		params   []byte
 		report   []byte
 		label    *string
+		fileName *string
 		pos      *int32
 	)
 	err := row.Scan(&r.ID, &r.Hostname, &r.AssetHostname, &r.Mode, &r.Packages, &r.Holds, &r.Reboot,
@@ -255,7 +261,7 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 		&r.StartedAt, &r.FinishedAt, &r.UpdatedAt, &r.Step, &r.Message, &r.Planned, &upgraded,
 		&r.Restarted, &r.RebootRequired, &r.Rebooted, &r.Log, &r.BatchID, &pos,
 		&items, &r.Purge, &r.StartServices, &r.Started, &r.PreviewID, &r.UndoOf, &r.expect,
-		&r.ScriptVersionID, &r.ScriptAction, &params, &report, &label)
+		&r.ScriptVersionID, &r.ScriptAction, &params, &report, &label, &r.SoftwareFileID, &fileName)
 	if err != nil {
 		return r, err
 	}
@@ -272,6 +278,9 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	}
 	if label != nil {
 		r.ScriptName = *label
+	}
+	if fileName != nil {
+		r.SoftwareFileName = *fileName
 	}
 	if r.Items == nil {
 		r.Items = []tunnel.SoftwareItem{}
@@ -726,6 +735,9 @@ type PackageRunOrder struct {
 	Expect        string                `json:"expect,omitempty"`
 	// Script is a reviewed script to run, for mode script.
 	Script *ScriptRunOrder `json:"script,omitempty"`
+	// App is what a device needs for an app_* run: the file to fetch for an
+	// install, what it must say about itself, and the package.
+	App *AppRunOrder `json:"app,omitempty"`
 }
 
 // packageRunToSend is the run to put on host's heartbeat reply, marking it
@@ -820,6 +832,8 @@ type newRun struct {
 	Purge, StartServices bool
 	Expect               string
 	PreviewID, UndoOf    *string
+	// An app run on a device.
+	SoftwareFileID *string
 }
 
 // hasPendingRun reports whether host has a run not yet finished.
@@ -866,13 +880,13 @@ func (s *Store) insertRun(ctx context.Context, q pgxQuerier, n newRun) (PackageR
 		INSERT INTO package_runs (hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
 		                          requested_by, batch_id, batch_position, window_start,
 		                          items, purge, start_services, expect, preview_id, undo_of,
-		                          script_version_id, script_action, script_params, script_secrets)
+		                          script_version_id, script_action, script_params, script_secrets, software_file_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11,$12,$13::jsonb,$14,$15,$16,$17::uuid,$18::uuid,
-		        $19::uuid,$20,$21::jsonb,$22)
+		        $19::uuid,$20,$21::jsonb,$22,$23::uuid)
 		RETURNING `+packageRunCols,
 		n.Hostname, n.AssetHostname, n.Mode, n.Packages, n.Holds, n.Reboot, n.Trigger, n.State,
 		n.RequestedBy, n.BatchID, pos, n.WindowStart, items, n.Purge, n.StartServices, n.Expect,
-		n.PreviewID, n.UndoOf, n.ScriptVersionID, n.ScriptAction, params, n.ScriptSecrets)
+		n.PreviewID, n.UndoOf, n.ScriptVersionID, n.ScriptAction, params, n.ScriptSecrets, n.SoftwareFileID)
 	r, err := scanPackageRun(row, false)
 	if err != nil && isUniqueViolation(err) {
 		return r, ErrRunActive

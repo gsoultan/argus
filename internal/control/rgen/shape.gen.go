@@ -620,6 +620,7 @@ func _assertPackageRunShape(m m0.PackageRun) {
 		m.ScriptParams,
 		m.ScriptSecrets,
 		m.ScriptReport,
+		m.SoftwareFileID,
 	}
 }
 
@@ -760,6 +761,27 @@ func _assertSignInDeviceShape(m m0.SignInDevice) {
 		m.Fingerprint,
 		m.FirstSeenAt,
 		m.LastSeenAt,
+	}
+}
+
+// _assertSoftwareFileShape fails to compile if m0.SoftwareFile gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwareFileShape(m m0.SoftwareFile) {
+	type shape m0.SoftwareFile
+	_ = shape{
+		m.ID,
+		m.Platform,
+		m.Kind,
+		m.Name,
+		m.FileName,
+		m.Sha256,
+		m.SizeBytes,
+		m.StorageKey,
+		m.Meta,
+		m.Note,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.ArchivedAt,
 	}
 }
 

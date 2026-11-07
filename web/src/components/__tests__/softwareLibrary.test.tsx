@@ -27,6 +27,8 @@ const api = vi.hoisted(() => ({
   runScript: vi.fn(),
   installedSoftware: vi.fn(),
   softwareRuns: vi.fn(),
+  softwareFiles: vi.fn(() => Promise.resolve([])),
+  uploadSoftwareFile: vi.fn(),
 }))
 
 vi.mock('~/lib/live', async (orig) => ({

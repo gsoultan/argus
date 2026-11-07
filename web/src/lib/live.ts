@@ -775,6 +775,20 @@ export async function send<T>(method: string, path: string, body?: unknown): Pro
   return readReply<T>(res)
 }
 
+/**
+ * A file sent as multipart/form-data, with the same contract as send(). The
+ * browser sets the boundary, so no Content-Type is given here.
+ */
+export async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    body: form,
+  })
+  return readReply<T>(res)
+}
+
 /* ── Teams ──────────────────────────────────────────────────────────────── */
 
 export async function teams(): Promise<Team[]> {
@@ -2109,6 +2123,7 @@ export interface PackageRun {
   assetHostname: string
   assetId?: string
   mode: 'all' | 'security' | 'selected' | 'install' | 'remove' | 'script'
+    | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore'
   packages: string[]
   holds: string[]
   reboot: PackageReboot
@@ -2140,6 +2155,9 @@ export interface PackageRun {
   started?: string[]
   previewId?: string | null
   undoOf?: string | null
+  /** An app install on a device: the library file it hands the device. */
+  softwareFileId?: string
+  softwareFileName?: string
   /** A script run: which version, which part, its plain values, and what changed. */
   scriptVersionId?: string
   scriptName?: string

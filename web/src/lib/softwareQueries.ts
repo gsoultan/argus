@@ -14,6 +14,11 @@ import {
   removeScript,
   reviewScript,
   runScript,
+  runAndroidApp,
+  softwareFiles,
+  uploadSoftwareFile,
+  removeSoftwareFile,
+  type AppAction,
   saveScriptVersion,
   script,
   scriptRules,
@@ -82,6 +87,8 @@ export function useRefreshSoftware() {
   return useCallback(() => {
     void qc.invalidateQueries({ queryKey: ['software'] })
     void qc.invalidateQueries({ queryKey: ['packages'] })
+    // A device's apps come with its facts, a little after a change ends.
+    void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'asset' && q.queryKey[2] === 'android-apps' })
   }, [qc])
 }
 
@@ -121,3 +128,23 @@ export const useRunScript = (assetId: string) => {
 }
 export const useCheckScript = () =>
   useMutation({ mutationFn: (v: Parameters<typeof checkScript>[0]) => checkScript(v) })
+
+/* ── Library files and apps on devices ───────────────────────────────────── */
+
+export const softwareFilesQuery = (platform?: 'android' | 'windows') =>
+  queryOptions({ queryKey: ['software', 'files', platform ?? 'all'] as const, queryFn: () => softwareFiles(platform) })
+
+export const useUploadSoftwareFile = () =>
+  useScriptMutation((v: { file: File; note: string }) => uploadSoftwareFile(v.file, v.note))
+export const useRemoveSoftwareFile = () => useScriptMutation((id: string) => removeSoftwareFile(id))
+
+export const useAndroidAppRun = (assetId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { action: AppAction; fileId?: string; package?: string }) => runAndroidApp(assetId, v),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['software'] })
+      void qc.invalidateQueries({ queryKey: ['asset', assetId] })
+    },
+  })
+}

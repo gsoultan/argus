@@ -36,6 +36,10 @@ const module = "github.com/gsoultan/argus/"
 // format, the recording format the agent writes and the control plane
 // verifies -- not when it is merely convenient to put it in one place.
 var shared = []string{
+	// What an Android package says about itself: the control plane reads it
+	// when an APK is added to the software library, the Argus app before it
+	// installs one. Standard library only.
+	module + "internal/apk",
 	module + "internal/hashchain",
 	// The fan-out to live viewers: the control plane's for the sessions it
 	// relays, the agent's for every session it records.

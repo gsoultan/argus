@@ -1,4 +1,4 @@
-import { get, send, type PackageRun } from '~/lib/live'
+import { get, send, upload, type PackageRun } from '~/lib/live'
 
 /*
  * Installing and removing software on a Linux server. Here rather than in
@@ -125,7 +125,20 @@ export function sizeText(kb: number | undefined): string {
 }
 
 /** What a finished or pending install or removal did, in a sentence. */
+const APP_VERBS: Record<string, [string, string]> = {
+  app_install: ['install', 'installed'],
+  app_uninstall: ['uninstall', 'uninstalled'],
+  app_disable: ['disable', 'disabled'],
+  app_restore: ['restore', 'restored'],
+}
+
 export function softwareRunText(r: PackageRun): string {
+  const app = APP_VERBS[r.mode]
+  if (app) {
+    const item = r.items?.[0]
+    const what = item ? `${item.name}${r.mode === 'app_install' && item.version ? ` ${item.version}` : ''}` : 'an app'
+    return `${r.state === 'done' ? app[1] : app[0]} ${what}`
+  }
   if (r.mode === 'script') {
     return `${r.state === 'done' ? 'ran' : 'run'} the ${r.scriptAction ?? 'install'} script of ${r.scriptName ?? 'a script'}`
   }
@@ -279,4 +292,61 @@ export async function fileBase64(file: File): Promise<string> {
   let s = ''
   for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000))
   return btoa(s)
+}
+
+/* ── Library files and apps on Android devices ───────────────────────────── */
+
+export interface SoftwareFile {
+  id: string
+  platform: 'android' | 'windows'
+  kind: 'apk' | 'msi' | 'exe'
+  name: string
+  fileName: string
+  sha256: string
+  size: number
+  /** What an APK says about itself. */
+  app?: {
+    package: string
+    versionCode: number
+    versionName: string
+    label: string
+    minSdk: number
+    /** SHA-256 of the signing certificate. */
+    signer: string
+    scheme: 'v1' | 'v2' | 'v3'
+  }
+  note: string
+  createdBy: string
+  createdAt: string
+  /** Said once, when the file is added. */
+  warnings?: string[]
+}
+
+export function sizeOf(bytes: number): string {
+  if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`
+  if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+/** The signer as people compare it: the first and last few hex digits. */
+export const signerShort = (s: string) => `${s.slice(0, 8)}…${s.slice(-4)}`
+
+export async function softwareFiles(platform?: 'android' | 'windows'): Promise<SoftwareFile[]> {
+  return get(`/api/v1/software/files${platform ? `?platform=${platform}` : ''}`)
+}
+
+export async function uploadSoftwareFile(file: File, note: string): Promise<SoftwareFile> {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  return upload(`/api/v1/software/files?note=${encodeURIComponent(note)}`, form)
+}
+
+export async function removeSoftwareFile(id: string): Promise<void> {
+  await send('DELETE', `/api/v1/software/files/${encodeURIComponent(id)}`)
+}
+
+export type AppAction = 'install' | 'uninstall' | 'disable' | 'restore'
+
+export async function runAndroidApp(assetId: string, body: { action: AppAction; fileId?: string; package?: string }): Promise<PackageRun> {
+  return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/android-apps/runs`, body)
 }

@@ -5,7 +5,7 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconCode, IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
+import { IconBrandAndroid, IconCode, IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
 import { EmptyState, SectionCard } from '~/components/page'
 import { relTime } from '~/components/primitives'
 import { run as notifyRun } from '~/lib/notify'
@@ -13,11 +13,11 @@ import { meQuery } from '~/lib/queries'
 import {
   fileBase64, findingKey,
   type ScriptFinding, type ScriptParam, type ScriptPartInput, type ScriptPlatform, type ScriptVersion,
-  type ScriptVersionInput, type SoftwareScript,
+  signerShort, sizeOf, type ScriptVersionInput, type SoftwareFile, type SoftwareScript,
 } from '~/lib/softwareApi'
 import {
-  scriptQuery, scriptRulesQuery, scriptsQuery, useCheckScript, useCreateScript, useRemoveScript, useReviewScript,
-  useSaveScriptVersion,
+  scriptQuery, scriptRulesQuery, scriptsQuery, softwareFilesQuery, useCheckScript, useCreateScript, useRemoveScript,
+  useRemoveSoftwareFile, useReviewScript, useSaveScriptVersion, useUploadSoftwareFile,
 } from '~/lib/softwareQueries'
 import { FS, SP } from '~/theme'
 
@@ -76,6 +76,7 @@ export function SoftwareLibrary({ canEdit }: { canEdit: boolean }) {
           </Table>
         )}
       </SectionCard>
+      <FilesCard canEdit={canEdit} />
       <RulesCard />
       {open && <ScriptDetail id={open} canEdit={canEdit} onClose={() => setOpen(null)}
         onEdit={(s) => { setOpen(null); setEditing(s) }} />}
@@ -452,6 +453,79 @@ function RulesCard() {
             </Table.Tbody>
           </Table>
         </Box>
+      )}
+    </SectionCard>
+  )
+}
+
+/* ── Files: APKs for devices ─────────────────────────────────────────────── */
+
+function FilesCard({ canEdit }: { canEdit: boolean }) {
+  const { data, error } = useQuery(softwareFilesQuery())
+  const add = useUploadSoftwareFile()
+  const remove = useRemoveSoftwareFile()
+  const [added, setAdded] = useState<SoftwareFile | null>(null)
+  const pick = (file: File | null) => {
+    if (!file) return
+    setAdded(null)
+    void notifyRun(async () => setAdded(await add.mutateAsync({ file, note: '' })), { failure: `${file.name} was not added` })
+  }
+  return (
+    <SectionCard title="Apps for devices" icon={IconBrandAndroid} flush
+      description="Android packages Argus can install on devices from their Apps tab. Each is read before it is kept: the app, its version and whose signature it carries. Removing one removes the file only, never the app from devices."
+      action={canEdit ? (
+        <FileButton onChange={pick} accept=".apk">
+          {(props) => <Button {...props} size="compact-sm" loading={add.isPending} leftSection={<IconUpload size={14} />}>Add an APK</Button>}
+        </FileButton>
+      ) : undefined}>
+      {added && (
+        <Alert color={added.warnings?.length ? 'amber' : 'teal'} m="md" withCloseButton onClose={() => setAdded(null)}>
+          <Text size={FS.body} fw={600}>Added {added.name} {added.app?.versionName}</Text>
+          <Text size={FS.micro} c="dimmed" ff="monospace">
+            {added.app?.package} · version code {added.app?.versionCode} · signed {added.app?.scheme} by {added.app && signerShort(added.app.signer)}
+          </Text>
+          {added.warnings?.map((w) => <Text key={w} size={FS.body} mt={4}>{w}</Text>)}
+        </Alert>
+      )}
+      {error ? (
+        <Alert color="rose" m="md"><Text size={FS.body}>{error instanceof Error ? error.message : String(error)}</Text></Alert>
+      ) : !data ? <Skeleton h={80} m="md" /> : data.length === 0 ? (
+        <EmptyState compact icon={IconBrandAndroid} title="No APKs yet."
+          description="Add a company app's APK; devices install it from their Apps tab, and the person holding the device confirms." />
+      ) : (
+        <Table verticalSpacing={8} fz="sm">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>App</Table.Th>
+              <Table.Th>Version</Table.Th>
+              <Table.Th>Signed by</Table.Th>
+              <Table.Th>Size</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {data.map((f) => (
+              <Table.Tr key={f.id}>
+                <Table.Td>
+                  <Text size="sm" fw={600}>{f.name}</Text>
+                  <Text size={FS.micro} c="dimmed" ff="monospace">{f.app?.package ?? f.fileName}</Text>
+                </Table.Td>
+                <Table.Td><Text size={FS.meta}>{f.app?.versionName} <Text span c="dimmed" size={FS.micro}>({f.app?.versionCode})</Text></Text></Table.Td>
+                <Table.Td><Text size={FS.micro} ff="monospace" title={f.app?.signer}>{f.app && signerShort(f.app.signer)}</Text></Table.Td>
+                <Table.Td><Text size={FS.meta}>{sizeOf(f.size)}</Text></Table.Td>
+                <Table.Td ta="right">
+                  {canEdit && (
+                    <ActionIcon variant="subtle" color="slate" aria-label={`Remove ${f.name}`} loading={remove.isPending}
+                      onClick={() => void notifyRun(() => remove.mutateAsync(f.id),
+                        { failure: 'Not removed', success: ['Removed from the library', 'Devices that installed it keep the app.'] })}>
+                      <IconTrash size={14} />
+                    </ActionIcon>
+                  )}
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
       )}
     </SectionCard>
   )
