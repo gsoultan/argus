@@ -47,6 +47,7 @@ enforces all of it and CI runs it by name.
 | [control-status](control-status.md) | Settings › Status: argus-control's own health, where each number comes from, what counts as a problem |
 | [home-page](home-page.md) | Home at `/`: what each role sees, where each card's numbers come from |
 | [package-updates](package-updates.md) | Operating system updates: the agent's helper, runs on the heartbeat, rules and windows, what survives a restart |
+| [software-install](software-install.md) | Installing and removing software: tunnel questions, previews with a hash, runs as package runs, protection, undo |
 | [log-cleanup](log-cleanup.md) | Log cleanup: what the scan reports, how a cleanup is planned and re-checked, the evidence never cleaned, rules |
 | [android-devices](android-devices.md) | Android devices as assets: kind, view/control, the android service, the Add-a-device wizard, the phone toolbar |
 

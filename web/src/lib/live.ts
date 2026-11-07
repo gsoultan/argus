@@ -2099,7 +2099,7 @@ export interface PackageRun {
   hostname: string
   assetHostname: string
   assetId?: string
-  mode: 'all' | 'security' | 'selected'
+  mode: 'all' | 'security' | 'selected' | 'install' | 'remove'
   packages: string[]
   holds: string[]
   reboot: PackageReboot
@@ -2123,6 +2123,14 @@ export interface PackageRun {
   log?: string
   batchId: string | null
   batchPosition: number | null
+  /** An install or a removal: what it was asked for, and how. */
+  items?: { name: string; version?: string }[]
+  purge?: boolean
+  startServices?: boolean
+  /** The services an install started. */
+  started?: string[]
+  previewId?: string | null
+  undoOf?: string | null
 }
 
 /** A server's Updates tab. */

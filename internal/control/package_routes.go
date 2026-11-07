@@ -171,8 +171,18 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	if r.Trigger == "automatic" {
 		who = "started by its update rule"
 	}
-	detail := fmt.Sprintf("The update run on %s (%s, %s) %s: upgraded %d package%s", r.AssetHostname,
-		describeMode(r), who, strings.ReplaceAll(r.State, "_", " "), len(r.Upgraded), plural(len(r.Upgraded)))
+	changed := "upgraded"
+	switch r.Mode {
+	case PackagesInstall:
+		changed = "installed or changed"
+	case PackagesRemove:
+		changed = "removed"
+	}
+	detail := fmt.Sprintf("The %s on %s (%s, %s) %s: %s %d package%s", runNoun(r), r.AssetHostname,
+		describeMode(r), who, strings.ReplaceAll(r.State, "_", " "), changed, len(r.Upgraded), plural(len(r.Upgraded)))
+	if len(r.Started) > 0 {
+		detail += ", started " + strings.Join(r.Started, ", ")
+	}
 	if len(r.Restarted) > 0 {
 		detail += ", restarted " + strings.Join(r.Restarted, ", ")
 	}
@@ -187,13 +197,17 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	a.auditPackages(ctx, AuditEvent{Action: action, Severity: severity, Target: r.AssetHostname, Detail: detail + "."})
 	link := "/assets"
 	if id, _, _, err := a.store.assetForAgent(ctx, r.Hostname); err == nil {
-		link = "/assets/" + id + "?tab=updates"
+		link = "/assets/" + id + "?tab=" + runTab(r)
 	}
 	switch {
 	case r.State == RunFailed || r.State == RunInterrupted:
-		title := "Updating " + r.AssetHostname + " failed"
+		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from "}[r.Mode]
+		if verb == "" {
+			verb = "Updating "
+		}
+		title := verb + r.AssetHostname + " failed"
 		if r.State == RunInterrupted {
-			title = "Updating " + r.AssetHostname + " was interrupted"
+			title = verb + r.AssetHostname + " was interrupted"
 		}
 		a.raiseAlert(ctx, ConsoleAlert{
 			Kind: AlertServer, Severity: "warning", Audience: AudienceAdmins,
@@ -220,8 +234,41 @@ func describeMode(r PackageRun) string {
 		return "all updates"
 	case PackagesSecurity:
 		return "security updates"
+	case PackagesInstall, PackagesRemove:
+		return describeSoftware(r.Mode, r.Items, r.Purge)
 	}
 	return "selected: " + strings.Join(r.Packages, ", ")
+}
+
+// runPhrase is what a run does, after a verb: "Approved installing all
+// updates", "Approved removing nginx".
+func runPhrase(r PackageRun) string {
+	switch r.Mode {
+	case PackagesInstall:
+		return "installing " + describeMode(r)
+	case PackagesRemove:
+		return "removing " + describeMode(r)
+	}
+	return "installing " + describeMode(r)
+}
+
+// runNoun names a run in a sentence.
+func runNoun(r PackageRun) string {
+	switch r.Mode {
+	case PackagesInstall:
+		return "install"
+	case PackagesRemove:
+		return "removal"
+	}
+	return "update run"
+}
+
+// runTab is the server tab a run is shown on.
+func runTab(r PackageRun) string {
+	if r.Mode == PackagesInstall || r.Mode == PackagesRemove {
+		return "apps"
+	}
+	return "updates"
 }
 
 func (a *API) auditPackages(ctx context.Context, e AuditEvent) {
@@ -658,7 +705,7 @@ func (a *API) postPackageRunDecision(approve bool) http.HandlerFunc {
 		}
 		a.auditAsset(r, AuditEvent{
 			Action: action, Severity: "notice", ActorEmail: sess.Email, Target: run.AssetHostname,
-			Detail: fmt.Sprintf("%s installing %s on %s, asked by %s.", verb, describeMode(run),
+			Detail: fmt.Sprintf("%s %s on %s, asked by %s.", verb, runPhrase(run),
 				run.AssetHostname, run.RequestedBy),
 		})
 		a.closeAlerts(r.Context(), packageRunSubject(run.ID), verb+" by "+sess.Email)
@@ -682,7 +729,7 @@ func (a *API) postPackageRunCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{
 		Action: "packages.run_cancelled", Severity: "notice", ActorEmail: sess.Email, Target: run.AssetHostname,
-		Detail: fmt.Sprintf("Took back installing %s on %s before it started.", describeMode(run), run.AssetHostname),
+		Detail: fmt.Sprintf("Took back %s on %s before it started.", runPhrase(run), run.AssetHostname),
 	})
 	a.closeAlerts(r.Context(), packageRunSubject(run.ID), "Taken back by "+sess.Email)
 	writeJSON(w, http.StatusOK, run)

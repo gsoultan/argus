@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 /*
@@ -124,6 +126,10 @@ const (
 	PackagesAll      = "all"
 	PackagesSecurity = "security"
 	PackagesSelected = "selected"
+	// PackagesInstall and PackagesRemove install or remove what the console
+	// previewed (software_apply.go).
+	PackagesInstall = "install"
+	PackagesRemove  = "remove"
 )
 
 // PackageRunRequest is an install the console asked for.
@@ -138,6 +144,15 @@ type PackageRunRequest struct {
 	// Reboot is "if_needed" to reboot when the server asks for one after
 	// the install, else "never".
 	Reboot string `json:"reboot,omitempty"`
+	// Items, Purge, StartServices and Expect are for install and remove:
+	// what to install or remove, whether to delete configuration too,
+	// whether to start the services new packages bring, and the hash of the
+	// preview a person said yes to. The run stops when the server's own
+	// simulation no longer matches it.
+	Items         []tunnel.SoftwareItem `json:"items,omitempty"`
+	Purge         bool                  `json:"purge,omitempty"`
+	StartServices bool                  `json:"start_services,omitempty"`
+	Expect        string                `json:"expect,omitempty"`
 }
 
 // Package run states.
@@ -169,6 +184,8 @@ type PackageRunStatus struct {
 	Planned   int             `json:"planned,omitempty"`
 	Upgraded  []PackageChange `json:"upgraded,omitempty"`
 	Restarted []string        `json:"restarted,omitempty"`
+	// Started are the services an install started, for install runs.
+	Started []string `json:"started,omitempty"`
 	// RebootRequired is the server still wanting a reboot when the run
 	// ended without one.
 	RebootRequired bool `json:"reboot_required,omitempty"`
@@ -379,6 +396,15 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 				return
 			}
 		}
+	case PackagesInstall, PackagesRemove:
+		if err := tunnel.ValidateSoftwareChange(req.Mode, req.Items, req.Purge); err != nil {
+			fail(err.Error())
+			return
+		}
+		if !reHash.MatchString(req.Expect) {
+			fail("the run does not say which preview it was approved from")
+			return
+		}
 	default:
 		fail(fmt.Sprintf("%q is not a way to update", req.Mode))
 		return
@@ -422,6 +448,9 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 // rePackageName is a package name as apt, dnf and zypper spell them, with
 // an optional architecture.
 var rePackageName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._:~-]{0,199}$`)
+
+// reHash is a preview's hash: SHA-256 in hex.
+var reHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // reHoldGlob is a package name with * and ? allowed.
 var reHoldGlob = regexp.MustCompile(`^[A-Za-z0-9*?][A-Za-z0-9+._:~*?-]{0,199}$`)

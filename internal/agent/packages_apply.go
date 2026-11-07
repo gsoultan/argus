@@ -162,6 +162,9 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 		StartedAt: now, At: now}
 	a.lw = &runLog{limit: maxRunLog, flush: a.flushLog}
 	a.save()
+	if a.Plan.Mode == PackagesInstall || a.Plan.Mode == PackagesRemove {
+		return a.applySoftware(ctx)
+	}
 
 	m := detectManager(a.Look)
 	if m == nil {

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 /*
@@ -124,6 +126,7 @@ type PackageRunStatus struct {
 	Planned        int             `json:"planned,omitempty"`
 	Upgraded       []PackageChange `json:"upgraded,omitempty"`
 	Restarted      []string        `json:"restarted,omitempty"`
+	Started        []string        `json:"started,omitempty"`
 	RebootRequired bool            `json:"reboot_required,omitempty"`
 	Rebooted       bool            `json:"rebooted,omitempty"`
 	Log            string          `json:"log,omitempty"`
@@ -209,22 +212,35 @@ type PackageRun struct {
 	Log            string          `json:"log,omitempty"`
 	BatchID        *string         `json:"batchId"`
 	BatchPosition  *int            `json:"batchPosition"`
+	// Items, Purge and StartServices are an install or a removal's; Started
+	// the services an install started; PreviewID what a person said yes to,
+	// UndoOf the run it undoes.
+	Items         []tunnel.SoftwareItem `json:"items"`
+	Purge         bool                  `json:"purge"`
+	StartServices bool                  `json:"startServices"`
+	Started       []string              `json:"started"`
+	PreviewID     *string               `json:"previewId"`
+	UndoOf        *string               `json:"undoOf"`
+	expect        string
 }
 
 const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
 	requested_by, requested_at, decided_by, decided_at, sent_at, started_at, finished_at, updated_at,
-	step, message, planned, upgraded, restarted, reboot_required, rebooted, log, batch_id::text, batch_position`
+	step, message, planned, upgraded, restarted, reboot_required, rebooted, log, batch_id::text, batch_position,
+	items, purge, start_services, started, preview_id::text, undo_of::text, expect`
 
 func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	var (
 		r        PackageRun
 		upgraded []byte
+		items    []byte
 		pos      *int32
 	)
 	err := row.Scan(&r.ID, &r.Hostname, &r.AssetHostname, &r.Mode, &r.Packages, &r.Holds, &r.Reboot,
 		&r.Trigger, &r.State, &r.RequestedBy, &r.RequestedAt, &r.DecidedBy, &r.DecidedAt, &r.SentAt,
 		&r.StartedAt, &r.FinishedAt, &r.UpdatedAt, &r.Step, &r.Message, &r.Planned, &upgraded,
-		&r.Restarted, &r.RebootRequired, &r.Rebooted, &r.Log, &r.BatchID, &pos)
+		&r.Restarted, &r.RebootRequired, &r.Rebooted, &r.Log, &r.BatchID, &pos,
+		&items, &r.Purge, &r.StartServices, &r.Started, &r.PreviewID, &r.UndoOf, &r.expect)
 	if err != nil {
 		return r, err
 	}
@@ -233,6 +249,13 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 		r.BatchPosition = &p
 	}
 	_ = json.Unmarshal(upgraded, &r.Upgraded)
+	_ = json.Unmarshal(items, &r.Items)
+	if r.Items == nil {
+		r.Items = []tunnel.SoftwareItem{}
+	}
+	if r.Started == nil {
+		r.Started = []string{}
+	}
 	if r.Upgraded == nil {
 		r.Upgraded = []PackageChange{}
 	}
@@ -614,10 +637,17 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 	if restarted == nil {
 		restarted = []string{}
 	}
+	started := st.Started
+	if len(started) > 200 {
+		started = started[:200]
+	}
+	if started == nil {
+		started = []string{}
+	}
 	row := s.db(ctx).QueryRow(ctx, `
 		UPDATE package_runs SET
 		       state = $3, step = $4, message = $5, planned = $6, upgraded = $7::jsonb,
-		       restarted = $8, reboot_required = $9, rebooted = $10, log = $11,
+		       restarted = $8, reboot_required = $9, rebooted = $10, log = $11, started = $12,
 		       started_at = COALESCE(started_at, now()),
 		       finished_at = CASE WHEN $3 IN ('done','failed','interrupted') THEN now() ELSE NULL END,
 		       updated_at = now()
@@ -629,7 +659,7 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 		   AND ((state, step, message, log, rebooted) IS DISTINCT FROM ($3, $4, $5, $11, $10)
 		        OR updated_at < now() - interval '5 minutes')
 		RETURNING `+packageRunCols, host, st.ID, state, st.Step, st.Message, st.Planned, up, restarted,
-		st.RebootRequired, st.Rebooted, st.Log)
+		st.RebootRequired, st.Rebooted, st.Log, started)
 	r, err := scanPackageRun(row, false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -657,25 +687,34 @@ type PackageRunOrder struct {
 	Packages []string `json:"packages,omitempty"`
 	Holds    []string `json:"holds,omitempty"`
 	Reboot   string   `json:"reboot"`
+	// Items, Purge, StartServices and Expect are an install or a removal's.
+	Items         []tunnel.SoftwareItem `json:"items,omitempty"`
+	Purge         bool                  `json:"purge,omitempty"`
+	StartServices bool                  `json:"start_services,omitempty"`
+	Expect        string                `json:"expect,omitempty"`
 }
 
 // packageRunToSend is the run to put on host's heartbeat reply, marking it
 // sent: from then on it cannot be taken back.
 func (s *Store) packageRunToSend(ctx context.Context, host string) (*PackageRunOrder, error) {
-	var o PackageRunOrder
+	var (
+		o     PackageRunOrder
+		items []byte
+	)
 	err := s.db(ctx).QueryRow(ctx, `
 		UPDATE package_runs SET sent_at = COALESCE(sent_at, now())
 		 WHERE id = (SELECT id FROM package_runs
 		              WHERE lower(hostname) = lower($1) AND state IN ('queued','running','rebooting')
 		              ORDER BY requested_at LIMIT 1)
-		RETURNING id::text, mode, packages, holds, reboot`, host).Scan(&o.ID, &o.Mode, &o.Packages,
-		&o.Holds, &o.Reboot)
+		RETURNING id::text, mode, packages, holds, reboot, items, purge, start_services, expect`, host).Scan(&o.ID,
+		&o.Mode, &o.Packages, &o.Holds, &o.Reboot, &items, &o.Purge, &o.StartServices, &o.Expect)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	_ = json.Unmarshal(items, &o.Items)
 	return &o, nil
 }
 
@@ -737,6 +776,11 @@ type newRun struct {
 	BatchID                 *string
 	BatchPosition           *int
 	WindowStart             *time.Time
+	// An install or a removal.
+	Items                []tunnel.SoftwareItem
+	Purge, StartServices bool
+	Expect               string
+	PreviewID, UndoOf    *string
 }
 
 // hasPendingRun reports whether host has a run not yet finished.
@@ -765,13 +809,22 @@ func (s *Store) insertRun(ctx context.Context, q pgxQuerier, n newRun) (PackageR
 		p := int32(*n.BatchPosition)
 		pos = &p
 	}
+	if n.Items == nil {
+		n.Items = []tunnel.SoftwareItem{}
+	}
+	items, err := json.Marshal(n.Items)
+	if err != nil {
+		return PackageRun{}, err
+	}
 	row := q.QueryRow(ctx, `
 		INSERT INTO package_runs (hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
-		                          requested_by, batch_id, batch_position, window_start)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11,$12)
+		                          requested_by, batch_id, batch_position, window_start,
+		                          items, purge, start_services, expect, preview_id, undo_of)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11,$12,$13::jsonb,$14,$15,$16,$17::uuid,$18::uuid)
 		RETURNING `+packageRunCols,
 		n.Hostname, n.AssetHostname, n.Mode, n.Packages, n.Holds, n.Reboot, n.Trigger, n.State,
-		n.RequestedBy, n.BatchID, pos, n.WindowStart)
+		n.RequestedBy, n.BatchID, pos, n.WindowStart, items, n.Purge, n.StartServices, n.Expect,
+		n.PreviewID, n.UndoOf)
 	r, err := scanPackageRun(row, false)
 	if err != nil && isUniqueViolation(err) {
 		return r, ErrRunActive
