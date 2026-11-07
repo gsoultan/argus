@@ -144,6 +144,10 @@ type HeartbeatReply struct {
 	// updates, as the agent decodes it. Absent from a control plane older
 	// than them: the agent then does not look for updates.
 	Packages json.RawMessage `json:"packages"`
+	// Logs is what the console wants done about log files, as the agent
+	// decodes it. Absent from a control plane older than log cleanup: the
+	// agent then does not scan.
+	Logs json.RawMessage `json:"logs"`
 	// KeepRecordingsHours is how long the console wants this host to keep a
 	// recording once the control plane has stored it; 0 is for ever. Nil from
 	// a control plane older than the setting: the agent keeps its own default.

@@ -15,6 +15,9 @@ import { OverviewTab } from '~/components/server/OverviewTab'
 import { SessionsTab } from '~/components/server/SessionsTab'
 import { SettingsTab } from '~/components/server/SettingsTab'
 import { UpdatesTab } from '~/components/server/UpdatesTab'
+import { cleanable, diskFilling, LogsTab } from '~/components/server/LogsTab'
+import { assetLogsQuery } from '~/lib/logQueries'
+import { bytes } from '~/components/server/SystemCard'
 import { SERVER_TABS, SERVER_TAB_LABEL, parseServerTab, type ServerTab } from '~/components/server/tabs'
 import { assetQuery, meQuery, sessionsQuery } from '~/lib/queries'
 import { assetPackagesQuery } from '~/lib/packageQueries'
@@ -57,6 +60,10 @@ function AssetDetail() {
   const { data: pkgs } = useQuery({ ...assetPackagesQuery(assetId), enabled: isConfigured() && seesUpdates && asset?.protocol !== 'rdp' })
   const waiting = pkgs?.report?.updates.length ?? 0
   const securityWaiting = pkgs?.report?.updates.filter((u) => u.security).length ?? 0
+  // Logs: read by the same people as updates, on Linux and Windows alike.
+  const { data: logs } = useQuery({ ...assetLogsQuery(assetId), enabled: isConfigured() && seesUpdates })
+  const freeable = logs?.report ? cleanable(logs) : 0
+  const filling = logs ? diskFilling(logs) : false
   const [editing, setEditing] = useState(false)
 
   if (!asset) {
@@ -126,7 +133,7 @@ function AssetDetail() {
         tabs={
           <Tabs value={tab} onChange={(v) => v && setTab(v as ServerTab)} keepMounted={false}>
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
-              {SERVER_TABS.filter((t) => t !== 'updates' || seesUpdates).map((t) => (
+              {SERVER_TABS.filter((t) => (t !== 'updates' && t !== 'logs') || seesUpdates).map((t) => (
                 <Tabs.Tab
                   key={t}
                   value={t}
@@ -136,6 +143,8 @@ function AssetDetail() {
                       <Badge size="xs" variant="light" color="slate" circle={false}>{sessions.length}</Badge>
                     ) : t === 'updates' && waiting > 0 ? (
                       <Badge size="xs" variant="light" color={securityWaiting > 0 ? 'rose' : 'slate'} circle={false}>{waiting}</Badge>
+                    ) : t === 'logs' && freeable >= 1024 ** 3 ? (
+                      <Badge size="xs" variant="light" color={filling ? 'amber' : 'slate'} circle={false}>{bytes(freeable)}</Badge>
                     ) : t === 'settings' && needsAttention ? (
                       <Box
                         component="span"
@@ -157,11 +166,12 @@ function AssetDetail() {
 
       <PageBody>
         <HostKeyChanged asset={asset} />
-        {tab === 'overview' && <OverviewTab asset={asset} sessions={sessions} onTab={setTab} />}
+        {tab === 'overview' && <OverviewTab asset={asset} sessions={sessions} onTab={setTab} canFreeSpace={seesUpdates && isConfigured()} />}
         {tab === 'access' && <AccessTab asset={asset} canEdit={canEdit} />}
         {tab === 'sessions' && <SessionsTab asset={asset} sessions={sessions} />}
         {tab === 'apps' && <AppsTab asset={asset} canEdit={canEdit} />}
         {tab === 'updates' && seesUpdates && <UpdatesTab asset={asset} canEdit={canEdit} />}
+        {tab === 'logs' && seesUpdates && <LogsTab asset={asset} canEdit={canEdit} />}
         {tab === 'settings' && (
           <SettingsTab asset={asset} canEdit={canEdit} onEdit={() => setEditing(true)} />
         )}

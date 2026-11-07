@@ -2154,3 +2154,181 @@ export interface PackageFleetRow {
   mode: PackageMode
   run: PackageRun | null
 }
+
+/* ── Log cleanup ─────────────────────────────────────────────────────────── */
+
+export interface LogFile {
+  path: string
+  bytes: number
+  modified: string
+}
+
+export type LogItemKind = 'journal' | 'rotated' | 'active' | 'container' | 'files' | 'iis' | 'winlogs' | 'temp' | 'dumps' | string
+
+/** A group of logs the agent found: the journal, rotated files, a live log, a container's. */
+export interface LogItem {
+  key: string
+  kind: LogItemKind
+  title: string
+  detail?: string
+  root: string
+  mount?: string
+  bytes: number
+  count: number
+  oldest?: string
+  newest?: string
+  files?: LogFile[]
+  /** Files not listed, beyond the agent's limit. */
+  more?: number
+  min_age_days?: number
+}
+
+/** A file deleted from disk but still held open, so its space is not freed. */
+export interface LogOpenDeleted {
+  pid: number
+  fd: number
+  process: string
+  unit?: string
+  path: string
+  bytes: number
+}
+
+export interface LogProtected {
+  title: string
+  detail: string
+  bytes: number
+}
+
+export interface LogEventLog {
+  name: string
+  bytes: number
+  max_bytes: number
+  retain?: boolean
+  protected?: boolean
+  records?: number
+}
+
+export interface LogDisk {
+  mount: string
+  fs: string
+  total: number
+  used: number
+  avail: number
+}
+
+export interface LogReport {
+  scanned_at: string
+  os: string
+  supported: boolean
+  reason?: string
+  error?: string
+  disks: LogDisk[]
+  items: LogItem[]
+  open: LogOpenDeleted[]
+  protected: LogProtected[]
+  event_logs?: LogEventLog[]
+  active_over: number
+  utc_offset_minutes: number
+}
+
+/** What cleaning an item would do under the server's rule. */
+export interface LogPreview {
+  key: string
+  does: string
+  frees: number
+  files: number
+  automatic: boolean
+}
+
+export type LogMode = 'off' | 'disk' | 'daily'
+
+export interface LogCleanupRule {
+  id?: string
+  position: number
+  /** '' is every server no other rule names. */
+  tag: string
+  mode: LogMode
+  diskPercent: number
+  windowStartMinute: number
+  windowMinutes: number
+  rotatedKeepDays: number
+  journalKeepDays: number
+  journalMaxMb: number
+  /** Empty live logs bigger than this, automatically; 0 never does. */
+  activeOverMb: number
+  activeKeepMb: number
+  needsApproval: boolean
+}
+
+export interface LogCleanupPolicy {
+  rules: LogCleanupRule[]
+  /** Extra paths Argus may clean, as globs. */
+  paths: string[]
+  /** Extra paths Argus never touches. */
+  protect: string[]
+}
+
+export type LogRunState =
+  | 'awaiting_approval' | 'queued' | 'running'
+  | 'done' | 'failed' | 'interrupted' | 'cancelled' | 'denied'
+
+export interface LogRemoved {
+  path: string
+  action: 'deleted' | 'truncated' | 'emptied' | 'vacuumed' | 'restarted' | 'resized' | string
+  bytes: number
+  after?: number
+  modified?: string
+}
+
+export interface LogRun {
+  id: string
+  hostname: string
+  assetHostname: string
+  assetId?: string
+  trigger: 'manual' | 'automatic'
+  state: LogRunState
+  items: string[]
+  summary: string
+  plannedBytes: number
+  reason: string
+  requestedBy: string
+  requestedAt: string
+  decidedBy: string | null
+  decidedAt: string | null
+  sentAt: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  updatedAt: string
+  step: string
+  message: string
+  freed: number
+  removedCount: number
+  /** The manifest; only on a run read by itself. */
+  removed?: LogRemoved[]
+  removedMore: number
+  skipped: { path: string; why: string }[]
+}
+
+/** A server's Logs tab. */
+export interface LogsView {
+  hostname: string
+  enrolled: boolean
+  reported: boolean
+  supported: boolean
+  reason: string
+  scanning: boolean
+  scanAsked: boolean
+  report: LogReport | null
+  previews: LogPreview[]
+  rule: LogCleanupRule
+  runs: LogRun[]
+  /** What an admin types to clean: the server's short name. */
+  confirm: string
+}
+
+export interface LogPick {
+  items: string[]
+  open: { pid: number; fd: number }[]
+  restart: string[]
+  eventLogs: { name: string; maxMb: number }[]
+}

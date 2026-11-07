@@ -49,6 +49,10 @@ type Row struct {
 	PackagesCheckID runtime.Null[string]
 	PackagesCheckAt runtime.Null[time.Time]
 	UsageAt         runtime.Null[time.Time]
+	Logs            runtime.Null[runtime.JSON]
+	LogsState       runtime.Null[runtime.JSON]
+	LogsScanID      runtime.Null[string]
+	LogsScanAt      runtime.Null[time.Time]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -87,7 +91,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 29
+const nCols = 33
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -334,6 +338,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.UsageAt.V
 		q.ntm++
+	case 31:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.LogsScanID.V
+		q.ns++
+	case 32:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.LogsScanAt.V
+		q.ntm++
 	}
 }
 
@@ -530,6 +548,10 @@ var (
 	PackagesCheckID = NullTextCol{26}
 	PackagesCheckAt = NullTimeCol{27}
 	UsageAt         = NullTimeCol{28}
+	Logs            = NullJSONCol{29}
+	LogsState       = NullJSONCol{30}
+	LogsScanID      = NullTextCol{31}
+	LogsScanAt      = NullTimeCol{32}
 )
 
 // TextCol addresses a text column.
@@ -1037,6 +1059,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 29:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 30:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 31:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1222,6 +1265,34 @@ func (q *Query) leaf(p Pred) {
 		q.tims[q.ntm] = p.tim
 		q.ntm++
 	case 28:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 29:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 30:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 31:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 32:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
@@ -1439,39 +1510,72 @@ func (q Query) PackagesStateHasAnyKey(v ...string) Query {
 func (q Query) PackagesStateHasAllKeys(v ...string) Query {
 	return q.Where(PackagesState.HasAllKeys(v...))
 }
-func (q Query) PackagesStateIsNull() Query             { return q.Where(PackagesState.IsNull()) }
-func (q Query) PackagesStateIsNotNull() Query          { return q.Where(PackagesState.IsNotNull()) }
-func (q Query) PackagesCheckIDEq(v string) Query       { return q.Where(PackagesCheckID.Eq(v)) }
-func (q Query) PackagesCheckIDNotEq(v string) Query    { return q.Where(PackagesCheckID.NotEq(v)) }
-func (q Query) PackagesCheckIDGt(v string) Query       { return q.Where(PackagesCheckID.Gt(v)) }
-func (q Query) PackagesCheckIDGte(v string) Query      { return q.Where(PackagesCheckID.Gte(v)) }
-func (q Query) PackagesCheckIDLt(v string) Query       { return q.Where(PackagesCheckID.Lt(v)) }
-func (q Query) PackagesCheckIDLte(v string) Query      { return q.Where(PackagesCheckID.Lte(v)) }
-func (q Query) PackagesCheckIDEqLower(v string) Query  { return q.Where(PackagesCheckID.EqLower(v)) }
-func (q Query) PackagesCheckIDLike(v string) Query     { return q.Where(PackagesCheckID.Like(v)) }
-func (q Query) PackagesCheckIDILike(v string) Query    { return q.Where(PackagesCheckID.ILike(v)) }
-func (q Query) PackagesCheckIDIn(v ...string) Query    { return q.Where(PackagesCheckID.In(v...)) }
-func (q Query) PackagesCheckIDNotIn(v ...string) Query { return q.Where(PackagesCheckID.NotIn(v...)) }
-func (q Query) PackagesCheckIDIsNull() Query           { return q.Where(PackagesCheckID.IsNull()) }
-func (q Query) PackagesCheckIDIsNotNull() Query        { return q.Where(PackagesCheckID.IsNotNull()) }
-func (q Query) PackagesCheckAtEq(v time.Time) Query    { return q.Where(PackagesCheckAt.Eq(v)) }
-func (q Query) PackagesCheckAtNotEq(v time.Time) Query { return q.Where(PackagesCheckAt.NotEq(v)) }
-func (q Query) PackagesCheckAtGt(v time.Time) Query    { return q.Where(PackagesCheckAt.Gt(v)) }
-func (q Query) PackagesCheckAtGte(v time.Time) Query   { return q.Where(PackagesCheckAt.Gte(v)) }
-func (q Query) PackagesCheckAtLt(v time.Time) Query    { return q.Where(PackagesCheckAt.Lt(v)) }
-func (q Query) PackagesCheckAtLte(v time.Time) Query   { return q.Where(PackagesCheckAt.Lte(v)) }
-func (q Query) PackagesCheckAtIsNull() Query           { return q.Where(PackagesCheckAt.IsNull()) }
-func (q Query) PackagesCheckAtIsNotNull() Query        { return q.Where(PackagesCheckAt.IsNotNull()) }
-func (q Query) UsageAtEq(v time.Time) Query            { return q.Where(UsageAt.Eq(v)) }
-func (q Query) UsageAtNotEq(v time.Time) Query         { return q.Where(UsageAt.NotEq(v)) }
-func (q Query) UsageAtGt(v time.Time) Query            { return q.Where(UsageAt.Gt(v)) }
-func (q Query) UsageAtGte(v time.Time) Query           { return q.Where(UsageAt.Gte(v)) }
-func (q Query) UsageAtLt(v time.Time) Query            { return q.Where(UsageAt.Lt(v)) }
-func (q Query) UsageAtLte(v time.Time) Query           { return q.Where(UsageAt.Lte(v)) }
-func (q Query) UsageAtIsNull() Query                   { return q.Where(UsageAt.IsNull()) }
-func (q Query) UsageAtIsNotNull() Query                { return q.Where(UsageAt.IsNotNull()) }
+func (q Query) PackagesStateIsNull() Query                { return q.Where(PackagesState.IsNull()) }
+func (q Query) PackagesStateIsNotNull() Query             { return q.Where(PackagesState.IsNotNull()) }
+func (q Query) PackagesCheckIDEq(v string) Query          { return q.Where(PackagesCheckID.Eq(v)) }
+func (q Query) PackagesCheckIDNotEq(v string) Query       { return q.Where(PackagesCheckID.NotEq(v)) }
+func (q Query) PackagesCheckIDGt(v string) Query          { return q.Where(PackagesCheckID.Gt(v)) }
+func (q Query) PackagesCheckIDGte(v string) Query         { return q.Where(PackagesCheckID.Gte(v)) }
+func (q Query) PackagesCheckIDLt(v string) Query          { return q.Where(PackagesCheckID.Lt(v)) }
+func (q Query) PackagesCheckIDLte(v string) Query         { return q.Where(PackagesCheckID.Lte(v)) }
+func (q Query) PackagesCheckIDEqLower(v string) Query     { return q.Where(PackagesCheckID.EqLower(v)) }
+func (q Query) PackagesCheckIDLike(v string) Query        { return q.Where(PackagesCheckID.Like(v)) }
+func (q Query) PackagesCheckIDILike(v string) Query       { return q.Where(PackagesCheckID.ILike(v)) }
+func (q Query) PackagesCheckIDIn(v ...string) Query       { return q.Where(PackagesCheckID.In(v...)) }
+func (q Query) PackagesCheckIDNotIn(v ...string) Query    { return q.Where(PackagesCheckID.NotIn(v...)) }
+func (q Query) PackagesCheckIDIsNull() Query              { return q.Where(PackagesCheckID.IsNull()) }
+func (q Query) PackagesCheckIDIsNotNull() Query           { return q.Where(PackagesCheckID.IsNotNull()) }
+func (q Query) PackagesCheckAtEq(v time.Time) Query       { return q.Where(PackagesCheckAt.Eq(v)) }
+func (q Query) PackagesCheckAtNotEq(v time.Time) Query    { return q.Where(PackagesCheckAt.NotEq(v)) }
+func (q Query) PackagesCheckAtGt(v time.Time) Query       { return q.Where(PackagesCheckAt.Gt(v)) }
+func (q Query) PackagesCheckAtGte(v time.Time) Query      { return q.Where(PackagesCheckAt.Gte(v)) }
+func (q Query) PackagesCheckAtLt(v time.Time) Query       { return q.Where(PackagesCheckAt.Lt(v)) }
+func (q Query) PackagesCheckAtLte(v time.Time) Query      { return q.Where(PackagesCheckAt.Lte(v)) }
+func (q Query) PackagesCheckAtIsNull() Query              { return q.Where(PackagesCheckAt.IsNull()) }
+func (q Query) PackagesCheckAtIsNotNull() Query           { return q.Where(PackagesCheckAt.IsNotNull()) }
+func (q Query) UsageAtEq(v time.Time) Query               { return q.Where(UsageAt.Eq(v)) }
+func (q Query) UsageAtNotEq(v time.Time) Query            { return q.Where(UsageAt.NotEq(v)) }
+func (q Query) UsageAtGt(v time.Time) Query               { return q.Where(UsageAt.Gt(v)) }
+func (q Query) UsageAtGte(v time.Time) Query              { return q.Where(UsageAt.Gte(v)) }
+func (q Query) UsageAtLt(v time.Time) Query               { return q.Where(UsageAt.Lt(v)) }
+func (q Query) UsageAtLte(v time.Time) Query              { return q.Where(UsageAt.Lte(v)) }
+func (q Query) UsageAtIsNull() Query                      { return q.Where(UsageAt.IsNull()) }
+func (q Query) UsageAtIsNotNull() Query                   { return q.Where(UsageAt.IsNotNull()) }
+func (q Query) LogsContains(v runtime.JSON) Query         { return q.Where(Logs.Contains(v)) }
+func (q Query) LogsContainedBy(v runtime.JSON) Query      { return q.Where(Logs.ContainedBy(v)) }
+func (q Query) LogsHasAnyKey(v ...string) Query           { return q.Where(Logs.HasAnyKey(v...)) }
+func (q Query) LogsHasAllKeys(v ...string) Query          { return q.Where(Logs.HasAllKeys(v...)) }
+func (q Query) LogsIsNull() Query                         { return q.Where(Logs.IsNull()) }
+func (q Query) LogsIsNotNull() Query                      { return q.Where(Logs.IsNotNull()) }
+func (q Query) LogsStateContains(v runtime.JSON) Query    { return q.Where(LogsState.Contains(v)) }
+func (q Query) LogsStateContainedBy(v runtime.JSON) Query { return q.Where(LogsState.ContainedBy(v)) }
+func (q Query) LogsStateHasAnyKey(v ...string) Query      { return q.Where(LogsState.HasAnyKey(v...)) }
+func (q Query) LogsStateHasAllKeys(v ...string) Query     { return q.Where(LogsState.HasAllKeys(v...)) }
+func (q Query) LogsStateIsNull() Query                    { return q.Where(LogsState.IsNull()) }
+func (q Query) LogsStateIsNotNull() Query                 { return q.Where(LogsState.IsNotNull()) }
+func (q Query) LogsScanIDEq(v string) Query               { return q.Where(LogsScanID.Eq(v)) }
+func (q Query) LogsScanIDNotEq(v string) Query            { return q.Where(LogsScanID.NotEq(v)) }
+func (q Query) LogsScanIDGt(v string) Query               { return q.Where(LogsScanID.Gt(v)) }
+func (q Query) LogsScanIDGte(v string) Query              { return q.Where(LogsScanID.Gte(v)) }
+func (q Query) LogsScanIDLt(v string) Query               { return q.Where(LogsScanID.Lt(v)) }
+func (q Query) LogsScanIDLte(v string) Query              { return q.Where(LogsScanID.Lte(v)) }
+func (q Query) LogsScanIDEqLower(v string) Query          { return q.Where(LogsScanID.EqLower(v)) }
+func (q Query) LogsScanIDLike(v string) Query             { return q.Where(LogsScanID.Like(v)) }
+func (q Query) LogsScanIDILike(v string) Query            { return q.Where(LogsScanID.ILike(v)) }
+func (q Query) LogsScanIDIn(v ...string) Query            { return q.Where(LogsScanID.In(v...)) }
+func (q Query) LogsScanIDNotIn(v ...string) Query         { return q.Where(LogsScanID.NotIn(v...)) }
+func (q Query) LogsScanIDIsNull() Query                   { return q.Where(LogsScanID.IsNull()) }
+func (q Query) LogsScanIDIsNotNull() Query                { return q.Where(LogsScanID.IsNotNull()) }
+func (q Query) LogsScanAtEq(v time.Time) Query            { return q.Where(LogsScanAt.Eq(v)) }
+func (q Query) LogsScanAtNotEq(v time.Time) Query         { return q.Where(LogsScanAt.NotEq(v)) }
+func (q Query) LogsScanAtGt(v time.Time) Query            { return q.Where(LogsScanAt.Gt(v)) }
+func (q Query) LogsScanAtGte(v time.Time) Query           { return q.Where(LogsScanAt.Gte(v)) }
+func (q Query) LogsScanAtLt(v time.Time) Query            { return q.Where(LogsScanAt.Lt(v)) }
+func (q Query) LogsScanAtLte(v time.Time) Query           { return q.Where(LogsScanAt.Lte(v)) }
+func (q Query) LogsScanAtIsNull() Query                   { return q.Where(LogsScanAt.IsNull()) }
+func (q Query) LogsScanAtIsNotNull() Query                { return q.Where(LogsScanAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1682,6 +1786,30 @@ var orderTable = [nCols][4]string{
 		"\"usage_at\" ASC NULLS FIRST",
 		"\"usage_at\" DESC NULLS LAST",
 	},
+	{ // logs
+		"\"logs\"",
+		"\"logs\" DESC",
+		"\"logs\" ASC NULLS FIRST",
+		"\"logs\" DESC NULLS LAST",
+	},
+	{ // logs_state
+		"\"logs_state\"",
+		"\"logs_state\" DESC",
+		"\"logs_state\" ASC NULLS FIRST",
+		"\"logs_state\" DESC NULLS LAST",
+	},
+	{ // logs_scan_id
+		"\"logs_scan_id\"",
+		"\"logs_scan_id\" DESC",
+		"\"logs_scan_id\" ASC NULLS FIRST",
+		"\"logs_scan_id\" DESC NULLS LAST",
+	},
+	{ // logs_scan_at
+		"\"logs_scan_at\"",
+		"\"logs_scan_at\" DESC",
+		"\"logs_scan_at\" ASC NULLS FIRST",
+		"\"logs_scan_at\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1716,6 +1844,10 @@ var identTable = [nCols]string{
 	"\"packages_check_id\"",
 	"\"packages_check_at\"",
 	"\"usage_at\"",
+	"\"logs\"",
+	"\"logs_state\"",
+	"\"logs_scan_id\"",
+	"\"logs_scan_at\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1748,7 +1880,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [29][28]runtime.Frag{
+var fragTable = [33][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2619,6 +2751,126 @@ var fragTable = [29][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // logs
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"logs\" @> $", B: ""},
+		{A: "\"logs\" <@ $", B: ""},
+		{A: "\"logs\" ?| $", B: ""},
+		{A: "\"logs\" ?& $", B: ""},
+		{A: "\"logs\" IS NULL", B: ""},
+		{A: "\"logs\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // logs_state
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"logs_state\" @> $", B: ""},
+		{A: "\"logs_state\" <@ $", B: ""},
+		{A: "\"logs_state\" ?| $", B: ""},
+		{A: "\"logs_state\" ?& $", B: ""},
+		{A: "\"logs_state\" IS NULL", B: ""},
+		{A: "\"logs_state\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // logs_scan_id
+		{}, // opNone
+		{A: "\"logs_scan_id\" = $", B: ""},
+		{A: "\"logs_scan_id\" <> $", B: ""},
+		{A: "\"logs_scan_id\" > $", B: ""},
+		{A: "\"logs_scan_id\" >= $", B: ""},
+		{A: "\"logs_scan_id\" < $", B: ""},
+		{A: "\"logs_scan_id\" <= $", B: ""},
+		{A: "lower(\"logs_scan_id\") = lower($", B: ")"},
+		{A: "\"logs_scan_id\" LIKE $", B: ""},
+		{A: "\"logs_scan_id\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"logs_scan_id\" = ANY($", B: ")"},
+		{A: "\"logs_scan_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"logs_scan_id\" IS NULL", B: ""},
+		{A: "\"logs_scan_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // logs_scan_at
+		{}, // opNone
+		{A: "\"logs_scan_at\" = $", B: ""},
+		{A: "\"logs_scan_at\" <> $", B: ""},
+		{A: "\"logs_scan_at\" > $", B: ""},
+		{A: "\"logs_scan_at\" >= $", B: ""},
+		{A: "\"logs_scan_at\" < $", B: ""},
+		{A: "\"logs_scan_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"logs_scan_at\" IS NULL", B: ""},
+		{A: "\"logs_scan_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2813,6 +3065,10 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.PackagesCheckID = runtime.NullText(rv[26], sl)
 	r.PackagesCheckAt = runtime.Nullable(rv[27], runtime.Timestamptz)
 	r.UsageAt = runtime.Nullable(rv[28], runtime.Timestamptz)
+	r.Logs = runtime.NullJSON(rv[29], sl)
+	r.LogsState = runtime.NullJSON(rv[30], sl)
+	r.LogsScanID = runtime.NullText(rv[31], sl)
+	r.LogsScanAt = runtime.Nullable(rv[32], runtime.Timestamptz)
 	return decErr
 }
 
@@ -2963,6 +3219,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 29:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 30:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 31:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3068,6 +3336,22 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.tims[ntm])
 			ntm++
 		case 28:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 29:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 30:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 31:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 32:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++

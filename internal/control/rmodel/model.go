@@ -89,6 +89,12 @@ type Agent struct {
 	PackagesCheckID *string
 	PackagesCheckAt *time.Time
 	UsageAt         *time.Time
+	// Logs is what logs use the server's disk, as the agent last reported
+	// them; LogsState whether it can clean them (migration 055).
+	Logs       *storm.JSON
+	LogsState  *storm.JSON
+	LogsScanID *string
+	LogsScanAt *time.Time
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -512,6 +518,10 @@ type GatewayPolicy struct {
 	AgentAutoUpdate bool
 	// PackageHolds are packages nothing upgrades on its own (migration 050).
 	PackageHolds []string
+	// LogCleanPaths are extra places logs are cleaned; LogProtectPaths
+	// extra places they never are (migration 055).
+	LogCleanPaths   []string
+	LogProtectPaths []string
 }
 
 func (m *GatewayPolicy) Schema(t *storm.Table) {
@@ -532,6 +542,8 @@ func (m *GatewayPolicy) Schema(t *storm.Table) {
 		"direct_ssh = ANY (ARRAY['refuse'::text, 'approve'::text, 'allow'::text])")
 	t.Col(&m.AgentAutoUpdate).Default("false")
 	t.Col(&m.PackageHolds).Default("'{postgresql*,mysql-server*,mariadb-server*,docker-ce*,containerd.io}'::text[]")
+	t.Col(&m.LogCleanPaths).Default("'{}'::text[]")
+	t.Col(&m.LogProtectPaths).Default("'{}'::text[]")
 }
 
 // HostKeyPin is table host_key_pins.
@@ -1116,6 +1128,8 @@ func All() []any {
 		&DirectLoginRequest{},
 		&GatewayPolicy{},
 		&HostKeyPin{},
+		&LogCleanupRun{},
+		&LogCleanupRule{},
 		&PackageRun{},
 		&PackageUpdateRule{},
 		&RecoveryCode{},
@@ -1234,6 +1248,101 @@ func (m *DatabaseChange) Schema(t *storm.Table) {
 	t.Col(&m.ApprovalID).Default("''::text")
 	t.Index(&m.Database, &m.Seq).Named("database_changes_database")
 	t.Index(&m.At).Named("database_changes_at")
+}
+
+// LogCleanupRun is table log_cleanup_runs: a log cleanup on one server
+// (migration 055).
+type LogCleanupRun struct {
+	ID            [16]byte
+	Hostname      string
+	AssetHostname string
+	Trigger       string
+	State         string
+	Actions       storm.JSON
+	Items         []string
+	Summary       string
+	PlannedBytes  int64
+	Reason        string
+	RequestedBy   string
+	RequestedAt   time.Time
+	DecidedBy     *string
+	DecidedAt     *time.Time
+	SentAt        *time.Time
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
+	UpdatedAt     time.Time
+	Step          string
+	Message       string
+	Freed         int64
+	Removed       storm.JSON
+	RemovedMore   int32
+	Skipped       storm.JSON
+	AutoDay       *string
+}
+
+func (m *LogCleanupRun) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Actions).Default("'[]'::jsonb")
+	t.Col(&m.Items).Default("'{}'::text[]")
+	t.Col(&m.Summary).Default("''::text")
+	t.Col(&m.PlannedBytes).Default("0")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.Col(&m.Step).Default("''::text")
+	t.Col(&m.Message).Default("''::text")
+	t.Col(&m.Freed).Default("0")
+	t.Col(&m.Removed).Default("'[]'::jsonb")
+	t.Col(&m.RemovedMore).Default("0")
+	t.Col(&m.Skipped).Default("'[]'::jsonb")
+	t.CheckNamed("log_cleanup_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'queued'::text, 'running'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
+	t.CheckNamed("log_cleanup_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")
+	t.Index(storm.Lower(&m.Hostname), storm.Desc(&m.RequestedAt)).Named("log_cleanup_runs_host")
+	t.Index(storm.Lower(&m.Hostname)).Unique().Where("state = ANY (ARRAY['queued'::text, 'running'::text])").Named("log_cleanup_runs_one_active")
+	t.Index(storm.Lower(&m.Hostname), &m.AutoDay).Unique().Where("trigger = 'automatic'::text").Named("log_cleanup_runs_one_per_day")
+}
+
+// LogCleanupRule is table log_cleanup_rules: what a cleanup keeps on
+// servers with a tag, and when one starts on its own (migration 055).
+type LogCleanupRule struct {
+	ID                [16]byte
+	Position          int32
+	Tag               string
+	Mode              string
+	DiskPercent       int32
+	WindowStartMinute int32
+	WindowMinutes     int32
+	RotatedKeepDays   int32
+	JournalKeepDays   int32
+	JournalMaxMb      int32
+	ActiveOverMb      int32
+	ActiveKeepMb      int32
+	NeedsApproval     bool
+}
+
+func (m *LogCleanupRule) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.DiskPercent).Default("85")
+	t.Col(&m.WindowStartMinute).Default("180")
+	t.Col(&m.WindowMinutes).Default("120")
+	t.Col(&m.RotatedKeepDays).Default("14")
+	t.Col(&m.JournalKeepDays).Default("28")
+	t.Col(&m.JournalMaxMb).Default("2048")
+	t.Col(&m.ActiveOverMb).Default("0")
+	t.Col(&m.ActiveKeepMb).Default("100")
+	t.Col(&m.NeedsApproval).Default("false")
+	t.UniqueNamed("log_cleanup_rules_tag_key", &m.Tag)
+	t.CheckNamed("log_cleanup_rules_mode_check", "mode = ANY (ARRAY['off'::text, 'disk'::text, 'daily'::text])")
+	t.CheckNamed("log_cleanup_rules_disk_percent_check", "(disk_percent >= 50) AND (disk_percent <= 99)")
+	t.CheckNamed("log_cleanup_rules_window_start_minute_check", "(window_start_minute >= 0) AND (window_start_minute <= 1439)")
+	t.CheckNamed("log_cleanup_rules_window_minutes_check", "(window_minutes >= 30) AND (window_minutes <= 1440)")
+	t.CheckNamed("log_cleanup_rules_rotated_keep_days_check", "(rotated_keep_days >= 0) AND (rotated_keep_days <= 3650)")
+	t.CheckNamed("log_cleanup_rules_journal_keep_days_check", "(journal_keep_days >= 7) AND (journal_keep_days <= 3650)")
+	t.CheckNamed("log_cleanup_rules_journal_max_mb_check", "(journal_max_mb >= 256) AND (journal_max_mb <= 1048576)")
+	t.CheckNamed("log_cleanup_rules_active_over_mb_check", "(active_over_mb = 0) OR ((active_over_mb >= 100) AND (active_over_mb <= 1048576))")
+	t.CheckNamed("log_cleanup_rules_active_keep_mb_check", "(active_keep_mb >= 0) AND (active_keep_mb <= 256)")
 }
 
 // PackageRun is table package_runs: an operating system update run on one
