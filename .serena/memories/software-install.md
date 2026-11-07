@@ -8,7 +8,7 @@ library with scripts, Android, Windows, many servers at once.
 Agent: `internal/agent/software*.go`. Shared: `internal/tunnel/software.go`
 (grant, validation, result types). Control: `internal/control/software_routes.go`
 plus install/remove fields on package runs in `package_updates.go`. Migration
-056. Console: `web/src/components/server/InstalledSoftware.tsx`,
+057. Console: `web/src/components/server/InstalledSoftware.tsx`,
 `web/src/lib/software{Api,Queries}.ts`.
 
 ## How it works
@@ -44,7 +44,7 @@ plus install/remove fields on package runs in `package_updates.go`. Migration
 
 - Settings › Software (`web/src/components/SoftwareLibrary.tsx`); the Install
   drawer has a Repositories | Script switch (`server/ScriptInstall.tsx`).
-- Tables `software_scripts`, `software_script_versions` (migration 057).
+- Tables `software_scripts`, `software_script_versions` (migration 058).
   Every save is a new version with a SHA-256 per part (install, uninstall,
   check). Pasted text or an uploaded .sh/.ps1, normalized by
   `NormalizeScript` (BOM, UTF-16, CRLF, no binaries, 256 KB).

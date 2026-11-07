@@ -1380,7 +1380,7 @@ type PackageRun struct {
 	BatchPosition  *int32
 	WindowStart    *time.Time
 	// Items to install or remove, as the preview named them, and how
-	// (migration 056).
+	// (migration 057).
 	Items         storm.JSON
 	Purge         bool
 	StartServices bool
@@ -1389,7 +1389,7 @@ type PackageRun struct {
 	UndoOf        *[16]byte
 	Started       []string
 	// The library script version a script run executes, its part and
-	// parameters, and what it changed (migration 057).
+	// parameters, and what it changed (migration 058).
 	ScriptVersionID *[16]byte
 	ScriptAction    string
 	ScriptParams    storm.JSON
@@ -1460,7 +1460,7 @@ func (m *PackageUpdateRule) Schema(t *storm.Table) {
 }
 
 // SoftwarePreview is table software_previews: what installing or removing
-// would change on one server, as its package manager simulated it (migration 056).
+// would change on one server, as its package manager simulated it (migration 057).
 type SoftwarePreview struct {
 	ID            [16]byte
 	Hostname      string
@@ -1489,7 +1489,7 @@ func (m *SoftwarePreview) Schema(t *storm.Table) {
 }
 
 // SoftwareScript is table software_scripts: an install script in the
-// Software library (migration 057).
+// Software library (migration 058).
 type SoftwareScript struct {
 	ID          [16]byte
 	Name        string
@@ -1510,7 +1510,7 @@ func (m *SoftwareScript) Schema(t *storm.Table) {
 }
 
 // SoftwareScriptVersion is table software_script_versions: one checked,
-// reviewed and signed version of a script (migration 057).
+// reviewed and signed version of a script (migration 058).
 type SoftwareScriptVersion struct {
 	ID             [16]byte
 	Script         SoftwareScript
