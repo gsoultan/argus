@@ -320,6 +320,15 @@ export function useDecideDirectLogin() {
   })
 }
 
+/** Withdraws your own waiting direct login, or reminds its approvers. */
+export function useOwnDirectLogin(act: 'withdraw' | 'remind') {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.ownDirectLogin(id, act),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['direct-logins'] }),
+  })
+}
+
 export function useSetAssetDirectSsh() {
   const qc = useQueryClient()
   return useMutation({

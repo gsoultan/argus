@@ -80,8 +80,8 @@ function Row({ t, onResolve, onRetry, onCancel }: {
                   : t.status === 'skipped' ? 'Skipped'
                     : formatSize(t.bytes)}
         </Text>
-        {t.status === 'waiting' && (
-          <Tooltip label="Take out of the queue">
+        {(t.status === 'waiting' || t.status === 'active') && (
+          <Tooltip label={t.status === 'active' ? 'Stop it. Nothing half-done is kept.' : 'Take out of the queue'}>
             <ActionIcon size="sm" variant="subtle" color="slate" onClick={() => onCancel(t.id)} aria-label={`Cancel ${t.name}`}>
               <IconX size={14} />
             </ActionIcon>

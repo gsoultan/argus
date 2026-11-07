@@ -9,7 +9,9 @@ import {
 } from '@tabler/icons-react'
 import { downloadText } from '~/lib/download'
 import { notifyError, notifyOk } from '~/lib/notify'
-import { assetsQuery, directLoginsQuery, myServerAccountQuery, myServersQuery, useSetMySshKey } from '~/lib/queries'
+import {
+  assetsQuery, directLoginsQuery, myServerAccountQuery, myServersQuery, useOwnDirectLogin, useSetMySshKey,
+} from '~/lib/queries'
 import { shortName } from '~/lib/reach'
 import { canGenerateSshKey, generateSshKey } from '~/lib/sshKeygen'
 import { directCommand, KEY_FILE, shortCommand, sshConfig, type SshTarget } from '~/lib/sshConfig'
@@ -314,9 +316,16 @@ function saveKey(privateKey: string) {
  * Your own terminal is sitting at "Waiting for approval" on this server: say
  * so here, with how long it has left, so the person is not left guessing.
  */
+/** Matches the control plane's DirectLoginRemindEvery. */
+const REMIND_EVERY_MS = 30_000
+
 export function PendingDirectLogin({ hostname, login }: { hostname: string; login: string | undefined }) {
   const { data } = useQuery({ ...directLoginsQuery(), retry: false, enabled: !!login })
   const [now, setNow] = useState(() => Date.now())
+  const withdraw = useOwnDirectLogin('withdraw')
+  const remind = useOwnDirectLogin('remind')
+  /** When the approvers were last reminded about which login, to pace the button. */
+  const [reminded, setReminded] = useState<{ id: string; at: number } | null>(null)
   const pending = (data ?? []).filter((d) => d.state === 'pending' && d.principal === login
     && shortName(d.hostname) === shortName(hostname) && Date.parse(d.expiresAt) > now)
   const any = pending.length > 0
@@ -330,15 +339,37 @@ export function PendingDirectLogin({ hostname, login }: { hostname: string; logi
   const left = Math.max(0, Math.round((Date.parse(d.expiresAt) - now) / 1000))
   const asked = Math.max(0, Math.round((now - Date.parse(d.createdAt)) / 1000))
   const span = (s: number) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`)
+  const cooling = reminded?.id === d.id ? Math.max(0, Math.ceil((reminded.at + REMIND_EVERY_MS - now) / 1000)) : 0
   return (
-    <Group className="argus-way-pending" gap="md" wrap="nowrap" role="status">
-      <ThemeIcon size={36} radius="md" color="amber" variant="light"><IconHourglassHigh size={20} /></ThemeIcon>
-      <Box style={{ minWidth: 0 }}>
-        <Text fw={600} size="sm">Your login to {shortName(hostname)} is waiting for approval</Text>
-        <Text size={FS.meta} c={INK.pending} mt={2}>
-          {d.principal}{d.clientAddr ? ` from ${d.clientAddr}` : ''} · asked {span(asked)} ago · refused in {span(left)} if nobody answers
-        </Text>
-      </Box>
+    <Group className="argus-way-pending" gap="md" wrap="wrap" role="status">
+      <Group gap="md" wrap="nowrap" style={{ flex: '1 1 320px', minWidth: 0 }}>
+        <ThemeIcon size={36} radius="md" color="amber" variant="light"><IconHourglassHigh size={20} /></ThemeIcon>
+        <Box style={{ minWidth: 0 }}>
+          <Text fw={600} size="sm">Your login to {shortName(hostname)} is waiting for approval</Text>
+          <Text size={FS.meta} c={INK.pending} mt={2}>
+            {d.principal}{d.clientAddr ? ` from ${d.clientAddr}` : ''} · asked {span(asked)} ago · refused in {span(left)} if nobody answers
+          </Text>
+        </Box>
+      </Group>
+      <Group gap="sm" wrap="nowrap">
+        <Button size="xs" variant="default" disabled={cooling > 0} loading={remind.isPending}
+          onClick={() => remind.mutate(d.id, {
+            onSuccess: () => {
+              setReminded({ id: d.id, at: Date.now() })
+              notifyOk('Approvers reminded', 'Everyone who can approve it sees it again under Approvals.')
+            },
+            onError: (err) => notifyError('Not sent', err),
+          })}>
+          {cooling > 0 ? `Reminded · again in ${cooling} s` : 'Remind approvers'}
+        </Button>
+        <Button size="xs" variant="subtle" color="rose" loading={withdraw.isPending}
+          onClick={() => withdraw.mutate(d.id, {
+            onSuccess: () => notifyOk('Login cancelled', 'Your terminal is refused now rather than waiting.'),
+            onError: (err) => notifyError('Not cancelled', err),
+          })}>
+          Cancel login
+        </Button>
+      </Group>
     </Group>
   )
 }
