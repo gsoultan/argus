@@ -9,7 +9,7 @@ import {
 } from '~/components/primitives'
 import { HostKeyUnpinned } from '~/components/server/hostKey'
 import { LoginAccounts } from '~/components/server/layout'
-import { SystemCard } from '~/components/server/SystemCard'
+import { SystemCard, systemQuery } from '~/components/server/SystemCard'
 import type { ServerTab } from '~/components/server/tabs'
 import { directSshLabel } from '~/lib/directSsh'
 import { agentUpdateQuery, assignmentsQuery, policyQuery, teamAssignmentsQuery } from '~/lib/queries'
@@ -147,6 +147,7 @@ export function OverviewTab({ asset, sessions, onTab }: {
                 <Text size={FS.meta}>{connectsBy(asset)}</Text>
               </Fact>
               <Fact label={asset.kind === 'android' ? 'Opened as' : 'Login accounts'}><LoginAccounts asset={asset} /></Fact>
+              {asset.kind === 'android' && <DeviceSecurity asset={asset} />}
               {asset.protocol !== 'rdp' && (
                 <Fact label="Direct logins">
                   <Text size={FS.meta}>
@@ -168,6 +169,35 @@ export function OverviewTab({ asset, sessions, onTab }: {
         </Grid.Col>
       </Grid>
     </Stack>
+  )
+}
+
+/**
+ * The two facts a device's security turns on that a server has no equal to:
+ * which engine drives it, and whether wireless debugging — a shell-level
+ * door that listens on every interface on Android 11+ — is on. Read from
+ * the same system call the card uses, so it says what the device reports,
+ * not what the console set.
+ */
+function DeviceSecurity({ asset }: { asset: Asset }) {
+  const { data } = useQuery(systemQuery(asset))
+  const sys = data?.system
+  const engine = sys?.engine
+  return (
+    <>
+      <Fact label="Engine">
+        <Text size={FS.meta}>
+          {engine === 'unattended' ? 'Unattended (the helper, nobody there)'
+            : engine === 'attended' ? 'Attended (accepted on the device)'
+            : '…'}
+        </Text>
+      </Fact>
+      {sys?.wirelessDebugging && (
+        <Fact label="Wireless debugging">
+          <Text size={FS.meta} c="amber.7" fw={500}>On — listens on every interface</Text>
+        </Fact>
+      )}
+    </>
   )
 }
 

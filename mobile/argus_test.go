@@ -86,6 +86,39 @@ func pushing(t *testing.T, a *Agent, w, h int) (stop func()) {
 	return func() { close(done) }
 }
 
+func TestUnattendedOpensWithNobodyToAccept(t *testing.T) {
+	// A company device: no one holds it, so consent is never asked and the
+	// session opens anyway. The fake would decline (accept is false), which
+	// proves the agent did not call it.
+	app := &fakeApp{accept: false}
+	a := NewAgent(t.TempDir(), app, nil, "Android 14", "Pixel Tablet", "m2")
+	a.SetUnattended(true)
+	if !a.Unattended() {
+		t.Fatal("SetUnattended did not take")
+	}
+	stop := pushing(t, a, 8, 4)
+	defer stop()
+	dev, err := a.openDevice(agent.AndroidOpen{Person: "dana@example.com", Principal: agent.DeviceControlPrincipal})
+	if err != nil {
+		t.Fatalf("unattended session did not open: %v", err)
+	}
+	defer dev.Close()
+	app.mu.Lock()
+	asked := len(app.asked)
+	app.mu.Unlock()
+	if asked != 0 {
+		t.Fatalf("consent was asked in unattended mode: %v", app.asked)
+	}
+	if a.Sessions() != 1 {
+		t.Fatalf("session did not count: %d", a.Sessions())
+	}
+	// Back to attended: consent is asked again, and a decline closes it.
+	a.SetUnattended(false)
+	if _, err := a.openDevice(agent.AndroidOpen{Principal: agent.DeviceControlPrincipal}); err == nil {
+		t.Fatal("attended opened without consent after leaving unattended")
+	}
+}
+
 func TestNothingOpensWithoutTheHoldersYes(t *testing.T) {
 	app := &fakeApp{}
 	a := NewAgent(t.TempDir(), app, nil, "Android 14", "Pixel 8", "m1")

@@ -37,6 +37,15 @@ type HostSystem struct {
 	// Interfaces is nil from an agent older than per-interface addresses;
 	// the card then falls back to the flat list on the agents row.
 	Interfaces []HostInterface `json:"interfaces,omitempty"`
+	// Engine is how an Android device is driven: "attended" (someone accepts
+	// each session) or "unattended" (the helper over local ADB, nobody
+	// there). Empty from a server, or an app older than the unattended
+	// engine.
+	Engine string `json:"engine,omitempty"`
+	// WirelessDebugging is whether wireless debugging is on, which the
+	// unattended engine needs and which listens on every interface on
+	// Android 11+. The console shows it so nobody finds it by surprise.
+	WirelessDebugging bool `json:"wireless_debugging,omitempty"`
 }
 
 // HostInterface mirrors agent.NetInterface.
@@ -94,6 +103,11 @@ func (s *HostSystem) bounded() *HostSystem {
 	case "physical", "virtual", "container":
 	default:
 		c.Machine = ""
+	}
+	switch c.Engine {
+	case "attended", "unattended":
+	default:
+		c.Engine = ""
 	}
 	if c.OffsetSeconds < -14*3600 || c.OffsetSeconds > 14*3600 {
 		c.OffsetSeconds = 0
@@ -313,6 +327,10 @@ type SystemFacts struct {
 	BootedAt      *time.Time `json:"bootedAt"`
 	TimeZone      string     `json:"timeZone"`
 	OffsetSeconds int        `json:"utcOffsetSeconds"`
+	// Engine and WirelessDebugging are an Android device's; empty and false
+	// for a server. See HostSystem.
+	Engine            string `json:"engine,omitempty"`
+	WirelessDebugging bool   `json:"wirelessDebugging,omitempty"`
 }
 
 // SystemUsage is HostUsage as the console spells it.
@@ -371,6 +389,7 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 			Kernel: hs.Kernel, Arch: hs.Arch, CPUModel: hs.CPUModel, CPUs: hs.CPUs,
 			MemoryBytes: hs.MemoryBytes, Machine: hs.Machine, Hypervisor: hs.Hypervisor,
 			BootedAt: hs.BootedAt, TimeZone: hs.TimeZone, OffsetSeconds: hs.OffsetSeconds,
+			Engine: hs.Engine, WirelessDebugging: hs.WirelessDebugging,
 		}
 	}
 	out.Network = systemNetwork(hs.Interfaces, flat)

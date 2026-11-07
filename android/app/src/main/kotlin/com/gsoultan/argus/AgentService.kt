@@ -63,6 +63,14 @@ class AgentService : Service() {
             return START_NOT_STICKY
         }
         instance = this
+        // A device set up for unattended arms itself: the helper is started
+        // over ADB and the agent told it is unattended, so a session opens
+        // with nobody there. Off the main thread, since arming talks to adbd.
+        if (app.unattended.paired() && !app.unattended.armed) {
+            Thread {
+                app.unattended.arm()?.let { app.note("unattended: $it") }
+            }.start()
+        }
         return START_STICKY
     }
 

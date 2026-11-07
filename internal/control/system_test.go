@@ -109,6 +109,30 @@ func TestSystemDetailsReachTheServerPage(t *testing.T) {
 	}
 }
 
+func TestADeviceReportsItsEngineAndWirelessDebugging(t *testing.T) {
+	s, h, _ := reportAPI(t)
+	asset, cred := enrolledAsset(t, s, h)
+	path := "/api/v1/assets/" + asset.ID + "/system"
+
+	facts := `{"hostname":"` + asset.Hostname + `","os":"Android 14","system":{` +
+		`"model":"Pixel Tablet","engine":"unattended","wireless_debugging":true}}`
+	if w := do(t, h, http.MethodPost, "/api/v1/report/facts", cred, facts); w.Code != http.StatusOK {
+		t.Fatalf("facts: %d %s", w.Code, w.Body)
+	}
+	got := getSystem(t, h, path)
+	if !got.Reported || got.System == nil || got.System.Engine != "unattended" || !got.System.WirelessDebugging {
+		t.Fatalf("after device facts: %+v", got.System)
+	}
+	// An engine value Argus does not know is dropped rather than shown.
+	facts = `{"hostname":"` + asset.Hostname + `","os":"Android 14","system":{"engine":"root","wireless_debugging":false}}`
+	if w := do(t, h, http.MethodPost, "/api/v1/report/facts", cred, facts); w.Code != http.StatusOK {
+		t.Fatalf("facts 2: %d %s", w.Code, w.Body)
+	}
+	if got := getSystem(t, h, path); got.System.Engine != "" || got.System.WirelessDebugging {
+		t.Fatalf("a bad engine was kept: %+v", got.System)
+	}
+}
+
 func TestSystemReportIsBounded(t *testing.T) {
 	sys := (&HostSystem{Kernel: strings.Repeat("k", 5000), Machine: "mainframe", CPUs: -1, OffsetSeconds: 99 * 3600}).bounded()
 	if len(sys.Kernel) != maxSystemText || sys.Machine != "" || sys.CPUs != 0 || sys.OffsetSeconds != 0 {

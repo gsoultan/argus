@@ -10,7 +10,9 @@ import android.os.Looper
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -57,6 +59,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.forget).setOnClickListener {
             AgentService.stop(this)
             thread { Mobile.forget(app.stateDir); handler.post { refresh() } }
+        }
+        findViewById<Button>(R.id.unattended).setOnClickListener {
+            if (app.unattended.armed) {
+                thread { app.unattended.disarm(); handler.post { refresh() } }
+            } else {
+                unattendedDialog()
+            }
         }
 
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -123,6 +132,50 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.inputState).text =
             getString(if (InputService.instance != null) R.string.input_on else R.string.input_off)
         findViewById<Button>(R.id.enableInput).isEnabled = InputService.instance == null
+        val armed = app.unattended.armed
+        findViewById<TextView>(R.id.unattendedState).text =
+            getString(if (armed) R.string.unattended_on else R.string.unattended_off)
+        findViewById<Button>(R.id.unattended).text =
+            getString(if (armed) R.string.unattended_disable else R.string.unattended_setup)
+        findViewById<Button>(R.id.unattended).isEnabled = st?.enrolled == true
         findViewById<TextView>(R.id.log).text = app.log.takeLast(12).joinToString("\n")
+    }
+
+    /**
+     * Sets up unattended control: the person turns on Wireless debugging in
+     * Developer options and enters the pairing address and code it shows. The
+     * app pairs, keeps the key for after a reboot, and arms the engine.
+     */
+    private fun unattendedDialog() {
+        val host = EditText(this).apply { hint = getString(R.string.pair_host); setSingleLine() }
+        val code = EditText(this).apply { hint = getString(R.string.pair_code); setSingleLine() }
+        val explain = TextView(this).apply { text = getString(R.string.unattended_explain); setPadding(0, 0, 0, 24) }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 0)
+            addView(explain); addView(host); addView(code)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.unattended_title)
+            .setView(box)
+            .setPositiveButton(R.string.pair) { _, _ ->
+                val hp = host.text.toString().trim().split(":")
+                val h = hp.getOrNull(0).orEmpty()
+                val port = hp.getOrNull(1)?.toIntOrNull() ?: 0
+                val c = code.text.toString().trim()
+                if (h.isBlank() || port == 0 || c.isBlank()) {
+                    Toast.makeText(this, R.string.unattended_explain, Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                thread {
+                    val err = app.unattended.setUp(h, port, c)
+                    handler.post {
+                        if (err != null) Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                        refresh()
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 }

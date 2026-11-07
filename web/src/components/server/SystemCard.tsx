@@ -11,7 +11,7 @@ import type { Asset, ServerDisk, ServerInterface, ServerSystem, ServerSystemFact
  * fetch load with the server page and not on every first visit. Usage
  * arrives about once a minute, so the card refreshes on the same beat.
  */
-const systemQuery = (asset: Asset) =>
+export const systemQuery = (asset: Asset) =>
   queryOptions({
     queryKey: ['asset', asset.id, 'system'] as const,
     queryFn: () => live.orFallback(() => live.system(asset.id), async () => fixtureSystem(asset)),
@@ -25,6 +25,20 @@ const systemQuery = (asset: Asset) =>
  */
 function fixtureSystem(a: Asset): ServerSystem {
   const none: ServerSystem = { reported: false, os: a.os ?? '', system: null, usage: null, usageAt: null }
+  if (a.kind === 'android') {
+    if (a.agentState === 'absent') return none
+    return {
+      reported: true,
+      os: a.os || 'Android 14',
+      system: {
+        kernel: '', arch: '', cpuModel: '', cpus: 0, memoryBytes: 0, machine: '', hypervisor: '',
+        bootedAt: null, timeZone: '', utcOffsetSeconds: 0,
+        engine: a.controlMode === 'unattended' ? 'unattended' : 'attended',
+        wirelessDebugging: a.controlMode === 'unattended',
+      },
+      usage: null, usageAt: a.agentLastSeenAt ?? null, network: [],
+    }
+  }
   if (a.agentState === 'absent' || a.protocol === 'rdp') return none
   const GB = 1024 ** 3
   const at = a.agentLastSeenAt ?? new Date().toISOString()
