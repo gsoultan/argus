@@ -34,9 +34,11 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 718.5 kB with Android devices: the device kind in the shell's shared
  * modules (lists, roles, the asset type). The wizard's QR code and the phone
  * toolbar are in chunks that are not stored.
+ * 720.9 kB with Cloud in the menu: the item and its icon, and the two cloud
+ * routes' guards and search rule in the entry. The pages are not stored.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 720
+const MAX_KB = 722
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')

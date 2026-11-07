@@ -139,8 +139,12 @@ const BUDGET_KB = {
    * chunks of their own, kept out of the shared live module.
    * 400.7 kB with Android devices, the same shared weight as the overview
    * plus the device toolbar in the desktop view, which Watch live loads.
+   * 403.0 kB with Cloud in the menu: the item and its icon, the two cloud
+   * routes and their role guards in the route map, and the tab names the
+   * page's search rule checks. The pages, the wizard and the cloud queries
+   * are in route chunks.
    */
-  sessionDetail: 402,
+  sessionDetail: 404,
 }
 
 /**
