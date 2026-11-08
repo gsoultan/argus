@@ -8,7 +8,7 @@ import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconCheck, IconClipboardCheck, IconClockHour4, IconPlus, IconTerminal2, IconX,
+  IconAlertTriangle, IconCheck, IconClipboardCheck, IconClockHour4, IconCloud, IconPlus, IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { Mono, RequestStateBadge, absTime, relTime } from '~/components/primitives'
@@ -21,6 +21,8 @@ import {
 import { requestOutcome, settledMeanwhile } from '~/lib/requestOutcome'
 import { canSee } from '~/lib/roles'
 import { LoginAsPicker } from '~/components/LoginAsPicker'
+import { ChangesList } from '~/components/cloud/ChangesList'
+import { cloudChangesQuery } from '~/lib/cloud'
 import { ChangeReview, ChangesTable } from '~/components/ChangeReview'
 import { ImpactText } from '~/components/ChangeImpact'
 import { impactOf } from '~/lib/changeApproval'
@@ -162,6 +164,8 @@ function Approvals() {
           <ChangesTable reqs={changes} mine={me?.email} onOpen={(r) => setReviewId(r.id)} />
         )}
 
+        {decides && tab === 'pending' && <CloudQueue />}
+
         {decides && (
           <Group gap={SP.cozy}>
             <IconClipboardCheck size={16} />
@@ -225,6 +229,26 @@ function Approvals() {
         </Modal>
       )}
     </Box>
+  )
+}
+
+/**
+ * Cloud changes waiting for someone other than the person who asked:
+ * launches and removals in production, and the like. Shown only when there
+ * are some, so a fleet without cloud accounts never sees it.
+ */
+function CloudQueue() {
+  const { data } = useQuery(cloudChangesQuery({ pending: true }))
+  if (!data?.length) return null
+  return (
+    <Stack gap="sm" mb="lg">
+      <Group gap={SP.cozy}>
+        <IconCloud size={16} />
+        <Text fw={600} size="sm">Cloud changes</Text>
+        <Badge size="sm" variant="light" color="amber">{data.length}</Badge>
+      </Group>
+      <ChangesList changes={data} empty={{ title: '', text: '' }} />
+    </Stack>
   )
 }
 
