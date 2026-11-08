@@ -35,6 +35,8 @@ const TerminalResumeService = tunnel.TerminalResumeService
 
 // TerminalConfig is what the terminal service needs.
 type TerminalConfig struct {
+	// Asker reaches the person at a workstation; nil is this platform's.
+	Asker     Asker
 	Collector *Collector
 	Verifier  *tunnel.GrantVerifier
 	Hostname  string
@@ -173,6 +175,10 @@ func Terminal(cfg TerminalConfig) TunnelService {
 	return func(ctx context.Context, call *Call) {
 		g, ok := verifyTerminalGrant(cfg, log, call)
 		if !ok {
+			return
+		}
+		if err := askAtMachineFor(ctx, cfg.Asker, g, "open a terminal as "+g.Principal, log); err != nil {
+			call.Refuse(err.Error())
 			return
 		}
 		t, err := startTerminal(cfg, g)

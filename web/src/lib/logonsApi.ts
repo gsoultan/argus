@@ -74,7 +74,7 @@ export function connectOutcome(v: LogonsView, principal: string): string | undef
   }
   if (mine) return `${principal} is already signed in from ${mine.from || 'elsewhere'}. Opening takes that session over.`
   if (v.edition === 'workstation' && v.logons.some((l) => l.state === 'active')) {
-    return 'Someone is using this PC. Windows takes one person at a time, so it will ask them to let you in, and sign them out of the screen if they do.'
+    return 'Someone is using this PC, so Argus asks them first. Desktop Windows takes one person at a time: if you sign in as another account and they allow it, their session moves off the screen.'
   }
   if (slotsFull(v)) {
     return 'Every Remote Desktop session this server allows is taken. Windows would ask someone to give theirs up; an admin can sign out a disconnected one below instead.'

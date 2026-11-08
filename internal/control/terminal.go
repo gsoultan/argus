@@ -320,7 +320,13 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 		_ = conn.Close(websocket.StatusNormalClosure, "refused")
 	}
 
-	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), tunnel.NewGrant(email, host, principal, client))
+	g := tunnel.NewGrant(email, host, principal, client)
+	// On a workstation whoever is at its screen is told who opened a
+	// terminal; a terminal takes nothing from them, so it does not wait.
+	if kind, _, kerr := a.store.AssetDesktopOpen(ctx, host); kerr == nil && kind == "workstation" {
+		g.Ask = &tunnel.GrantAsk{Mode: tunnel.TellOnly, Who: email}
+	}
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the session grant")
 		return

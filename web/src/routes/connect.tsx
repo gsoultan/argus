@@ -573,6 +573,17 @@ function Connect() {
         </Alert>
       )}
 
+      {target && selected?.kind === 'workstation' && !noAccounts && (
+        <Alert color="azure" variant="light" icon={<IconDeviceDesktop size={16} />}
+          title={isRDPTarget ? 'Whoever is using it is asked first' : 'Whoever is using it is told'}>
+          <Text size={FS.body} lh={1.5}>
+            {isRDPTarget
+              ? 'This is someone\u2019s PC. If a person is signed in and using it, Argus asks them on their screen, naming you. It opens when they allow it; no answer in a minute is a no. If nobody is using it, it opens straight away.'
+              : 'This is someone\u2019s computer. It opens straight away, and anyone signed in at its screen gets a notice naming you.'}
+          </Text>
+        </Alert>
+      )}
+
       {target && isScreenTarget && !isDeviceTarget && !noAccounts && (
         <Alert color="amber" variant="light" icon={<IconDeviceDesktop size={16} />}
           title="Screen sharing, not Remote Desktop">

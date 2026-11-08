@@ -55,7 +55,7 @@ describe('what connecting will do', () => {
     expect(connectOutcome(full(), 'ops')).toMatch(/Every Remote Desktop session/)
     expect(connectOutcome(full({ logons: [] }), 'ops')).toBeUndefined()
     const pc = full({ edition: 'workstation', remoteLimit: 1, logons: [{ session: 1, account: 'PC\\sam', state: 'active', console: true }] })
-    expect(connectOutcome(pc, 'ops')).toMatch(/ask them to let you in/)
+    expect(connectOutcome(pc, 'ops')).toMatch(/Argus asks them first/)
     expect(connectOutcome(full({ platform: 'linux' }), 'ops')).toBeUndefined()
   })
 })

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,12 +159,19 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 
 	g := tunnel.NewGrant(email, host, principal, client)
 	g.Service = service
+	// A workstation is someone's: whoever is using it is asked first, and
+	// the open waits for their answer as well as for the agent.
+	openWait := terminalOpenWait
+	if kind == "workstation" {
+		g.Ask = &tunnel.GrantAsk{Mode: tunnel.AskFirst, Seconds: workstationAskSeconds, Who: email}
+		openWait += workstationAskSeconds * time.Second
+	}
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the session grant")
 		return
 	}
-	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
+	octx, cancel := context.WithTimeout(ctx, openWait)
 	st, answer, err := a.Tunnels.OpenWith(octx, host, tunnel.Header{
 		Service: service, Grant: grant,
 		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height,
@@ -184,6 +192,11 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	case tunnel.IsRefused(err) && service == agentAndroidService && answer.Error == "unknown service":
 		fail("what is connected as " + host + " is not the Argus app for Android, so it has " +
 			"no screen to share; check the device and its app")
+		return
+	case tunnel.IsRefused(err) && strings.HasPrefix(answer.Error, tunnel.AskRefusedPrefix):
+		a.auditAskRefused(ctx, email, host, what+" as "+principal, answer.Error)
+		fail(strings.TrimPrefix(answer.Error, tunnel.AskRefusedPrefix) + ", so the session did not open. " +
+			"Ask them, or try again later.")
 		return
 	case tunnel.IsRefused(err):
 		a.log.Warn("desktop: the agent refused the session", "host", host,

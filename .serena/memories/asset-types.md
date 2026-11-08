@@ -27,3 +27,7 @@ of three types. Design and mockups:
   workstation and telling them on a Linux one; per-type policies; fleet
   update notices. Today nothing asks on Windows; any prompt comes from
   Windows' own session rules.
+
+## Before connecting (steps 2 and 3)
+- `logons` tunnel service (agent/logons*.go, tunnel/logons.go): who is signed in (WTS on Windows, utmp on Linux) and the Remote Desktop limit (1 desktop edition, 2 server without Session Host). Shown on the Connect page (components/connect/SignedIn.tsx). Admins may sign out a disconnected Windows session; the agent refuses active, console or changed-hands sessions. Audited as asset.session_signed_out / asset.session_sign_out_refused.
+- Workstation grants carry `tunnel.GrantAsk` (agent/ask*.go): desktop and screen ask the active session first via WTSSendMessageW (60 s, no answer = no); terminals only tell (notify-send on Linux, a message box on Windows). Nobody using it means nobody is asked. A refusal starts with tunnel.AskRefusedPrefix and is audited as session.declined_at_machine. Servers carry no Ask.
