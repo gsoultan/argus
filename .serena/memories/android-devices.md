@@ -10,7 +10,7 @@ helper over ADB, re-arm after reboot) — draft PR #178.
 
 ## How a device is stored
 
-- `assets.kind` is `server`, `workstation` (migration 063) or `android`
+- `assets.kind` is `server`, `workstation` (migration 065) or `android`
   (migration 051). The console calls them Server, Workstation and Device
   (`web/src/lib/assetType.ts`). A device is stored
   the way it opens: `protocol = 'rdp'`, `desktop_mode = 'screen'`,

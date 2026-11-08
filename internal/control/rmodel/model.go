@@ -240,7 +240,7 @@ type Asset struct {
 	// ControlNeedsApproval makes "control" an elevated principal on a device.
 	ControlNeedsApproval bool
 	// ConnectAsk is nil to follow the type's connect rule, or never, ask or
-	// tell (migration 064).
+	// tell (migration 066).
 	ConnectAsk *string
 }
 
@@ -540,7 +540,7 @@ type GatewayPolicy struct {
 	LogCleanPaths   []string
 	LogProtectPaths []string
 	// ConnectRules is who is asked before a session opens, per type of
-	// asset (migration 064).
+	// asset (migration 066).
 	ConnectRules storm.JSON
 }
 
