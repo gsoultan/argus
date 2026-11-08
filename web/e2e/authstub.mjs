@@ -337,7 +337,18 @@ const server = createServer(async (req, res) => {
         return json(res, 200, [])
       }
     }
-    if (path === '/api/v1/platform/organizations') {
+    // A rename answers with the new name and keeps the list as it is, so the
+    // other tests sharing this stub still find the names they expect.
+    const renamed = /^\/api\/v1\/platform\/organizations\/([a-z0-9]+)\/name$/.exec(path)
+    if (renamed && req.method === 'POST') {
+      const o = ORGS.find((x) => x.id === renamed[1])
+      if (!o) return json(res, 404, { error: 'no such organization' })
+      const body = /** @type {any} */ (await readBody(req))
+      const name = String(body.name ?? '').trim()
+      if (!name) return json(res, 400, { error: 'the name must be between 1 and 120 characters' })
+      return json(res, 200, { id: o.id, slug: o.slug, name, default: o.default })
+    }
+    if (path === '/api/v1/platform/organizations' && req.method === 'GET') {
       return json(res, 200, ORGS.map((o) => ({
         id: o.id, slug: o.slug, name: o.name, default: o.default,
         createdAt: ago(60 * 24 * 30), createdBy: o.default ? 'system' : 'dev@northwind.id',

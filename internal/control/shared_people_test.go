@@ -322,3 +322,102 @@ func TestAnAdminCreatesAnOrganizationAndCanSwitchToIt(t *testing.T) {
 		t.Errorf("after switching: %s", me)
 	}
 }
+
+func TestAnAdminCreatesAnOrganizationWithoutASecondPassword(t *testing.T) {
+	h := newTenantHarness(t)
+	admin, pw := newAccount(t, h.store, "admin")
+	in := h.signIn(t, "", admin, pw)
+
+	// No first owner named: the admin is the owner, and no account with a
+	// password of its own is made in the new organization.
+	slug := strings.ToLower(unique("solo"))
+	code, body := h.call(t, in, "", http.MethodPost, "/api/v1/platform/organizations",
+		`{"slug":"`+slug+`","name":"Solo"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create organization without an owner = %d: %s", code, body)
+	}
+	var created Tenant
+	_ = json.Unmarshal([]byte(body), &created)
+	t.Cleanup(func() {
+		h.store.closeTenants()
+		_, _ = h.store.pool.Exec(context.Background(), `DELETE FROM argus_platform.memberships WHERE tenant_id = $1`, created.ID)
+		_, _ = h.store.pool.Exec(context.Background(), `DROP SCHEMA IF EXISTS "`+created.Schema+`" CASCADE`)
+		_, _ = h.store.pool.Exec(context.Background(), `DELETE FROM argus_platform.tenants WHERE id = $1`, created.ID)
+	})
+	// A named owner still needs a valid email and a long enough password.
+	if code, _ := h.call(t, in, "", http.MethodPost, "/api/v1/platform/organizations",
+		`{"slug":"`+slug+`-2","name":"Two","ownerEmail":"someone@acme.id","ownerPassword":"short"}`); code != http.StatusBadRequest {
+		t.Errorf("a named owner with a short password = %d, want 400", code)
+	}
+	if code, body := h.call(t, in, "", http.MethodPost, "/auth/switch", `{"org":"`+slug+`"}`); code != http.StatusOK {
+		t.Fatalf("switch = %d: %s", code, body)
+	}
+	_, me := h.call(t, in, "", http.MethodGet, "/auth/me", "")
+	var id struct {
+		Role string         `json:"role"`
+		Org  map[string]any `json:"org"`
+	}
+	_ = json.Unmarshal([]byte(me), &id)
+	if id.Org["slug"] != slug || id.Role != "owner" {
+		t.Errorf("after switching to an organization created without an owner: %s", me)
+	}
+
+}
+
+func TestAnAdminRenamesAnOrganization(t *testing.T) {
+	h := newTenantHarness(t)
+	tn, owner, opw := newTenant(t, h.store)
+	admin, pw := newAccount(t, h.store, "admin")
+	in := h.signIn(t, "", admin, pw)
+	inB := h.signIn(t, tn.Slug, owner, opw)
+
+	var before string
+	_ = h.store.pool.QueryRow(context.Background(),
+		`SELECT name FROM argus_platform.tenants WHERE id = 'default'`).Scan(&before)
+	t.Cleanup(func() {
+		_, _ = h.store.pool.Exec(context.Background(),
+			`UPDATE argus_platform.tenants SET name = $1 WHERE id = 'default'`, before)
+	})
+
+	// Another organization: the name changes, the short name does not, and
+	// its own people see the new name and why.
+	code, body := h.call(t, in, "", http.MethodPost,
+		"/api/v1/platform/organizations/"+tn.ID+"/name", `{"name":"  Northwind Traders  "}`)
+	if code != http.StatusOK || !strings.Contains(body, `"name":"Northwind Traders"`) ||
+		!strings.Contains(body, `"slug":"`+tn.Slug+`"`) {
+		t.Fatalf("rename = %d: %s", code, body)
+	}
+	_, me := h.call(t, inB, "", http.MethodGet, "/auth/me", "")
+	if !strings.Contains(me, `"name":"Northwind Traders"`) {
+		t.Errorf("the organization's own console does not show its new name: %s", me)
+	}
+	_, audit := h.call(t, inB, "", http.MethodGet, "/api/v1/audit?limit=50", "")
+	if !strings.Contains(audit, "tenant.renamed") {
+		t.Error("the organization's audit log does not record its rename")
+	}
+
+	// The default organization too, shown at once on this replica.
+	if code, body := h.call(t, in, "", http.MethodPost,
+		"/api/v1/platform/organizations/default/name", `{"name":"Head office"}`); code != http.StatusOK {
+		t.Fatalf("rename default = %d: %s", code, body)
+	}
+	_, me = h.call(t, in, "", http.MethodGet, "/auth/me", "")
+	if !strings.Contains(me, `"name":"Head office"`) {
+		t.Errorf("the default organization's console does not show its new name: %s", me)
+	}
+
+	// Refusals: an empty name, an unknown organization, and anyone who does
+	// not manage the platform.
+	if code, _ := h.call(t, in, "", http.MethodPost,
+		"/api/v1/platform/organizations/"+tn.ID+"/name", `{"name":"   "}`); code != http.StatusBadRequest {
+		t.Errorf("empty name = %d, want 400", code)
+	}
+	if code, _ := h.call(t, in, "", http.MethodPost,
+		"/api/v1/platform/organizations/zzzzzzzzzzzz/name", `{"name":"x"}`); code != http.StatusNotFound {
+		t.Errorf("unknown organization = %d, want 404", code)
+	}
+	if code, _ := h.call(t, inB, "", http.MethodPost,
+		"/api/v1/platform/organizations/"+tn.ID+"/name", `{"name":"Mine now"}`); code != http.StatusNotFound {
+		t.Errorf("an organization's own owner renamed it through the platform route: %d", code)
+	}
+}

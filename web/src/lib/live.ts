@@ -1941,15 +1941,24 @@ export async function organizations(): Promise<Organization[]> {
   return get<Organization[]>('/api/v1/platform/organizations')
 }
 
-/** Creates an organization with its first owner. */
+/**
+ * Creates an organization. The person creating it is always one of its
+ * owners, signing in with the account they have; name a first owner only to
+ * make a new account there for someone else.
+ */
 export async function createOrganization(input: {
   slug: string
   name: string
-  ownerEmail: string
-  ownerName: string
-  ownerPassword: string
+  ownerEmail?: string
+  ownerName?: string
+  ownerPassword?: string
 }): Promise<Organization> {
   return post<Organization>('/api/v1/platform/organizations', input)
+}
+
+/** Changes an organization's display name. Its short name stays as it is. */
+export async function renameOrganization(id: string, name: string): Promise<Organization> {
+  return post<Organization>(`/api/v1/platform/organizations/${encodeURIComponent(id)}/name`, { name })
 }
 
 /** Switches an organization off, or back on. */

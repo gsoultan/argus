@@ -1,19 +1,19 @@
 import { useState } from 'react'
 import {
-  Alert, Badge, Button, Group, Menu, Modal, PasswordInput, Skeleton, Stack, Table, Text,
+  Alert, Badge, Button, Checkbox, Group, Menu, Modal, PasswordInput, Skeleton, Stack, Table, Text,
   TextInput, ActionIcon,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconBuilding, IconDots, IconPlus, IconPower, IconRefresh,
+  IconAlertTriangle, IconBuilding, IconDots, IconPencil, IconPlus, IconPower, IconRefresh,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { Mono, relTime } from '~/components/primitives'
 import { generatePassword } from '~/lib/password'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
-  createOrganization, organizations, setOrganizationDisabled, type Organization,
+  createOrganization, organizations, renameOrganization, setOrganizationDisabled, type Organization,
 } from '~/lib/live'
 import { FS } from '~/theme'
 
@@ -21,8 +21,8 @@ import { FS } from '~/theme'
  * Organizations sharing this control plane.
  *
  * Shown to an owner of the default organization only. It lists each
- * organization by name with two counts, and offers to add one or switch one
- * off. It deliberately shows nothing from inside an organization: no servers,
+ * organization by name with two counts, and offers to add one, rename one or
+ * switch one off. It deliberately shows nothing from inside an organization: no servers,
  * no people, no sessions. A platform owner who needs to see inside one is
  * given an account there by its owner, like anyone else.
  */
@@ -33,6 +33,7 @@ export function Organizations() {
   const { data, isPending, error } = useQuery({ queryKey: orgsKey, queryFn: organizations })
   const [adding, addModal] = useDisclosure(false)
   const [confirm, setConfirm] = useState<Organization | null>(null)
+  const [renaming, setRenaming] = useState<Organization | null>(null)
 
   const toggle = useMutation({
     mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) => setOrganizationDisabled(id, disabled),
@@ -98,33 +99,34 @@ export function Organizations() {
                     </Text>
                   </Table.Td>
                   <Table.Td ta="right">
-                    {!o.default && (
-                      <Menu position="bottom-end" withinPortal>
-                        <Menu.Target>
-                          <ActionIcon variant="subtle" color="slate" aria-label={`Actions for ${o.name}`}>
-                            <IconDots size={16} />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          {o.disabledAt ? (
-                            <Menu.Item
-                              leftSection={<IconRefresh size={14} />}
-                              onClick={() => toggle.mutate({ id: o.id, disabled: false })}
-                            >
-                              Enable again
-                            </Menu.Item>
-                          ) : (
-                            <Menu.Item
-                              color="rose"
-                              leftSection={<IconPower size={14} />}
-                              onClick={() => setConfirm(o)}
-                            >
-                              Disable
-                            </Menu.Item>
-                          )}
-                        </Menu.Dropdown>
-                      </Menu>
-                    )}
+                    <Menu position="bottom-end" withinPortal>
+                      <Menu.Target>
+                        <ActionIcon variant="subtle" color="slate" aria-label={`Actions for ${o.name}`}>
+                          <IconDots size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => setRenaming(o)}>
+                          Rename
+                        </Menu.Item>
+                        {o.default ? null : o.disabledAt ? (
+                          <Menu.Item
+                            leftSection={<IconRefresh size={14} />}
+                            onClick={() => toggle.mutate({ id: o.id, disabled: false })}
+                          >
+                            Enable again
+                          </Menu.Item>
+                        ) : (
+                          <Menu.Item
+                            color="rose"
+                            leftSection={<IconPower size={14} />}
+                            onClick={() => setConfirm(o)}
+                          >
+                            Disable
+                          </Menu.Item>
+                        )}
+                      </Menu.Dropdown>
+                    </Menu>
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -137,6 +139,12 @@ export function Organizations() {
         opened={adding}
         onClose={addModal.close}
         onCreated={() => void qc.invalidateQueries({ queryKey: orgsKey })}
+      />
+
+      <RenameOrganizationModal
+        org={renaming}
+        onClose={() => setRenaming(null)}
+        onRenamed={() => void qc.invalidateQueries({ queryKey: orgsKey })}
       />
 
       <Modal opened={confirm !== null} onClose={() => setConfirm(null)} title="Disable organization" size="md">
@@ -174,13 +182,19 @@ function NewOrganizationModal({ opened, onClose, onCreated }: {
 }) {
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
   const [ownerEmail, setOwnerEmail] = useState('')
   const [ownerName, setOwnerName] = useState('')
   const [password, setPassword] = useState('')
+  // Off by default: the person creating it is its owner and signs in with
+  // the account they have. On only to set it up for someone else, who then
+  // needs an account and a password of their own there.
+  const [forSomeoneElse, setForSomeoneElse] = useState(false)
   const [created, setCreated] = useState<Organization | null>(null)
 
   const reset = () => {
-    setName(''); setSlug(''); setOwnerEmail(''); setOwnerName(''); setPassword(''); setCreated(null)
+    setName(''); setSlug(''); setOwnerEmail(''); setOwnerName(''); setPassword('')
+    setForSomeoneElse(false); setSlugTouched(false); setCreated(null)
   }
   const close = () => { reset(); onClose() }
 
@@ -192,23 +206,31 @@ function NewOrganizationModal({ opened, onClose, onCreated }: {
 
   // The short name follows the display name until it is edited by hand.
   const slugFrom = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
-  const [slugTouched, setSlugTouched] = useState(false)
 
   const valid = name.trim() && /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/.test(slug) &&
-    ownerEmail.includes('@') && password.length >= 12
+    (!forSomeoneElse || (ownerEmail.includes('@') && password.length >= 12))
 
   return (
     <Modal opened={opened} onClose={close} title="New organization" size="md">
       {created ? (
         <Stack gap="sm">
           <Alert color="teal" variant="light">
-            <Text size={FS.body} lh={1.5}>
-              <b>{created.name}</b> is ready. Its owner signs in at this console with organization{' '}
-              <Mono>{created.slug}</Mono>, the email <Mono>{ownerEmail}</Mono> and the password below.
-              Pass the password on now; it is not shown again.
-            </Text>
+            {forSomeoneElse ? (
+              <Text size={FS.body} lh={1.5}>
+                <b>{created.name}</b> is ready. Its owner signs in at this console with organization{' '}
+                <Mono>{created.slug}</Mono>, the email <Mono>{ownerEmail}</Mono> and the password below.
+                Pass the password on now; it is not shown again. You are an owner too, with your own account.
+              </Text>
+            ) : (
+              <Text size={FS.body} lh={1.5}>
+                <b>{created.name}</b> is ready, and you are its owner. Switch to it from the organization
+                menu; you sign in with the account you already have.
+              </Text>
+            )}
           </Alert>
-          <TextInput readOnly value={password} label="Owner's password" styles={{ input: { fontFamily: 'monospace' } }} />
+          {forSomeoneElse && (
+            <TextInput readOnly value={password} label="Owner's password" styles={{ input: { fontFamily: 'monospace' } }} />
+          )}
           <Group justify="flex-end">
             <Button size="xs" onClick={close}>Done</Button>
           </Group>
@@ -218,7 +240,9 @@ function NewOrganizationModal({ opened, onClose, onCreated }: {
           onSubmit={(e) => {
             e.preventDefault()
             if (!valid) return
-            create.mutate({ name: name.trim(), slug, ownerEmail: ownerEmail.trim(), ownerName: ownerName.trim(), ownerPassword: password })
+            create.mutate(forSomeoneElse
+              ? { name: name.trim(), slug, ownerEmail: ownerEmail.trim(), ownerName: ownerName.trim(), ownerPassword: password }
+              : { name: name.trim(), slug })
           }}
         >
           <Stack gap="sm">
@@ -239,24 +263,94 @@ function NewOrganizationModal({ opened, onClose, onCreated }: {
               onChange={(e) => { setSlugTouched(true); setSlug(e.currentTarget.value.toLowerCase()) }}
               error={slug && !/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/.test(slug) ? '2 to 40 characters: a-z, 0-9, hyphens' : undefined}
             />
-            <Text size={FS.meta} fw={600} mt="xs">First owner</Text>
-            <TextInput label="Email" type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.currentTarget.value)} />
-            <TextInput label="Display name" value={ownerName} onChange={(e) => setOwnerName(e.currentTarget.value)} />
-            <PasswordInput
-              label="Password"
-              description="At least 12 characters. Shown once after the organization is created."
-              value={password}
-              onChange={(e) => setPassword(e.currentTarget.value)}
-              rightSection={
-                <ActionIcon variant="subtle" color="slate" aria-label="Generate a password" onClick={() => setPassword(generatePassword())}>
-                  <IconRefresh size={14} />
-                </ActionIcon>
-              }
+            <Checkbox
+              mt="xs"
+              label="Set it up for someone else"
+              description="You are its owner and sign in with your current account. Tick this only to also make an account there for another person, with a password you pass on to them."
+              checked={forSomeoneElse}
+              onChange={(e) => setForSomeoneElse(e.currentTarget.checked)}
             />
+            {forSomeoneElse && (
+              <>
+                <TextInput label="Their email" type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.currentTarget.value)} />
+                <TextInput label="Their display name" value={ownerName} onChange={(e) => setOwnerName(e.currentTarget.value)} />
+                <PasswordInput
+                  label="Their password"
+                  description="At least 12 characters. Shown once after the organization is created."
+                  value={password}
+                  onChange={(e) => setPassword(e.currentTarget.value)}
+                  rightSection={
+                    <ActionIcon variant="subtle" color="slate" aria-label="Generate a password" onClick={() => setPassword(generatePassword())}>
+                      <IconRefresh size={14} />
+                    </ActionIcon>
+                  }
+                />
+              </>
+            )}
             <Group justify="flex-end" mt="xs">
               <Button variant="default" size="xs" onClick={close}>Cancel</Button>
               <Button type="submit" size="xs" loading={create.isPending} disabled={!valid}>
                 Create organization
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      )}
+    </Modal>
+  )
+}
+
+function RenameOrganizationModal({ org, onClose, onRenamed }: {
+  org: Organization | null
+  onClose: () => void
+  onRenamed: () => void
+}) {
+  const [name, setName] = useState('')
+  const [shownFor, setShownFor] = useState<string | null>(null)
+  // Start from the current name each time the dialog opens for an organization.
+  if (org && shownFor !== org.id) {
+    setShownFor(org.id)
+    setName(org.name)
+  }
+  const close = () => { setShownFor(null); onClose() }
+
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => renameOrganization(id, name),
+    onSuccess: (o) => {
+      onRenamed()
+      notifyOk('Organization renamed', `It is now called ${o.name}. Its people still sign in with ${o.default ? 'a blank organization' : o.slug}.`)
+      close()
+    },
+    onError: (err) => notifyError('Could not rename the organization', err),
+  })
+
+  const trimmed = name.trim()
+  const valid = trimmed.length > 0 && trimmed.length <= 120 && trimmed !== org?.name
+
+  return (
+    <Modal opened={org !== null} onClose={close} title="Rename organization" size="md">
+      {org && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (valid) rename.mutate({ id: org.id, name: trimmed })
+          }}
+        >
+          <Stack gap="sm">
+            <TextInput
+              label="Name"
+              description={org.default
+                ? 'What the console calls it. Nothing changes at sign-in.'
+                : <>What the console calls it. Its short name, <Mono>{org.slug}</Mono>, stays the same, so nothing changes at sign-in.</>}
+              value={name}
+              maxLength={120}
+              autoFocus
+              onChange={(e) => setName(e.currentTarget.value)}
+            />
+            <Group justify="flex-end" mt="xs">
+              <Button variant="default" size="xs" onClick={close}>Cancel</Button>
+              <Button type="submit" size="xs" loading={rename.isPending} disabled={!valid}>
+                Rename
               </Button>
             </Group>
           </Stack>

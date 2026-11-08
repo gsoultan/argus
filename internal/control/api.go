@@ -474,6 +474,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/control-update", a.getControlUpdateBanner)
 	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
 	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
+	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/name", a.postTenantName)
 	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/disable", a.postTenantDisabled(true))
 	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/enable", a.postTenantDisabled(false))
 }
