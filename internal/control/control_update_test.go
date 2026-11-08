@@ -209,6 +209,9 @@ func TestControlUpdateRoutes(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// As in production, where a query that names no organization is refused.
+	h.store.Strict = true
+	defer func() { h.store.Strict = false }()
 	h.api.ControlUpdateStarted(ctx)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -223,7 +226,7 @@ func TestControlUpdateRoutes(t *testing.T) {
 	if r, ok := controlupdate.ReadReady(h.api.Updates.Dir); !ok || r.Version != "0.8.2" || !r.Listening {
 		t.Errorf("ready %+v", r)
 	}
-	events, err := h.store.AuditEvents(context.Background(), 100, 0)
+	events, err := h.store.AuditEvents(PlatformContext(context.Background()), 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

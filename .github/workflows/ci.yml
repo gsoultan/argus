@@ -1363,7 +1363,8 @@ jobs:
           for i in $(seq 1 30); do
             n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'control.updated'")
             [ "$n" = 1 ] && break; sleep 1; done
-          [ "$n" = 1 ] || { echo "::error::the update was not recorded in the audit log"; exit 1; }
+          [ "$n" = 1 ] || { sudo journalctl -u argus-control --no-pager | grep -i 'update\|refused' | tail -20
+            echo "::error::the update was not recorded in the audit log"; exit 1; }
 
           # A version that exits at once goes back to 9.9.0 by itself.
           listed 9.9.0 9.9.1
@@ -1377,7 +1378,8 @@ jobs:
           for i in $(seq 1 30); do
             n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'control.update_rolled_back'")
             [ "$n" = 1 ] && break; sleep 1; done
-          [ "$n" = 1 ] || { echo "::error::the rollback was not recorded in the audit log"; exit 1; }
+          [ "$n" = 1 ] || { sudo journalctl -u argus-control --no-pager | grep -i 'update\|refused' | tail -20
+            echo "::error::the rollback was not recorded in the audit log"; exit 1; }
 
       - name: Confirm the units are hardened
         run: |

@@ -537,6 +537,9 @@ func (a *API) ControlUpdateStarted(ctx context.Context) {
 	if u == nil || u.Dir == "" {
 		return
 	}
+	// The outcome is the platform's, recorded in the default organization's
+	// audit log; a strict store refuses a context that names none.
+	ctx = PlatformContext(ctx)
 	if err := controlupdate.WriteReady(u.Dir, controlupdate.Ready{
 		Version: strings.TrimPrefix(a.Version, "v"), PID: os.Getpid(), At: time.Now().UTC(),
 		Listening: true, Database: true,
