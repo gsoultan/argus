@@ -240,6 +240,8 @@ export interface Asset {
    * does on a server. `view` never does.
    */
   controlNeedsApproval?: boolean
+  /** Who is asked before connecting: null follows the type's rule. */
+  connectAsk?: 'never' | 'ask' | 'tell' | null
   /** Null when credentialMode is 'ca-certificate' — nothing to rotate. */
   credentialRotatedAt: ISOTime | null
   rotationIntervalDays: number | null
@@ -621,6 +623,8 @@ export interface AssetInput {
   kind?: AssetKind
   controlMode?: ControlMode
   controlNeedsApproval?: boolean
+  /** Null follows the type's rule in Settings › Asset types. */
+  connectAsk?: 'never' | 'ask' | 'tell' | null
   rotationIntervalDays?: number | null
 }
 

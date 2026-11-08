@@ -639,9 +639,12 @@ type Asset struct {
 	// agreed to ("attended" asks whoever holds it, "unattended" asks
 	// nobody), and ControlNeedsApproval whether the "control" principal
 	// needs an approved access request first. See 051_android_devices.sql.
-	Kind                 string     `json:"kind"`
-	ControlMode          string     `json:"controlMode"`
-	ControlNeedsApproval bool       `json:"controlNeedsApproval"`
+	Kind                 string `json:"kind"`
+	ControlMode          string `json:"controlMode"`
+	ControlNeedsApproval bool   `json:"controlNeedsApproval"`
+	// ConnectAsk is nil to follow the type's rule in Settings › Asset types,
+	// or this asset's own: never, ask or tell. See connect_rules.go.
+	ConnectAsk           *string    `json:"connectAsk"`
 	CredentialMode       string     `json:"credentialMode"`
 	CredentialRotatedAt  *time.Time `json:"credentialRotatedAt"`
 	RotationIntervalDays *int       `json:"rotationIntervalDays"`

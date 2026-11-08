@@ -36,7 +36,7 @@ const assetSelect = `
 	       a.agent_state, a.agent_last_seen_at, a.bypass_posture,
 	       a.unmanaged_key_count, a.agent_console_only,
 	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts, a.direct_ssh_accounts,
-	       a.desktop_mode, a.kind, a.control_mode, a.control_needs_approval,
+	       a.desktop_mode, a.kind, a.control_mode, a.control_needs_approval, a.connect_ask,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
@@ -51,7 +51,7 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.Health, &a.LastCheckedAt, &a.Principals,
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
 		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts, &a.DirectSSHAccounts,
-		&a.DesktopMode, &a.Kind, &a.ControlMode, &a.ControlNeedsApproval, &a.TunnelConnected)
+		&a.DesktopMode, &a.Kind, &a.ControlMode, &a.ControlNeedsApproval, &a.ConnectAsk, &a.TunnelConnected)
 	return a, err
 }
 
@@ -98,6 +98,9 @@ type AssetInput struct {
 	// the "control" principal need an approved access request. Devices only.
 	ControlMode          string `json:"controlMode"`
 	ControlNeedsApproval bool   `json:"controlNeedsApproval"`
+	// ConnectAsk is empty or null to follow the type's rule, or never, ask
+	// or tell. Not for a device, whose app asks as its control mode says.
+	ConnectAsk *string `json:"connectAsk"`
 
 	RotationIntervalDays *int `json:"rotationIntervalDays"`
 }
@@ -150,6 +153,21 @@ func (in AssetInput) normalise() (AssetInput, error) {
 	in.GroupName = strings.TrimSpace(in.GroupName)
 	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
 	in.ControlMode = strings.ToLower(strings.TrimSpace(in.ControlMode))
+
+	if in.ConnectAsk != nil {
+		v := strings.ToLower(strings.TrimSpace(*in.ConnectAsk))
+		switch v {
+		case "":
+			in.ConnectAsk = nil
+		case ConnectNever, ConnectAsk, ConnectTell:
+			in.ConnectAsk = &v
+		default:
+			return bad("before connecting must be never, ask or tell")
+		}
+	}
+	if in.Kind == "android" && in.ConnectAsk != nil {
+		return bad("a device's app asks as its control mode says; it has no before-connecting setting")
+	}
 
 	switch in.Kind {
 	case "", "server", "workstation":
@@ -343,13 +361,13 @@ func (s *Store) CreateAsset(ctx context.Context, in AssetInput) (Asset, error) {
 	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO assets (hostname, address, port, protocol, os, tags, group_name,
 			principals, credential_mode, credential_ref, domain,
-			rotation_interval_days, desktop_mode, kind, control_mode, control_needs_approval,
+			rotation_interval_days, desktop_mode, kind, control_mode, control_needs_approval, connect_ask,
 			source, health, host_key_state)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'console','reachable','unpinned')
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'console','reachable','unpinned')
 		RETURNING id::text`,
 		v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval).Scan(&id)
+		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval, v.ConnectAsk).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrInvalidAsset{
@@ -377,11 +395,11 @@ func (s *Store) UpdateAsset(ctx context.Context, id string, in AssetInput) (Asse
 			tags = $7, group_name = $8, principals = $9, credential_mode = $10,
 			credential_ref = $11, domain = $12, rotation_interval_days = $13,
 			desktop_mode = $14, kind = $15, control_mode = $16, control_needs_approval = $17,
-			source = 'console', updated_at = now()
+			connect_ask = $18, source = 'console', updated_at = now()
 		WHERE id = $1::uuid AND archived_at IS NULL`,
 		id, v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval)
+		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval, v.ConnectAsk)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrInvalidAsset{

@@ -159,12 +159,20 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 
 	g := tunnel.NewGrant(email, host, principal, client)
 	g.Service = service
-	// A workstation is someone's: whoever is using it is asked first, and
-	// the open waits for their answer as well as for the agent.
+	// A workstation is someone's: by its type's rule, or its own, whoever
+	// is using it is asked first, and the open waits for their answer as
+	// well as for the agent. A device's app asks on its own.
 	openWait := terminalOpenWait
-	if kind == "workstation" {
-		g.Ask = &tunnel.GrantAsk{Mode: tunnel.AskFirst, Seconds: workstationAskSeconds, Who: email}
-		openWait += workstationAskSeconds * time.Second
+	if kind != "android" {
+		ask, err := a.askFor(ctx, host, email, true)
+		if err != nil {
+			fail("could not read who is asked before connecting: " + err.Error())
+			return
+		}
+		g.Ask = ask
+		if ask != nil && ask.Mode == tunnel.AskFirst {
+			openWait += time.Duration(ask.Seconds) * time.Second
+		}
 	}
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {

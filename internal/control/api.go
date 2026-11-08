@@ -383,6 +383,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerPackageRoutes(mux)
 	a.registerSoftwareRoutes(mux)
 	a.registerLogonsRoutes(mux)
+	a.registerConnectRuleRoutes(mux)
 	a.registerScriptRoutes(mux)
 	a.registerSoftwareFileRoutes(mux)
 	a.registerLogCleanupRoutes(mux)

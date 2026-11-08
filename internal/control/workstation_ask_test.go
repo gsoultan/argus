@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -109,5 +110,91 @@ func TestAWorkstationDesktopAsksThePersonUsingIt(t *testing.T) {
 	if len(frame) == 0 || frame[0] != rdp.FrameClosed || len(msgs) == 0 ||
 		!strings.Contains(msgs[0].Data, "sam said no") || len(asked) != 0 {
 		t.Fatalf("declined: %v %+v asked %v", frame, msgs, asked)
+	}
+}
+
+func TestConnectRulesPerTypeAndPerAsset(t *testing.T) {
+	e := newTunnelEnv(t)
+	ctx := context.Background()
+	admin, _ := newAccount(t, e.store, "admin")
+	auditor, _ := newAccount(t, e.store, "auditor")
+	e.api.UserTokens = map[string]string{"admin-token": admin, "auditor-token": auditor}
+	t.Cleanup(func() { _ = e.store.SetConnectRules(context.Background(), DefaultConnectRules(), "test") })
+	_ = e.store.SetConnectRules(ctx, DefaultConnectRules(), "test")
+
+	mk := func(kind string, own *string) string {
+		t.Helper()
+		host := unique(kind)
+		if _, err := e.store.CreateAsset(ctx, AssetInput{Hostname: host, Protocol: "rdp", Kind: kind,
+			Principals: []string{"ana"}, ConnectAsk: own}); err != nil {
+			t.Fatal(err)
+		}
+		return host
+	}
+	mode := func(host string, desktop bool) string {
+		t.Helper()
+		ask, err := e.api.askFor(ctx, host, "ana@example.com", desktop)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ask == nil {
+			return ConnectNever
+		}
+		return ask.Mode
+	}
+	never, ask := ConnectNever, ConnectAsk
+	srv, ws, kiosk, askedServer := mk("server", nil), mk("workstation", nil), mk("workstation", &never), mk("server", &ask)
+
+	for _, c := range []struct {
+		host    string
+		desktop bool
+		want    string
+	}{
+		{srv, true, ConnectNever}, {srv, false, ConnectNever},
+		{ws, true, tunnel.AskFirst}, {ws, false, tunnel.TellOnly},
+		{kiosk, true, ConnectNever}, {kiosk, false, ConnectNever},
+		// Asking is never a terminal's rule: it tells instead.
+		{askedServer, true, tunnel.AskFirst}, {askedServer, false, tunnel.TellOnly},
+	} {
+		if got := mode(c.host, c.desktop); got != c.want {
+			t.Errorf("%s desktop=%v: %s, want %s", c.host, c.desktop, got, c.want)
+		}
+	}
+
+	// A device has no setting of its own here.
+	bad := "ask"
+	if _, err := e.store.CreateAsset(ctx, AssetInput{Hostname: unique("phone"), Kind: "android", ConnectAsk: &bad}); err == nil {
+		t.Error("a device took a before-connecting setting")
+	}
+
+	// The rules through the API: an auditor reads, only an admin writes.
+	w := do(t, e.h, http.MethodGet, "/api/v1/settings/asset-types", "auditor-token", "")
+	var got ConnectRules
+	if _ = json.Unmarshal(w.Body.Bytes(), &got); w.Code != http.StatusOK || got.Workstation.Desktop != ConnectAsk {
+		t.Fatalf("read: %d %s", w.Code, w.Body)
+	}
+	body := `{"server":{"desktop":"tell","terminal":"never","seconds":60},"workstation":{"desktop":"ask","terminal":"tell","seconds":30}}`
+	if w := do(t, e.h, http.MethodPut, "/api/v1/settings/asset-types", "auditor-token", body); w.Code != http.StatusForbidden {
+		t.Fatalf("an auditor wrote: %d", w.Code)
+	}
+	for _, b := range []string{
+		`{"server":{"desktop":"ask","terminal":"ask","seconds":60},"workstation":{"desktop":"ask","terminal":"tell","seconds":30}}`,
+		`{"server":{"desktop":"never","terminal":"never","seconds":5},"workstation":{"desktop":"ask","terminal":"tell","seconds":30}}`,
+	} {
+		if w := do(t, e.h, http.MethodPut, "/api/v1/settings/asset-types", "admin-token", b); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d", b, w.Code)
+		}
+	}
+	if w := do(t, e.h, http.MethodPut, "/api/v1/settings/asset-types", "admin-token", body); w.Code != http.StatusOK {
+		t.Fatalf("write: %d %s", w.Code, w.Body)
+	}
+	if got := mode(srv, true); got != tunnel.TellOnly {
+		t.Errorf("a server after the rule changed: %s", got)
+	}
+	if a, _ := e.api.askFor(ctx, ws, "ana@example.com", true); a == nil || a.Seconds != 30 {
+		t.Errorf("a workstation's wait after the rule changed: %+v", a)
+	}
+	if n, _ := e.store.AuditCountFor(ctx, "settings.connect_rules", "asset types"); n < 1 {
+		t.Error("the change was not audited")
 	}
 }

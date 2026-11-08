@@ -165,6 +165,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.Kind,
 		m.ControlMode,
 		m.ControlNeedsApproval,
+		m.ConnectAsk,
 	}
 }
 
@@ -628,6 +629,7 @@ func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
 		m.PackageHolds,
 		m.LogCleanPaths,
 		m.LogProtectPaths,
+		m.ConnectRules,
 	}
 }
 

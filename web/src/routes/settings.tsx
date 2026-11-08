@@ -7,7 +7,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
+  IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDevices, IconDeviceFloppy, IconInfoCircle, IconLock,
   IconDatabase, IconFileText, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
@@ -25,6 +25,7 @@ import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
 import { SoftwareLibrary } from '~/components/SoftwareLibrary'
 import { LogCleanupSettings } from '~/components/LogCleanupSettings'
 import { DiskGrowSettings } from '~/components/DiskGrowSettings'
+import { AssetTypeSettings } from '~/components/AssetTypeSettings'
 import { ControlStatusSection, useStatusProblems } from '~/components/ControlStatus'
 import { ControlUpdateSection } from '~/components/ControlUpdate'
 import {
@@ -72,7 +73,7 @@ const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
 type PlatformSectionId = 'organizations' | 'status' | 'control-updates'
-type ServerSectionId = 'updates' | 'software' | 'logs' | 'disks'
+type ServerSectionId = 'asset-types' | 'updates' | 'software' | 'logs' | 'disks'
 type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId
 
 interface NavItem {
@@ -166,6 +167,7 @@ function Settings() {
   // an admin or owner, and only against a real control plane.
   const serverItems: NavItem[] = isConfigured() && me && (canEdit || me.role === 'auditor')
     ? [
+      { id: 'asset-types', label: 'Asset types', icon: IconDevices, changed: false },
       { id: 'updates', label: 'Updates', icon: IconPackage, changed: false },
       { id: 'software', label: 'Software', icon: IconTerminal2, changed: false },
       { id: 'logs', label: 'Log cleanup', icon: IconFileText, changed: false },
@@ -273,7 +275,7 @@ function Settings() {
             )}
             <SectionNav title="Sessions" items={policyItems} active={active} onOpen={open} />
             {serverItems.length > 0 && (
-              <SectionNav title="Servers" items={serverItems} active={active} onOpen={open} />
+              <SectionNav title="Assets" items={serverItems} active={active} onOpen={open} />
             )}
             {controlItems.length > 0 && (
               <SectionNav title="Advanced" items={controlItems} active={active} onOpen={open} />
@@ -296,7 +298,7 @@ function Settings() {
                   : []),
                 { group: 'Sessions', items: policyItems.map(navOption) },
                 ...(serverItems.length > 0
-                  ? [{ group: 'Servers', items: serverItems.map(navOption) }]
+                  ? [{ group: 'Assets', items: serverItems.map(navOption) }]
                   : []),
                 ...(controlItems.length > 0
                   ? [{ group: 'Advanced', items: controlItems.map(navOption) }]
@@ -364,6 +366,7 @@ function Settings() {
               </>
             )}
 
+            {active === 'asset-types' && serverItems.length > 0 && <AssetTypeSettings canEdit={canEdit} />}
             {active === 'updates' && serverItems.length > 0 && <PackageUpdateSettings canEdit={canEdit} />}
             {active === 'software' && serverItems.length > 0 && <SoftwareLibrary canEdit={canEdit} />}
             {active === 'logs' && serverItems.length > 0 && <LogCleanupSettings canEdit={canEdit} />}

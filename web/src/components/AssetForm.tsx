@@ -50,6 +50,7 @@ function fromAsset(a: Asset): AssetInput {
     kind: a.kind ?? 'server',
     controlMode: a.controlMode,
     controlNeedsApproval: a.controlNeedsApproval,
+    connectAsk: a.connectAsk ?? null,
     rotationIntervalDays: a.rotationIntervalDays,
   }
 }
@@ -193,6 +194,30 @@ export function AssetForm({
             data={[
               { value: 'server', label: 'Server' },
               { value: 'workstation', label: 'Workstation (laptop or PC)' },
+            ]}
+          />
+        </Box>
+        <Box>
+          <Text size="sm" fw={500}>Before connecting</Text>
+          <Text size="xs" c="dimmed" mb={6}>
+            {form.connectAsk === 'never'
+              ? 'Opens without asking or telling anyone, like a server. For lab or kiosk machines nobody uses as their own.'
+              : form.connectAsk === 'ask'
+              ? 'Whoever is using it is asked first, on their screen. A terminal only tells them.'
+              : form.connectAsk === 'tell'
+              ? 'Opens at once; whoever is using it gets a notice naming who connected.'
+              : `As set for every ${form.kind === 'workstation' ? 'workstation' : 'server'} in Settings, Asset types.`}
+          </Text>
+          <SegmentedControl
+            fullWidth
+            aria-label="Before connecting"
+            value={form.connectAsk ?? 'type'}
+            onChange={(v) => set('connectAsk', v === 'type' ? null : (v as 'never' | 'ask' | 'tell'))}
+            data={[
+              { value: 'type', label: `Like other ${form.kind === 'workstation' ? 'workstations' : 'servers'}` },
+              { value: 'never', label: 'Never ask' },
+              { value: 'ask', label: 'Ask first' },
+              { value: 'tell', label: 'Tell them' },
             ]}
           />
         </Box>

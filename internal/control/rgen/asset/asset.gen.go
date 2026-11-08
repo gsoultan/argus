@@ -58,6 +58,7 @@ type Row struct {
 	Kind                  string
 	ControlMode           string
 	ControlNeedsApproval  bool
+	ConnectAsk            runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -96,7 +97,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 38
+const nCols = 39
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -450,6 +451,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.bools[q.nbo] = r.ControlNeedsApproval
 		q.nbo++
+	case 38:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.ConnectAsk.V
+		q.ns++
 	}
 }
 
@@ -657,6 +665,7 @@ var (
 	Kind                  = TextCol{35}
 	ControlMode           = TextCol{36}
 	ControlNeedsApproval  = BoolCol{37}
+	ConnectAsk            = NullTextCol{38}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1275,6 +1284,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 38:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1536,6 +1552,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 38:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1918,8 +1941,21 @@ func (q Query) ControlModeIn(v ...string) Query        { return q.Where(ControlM
 func (q Query) ControlModeNotIn(v ...string) Query     { return q.Where(ControlMode.NotIn(v...)) }
 func (q Query) ControlNeedsApprovalEq(v bool) Query    { return q.Where(ControlNeedsApproval.Eq(v)) }
 func (q Query) ControlNeedsApprovalNotEq(v bool) Query { return q.Where(ControlNeedsApproval.NotEq(v)) }
+func (q Query) ConnectAskEq(v string) Query            { return q.Where(ConnectAsk.Eq(v)) }
+func (q Query) ConnectAskNotEq(v string) Query         { return q.Where(ConnectAsk.NotEq(v)) }
+func (q Query) ConnectAskGt(v string) Query            { return q.Where(ConnectAsk.Gt(v)) }
+func (q Query) ConnectAskGte(v string) Query           { return q.Where(ConnectAsk.Gte(v)) }
+func (q Query) ConnectAskLt(v string) Query            { return q.Where(ConnectAsk.Lt(v)) }
+func (q Query) ConnectAskLte(v string) Query           { return q.Where(ConnectAsk.Lte(v)) }
+func (q Query) ConnectAskEqLower(v string) Query       { return q.Where(ConnectAsk.EqLower(v)) }
+func (q Query) ConnectAskLike(v string) Query          { return q.Where(ConnectAsk.Like(v)) }
+func (q Query) ConnectAskILike(v string) Query         { return q.Where(ConnectAsk.ILike(v)) }
+func (q Query) ConnectAskIn(v ...string) Query         { return q.Where(ConnectAsk.In(v...)) }
+func (q Query) ConnectAskNotIn(v ...string) Query      { return q.Where(ConnectAsk.NotIn(v...)) }
+func (q Query) ConnectAskIsNull() Query                { return q.Where(ConnectAsk.IsNull()) }
+func (q Query) ConnectAskIsNotNull() Query             { return q.Where(ConnectAsk.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval" FROM "assets"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask" FROM "assets"`
 const countPrefix = `SELECT count(*) FROM "assets"`
 const existsPrefix = `SELECT 1 FROM "assets"`
 const existsSuffix = ` LIMIT 1`
@@ -2184,6 +2220,12 @@ var orderTable = [nCols][4]string{
 		"\"control_needs_approval\" ASC NULLS FIRST",
 		"\"control_needs_approval\" DESC NULLS LAST",
 	},
+	{ // connect_ask
+		"\"connect_ask\"",
+		"\"connect_ask\" DESC",
+		"\"connect_ask\" ASC NULLS FIRST",
+		"\"connect_ask\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -2227,6 +2269,7 @@ var identTable = [nCols]string{
 	"\"kind\"",
 	"\"control_mode\"",
 	"\"control_needs_approval\"",
+	"\"connect_ask\"",
 }
 
 var lowering = runtime.Lowering{
@@ -2259,7 +2302,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [38][28]runtime.Frag{
+var fragTable = [39][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -3400,6 +3443,36 @@ var fragTable = [38][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // connect_ask
+		{}, // opNone
+		{A: "\"connect_ask\" = $", B: ""},
+		{A: "\"connect_ask\" <> $", B: ""},
+		{A: "\"connect_ask\" > $", B: ""},
+		{A: "\"connect_ask\" >= $", B: ""},
+		{A: "\"connect_ask\" < $", B: ""},
+		{A: "\"connect_ask\" <= $", B: ""},
+		{A: "lower(\"connect_ask\") = lower($", B: ")"},
+		{A: "\"connect_ask\" LIKE $", B: ""},
+		{A: "\"connect_ask\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"connect_ask\" = ANY($", B: ")"},
+		{A: "\"connect_ask\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"connect_ask\" IS NULL", B: ""},
+		{A: "\"connect_ask\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3601,6 +3674,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Kind = sl.Str(rv[35])
 	r.ControlMode = sl.Str(rv[36])
 	r.ControlNeedsApproval = runtime.Bool(rv[37])
+	r.ConnectAsk = runtime.NullText(rv[38], sl)
 	return decErr
 }
 
@@ -3788,6 +3862,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 38:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3936,6 +4014,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 38:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -4073,7 +4155,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval"`
+const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask"`
 
 const updatePrefix = `UPDATE "assets" SET `
 const deletePrefix = `DELETE FROM "assets"`
@@ -4117,9 +4199,10 @@ const (
 	dKind                  uint64 = 1 << 33
 	dControlMode           uint64 = 1 << 34
 	dControlNeedsApproval  uint64 = 1 << 35
+	dConnectAsk            uint64 = 1 << 36
 )
 
-const nUpdatable = 36
+const nUpdatable = 37
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -4159,6 +4242,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"kind\" = $", B: ""},                    // kind
 	{A: "\"control_mode\" = $", B: ""},            // control_mode
 	{A: "\"control_needs_approval\" = $", B: ""},  // control_needs_approval
+	{A: "\"connect_ask\" = $", B: ""},             // connect_ask
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -4201,6 +4285,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                    // kind has no server-side form
 	{},                                    // control_mode has no server-side form
 	{},                                    // control_needs_approval has no server-side form
+	{},                                    // connect_ask has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -4250,9 +4335,10 @@ const (
 	iKind                  uint64 = 1 << 35
 	iControlMode           uint64 = 1 << 36
 	iControlNeedsApproval  uint64 = 1 << 37
+	iConnectAsk            uint64 = 1 << 38
 )
 
-const nInsertable = 38
+const nInsertable = 39
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -4294,6 +4380,7 @@ var insCols = [nInsertable]string{
 	"\"kind\"",
 	"\"control_mode\"",
 	"\"control_needs_approval\"",
+	"\"connect_ask\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -4302,7 +4389,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"assets\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\", \"connect_ask\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -4321,7 +4408,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\", \"connect_ask\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -4777,6 +4864,20 @@ func (m *Mut) SetControlNeedsApproval(v bool) {
 	m.expr &^= dControlNeedsApproval
 }
 
+func (m *Mut) SetConnectAsk(v string) {
+	m.row.ConnectAsk = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dConnectAsk
+	m.expr &^= dConnectAsk
+}
+
+// SetConnectAskNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetConnectAskNull() {
+	m.row.ConnectAsk = runtime.Null[string]{}
+	m.dirty |= dConnectAsk
+	m.expr &^= dConnectAsk
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -5112,6 +5213,18 @@ func (n *Ins) SetControlNeedsApproval(v bool) {
 	n.set |= iControlNeedsApproval
 }
 
+func (n *Ins) SetConnectAsk(v string) {
+	n.row.ConnectAsk = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iConnectAsk
+}
+
+// SetConnectAskNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetConnectAskNull() {
+	n.row.ConnectAsk = runtime.Null[string]{}
+	n.set |= iConnectAsk
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -5163,7 +5276,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 36)
+	set := make([]string, 0, 37)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -5274,6 +5387,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<37) != 0 {
 			set = append(set, "control_needs_approval")
 		}
+		if mask&(1<<38) != 0 {
+			set = append(set, "connect_ask")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -5380,6 +5496,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<37) != 0 {
 			set = append(set, "control_needs_approval")
 		}
+		if mask&(1<<38) != 0 {
+			set = append(set, "connect_ask")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -5485,6 +5604,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<37) != 0 {
 			set = append(set, "control_needs_approval")
+		}
+		if mask&(1<<38) != 0 {
+			set = append(set, "connect_ask")
 		}
 	}
 	return set
@@ -5608,6 +5730,7 @@ var assignFor = map[string]string{
 	"kind":                    "\"kind\" = EXCLUDED.\"kind\"",
 	"control_mode":            "\"control_mode\" = EXCLUDED.\"control_mode\"",
 	"control_needs_approval":  "\"control_needs_approval\" = EXCLUDED.\"control_needs_approval\"",
+	"connect_ask":             "\"connect_ask\" = EXCLUDED.\"connect_ask\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -5734,6 +5857,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.ControlMode)
 		case 37:
 			args = append(args, n.row.ControlNeedsApproval)
+		case 38:
+			args = append(args, n.row.ConnectAsk.Arg())
 		}
 	}
 	var out Row
@@ -5771,7 +5896,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 38)
+	args := make([]any, 0, 39)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -5810,6 +5935,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.Kind)
 	args = append(args, r.ControlMode)
 	args = append(args, r.ControlNeedsApproval)
+	args = append(args, r.ConnectAsk.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -5874,13 +6000,14 @@ var copyCols = []string{
 	"kind",
 	"control_mode",
 	"control_needs_approval",
+	"connect_ask",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [38]any
+	buf  [39]any
 }
 
 func (s *rowSource) Next() bool {
@@ -5936,6 +6063,7 @@ func (s *rowSource) Values() []any {
 	s.buf[35] = &r.Kind
 	s.buf[36] = &r.ControlMode
 	s.buf[37] = &r.ControlNeedsApproval
+	s.buf[38] = r.ConnectAsk.Ptr()
 	return s.buf[:]
 }
 
@@ -6004,8 +6132,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 35
 	mask |= 1 << 36
 	mask |= 1 << 37
+	mask |= 1 << 38
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 38)
+	args := make([]any, 0, 39)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -6044,6 +6173,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.Kind)
 	args = append(args, r.ControlMode)
 	args = append(args, r.ControlNeedsApproval)
+	args = append(args, r.ConnectAsk.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -6153,6 +6283,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.ControlMode)
 		case 37:
 			args = append(args, n.row.ControlNeedsApproval)
+		case 38:
+			args = append(args, n.row.ConnectAsk.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -6280,6 +6412,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.ControlMode)
 		case 35:
 			args = append(args, m.row.ControlNeedsApproval)
+		case 36:
+			args = append(args, m.row.ConnectAsk.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6434,6 +6568,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.ControlMode)
 		case 35:
 			args = append(args, m.row.ControlNeedsApproval)
+		case 36:
+			args = append(args, m.row.ConnectAsk.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6654,6 +6790,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.ControlMode)
 		case 35:
 			args = append(args, m.row.ControlNeedsApproval)
+		case 36:
+			args = append(args, m.row.ConnectAsk.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)
