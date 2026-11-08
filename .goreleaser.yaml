@@ -118,6 +118,11 @@ archives:
         dst: docs
       - src: packaging/config/*
         dst: config
+      # argus-control serves the console from console/ beside the binary when
+      # no package installed it (see detectConsoleDir). Without it here, an
+      # upgrade from this archive replaced the binary and left the old console.
+      - src: web/dist-release
+        dst: console
 
   - id: darwin
     ids: [argus-control-darwin, argus-verify-darwin, argus-agent-darwin]

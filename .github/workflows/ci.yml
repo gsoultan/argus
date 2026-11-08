@@ -1122,6 +1122,25 @@ jobs:
           [ "$(sudo stat -c '%a %U' /var/lib/argus-control/tls/ca.key)" = "600 argus" ]
           ! sudo test -e /var/lib/argus-control/setup-token
 
+          # An upgrade leaves the control plane running on the new binary.
+          # The package used to stop and disable it on upgrade and never start
+          # it again, so the old process kept serving and the console's About
+          # page reported the old version. Reinstalling the same package walks
+          # the same prerm-upgrade / postinst-configure path.
+          old_pid=$(systemctl show -p MainPID --value argus-control)
+          sudo dpkg -i $(ls dist/argus-control*linux_amd64.deb)
+          for i in $(seq 1 45); do
+            pid=$(systemctl show -p MainPID --value argus-control)
+            [ "$pid" != 0 ] && [ "$pid" != "$old_pid" ] &&
+              curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz 2>/dev/null | grep '"ok"' >/dev/null && break
+            sleep 1
+          done
+          [ "$pid" != 0 ] && [ "$pid" != "$old_pid" ] || {
+            sudo journalctl -u argus-control --no-pager | tail -30
+            echo "::error::upgrading the argus-control package did not restart it on the new binary (pid $old_pid -> $pid)"; exit 1; }
+          systemctl is-enabled --quiet argus-control || {
+            echo "::error::upgrading the argus-control package left it disabled"; exit 1; }
+
           # The console ships in the package and is served same-origin.
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/assets/add | grep '<div id="root">' >/dev/null
           curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/console-config.js | grep fleetUrl >/dev/null
