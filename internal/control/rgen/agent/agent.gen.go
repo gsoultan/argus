@@ -54,6 +54,11 @@ type Row struct {
 	LogsScanID      runtime.Null[string]
 	LogsScanAt      runtime.Null[time.Time]
 	AndroidApps     runtime.Null[runtime.JSON]
+	Disks           runtime.Null[runtime.JSON]
+	DisksState      runtime.Null[runtime.JSON]
+	DisksScanID     runtime.Null[string]
+	DisksScanAt     runtime.Null[time.Time]
+	DisksRescan     bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -92,7 +97,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 34
+const nCols = 39
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -353,6 +358,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.LogsScanAt.V
 		q.ntm++
+	case 36:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.DisksScanID.V
+		q.ns++
+	case 37:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.DisksScanAt.V
+		q.ntm++
+	case 38:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.DisksRescan
+		q.nbo++
 	}
 }
 
@@ -554,6 +580,11 @@ var (
 	LogsScanID      = NullTextCol{31}
 	LogsScanAt      = NullTimeCol{32}
 	AndroidApps     = NullJSONCol{33}
+	Disks           = NullJSONCol{34}
+	DisksState      = NullJSONCol{35}
+	DisksScanID     = NullTextCol{36}
+	DisksScanAt     = NullTimeCol{37}
+	DisksRescan     = BoolCol{38}
 )
 
 // TextCol addresses a text column.
@@ -1089,6 +1120,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 34:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 35:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 36:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1315,6 +1367,41 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.jsns[q.njs] = p.jsn
 		q.njs++
+	case 34:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 35:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 36:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 37:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 38:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1594,12 +1681,47 @@ func (q Query) AndroidAppsContains(v runtime.JSON) Query  { return q.Where(Andro
 func (q Query) AndroidAppsContainedBy(v runtime.JSON) Query {
 	return q.Where(AndroidApps.ContainedBy(v))
 }
-func (q Query) AndroidAppsHasAnyKey(v ...string) Query  { return q.Where(AndroidApps.HasAnyKey(v...)) }
-func (q Query) AndroidAppsHasAllKeys(v ...string) Query { return q.Where(AndroidApps.HasAllKeys(v...)) }
-func (q Query) AndroidAppsIsNull() Query                { return q.Where(AndroidApps.IsNull()) }
-func (q Query) AndroidAppsIsNotNull() Query             { return q.Where(AndroidApps.IsNotNull()) }
+func (q Query) AndroidAppsHasAnyKey(v ...string) Query     { return q.Where(AndroidApps.HasAnyKey(v...)) }
+func (q Query) AndroidAppsHasAllKeys(v ...string) Query    { return q.Where(AndroidApps.HasAllKeys(v...)) }
+func (q Query) AndroidAppsIsNull() Query                   { return q.Where(AndroidApps.IsNull()) }
+func (q Query) AndroidAppsIsNotNull() Query                { return q.Where(AndroidApps.IsNotNull()) }
+func (q Query) DisksContains(v runtime.JSON) Query         { return q.Where(Disks.Contains(v)) }
+func (q Query) DisksContainedBy(v runtime.JSON) Query      { return q.Where(Disks.ContainedBy(v)) }
+func (q Query) DisksHasAnyKey(v ...string) Query           { return q.Where(Disks.HasAnyKey(v...)) }
+func (q Query) DisksHasAllKeys(v ...string) Query          { return q.Where(Disks.HasAllKeys(v...)) }
+func (q Query) DisksIsNull() Query                         { return q.Where(Disks.IsNull()) }
+func (q Query) DisksIsNotNull() Query                      { return q.Where(Disks.IsNotNull()) }
+func (q Query) DisksStateContains(v runtime.JSON) Query    { return q.Where(DisksState.Contains(v)) }
+func (q Query) DisksStateContainedBy(v runtime.JSON) Query { return q.Where(DisksState.ContainedBy(v)) }
+func (q Query) DisksStateHasAnyKey(v ...string) Query      { return q.Where(DisksState.HasAnyKey(v...)) }
+func (q Query) DisksStateHasAllKeys(v ...string) Query     { return q.Where(DisksState.HasAllKeys(v...)) }
+func (q Query) DisksStateIsNull() Query                    { return q.Where(DisksState.IsNull()) }
+func (q Query) DisksStateIsNotNull() Query                 { return q.Where(DisksState.IsNotNull()) }
+func (q Query) DisksScanIDEq(v string) Query               { return q.Where(DisksScanID.Eq(v)) }
+func (q Query) DisksScanIDNotEq(v string) Query            { return q.Where(DisksScanID.NotEq(v)) }
+func (q Query) DisksScanIDGt(v string) Query               { return q.Where(DisksScanID.Gt(v)) }
+func (q Query) DisksScanIDGte(v string) Query              { return q.Where(DisksScanID.Gte(v)) }
+func (q Query) DisksScanIDLt(v string) Query               { return q.Where(DisksScanID.Lt(v)) }
+func (q Query) DisksScanIDLte(v string) Query              { return q.Where(DisksScanID.Lte(v)) }
+func (q Query) DisksScanIDEqLower(v string) Query          { return q.Where(DisksScanID.EqLower(v)) }
+func (q Query) DisksScanIDLike(v string) Query             { return q.Where(DisksScanID.Like(v)) }
+func (q Query) DisksScanIDILike(v string) Query            { return q.Where(DisksScanID.ILike(v)) }
+func (q Query) DisksScanIDIn(v ...string) Query            { return q.Where(DisksScanID.In(v...)) }
+func (q Query) DisksScanIDNotIn(v ...string) Query         { return q.Where(DisksScanID.NotIn(v...)) }
+func (q Query) DisksScanIDIsNull() Query                   { return q.Where(DisksScanID.IsNull()) }
+func (q Query) DisksScanIDIsNotNull() Query                { return q.Where(DisksScanID.IsNotNull()) }
+func (q Query) DisksScanAtEq(v time.Time) Query            { return q.Where(DisksScanAt.Eq(v)) }
+func (q Query) DisksScanAtNotEq(v time.Time) Query         { return q.Where(DisksScanAt.NotEq(v)) }
+func (q Query) DisksScanAtGt(v time.Time) Query            { return q.Where(DisksScanAt.Gt(v)) }
+func (q Query) DisksScanAtGte(v time.Time) Query           { return q.Where(DisksScanAt.Gte(v)) }
+func (q Query) DisksScanAtLt(v time.Time) Query            { return q.Where(DisksScanAt.Lt(v)) }
+func (q Query) DisksScanAtLte(v time.Time) Query           { return q.Where(DisksScanAt.Lte(v)) }
+func (q Query) DisksScanAtIsNull() Query                   { return q.Where(DisksScanAt.IsNull()) }
+func (q Query) DisksScanAtIsNotNull() Query                { return q.Where(DisksScanAt.IsNotNull()) }
+func (q Query) DisksRescanEq(v bool) Query                 { return q.Where(DisksRescan.Eq(v)) }
+func (q Query) DisksRescanNotEq(v bool) Query              { return q.Where(DisksRescan.NotEq(v)) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at", "android_apps" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at", "android_apps", "disks", "disks_state", "disks_scan_id", "disks_scan_at", "disks_rescan" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1840,6 +1962,36 @@ var orderTable = [nCols][4]string{
 		"\"android_apps\" ASC NULLS FIRST",
 		"\"android_apps\" DESC NULLS LAST",
 	},
+	{ // disks
+		"\"disks\"",
+		"\"disks\" DESC",
+		"\"disks\" ASC NULLS FIRST",
+		"\"disks\" DESC NULLS LAST",
+	},
+	{ // disks_state
+		"\"disks_state\"",
+		"\"disks_state\" DESC",
+		"\"disks_state\" ASC NULLS FIRST",
+		"\"disks_state\" DESC NULLS LAST",
+	},
+	{ // disks_scan_id
+		"\"disks_scan_id\"",
+		"\"disks_scan_id\" DESC",
+		"\"disks_scan_id\" ASC NULLS FIRST",
+		"\"disks_scan_id\" DESC NULLS LAST",
+	},
+	{ // disks_scan_at
+		"\"disks_scan_at\"",
+		"\"disks_scan_at\" DESC",
+		"\"disks_scan_at\" ASC NULLS FIRST",
+		"\"disks_scan_at\" DESC NULLS LAST",
+	},
+	{ // disks_rescan
+		"\"disks_rescan\"",
+		"\"disks_rescan\" DESC",
+		"\"disks_rescan\" ASC NULLS FIRST",
+		"\"disks_rescan\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1879,6 +2031,11 @@ var identTable = [nCols]string{
 	"\"logs_scan_id\"",
 	"\"logs_scan_at\"",
 	"\"android_apps\"",
+	"\"disks\"",
+	"\"disks_state\"",
+	"\"disks_scan_id\"",
+	"\"disks_scan_at\"",
+	"\"disks_rescan\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1911,7 +2068,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [34][28]runtime.Frag{
+var fragTable = [39][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2932,6 +3089,156 @@ var fragTable = [34][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // disks
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"disks\" @> $", B: ""},
+		{A: "\"disks\" <@ $", B: ""},
+		{A: "\"disks\" ?| $", B: ""},
+		{A: "\"disks\" ?& $", B: ""},
+		{A: "\"disks\" IS NULL", B: ""},
+		{A: "\"disks\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // disks_state
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"disks_state\" @> $", B: ""},
+		{A: "\"disks_state\" <@ $", B: ""},
+		{A: "\"disks_state\" ?| $", B: ""},
+		{A: "\"disks_state\" ?& $", B: ""},
+		{A: "\"disks_state\" IS NULL", B: ""},
+		{A: "\"disks_state\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // disks_scan_id
+		{}, // opNone
+		{A: "\"disks_scan_id\" = $", B: ""},
+		{A: "\"disks_scan_id\" <> $", B: ""},
+		{A: "\"disks_scan_id\" > $", B: ""},
+		{A: "\"disks_scan_id\" >= $", B: ""},
+		{A: "\"disks_scan_id\" < $", B: ""},
+		{A: "\"disks_scan_id\" <= $", B: ""},
+		{A: "lower(\"disks_scan_id\") = lower($", B: ")"},
+		{A: "\"disks_scan_id\" LIKE $", B: ""},
+		{A: "\"disks_scan_id\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"disks_scan_id\" = ANY($", B: ")"},
+		{A: "\"disks_scan_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"disks_scan_id\" IS NULL", B: ""},
+		{A: "\"disks_scan_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // disks_scan_at
+		{}, // opNone
+		{A: "\"disks_scan_at\" = $", B: ""},
+		{A: "\"disks_scan_at\" <> $", B: ""},
+		{A: "\"disks_scan_at\" > $", B: ""},
+		{A: "\"disks_scan_at\" >= $", B: ""},
+		{A: "\"disks_scan_at\" < $", B: ""},
+		{A: "\"disks_scan_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"disks_scan_at\" IS NULL", B: ""},
+		{A: "\"disks_scan_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // disks_rescan
+		{}, // opNone
+		{A: "\"disks_rescan\" = $", B: ""},
+		{A: "\"disks_rescan\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3131,6 +3438,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.LogsScanID = runtime.NullText(rv[31], sl)
 	r.LogsScanAt = runtime.Nullable(rv[32], runtime.Timestamptz)
 	r.AndroidApps = runtime.NullJSON(rv[33], sl)
+	r.Disks = runtime.NullJSON(rv[34], sl)
+	r.DisksState = runtime.NullJSON(rv[35], sl)
+	r.DisksScanID = runtime.NullText(rv[36], sl)
+	r.DisksScanAt = runtime.Nullable(rv[37], runtime.Timestamptz)
+	r.DisksRescan = runtime.Bool(rv[38])
 	return decErr
 }
 
@@ -3297,6 +3609,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 34:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 35:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 36:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3425,6 +3749,26 @@ func (q Query) bindPreds(b *binder) []any {
 			b.jsns[njs] = q.jsns[njs]
 			v = append(v, &b.jsns[njs])
 			njs++
+		case 34:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 35:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 36:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 37:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 38:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v

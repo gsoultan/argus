@@ -385,6 +385,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerScriptRoutes(mux)
 	a.registerSoftwareFileRoutes(mux)
 	a.registerLogCleanupRoutes(mux)
+	a.registerDiskGrowRoutes(mux)
 	a.registerCloudRoutes(mux)
 	a.registerCloudChangeRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
@@ -926,6 +927,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// sent is going. Absent from an agent older than package updates.
 		Packages *PackageBeat `json:"packages"`
 		Logs     *LogBeat     `json:"logs"`
+		// Disks is each filesystem's stack and how a grow it was sent is
+		// going. Absent from an agent older than disk growing.
+		Disks *DiskBeat `json:"disks"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -1030,6 +1034,10 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Log cleanup, likewise.
 		if o := a.heartbeatLogs(r.Context(), in.Hostname, in.Logs); o != nil {
 			reply["logs"] = o
+		}
+		// Growing disks, likewise.
+		if o := a.heartbeatDisks(r.Context(), in.Hostname, in.Disks); o != nil {
+			reply["disks"] = o
 		}
 	}
 	if errors.Is(err, ErrAgentUnmatched) {
