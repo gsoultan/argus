@@ -249,7 +249,7 @@ function Connect() {
     return (
       <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
-          crumbs={[{ label: 'Servers', to: '/assets' }, { label: short }]}
+          crumbs={[{ label: 'Assets', to: '/assets' }, { label: short }]}
           title={`${principalLabel(session.principal, openedAsset)} on ${short}`}
           status={
             <Badge
@@ -626,7 +626,7 @@ function Connect() {
   return (
     <Box>
       <PageHeader
-        crumbs={[{ label: 'Servers', to: '/assets' }, { label: name || 'Connect' }]}
+        crumbs={[{ label: 'Assets', to: '/assets' }, { label: name || 'Connect' }]}
         title={selected ? `Connect to ${name}` : 'Connect'}
         status={selected && <ReachBadge reach={reachOf(selected)} />}
         description={selected

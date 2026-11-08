@@ -51,6 +51,7 @@ enforces all of it and CI runs it by name.
 | [log-cleanup](log-cleanup.md) | Log cleanup: what the scan reports, how a cleanup is planned and re-checked, the evidence never cleaned, rules |
 | [disk-grow](disk-grow.md) | Growing disks: each filesystem's stack and answer, NVMe and rescans, how a grow is planned, re-checked and run, rules |
 | [android-devices](android-devices.md) | Android devices as assets: kind, view/control, the android service, the Add-a-device wizard, the phone toolbar |
+| [asset-types](asset-types.md) | Servers, workstations and devices: the kind, the tabs each type gets, the plan for who is asked before a session |
 
 ## Standing rules for this repo
 

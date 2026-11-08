@@ -14,7 +14,7 @@ test('follows the operating system by default', async ({ browser }) => {
     const ctx = await browser.newContext({ colorScheme, serviceWorkers: 'block' })
     const page = await ctx.newPage()
     await page.goto('/assets')
-    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
     expect(await scheme(page)).toBe(colorScheme)
     await ctx.close()
   }

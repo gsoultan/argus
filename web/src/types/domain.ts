@@ -225,8 +225,9 @@ export interface Asset {
    */
   desktopMode?: DesktopMode
   /**
-   * What this row is: a `server`, or an `android` device driven through the
-   * Argus app on it. A device opens the way a shared Windows console does
+   * What this row is: a `server`, a `workstation` (a laptop or PC someone
+   * uses, stored and opened exactly as a server is), or an `android` device
+   * driven through the Argus app on it. A device opens the way a shared Windows console does
    * (protocol `rdp`, desktop mode `screen`) and has no accounts: its
    * principals are `view` and `control`. Absent from an older control
    * plane, which is `server`.
@@ -627,7 +628,7 @@ export interface AssetInput {
 export type DesktopMode = 'rdp' | 'screen'
 
 /** What an asset is; see Asset.kind. */
-export type AssetKind = 'server' | 'android'
+export type AssetKind = 'server' | 'workstation' | 'android'
 
 /**
  * How an Android device is controlled: `attended`, where whoever holds it

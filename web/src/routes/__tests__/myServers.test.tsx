@@ -98,7 +98,7 @@ describe('the servers someone can reach', () => {
   it('says an administrator is seeing every server, not their assignments', async () => {
     signedInAs('admin')
     await renderRoute('/mine')
-    expect(await screen.findByText(/every server in argus/i)).toBeInTheDocument()
+    expect(await screen.findByText(/every server, workstation and device in argus/i)).toBeInTheDocument()
   })
 })
 
@@ -184,16 +184,16 @@ describe('asking for more', () => {
 describe('the menu follows the role', () => {
   const menu = async () => {
     const nav = await screen.findByRole('navigation', { name: 'Main' })
-    await within(nav).findByRole('link', { name: /^servers/i })
+    await within(nav).findByRole('link', { name: /^assets/i })
     return within(nav).getAllByRole('link').map((l) => l.textContent?.replace(/\d+$/, ''))
   }
 
   // Asked for in so many words: an ordinary user's console is their servers,
   // the databases and message brokers they were given, and what they did on them.
-  it('shows a member Home, Servers, Databases, Brokers and My activity', async () => {
+  it('shows a member Home, Assets, Databases, Brokers and My activity', async () => {
     signedInAs('operator')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'Brokers', 'My activity'])
+    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'My activity'])
     expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument()
   })
 
@@ -201,28 +201,28 @@ describe('the menu follows the role', () => {
   it('adds Approvals for an approver', async () => {
     signedInAs('approver')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'Brokers', 'Approvals', 'My activity'])
+    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'Approvals', 'My activity'])
   })
 
   it('shows an administrator the eight', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'Brokers', 'Cloud', 'Approvals', 'Teams', 'Activity', 'Settings'])
+    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'Cloud', 'Approvals', 'Teams', 'Activity', 'Settings'])
   })
 
   it.each([
     ['/assets/add', 'auditor'], ['/audit', 'operator'], ['/settings', 'operator'],
     ['/teams', 'operator'], ['/assets/id-web-01', 'operator'],
-  ] as const)('sends %s to Servers for an %s', async (path, role) => {
+  ] as const)('sends %s to Assets for an %s', async (path, role) => {
     signedInAs(role)
     await renderRoute(path)
-    expect(await screen.findByRole('heading', { name: 'Servers' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Assets' })).toBeInTheDocument()
   })
 
   it.each(['/mine', '/coverage', '/requests'] as const)('keeps the old address %s working', async (path) => {
     signedInAs('admin')
     await renderRoute(path)
-    expect(await screen.findByRole('heading', { name: /Servers|Approvals/ })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Assets|Approvals/ })).toBeInTheDocument()
   })
 })
 

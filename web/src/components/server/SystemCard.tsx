@@ -134,7 +134,7 @@ export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false }
               <Text size={FS.meta} c="dimmed" maw={440} mx="auto" lh={1.5}>
                 This server&apos;s agent does not report its processor, memory or disks. Update it to see them here.
               </Text>
-              <Button size="xs" variant="default" mt="sm" onClick={() => onTab('settings')}>Update agent</Button>
+              <Button size="xs" variant="default" mt="sm" onClick={() => onTab('agent')}>Update agent</Button>
             </>
           )}
         </Box>

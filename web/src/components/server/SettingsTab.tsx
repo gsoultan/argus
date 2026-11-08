@@ -2,20 +2,19 @@ import { Alert, Badge, Box, Button, Card, Group, Modal, Stack, Text } from '@man
 import { useDisclosure } from '@mantine/hooks'
 import { useNavigate } from '@tanstack/react-router'
 import { IconAlertTriangle, IconPencil, IconShieldCheck, IconTrash } from '@tabler/icons-react'
-import { AgentUpdateCard } from '~/components/AgentUpdate'
 import { Digest, HostKeyBadge, Mono, absTime, relTime } from '~/components/primitives'
 import { usePin } from '~/components/server/hostKey'
 import { SettingsSection, SettingsSections } from '~/components/server/layout'
 import { connectsBy } from '~/components/server/OverviewTab'
-import { isConfigured } from '~/lib/live'
 import { run } from '~/lib/notify'
 import { useArchiveAsset } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
+import { assetNoun } from '~/lib/assetType'
 
 /**
- * The controls a server needs rarely: its details, its host key, its agent,
- * and taking it out of Argus.
+ * The controls an asset needs rarely: its details, its host key, and taking
+ * it out of Argus. Its agent has a tab of its own (AgentTab).
  */
 export function SettingsTab({ asset, canEdit, onEdit }: {
   asset: Asset
@@ -75,19 +74,8 @@ export function SettingsTab({ asset, canEdit, onEdit }: {
         </SettingsSection>
       )}
 
-      {isConfigured() && (
-        <SettingsSection
-          title={device ? 'The app' : 'Agent'}
-          description={device
-            ? 'The Argus app on this device, which shares its screen and records every session on it.'
-            : 'The Argus agent on this server, which opens and records every session here.'}
-        >
-          <AgentUpdateCard asset={asset} canEdit={canEdit} bare />
-        </SettingsSection>
-      )}
-
       {canEdit && (
-        <SettingsSection title={device ? 'Remove device' : 'Remove server'} description="Its recordings and activity are kept." danger>
+        <SettingsSection title={`Remove ${assetNoun(asset)}`} description="Its recordings and activity are kept." danger>
           <RemoveServer asset={asset} />
         </SettingsSection>
       )}

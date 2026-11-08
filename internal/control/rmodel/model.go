@@ -272,7 +272,7 @@ func (m *Asset) Schema(t *storm.Table) {
 		"desktop_mode = ANY (ARRAY['rdp'::text, 'screen'::text])")
 	t.Col(&m.Kind).Default("'server'::text")
 	t.CheckNamed("assets_kind_check",
-		"kind = ANY (ARRAY['server'::text, 'android'::text])")
+		"kind = ANY (ARRAY['server'::text, 'workstation'::text, 'android'::text])")
 	t.Col(&m.ControlMode).Default("'attended'::text")
 	t.CheckNamed("assets_control_mode_check",
 		"control_mode = ANY (ARRAY['attended'::text, 'unattended'::text])")

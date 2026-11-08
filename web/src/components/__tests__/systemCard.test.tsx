@@ -70,10 +70,10 @@ describe('SystemCard', () => {
     expect(screen.getByText(/has not reported since/)).toBeTruthy()
   })
 
-  it('sends an older agent to Settings to update, and says where details come from with none', () => {
+  it('sends an older agent to the Agent tab to update, and says where details come from with none', () => {
     const onTab = show(linux(), { reported: false, os: 'Ubuntu 22.04', system: null, usage: null, usageAt: null })
     fireEvent.click(screen.getByRole('button', { name: 'Update agent' }))
-    expect(onTab).toHaveBeenCalledWith('settings')
+    expect(onTab).toHaveBeenCalledWith('agent')
     expect(screen.getByText('Ubuntu 22.04')).toBeTruthy()
   })
 

@@ -14,7 +14,8 @@ import type { UserRole } from '~/types/domain'
  *
  * - **Home**: where the console opens. What is waiting on you, then the fleet
  *   at a glance for whoever sees all of it, or your own servers otherwise.
- * - **Servers**: every server you can open, with Connect on each. An admin
+ * - **Assets**: every server, workstation and device you can open, with
+ *   Connect on each. An admin
  *   also adds and manages them here.
  * - **Databases**: every database you can open, in a query workspace. Listed
  *   next to Servers because people think "open orders", not "open core-db-01".
@@ -60,9 +61,9 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     to: '/assets',
-    label: 'Servers',
+    label: 'Assets',
     icon: IconServer2,
-    blurb: 'Connect to a server, or add one',
+    blurb: 'Connect to a server, workstation or device, or add one',
     badge: (s) => s.serversWaiting,
   },
   {
@@ -122,7 +123,7 @@ export const ALL_PAGES: NavItem[] = [
   ...NAV_ITEMS,
   {
     to: '/assets/add',
-    label: 'Add a server',
+    label: 'Add an asset',
     icon: IconCirclePlus,
     blurb: 'Install the agent and say who can use it',
     audience: 'admin',

@@ -63,7 +63,8 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 		// PersonalAccounts gives each member of the teams an account of
 		// their own on the server.
 		PersonalAccounts bool `json:"personalAccounts"`
-		// Kind "android" enrols the host as a device, with the two below.
+		// Kind "server" (the default) or "workstation" enrols a host; "android"
+		// enrols it as a device, with the two below.
 		Kind                 string `json:"kind"`
 		ControlMode          string `json:"controlMode"`
 		ControlNeedsApproval bool   `json:"controlNeedsApproval"`
@@ -81,14 +82,14 @@ func (a *API) postEnrol(w http.ResponseWriter, r *http.Request) {
 	var id string
 	var err error
 	switch in.Kind {
-	case "", "server":
-		id, err = a.store.EnrolHost(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams,
-			in.PersonalAccounts)
+	case "", "server", "workstation":
+		id, err = a.store.EnrolHostAs(r.Context(), in.Kind, hostname, sess.Email, in.Principals, in.People,
+			in.Teams, in.PersonalAccounts)
 	case "android":
 		id, err = a.store.EnrolDevice(r.Context(), hostname, sess.Email, in.Principals, in.People, in.Teams,
 			DeviceEnrol{ControlMode: in.ControlMode, ControlNeedsApproval: in.ControlNeedsApproval})
 	default:
-		writeErr(w, http.StatusBadRequest, "kind must be server or android")
+		writeErr(w, http.StatusBadRequest, "kind must be server, workstation or android")
 		return
 	}
 	if errors.Is(err, ErrAlreadyReviewed) {
@@ -186,6 +187,9 @@ func enrolDetail(hostname, kind string, principals, people []string) string {
 		return d + " Assigned to " + strings.Join(people, ", ") + "."
 	}
 	d := "Enrolled discovered host " + hostname + " as a managed asset. "
+	if kind == "workstation" {
+		d = "Enrolled discovered host " + hostname + " as a workstation, a laptop or PC someone uses. "
+	}
 	if len(principals) == 0 {
 		return d + "No login accounts were allowed and nobody is assigned to it."
 	}

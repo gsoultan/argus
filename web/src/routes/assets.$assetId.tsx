@@ -20,7 +20,10 @@ import { DisksTab, growable, stuck } from '~/components/server/DisksTab'
 import { assetDisksQuery } from '~/lib/diskQueries'
 import { assetLogsQuery } from '~/lib/logQueries'
 import { bytes } from '~/components/server/SystemCard'
-import { SERVER_TABS, SERVER_TAB_LABEL, parseServerTab, type ServerTab } from '~/components/server/tabs'
+import { parseServerTab, type ServerTab } from '~/components/server/tabs'
+import { TABS_BY_TYPE, tabLabel } from '~/components/server/tabsByType'
+import { ASSET_TYPE_LABEL, assetTypeOf } from '~/lib/assetType'
+import { AgentTab } from '~/components/server/AgentTab'
 import { assetQuery, meQuery, sessionsQuery } from '~/lib/queries'
 import { assetPackagesQuery } from '~/lib/packageQueries'
 import { isConfigured } from '~/lib/live'
@@ -52,7 +55,7 @@ export const Route = createFileRoute('/assets/$assetId')({
 function AssetDetail() {
   const navigate = useNavigate({ from: Route.fullPath })
   const { assetId } = Route.useParams()
-  const tab: ServerTab = parseServerTab(Route.useSearch().tab) ?? 'overview'
+  const asked: ServerTab = parseServerTab(Route.useSearch().tab) ?? 'overview'
   const { data: asset } = useQuery(assetQuery(assetId))
   const { data: allSessions } = useQuery(sessionsQuery())
   const { data: me } = useQuery(meQuery())
@@ -74,7 +77,7 @@ function AssetDetail() {
   if (!asset) {
     return (
       <Box>
-        <PageHeader crumbs={[{ label: 'Servers', to: '/assets' }]} title="Asset not found" />
+        <PageHeader crumbs={[{ label: 'Assets', to: '/assets' }]} title="Asset not found" />
         <PageBody>
           <Card>
             <EmptyState
@@ -88,6 +91,9 @@ function AssetDetail() {
     )
   }
 
+  // A tab this type does not have (a link to Logs on a workstation, say)
+  // lands on Overview rather than on a tab missing from the row above.
+  const tab: ServerTab = TABS_BY_TYPE[assetTypeOf(asset)].includes(asked) ? asked : 'overview'
   const sessions = allSessions?.filter((s) => s.assetId === asset.id)
   const setTab = (t: ServerTab) =>
     void navigate({ search: t === 'overview' ? {} : { tab: t }, replace: true, resetScroll: false })
@@ -97,7 +103,7 @@ function AssetDetail() {
     <SplitView storageKey="servers" label="servers" list={<ServerList currentId={asset.id} />}>
       <PageHeader
         crumbs={[
-          { label: 'Servers', to: '/assets' },
+          { label: 'Assets', to: '/assets' },
           { label: asset.hostname.split('.')[0] ?? asset.hostname },
         ]}
         title={asset.hostname}
@@ -105,7 +111,7 @@ function AssetDetail() {
         description={
           <Group gap={SP.snug} wrap="wrap">
             <Text span size="sm" c="dimmed">
-              {asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')} · {asset.address}
+              {ASSET_TYPE_LABEL[assetTypeOf(asset)].one} · {asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')} · {asset.address}
             </Text>
             {asset.tags.map((t) => (
               <Badge key={t} size="xs" variant="outline" color="slate">{t}</Badge>
@@ -138,11 +144,9 @@ function AssetDetail() {
         tabs={
           <Tabs value={tab} onChange={(v) => v && setTab(v as ServerTab)} keepMounted={false}>
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
-              {SERVER_TABS.filter((t) => {
-                // A device has no OS packages to update and no host logs to
-                // free: its tabs are Overview, Access, Sessions, Apps, Settings.
-                if (asset.kind === 'android' && (t === 'updates' || t === 'logs' || t === 'disks')) return false
-                return (t !== 'updates' && t !== 'logs' && t !== 'disks') || seesUpdates
+              {TABS_BY_TYPE[assetTypeOf(asset)].filter((t) => {
+                // Updates, disks and logs are for those who may act on them, or audit.
+                return (t !== 'updates' && t !== 'disks' && t !== 'logs') || seesUpdates
               }).map((t) => (
                 <Tabs.Tab
                   key={t}
@@ -170,7 +174,7 @@ function AssetDetail() {
                     ) : undefined
                   }
                 >
-                  {SERVER_TAB_LABEL[t]}
+                  {tabLabel(t, asset.kind)}
                 </Tabs.Tab>
               ))}
             </Tabs.List>
@@ -187,6 +191,7 @@ function AssetDetail() {
         {tab === 'updates' && seesUpdates && <UpdatesTab asset={asset} canEdit={canEdit} />}
         {tab === 'disks' && seesUpdates && <DisksTab asset={asset} canEdit={canEdit} />}
         {tab === 'logs' && seesUpdates && <LogsTab asset={asset} canEdit={canEdit} />}
+        {tab === 'agent' && <AgentTab asset={asset} canEdit={canEdit} />}
         {tab === 'settings' && (
           <SettingsTab asset={asset} canEdit={canEdit} onEdit={() => setEditing(true)} />
         )}

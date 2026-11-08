@@ -14,7 +14,8 @@ import { canSee, seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 
 /**
- * Servers: the first page for everyone, and one list.
+ * Assets: the first page for everyone, and one list of servers, workstations
+ * and devices.
  *
  * Every server you can open, each with Connect. An admin also adds servers
  * here and reaches each one's page (who can connect, its rules) from its card.
@@ -54,16 +55,16 @@ function Servers() {
   return (
     <Box>
       <PageHeader
-        title="Servers"
+        title="Assets"
         description={
           !whole
-            ? 'The servers you were given. Open a terminal in this browser, or reach them from your own.'
-            : 'Every server in Argus. Open a terminal on one, or Manage it to choose who can connect.'
+            ? 'The servers, workstations and devices you were given. Open one in this browser, or reach a server from your own terminal.'
+            : 'Every server, workstation and device in Argus. Open one, or Manage it to choose who can connect.'
         }
         actions={
           admin ? (
             <ButtonLink to="/assets/add" size="sm" leftSection={<IconPlus size={16} />}>
-              Add server
+              Add asset
             </ButtonLink>
           ) : (
             (assets?.length ?? 0) > 0 && (

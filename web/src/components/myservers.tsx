@@ -20,6 +20,7 @@ import { assetsQuery, meQuery, myServersQuery, requestsQuery } from '~/lib/queri
 import { seesWholeFleet } from '~/lib/roles'
 import type { Asset, MyServer } from '~/types/domain'
 import { kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
+import { ASSET_TYPES, ASSET_TYPE_LABEL, assetTypeOf, type AssetType } from '~/lib/assetType'
 
 // Re-exported: every page that shows a server's status imports them from here.
 export { kindOf, reachOf, shortName, type Reach }
@@ -27,6 +28,7 @@ import { FS, SP, INK } from '~/theme'
 
 type Show = 'all' | 'online' | 'offline'
 type Kind = 'all' | 'linux' | 'windows' | 'android'
+type TypeFilter = 'all' | AssetType
 
 /** What the Connect button opens: a phone's screen, a desktop or a terminal. */
 function OpenIcon({ kind, rdp }: { kind: ReturnType<typeof kindOf>; rdp: boolean }) {
@@ -91,7 +93,10 @@ export function ServerCard({ asset: a, admin = false, mine }: { asset: Asset; ad
   const reach = reachOf(a)
   const rdp = a.protocol === 'rdp'
   const kind = kindOf(a)
-  const KindIcon = kind === 'android' ? IconDeviceMobile : kind === 'windows' ? IconBrandWindows : IconServer2
+  const type = assetTypeOf(a)
+  // The type first: a laptop reads as a laptop whatever it runs.
+  const KindIcon = kind === 'android' ? IconDeviceMobile : type === 'workstation' ? IconDeviceLaptop
+    : kind === 'windows' ? IconBrandWindows : IconServer2
   const name = shortName(a.hostname)
   const noAccount = a.principals.length === 0
   const disabled = reach === 'blocked' || noAccount
@@ -117,7 +122,7 @@ export function ServerCard({ asset: a, admin = false, mine }: { asset: Asset; ad
                 {name}
               </Text>
               <Text size={FS.meta} c="dimmed" truncate>
-                {a.os} · {kind === 'android' ? 'Android device' : rdp ? 'Remote Desktop' : 'Terminal (SSH)'}
+                {type === 'workstation' ? 'Workstation · ' : ''}{a.os} · {kind === 'android' ? 'Android device' : rdp ? 'Remote Desktop' : 'Terminal (SSH)'}
               </Text>
             </Box>
           </Group>
@@ -363,6 +368,7 @@ export function ServerCards() {
   const [text, setText] = useState('')
   const [show, setShow] = useState<Show>('all')
   const [kind, setKind] = useState<Kind>('all')
+  const [type, setType] = useState<TypeFilter>('all')
 
   // Approved and not yet expired, for this person only: an approver is sent the
   // whole queue, and someone else's grant is not a server you can reach.
@@ -389,6 +395,12 @@ export function ServerCards() {
 
   const kinds = useMemo(() => new Set((assets ?? []).map(kindOf)), [assets])
   const hasBothKinds = kinds.size > 1
+  const typeCounts = useMemo(() => {
+    const c: Record<AssetType, number> = { server: 0, workstation: 0, device: 0 }
+    for (const a of assets ?? []) c[assetTypeOf(a)]++
+    return c
+  }, [assets])
+  const hasTypes = ASSET_TYPES.filter((t) => typeCounts[t] > 0).length > 1
 
   const counts = useMemo(() => {
     if (!assets) return undefined
@@ -413,17 +425,19 @@ export function ServerCards() {
           if (show === 'online' && r !== 'online' && r !== 'slow') return false
           if (show === 'offline' && (r === 'online' || r === 'slow')) return false
           if (kind !== 'all' && kindOf(a) !== kind) return false
+          if (type !== 'all' && assetTypeOf(a) !== type) return false
           return true
         })
         .sort((x, y) => shortName(x.hostname).localeCompare(shortName(y.hostname))),
-    [assets, needle, show, kind],
+    [assets, needle, show, kind, type],
   )
 
-  const filtering = needle !== '' || show !== 'all' || kind !== 'all'
+  const filtering = needle !== '' || show !== 'all' || kind !== 'all' || type !== 'all'
   const clear = () => {
     setText('')
     setShow('all')
     setKind('all')
+    setType('all')
   }
 
   return (
@@ -450,17 +464,31 @@ export function ServerCards() {
             <Group gap="md" wrap="nowrap">
               <Text size={FS.micro} c="dimmed">
                 {filtering ? `${visible.length} of ${assets.length}` : assets.length}{' '}
-                {assets.length === 1 ? 'server' : 'servers'}
+                {assets.length === 1 ? 'asset' : 'assets'}
               </Text>
               <DownloadSshConfigButton size="sm" />
             </Group>
           )
         }
       >
+        {hasTypes && (
+          <SegmentedControl
+            aria-label="Type of asset"
+            value={type}
+            onChange={(v) => setType(v as TypeFilter)}
+            data={[
+              { value: 'all', label: 'All' },
+              ...ASSET_TYPES.filter((t) => typeCounts[t] > 0).map((t) => ({
+                value: t,
+                label: `${ASSET_TYPE_LABEL[t].many} (${typeCounts[t]})`,
+              })),
+            ]}
+          />
+        )}
         <TextInput
           w={260}
           aria-label="Find a server"
-          placeholder="Find a server"
+          placeholder="Find by name, address or tag"
           leftSection={<IconSearch size={14} />}
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}

@@ -89,7 +89,8 @@ type AssetInput struct {
 	// DesktopMode is how a Windows server's desktop opens: "rdp" through its
 	// own Remote Desktop, or "screen", sharing the console without it.
 	DesktopMode string `json:"desktopMode"`
-	// Kind is "server" or "android". A device is reached over the agent
+	// Kind is "server", "workstation" (a laptop or PC someone sits at,
+	// stored and opened as a server is) or "android". A device is reached over the agent
 	// tunnel like a Windows server set to screen sharing, so it is stored
 	// as protocol rdp with desktop mode screen, whatever was sent.
 	Kind string `json:"kind"`
@@ -151,10 +152,12 @@ func (in AssetInput) normalise() (AssetInput, error) {
 	in.ControlMode = strings.ToLower(strings.TrimSpace(in.ControlMode))
 
 	switch in.Kind {
-	case "", "server":
-		in.Kind = "server"
+	case "", "server", "workstation":
+		if in.Kind == "" {
+			in.Kind = "server"
+		}
 		if in.ControlMode != "" || in.ControlNeedsApproval {
-			return bad("control mode and approval apply to a device, not a server")
+			return bad("control mode and approval apply to a device, not a %s", in.Kind)
 		}
 		in.ControlMode = "attended"
 	case "android":
@@ -178,7 +181,7 @@ func (in AssetInput) normalise() (AssetInput, error) {
 			}
 		}
 	default:
-		return bad("kind must be server or android")
+		return bad("kind must be server, workstation or android")
 	}
 
 	if !reHostname.MatchString(in.Hostname) {

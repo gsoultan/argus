@@ -101,7 +101,7 @@ test.describe('the data-source badge', () => {
   test('does not claim a connection before one has answered', async ({ page }) => {
     await page.goto('/assets')
     await signIn(page)
-    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
 
     // A control plane that is up — /auth/me still answers, so the login gate
     // lets go — but slow on the endpoints the console draws figures from.
@@ -140,7 +140,7 @@ test.describe('the data-source badge', () => {
   }) => {
     await page.goto('/assets')
     await signIn(page)
-    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
 
     // Up for auth, so the login gate still lets go; dead for everything the
     // console draws figures from.
@@ -414,7 +414,7 @@ test.describe('organizations', () => {
   test('the header names the organization and switching shows only its servers', async ({ page }) => {
     await page.goto('/assets')
     await signIn(page)
-    await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
     await expect(page.getByText('open-absent-1').first()).toBeVisible()
 
     // Always on screen, not only once there is something to switch to: a
@@ -429,7 +429,7 @@ test.describe('organizations', () => {
     // The whole console starts over in the chosen organization.
     await expect(page.getByRole('button', { name: /^Organization: Acme Logistics/ })).toBeVisible()
     // It starts over on Home; the servers are one click away.
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Servers' }).click()
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Assets' }).click()
     await expect(page.getByText('acme-web-1').first()).toBeVisible()
     await expect(page.getByText('open-absent-1')).toHaveCount(0)
   })

@@ -5,7 +5,8 @@ import {
 import { useCreateAsset, useUpdateAsset } from '~/lib/queries'
 import { run } from '~/lib/notify'
 import { SP } from '~/theme'
-import { DEVICE_PRINCIPALS, type Asset, type AssetInput, type AssetProtocol, type ControlMode, type DesktopMode } from '~/types/domain'
+import { ASSET_TYPE_BLURB } from '~/lib/assetType'
+import { DEVICE_PRINCIPALS, type Asset, type AssetInput, type AssetKind, type AssetProtocol, type ControlMode, type DesktopMode } from '~/types/domain'
 
 /**
  * Adding a host to the inventory, and editing one.
@@ -179,8 +180,25 @@ export function AssetForm({
         </Stack>
       ) : (
       <Stack gap="sm">
+        <Box>
+          <Text size="sm" fw={500}>Type</Text>
+          <Text size="xs" c="dimmed" mb={6}>
+            {ASSET_TYPE_BLURB[form.kind === 'workstation' ? 'workstation' : 'server']}
+          </Text>
+          <SegmentedControl
+            fullWidth
+            aria-label="Type"
+            value={form.kind === 'workstation' ? 'workstation' : 'server'}
+            onChange={(v) => set('kind', v as AssetKind)}
+            data={[
+              { value: 'server', label: 'Server' },
+              { value: 'workstation', label: 'Workstation (laptop or PC)' },
+            ]}
+          />
+        </Box>
         <SegmentedControl
           fullWidth
+          aria-label="Connects by"
           value={form.protocol ?? 'ssh'}
           onChange={(v) => setProtocol(v as AssetProtocol)}
           data={[

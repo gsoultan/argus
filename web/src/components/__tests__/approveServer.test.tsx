@@ -99,7 +99,7 @@ describe('approving a server', () => {
     fireEvent.click(await screen.findByRole('checkbox', { name: 'deploy' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add and connect' }))
     await waitFor(() => expect(calls()).toHaveLength(1))
-    expect(calls()[0]).toEqual({ principals: ['ubuntu', 'deploy'], people: [] })
+    expect(calls()[0]).toEqual({ principals: ['ubuntu', 'deploy'], people: [], kind: 'server' })
     await waitFor(() => expect(router.state.location.pathname).toBe('/connect'))
     expect(router.state.location.search).toEqual({ host: 'web-04.example', as: 'ubuntu', open: true })
     expect(onClose).toHaveBeenCalled()
@@ -112,8 +112,19 @@ describe('approving a server', () => {
     expect(screen.getByRole('button', { name: 'Add and connect' })).toBeDisabled()
     // Adding with nothing granted is still allowed, and says so.
     fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
-    await waitFor(() => expect(calls()).toEqual([{ principals: [], people: [] }]))
+    await waitFor(() => expect(calls()).toEqual([{ principals: [], people: [], kind: 'server' }]))
     expect(await screen.findByText(/nobody can log in yet/i)).toBeInTheDocument()
+  })
+
+  it('adds a laptop as a workstation when the admin says so', async () => {
+    const calls = enrolCalls()
+    await renderDialog()
+    await screen.findByRole('checkbox', { name: 'ubuntu' })
+    fireEvent.click(screen.getByRole('radio', { name: 'Workstation (laptop or PC)' }))
+    expect(screen.getByText(/belongs to someone/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
+    await waitFor(() => expect(calls()).toHaveLength(1))
+    expect(calls()[0]).toMatchObject({ kind: 'workstation' })
   })
 
   it('takes an account the server did not report', async () => {
