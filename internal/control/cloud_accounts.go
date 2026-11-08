@@ -27,19 +27,22 @@ var CloudEnvironments = []string{"production", "staging", "development"}
 
 // CloudAccount is one connected account.
 type CloudAccount struct {
-	ID          string            `json:"id"`
-	Provider    string            `json:"provider"`
-	Name        string            `json:"name"`
-	AccountID   string            `json:"accountId"`
-	RoleARN     string            `json:"roleArn"`
-	Access      string            `json:"access"`
-	Environment string            `json:"environment"`
-	IdentityARN string            `json:"identityArn"`
-	Regions     []string          `json:"regions"`
-	ConnectedBy string            `json:"connectedBy"`
-	ConnectedAt time.Time         `json:"connectedAt"`
-	SyncedAt    *time.Time        `json:"syncedAt"`
-	SyncErrors  map[string]string `json:"syncErrors"`
+	ID        string `json:"id"`
+	Provider  string `json:"provider"`
+	Name      string `json:"name"`
+	AccountID string `json:"accountId"`
+	RoleARN   string `json:"roleArn"`
+	// ManageRoleARN is the role changes are made with; empty when the
+	// account is read only.
+	ManageRoleARN string            `json:"manageRoleArn,omitempty"`
+	Access        string            `json:"access"`
+	Environment   string            `json:"environment"`
+	IdentityARN   string            `json:"identityArn"`
+	Regions       []string          `json:"regions"`
+	ConnectedBy   string            `json:"connectedBy"`
+	ConnectedAt   time.Time         `json:"connectedAt"`
+	SyncedAt      *time.Time        `json:"syncedAt"`
+	SyncErrors    map[string]string `json:"syncErrors"`
 	// Counts is how many of each kind are present now, by kind.
 	Counts map[string]int `json:"counts"`
 }
@@ -50,7 +53,7 @@ var ErrCloudAccountExists = errors.New("this account is already connected")
 // ErrCloudAccountNotFound is an unknown or disconnected account.
 var ErrCloudAccountNotFound = errors.New("no such cloud account")
 
-const cloudAccountCols = `a.id::text, a.provider, a.name, a.account_id, a.role_arn, a.access, a.environment,
+const cloudAccountCols = `a.id::text, a.provider, a.name, a.account_id, a.role_arn, COALESCE(a.manage_role_arn, ''), a.access, a.environment,
 	a.identity_arn, a.regions, a.connected_by, a.connected_at, a.synced_at, a.sync_errors,
 	COALESCE((SELECT jsonb_object_agg(kind, n) FROM (
 		SELECT kind, count(*) AS n FROM cloud_resources r
@@ -59,7 +62,7 @@ const cloudAccountCols = `a.id::text, a.provider, a.name, a.account_id, a.role_a
 func scanCloudAccount(row pgx.Row) (CloudAccount, error) {
 	var c CloudAccount
 	var errs, counts []byte
-	if err := row.Scan(&c.ID, &c.Provider, &c.Name, &c.AccountID, &c.RoleARN, &c.Access, &c.Environment,
+	if err := row.Scan(&c.ID, &c.Provider, &c.Name, &c.AccountID, &c.RoleARN, &c.ManageRoleARN, &c.Access, &c.Environment,
 		&c.IdentityARN, &c.Regions, &c.ConnectedBy, &c.ConnectedAt, &c.SyncedAt, &errs, &counts); err != nil {
 		return CloudAccount{}, err
 	}
@@ -105,10 +108,12 @@ func (s *Store) CloudAccount(ctx context.Context, id string) (CloudAccount, erro
 func (s *Store) CreateCloudAccount(ctx context.Context, c CloudAccount) (CloudAccount, error) {
 	var id string
 	err := s.db(ctx).QueryRow(ctx, `
-		INSERT INTO cloud_accounts (provider, name, account_id, role_arn, access, environment, identity_arn,
-			regions, connected_by)
-		VALUES ($1, $2, $3, $4, 'read', $5, $6, $7, $8) RETURNING id::text`,
-		c.Provider, c.Name, c.AccountID, c.RoleARN, c.Environment, c.IdentityARN, c.Regions, c.ConnectedBy).Scan(&id)
+		INSERT INTO cloud_accounts (provider, name, account_id, role_arn, manage_role_arn, access, environment,
+			identity_arn, regions, connected_by)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), CASE WHEN $5 = '' THEN 'read' ELSE 'manage' END, $6, $7, $8, $9)
+		RETURNING id::text`,
+		c.Provider, c.Name, c.AccountID, c.RoleARN, c.ManageRoleARN, c.Environment, c.IdentityARN, c.Regions,
+		c.ConnectedBy).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return CloudAccount{}, ErrCloudAccountExists

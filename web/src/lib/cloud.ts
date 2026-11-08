@@ -17,6 +17,8 @@ export interface CloudAccount {
   name: string
   accountId: string
   roleArn: string
+  /** The role changes are made with; absent when the account is read only. */
+  manageRoleArn?: string
   access: 'read' | 'manage'
   environment: CloudEnvironment
   identityArn: string
@@ -82,6 +84,8 @@ export interface CloudPrepared {
   principal: string
   source: string
   roleName: string
+  /** Set when the template makes the manage role too. */
+  manageRoleName?: string
   template: string
   command: string
 }
@@ -91,6 +95,7 @@ export interface CloudAccountInput {
   name: string
   accountId: string
   roleArn: string
+  manageRoleArn?: string
   environment: CloudEnvironment
 }
 
@@ -113,8 +118,8 @@ export const cloudItemsQuery = (kind: CloudKind) =>
     refetchInterval: 60_000,
   })
 
-export function prepareCloudAccount(accountId: string): Promise<CloudPrepared> {
-  return send('POST', '/api/v1/cloud/accounts/prepare', { provider: 'aws', accountId })
+export function prepareCloudAccount(accountId: string, manage = false): Promise<CloudPrepared> {
+  return send('POST', '/api/v1/cloud/accounts/prepare', { provider: 'aws', accountId, manage })
 }
 
 export function templateURL(accountId: string): string {
@@ -149,6 +154,178 @@ export function useSyncCloudAccount() {
     // The read runs in the background; look again shortly.
     onSettled: () => window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['cloud'] }), 4_000),
   })
+}
+
+export function useAllowCloudChanges() {
+  const done = useInvalidate()
+  return useMutation({
+    mutationFn: ({ id, roleArn }: { id: string; roleArn: string }) =>
+      send<CloudAccount>('PUT', `/api/v1/cloud/accounts/${encodeURIComponent(id)}/manage`, { roleArn }),
+    onSettled: done,
+  })
+}
+
+export function useMakeCloudReadOnly() {
+  const done = useInvalidate()
+  return useMutation({
+    mutationFn: (id: string) => send<CloudAccount>('DELETE', `/api/v1/cloud/accounts/${encodeURIComponent(id)}/manage`),
+    onSettled: done,
+  })
+}
+
+/* ── Changes ────────────────────────────────────────────────────────────── */
+
+export type CloudAction = 'launch' | 'start' | 'stop' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'remove'
+export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled'
+
+export interface CloudChange {
+  id: string
+  accountId: string
+  accountName: string
+  region: string
+  action: CloudAction
+  level: 'operate' | 'change' | 'remove'
+  environment: CloudEnvironment
+  resourceId: string
+  resourceName: string
+  spec: Record<string, unknown>
+  plan: Partial<CloudRemovePlanView>
+  planHash: string
+  summary: string
+  reason: string
+  state: CloudChangeState
+  requestedBy: string
+  requestedAt: string
+  decidedBy: string | null
+  decidedAt: string | null
+  appliedAt: string | null
+  requestId: string
+  result: { resourceId?: string; requestId?: string; snapshots?: Record<string, string>; detail?: string }
+  error: string
+}
+
+export interface CloudImage { family: string; label: string; id: string; name: string; linux: boolean }
+
+export interface CloudLaunchOptions {
+  images: CloudImage[]
+  sizes: string[]
+  subnets: CloudItem[]
+  firewalls: CloudItem[]
+  environment: CloudEnvironment
+  needsApproval: boolean
+  agentProblem?: string
+}
+
+export interface CloudVolume {
+  id: string
+  device: string
+  sizeGb: number
+  deleted: boolean
+  lastSnapshotAt?: string
+  lastSnapshotId?: string
+}
+
+export interface CloudRemovePlanView {
+  plan: {
+    id: string; name: string; state: string; size: string; protected: boolean; managedBy?: string
+    volumes: CloudVolume[]; publicIp?: string; elasticIp?: string
+  }
+  hash: string
+  environment: CloudEnvironment
+  needsApproval: boolean
+  server?: string
+  refusal?: string
+}
+
+export interface CloudChangeInput {
+  accountId: string
+  region: string
+  action: CloudAction
+  resourceId?: string
+  spec?: Record<string, unknown>
+  reason?: string
+  confirm?: string
+}
+
+const changesKey = ['cloud', 'changes'] as const
+
+export const cloudChangesQuery = (opts: { pending?: boolean; enabled?: boolean } = {}) =>
+  queryOptions({
+    queryKey: [...changesKey, opts.pending ? 'pending' : 'all'],
+    queryFn: () => get<{ changes: CloudChange[] }>(`/api/v1/cloud/changes${opts.pending ? '?pending=1' : ''}`).then((r) => r.changes),
+    enabled: isConfigured() && opts.enabled !== false,
+    refetchInterval: 30_000,
+  })
+
+export const cloudLaunchOptionsQuery = (accountId: string | null, region: string | null) =>
+  queryOptions({
+    queryKey: ['cloud', 'launch-options', accountId, region],
+    queryFn: () => get<CloudLaunchOptions>(
+      `/api/v1/cloud/launch-options?accountId=${encodeURIComponent(accountId ?? '')}&region=${encodeURIComponent(region ?? '')}`),
+    enabled: isConfigured() && Boolean(accountId && region),
+    staleTime: 5 * 60_000,
+  })
+
+export const cloudRemovePlanQuery = (it: CloudItem | null) =>
+  queryOptions({
+    queryKey: ['cloud', 'remove-plan', it?.accountId, it?.resource.region, it?.resource.id],
+    queryFn: () => get<CloudRemovePlanView>(`/api/v1/cloud/remove-plan?accountId=${encodeURIComponent(it!.accountId)}` +
+      `&region=${encodeURIComponent(it!.resource.region)}&resourceId=${encodeURIComponent(it!.resource.id)}`),
+    enabled: isConfigured() && Boolean(it),
+    staleTime: 0,
+    gcTime: 0,
+  })
+
+export function useAskCloudChange() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (in_: CloudChangeInput) => send<CloudChange>('POST', '/api/v1/cloud/changes', in_),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: changesKey })
+      // The change is read back by the background sync a moment later.
+      window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['cloud'] }), 5_000)
+    },
+  })
+}
+
+export function useDecideCloudChange() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, verb }: { id: string; verb: 'approve' | 'decline' | 'cancel' }) =>
+      send<CloudChange>('POST', `/api/v1/cloud/changes/${encodeURIComponent(id)}/${verb}`),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: changesKey })
+      window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['cloud'] }), 5_000)
+    },
+  })
+}
+
+/** Which environments need a second person, for what: the control plane's rule. */
+export function needsApproval(env: CloudEnvironment, level: CloudChange['level']): boolean {
+  if (env === 'production') return level === 'change' || level === 'remove'
+  if (env === 'staging') return level === 'remove'
+  return false
+}
+
+/** The environment a resource is in: its Environment tag, else its account's. */
+export function envOf(tags: Record<string, string> | undefined, account: CloudEnvironment): CloudEnvironment {
+  for (const [k, v] of Object.entries(tags ?? {})) {
+    if (k.toLowerCase() !== 'environment' && k.toLowerCase() !== 'env') continue
+    const x = v.trim().toLowerCase()
+    if (['production', 'prod', 'prd', 'live'].includes(x)) return 'production'
+    if (['staging', 'stage', 'stg', 'uat', 'preprod'].includes(x)) return 'staging'
+    if (['development', 'dev', 'test', 'testing', 'sandbox'].includes(x)) return 'development'
+  }
+  return account
+}
+
+export const CHANGE_STATE: Record<CloudChangeState, { label: string; color: string }> = {
+  awaiting_approval: { label: 'Waiting for approval', color: 'amber' },
+  applying: { label: 'Running', color: 'sky' },
+  applied: { label: 'Done', color: 'teal' },
+  failed: { label: 'Failed', color: 'rose' },
+  declined: { label: 'Declined', color: 'slate' },
+  cancelled: { label: 'Withdrawn', color: 'slate' },
 }
 
 /* ── Reading what came back ─────────────────────────────────────────────── */

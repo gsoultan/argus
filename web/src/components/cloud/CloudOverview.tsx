@@ -1,18 +1,20 @@
 import { Alert, Badge, Box, Button, Card, Flex, Group, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon } from '@mantine/core'
 import {
-  IconAlertTriangle, IconBrandAws, IconCircleCheck, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconRefresh, IconServer2,
+  IconAlertTriangle, IconBrandAws, IconCircleCheck, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
 } from '@tabler/icons-react'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { EmptyState, SectionCard } from '~/components/page'
 import { Stat, relTime } from '~/components/primitives'
 import { ButtonLink } from '~/components/links'
 import {
-  openToInternet, staleness, useDisconnectCloudAccount, useSyncCloudAccount,
+  openToInternet, prepareCloudAccount, staleness, useAllowCloudChanges, useDisconnectCloudAccount, useMakeCloudReadOnly, useSyncCloudAccount,
   type CloudAccount, type CloudBase, type CloudItem,
 } from '~/lib/cloud'
 import { run } from '~/lib/notify'
 import { FS, INK, SP } from '~/theme'
 import { EnvBadge } from './common'
+import { RoleSetup } from './RoleSetup'
 import type { CloudTab } from './tabs'
 
 export function CloudOverview({ accounts, bases, instances, firewalls, volumes, addresses, admin, onTab }: {
@@ -125,6 +127,7 @@ function Finding({ color, icon: Icon, title, text, action }: {
 function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
   const sync = useSyncCloudAccount()
   const [confirm, setConfirm] = useState(false)
+  const [access, setAccess] = useState(false)
   const stale = staleness(a)
   const counts = [
     [a.counts.instance ?? 0, 'instance'], [a.counts.volume ?? 0, 'disk'], [a.counts.firewall ?? 0, 'firewall'],
@@ -136,7 +139,9 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
           <Group gap="xs" wrap="wrap">
             <Text fw={600} size={FS.body}>{a.name}</Text>
             <EnvBadge env={a.environment} />
-            <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>
+            {a.access === 'manage'
+              ? <Badge variant="light" color="azure" radius="sm" tt="none" fw={500}>Can change</Badge>
+              : <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>}
           </Group>
           <Text size={FS.micro} c="dimmed" ff="monospace" mt={2}>{a.accountId.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3')} · {a.regions.length} region{a.regions.length === 1 ? '' : 's'}</Text>
           <Text size={FS.meta} c="dimmed" mt={SP.tight}>
@@ -153,12 +158,74 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
                 success: ['Reading again', `${a.name} is being read; this page updates when it is done.`] })}>
               Read now
             </Button>
+            {a.access === 'manage'
+              ? <Button size="xs" variant="subtle" color="gray" onClick={() => setAccess(true)}>Make read only</Button>
+              : <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
             <Button size="xs" variant="subtle" color="rose" onClick={() => setConfirm(true)}>Disconnect</Button>
           </Group>
         )}
       </Flex>
       <Disconnect a={a} opened={confirm} onClose={() => setConfirm(false)} />
+      {access && (a.access === 'manage'
+        ? <ReadOnly a={a} onClose={() => setAccess(false)} />
+        : <AllowChanges a={a} onClose={() => setAccess(false)} />)}
     </Box>
+  )
+}
+
+/**
+ * Lets Argus change an account: the same stack, updated to add the manage
+ * role, and that role pasted back. Argus assumes it before saving.
+ */
+function AllowChanges({ a, onClose }: { a: CloudAccount; onClose: () => void }) {
+  const prepared = useQuery({ queryKey: ['cloud', 'prepare-manage', a.accountId], queryFn: () => prepareCloudAccount(a.accountId, true), gcTime: 0 })
+  const allow = useAllowCloudChanges()
+  const [arn, setArn] = useState('')
+  return (
+    <Modal opened onClose={onClose} size="xl" centered title={<Text fw={700}>Allow changes in {a.name}</Text>}>
+      <Stack gap="md">
+        <Text size={FS.body} lh={1.55}>
+          Argus gets a second role, <Text span ff="monospace">ArgusManage</Text>, that can launch, start, stop, resize, tag and remove
+          instances and nothing else. Every change is made as the person who asked, waits for approval where
+          the environment asks for it, and goes in the audit log.
+        </Text>
+        {prepared.error && <Alert color="rose" variant="light">{(prepared.error as Error).message}</Alert>}
+        {prepared.data ? <RoleSetup prepared={prepared.data} update /> : !prepared.error && <Text size={FS.meta} c="dimmed">Making the template…</Text>}
+        <TextInput label="Manage role ARN" description="The stack's ManageRoleArn output, once the update is done."
+          placeholder={`arn:aws:iam::${a.accountId}:role/ArgusManage`} value={arn} onChange={(e) => setArn(e.currentTarget.value)}
+          styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button disabled={!arn.trim().startsWith('arn:')} loading={allow.isPending}
+            onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn.trim() }), { failure: 'Argus could not use that role',
+              success: ['Changes allowed', `Admins can now launch and change instances in ${a.name}.`] }).then((ok) => ok && onClose())}>
+            Check and allow
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  )
+}
+
+function ReadOnly({ a, onClose }: { a: CloudAccount; onClose: () => void }) {
+  const ro = useMakeCloudReadOnly()
+  return (
+    <Modal opened onClose={onClose} centered title={<Text fw={700}>Make {a.name} read only?</Text>}>
+      <Stack gap="md">
+        <Text size={FS.body} lh={1.55}>
+          Argus stops using the manage role, and nobody can change instances in this account from Argus. Changes waiting
+          for approval can no longer run. The role stays in AWS until the stack is updated without it.
+        </Text>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button color="amber" loading={ro.isPending}
+            onClick={() => void run(() => ro.mutateAsync(a.id), { failure: 'Could not make it read only',
+              success: ['Read only', `${a.name} can no longer be changed from Argus.`] }).then((ok) => ok && onClose())}>
+            Make read only
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }
 
@@ -196,7 +263,7 @@ function FirstAccount({ admin, base }: { admin: boolean; base?: CloudBase }) {
           <Text fw={700} size="lg">Connect your first AWS account</Text>
           <Text size={FS.body} c="dimmed" mt={SP.tight} lh={1.6}>
             See every instance, disk and firewall across your accounts and regions, which ones have an Argus server, and what is
-            open to the internet. Argus never asks for access keys: it uses a read-only role you create in the account with one click.
+            open to the internet. Argus never asks for access keys: it uses a role you create in the account with one click, read only unless you allow changes.
           </Text>
         </Box>
         <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm" w="100%">

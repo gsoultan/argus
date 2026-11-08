@@ -1,15 +1,16 @@
 import { Alert, Badge, Box, Group, Select, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconBrandAws, IconInfoCircle, IconSearch } from '@tabler/icons-react'
+import { IconBrandAws, IconCirclePlus, IconInfoCircle, IconSearch } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { CloudOverview } from '~/components/cloud/CloudOverview'
+import { ChangesList } from '~/components/cloud/ChangesList'
 import { DisksTable, InstancesTable, NetworkTables } from '~/components/cloud/CloudTables'
 import { CLOUD_TABS, CLOUD_TAB_LABEL, parseCloudTab, type CloudTab } from '~/components/cloud/tabs'
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader, Toolbar } from '~/components/page'
 import { relTime } from '~/components/primitives'
-import { cloudAccountsQuery, cloudItemsQuery, type CloudItem, type CloudKind } from '~/lib/cloud'
+import { cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, type CloudItem, type CloudKind } from '~/lib/cloud'
 import { guard } from '~/lib/guard'
 import { isConfigured } from '~/lib/live'
 import { meQuery } from '~/lib/queries'
@@ -18,9 +19,9 @@ import { FS } from '~/theme'
 
 /**
  * Cloud: the connected AWS accounts and what is in them, read every five
- * minutes through a read-only role. Nothing on this page changes anything in
- * AWS yet; launching, changing and removing come with approvals and audit in
- * the next step. See plans/cloud-management/design.md.
+ * minutes. On an account Argus may change, admins launch, stop, resize and
+ * remove instances from here; Changes lists every one, with who approved it.
+ * See plans/cloud-management/design.md.
  */
 export const Route = createFileRoute('/cloud/')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'fleet'),
@@ -37,6 +38,8 @@ function Cloud() {
   const { data: me } = useQuery(meQuery())
   const admin = canSee(me?.role, 'admin')
   const accounts = useQuery(cloudAccountsQuery())
+  const changes = useQuery(cloudChangesQuery({ enabled: tab === 'changes' }))
+  const pending = useQuery(cloudChangesQuery({ pending: true }))
   const q: Record<CloudKind, { data?: CloudItem[]; isPending: boolean }> = {
     instance: useQuery(cloudItemsQuery('instance')),
     volume: useQuery(cloudItemsQuery('volume')),
@@ -66,7 +69,7 @@ function Cloud() {
   const list = accounts.data?.accounts ?? []
   const newest = list.map((a) => a.syncedAt).filter(Boolean).sort().at(-1) ?? null
 
-  const description = 'Every instance, disk and firewall in your AWS accounts, and which instances have an Argus server. Read every five minutes through a read-only role; nothing here changes anything in AWS.'
+  const description = 'Every instance, disk and firewall in your AWS accounts, and which instances have an Argus server. Launch, stop, resize and remove instances, with approval where the environment asks for it.'
   if (!isConfigured()) {
     return (
       <Box>
@@ -83,6 +86,7 @@ function Cloud() {
   const count = (k: CloudKind) => q[k].data?.length
   const badge = (n?: number) => (n ? <Badge size="xs" variant="light" color="slate" circle={false}>{n}</Badge> : undefined)
   const hasAccounts = list.length > 0
+  const canChange = list.some((a) => a.access === 'manage')
 
   return (
     <Box>
@@ -91,14 +95,18 @@ function Cloud() {
         status={<Badge variant="light" color="slate" radius="sm" leftSection={<IconBrandAws size={12} />}>AWS</Badge>}
         description={description}
         actions={admin && hasAccounts ? (
-          <ButtonLink to="/cloud/connect" size="sm" leftSection={<IconBrandAws size={16} />}>Connect an account</ButtonLink>
+          <Group gap="xs">
+            <ButtonLink to="/cloud/connect" size="sm" variant="default" leftSection={<IconBrandAws size={16} />}>Connect an account</ButtonLink>
+            {canChange && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
+          </Group>
         ) : undefined}
         tabs={hasAccounts ? (
           <Tabs value={tab} onChange={(v) => v && setTab(v as CloudTab)} keepMounted={false}>
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
               {CLOUD_TABS.map((t) => (
                 <Tabs.Tab key={t} value={t} fz="sm" rightSection={
-                  t === 'instances' ? badge(count('instance')) : t === 'disks' ? badge(count('volume')) : t === 'network' ? badge(count('firewall')) : undefined
+                  t === 'instances' ? badge(count('instance')) : t === 'disks' ? badge(count('volume')) : t === 'network' ? badge(count('firewall'))
+                    : t === 'changes' && pending.data?.length ? <Badge size="xs" variant="filled" color="amber" circle={false}>{pending.data.length}</Badge> : undefined
                 }>
                   {CLOUD_TAB_LABEL[t]}
                 </Tabs.Tab>
@@ -110,7 +118,7 @@ function Cloud() {
       <PageBody>
         <Stack gap="md">
           {accounts.error && <Alert color="rose" variant="light">{(accounts.error as Error).message}</Alert>}
-          {tab !== 'overview' && hasAccounts && (
+          {tab !== 'overview' && tab !== 'changes' && hasAccounts && (
             <Toolbar right={<Text size={FS.meta} c="dimmed">{newest ? `Read ${relTime(newest)}` : null}</Text>}>
               <TextInput placeholder="Name, id, address or tag" leftSection={<IconSearch size={14} />} value={search}
                 onChange={(e) => setSearch(e.currentTarget.value)} w={{ base: '100%', sm: 300 }} aria-label="Search cloud resources" />
@@ -129,6 +137,10 @@ function Cloud() {
             )
           )}
           {tab === 'instances' && <InstancesTable items={narrow(q.instance.data)} loading={q.instance.isPending} names={names} filtered={filtered} />}
+          {tab === 'changes' && (
+            <ChangesList changes={changes.data} loading={changes.isPending}
+              empty={{ title: 'No changes yet', text: 'Launching, stopping, resizing and removing instances from Argus shows up here, with who asked, who approved and what AWS said.' }} />
+          )}
           {tab === 'disks' && <DisksTable items={narrow(q.volume.data)} loading={q.volume.isPending} names={names} filtered={filtered} />}
           {tab === 'network' && (
             <NetworkTables firewalls={narrow(q.firewall.data)} networks={narrow(q.network.data)} subnets={q.subnet.data}

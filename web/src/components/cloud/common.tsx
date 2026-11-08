@@ -8,6 +8,7 @@ import {
   type CloudEnvironment, type CloudItem, type CloudResource,
 } from '~/lib/cloud'
 import { FS, INK, SP } from '~/theme'
+import { InstanceActions } from './InstanceActions'
 
 export function EnvBadge({ env }: { env: CloudEnvironment }) {
   return <Badge variant="light" color={ENV_COLOR[env]} radius="sm">{ENV_LABEL[env]}</Badge>
@@ -88,6 +89,7 @@ export function ResourceDrawer({ it, onClose, names }: {
               <Badge variant="light" color="rose" radius="sm">Open to the internet: {openToInternet(r).join(', ')}</Badge>
             )}
           </Group>
+          {r.kind === 'instance' && <InstanceActions it={it} />}
           <Box style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Id"><Text size={FS.meta} ff="monospace" style={{ overflowWrap: 'anywhere' }}>{r.id}</Text></Field>
             <Field label="Account"><Text size={FS.meta}>{it.accountName}</Text></Field>

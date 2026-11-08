@@ -118,8 +118,14 @@ const BUDGET_KB = {
    * 401 listener the sign-in gate subscribes to, its "your session has ended"
    * note, and the error screen's sign-in button. All of it has to be in the
    * shell, because any page can be the one whose request finds the session gone.
+   * 307.5 kB with cloud changes as well (303.8 before; 306.3 against the
+   * build before readable errors). None of it is cloud code: with the launch page, the instance actions and the changes
+   * list sharing the menu's icons, the bundler moved ten of those icons
+   * (Home, Servers, Databases, Cloud, Settings and the like) out of the
+   * entry into a small file each. The bytes are the same; the 3.6 kB is
+   * the per-file overhead. The cloud pages themselves are in route chunks.
    */
-  overview: 305,
+  overview: 308,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -160,8 +166,10 @@ const BUDGET_KB = {
    * are in route chunks.
    * 404.8 kB with readable errors and sign-in on an expired session, the
    * same shared weight as the overview.
+   * 407.8 kB with cloud changes as well: the same icon files as the overview,
+   * above.
    */
-  sessionDetail: 406,
+  sessionDetail: 409,
 }
 
 /**
