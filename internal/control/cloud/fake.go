@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +37,9 @@ type Fake struct {
 	Protected map[string]bool
 	// LastUserData is what the last launch would have run at first boot.
 	LastUserData string
+	// PowerErr fails starting or stopping one instance, by id, in Power
+	// and in any PowerMany that names it.
+	PowerErr map[string]error
 
 	reqs, launched int
 }
@@ -179,6 +183,9 @@ func (f *Fake) Power(_ context.Context, a Account, actor Actor, region, id strin
 	if err != nil {
 		return Result{}, err
 	}
+	if e := f.PowerErr[id]; e != nil {
+		return Result{}, e
+	}
 	switch act {
 	case ActionStart:
 		f.Resources[region][i].State = "running"
@@ -186,6 +193,40 @@ func (f *Fake) Power(_ context.Context, a Account, actor Actor, region, id strin
 		f.Resources[region][i].State = "stopped"
 	}
 	return Result{ResourceID: id, RequestID: f.request()}, nil
+}
+
+// PowerMany is Power for many instances in one call, failing as a whole
+// when any of them would fail.
+func (f *Fake) PowerMany(_ context.Context, a Account, actor Actor, region string, ids []string, act Action) (Result, error) {
+	f.record(string(act) + "-many " + strings.Join(ids, ",") + " " + string(actor))
+	if err := f.admit(a); err != nil {
+		return Result{}, err
+	}
+	if len(ids) == 0 || len(ids) > MaxBulkPower {
+		return Result{}, fmt.Errorf("between 1 and %d instances", MaxBulkPower)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	idx := make([]int, len(ids))
+	for n, id := range ids {
+		i, err := f.find(region, id)
+		if err != nil {
+			return Result{}, err
+		}
+		if e := f.PowerErr[id]; e != nil {
+			return Result{}, e
+		}
+		idx[n] = i
+	}
+	for _, i := range idx {
+		switch act {
+		case ActionStart:
+			f.Resources[region][i].State = "running"
+		case ActionStop:
+			f.Resources[region][i].State = "stopped"
+		}
+	}
+	return Result{RequestID: f.request()}, nil
 }
 
 func (f *Fake) Resize(_ context.Context, a Account, actor Actor, region, id, size string) (Result, error) {
@@ -299,3 +340,8 @@ func (f *Fake) Remove(_ context.Context, a Account, actor Actor, region, id stri
 	f.Resources[region][i].State = "shutting-down"
 	return out, nil
 }
+
+var (
+	_ Manager   = (*Fake)(nil)
+	_ BulkPower = (*Fake)(nil)
+)

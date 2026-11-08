@@ -3,7 +3,7 @@ import { IconDeviceFloppy, IconNetwork, IconServer2 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { DataTable, EmptyState } from '~/components/page'
 import { relTime, rowNav } from '~/components/primitives'
-import { openToInternet, type CloudItem } from '~/lib/cloud'
+import { openToInternet, scheduleOf, type CloudItem } from '~/lib/cloud'
 import { FS, INK } from '~/theme'
 import { NameCell, ResourceDrawer, ServerCell, StateBadge, WhereCell } from './common'
 
@@ -27,9 +27,9 @@ export function InstancesTable({ items, loading, names, filtered }: TableProps) 
   const { show, drawer } = useDrawer(names)
   return (
     <>
-      <DataTable minWidth={900} loading={loading} isEmpty={(items?.length ?? 0) === 0}
+      <DataTable minWidth={980} loading={loading} isEmpty={(items?.length ?? 0) === 0}
         empty={<EmptyState icon={IconServer2} title="No instances" description={emptyText(filtered, 'instances')} />}
-        columns={['Instance', 'Account and zone', 'Type', 'State', 'Addresses', 'Argus server', 'Launched']}>
+        columns={['Instance', 'Account and zone', 'Type', 'State', 'Schedule', 'Addresses', 'Argus server', 'Launched']}>
         {items?.map((it) => {
           const r = it.resource
           return (
@@ -38,6 +38,9 @@ export function InstancesTable({ items, loading, names, filtered }: TableProps) 
               <Table.Td><WhereCell it={it} /></Table.Td>
               <Table.Td><Text size={FS.meta} ff="monospace">{r.size}</Text></Table.Td>
               <Table.Td><StateBadge state={r.state} /></Table.Td>
+              <Table.Td>
+                {scheduleOf(r.tags) ? <Text size={FS.meta} ff="monospace">{scheduleOf(r.tags)}</Text> : <Text size={FS.meta} c="dimmed">—</Text>}
+              </Table.Td>
               <Table.Td>
                 <Text size={FS.meta} ff="monospace">{r.addresses?.[0] ?? '—'}</Text>
                 {r.publicIp && <Text size={FS.micro} c="dimmed" ff="monospace">{r.publicIp} public</Text>}

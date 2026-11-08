@@ -179,6 +179,39 @@ func (p *Provider) Power(ctx context.Context, a cloud.Account, actor cloud.Actor
 	return cloud.Result{ResourceID: id, RequestID: requestID(md)}, nil
 }
 
+// PowerMany starts or stops up to cloud.MaxBulkPower instances of one
+// region in one call, as schedules do.
+func (p *Provider) PowerMany(ctx context.Context, a cloud.Account, actor cloud.Actor, region string, ids []string, act cloud.Action) (cloud.Result, error) {
+	if len(ids) == 0 || len(ids) > cloud.MaxBulkPower {
+		return cloud.Result{}, fmt.Errorf("between 1 and %d instances", cloud.MaxBulkPower)
+	}
+	c, err := p.client(ctx, a, actor, region)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	var md middleware.Metadata
+	switch act {
+	case cloud.ActionStart:
+		out, e := c.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: ids})
+		if e == nil {
+			md = out.ResultMetadata
+		}
+		err = e
+	case cloud.ActionStop:
+		out, e := c.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: ids})
+		if e == nil {
+			md = out.ResultMetadata
+		}
+		err = e
+	default:
+		return cloud.Result{}, fmt.Errorf("%q is not something a schedule does", act)
+	}
+	if err != nil {
+		return cloud.Result{}, errors.New(plain(err))
+	}
+	return cloud.Result{RequestID: requestID(md)}, nil
+}
+
 // Resize changes a stopped instance's type.
 func (p *Provider) Resize(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id, size string) (cloud.Result, error) {
 	c, err := p.client(ctx, a, actor, region)
@@ -376,3 +409,4 @@ func sortedValues(m map[string]string) []string {
 }
 
 var _ cloud.Manager = (*Provider)(nil)
+var _ cloud.BulkPower = (*Provider)(nil)

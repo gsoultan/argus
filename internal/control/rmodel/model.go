@@ -1140,7 +1140,10 @@ func All() []any {
 		&AuditEvent{},
 		&CloudAccount{},
 		&CloudChange{},
+		&CloudKeepRunning{},
 		&CloudResource{},
+		&CloudSchedule{},
+		&CloudScheduleRun{},
 		&Database{},
 		&DatabaseAssignment{},
 		&DatabaseBackup{},
@@ -1781,6 +1784,102 @@ func (m *CloudChange) Schema(t *storm.Table) {
 	t.Index(&m.Account, &m.ResourceID).Unique().Where("(state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text])) AND (resource_id <> ''::text)").Named("cloud_changes_one_open")
 	t.Index(storm.Desc(&m.RequestedAt)).Named("cloud_changes_recent")
 	t.Index(&m.Account, &m.ResourceID).Named("cloud_changes_resource")
+}
+
+// CloudSchedule is table cloud_schedules: weekly windows in one time zone
+// that start and stop the instances tagged ArgusSchedule=<name>
+// (migration 068).
+type CloudSchedule struct {
+	ID           [16]byte
+	Name         string
+	Timezone     string
+	Windows      storm.JSON
+	SkipDates    []string
+	AccountIds   [][16]byte
+	Regions      []string
+	Mode         string
+	Owner        string
+	State        string
+	PausedReason string
+	Pending      *storm.JSON
+	PendingBy    *string
+	PendingAt    *time.Time
+	Reason       string
+	CheckedAt    *time.Time
+	CreatedBy    string
+	CreatedAt    time.Time
+	UpdatedBy    string
+	UpdatedAt    time.Time
+}
+
+func (m *CloudSchedule) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Windows).Default("'[]'::jsonb")
+	t.Col(&m.SkipDates).Default("'{}'::text[]")
+	t.Col(&m.AccountIds).Default("'{}'::uuid[]")
+	t.Col(&m.Regions).Default("'{}'::text[]")
+	t.Col(&m.Mode).Default("'transitions'::text")
+	t.Col(&m.PausedReason).Default("''::text")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("cloud_schedules_mode_check", "mode = ANY (ARRAY['transitions'::text, 'enforce'::text])")
+	t.CheckNamed("cloud_schedules_name_check", "name ~ '^[A-Za-z0-9-]{1,63}$'::text")
+	t.CheckNamed("cloud_schedules_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'active'::text, 'paused'::text])")
+	t.Index(storm.Lower(&m.Name)).Unique().Named("cloud_schedules_name")
+}
+
+// CloudScheduleRun is table cloud_schedule_runs: one transition of one
+// schedule, claimed by the first control host to insert it (migration 068).
+type CloudScheduleRun struct {
+	ID         [16]byte
+	Schedule   CloudSchedule
+	DueAt      time.Time
+	Action     string
+	State      string
+	Targets    storm.JSON
+	RequestIds []string
+	Detail     string
+	Attempts   int32
+	NextAt     *time.Time
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}
+
+func (m *CloudScheduleRun) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Schedule).ConstraintName("cloud_schedule_runs_schedule_id_fkey")
+	t.Col(&m.Schedule).OnDelete(storm.Cascade)
+	t.Col(&m.Targets).Default("'[]'::jsonb")
+	t.Col(&m.RequestIds).Default("'{}'::text[]")
+	t.Col(&m.Detail).Default("''::text")
+	t.Col(&m.Attempts).Default("0")
+	t.Col(&m.StartedAt).Default("now()")
+	t.CheckNamed("cloud_schedule_runs_action_check", "action = ANY (ARRAY['start'::text, 'stop'::text])")
+	t.CheckNamed("cloud_schedule_runs_state_check", "state = ANY (ARRAY['running'::text, 'done'::text, 'partial'::text, 'failed'::text, 'skipped'::text])")
+	t.Index(&m.NextAt).Where("next_at IS NOT NULL").Named("cloud_schedule_runs_next")
+	t.Index(&m.Schedule, &m.DueAt, &m.Action).Unique().Named("cloud_schedule_runs_once")
+}
+
+// CloudKeepRunning is table cloud_keep_running: an instance every schedule
+// leaves alone until a time (migration 068).
+type CloudKeepRunning struct {
+	Account    CloudAccount
+	InstanceID string
+	Until      time.Time
+	Reason     string
+	SetBy      string
+	SetAt      time.Time
+}
+
+func (m *CloudKeepRunning) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Account, &m.InstanceID)
+	t.Name("cloud_keep_running")
+	t.Col(&m.Account).ConstraintName("cloud_keep_running_account_id_fkey")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.SetAt).Default("now()")
 }
 
 // CloudResource is table cloud_resources: what Argus last read in a cloud
