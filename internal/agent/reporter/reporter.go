@@ -148,6 +148,10 @@ type HeartbeatReply struct {
 	// decodes it. Absent from a control plane older than log cleanup: the
 	// agent then does not scan.
 	Logs json.RawMessage `json:"logs"`
+	// Disks is what the console wants done about disks, as the agent
+	// decodes it. Absent from a control plane older than disk growing: the
+	// agent then does not scan.
+	Disks json.RawMessage `json:"disks"`
 	// KeepRecordingsHours is how long the console wants this host to keep a
 	// recording once the control plane has stored it; 0 is for ever. Nil from
 	// a control plane older than the setting: the agent keeps its own default.
