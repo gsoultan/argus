@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Alert, Badge, Box, Button, Checkbox, Group, Modal, Radio, ScrollArea, SegmentedControl, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { AnchorLink } from '~/components/links'
-import { IconPackage } from '@tabler/icons-react'
+import { IconPackage, IconPower } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { relTime } from '~/components/primitives'
 import { MODE_LABEL, RunState } from '~/components/server/UpdatesTab'
@@ -61,8 +61,10 @@ export function PackageFleetCard({ canEdit }: { canEdit: boolean }) {
                 {chosen.length} selected · {chosen.reduce((n, r) => n + r.updates, 0)} updates
               </Text>
             )}
-            <Button size="compact-sm" disabled={chosen.length === 0} onClick={() => setAsking(true)}>
-              Update {chosen.length || ''} server{chosen.length === 1 ? '' : 's'}…
+            <Button size="compact-sm" disabled={chosen.length === 0} onClick={() => setAsking(true)}
+              color={filter === 'reboot' ? 'amber' : undefined}
+              leftSection={filter === 'reboot' ? <IconPower size={14} /> : undefined}>
+              {filter === 'reboot' ? 'Reboot' : 'Update'} {chosen.length || ''} server{chosen.length === 1 ? '' : 's'}…
             </Button>
           </Group>
         )}
@@ -109,7 +111,8 @@ export function PackageFleetCard({ canEdit }: { canEdit: boolean }) {
           </Table>
         </ScrollArea>
       )}
-      {asking && <AskFleet rows={chosen} onClose={() => setAsking(false)} onDone={() => { setAsking(false); setPicked([]) }} />}
+      {asking && <AskFleet rows={chosen} reboot={filter === 'reboot'} onClose={() => setAsking(false)}
+        onDone={() => { setAsking(false); setPicked([]) }} />}
     </SectionCard>
   )
 }
@@ -134,40 +137,58 @@ function FleetUpdates({ row: r }: { row: PackageFleetRow }) {
   )
 }
 
-function AskFleet({ rows, onClose, onDone }: { rows: PackageFleetRow[]; onClose: () => void; onDone: () => void }) {
+function AskFleet({ rows, reboot: rebootOnly, onClose, onDone }: {
+  rows: PackageFleetRow[]
+  /** Picked from the servers that need a reboot: reboot them, install nothing. */
+  reboot: boolean
+  onClose: () => void
+  onDone: () => void
+}) {
   const start = useStartPackageRuns()
-  const [mode, setMode] = useState<'security' | 'all'>(rows.some((r) => r.security > 0) ? 'security' : 'all')
+  const tooOld = rows.filter((r) => !r.canReboot)
+  const [mode, setMode] = useState<'security' | 'all' | 'reboot'>(
+    rebootOnly && tooOld.length === 0 ? 'reboot' : rows.some((r) => r.security > 0) ? 'security' : 'all')
   const [reboot, setReboot] = useState<PackageReboot>('never')
+  const verb = mode === 'reboot' ? 'Reboot' : 'Update'
   return (
-    <Modal opened onClose={onClose} title={`Update ${rows.length} server${rows.length === 1 ? '' : 's'}`} size="md">
+    <Modal opened onClose={onClose} title={`${verb} ${rows.length} server${rows.length === 1 ? '' : 's'}`} size="md">
       <Stack gap="sm">
         <Text size={FS.body} lh={1.5}>
-          One at a time, in this order. If one fails or is interrupted, the servers after it are not started, so a
-          bad update reaches one server rather than all of them.
+          {mode === 'reboot'
+            ? 'One at a time, in this order: each reboots once the one before it is back. If one fails to come back, the servers after it are not rebooted.'
+            : 'One at a time, in this order. If one fails or is interrupted, the servers after it are not started, so a bad update reaches one server rather than all of them.'}
         </Text>
         <Text size={FS.meta} ff="monospace" c="dimmed">{rows.map((r, i) => `${i + 1}. ${r.hostname}`).join('\n')}</Text>
-        <Radio.Group label="Install" value={mode} onChange={(m) => setMode(m as 'security' | 'all')}>
+        <Radio.Group label="Do" value={mode} onChange={(m) => setMode(m as 'security' | 'all' | 'reboot')}>
           <Stack gap={SP.cozy} mt={SP.snug}>
-            <Radio value="security" label="Security updates only" />
-            <Radio value="all" label="All updates" description="Held packages are left out either way." />
+            <Radio value="security" label="Install security updates only" />
+            <Radio value="all" label="Install all updates" description="Held packages are left out either way." />
+            <Radio value="reboot" label="Reboot only; install nothing" disabled={tooOld.length > 0}
+              description={tooOld.length > 0
+                ? `Not for ${tooOld.map((r) => r.hostname).join(', ')}: the agent is too old to reboot from here.`
+                : 'For servers waiting for a reboot after their updates.'} />
           </Stack>
         </Radio.Group>
-        <Radio.Group label="If an update needs a reboot" value={reboot} onChange={(x) => setReboot(x as PackageReboot)}>
-          <Stack gap={SP.cozy} mt={SP.snug}>
-            <Radio value="never" label="Do not reboot; tell me it is needed" />
-            <Radio value="if_needed" label="Reboot each server at the end of its run" />
-          </Stack>
-        </Radio.Group>
+        {mode !== 'reboot' && (
+          <Radio.Group label="If an update needs a reboot" value={reboot} onChange={(x) => setReboot(x as PackageReboot)}>
+            <Stack gap={SP.cozy} mt={SP.snug}>
+              <Radio value="never" label="Do not reboot; tell me it is needed" />
+              <Radio value="if_needed" label="Reboot each server at the end of its run" />
+            </Stack>
+          </Radio.Group>
+        )}
         <Alert color="slate" p="xs">
           <Text size={FS.meta}>Servers whose rule needs a second admin wait for approval in their turn.</Text>
         </Alert>
         <Group justify="flex-end" gap="sm">
           <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button loading={start.isPending} onClick={() => void run(
-            () => start.mutateAsync({ assetIds: rows.map((r) => r.assetId), mode, reboot }),
-            { failure: 'Updates not started', success: ['Updates asked for', `${rows[0]?.hostname ?? 'The first server'} starts within 30 seconds; the others follow one by one.`] },
+          <Button loading={start.isPending} color={mode === 'reboot' ? 'rose' : undefined} onClick={() => void run(
+            () => start.mutateAsync({ assetIds: rows.map((r) => r.assetId), mode, reboot: mode === 'reboot' ? 'if_needed' : reboot }),
+            mode === 'reboot'
+              ? { failure: 'Reboots not started', success: ['Reboots asked for', `${rows[0]?.hostname ?? 'The first server'} reboots within 30 seconds; the others follow one by one.`] }
+              : { failure: 'Updates not started', success: ['Updates asked for', `${rows[0]?.hostname ?? 'The first server'} starts within 30 seconds; the others follow one by one.`] },
           ).then((ok) => ok && onDone())}>
-            Update {rows.length} server{rows.length === 1 ? '' : 's'}
+            {verb} {rows.length} server{rows.length === 1 ? '' : 's'}
           </Button>
         </Group>
       </Stack>

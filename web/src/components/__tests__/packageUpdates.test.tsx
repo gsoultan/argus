@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UpdatesTab, heldBy, windowText } from '~/components/server/UpdatesTab'
 import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
-import type { PackagePolicy, PackageRun, PackagesView } from '~/lib/live'
+import { PackageFleetCard } from '~/components/PackageFleet'
+import type { PackageFleetRow, PackagePolicy, PackageRun, PackagesView } from '~/lib/live'
 import { theme } from '~/theme'
 import type { Asset } from '~/types/domain'
 
@@ -21,6 +22,8 @@ const live = vi.hoisted(() => ({
   packageRun: vi.fn(),
   packagePolicy: vi.fn(),
   savePackagePolicy: vi.fn(),
+  packageFleet: vi.fn(),
+  startPackageRuns: vi.fn(),
 }))
 
 vi.mock('~/lib/live', async (orig) => ({
@@ -33,6 +36,10 @@ vi.mock('~/lib/packageApi', async (orig) => ({
   ...live,
 }))
 
+vi.mock('~/components/links', () => ({
+  AnchorLink: ({ children }: { children: React.ReactNode }) => <a href="/assets">{children}</a>,
+}))
+
 const asset = { id: 'a1', hostname: 'web-01', protocol: 'ssh' } as Asset
 
 const rule = {
@@ -41,7 +48,7 @@ const rule = {
 }
 
 const view = (over: Partial<PackagesView> = {}): PackagesView => ({
-  hostname: 'web-01', enrolled: true, reported: true, supported: true, checking: false, checkAsked: false,
+  hostname: 'web-01', enrolled: true, reported: true, supported: true, canReboot: true, checking: false, checkAsked: false,
   report: {
     checked_at: new Date().toISOString(), manager: 'apt', supported: true, utc_offset_minutes: 0,
     updates: [
@@ -187,6 +194,123 @@ describe('UpdatesTab', () => {
     expect(await screen.findByText('Waiting for approval')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Take back' })).toBeTruthy()
+  })
+})
+
+describe('Reboot', () => {
+  const needs = (over: Partial<PackagesView> = {}) => {
+    const v = view(over)
+    return { ...v, report: { ...v.report!, reboot_required: true } }
+  }
+
+  it('says a reboot is needed where it shows, and reboots after asking', async () => {
+    live.assetPackages.mockResolvedValue(needs())
+    live.startPackageRun.mockResolvedValue(runOf({ mode: 'reboot', reboot: 'if_needed' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('This server needs a reboot')).toBeTruthy()
+    expect(screen.getByText('Needed now')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Reboot now…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Reboot web-01?')).toBeTruthy()
+    expect(within(dialog).getByText(/Nothing is installed/)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Reboot web-01' }))
+    await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1', { mode: 'reboot', reboot: 'if_needed' }))
+  })
+
+  it('does nothing when the reboot is cancelled', async () => {
+    live.assetPackages.mockResolvedValue(needs())
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Reboot now…' }))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(live.startPackageRun).not.toHaveBeenCalled()
+  })
+
+  it('says when the reboot waits for a second admin', async () => {
+    live.assetPackages.mockResolvedValue(needs({ rule: { ...rule, needsApproval: true } }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Reboot now…' }))
+    expect(within(await screen.findByRole('dialog')).getByText(/waits until another admin approves it/)).toBeTruthy()
+  })
+
+  it('shows no banner when no reboot is needed', async () => {
+    live.assetPackages.mockResolvedValue(view())
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('openssl')).toBeTruthy()
+    expect(screen.queryByText('This server needs a reboot')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reboot now…' })).toBeNull()
+  })
+
+  it('tells someone who may not reboot who can, with no button', async () => {
+    live.assetPackages.mockResolvedValue(needs())
+    renderWith(<UpdatesTab asset={asset} canEdit={false} />)
+    expect(await screen.findByText(/An admin or owner can reboot it from here/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Reboot now…' })).toBeNull()
+  })
+
+  it('asks to update an agent too old to reboot', async () => {
+    live.assetPackages.mockResolvedValue(needs({ canReboot: false }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/too old to reboot from the console/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Reboot now…' })).toBeNull()
+  })
+
+  it('waits for a run going before it offers a reboot', async () => {
+    live.assetPackages.mockResolvedValue(needs({ runs: [runOf({ state: 'queued' })] }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/once the run going now has ended/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Reboot now…' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('follows a reboot going in place of the banner', async () => {
+    live.assetPackages.mockResolvedValue(needs({
+      runs: [runOf({ mode: 'reboot', reboot: 'if_needed', state: 'rebooting', step: 'reboot',
+        message: 'rebooting, as asked from the console', sentAt: new Date().toISOString() })],
+    }))
+    live.packageRun.mockResolvedValue(runOf({ mode: 'reboot', state: 'rebooting' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('rebooting, as asked from the console')).toBeTruthy()
+    expect(screen.getAllByText('Rebooting').length).toBeGreaterThan(0)
+    expect(screen.queryByText('This server needs a reboot')).toBeNull()
+    expect(screen.queryByText('Refresh package lists')).toBeNull()
+  })
+})
+
+describe('PackageFleetCard', () => {
+  const row = (over: Partial<PackageFleetRow>): PackageFleetRow => ({
+    assetId: 'a1', hostname: 'web-01', tags: [], os: 'Ubuntu 24.04', reported: true, supported: true, manager: 'apt',
+    checkedAt: new Date().toISOString(), updates: 0, security: 0, rebootRequired: true, canReboot: true, mode: 'notify',
+    run: null, ...over,
+  })
+
+  it('reboots the servers waiting for one, one at a time, installing nothing', async () => {
+    live.packageFleet.mockResolvedValue([row({}), row({ assetId: 'a2', hostname: 'web-02' })])
+    live.startPackageRuns.mockResolvedValue([])
+    renderWith(<PackageFleetCard canEdit />)
+    fireEvent.click(await screen.findByText('Reboot needed 2'))
+    fireEvent.click(screen.getByLabelText('Update web-02'))
+    fireEvent.click(screen.getByLabelText('Update web-01'))
+    fireEvent.click(screen.getByRole('button', { name: 'Reboot 2 servers…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect((within(dialog).getByLabelText('Reboot only; install nothing') as HTMLInputElement).checked).toBe(true)
+    expect(within(dialog).queryByText('If an update needs a reboot')).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Reboot 2 servers' }))
+    await waitFor(() => expect(live.startPackageRuns.mock.calls[0]?.[0]).toEqual(
+      { assetIds: ['a2', 'a1'], mode: 'reboot', reboot: 'if_needed' }))
+  })
+
+  it('does not offer a reboot-only run when an agent is too old for one', async () => {
+    live.packageFleet.mockResolvedValue([row({}), row({ assetId: 'a2', hostname: 'old-01', canReboot: false })])
+    renderWith(<PackageFleetCard canEdit />)
+    fireEvent.click(await screen.findByText('Reboot needed 2'))
+    fireEvent.click(screen.getByLabelText('Update web-01'))
+    fireEvent.click(screen.getByLabelText('Update old-01'))
+    fireEvent.click(screen.getByRole('button', { name: 'Reboot 2 servers…' }))
+    const dialog = await screen.findByRole('dialog')
+    const only = within(dialog).getByLabelText('Reboot only; install nothing') as HTMLInputElement
+    expect(only.disabled).toBe(true)
+    expect(only.checked).toBe(false)
+    expect(within(dialog).getByText(/Not for old-01/)).toBeTruthy()
   })
 })
 

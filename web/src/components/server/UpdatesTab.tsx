@@ -4,7 +4,7 @@ import {
   SimpleGrid, Skeleton, Stack, Table, Text, ThemeIcon,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { IconCheck, IconCircleDashed, IconPackage, IconRefresh, IconX } from '@tabler/icons-react'
+import { IconCheck, IconCircleDashed, IconPackage, IconPower, IconRefresh, IconX } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { absTime, relTime, Stat } from '~/components/primitives'
 import {
@@ -76,6 +76,9 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
         <>
           {active && <ActiveRun run={active} canEdit={canEdit} />}
           <Summary view={v} />
+          {v.report?.reboot_required && active?.mode !== 'reboot' && (
+            <RebootNeeded view={v} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
+          )}
           <Packages view={v} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
         </>
       )}
@@ -139,6 +142,74 @@ function Summary({ view: v }: { view: PackagesView }) {
         value={r?.reboot_required ? 'Needed now' : kernel ? 'Will be needed' : 'Not needed'}
         sub={r?.reboot_required ? 'an installed update waits for one' : kernel ? `${kernel.name} ${kernel.available}` : undefined} />
     </SimpleGrid>
+  )
+}
+
+/* ── Reboot ──────────────────────────────────────────────────────────────── */
+
+/**
+ * The server says installed updates wait for a reboot: say so where it is
+ * seen, with the button that does it.
+ */
+function RebootNeeded({ view: v, assetId, canEdit, busy }: {
+  view: PackagesView
+  assetId: string
+  canEdit: boolean
+  busy: boolean
+}) {
+  const [asking, setAsking] = useState(false)
+  const why = !canEdit ? 'An admin or owner can reboot it from here.'
+    : !v.canReboot ? "This server's agent is too old to reboot from the console. Update the agent from the Settings tab first."
+      : busy ? 'It can be rebooted once the run going now has ended.'
+        : null
+  return (
+    <Alert color="amber" p="sm" icon={<IconPower size={18} />} title="This server needs a reboot">
+      <Group justify="space-between" align="center" gap="sm" wrap="wrap">
+        <Text size={FS.body} lh={1.5} style={{ flex: '1 1 260px' }}>
+          Updates are installed and take effect once it restarts.{why ? ` ${why}` : ''}
+        </Text>
+        {canEdit && v.canReboot && (
+          <Button size="sm" color="amber" leftSection={<IconPower size={16} />} disabled={busy}
+            onClick={() => setAsking(true)}>
+            Reboot now…
+          </Button>
+        )}
+      </Group>
+      {asking && <ConfirmReboot assetId={assetId} view={v} onClose={() => setAsking(false)} />}
+    </Alert>
+  )
+}
+
+function ConfirmReboot({ assetId, view: v, onClose }: { assetId: string; view: PackagesView; onClose: () => void }) {
+  const start = useStartPackageRun(assetId)
+  return (
+    <Modal opened onClose={onClose} title={`Reboot ${v.hostname}?`} size="md">
+      <Stack gap="sm">
+        <Text size={FS.body} lh={1.5}>
+          The server restarts now. Sessions to it drop, and what it serves is down until it is back, usually a minute
+          or two. Nothing is installed. Argus confirms it came back on a new boot, then looks for updates again.
+        </Text>
+        {v.rule.needsApproval && (
+          <Alert color="azure" p="xs">
+            <Text size={FS.body}>This server's rule asks for a second admin: the reboot waits until another admin approves it.</Text>
+          </Alert>
+        )}
+        <Group justify="flex-end" gap="sm">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button color="rose" leftSection={<IconPower size={16} />} loading={start.isPending} onClick={() => void notifyRun(
+            () => start.mutateAsync({ mode: 'reboot', reboot: 'if_needed' }),
+            {
+              failure: 'Reboot not started',
+              success: v.rule.needsApproval
+                ? ['Waiting for approval', 'Another admin approves the reboot before it starts.']
+                : ['Reboot asked for', 'The server reboots at its next check-in, within 30 seconds.'],
+            },
+          ).then((ok) => ok && onClose())}>
+            Reboot {v.hostname}
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }
 
@@ -368,6 +439,10 @@ function ConfirmRun({ assetId, mode, names, view: v, onClose }: {
 
 /* ── A run going ─────────────────────────────────────────────────────────── */
 
+const REBOOT_STEPS: { key: string; label: string; detail: string }[] = [
+  { key: 'reboot', label: 'Reboot', detail: 'the server restarts; Argus confirms it came back on a new boot' },
+]
+
 const STEPS: { key: string; label: string; detail: string }[] = [
   { key: 'refresh', label: 'Refresh package lists', detail: 'and work out what to install' },
   { key: 'install', label: 'Install', detail: 'changed configuration files are kept as they are' },
@@ -376,6 +451,7 @@ const STEPS: { key: string; label: string; detail: string }[] = [
 ]
 
 export function runTitle(r: PackageRun): string {
+  if (r.mode === 'reboot') return 'Reboot'
   if (r.mode === 'script') return `Script · ${r.scriptName ?? ''}`
   if (r.mode === 'install' || r.mode === 'remove') {
     const names = (r.items ?? []).map((i) => i.name)
@@ -407,21 +483,26 @@ export function RunState({ state }: { state: PackageRun['state'] }) {
 function ActiveRun({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) {
   const started = r.state === 'running' || r.state === 'rebooting'
   const { data: full } = useQuery(packageRunQuery(r.id, started))
-  const at = STEPS.findIndex((s) => s.key === (r.state === 'rebooting' ? 'reboot' : r.step))
+  const reboot = r.mode === 'reboot'
+  const steps = reboot ? REBOOT_STEPS : STEPS
+  const at = steps.findIndex((s) => s.key === (r.state === 'rebooting' || reboot ? 'reboot' : r.step))
   return (
-    <SectionCard title="Update run" icon={IconPackage} badge={<RunState state={r.state} />}
-      description={`${runTitle(r)} · ${r.trigger === 'automatic' ? 'started by its rule' : `asked by ${r.requestedBy}`} ${relTime(r.requestedAt)}${r.reboot === 'if_needed' ? ' · reboot if needed' : ''}`}
+    <SectionCard title={reboot ? 'Reboot' : 'Update run'} icon={reboot ? IconPower : IconPackage} badge={<RunState state={r.state} />}
+      description={reboot
+        ? `Asked by ${r.requestedBy} ${relTime(r.requestedAt)}`
+        : `${runTitle(r)} · ${r.trigger === 'automatic' ? 'started by its rule' : `asked by ${r.requestedBy}`} ${relTime(r.requestedAt)}${r.reboot === 'if_needed' ? ' · reboot if needed' : ''}`}
       action={<RunActions run={r} canEdit={canEdit} />}>
       {!started ? (
         <Text size={FS.body} c="dimmed" lh={1.5}>
           {r.state === 'awaiting_approval' ? 'Another admin approves this run before the server is asked to start it.'
-            : r.state === 'waiting' ? 'Servers in this batch are updated one at a time; this one goes when the one before it is done.'
-              : 'Asked. The server starts at its next check-in, within 30 seconds.'}
+            : r.state === 'waiting' ? 'Servers in this batch go one at a time; this one goes when the one before it is done.'
+              : reboot ? 'Asked. The server reboots at its next check-in, within 30 seconds.'
+                : 'Asked. The server starts at its next check-in, within 30 seconds.'}
         </Text>
       ) : (
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
           <Stack gap={SP.cozy}>
-            {STEPS.map((s, i) => {
+            {steps.map((s, i) => {
               const done = at > i
               const now = at === i
               const skipped = s.key === 'reboot' && r.reboot === 'never'

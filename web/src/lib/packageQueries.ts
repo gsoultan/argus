@@ -64,7 +64,7 @@ export function useCheckPackages(assetId: string) {
 export function useStartPackageRun(assetId: string) {
   const done = useInvalidate()
   return useMutation({
-    mutationFn: (body: { mode: 'all' | 'security' | 'selected'; packages?: string[]; reboot: PackageReboot }) =>
+    mutationFn: (body: { mode: 'all' | 'security' | 'selected' | 'reboot'; packages?: string[]; reboot: PackageReboot }) =>
       startPackageRun(assetId, body),
     onSettled: done,
   })

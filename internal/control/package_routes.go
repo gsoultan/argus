@@ -188,6 +188,9 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	}
 	detail := fmt.Sprintf("The %s on %s (%s, %s) %s: %s %d package%s", runNoun(r), r.AssetHostname,
 		describeMode(r), who, strings.ReplaceAll(r.State, "_", " "), changed, len(r.Upgraded), plural(len(r.Upgraded)))
+	if r.Mode == PackagesReboot {
+		detail = fmt.Sprintf("The reboot of %s (%s) %s", r.AssetHostname, who, strings.ReplaceAll(r.State, "_", " "))
+	}
 	if len(r.Started) > 0 {
 		detail += ", started " + strings.Join(r.Started, ", ")
 	}
@@ -210,7 +213,7 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	switch {
 	case r.State == RunFailed || r.State == RunInterrupted:
 		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from ",
-			PackagesScript: "A script on ", PackagesFileInstall: "Installing on "}[r.Mode]
+			PackagesScript: "A script on ", PackagesFileInstall: "Installing on ", PackagesReboot: "Rebooting "}[r.Mode]
 		if verb == "" {
 			verb = "Updating "
 		}
@@ -226,9 +229,11 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 		a.raiseAlert(ctx, ConsoleAlert{
 			Kind: AlertServer, Severity: "info", Audience: AudienceAdmins,
 			Title:  r.AssetHostname + " needs a reboot",
-			Detail: "Updates were installed and take effect after a reboot, which the run was told not to do.",
-			Link:   link,
+			Detail: "Updates were installed and take effect after a reboot. Reboot it from its Updates tab.",
+			Link:   link, Subject: rebootSubject(r.Hostname),
 		})
+	case r.Rebooted:
+		a.closeAlerts(ctx, rebootSubject(r.Hostname), "Rebooted")
 	}
 	if r.BatchID != nil {
 		if err := a.store.advanceBatch(ctx, *r.BatchID); err != nil {
@@ -243,6 +248,8 @@ func describeMode(r PackageRun) string {
 		return "all updates"
 	case PackagesSecurity:
 		return "security updates"
+	case PackagesReboot:
+		return "a reboot"
 	case PackagesInstall, PackagesRemove:
 		return describeSoftware(r.Mode, r.Items, r.Purge)
 	case PackagesScript:
@@ -281,6 +288,8 @@ func runPhrase(r PackageRun) string {
 		return "disabling " + describeMode(r)
 	case AppRestore:
 		return "restoring " + describeMode(r)
+	case PackagesReboot:
+		return "rebooting the server"
 	}
 	return "installing " + describeMode(r)
 }
@@ -302,6 +311,8 @@ func runNoun(r PackageRun) string {
 		return "app uninstall"
 	case AppDisable, AppRestore:
 		return "app change"
+	case PackagesReboot:
+		return "reboot"
 	}
 	return "update run"
 }
@@ -375,6 +386,7 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 	}
 	if st != nil {
 		v.Reported, v.Supported, v.Reason, v.Checking, v.Installs = true, st.Supported, st.Reason, st.Checking, st.Installs
+		v.CanReboot = st.Reboot
 	}
 	v.Report = report
 	policy, err := a.store.PackagePolicy(ctx)
@@ -395,6 +407,16 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 	}
 	t.view = v
 	return t, nil
+}
+
+// rebootReady refuses a reboot an agent too old to do one would fail.
+func rebootReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
+	if in.Mode == PackagesReboot && !t.view.CanReboot {
+		writeErr(w, http.StatusConflict, "this server's agent is too old to reboot from the console; "+
+			"update the agent from its Settings tab first")
+		return false
+	}
+	return true
 }
 
 // packagesReady says whether a run can be asked of t now, answering the
@@ -489,6 +511,10 @@ func (in *runRequest) validate() error {
 	switch in.Mode {
 	case PackagesAll, PackagesSecurity:
 		in.Packages = nil
+	case PackagesReboot:
+		// A reboot is the whole run: whatever was said about rebooting.
+		in.Packages, in.Reboot = nil, "if_needed"
+		return nil
 	case "selected":
 		if len(in.Packages) == 0 {
 			return errors.New("pick at least one package to install")
@@ -503,7 +529,7 @@ func (in *runRequest) validate() error {
 		}
 		in.Packages = dedupe(in.Packages)
 	default:
-		return errors.New("say what to install: all, security or selected")
+		return errors.New("say what to do: all, security, selected or reboot")
 	}
 	switch in.Reboot {
 	case "", "never":
@@ -559,7 +585,7 @@ func (a *API) postAssetPackageRun(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "package updates", err)
 		return
 	}
-	if !packagesReady(w, t) {
+	if !packagesReady(w, t) || !rebootReady(w, t, in) {
 		return
 	}
 	runs, err := a.store.CreatePackageRuns(r.Context(), []newRun{a.newManualRun(t, in, sess.Email)})
@@ -639,6 +665,11 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, asset.Hostname+": "+reason)
 			return
 		}
+		if req.Mode == PackagesReboot && !t.view.CanReboot {
+			writeErr(w, http.StatusConflict, asset.Hostname+": its agent is too old to reboot from the console; "+
+				"update the agent from its Settings tab first")
+			return
+		}
 		runs = append(runs, a.newManualRun(t, req, sess.Email))
 		links[asset.Hostname] = asset.ID
 	}
@@ -671,16 +702,23 @@ func (a *API) packageRunsAsked(r *http.Request, by string, runs []PackageRun, li
 		if run.State == RunAwaitingApproval {
 			waits = "; it waits for another admin to approve it"
 		}
+		detail := fmt.Sprintf("Asked to install %s on %s, %s%s%s.", describeMode(run), run.AssetHostname,
+			reboot, order, waits)
+		title, ask := by+" asks to update "+run.AssetHostname, "Install "+describeMode(run)
+		if run.Mode == PackagesReboot {
+			order = strings.Replace(order, "updated", "rebooted", 1)
+			detail = fmt.Sprintf("Asked to reboot %s%s%s.", run.AssetHostname, order, waits)
+			title, ask = by+" asks to reboot "+run.AssetHostname, "Reboot it"
+		}
 		a.auditAsset(r, AuditEvent{
 			Action: "packages.run_requested", Severity: "notice", ActorEmail: by, Target: run.AssetHostname,
-			Detail: fmt.Sprintf("Asked to install %s on %s, %s%s%s.", describeMode(run), run.AssetHostname,
-				reboot, order, waits),
+			Detail: detail,
 		})
 		if run.State == RunAwaitingApproval {
 			a.raiseAlert(r.Context(), ConsoleAlert{
 				Kind: AlertApproval, Severity: "warning", Audience: AudienceAdmins, Actor: by,
-				Title:   by + " asks to update " + run.AssetHostname,
-				Detail:  "Install " + describeMode(run) + ". Approve or deny it on the server's Updates tab.",
+				Title:   title,
+				Detail:  ask + ". Approve or deny it on the server's Updates tab.",
 				Link:    "/assets/" + links[run.AssetHostname] + "?tab=updates",
 				Subject: packageRunSubject(run.ID),
 			})
@@ -689,6 +727,10 @@ func (a *API) packageRunsAsked(r *http.Request, by string, runs []PackageRun, li
 }
 
 func packageRunSubject(id string) string { return "package-run:" + id }
+
+// rebootSubject is what a server's "needs a reboot" alert is about, so a
+// reboot closes it.
+func rebootSubject(agent string) string { return "package-reboot:" + strings.ToLower(agent) }
 
 func (a *API) getPackageRun(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.authenticate(r)
