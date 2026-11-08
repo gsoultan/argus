@@ -16,6 +16,8 @@ import { SessionsTab } from '~/components/server/SessionsTab'
 import { SettingsTab } from '~/components/server/SettingsTab'
 import { UpdatesTab } from '~/components/server/UpdatesTab'
 import { cleanable, diskFilling, LogsTab } from '~/components/server/LogsTab'
+import { DisksTab, growable, stuck } from '~/components/server/DisksTab'
+import { assetDisksQuery } from '~/lib/diskQueries'
 import { assetLogsQuery } from '~/lib/logQueries'
 import { bytes } from '~/components/server/SystemCard'
 import { SERVER_TABS, SERVER_TAB_LABEL, parseServerTab, type ServerTab } from '~/components/server/tabs'
@@ -64,6 +66,9 @@ function AssetDetail() {
   const { data: logs } = useQuery({ ...assetLogsQuery(assetId), enabled: isConfigured() && seesUpdates })
   const freeable = logs?.report ? cleanable(logs) : 0
   const filling = logs ? diskFilling(logs) : false
+  const { data: disks } = useQuery({ ...assetDisksQuery(assetId), enabled: isConfigured() && seesUpdates && asset?.kind !== 'android' })
+  const growRoom = disks ? growable(disks) : 0
+  const diskStuck = disks ? stuck(disks) : false
   const [editing, setEditing] = useState(false)
 
   if (!asset) {
@@ -136,8 +141,8 @@ function AssetDetail() {
               {SERVER_TABS.filter((t) => {
                 // A device has no OS packages to update and no host logs to
                 // free: its tabs are Overview, Access, Sessions, Apps, Settings.
-                if (asset.kind === 'android' && (t === 'updates' || t === 'logs')) return false
-                return (t !== 'updates' && t !== 'logs') || seesUpdates
+                if (asset.kind === 'android' && (t === 'updates' || t === 'logs' || t === 'disks')) return false
+                return (t !== 'updates' && t !== 'logs' && t !== 'disks') || seesUpdates
               }).map((t) => (
                 <Tabs.Tab
                   key={t}
@@ -148,6 +153,10 @@ function AssetDetail() {
                       <Badge size="xs" variant="light" color="slate" circle={false}>{sessions.length}</Badge>
                     ) : t === 'updates' && waiting > 0 ? (
                       <Badge size="xs" variant="light" color={securityWaiting > 0 ? 'rose' : 'slate'} circle={false}>{waiting}</Badge>
+                    ) : t === 'disks' && growRoom >= 1024 ** 3 ? (
+                      <Badge size="xs" variant="light" color="teal" circle={false}>+{bytes(growRoom)}</Badge>
+                    ) : t === 'disks' && diskStuck ? (
+                      <Badge size="xs" variant="light" color="amber" circle={false}>full</Badge>
                     ) : t === 'logs' && freeable >= 1024 ** 3 ? (
                       <Badge size="xs" variant="light" color={filling ? 'amber' : 'slate'} circle={false}>{bytes(freeable)}</Badge>
                     ) : t === 'settings' && needsAttention ? (
@@ -176,6 +185,7 @@ function AssetDetail() {
         {tab === 'sessions' && <SessionsTab asset={asset} sessions={sessions} />}
         {tab === 'apps' && <AppsTab asset={asset} canEdit={canEdit} />}
         {tab === 'updates' && seesUpdates && <UpdatesTab asset={asset} canEdit={canEdit} />}
+        {tab === 'disks' && seesUpdates && <DisksTab asset={asset} canEdit={canEdit} />}
         {tab === 'logs' && seesUpdates && <LogsTab asset={asset} canEdit={canEdit} />}
         {tab === 'settings' && (
           <SettingsTab asset={asset} canEdit={canEdit} onEdit={() => setEditing(true)} />

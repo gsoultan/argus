@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
-  IconFileText, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
+  IconDatabase, IconFileText, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -24,6 +24,7 @@ import { Organizations } from '~/components/Organizations'
 import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
 import { SoftwareLibrary } from '~/components/SoftwareLibrary'
 import { LogCleanupSettings } from '~/components/LogCleanupSettings'
+import { DiskGrowSettings } from '~/components/DiskGrowSettings'
 import { ControlStatusSection, useStatusProblems } from '~/components/ControlStatus'
 import { ControlUpdateSection } from '~/components/ControlUpdate'
 import {
@@ -71,7 +72,7 @@ const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
 type PlatformSectionId = 'organizations' | 'status' | 'control-updates'
-type ServerSectionId = 'updates' | 'software' | 'logs'
+type ServerSectionId = 'updates' | 'software' | 'logs' | 'disks'
 type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId
 
 interface NavItem {
@@ -168,6 +169,7 @@ function Settings() {
       { id: 'updates', label: 'Updates', icon: IconPackage, changed: false },
       { id: 'software', label: 'Software', icon: IconTerminal2, changed: false },
       { id: 'logs', label: 'Log cleanup', icon: IconFileText, changed: false },
+      { id: 'disks', label: 'Disk growing', icon: IconDatabase, changed: false },
     ]
     : []
   const items = [...statusItems, ...policyItems, ...serverItems, ...controlItems, ...platformItems]
@@ -365,6 +367,7 @@ function Settings() {
             {active === 'updates' && serverItems.length > 0 && <PackageUpdateSettings canEdit={canEdit} />}
             {active === 'software' && serverItems.length > 0 && <SoftwareLibrary canEdit={canEdit} />}
             {active === 'logs' && serverItems.length > 0 && <LogCleanupSettings canEdit={canEdit} />}
+            {active === 'disks' && serverItems.length > 0 && <DiskGrowSettings canEdit={canEdit} />}
 
             {active === 'organizations' && platformItems.length > 0 && <Organizations />}
 

@@ -98,6 +98,14 @@ type Agent struct {
 	// AndroidApps is the apps installed on a device, as its agent last
 	// reported them (migration 061).
 	AndroidApps *storm.JSON
+	// Disks is each filesystem's stack and whether it can grow, as the
+	// agent last reported it; DisksState whether it can grow disks at all
+	// (migration 064).
+	Disks       *storm.JSON
+	DisksState  *storm.JSON
+	DisksScanID *string
+	DisksScanAt *time.Time
+	DisksRescan bool
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -108,6 +116,7 @@ func (m *Agent) Schema(t *storm.Table) {
 	t.Col(&m.MatchedAsset).Default("false")
 	t.Col(&m.Os).Default("''::text")
 	t.Col(&m.Addresses).Default("'{}'::text[]")
+	t.Col(&m.DisksRescan).Default("false")
 	t.Col(&m.Accounts).Default("'{}'::text[]")
 	t.Col(&m.SshPorts).Default("'{}'::integer[]")
 	t.Col(&m.EnrollmentState).Default("'unreviewed'::text")
@@ -1134,6 +1143,8 @@ func All() []any {
 		&DirectLoginRequest{},
 		&GatewayPolicy{},
 		&HostKeyPin{},
+		&DiskGrowRun{},
+		&DiskGrowRule{},
 		&LogCleanupRun{},
 		&LogCleanupRule{},
 		&PackageRun{},
@@ -1258,6 +1269,79 @@ func (m *DatabaseChange) Schema(t *storm.Table) {
 	t.Col(&m.ApprovalID).Default("''::text")
 	t.Index(&m.Database, &m.Seq).Named("database_changes_database")
 	t.Index(&m.At).Named("database_changes_at")
+}
+
+// DiskGrowRun is table disk_grow_runs: growing one filesystem on one
+// server (migration 064).
+type DiskGrowRun struct {
+	ID            [16]byte
+	Hostname      string
+	AssetHostname string
+	Trigger       string
+	State         string
+	FsKey         string
+	Mount         string
+	Path          storm.JSON
+	GrowBytes     int64
+	PlannedBytes  int64
+	Summary       string
+	Reason        string
+	RequestedBy   string
+	RequestedAt   time.Time
+	DecidedBy     *string
+	DecidedAt     *time.Time
+	SentAt        *time.Time
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
+	UpdatedAt     time.Time
+	Step          string
+	Message       string
+	Steps         storm.JSON
+	TableBefore   string
+	SizeBefore    int64
+	SizeAfter     int64
+	AutoDay       *string
+}
+
+func (m *DiskGrowRun) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.GrowBytes).Default("0")
+	t.Col(&m.PlannedBytes).Default("0")
+	t.Col(&m.Summary).Default("''::text")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.Col(&m.Step).Default("''::text")
+	t.Col(&m.Message).Default("''::text")
+	t.Col(&m.Steps).Default("'[]'::jsonb")
+	t.Col(&m.TableBefore).Default("''::text")
+	t.Col(&m.SizeBefore).Default("0")
+	t.Col(&m.SizeAfter).Default("0")
+	t.CheckNamed("disk_grow_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'queued'::text, 'running'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
+	t.CheckNamed("disk_grow_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")
+	t.Index(storm.Lower(&m.Hostname), storm.Desc(&m.RequestedAt)).Named("disk_grow_runs_host")
+	t.Index(storm.Lower(&m.Hostname)).Unique().Where("state = ANY (ARRAY['queued'::text, 'running'::text])").Named("disk_grow_runs_one_active")
+	t.Index(storm.Lower(&m.Hostname), &m.AutoDay).Unique().Where("trigger = 'automatic'::text").Named("disk_grow_runs_one_per_day")
+}
+
+// DiskGrowRule is table disk_grow_rules: whether a grow on servers with a
+// tag waits for approval, and when one starts on its own (migration 064).
+type DiskGrowRule struct {
+	ID            [16]byte
+	Position      int32
+	Tag           string
+	NeedsApproval bool
+	AutoPercent   int32
+}
+
+func (m *DiskGrowRule) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.NeedsApproval).Default("false")
+	t.Col(&m.AutoPercent).Default("0")
+	t.UniqueNamed("disk_grow_rules_tag_key", &m.Tag)
+	t.CheckNamed("disk_grow_rules_auto_percent_check", "(auto_percent = 0) OR ((auto_percent >= 50) AND (auto_percent <= 99))")
 }
 
 // LogCleanupRun is table log_cleanup_runs: a log cleanup on one server

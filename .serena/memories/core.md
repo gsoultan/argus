@@ -49,6 +49,7 @@ enforces all of it and CI runs it by name.
 | [package-updates](package-updates.md) | Operating system updates: the agent's helper, runs on the heartbeat, rules and windows, what survives a restart |
 | [software-install](software-install.md) | Installing and removing software: tunnel questions, previews with a hash, runs as package runs, protection, undo |
 | [log-cleanup](log-cleanup.md) | Log cleanup: what the scan reports, how a cleanup is planned and re-checked, the evidence never cleaned, rules |
+| [disk-grow](disk-grow.md) | Growing disks: each filesystem's stack and answer, NVMe and rescans, how a grow is planned, re-checked and run, rules |
 | [android-devices](android-devices.md) | Android devices as assets: kind, view/control, the android service, the Add-a-device wizard, the phone toolbar |
 
 ## Standing rules for this repo

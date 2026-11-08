@@ -108,6 +108,20 @@ func main() {
 		plan := fs.String("plan", "", "the cleanup plan the daemon wrote")
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(agent.RunLogsClean(*plan))
+	case "disks-scan":
+		// Run by the daemon outside its sandbox: each filesystem's stack and
+		// whether it can grow. Reads only.
+		fs := flag.NewFlagSet("disks-scan", flag.ExitOnError)
+		req := fs.String("req", "", "the scan request the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunDisksScan(*req, os.Stdout))
+	case "disks-grow":
+		// Run by the daemon in a unit of its own to grow the filesystem the
+		// console asked for.
+		fs := flag.NewFlagSet("disks-grow", flag.ExitOnError)
+		plan := fs.String("plan", "", "the grow plan the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunDisksGrow(*plan))
 	case "software-query":
 		// Run by the software service outside the agent's sandbox: one
 		// question about installed or installable software on stdin, the
@@ -281,6 +295,8 @@ func runDaemon(args []string) int {
 	pkgs.Fetch = rep.Download
 	// Log cleanup: the same, from the same binary.
 	logs := agent.NewLogs(*stateDir, exe, log)
+	// Growing disks: the same, from the same binary.
+	disks := agent.NewDisks(*stateDir, exe, log)
 	updater.Marker = agent.UpdateMarkerPath(*socket)
 	var (
 		openStreams atomic.Int64
@@ -651,6 +667,7 @@ func runDaemon(args []string) int {
 		}
 		pkgBeat := pkgs.Beat()
 		logBeat := logs.Beat()
+		diskBeat := disks.Beat()
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
@@ -667,6 +684,7 @@ func runDaemon(args []string) int {
 			"usage":             usageReport,
 			"packages":          pkgBeat,
 			"logs":              logBeat,
+			"disks":             diskBeat,
 		})
 		// Like an update: only a delivered reply starts or stops anything.
 		if ok {
@@ -690,6 +708,16 @@ func runDaemon(args []string) int {
 				}
 			}
 			logs.Handle(ctx, logOrders)
+			disks.Delivered(diskBeat)
+			var diskOrders *agent.DiskOrders
+			if len(reply.Disks) > 0 && string(reply.Disks) != "null" {
+				diskOrders = &agent.DiskOrders{}
+				if err := json.Unmarshal(reply.Disks, diskOrders); err != nil {
+					log.Error("disks: cannot read the console's orders", "error", err)
+					diskOrders = nil
+				}
+			}
+			disks.Handle(ctx, diskOrders)
 		}
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
@@ -814,6 +842,12 @@ func runDaemon(args []string) int {
 		}
 	}
 	go logs.Watch(ctx)
+	disks.Changed = func() {
+		if rep.Enabled() {
+			heartbeat()
+		}
+	}
+	go disks.Watch(ctx)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what

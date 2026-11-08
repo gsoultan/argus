@@ -71,6 +71,11 @@ func _assertAgentShape(m m0.Agent) {
 		m.LogsScanID,
 		m.LogsScanAt,
 		m.AndroidApps,
+		m.Disks,
+		m.DisksState,
+		m.DisksScanID,
+		m.DisksScanAt,
+		m.DisksRescan,
 	}
 }
 
@@ -552,6 +557,54 @@ func _assertDirectLoginRequestShape(m m0.DirectLoginRequest) {
 		m.KeyType,
 		m.KeyComment,
 		m.KeyFound,
+	}
+}
+
+// _assertDiskGrowRuleShape fails to compile if m0.DiskGrowRule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDiskGrowRuleShape(m m0.DiskGrowRule) {
+	type shape m0.DiskGrowRule
+	_ = shape{
+		m.ID,
+		m.Position,
+		m.Tag,
+		m.NeedsApproval,
+		m.AutoPercent,
+	}
+}
+
+// _assertDiskGrowRunShape fails to compile if m0.DiskGrowRun gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDiskGrowRunShape(m m0.DiskGrowRun) {
+	type shape m0.DiskGrowRun
+	_ = shape{
+		m.ID,
+		m.Hostname,
+		m.AssetHostname,
+		m.Trigger,
+		m.State,
+		m.FsKey,
+		m.Mount,
+		m.Path,
+		m.GrowBytes,
+		m.PlannedBytes,
+		m.Summary,
+		m.Reason,
+		m.RequestedBy,
+		m.RequestedAt,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.SentAt,
+		m.StartedAt,
+		m.FinishedAt,
+		m.UpdatedAt,
+		m.Step,
+		m.Message,
+		m.Steps,
+		m.TableBefore,
+		m.SizeBefore,
+		m.SizeAfter,
+		m.AutoDay,
 	}
 }
 

@@ -36,9 +36,12 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * toolbar are in chunks that are not stored.
  * 720.7 kB with Cloud in the menu: the item and its icon, and the two cloud
  * routes' guards and search rule in the entry. The pages are not stored.
+ * 722.1 kB with the Disks tab (722.0 before, same build): its name in the
+ * server page's tab list and the shared stylesheet. The tab, its dialog and
+ * Settings › Disk growing are in chunks that are not stored.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 722
+const MAX_KB = 723
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
