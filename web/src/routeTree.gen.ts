@@ -25,6 +25,7 @@ import { Route as UsersRouteImport } from './routes/users'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
 import { Route as AssetsAddRouteImport } from './routes/assets.add'
+import { Route as AssetsUpdatesRouteImport } from './routes/assets.updates'
 import { Route as BrokersIndexRouteImport } from './routes/brokers.index'
 import { Route as BrokersBrokerIdRouteImport } from './routes/brokers.$brokerId'
 import { Route as CloudIndexRouteImport } from './routes/cloud.index'
@@ -116,6 +117,11 @@ const AssetsAddRoute = AssetsAddRouteImport.update({
   path: '/assets/add',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssetsUpdatesRoute = AssetsUpdatesRouteImport.update({
+  id: '/assets/updates',
+  path: '/assets/updates',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BrokersIndexRoute = BrokersIndexRouteImport.update({
   id: '/brokers/',
   path: '/brokers/',
@@ -183,6 +189,7 @@ export interface FileRoutesByFullPath {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/assets/updates': typeof AssetsUpdatesRoute
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
   '/cloud/launch': typeof CloudLaunchRoute
@@ -211,6 +218,7 @@ export interface FileRoutesByTo {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/assets/updates': typeof AssetsUpdatesRoute
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
   '/cloud/launch': typeof CloudLaunchRoute
@@ -240,6 +248,7 @@ export interface FileRoutesById {
   '/users': typeof UsersRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/assets/updates': typeof AssetsUpdatesRoute
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
   '/cloud/launch': typeof CloudLaunchRoute
@@ -270,6 +279,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/assets/updates'
     | '/brokers/$brokerId'
     | '/cloud/connect'
     | '/cloud/launch'
@@ -298,6 +308,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/assets/updates'
     | '/brokers/$brokerId'
     | '/cloud/connect'
     | '/cloud/launch'
@@ -326,6 +337,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/assets/updates'
     | '/brokers/$brokerId'
     | '/cloud/connect'
     | '/cloud/launch'
@@ -355,6 +367,7 @@ export interface RootRouteChildren {
   UsersRoute: typeof UsersRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
+  AssetsUpdatesRoute: typeof AssetsUpdatesRoute
   BrokersBrokerIdRoute: typeof BrokersBrokerIdRoute
   CloudConnectRoute: typeof CloudConnectRoute
   CloudLaunchRoute: typeof CloudLaunchRoute
@@ -482,6 +495,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssetsAddRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assets/updates': {
+      id: '/assets/updates'
+      path: '/assets/updates'
+      fullPath: '/assets/updates'
+      preLoaderRoute: typeof AssetsUpdatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/brokers/': {
       id: '/brokers/'
       path: '/brokers'
@@ -571,6 +591,7 @@ const rootRouteChildren: RootRouteChildren = {
   UsersRoute: UsersRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,
+  AssetsUpdatesRoute: AssetsUpdatesRoute,
   BrokersBrokerIdRoute: BrokersBrokerIdRoute,
   CloudConnectRoute: CloudConnectRoute,
   CloudLaunchRoute: CloudLaunchRoute,

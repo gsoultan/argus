@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Alert, Box, Group, Stack, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { IconClipboardCheck, IconHourglassHigh, IconPlus } from '@tabler/icons-react'
+import { IconClipboardCheck, IconHourglassHigh, IconPlus, IconRefresh } from '@tabler/icons-react'
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { ServerCards } from '~/components/myservers'
@@ -63,8 +63,17 @@ function Servers() {
         }
         actions={
           admin ? (
-            <ButtonLink to="/assets/add" size="sm" leftSection={<IconPlus size={16} />}>
-              Add asset
+            <>
+              <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
+                Updates
+              </ButtonLink>
+              <ButtonLink to="/assets/add" size="sm" leftSection={<IconPlus size={16} />}>
+                Add asset
+              </ButtonLink>
+            </>
+          ) : whole ? (
+            <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
+              Updates
             </ButtonLink>
           ) : (
             (assets?.length ?? 0) > 0 && (

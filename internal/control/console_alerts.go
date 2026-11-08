@@ -35,10 +35,12 @@ const (
 	AlertSecurity = "security"
 	AlertServer   = "server"
 	AlertBackup   = "backup"
+	// AlertUpdates is the daily digest of what is waiting to be updated.
+	AlertUpdates = "updates"
 )
 
 // AlertKinds is every kind, in the order Settings lists them.
-var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData}
+var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData, AlertUpdates}
 
 // Alert audiences.
 const (

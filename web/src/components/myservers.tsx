@@ -21,6 +21,8 @@ import { seesWholeFleet } from '~/lib/roles'
 import type { Asset, MyServer } from '~/types/domain'
 import { kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
 import { ASSET_TYPES, ASSET_TYPE_LABEL, assetTypeOf, type AssetType } from '~/lib/assetType'
+import { needsUpdates, updatesWaitingQuery, type UpdatesWaitingRow } from '~/lib/updatesWaiting'
+import { isConfigured } from '~/lib/live'
 
 // Re-exported: every page that shows a server's status imports them from here.
 export { kindOf, reachOf, shortName, type Reach }
@@ -88,7 +90,11 @@ function Dot({ color }: { color: string }) {
  * one question, "can I get on it, and how", and the answer is the status, the
  * accounts they were given, and a button.
  */
-export function ServerCard({ asset: a, admin = false, mine }: { asset: Asset; admin?: boolean; mine?: MyServer }) {
+export function ServerCard({ asset: a, admin = false, mine, waiting }: {
+  asset: Asset; admin?: boolean; mine?: MyServer
+  /** What is waiting to be updated on it, for those who see the fleet. */
+  waiting?: UpdatesWaitingRow
+}) {
   const navigate = useNavigate()
   const reach = reachOf(a)
   const rdp = a.protocol === 'rdp'
@@ -129,9 +135,15 @@ export function ServerCard({ asset: a, admin = false, mine }: { asset: Asset; ad
           <ReachBadge reach={reach} />
         </Group>
 
-        {tag && reach !== 'blocked' && !noAccount && (
+        {((tag && reach !== 'blocked' && !noAccount) || needsUpdates(waiting)) && (
           <Group gap={SP.snug}>
-            <Badge color={tag.color} variant="light" size="sm" radius="sm" tt="none" fw={600}>{tag.label}</Badge>
+            {tag && reach !== 'blocked' && !noAccount && (
+              <Badge color={tag.color} variant="light" size="sm" radius="sm" tt="none" fw={600}>{tag.label}</Badge>
+            )}
+            {!!waiting?.security && <Badge color="rose" variant="light" size="sm" radius="sm" tt="none">{waiting.security} security</Badge>}
+            {!waiting?.security && !!waiting?.updates && <Badge color="slate" variant="light" size="sm" radius="sm" tt="none">{waiting.updates} updates</Badge>}
+            {waiting?.agent === 'behind' && <Badge color="azure" variant="light" size="sm" radius="sm" tt="none">agent behind</Badge>}
+            {waiting?.rebootRequired && <Badge color="amber" variant="light" size="sm" radius="sm" tt="none">restart</Badge>}
           </Group>
         )}
 
@@ -369,6 +381,10 @@ export function ServerCards() {
   const [show, setShow] = useState<Show>('all')
   const [kind, setKind] = useState<Kind>('all')
   const [type, setType] = useState<TypeFilter>('all')
+  const [needs, setNeeds] = useState(false)
+  const { data: waiting } = useQuery({ ...updatesWaitingQuery(), enabled: whole && isConfigured() })
+  const waitingBy = useMemo(() => new Map((waiting?.assets ?? []).map((w) => [w.assetId, w])), [waiting])
+  const needCount = (assets ?? []).filter((a) => needsUpdates(waitingBy.get(a.id))).length
 
   // Approved and not yet expired, for this person only: an approver is sent the
   // whole queue, and someone else's grant is not a server you can reach.
@@ -426,14 +442,16 @@ export function ServerCards() {
           if (show === 'offline' && (r === 'online' || r === 'slow')) return false
           if (kind !== 'all' && kindOf(a) !== kind) return false
           if (type !== 'all' && assetTypeOf(a) !== type) return false
+          if (needs && !needsUpdates(waitingBy.get(a.id))) return false
           return true
         })
         .sort((x, y) => shortName(x.hostname).localeCompare(shortName(y.hostname))),
-    [assets, needle, show, kind, type],
+    [assets, needle, show, kind, type, needs, waitingBy],
   )
 
-  const filtering = needle !== '' || show !== 'all' || kind !== 'all' || type !== 'all'
+  const filtering = needle !== '' || show !== 'all' || kind !== 'all' || type !== 'all' || needs
   const clear = () => {
+    setNeeds(false)
     setText('')
     setShow('all')
     setKind('all')
@@ -503,6 +521,11 @@ export function ServerCards() {
             { value: 'offline', label: counts ? `Offline (${counts.offline})` : 'Offline' },
           ]}
         />
+        {(needCount > 0 || needs) && (
+          <Button size="xs" variant={needs ? 'filled' : 'default'} aria-pressed={needs} onClick={() => setNeeds(!needs)}>
+            Needs updates ({needCount})
+          </Button>
+        )}
         {hasBothKinds && (
           <SegmentedControl
             aria-label="Kind of server"
@@ -550,7 +573,7 @@ export function ServerCards() {
         />
       ) : (
         <CardGrid>
-          {visible.map((a) => <ServerCard key={a.id} asset={a} admin={canAdmin} mine={mineBy.get(a.hostname)} />)}
+          {visible.map((a) => <ServerCard key={a.id} asset={a} admin={canAdmin} mine={mineBy.get(a.hostname)} waiting={waitingBy.get(a.id)} />)}
         </CardGrid>
       )}
     </>
