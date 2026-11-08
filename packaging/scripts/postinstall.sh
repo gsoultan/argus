@@ -71,6 +71,36 @@ elif [ -x /usr/bin/argus-agent ] && [ -f /var/lib/argus/enrollment.json ] &&
     echo "argus-agent restarts on the new version in about 10 seconds."
 fi
 
+# A configured control plane runs again after an upgrade, on the new binary.
+# Before this, the package's preremove stopped and disabled it on every
+# upgrade and nothing started it again; where someone brought the old process
+# back, the files on disk were new but the process was not, and the console's
+# About page (which asks the process) kept showing the old version.
+#
+# "Configured" is setup having written its configuration: a fresh install has
+# none and stays unstarted (below). Enabled as well as restarted, because the
+# package being replaced may carry the old preremove, which disables it -- and
+# on rpm that runs after this script, which is the other reason this waits.
+#
+# A few seconds later, not now: an upgrade run from a console terminal goes
+# through this control plane, and restarting it ends that session -- and the
+# package manager running in it -- before it has finished.
+# An update the console asked for restarts the control plane itself and checks
+# the new version came up; a second restart from here would only get in its way.
+if [ -n "${ARGUS_CONTROL_UPDATING:-}" ]; then
+    :
+elif [ -x /usr/bin/argus-control ] && command -v systemctl >/dev/null 2>&1 &&
+   systemctl cat argus-control >/dev/null 2>&1 &&
+   { systemctl is-active --quiet argus-control 2>/dev/null ||
+     [ -f /var/lib/argus-control/control.yaml ]; }; then
+    if ! systemd-run --quiet --on-active=10s --unit="argus-control-upgrade-$$" \
+            /bin/sh -c 'systemctl enable argus-control; systemctl restart argus-control' >/dev/null 2>&1; then
+        systemctl enable argus-control >/dev/null 2>&1 || true
+        systemctl restart --no-block argus-control >/dev/null 2>&1 || true
+    fi
+    echo "argus-control restarts on the new version in about 10 seconds."
+fi
+
 # A fresh install is deliberately not enabled or started. These services need
 # certificates, secrets and an inventory before they can do anything, and a package that
 # starts a half-configured privileged-access service on install is a package
