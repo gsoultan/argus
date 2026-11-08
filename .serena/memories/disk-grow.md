@@ -4,7 +4,7 @@ The agent reads each filesystem's whole stack and says whether it can grow,
 and grows it online when the console asks or a tag's rule says so. Agent:
 `internal/agent/disks*.go`. Control plane: `internal/control/disk_grow.go`
 (types, store, planning, rules) and `disk_grow_routes.go` (heartbeat part,
-routes, audit, alerts). Migration 063. Console: the server's Disks tab
+routes, audit, alerts). Migration 064. Console: the server's Disks tab
 (`web/src/components/server/DisksTab.tsx`), Settings › Disk growing
 (`DiskGrowSettings.tsx`), calls in `web/src/lib/diskApi.ts`, queries in
 `diskQueries.ts`. Live only: nothing here has a fixture.

@@ -100,7 +100,7 @@ type Agent struct {
 	AndroidApps *storm.JSON
 	// Disks is each filesystem's stack and whether it can grow, as the
 	// agent last reported it; DisksState whether it can grow disks at all
-	// (migration 063).
+	// (migration 064).
 	Disks       *storm.JSON
 	DisksState  *storm.JSON
 	DisksScanID *string
@@ -1272,7 +1272,7 @@ func (m *DatabaseChange) Schema(t *storm.Table) {
 }
 
 // DiskGrowRun is table disk_grow_runs: growing one filesystem on one
-// server (migration 063).
+// server (migration 064).
 type DiskGrowRun struct {
 	ID            [16]byte
 	Hostname      string
@@ -1326,7 +1326,7 @@ func (m *DiskGrowRun) Schema(t *storm.Table) {
 }
 
 // DiskGrowRule is table disk_grow_rules: whether a grow on servers with a
-// tag waits for approval, and when one starts on its own (migration 063).
+// tag waits for approval, and when one starts on its own (migration 064).
 type DiskGrowRule struct {
 	ID            [16]byte
 	Position      int32
