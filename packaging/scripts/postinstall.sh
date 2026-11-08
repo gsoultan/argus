@@ -85,7 +85,11 @@ fi
 # A few seconds later, not now: an upgrade run from a console terminal goes
 # through this control plane, and restarting it ends that session -- and the
 # package manager running in it -- before it has finished.
-if [ -x /usr/bin/argus-control ] && command -v systemctl >/dev/null 2>&1 &&
+# An update the console asked for restarts the control plane itself and checks
+# the new version came up; a second restart from here would only get in its way.
+if [ -n "${ARGUS_CONTROL_UPDATING:-}" ]; then
+    :
+elif [ -x /usr/bin/argus-control ] && command -v systemctl >/dev/null 2>&1 &&
    systemctl cat argus-control >/dev/null 2>&1 &&
    { systemctl is-active --quiet argus-control 2>/dev/null ||
      [ -f /var/lib/argus-control/control.yaml ]; }; then

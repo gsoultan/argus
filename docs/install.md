@@ -832,12 +832,27 @@ they go through the tunnel like the rest of it.
 
 ## Upgrading
 
-Install the new packages over the old ones and restart:
+Install the new package over the old one, then check the new version is the
+one running:
 
 ```sh
 sudo apt install ./argus-control_<new>_linux_amd64.deb
-sudo systemctl restart argus-control
+dpkg -l argus-control | tail -1                      # the package: <new>
+curl -sk https://localhost:8080/console-config.js    # the process: "version":"<new>"
 ```
+
+The package restarts the control plane on the new binary about 10 seconds
+after it installs, and leaves it enabled. **About** in the console reports the
+running process's version, so it changes once that restart has happened.
+
+If `dpkg -l` still shows the old version, the package did not install: run the
+`apt install` again and read its output. A restart cannot help, because it
+starts the binary that is installed.
+
+Upgrading *from* 1.2.14 or older, the old package's removal script stops and
+disables the service on the way out. The new package starts it again, but if
+the console does not come back within a minute, run
+`sudo systemctl enable --now argus-control`.
 
 Upgrade the control plane first, then agents. Migrations run when
 the control plane starts. The organization registry is added to its own schema,
