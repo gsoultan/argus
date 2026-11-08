@@ -74,6 +74,8 @@ func (a *API) registerCloudRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/cloud/accounts", a.postCloudAccount)
 	mux.HandleFunc("DELETE /api/v1/cloud/accounts/{id}", a.deleteCloudAccount)
 	mux.HandleFunc("POST /api/v1/cloud/accounts/{id}/sync", a.postCloudSync)
+	mux.HandleFunc("PUT /api/v1/cloud/accounts/{id}/manage", a.putCloudManage)
+	mux.HandleFunc("DELETE /api/v1/cloud/accounts/{id}/manage", a.deleteCloudManage)
 	mux.HandleFunc("GET /api/v1/cloud/resources", a.getCloudResources)
 }
 
@@ -177,6 +179,8 @@ func (a *API) cloudBase(ctx context.Context, p cloud.Provider) CloudBase {
 type cloudPrepareIn struct {
 	Provider  string `json:"provider"`
 	AccountID string `json:"accountId"`
+	// Manage asks for the template that also makes the manage role.
+	Manage bool `json:"manage"`
 }
 
 // CloudPrepared is what the person needs to make the role in their
@@ -188,12 +192,14 @@ type CloudPrepared struct {
 	Principal  string `json:"principal"`
 	Source     string `json:"source"`
 	RoleName   string `json:"roleName"`
-	Template   string `json:"template"`
-	Command    string `json:"command"`
+	// ManageRoleName is set when the template makes the manage role too.
+	ManageRoleName string `json:"manageRoleName,omitempty"`
+	Template       string `json:"template"`
+	Command        string `json:"command"`
 }
 
 // prepare works out the role an account needs, or says why it cannot.
-func (a *API) cloudPrepare(ctx context.Context, provider, accountID string) (CloudPrepared, int, error) {
+func (a *API) cloudPrepare(ctx context.Context, provider, accountID string, manage bool) (CloudPrepared, int, error) {
 	if provider != "aws" {
 		return CloudPrepared{}, http.StatusBadRequest, errors.New("only AWS can be connected so far")
 	}
@@ -213,10 +219,15 @@ func (a *API) cloudPrepare(ctx context.Context, provider, accountID string) (Clo
 	if err != nil {
 		return CloudPrepared{}, http.StatusInternalServerError, err
 	}
-	return CloudPrepared{
+	out := CloudPrepared{
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
-		RoleName: aws.ReadRoleName, Template: aws.Template(base.Principal, ext), Command: aws.DeployCommand(base.Principal, ext),
-	}, http.StatusOK, nil
+		RoleName: aws.ReadRoleName, Template: aws.Template(base.Principal, ext, manage),
+		Command: aws.DeployCommand(base.Principal, ext, manage),
+	}
+	if manage {
+		out.ManageRoleName = aws.ManageRoleName
+	}
+	return out, http.StatusOK, nil
 }
 
 func (a *API) postCloudPrepare(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +239,7 @@ func (a *API) postCloudPrepare(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	out, code, err := a.cloudPrepare(r.Context(), in.Provider, strings.TrimSpace(in.AccountID))
+	out, code, err := a.cloudPrepare(r.Context(), in.Provider, strings.TrimSpace(in.AccountID), in.Manage)
 	if err != nil {
 		writeErr(w, code, err.Error())
 		return
@@ -244,23 +255,26 @@ func (a *API) getCloudTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("accountId"))
-	out, code, err := a.cloudPrepare(r.Context(), "aws", id)
+	manage := r.URL.Query().Get("manage") == "1"
+	out, code, err := a.cloudPrepare(r.Context(), "aws", id, manage)
 	if err != nil {
 		writeErr(w, code, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="argus-read-`+id+`.yaml"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="argus-access-`+id+`.yaml"`)
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(out.Template))
 }
 
 type cloudAccountIn struct {
-	Provider    string `json:"provider"`
-	Name        string `json:"name"`
-	AccountID   string `json:"accountId"`
-	RoleARN     string `json:"roleArn"`
-	Environment string `json:"environment"`
+	Provider  string `json:"provider"`
+	Name      string `json:"name"`
+	AccountID string `json:"accountId"`
+	RoleARN   string `json:"roleArn"`
+	// ManageRoleARN, when set, lets Argus make changes in the account.
+	ManageRoleARN string `json:"manageRoleArn"`
+	Environment   string `json:"environment"`
 }
 
 func (in *cloudAccountIn) validate() error {
@@ -279,6 +293,10 @@ func (in *cloudAccountIn) validate() error {
 	}
 	if strings.Split(in.RoleARN, ":")[4] != in.AccountID {
 		return errors.New("that role is in another account than " + in.AccountID)
+	}
+	in.ManageRoleARN = strings.TrimSpace(in.ManageRoleARN)
+	if err := checkManageRole(in.ManageRoleARN, in.AccountID, in.RoleARN); err != nil {
+		return err
 	}
 	if in.Environment == "" {
 		in.Environment = "production"
@@ -329,8 +347,25 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 			". Check the stack finished, the ARN is its ReadRoleArn output, and the template came from this Argus.")
 		return
 	}
+	access := "read only"
+	if in.ManageRoleARN != "" {
+		macct := acct
+		macct.RoleARN = in.ManageRoleARN
+		vctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		_, err := p.Verify(vctx, macct, cloud.Actor(actor))
+		cancel()
+		if err != nil {
+			a.auditAsset(r, AuditEvent{Action: "cloud.account.refused", Severity: "notice", ActorEmail: actor,
+				Target: cloudTarget(in.Provider, in.AccountID, in.Name),
+				Detail: "Could not use the manage role " + in.ManageRoleARN + ": " + err.Error()})
+			writeErr(w, http.StatusUnprocessableEntity, "Argus could read the account but not use the manage role: "+err.Error()+
+				". Check the ARN is the stack's ManageRoleArn output, or leave it empty to connect read only.")
+			return
+		}
+		access = "read and change through " + in.ManageRoleARN
+	}
 	c, err := a.store.CreateCloudAccount(r.Context(), CloudAccount{
-		Provider: in.Provider, Name: in.Name, AccountID: in.AccountID, RoleARN: in.RoleARN,
+		Provider: in.Provider, Name: in.Name, AccountID: in.AccountID, RoleARN: in.RoleARN, ManageRoleARN: in.ManageRoleARN,
 		Environment: in.Environment, IdentityARN: id.ARN, Regions: id.Regions, ConnectedBy: actor,
 	})
 	if errors.Is(err, ErrCloudAccountExists) {
@@ -343,7 +378,7 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{Action: "cloud.account.connected", Severity: "notice", ActorEmail: actor,
 		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
-		Detail: "Connected read only through " + c.RoleARN + " as " + id.ARN + ", " + c.Environment + ", " +
+		Detail: "Connected " + access + ", reading through " + c.RoleARN + " as " + id.ARN + ", " + c.Environment + ", " +
 			strconv.Itoa(len(id.Regions)) + " regions."})
 	a.syncCloudAccountSoon(r.Context(), c)
 	writeJSON(w, http.StatusCreated, c)
@@ -440,4 +475,109 @@ func matchServers(items []CloudItem, assets []Asset) {
 
 func cloudTarget(provider, accountID, name string) string {
 	return provider + " account " + accountID + " (" + name + ")"
+}
+
+// checkManageRole checks a manage role ARN beside the read role: in the
+// same account, and not the read role itself.
+func checkManageRole(arn, accountID, readRole string) error {
+	if arn == "" {
+		return nil
+	}
+	if !aws.ValidRoleARN(arn) {
+		return errors.New("the manage role is not an IAM role ARN; it looks like arn:aws:iam::" + accountID + ":role/" + aws.ManageRoleName)
+	}
+	if strings.Split(arn, ":")[4] != accountID {
+		return errors.New("the manage role is in another account than " + accountID)
+	}
+	if arn == readRole {
+		return errors.New("the manage role must be a different role from the read role")
+	}
+	return nil
+}
+
+// putCloudManage lets Argus change an account that was read only: the
+// person deployed the manage template over the stack and pastes the new
+// role, which Argus assumes as them before keeping it.
+func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := a.cloudAdmin(w, r, "allowing changes in a cloud account")
+	if !ok {
+		return
+	}
+	var in struct {
+		RoleARN string `json:"roleArn"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	c, err := a.store.CloudAccount(r.Context(), r.PathValue("id"))
+	if errors.Is(err, ErrCloudAccountNotFound) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		a.fail(w, "cloud account", err)
+		return
+	}
+	in.RoleARN = strings.TrimSpace(in.RoleARN)
+	if in.RoleARN == "" {
+		writeErr(w, http.StatusBadRequest, "paste the stack's ManageRoleArn output")
+		return
+	}
+	if err := checkManageRole(in.RoleARN, c.AccountID, c.RoleARN); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p, ok := a.cloudProvider(c.Provider)
+	if !ok {
+		writeErr(w, http.StatusNotImplemented, "this control plane was started without AWS support")
+		return
+	}
+	ext, err := a.cloudExternalID(r.Context(), c.Provider, c.AccountID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	vctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	_, err = p.Verify(vctx, cloud.Account{Provider: c.Provider, AccountID: c.AccountID, RoleARN: in.RoleARN, ExternalID: ext}, cloud.Actor(actor))
+	cancel()
+	if err != nil {
+		a.auditAsset(r, AuditEvent{Action: "cloud.account.refused", Severity: "notice", ActorEmail: actor,
+			Target: cloudTarget(c.Provider, c.AccountID, c.Name),
+			Detail: "Could not use the manage role " + in.RoleARN + ": " + err.Error()})
+		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use that role: "+err.Error()+
+			". Check the stack update finished and the ARN is its ManageRoleArn output.")
+		return
+	}
+	c, err = a.store.SetCloudManageRole(r.Context(), c.ID, in.RoleARN)
+	if err != nil {
+		a.fail(w, "cloud account", err)
+		return
+	}
+	a.auditAsset(r, AuditEvent{Action: "cloud.account.manage_allowed", Severity: "notice", ActorEmail: actor,
+		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
+		Detail: "Argus may now change instances in this account, through " + in.RoleARN + "."})
+	writeJSON(w, http.StatusOK, c)
+}
+
+// deleteCloudManage makes an account read only again. The role stays in
+// the account until someone deploys the read-only template over it.
+func (a *API) deleteCloudManage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := a.cloudAdmin(w, r, "making a cloud account read only")
+	if !ok {
+		return
+	}
+	c, err := a.store.SetCloudManageRole(r.Context(), r.PathValue("id"), "")
+	if errors.Is(err, ErrCloudAccountNotFound) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		a.fail(w, "cloud account", err)
+		return
+	}
+	a.auditAsset(r, AuditEvent{Action: "cloud.account.manage_removed", Severity: "notice", ActorEmail: actor,
+		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
+		Detail: "Argus no longer changes anything in this account. The manage role is still in it until the read-only template is deployed over the stack."})
+	writeJSON(w, http.StatusOK, c)
 }

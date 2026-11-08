@@ -1120,6 +1120,7 @@ func All() []any {
 		&AssetTeamAssignment{},
 		&AuditEvent{},
 		&CloudAccount{},
+		&CloudChange{},
 		&CloudResource{},
 		&Database{},
 		&DatabaseAssignment{},
@@ -1619,6 +1620,8 @@ type CloudAccount struct {
 	SyncErrors  storm.JSON
 	ArchivedAt  *time.Time
 	ArchivedBy  *string
+	// ManageRoleArn is the role changes are made with (migration 062).
+	ManageRoleArn *string
 }
 
 func (m *CloudAccount) Schema(t *storm.Table) {
@@ -1634,6 +1637,56 @@ func (m *CloudAccount) Schema(t *storm.Table) {
 	t.CheckNamed("cloud_accounts_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("cloud_accounts_provider_check", "provider = 'aws'::text")
 	t.Index(&m.Provider, &m.AccountID).Unique().Where("archived_at IS NULL").Named("cloud_accounts_one_active")
+}
+
+// CloudChange is table cloud_changes: one change Argus made or was asked
+// to make in a cloud account (migration 062).
+type CloudChange struct {
+	ID           [16]byte
+	Account      CloudAccount
+	Region       string
+	Action       string
+	Level        string
+	Environment  string
+	ResourceID   string
+	ResourceName string
+	Spec         storm.JSON
+	Plan         storm.JSON
+	PlanHash     string
+	Summary      string
+	Reason       string
+	State        string
+	RequestedBy  string
+	RequestedAt  time.Time
+	DecidedBy    *string
+	DecidedAt    *time.Time
+	AppliedAt    *time.Time
+	RequestID    string
+	Result       storm.JSON
+	Error        string
+}
+
+func (m *CloudChange) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Account).ConstraintName("cloud_changes_account_id_fkey")
+	t.Col(&m.ResourceID).Default("''::text")
+	t.Col(&m.ResourceName).Default("''::text")
+	t.Col(&m.Spec).Default("'{}'::jsonb")
+	t.Col(&m.Plan).Default("'{}'::jsonb")
+	t.Col(&m.PlanHash).Default("''::text")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.RequestID).Default("''::text")
+	t.Col(&m.Result).Default("'{}'::jsonb")
+	t.Col(&m.Error).Default("''::text")
+	t.CheckNamed("cloud_changes_action_check", "action = ANY (ARRAY['launch'::text, 'start'::text, 'stop'::text, 'reboot'::text, 'resize'::text, 'tags'::text, 'protect'::text, 'unprotect'::text, 'remove'::text])")
+	t.CheckNamed("cloud_changes_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
+	t.CheckNamed("cloud_changes_level_check", "level = ANY (ARRAY['operate'::text, 'change'::text, 'remove'::text])")
+	t.CheckNamed("cloud_changes_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text, 'applied'::text, 'failed'::text, 'declined'::text, 'cancelled'::text])")
+	t.Index(&m.Account, &m.ResourceID).Unique().Where("(state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text])) AND (resource_id <> ''::text)").Named("cloud_changes_one_open")
+	t.Index(storm.Desc(&m.RequestedAt)).Named("cloud_changes_recent")
+	t.Index(&m.Account, &m.ResourceID).Named("cloud_changes_resource")
 }
 
 // CloudResource is table cloud_resources: what Argus last read in a cloud

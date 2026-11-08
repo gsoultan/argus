@@ -20,21 +20,22 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID          [16]byte
-	Provider    string
-	Name        string
-	AccountID   string
-	RoleArn     string
-	Access      string
-	Environment string
-	IdentityArn string
-	Regions     []string
-	ConnectedBy string
-	ConnectedAt time.Time
-	SyncedAt    runtime.Null[time.Time]
-	SyncErrors  runtime.JSON
-	ArchivedAt  runtime.Null[time.Time]
-	ArchivedBy  runtime.Null[string]
+	ID            [16]byte
+	Provider      string
+	Name          string
+	AccountID     string
+	RoleArn       string
+	Access        string
+	Environment   string
+	IdentityArn   string
+	Regions       []string
+	ConnectedBy   string
+	ConnectedAt   time.Time
+	SyncedAt      runtime.Null[time.Time]
+	SyncErrors    runtime.JSON
+	ArchivedAt    runtime.Null[time.Time]
+	ArchivedBy    runtime.Null[string]
+	ManageRoleArn runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -73,7 +74,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 15
+const nCols = 16
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -277,6 +278,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.ArchivedBy.V
 		q.ns++
+	case 15:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.ManageRoleArn.V
+		q.ns++
 	}
 }
 
@@ -436,21 +444,22 @@ type Pred struct {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID          = UUIDCol{0}
-	Provider    = TextCol{1}
-	Name        = TextCol{2}
-	AccountID   = TextCol{3}
-	RoleArn     = TextCol{4}
-	Access      = TextCol{5}
-	Environment = TextCol{6}
-	IdentityArn = TextCol{7}
-	Regions     = TextArrayCol{8}
-	ConnectedBy = TextCol{9}
-	ConnectedAt = TimeCol{10}
-	SyncedAt    = NullTimeCol{11}
-	SyncErrors  = JSONCol{12}
-	ArchivedAt  = NullTimeCol{13}
-	ArchivedBy  = NullTextCol{14}
+	ID            = UUIDCol{0}
+	Provider      = TextCol{1}
+	Name          = TextCol{2}
+	AccountID     = TextCol{3}
+	RoleArn       = TextCol{4}
+	Access        = TextCol{5}
+	Environment   = TextCol{6}
+	IdentityArn   = TextCol{7}
+	Regions       = TextArrayCol{8}
+	ConnectedBy   = TextCol{9}
+	ConnectedAt   = TimeCol{10}
+	SyncedAt      = NullTimeCol{11}
+	SyncErrors    = JSONCol{12}
+	ArchivedAt    = NullTimeCol{13}
+	ArchivedBy    = NullTextCol{14}
+	ManageRoleArn = NullTextCol{15}
 )
 
 // UUIDCol addresses a uuid column.
@@ -845,6 +854,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 15:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -946,6 +962,13 @@ func (q *Query) leaf(p Pred) {
 		q.tims[q.ntm] = p.tim
 		q.ntm++
 	case 14:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 15:
 		if int(q.ns) >= 6 {
 			q.over = true
 			return
@@ -1091,8 +1114,21 @@ func (q Query) ArchivedByIn(v ...string) Query             { return q.Where(Arch
 func (q Query) ArchivedByNotIn(v ...string) Query          { return q.Where(ArchivedBy.NotIn(v...)) }
 func (q Query) ArchivedByIsNull() Query                    { return q.Where(ArchivedBy.IsNull()) }
 func (q Query) ArchivedByIsNotNull() Query                 { return q.Where(ArchivedBy.IsNotNull()) }
+func (q Query) ManageRoleArnEq(v string) Query             { return q.Where(ManageRoleArn.Eq(v)) }
+func (q Query) ManageRoleArnNotEq(v string) Query          { return q.Where(ManageRoleArn.NotEq(v)) }
+func (q Query) ManageRoleArnGt(v string) Query             { return q.Where(ManageRoleArn.Gt(v)) }
+func (q Query) ManageRoleArnGte(v string) Query            { return q.Where(ManageRoleArn.Gte(v)) }
+func (q Query) ManageRoleArnLt(v string) Query             { return q.Where(ManageRoleArn.Lt(v)) }
+func (q Query) ManageRoleArnLte(v string) Query            { return q.Where(ManageRoleArn.Lte(v)) }
+func (q Query) ManageRoleArnEqLower(v string) Query        { return q.Where(ManageRoleArn.EqLower(v)) }
+func (q Query) ManageRoleArnLike(v string) Query           { return q.Where(ManageRoleArn.Like(v)) }
+func (q Query) ManageRoleArnILike(v string) Query          { return q.Where(ManageRoleArn.ILike(v)) }
+func (q Query) ManageRoleArnIn(v ...string) Query          { return q.Where(ManageRoleArn.In(v...)) }
+func (q Query) ManageRoleArnNotIn(v ...string) Query       { return q.Where(ManageRoleArn.NotIn(v...)) }
+func (q Query) ManageRoleArnIsNull() Query                 { return q.Where(ManageRoleArn.IsNull()) }
+func (q Query) ManageRoleArnIsNotNull() Query              { return q.Where(ManageRoleArn.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by" FROM "cloud_accounts"`
+const selectPrefix = `SELECT "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn" FROM "cloud_accounts"`
 const countPrefix = `SELECT count(*) FROM "cloud_accounts"`
 const existsPrefix = `SELECT 1 FROM "cloud_accounts"`
 const existsSuffix = ` LIMIT 1`
@@ -1219,6 +1255,12 @@ var orderTable = [nCols][4]string{
 		"\"archived_by\" ASC NULLS FIRST",
 		"\"archived_by\" DESC NULLS LAST",
 	},
+	{ // manage_role_arn
+		"\"manage_role_arn\"",
+		"\"manage_role_arn\" DESC",
+		"\"manage_role_arn\" ASC NULLS FIRST",
+		"\"manage_role_arn\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1239,6 +1281,7 @@ var identTable = [nCols]string{
 	"\"sync_errors\"",
 	"\"archived_at\"",
 	"\"archived_by\"",
+	"\"manage_role_arn\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1271,7 +1314,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [15][28]runtime.Frag{
+var fragTable = [16][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1722,6 +1765,36 @@ var fragTable = [15][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // manage_role_arn
+		{}, // opNone
+		{A: "\"manage_role_arn\" = $", B: ""},
+		{A: "\"manage_role_arn\" <> $", B: ""},
+		{A: "\"manage_role_arn\" > $", B: ""},
+		{A: "\"manage_role_arn\" >= $", B: ""},
+		{A: "\"manage_role_arn\" < $", B: ""},
+		{A: "\"manage_role_arn\" <= $", B: ""},
+		{A: "lower(\"manage_role_arn\") = lower($", B: ")"},
+		{A: "\"manage_role_arn\" LIKE $", B: ""},
+		{A: "\"manage_role_arn\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"manage_role_arn\" = ANY($", B: ")"},
+		{A: "\"manage_role_arn\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"manage_role_arn\" IS NULL", B: ""},
+		{A: "\"manage_role_arn\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1897,6 +1970,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.SyncErrors = runtime.JSON(runtime.JSONB(rv[12], sl))
 	r.ArchivedAt = runtime.Nullable(rv[13], runtime.Timestamptz)
 	r.ArchivedBy = runtime.NullText(rv[14], sl)
+	r.ManageRoleArn = runtime.NullText(rv[15], sl)
 	return decErr
 }
 
@@ -2010,6 +2084,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 15:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2067,6 +2145,10 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.tims[ntm])
 			ntm++
 		case 14:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 15:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
@@ -2207,7 +2289,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "cloud_accounts" ("id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by"`
+const insertSQL = `INSERT INTO "cloud_accounts" ("id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn"`
 
 const updatePrefix = `UPDATE "cloud_accounts" SET `
 const deletePrefix = `DELETE FROM "cloud_accounts"`
@@ -2215,40 +2297,42 @@ const deletePrefix = `DELETE FROM "cloud_accounts"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dProvider    uint64 = 1 << 0
-	dName        uint64 = 1 << 1
-	dAccountID   uint64 = 1 << 2
-	dRoleArn     uint64 = 1 << 3
-	dAccess      uint64 = 1 << 4
-	dEnvironment uint64 = 1 << 5
-	dIdentityArn uint64 = 1 << 6
-	dRegions     uint64 = 1 << 7
-	dConnectedBy uint64 = 1 << 8
-	dConnectedAt uint64 = 1 << 9
-	dSyncedAt    uint64 = 1 << 10
-	dSyncErrors  uint64 = 1 << 11
-	dArchivedAt  uint64 = 1 << 12
-	dArchivedBy  uint64 = 1 << 13
+	dProvider      uint64 = 1 << 0
+	dName          uint64 = 1 << 1
+	dAccountID     uint64 = 1 << 2
+	dRoleArn       uint64 = 1 << 3
+	dAccess        uint64 = 1 << 4
+	dEnvironment   uint64 = 1 << 5
+	dIdentityArn   uint64 = 1 << 6
+	dRegions       uint64 = 1 << 7
+	dConnectedBy   uint64 = 1 << 8
+	dConnectedAt   uint64 = 1 << 9
+	dSyncedAt      uint64 = 1 << 10
+	dSyncErrors    uint64 = 1 << 11
+	dArchivedAt    uint64 = 1 << 12
+	dArchivedBy    uint64 = 1 << 13
+	dManageRoleArn uint64 = 1 << 14
 )
 
-const nUpdatable = 14
+const nUpdatable = 15
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"provider\" = $", B: ""},     // provider
-	{A: "\"name\" = $", B: ""},         // name
-	{A: "\"account_id\" = $", B: ""},   // account_id
-	{A: "\"role_arn\" = $", B: ""},     // role_arn
-	{A: "\"access\" = $", B: ""},       // access
-	{A: "\"environment\" = $", B: ""},  // environment
-	{A: "\"identity_arn\" = $", B: ""}, // identity_arn
-	{A: "\"regions\" = $", B: ""},      // regions
-	{A: "\"connected_by\" = $", B: ""}, // connected_by
-	{A: "\"connected_at\" = $", B: ""}, // connected_at
-	{A: "\"synced_at\" = $", B: ""},    // synced_at
-	{A: "\"sync_errors\" = $", B: ""},  // sync_errors
-	{A: "\"archived_at\" = $", B: ""},  // archived_at
-	{A: "\"archived_by\" = $", B: ""},  // archived_by
+	{A: "\"provider\" = $", B: ""},        // provider
+	{A: "\"name\" = $", B: ""},            // name
+	{A: "\"account_id\" = $", B: ""},      // account_id
+	{A: "\"role_arn\" = $", B: ""},        // role_arn
+	{A: "\"access\" = $", B: ""},          // access
+	{A: "\"environment\" = $", B: ""},     // environment
+	{A: "\"identity_arn\" = $", B: ""},    // identity_arn
+	{A: "\"regions\" = $", B: ""},         // regions
+	{A: "\"connected_by\" = $", B: ""},    // connected_by
+	{A: "\"connected_at\" = $", B: ""},    // connected_at
+	{A: "\"synced_at\" = $", B: ""},       // synced_at
+	{A: "\"sync_errors\" = $", B: ""},     // sync_errors
+	{A: "\"archived_at\" = $", B: ""},     // archived_at
+	{A: "\"archived_by\" = $", B: ""},     // archived_by
+	{A: "\"manage_role_arn\" = $", B: ""}, // manage_role_arn
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2269,6 +2353,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                     // sync_errors has no server-side form
 	{A: "\"archived_at\" = now()", B: ""},  // archived_at = the database's clock
 	{},                                     // archived_by has no server-side form
+	{},                                     // manage_role_arn has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2280,24 +2365,25 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID          uint64 = 1 << 0
-	iProvider    uint64 = 1 << 1
-	iName        uint64 = 1 << 2
-	iAccountID   uint64 = 1 << 3
-	iRoleArn     uint64 = 1 << 4
-	iAccess      uint64 = 1 << 5
-	iEnvironment uint64 = 1 << 6
-	iIdentityArn uint64 = 1 << 7
-	iRegions     uint64 = 1 << 8
-	iConnectedBy uint64 = 1 << 9
-	iConnectedAt uint64 = 1 << 10
-	iSyncedAt    uint64 = 1 << 11
-	iSyncErrors  uint64 = 1 << 12
-	iArchivedAt  uint64 = 1 << 13
-	iArchivedBy  uint64 = 1 << 14
+	iID            uint64 = 1 << 0
+	iProvider      uint64 = 1 << 1
+	iName          uint64 = 1 << 2
+	iAccountID     uint64 = 1 << 3
+	iRoleArn       uint64 = 1 << 4
+	iAccess        uint64 = 1 << 5
+	iEnvironment   uint64 = 1 << 6
+	iIdentityArn   uint64 = 1 << 7
+	iRegions       uint64 = 1 << 8
+	iConnectedBy   uint64 = 1 << 9
+	iConnectedAt   uint64 = 1 << 10
+	iSyncedAt      uint64 = 1 << 11
+	iSyncErrors    uint64 = 1 << 12
+	iArchivedAt    uint64 = 1 << 13
+	iArchivedBy    uint64 = 1 << 14
+	iManageRoleArn uint64 = 1 << 15
 )
 
-const nInsertable = 15
+const nInsertable = 16
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2316,6 +2402,7 @@ var insCols = [nInsertable]string{
 	"\"sync_errors\"",
 	"\"archived_at\"",
 	"\"archived_by\"",
+	"\"manage_role_arn\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2324,7 +2411,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"cloud_accounts\""
-const insReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\""
+const insReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\", \"manage_role_arn\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2343,7 +2430,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\""
+const updReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\", \"manage_role_arn\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2532,6 +2619,20 @@ func (m *Mut) SetArchivedByNull() {
 	m.expr &^= dArchivedBy
 }
 
+func (m *Mut) SetManageRoleArn(v string) {
+	m.row.ManageRoleArn = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dManageRoleArn
+	m.expr &^= dManageRoleArn
+}
+
+// SetManageRoleArnNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetManageRoleArnNull() {
+	m.row.ManageRoleArn = runtime.Null[string]{}
+	m.dirty |= dManageRoleArn
+	m.expr &^= dManageRoleArn
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2653,6 +2754,18 @@ func (n *Ins) SetArchivedByNull() {
 	n.set |= iArchivedBy
 }
 
+func (n *Ins) SetManageRoleArn(v string) {
+	n.row.ManageRoleArn = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iManageRoleArn
+}
+
+// SetManageRoleArnNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetManageRoleArnNull() {
+	n.row.ManageRoleArn = runtime.Null[string]{}
+	n.set |= iManageRoleArn
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2699,7 +2812,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 14)
+	set := make([]string, 0, 15)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2744,6 +2857,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<14) != 0 {
 			set = append(set, "archived_by")
 		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "manage_role_arn")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "name")
@@ -2780,6 +2896,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<14) != 0 {
 			set = append(set, "archived_by")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "manage_role_arn")
 		}
 	}
 	return set
@@ -2839,20 +2958,21 @@ func joinAssign(set []string) string {
 }
 
 var assignFor = map[string]string{
-	"provider":     "\"provider\" = EXCLUDED.\"provider\"",
-	"name":         "\"name\" = EXCLUDED.\"name\"",
-	"account_id":   "\"account_id\" = EXCLUDED.\"account_id\"",
-	"role_arn":     "\"role_arn\" = EXCLUDED.\"role_arn\"",
-	"access":       "\"access\" = EXCLUDED.\"access\"",
-	"environment":  "\"environment\" = EXCLUDED.\"environment\"",
-	"identity_arn": "\"identity_arn\" = EXCLUDED.\"identity_arn\"",
-	"regions":      "\"regions\" = EXCLUDED.\"regions\"",
-	"connected_by": "\"connected_by\" = EXCLUDED.\"connected_by\"",
-	"connected_at": "\"connected_at\" = EXCLUDED.\"connected_at\"",
-	"synced_at":    "\"synced_at\" = EXCLUDED.\"synced_at\"",
-	"sync_errors":  "\"sync_errors\" = EXCLUDED.\"sync_errors\"",
-	"archived_at":  "\"archived_at\" = EXCLUDED.\"archived_at\"",
-	"archived_by":  "\"archived_by\" = EXCLUDED.\"archived_by\"",
+	"provider":        "\"provider\" = EXCLUDED.\"provider\"",
+	"name":            "\"name\" = EXCLUDED.\"name\"",
+	"account_id":      "\"account_id\" = EXCLUDED.\"account_id\"",
+	"role_arn":        "\"role_arn\" = EXCLUDED.\"role_arn\"",
+	"access":          "\"access\" = EXCLUDED.\"access\"",
+	"environment":     "\"environment\" = EXCLUDED.\"environment\"",
+	"identity_arn":    "\"identity_arn\" = EXCLUDED.\"identity_arn\"",
+	"regions":         "\"regions\" = EXCLUDED.\"regions\"",
+	"connected_by":    "\"connected_by\" = EXCLUDED.\"connected_by\"",
+	"connected_at":    "\"connected_at\" = EXCLUDED.\"connected_at\"",
+	"synced_at":       "\"synced_at\" = EXCLUDED.\"synced_at\"",
+	"sync_errors":     "\"sync_errors\" = EXCLUDED.\"sync_errors\"",
+	"archived_at":     "\"archived_at\" = EXCLUDED.\"archived_at\"",
+	"archived_by":     "\"archived_by\" = EXCLUDED.\"archived_by\"",
+	"manage_role_arn": "\"manage_role_arn\" = EXCLUDED.\"manage_role_arn\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2926,6 +3046,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.ArchivedAt.Arg())
 		case 14:
 			args = append(args, n.row.ArchivedBy.Arg())
+		case 15:
+			args = append(args, n.row.ManageRoleArn.Arg())
 		}
 	}
 	var out Row
@@ -2963,7 +3085,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 15)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.Provider)
 	args = append(args, r.Name)
@@ -2979,6 +3101,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.SyncErrors)
 	args = append(args, r.ArchivedAt.Arg())
 	args = append(args, r.ArchivedBy.Arg())
+	args = append(args, r.ManageRoleArn.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3020,13 +3143,14 @@ var copyCols = []string{
 	"sync_errors",
 	"archived_at",
 	"archived_by",
+	"manage_role_arn",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [15]any
+	buf  [16]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3059,6 +3183,7 @@ func (s *rowSource) Values() []any {
 	s.buf[12] = &r.SyncErrors
 	s.buf[13] = r.ArchivedAt.Ptr()
 	s.buf[14] = r.ArchivedBy.Ptr()
+	s.buf[15] = r.ManageRoleArn.Ptr()
 	return s.buf[:]
 }
 
@@ -3104,8 +3229,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 12
 	mask |= 1 << 13
 	mask |= 1 << 14
+	mask |= 1 << 15
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 15)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.Provider)
 	args = append(args, r.Name)
@@ -3121,6 +3247,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.SyncErrors)
 	args = append(args, r.ArchivedAt.Arg())
 	args = append(args, r.ArchivedBy.Arg())
+	args = append(args, r.ManageRoleArn.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3184,6 +3311,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.ArchivedAt.Arg())
 		case 14:
 			args = append(args, n.row.ArchivedBy.Arg())
+		case 15:
+			args = append(args, n.row.ManageRoleArn.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3258,6 +3387,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.ArchivedAt.Arg())
 		case 13:
 			args = append(args, m.row.ArchivedBy.Arg())
+		case 14:
+			args = append(args, m.row.ManageRoleArn.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3368,6 +3499,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.ArchivedAt.Arg())
 		case 13:
 			args = append(args, m.row.ArchivedBy.Arg())
+		case 14:
+			args = append(args, m.row.ManageRoleArn.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3544,6 +3677,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.ArchivedAt.Arg())
 		case 13:
 			args = append(args, m.row.ArchivedBy.Arg())
+		case 14:
+			args = append(args, m.row.ManageRoleArn.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

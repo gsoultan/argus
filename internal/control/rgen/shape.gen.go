@@ -233,6 +233,37 @@ func _assertCloudAccountShape(m m0.CloudAccount) {
 		m.SyncErrors,
 		m.ArchivedAt,
 		m.ArchivedBy,
+		m.ManageRoleArn,
+	}
+}
+
+// _assertCloudChangeShape fails to compile if m0.CloudChange gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudChangeShape(m m0.CloudChange) {
+	type shape m0.CloudChange
+	_ = shape{
+		m.ID,
+		m.Account,
+		m.Region,
+		m.Action,
+		m.Level,
+		m.Environment,
+		m.ResourceID,
+		m.ResourceName,
+		m.Spec,
+		m.Plan,
+		m.PlanHash,
+		m.Summary,
+		m.Reason,
+		m.State,
+		m.RequestedBy,
+		m.RequestedAt,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.AppliedAt,
+		m.RequestID,
+		m.Result,
+		m.Error,
 	}
 }
 

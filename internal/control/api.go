@@ -383,6 +383,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerSoftwareFileRoutes(mux)
 	a.registerLogCleanupRoutes(mux)
 	a.registerCloudRoutes(mux)
+	a.registerCloudChangeRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)

@@ -134,30 +134,33 @@ func TestFirewallRules(t *testing.T) {
 	}
 }
 
-func TestTemplate(t *testing.T) {
-	tpl := Template("arn:aws:iam::603914770215:role/argus-control", "argus-0123abcd")
-	var doc struct {
-		Resources map[string]struct {
-			Type       string `yaml:"Type"`
-			Properties struct {
-				RoleName                 string `yaml:"RoleName"`
-				AssumeRolePolicyDocument struct {
+type templateDoc struct {
+	Resources map[string]struct {
+		Type       string `yaml:"Type"`
+		Properties struct {
+			RoleName                 string `yaml:"RoleName"`
+			AssumeRolePolicyDocument struct {
+				Statement []struct {
+					Principal map[string]string            `yaml:"Principal"`
+					Action    []string                     `yaml:"Action"`
+					Condition map[string]map[string]string `yaml:"Condition"`
+				} `yaml:"Statement"`
+			} `yaml:"AssumeRolePolicyDocument"`
+			Policies []struct {
+				PolicyDocument struct {
 					Statement []struct {
-						Principal map[string]string            `yaml:"Principal"`
-						Action    []string                     `yaml:"Action"`
-						Condition map[string]map[string]string `yaml:"Condition"`
+						Action []string `yaml:"Action"`
 					} `yaml:"Statement"`
-				} `yaml:"AssumeRolePolicyDocument"`
-				Policies []struct {
-					PolicyDocument struct {
-						Statement []struct {
-							Action []string `yaml:"Action"`
-						} `yaml:"Statement"`
-					} `yaml:"PolicyDocument"`
-				} `yaml:"Policies"`
-			} `yaml:"Properties"`
-		} `yaml:"Resources"`
-	}
+				} `yaml:"PolicyDocument"`
+			} `yaml:"Policies"`
+		} `yaml:"Properties"`
+	} `yaml:"Resources"`
+	Outputs map[string]any `yaml:"Outputs"`
+}
+
+func TestTemplate(t *testing.T) {
+	tpl := Template("arn:aws:iam::603914770215:role/argus-control", "argus-0123abcd", false)
+	var doc templateDoc
 	if err := yaml.Unmarshal([]byte(tpl), &doc); err != nil {
 		t.Fatalf("template is not YAML: %v\n%s", err, tpl)
 	}
@@ -178,7 +181,37 @@ func TestTemplate(t *testing.T) {
 			t.Fatalf("the read role must not be able to read data or change anything: %s", a)
 		}
 	}
-	if !strings.Contains(DeployCommand("p", "e"), "aws cloudformation deploy") {
+	if _, ok := doc.Resources["ArgusManage"]; ok {
+		t.Fatal("a read-only template must not make the manage role")
+	}
+	if !strings.Contains(DeployCommand("p", "e", false), "aws cloudformation deploy") {
 		t.Fatal("deploy command lost its deploy")
+	}
+}
+
+func TestManageTemplate(t *testing.T) {
+	tpl := Template("arn:aws:iam::603914770215:role/argus-control", "argus-0123abcd", true)
+	var doc templateDoc
+	if err := yaml.Unmarshal([]byte(tpl), &doc); err != nil {
+		t.Fatalf("template is not YAML: %v\n%s", err, tpl)
+	}
+	m, ok := doc.Resources["ArgusManage"]
+	if !ok || m.Properties.RoleName != ManageRoleName {
+		t.Fatalf("manage role missing: %+v", doc.Resources)
+	}
+	if _, ok := doc.Resources["ArgusRead"]; !ok {
+		t.Fatal("the manage template must keep the read role")
+	}
+	st := m.Properties.AssumeRolePolicyDocument.Statement[0]
+	if st.Condition["StringEquals"]["sts:ExternalId"] != "argus-0123abcd" || st.Condition["Null"]["sts:SourceIdentity"] != "false" {
+		t.Fatalf("the manage role must require the external id and a source identity: %v", st.Condition)
+	}
+	for _, a := range m.Properties.Policies[0].PolicyDocument.Statement[0].Action {
+		if strings.HasPrefix(a, "iam:") || a == "*" || a == "ec2:*" {
+			t.Fatalf("the manage role must not touch IAM or have wildcards: %s", a)
+		}
+	}
+	if _, ok := doc.Outputs["ManageRoleArn"]; !ok {
+		t.Fatal("no ManageRoleArn output")
 	}
 }
