@@ -355,3 +355,59 @@ func TestFileChangesAreDoneAsTheAccountAndAudited(t *testing.T) {
 		}
 	}
 }
+
+// Cancelling an upload is the browser ending its connection mid-file: the
+// destination is never written, and the chain says it stopped.
+func TestACancelledUploadWritesNothingAndIsAudited(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("files-cancel")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	e.runFilesAgent(t, cred, host)
+
+	dir := t.TempDir()
+	ticket, _ := signer.IssueTicket("ana@example.com", host, me(t), time.Minute)
+	c := e.openFiles(t, host, me(t), ticket)
+	if m, _ := readMsg(t, c); m.Type != "ready" {
+		t.Fatalf("not ready: %+v", m)
+	}
+	target := filepath.Join(dir, "big.iso")
+	writeMsg(t, c, filesMessage{Type: "upload", Path: target})
+	if m, _ := readMsg(t, c); m.Type != "upload-ready" {
+		t.Fatalf("upload not ready: %+v", m)
+	}
+	if err := c.Write(context.Background(), websocket.MessageBinary, make([]byte, tunnel.FileChunk)); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close(websocket.StatusNormalClosure, "cancelled")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		events, err := e.store.AuditEvents(context.Background(), 50, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, ev := range events {
+			if ev.Target == host && ev.Action == "file.upload" && strings.Contains(ev.Detail, "stopped after") &&
+				strings.Contains(ev.Detail, target) {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the cancelled upload is not in the audit chain")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("a cancelled upload left the file behind: %v", err)
+	}
+	left, _ := os.ReadDir(dir)
+	if len(left) != 0 {
+		t.Fatalf("a cancelled upload left %d files in the folder", len(left))
+	}
+}

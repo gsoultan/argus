@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,8 +75,16 @@ func RunFileOp(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 	case "upload":
-		overwrite := len(args) > 2 && args[2] == "-f"
-		if err := writeFile(path, stdin, overwrite); err != nil {
+		var overwrite, framed bool
+		for _, a := range args[2:] {
+			overwrite = overwrite || a == "-f"
+			framed = framed || a == "-framed"
+		}
+		in := stdin
+		if framed {
+			in = &uploadFrames{r: stdin}
+		}
+		if err := writeFile(path, in, overwrite); err != nil {
 			return fail(err)
 		}
 	case "mkdir", "rename", "delete", "preview":
@@ -254,6 +263,67 @@ func listDir(path string) (tunnel.FileAnswer, error) {
 		return a.Name < b.Name
 	})
 	return ans, nil
+}
+
+// errUploadCut is an upload whose stream ended without its closing frame:
+// the person cancelled it, or the connection went. Nothing is written.
+var errUploadCut = errors.New("the upload stopped before it finished, so nothing was written")
+
+// uploadFrames reads an upload the agent sends as length-prefixed chunks, a
+// 4-byte big-endian length then that many bytes, ending with a zero length.
+// Only that last frame makes it complete: a plain end of input means the
+// stream was cut, which a bare byte stream could not tell from the end of
+// the file, and a cut upload must never be renamed into place.
+type uploadFrames struct {
+	r    io.Reader
+	left uint32
+	done bool
+}
+
+func (u *uploadFrames) Read(p []byte) (int, error) {
+	for u.left == 0 {
+		if u.done {
+			return 0, io.EOF
+		}
+		var hdr [4]byte
+		if _, err := io.ReadFull(u.r, hdr[:]); err != nil {
+			return 0, errUploadCut
+		}
+		u.left = binary.BigEndian.Uint32(hdr[:])
+		if u.left == 0 {
+			u.done = true
+		}
+	}
+	if uint32(len(p)) > u.left {
+		p = p[:u.left]
+	}
+	n, err := u.r.Read(p)
+	u.left -= uint32(n)
+	if err == io.EOF {
+		if u.left > 0 || n == 0 {
+			return n, errUploadCut
+		}
+		err = nil
+	}
+	if err != nil {
+		return n, errUploadCut
+	}
+	return n, nil
+}
+
+// writeUploadFrame sends one chunk to the upload helper, length first; an
+// empty chunk is the end of the file. See uploadFrames.
+func writeUploadFrame(w io.Writer, p []byte) error {
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(p)))
+	if _, err := w.Write(hdr[:]); err != nil {
+		return err
+	}
+	if len(p) == 0 {
+		return nil
+	}
+	_, err := w.Write(p)
+	return err
 }
 
 // writeFile writes r to path through a temporary file beside it, so a

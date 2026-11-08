@@ -205,12 +205,15 @@ func (f *fileSession) upload(ctx context.Context, st tunnel.Stream, fr *tunnel.F
 					return
 				}
 				h.Write(p)
-				if _, err := pw.Write(p); err != nil {
+				if err := writeUploadFrame(pw, p); err != nil {
 					// The helper stopped reading; keep draining to the end
 					// so the stream stays in step.
 					continue
 				}
 			case tunnel.FrameFileEnd:
+				// The closing frame is what tells the helper the file is
+				// whole; a stream that breaks before it is never written.
+				_ = writeUploadFrame(pw, nil)
 				_ = pw.Close()
 				feedErr <- nil
 				return
@@ -222,7 +225,7 @@ func (f *fileSession) upload(ctx context.Context, st tunnel.Stream, fr *tunnel.F
 			}
 		}
 	}()
-	args := []string{"upload", req.Path}
+	args := []string{"upload", req.Path, "-framed"}
 	if req.Overwrite {
 		args = append(args, "-f")
 	}

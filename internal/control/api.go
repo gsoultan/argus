@@ -349,6 +349,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/requests/{id}", a.getOneRequest)
 	mux.HandleFunc("GET /api/v1/direct-logins", a.user(a.getDirectLogins))
 	mux.HandleFunc("POST /api/v1/direct-logins/{id}/decision", a.postDirectLoginDecision)
+	mux.HandleFunc("POST /api/v1/direct-logins/{id}/withdraw", a.user(a.postDirectLoginWithdraw))
+	mux.HandleFunc("POST /api/v1/direct-logins/{id}/remind", a.user(a.postDirectLoginRemind))
 	mux.HandleFunc("GET /api/v1/grant", a.user(a.getGrant))
 
 	// Console read surface. Paths match what web/src/lib/api.ts already calls.
