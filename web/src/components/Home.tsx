@@ -1,25 +1,26 @@
-import { Suspense, lazy, type ComponentType, type ReactNode } from 'react'
+import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react'
 import {
-  Badge, Box, Card, Group, SimpleGrid, Skeleton, Stack, Text, ThemeIcon,
+  Box, Card, Group, SimpleGrid, Skeleton, Stack, Text, ThemeIcon,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
-import { AnchorLink, ButtonLink } from '~/components/links'
+import { ButtonLink } from '~/components/links'
 import {
-  IconActivityHeartbeat, IconCircleCheck, IconClipboardCheck, IconServerBolt, type IconProps,
+  IconActivityHeartbeat, IconCircleCheck, IconClipboardCheck, IconDatabaseExclamation, IconServerBolt,
+  IconShieldExclamation, type IconProps,
 } from '@tabler/icons-react'
-import { PageBody, SectionCard, EmptyState } from '~/components/page'
-import { Mono, duration, now, relTime } from '~/components/primitives'
+import { PageBody } from '~/components/page'
+import { Mono, now, relTime } from '~/components/primitives'
 import { isStatus, Label } from '~/components/home/parts'
-import { BandStat, CommandBand, FleetMap, RecordingRing, SessionsByHour, perHour } from '~/components/home/Command'
+import { CommandBand } from '~/components/home/Command'
+import { FleetHealth, HappeningNow, HomeTiles, LiveNow, LivePill, SessionsChart, useLiveNeeds } from '~/components/home/Live'
+import { retainHome } from '~/lib/homeLive'
 import { isConfigured } from '~/lib/live'
 import {
-  controlStatusQuery, coverageQuery, directLoginsQuery, meQuery, recentAuditQuery,
-  requestsQuery, sessionsQuery, statsQuery,
+  controlStatusQuery, coverageQuery, directLoginsQuery, meQuery, requestsQuery, statsQuery,
 } from '~/lib/queries'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
-import type { AuditEvent, Session, User } from '~/types/domain'
+import type { AuditEvent, User } from '~/types/domain'
 
 // Each drawn for one kind of reader only, so each is its own download.
 const ControlCard = lazy(() => import('~/components/home/ControlCard'))
@@ -49,27 +50,25 @@ export function Home() {
 
   return (
     <>
-      {/* The whole fleet gets the dark band with its five numbers; everyone
-          else, and the moment before we know who this is, the plain header. */}
       <CommandBand
-        plain={!me || !whole}
         title={greeting(me)}
         subtitle={subtitle(me)}
-        actions={addServer ? (
-          <ButtonLink to="/assets/add" size="sm" {...(whole ? { className: 'argus-band-btn' } : { variant: 'default' })}>
-            Add server
-          </ButtonLink>
+        actions={(me && whole) || addServer ? (
+          <>
+            {me && whole && <LivePill />}
+            {addServer && <ButtonLink to="/assets/add" size="sm" variant="default">Add server</ButtonLink>}
+          </>
         ) : undefined}
-      >
-        {me && whole ? <FleetBand /> : undefined}
-      </CommandBand>
+      />
       <PageBody>
         <Stack gap="lg">
-          {me && approves && <NeedsYou me={me} />}
           {/* Nothing until we know who this is: guessing would fetch, and
               flash, the other reader's page. */}
           {!me ? <Skeleton h={180} radius="md" /> : whole ? <FleetHome me={me} /> : (
-            <Suspense fallback={<Skeleton h={180} radius="md" />}><PersonalHome me={me} /></Suspense>
+            <>
+              {approves && <NeedsYou me={me} />}
+              <Suspense fallback={<Skeleton h={180} radius="md" />}><PersonalHome me={me} /></Suspense>
+            </>
           )}
         </Stack>
       </PageBody>
@@ -138,17 +137,12 @@ function NeedsYou({ me }: { me: User | undefined }) {
       action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/assets">Finish ›</ButtonLink>,
     })
   }
-  const problems = isStatus(status) ? status.problems : []
-  if (problems.length > 0) {
-    const critical = problems.some((p) => p.severity === 'critical')
-    needs.push({
-      key: 'control', icon: IconActivityHeartbeat, color: critical ? 'rose' : 'amber',
-      title: problems.length === 1 ? `argus-control: ${lowerFirst(problems[0]!.title)}` : `argus-control has ${problems.length} problems`,
-      detail: problems.length === 1 ? (problems[0]!.detail ?? '') : problems.map((p) => p.title).slice(0, 2).join(' · '),
-      action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/settings" search={{ section: 'status' }}>Status ›</ButtonLink>,
-    })
-  }
+  const control = controlNeed(status)
+  if (control) needs.push(control)
+  return <NeedsList needs={needs} />
+}
 
+function NeedsList({ needs }: { needs: Need[] }) {
   if (needs.length === 0) {
     return (
       <Group gap={SP.cozy} data-testid="needs-you-clear">
@@ -186,135 +180,98 @@ function NeedCard({ need: n }: { need: Need }) {
 
 /* ── The fleet, for whoever sees all of it ─────────────────────────────── */
 
-/** The fleet in five numbers, on the band. */
-function FleetBand() {
-  const navigate = useNavigate()
-  const { data: stats } = useQuery(statsQuery())
-  const { data: sessions } = useQuery(sessionsQuery())
-  const online = stats ? stats.assetsTotal - stats.assetsUnreachable : undefined
-  const watched = stats ? stats.assetsTotal - stats.agentsStale : undefined
+/**
+ * The fleet, live: what needs someone, six numbers, the day by hour, who is
+ * on a server, how the servers are doing, and the audit log as it is written.
+ * All of it from one dashboard the control plane builds and streams; see
+ * lib/homeLive.ts. argus-control's own card is for platform managers.
+ */
+function FleetHome({ me }: { me: User }) {
+  useEffect(() => retainHome(), [])
+  const platform = Boolean(me.platformOwner) && isConfigured()
   return (
-    <>
-      <BandStat
-        label="Servers online"
-        value={stats ? `${online} of ${stats.assetsTotal}` : undefined}
-        sub={stats ? (stats.assetsUnreachable > 0 ? `${stats.assetsUnreachable} not reachable` : 'Every server answers') : undefined}
-        warn={!!stats && stats.assetsUnreachable > 0}
-        meter={stats && stats.assetsTotal ? (online ?? 0) / stats.assetsTotal : undefined}
-        onClick={() => void navigate({ to: '/assets' })}
-      />
-      <BandStat
-        label="Live sessions"
-        value={stats?.sessionsActive}
-        sub={stats ? (stats.sessionsSilent > 0 ? `${stats.sessionsSilent} gone silent` : 'Every one reporting') : undefined}
-        warn={!!stats && stats.sessionsSilent > 0}
-        onClick={() => void navigate({ to: '/activity' })}
-      />
-      <BandStat
-        label="Sessions, last 24 h"
-        value={stats?.sessionsToday}
-        sub="Each column is one hour"
-        spark={sessions ? perHour(sessions).all : undefined}
-      />
-      <BandStat
-        label="Straight to a server"
-        value={stats?.sessionsDirectToday}
-        sub={stats ? (stats.sessionsDirectToday > 0 ? 'Skipped Argus in the last 24 h' : 'All through the console') : undefined}
-        warn={!!stats && stats.sessionsDirectToday > 0}
-        onClick={() => void navigate({ to: '/activity' })}
-      />
-      <BandStat
-        label="Agents not reporting"
-        value={stats?.agentsStale}
-        sub={stats ? (stats.assetsUnmonitored > 0 ? `${stats.assetsUnmonitored} unmonitored if bypassed` : 'Every server is watched') : undefined}
-        warn={!!stats && stats.agentsStale > 0}
-        meter={stats && stats.assetsTotal ? (watched ?? 0) / stats.assetsTotal : undefined}
-        onClick={() => void navigate({ to: '/settings', search: { section: 'hosts' } })}
-      />
-    </>
+    <Stack gap="lg">
+      <FleetNeeds me={me} />
+      <Box>
+        <Label>Right now</Label>
+        <HomeTiles />
+      </Box>
+      <Box className="argus-homegrid">
+        <Stack gap="md" className="argus-homegrid-main">
+          <SessionsChart />
+          <LiveNow />
+        </Stack>
+        <Stack gap="md" className="argus-homegrid-side">
+          <FleetHealth />
+          {platform && <Suspense fallback={<Skeleton h={240} radius="md" />}><ControlCard /></Suspense>}
+        </Stack>
+      </Box>
+      <HappeningNow words={(e) => e.detail || <>{ACTION_WORDS[e.action] ?? <Mono>{e.action}</Mono>} {e.target}</>} />
+    </Stack>
   )
 }
 
 /**
- * The fleet, for whoever sees all of it: a bento of what is live, how the day
- * went by hour, every server at a glance, how sessions were recorded, and the
- * audit log. Twelve columns from 75em; one below 62em.
+ * Needs you, for the fleet roles: from the live dashboard, so it moves with
+ * it. Approvals, servers waiting to be added, a disk at 95% or fuller, a
+ * burst of failed sign-ins, and argus-control's own problems.
  */
-function FleetHome({ me }: { me: User | undefined }) {
-  const platform = Boolean(me?.platformOwner) && isConfigured()
-  return (
-    <Box className="argus-bento">
-      <Box className="argus-bento-5"><LiveNow /></Box>
-      <Box className="argus-bento-7"><SessionsByHour /></Box>
-      <Box className="argus-bento-5"><FleetMap /></Box>
-      <Box className="argus-bento-3"><RecordingRing /></Box>
-      <Box className="argus-bento-4"><Today /></Box>
-      {platform && (
-        <Box className="argus-bento-12">
-          <Suspense fallback={<Skeleton h={240} radius="md" />}><ControlCard /></Suspense>
-        </Box>
-      )}
-    </Box>
-  )
+function FleetNeeds({ me }: { me: User }) {
+  const admin = canSee(me.role, 'admin')
+  const platform = Boolean(me.platformOwner) && isConfigured()
+  const { waiting, unreviewed, fullDisks, failed15m } = useLiveNeeds()
+  const { data: status } = useQuery({ ...controlStatusQuery(), enabled: platform })
+  if (!waiting) return <Skeleton h={48} radius="md" />
+
+  const needs: Need[] = []
+  if (waiting.count > 0) {
+    const mins = waiting.oldestAt ? Math.max(0, Math.round((now() - Date.parse(waiting.oldestAt)) / 60_000)) : null
+    needs.push({
+      key: 'approvals', icon: IconClipboardCheck, color: 'amber',
+      title: `${waiting.count} ${waiting.count === 1 ? 'request is' : 'requests are'} waiting on you`,
+      detail: mins === null ? '' : mins < 1 ? 'the oldest just now' : `the oldest for ${mins} min`,
+      action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/approvals">Review ›</ButtonLink>,
+    })
+  }
+  for (const d of fullDisks.slice(0, 2)) {
+    needs.push({
+      key: `disk-${d.assetId}-${d.mount}`, icon: IconDatabaseExclamation, color: 'rose',
+      title: `${d.name}: ${d.mount} is ${Math.round(d.used)}% full`,
+      detail: 'From its agent\'s last report',
+      action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/assets/$assetId" params={{ assetId: d.assetId }}>Open ›</ButtonLink>,
+    })
+  }
+  if (failed15m >= 5) {
+    needs.push({
+      key: 'signins', icon: IconShieldExclamation, color: 'rose',
+      title: `${failed15m} failed sign-ins in 15 minutes`,
+      detail: 'Someone may be guessing a password',
+      action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/audit">Audit log ›</ButtonLink>,
+    })
+  }
+  if (admin && (unreviewed ?? 0) > 0) {
+    needs.push({
+      key: 'servers', icon: IconServerBolt, color: 'azure',
+      title: `${unreviewed} ${unreviewed === 1 ? 'server is' : 'servers are'} waiting to be added`,
+      detail: 'Their agents checked in and nobody has finished adding them',
+      action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/assets">Finish ›</ButtonLink>,
+    })
+  }
+  const control = controlNeed(status)
+  if (control) needs.push(control)
+  return <NeedsList needs={needs} />
 }
 
-const LIVE_SHOWN = 5
-
-function LiveNow() {
-  const { data, isPending } = useQuery(sessionsQuery('active'))
-  const live = (data ?? []).filter((s) => !s.silent)
-  return (
-    <SectionCard
-      title="Live now"
-      icon={IconActivityHeartbeat}
-      iconColor="sky"
-      badge={live.length > 0 ? <Badge color="sky" variant="light">{live.length}</Badge> : undefined}
-      action={<AnchorLink to="/activity" size={FS.meta}>All sessions ›</AnchorLink>}
-      flush
-    >
-      {isPending ? (
-        <Stack gap="xs" px="md" pb="md"><Skeleton h={36} /><Skeleton h={36} /></Stack>
-      ) : live.length === 0 ? (
-        <EmptyState compact title="Nobody is on a server right now" />
-      ) : (
-        <Box data-testid="live-now">
-          {live.slice(0, LIVE_SHOWN).map((s) => <LiveRow key={s.id} s={s} />)}
-          {live.length > LIVE_SHOWN && (
-            <Text size={FS.meta} c="dimmed" px="md" py="xs">and {live.length - LIVE_SHOWN} more</Text>
-          )}
-        </Box>
-      )}
-    </SectionCard>
-  )
-}
-
-function LiveRow({ s }: { s: Session }) {
-  const root = s.principal === 'root' || s.principal.toLowerCase() === 'administrator'
-  const kind = s.protocol === 'rdp' ? 'Desktop' : s.protocol === 'postgres' ? 'Database' : s.protocol === 'sftp' ? 'Files' : 'SSH'
-  return (
-    <Group
-      gap="sm" wrap="nowrap" px="md" py={SP.cozy}
-      style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
-    >
-      <Box style={{ flex: 1, minWidth: 0 }}>
-        <Text size={FS.body} truncate>
-          <Text span inherit fw={550}>{s.userEmail.split('@')[0]}</Text>
-          <Text span inherit c="dimmed"> as </Text>
-          <Mono>{s.principal}</Mono>
-          {root && <Badge ml={SP.snug} size="xs" color="rose" variant="light">{s.principal === 'root' ? 'root' : 'admin'}</Badge>}
-        </Text>
-        <Text size={FS.meta} c="dimmed" truncate>
-          {s.assetHostname} · {kind} · {duration(s.startedAt, null)}
-        </Text>
-      </Box>
-      <ButtonLink
-        to="/sessions/$sessionId" params={{ sessionId: s.id }}
-        variant="default" size="compact-sm" style={{ flexShrink: 0 }}
-      >
-        Watch
-      </ButtonLink>
-    </Group>
-  )
+function controlNeed(status: unknown): Need | null {
+  const problems = isStatus(status) ? status.problems : []
+  if (problems.length === 0) return null
+  const critical = problems.some((p) => p.severity === 'critical')
+  return {
+    key: 'control', icon: IconActivityHeartbeat, color: critical ? 'rose' : 'amber',
+    title: problems.length === 1 ? `argus-control: ${lowerFirst(problems[0]!.title)}` : `argus-control has ${problems.length} problems`,
+    detail: problems.length === 1 ? (problems[0]!.detail ?? '') : problems.map((p) => p.title).slice(0, 2).join(' · '),
+    action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/settings" search={{ section: 'status' }}>Status ›</ButtonLink>,
+  }
 }
 
 const ACTION_WORDS: Partial<Record<AuditEvent['action'], string>> = {
@@ -341,46 +298,6 @@ const ACTION_WORDS: Partial<Record<AuditEvent['action'], string>> = {
   'auth.login': 'signed in',
   'auth.mfa_fail': 'failed a second-factor check',
 }
-
-function Today() {
-  const { data, isPending } = useQuery(recentAuditQuery(6))
-  return (
-    <SectionCard
-      title="Latest in the audit log"
-      icon={IconClipboardCheck}
-      iconColor="violet"
-      action={<AnchorLink to="/audit" size={FS.meta}>Audit log ›</AnchorLink>}
-      flush
-    >
-      {isPending ? (
-        <Stack gap="xs" px="md" pb="md"><Skeleton h={20} /><Skeleton h={20} /><Skeleton h={20} /></Stack>
-      ) : !data || data.length === 0 ? (
-        <EmptyState compact title="Nothing has been recorded yet" />
-      ) : (
-        <Box data-testid="recent-audit">
-          {data.map((e) => (
-            <Group key={e.seq} gap="md" wrap="nowrap" align="flex-start" px="md" py={SP.cozy}
-              style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
-              <Text size={FS.meta} c="dimmed" w={70} style={{ flexShrink: 0 }}>{relTime(e.at)}</Text>
-              <Box style={{ minWidth: 0, flex: 1 }}>
-                <Text size={FS.meta} fw={550} truncate>
-                  {e.actorEmail || 'argus'}
-                  {e.severity === 'critical' && <Badge ml={SP.snug} size="xs" color="rose" variant="light">critical</Badge>}
-                </Text>
-                {/* The control plane writes each entry's detail as a sentence;
-                    the action's code is only for an entry that has none. */}
-                <Text size={FS.meta} c="dimmed" lineClamp={2} style={{ overflowWrap: 'anywhere' }}>
-                  {e.detail || <>{ACTION_WORDS[e.action] ?? <Mono>{e.action}</Mono>} {e.target}</>}
-                </Text>
-              </Box>
-            </Group>
-          ))}
-        </Box>
-      )}
-    </SectionCard>
-  )
-}
-
 
 function lowerFirst(s: string): string {
   return s ? s[0]!.toLowerCase() + s.slice(1) : s

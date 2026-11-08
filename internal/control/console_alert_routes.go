@@ -1,6 +1,8 @@
 package control
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,7 +179,24 @@ func (a *API) getConsoleAlertStream(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.WriteString(w, "retry: 5000\n\n"); err != nil {
 		return
 	}
-	if !send("ready", map[string]any{"popup": rd.prefs.Popup, "sound": rd.prefs.Sound}) {
+	// The stream's id lets this console switch Home's live dashboard on and
+	// off over it (postStreamHome) without opening a second connection.
+	hc := &homeControl{id: newStreamID(), email: rd.email, tenant: tenantIDOf(r.Context()), ch: make(chan bool, 1)}
+	a.homeStreams.Store(hc.id, hc)
+	defer a.homeStreams.Delete(hc.id)
+	var (
+		homeCh   <-chan homeFrame
+		homeStop func()
+	)
+	stopHome := func() {
+		if homeStop != nil {
+			homeStop()
+		}
+		homeCh, homeStop = nil, nil
+	}
+	defer stopHome()
+
+	if !send("ready", map[string]any{"popup": rd.prefs.Popup, "sound": rd.prefs.Sound, "stream": hc.id}) {
 		return
 	}
 
@@ -200,6 +219,39 @@ func (a *API) getConsoleAlertStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			rd.role = rs.sess.Role
+			// Demoted while watching: Home's fleet numbers stop here.
+			if homeCh != nil && !seesWholeFleet(rd.role) {
+				stopHome()
+				if !send("home", map[string]any{"off": true}) {
+					return
+				}
+			}
+		case on := <-hc.ch:
+			stopHome()
+			if !on {
+				continue
+			}
+			if !seesWholeFleet(rd.role) {
+				if !send("home", map[string]any{"off": true}) {
+					return
+				}
+				continue
+			}
+			// Subscribing again is also how a console that missed an update
+			// asks for the whole dashboard: a new subscription starts with it.
+			hs, stop, err := a.homeHub.subscribe(r.Context())
+			if err != nil {
+				continue
+			}
+			homeCh, homeStop = hs.ch, stop
+		case f, open := <-homeCh:
+			if !open {
+				homeCh, homeStop = nil, nil
+				continue
+			}
+			if !send("home", f) {
+				return
+			}
 		case ev, open := <-sub.ch:
 			if !open {
 				// Shut down, or too far behind: the console reconnects.
@@ -234,4 +286,102 @@ func (a *API) getConsoleAlertStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// homeControl is one open stream that can carry Home's live dashboard.
+type homeControl struct {
+	id     string
+	email  string
+	tenant string
+	ch     chan bool
+}
+
+func newStreamID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// postStreamHome switches Home's live dashboard on or off on one of the
+// caller's own alert streams. Switching it on again sends the whole
+// dashboard, which is how a console that missed an update catches up.
+//
+// The id is not a credential: the stream must be the caller's, in the
+// organization the caller is signed in to, and the caller must be one of the
+// roles that see the whole fleet. Someone else's id answers 404, as if it did
+// not exist.
+func (a *API) postStreamHome(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var in struct {
+		On bool `json:"on"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	v, found := a.homeStreams.Load(r.PathValue("id"))
+	hc, _ := v.(*homeControl)
+	if !found || hc == nil || !strings.EqualFold(hc.email, sess.Email) || hc.tenant != tenantIDOf(r.Context()) {
+		writeErr(w, http.StatusNotFound, "no such stream; it may have closed, and the console opens a new one")
+		return
+	}
+	if in.On && !seesWholeFleet(sess.Role) {
+		writeErr(w, http.StatusForbidden, "Home's live dashboard is for owners, admins and auditors")
+		return
+	}
+	// The newest wish wins: a pending one is replaced, never queued.
+	select {
+	case <-hc.ch:
+	default:
+	}
+	select {
+	case hc.ch <- in.On:
+	default:
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// getHome serves Home's live dashboard whole, for the first paint and for a
+// console that cannot hold a stream open. The fleet roles only, like the
+// stream.
+//
+// While anyone in the organization watches, it is the hub's last build,
+// lines and all, and costs nothing; otherwise one read, with whatever lines
+// the hub still holds.
+func (a *API) getHome(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !seesWholeFleet(sess.Role) {
+		writeErr(w, http.StatusForbidden, "Home's live dashboard is for owners, admins and auditors")
+		return
+	}
+	f, lines := a.homeHub.current(tenantIDOf(r.Context()))
+	if f != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(f)
+		return
+	}
+	var h HomeSnapshot
+	if err := a.store.homeFast(r.Context(), &h); err != nil {
+		a.fail(w, "home", err)
+		return
+	}
+	if err := a.store.homeSlow(r.Context(), &h, time.Now()); err != nil {
+		a.fail(w, "home", err)
+		return
+	}
+	h.At = time.Now().UTC()
+	h.Trends = HomeTrends{Answering: []int{}, Live: []int{}, Waiting: []int{}, Processor: []*float64{}}
+	if lines != nil {
+		_ = json.Unmarshal(lines, &h.Trends)
+	}
+	writeJSON(w, http.StatusOK, h)
 }

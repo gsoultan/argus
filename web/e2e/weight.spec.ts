@@ -105,8 +105,13 @@ const BUDGET_KB = {
    * the server lists, "Watch only" and "Control" in the shared roles
    * module, and the device fields on the asset type. The wizard's QR code,
    * the device form and the phone toolbar are in route or lazy chunks.
+   * 301.3 kB with the live Home (296.9 before, same build): six tiles with
+   * their lines and bars, the stacked chart, Fleet health and the live store
+   * replace the band, the fleet map and the ring, in Home's own chunk. In
+   * fixture mode the sample dashboard is one more small chunk; the stream
+   * code rides the bell's lazy one.
    */
-  overview: 298,
+  overview: 302,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -139,8 +144,10 @@ const BUDGET_KB = {
    * chunks of their own, kept out of the shared live module.
    * 400.7 kB with Android devices, the same shared weight as the overview
    * plus the device toolbar in the desktop view, which Watch live loads.
+   * 402.3 kB with the live Home (401.8 before): its two calls and types in
+   * the shared live and api modules.
    */
-  sessionDetail: 402,
+  sessionDetail: 403,
 }
 
 /**
@@ -159,8 +166,11 @@ const BUDGET_KB = {
  * 33.2 kB on Home with the full-width redesign: its command-centre stylesheet
  * loads with Home. The filter rails' and split views' styles load with their
  * own routes and are not paid here.
+ *
+ * 33.6 kB on Home with the live dashboard (33.4 before): tiles, the live
+ * pill, Fleet health's meters and the reduced-motion rules.
  */
-const CSS_BUDGET_KB = 33.5
+const CSS_BUDGET_KB = 33.8
 
 /**
  * The two self-hosted variable fonts, latin subsets.

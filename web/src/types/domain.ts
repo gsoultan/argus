@@ -1246,3 +1246,34 @@ export interface BackupsView {
   /** The newest backup whose test passed; retention keeps it. */
   lastGood: BackupTest | null
 }
+
+/**
+ * Home's live dashboard for the roles that see the whole fleet; mirrors
+ * HomeSnapshot in internal/control/home_snapshot.go.
+ */
+export interface HomeSnapshot {
+  servers: { total: number; answering: number; quiet: number; down: number }
+  live: { count: number; root: number; database: number; silent: number }
+  /** The last 24 hours. `hours` is oldest first, each [terminal, desktop, database]. */
+  sessions: { last24h: number; weekAgo: number; hours: [number, number, number][]; kinds: [number, number, number] }
+  waiting: { count: number; oldestAt: string | null }
+  /** From each agent's last report, if it is younger than 3 minutes. */
+  processor: { average: number | null; reporting: number; busiest: { assetId: string; name: string; busy: number }[] }
+  disks: { assetId: string; name: string; mount: string; used: number }[]
+  signIns: { last24h: number; failed24h: number; failed15m: number; hours: number[] }
+  liveList: { id: string; user: string; principal: string; host: string; kind: string; startedAt: string }[]
+  audit: AuditEvent[]
+  /** The last hour, one point a minute, oldest first; `since` is where they begin. */
+  trends: { since: string | null; answering: number[]; live: number[]; waiting: number[]; processor: (number | null)[] }
+  unreviewedHosts: number
+  at: string
+}
+
+/** One message about Home on the stream: the whole of it, or what changed. */
+export interface HomeFrame {
+  v: number
+  full?: boolean
+  set: Partial<HomeSnapshot>
+  /** Sent instead when this person may no longer see Home's fleet numbers. */
+  off?: boolean
+}

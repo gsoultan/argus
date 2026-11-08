@@ -51,7 +51,7 @@ import type {
   AuditEvent,
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh, MyServer,
   ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost, ServerLogin,
-  FleetStats, GatewayPolicy, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
+  FleetStats, GatewayPolicy, HomeSnapshot, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, TemporaryPasswordOutcome, User,
 } from '~/types/domain'
 
@@ -420,6 +420,15 @@ export const api = {
     return live.orFallback(live.stats, async () => {
       await latency(90)
       return computeStats()
+    })
+  },
+
+  async home(): Promise<HomeSnapshot> {
+    return live.orFallback(live.home, async () => {
+      await latency(90)
+      // Its own chunk: only an admin's Home in fixture mode needs it.
+      const { computeHome } = await import('~/lib/homeFixture')
+      return computeHome(db, computeStats())
     })
   },
 

@@ -21,6 +21,7 @@ import type { MyServer,
   Coverage,
   DiscoveredHost,
   FleetStats,
+  HomeSnapshot,
   GatewayPolicy,
   Session,
   Team,
@@ -1346,6 +1347,8 @@ export const live = {
   orFallback,
 
   stats: () => get<FleetStats>('/api/v1/stats'),
+  /** Home's live dashboard, whole: for the first paint and when no stream is open. */
+  home: () => get<HomeSnapshot>('/api/v1/home'),
   /**
    * The newest few audit entries, for Home's "Today". One page, never the
    * whole log: this is a glance, not the evidence the Audit page verifies.
@@ -2039,6 +2042,14 @@ export async function consoleAlerts(unread: boolean, before?: number): Promise<A
   if (before) q.set('before', String(before))
   const qs = q.toString()
   return get<AlertPage>(`/api/v1/alerts${qs ? `?${qs}` : ''}`)
+}
+
+/**
+ * Switches Home's live dashboard on or off on one of this browser's alert
+ * streams. On again is also how a tab that missed an update asks for all of it.
+ */
+export async function streamHome(stream: string, on: boolean): Promise<void> {
+  await post<unknown>(`/api/v1/alerts/stream/${encodeURIComponent(stream)}/home`, { on })
 }
 
 export async function markAlertsRead(input: { seqs?: number[]; upTo?: number }): Promise<void> {
