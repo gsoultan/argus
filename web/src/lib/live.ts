@@ -2034,6 +2034,62 @@ export async function controlStatus(): Promise<ControlStatus> {
   return get<ControlStatus>('/api/v1/platform/status')
 }
 
+/* ── Updating the control plane itself ─────────────────────────────────── */
+
+export type ControlUpdateState =
+  | 'waiting' | 'requested' | 'downloading' | 'backing_up' | 'installing' | 'restarting'
+  | 'rolling_back' | 'done' | 'rolled_back' | 'failed' | 'cancelled'
+
+/** One update of argus-control, as its helper and the control plane report it. */
+export interface ControlUpdateStatus {
+  id: string
+  from: string
+  target: string
+  requested_by?: string
+  state: ControlUpdateState
+  message: string
+  steps?: { state: ControlUpdateState; message: string; at: string }[]
+  at: string
+}
+
+/** Settings › Control plane › Updates, as GET /api/v1/platform/update returns it. */
+export interface ControlUpdateView {
+  running: string
+  hostname: string
+  supported: boolean
+  reason?: string
+  newest: { version: string; publishedAt: string; page: string } | null
+  newer: boolean
+  checkedAt?: string
+  checkFailure?: string
+  rollback?: {
+    known: boolean
+    reason?: string
+    added: number
+    breaking: { name: string; why?: string }[]
+  }
+  sessions: { held: number; ending: number; terminals: number; desktops: number; databases: number }
+  update: ControlUpdateStatus | null
+  helperLate?: boolean
+}
+
+export async function controlUpdate(): Promise<ControlUpdateView> {
+  return get<ControlUpdateView>('/api/v1/platform/update')
+}
+
+export async function requestControlUpdate(body: { version: string; when: 'idle' | 'now' }): Promise<ControlUpdateStatus> {
+  return send<ControlUpdateStatus>('POST', '/api/v1/platform/update', body)
+}
+
+export async function cancelControlUpdate(): Promise<ControlUpdateStatus> {
+  return send<ControlUpdateStatus>('DELETE', '/api/v1/platform/update')
+}
+
+/** Whether an update of argus-control is under way, for everyone's banner. */
+export async function controlUpdateBanner(): Promise<{ active: boolean; state?: ControlUpdateState; target?: string }> {
+  return get('/api/v1/control-update')
+}
+
 /* ── Console alerts (the bell) ──────────────────────────────────────────── */
 
 export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server' | 'backup' | 'data'

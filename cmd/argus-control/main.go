@@ -272,6 +272,15 @@ func run() error {
 		configPath = defaultConfigPath()
 	}
 
+	// These need no configuration: the helper runs as root and reads none
+	// of the control plane's, and the release build lists migrations.
+	switch flag.Arg(0) {
+	case "update-apply":
+		return runUpdateApply(flag.Args()[1:])
+	case "migrations":
+		return runMigrations(flag.Args()[1:])
+	}
+
 	if flag.NArg() > 0 {
 		path, err := commandConfig(configPath)
 		if err != nil {
@@ -558,6 +567,10 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		(cfg.AgentReleasesURL == "" || cfg.AgentReleasesAPI != "") {
 		api.Releases = &control.ReleaseWatcher{API: cfg.AgentReleasesAPI, Log: log}
 		go api.Releases.Run(ctx)
+	}
+	api.Updates = &control.ControlUpdater{
+		Dir: updateDir(loc), ReleasesURL: cfg.AgentReleasesURL, Log: log,
+		Unsupported: control.ControlUpdateSupport(updateDir(loc)),
 	}
 	if cfg.Console != nil {
 		api.FleetURL = cfg.Console.FleetURL
@@ -881,6 +894,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 				"listener in the clear; configure `tls` or terminate TLS in front of it")
 	}
 	started = true
+	// Tells an update helper waiting on this version that it is up, and
+	// records how the last update ended.
+	api.ControlUpdateStarted(ctx)
 	for i, l := range listeners {
 		l, ln := l, bound[i]
 		if cfg.TLS != nil {

@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDeviceFloppy, IconInfoCircle, IconLock,
-  IconFileText, IconNetwork, IconPackage, IconShieldLock, IconTerminal2, type IconProps,
+  IconFileText, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -25,6 +25,7 @@ import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
 import { SoftwareLibrary } from '~/components/SoftwareLibrary'
 import { LogCleanupSettings } from '~/components/LogCleanupSettings'
 import { ControlStatusSection, useStatusProblems } from '~/components/ControlStatus'
+import { ControlUpdateSection } from '~/components/ControlUpdate'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
@@ -69,7 +70,7 @@ const ALL_FIELDS = RECORDING_POLICY
 const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
-type PlatformSectionId = 'organizations' | 'status'
+type PlatformSectionId = 'organizations' | 'status' | 'control-updates'
 type ServerSectionId = 'updates' | 'software' | 'logs'
 type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId
 
@@ -157,7 +158,8 @@ function Settings() {
         ...(problems && problems.length > 0
           ? { count: { n: problems.length, color: problems.some((p) => p.severity === 'critical') ? 'rose' : 'amber' } }
           : {}),
-      }]
+      },
+      { id: 'control-updates', label: 'Updates', icon: IconRefresh, changed: false }]
     : []
   // Operating system updates: read by whoever reads the fleet, changed by
   // an admin or owner, and only against a real control plane.
@@ -367,6 +369,7 @@ function Settings() {
             {active === 'organizations' && platformItems.length > 0 && <Organizations />}
 
             {active === 'status' && statusItems.length > 0 && <ControlStatusSection onOpen={open} />}
+            {active === 'control-updates' && statusItems.length > 0 && <ControlUpdateSection />}
 
             {showControl && controlItems.some((c) => c.id === active) && (
               <>

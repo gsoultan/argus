@@ -1,0 +1,26 @@
+[Unit]
+Description=Argus control plane: update asked from the console
+Documentation=https://github.com/gsoultan/argus/blob/main/docs/install.md#upgrading
+
+# Started by argus-control-update.path. Downloads the release the console
+# named, checks it against the release's checksums, takes a backup
+# (argus-backup.service), installs the package, restarts argus-control and
+# waits for the new version to say it is ready. A version that does not come
+# up within 90 seconds, or exits three times, is replaced by the one that was
+# running. Each step is written to /var/lib/argus-control/update/status.json,
+# which the console reads.
+#
+# Root, because it installs a package. It takes nothing from the control
+# plane but a version number: where to download from is set here, in
+# /etc/argus/control-update.env (ARGUS_CONTROL_RELEASES_URL, for a mirror),
+# which the control plane cannot write.
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/argus/control-update.env
+ExecStart=/usr/bin/argus-control update-apply
+# The packages and the copy of the running binary, root's alone.
+StateDirectory=argus-control-update
+StateDirectoryMode=0700
+# A first backup of a large bucket can take hours; the update waits for it.
+TimeoutStartSec=7h
+KillMode=process

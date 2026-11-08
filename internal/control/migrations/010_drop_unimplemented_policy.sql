@@ -1,3 +1,4 @@
+-- argus:breaking: drops gateway_policy.encrypt_recordings_separate_key
 -- Remove a control that did nothing.
 --
 -- The console offered "Encrypt recordings at rest with a separate key", said it

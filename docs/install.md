@@ -832,6 +832,44 @@ they go through the tunnel like the rest of it.
 
 ## Upgrading
 
+### From the console
+
+**Settings › Control plane › Updates** (owners and admins of the default
+organization) shows the version running and the newest release, and updates to
+it. Before anything changes it says:
+
+- which open sessions the restart would end. Terminals on agents that hold a
+  shell pause for a few seconds and pick up where they were; desktops,
+  database sessions and terminals on older agents end. **When nothing would be
+  cut off** waits for those, up to two hours; **Now** does not.
+- whether going back would be clean. Each release publishes the migrations it
+  carries (`argus-control_<version>_migrations.json`); if any of the new ones
+  takes something away, the previous version may not start on the migrated
+  database, and going back means restoring the backup.
+
+The control plane cannot install a package itself. It writes the request to
+`/var/lib/argus-control/update/request.json`, and `argus-control-update.path`
+starts `argus-control-update.service` as root, which:
+
+1. downloads the release's package from GitHub, or from the mirror in
+   `ARGUS_CONTROL_RELEASES_URL` in `/etc/argus/control-update.env`, and checks
+   it against the release's `checksums.txt`;
+2. runs `argus-backup.service`, and changes nothing if the backup fails;
+3. installs the package and restarts `argus-control`;
+4. waits up to 90 seconds for the new version to say it is listening with its
+   database, and if it does not, or it exits three times, reinstalls the
+   version that was running.
+
+Each step shows on the page and in `journalctl -u argus-control-update`; the
+outcome goes in the audit log (`control.updated`, `control.update_rolled_back`,
+`control.update_failed`). With more than one replica, update each from its own
+address, one at a time. Updating from the console needs Linux with systemd and
+the package from this version on; the first upgrade to it is by hand, below.
+A mirror of the releases needs the migrations file too, and the control plane
+reads it from `agent_releases_url`.
+
+### By hand
+
 Install the new package over the old one, then check the new version is the
 one running:
 

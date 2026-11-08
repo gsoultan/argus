@@ -48,6 +48,8 @@ import {
   updateSavedQuery as liveUpdateSavedQuery,
   deleteSavedQuery as liveDeleteSavedQuery,
   controlStatus,
+  requestControlUpdate as liveRequestControlUpdate,
+  cancelControlUpdate as liveCancelControlUpdate,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -152,6 +154,24 @@ export const policyQuery = () =>
 export const statusKey = ['platform', 'status'] as const
 export const controlStatusQuery = () =>
   queryOptions({ queryKey: statusKey, queryFn: controlStatus, refetchInterval: 60_000 })
+
+export const controlUpdateKey = ['platform', 'update'] as const
+
+export function useRequestControlUpdate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: liveRequestControlUpdate,
+    onSettled: () => void qc.invalidateQueries({ queryKey: controlUpdateKey }),
+  })
+}
+
+export function useCancelControlUpdate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: liveCancelControlUpdate,
+    onSettled: () => void qc.invalidateQueries({ queryKey: controlUpdateKey }),
+  })
+}
 
 export const recentAuditQuery = (limit = 6) =>
   queryOptions({ queryKey: ['audit', 'recent', limit] as const, queryFn: () => api.recentAudit(limit), refetchInterval: 30_000 })

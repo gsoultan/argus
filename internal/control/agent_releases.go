@@ -52,8 +52,24 @@ type ReleaseWatcher struct {
 
 	mu      sync.Mutex
 	latest  *AgentRelease
+	control *AgentRelease // the newest with control plane packages
 	checked time.Time
 	failure string
+}
+
+// LatestControl is the newest release with control plane packages, for the
+// console's Updates page. Nil until one is found.
+func (w *ReleaseWatcher) LatestControl() *AgentRelease {
+	if w == nil {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.control == nil {
+		return nil
+	}
+	r := *w.control
+	return &r
 }
 
 // Latest is the newest release found, and when the watcher last asked.
@@ -98,7 +114,7 @@ func (w *ReleaseWatcher) log() *slog.Logger {
 
 // Check asks for the releases once.
 func (w *ReleaseWatcher) Check(ctx context.Context) error {
-	r, err := w.fetch(ctx)
+	r, c, err := w.fetch(ctx)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.checked = time.Now().UTC()
@@ -112,6 +128,9 @@ func (w *ReleaseWatcher) Check(ctx context.Context) error {
 	}
 	if r != nil {
 		w.latest = r
+	}
+	if c != nil {
+		w.control = c
 	}
 	return nil
 }
@@ -127,7 +146,7 @@ type ghRelease struct {
 	} `json:"assets"`
 }
 
-func (w *ReleaseWatcher) fetch(ctx context.Context) (*AgentRelease, error) {
+func (w *ReleaseWatcher) fetch(ctx context.Context) (*AgentRelease, *AgentRelease, error) {
 	api := w.API
 	if api == "" {
 		api = DefaultAgentReleasesAPI
@@ -138,23 +157,23 @@ func (w *ReleaseWatcher) fetch(ctx context.Context) (*AgentRelease, error) {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "argus-control")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s answered %s", api, resp.Status)
+		return nil, nil, fmt.Errorf("%s answered %s", api, resp.Status)
 	}
 	var list []ghRelease
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&list); err != nil {
-		return nil, fmt.Errorf("reading the releases: %w", err)
+		return nil, nil, fmt.Errorf("reading the releases: %w", err)
 	}
-	return newestAgentRelease(list), nil
+	return newestAgentRelease(list), newestRelease(list, "argus-control_"), nil
 }
 
 // newestAgentRelease picks the highest release an agent can update to: not
@@ -163,6 +182,11 @@ func (w *ReleaseWatcher) fetch(ctx context.Context) (*AgentRelease, error) {
 // release whose build failed has no packages, so it is passed over rather
 // than offered to agents that would fail to download it.
 func newestAgentRelease(list []ghRelease) *AgentRelease {
+	return newestRelease(list, "argus-agent_")
+}
+
+// newestRelease is newestAgentRelease for the packages named prefix.
+func newestRelease(list []ghRelease, prefix string) *AgentRelease {
 	var best *AgentRelease
 	for _, r := range list {
 		if r.Draft || r.Prerelease || !strings.HasPrefix(r.Tag, "v") {
@@ -177,7 +201,7 @@ func newestAgentRelease(list []ghRelease) *AgentRelease {
 			switch {
 			case a.Name == "checksums.txt":
 				sums = true
-			case strings.HasPrefix(a.Name, "argus-agent_"+v+"_linux_"):
+			case strings.HasPrefix(a.Name, prefix+v+"_linux_"):
 				pkgs = true
 			}
 		}

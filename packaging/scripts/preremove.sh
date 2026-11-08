@@ -12,9 +12,11 @@ esac
 # Only on removal. An upgrade used to stop and disable the control plane here,
 # and nothing started it again on the new binary: the console either went dark
 # or, where someone started the old process back up, kept reporting the old
-# version on its About page. The new package's postinstall restarts it instead.
+# version on its About page. The new package's postinstall restarts it instead,
+# or, for an update asked for from the console, the update helper, which checks
+# the new version came up and goes back if not.
 if [ "$removing" = 1 ] && command -v systemctl >/dev/null 2>&1; then
-    for svc in argus-agent argus-control; do
+    for svc in argus-agent argus-control argus-control-update.path; do
         systemctl stop "$svc" >/dev/null 2>&1 || true
         systemctl disable "$svc" >/dev/null 2>&1 || true
     done
