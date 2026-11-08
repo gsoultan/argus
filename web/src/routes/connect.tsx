@@ -13,6 +13,7 @@ import {
 import { OwnTerminalCard, PendingDirectLogin, useOwnTerminal } from '~/components/ssh/OwnTerminal'
 import type { FilesState } from '~/components/FileBrowser'
 import { ButtonLink } from '~/components/links'
+import { SignedIn } from '~/components/connect/SignedIn'
 import { ReachBadge, kindOf, reachOf } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
 import { isElevatedAccount, principalLabel, seesWholeFleet } from '~/lib/roles'
@@ -581,6 +582,10 @@ function Connect() {
             recording notes which Windows account was signed in.
           </Text>
         </Alert>
+      )}
+
+      {selected && viaAgent && !isDeviceTarget && !noAccounts && (
+        <SignedIn assetId={selected.id} principal={principal} />
       )}
 
       {target && isRDPTarget && !isScreenTarget && !isDeviceTarget && !noAccounts && (

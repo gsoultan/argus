@@ -402,6 +402,13 @@ func runDaemon(args []string) int {
 			Log:        log,
 			Executable: exe,
 		})
+		// Who is signed in here, for the console to show before a session
+		// opens; on Windows, signing out a disconnected one when every
+		// Remote Desktop session is taken. See internal/agent/logons.go.
+		services[agent.LogonsService] = agent.Logons(agent.LogonsConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Log:      log,
+		})
 		// Remote Desktop, to this host's own listener, on Windows: the agent is
 		// the RDP client and records the session before it is shown.
 		if runtime.GOOS == "windows" {

@@ -382,6 +382,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
 	a.registerPackageRoutes(mux)
 	a.registerSoftwareRoutes(mux)
+	a.registerLogonsRoutes(mux)
 	a.registerScriptRoutes(mux)
 	a.registerSoftwareFileRoutes(mux)
 	a.registerLogCleanupRoutes(mux)

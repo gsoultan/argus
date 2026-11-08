@@ -66,6 +66,8 @@ type Grant struct {
 	// Software is what a software grant may ask; nil for every other
 	// service.
 	Software *GrantSoftware `json:"software,omitempty"`
+	// Logons is what a logons grant may ask; nil for every other service.
+	Logons *GrantLogons `json:"logons,omitempty"`
 	// Session is the recording a watch grant may view; empty for every other
 	// service.
 	Session string `json:"sid,omitempty"`
