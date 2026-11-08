@@ -172,8 +172,12 @@ const BUDGET_KB = {
    * same shared weight as the overview.
    * 407.8 kB with cloud changes as well: the same icon files as the overview,
    * above.
+   * 409.1 kB with cloud schedules: the schedule editor's route, role guard
+   * and search rule in the route map, and the Schedules tab name the cloud
+   * page's search rule checks. The tab, the editor and their queries are in
+   * route chunks.
    */
-  sessionDetail: 409,
+  sessionDetail: 410,
 }
 
 /**
