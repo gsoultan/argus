@@ -27,7 +27,7 @@ describe('who may add and manage servers', () => {
   it('offers an administrator Add server, and each server’s page', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await screen.findByRole('link', { name: /add server/i })).toHaveAttribute('href', '/assets/add')
+    expect(await screen.findByRole('link', { name: /add asset/i })).toHaveAttribute('href', '/assets/add')
     expect((await screen.findAllByRole('link', { name: /^Manage / })).length).toBeGreaterThan(0)
   }, 15_000)
 
@@ -35,7 +35,7 @@ describe('who may add and manage servers', () => {
     signedInAs('operator')
     await renderRoute('/assets')
     expect(await screen.findByRole('textbox', { name: 'Find a server' })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /add server/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /add asset/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /^Manage / })).not.toBeInTheDocument()
   })
 
@@ -43,8 +43,8 @@ describe('who may add and manage servers', () => {
   it('gives a viewer the servers without the buttons that change them', async () => {
     signedInAs('auditor')
     await renderRoute('/assets')
-    expect(await screen.findByText(/every server in argus/i)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /add server/i })).not.toBeInTheDocument()
+    expect(await screen.findByText(/every server, workstation and device in argus/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /add asset/i })).not.toBeInTheDocument()
   })
 })
 

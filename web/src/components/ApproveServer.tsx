@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Avatar, Button, Checkbox, Group, Modal, MultiSelect, Stack, Text, TextInput,
+  Alert, Avatar, Button, Checkbox, Group, Modal, MultiSelect, SegmentedControl, Stack, Text, TextInput,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
@@ -10,6 +10,7 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import { isElevatedAccount } from '~/lib/roles'
 import type { DiscoveredHost } from '~/types/domain'
 import { FS, SP } from '~/theme'
+import { ASSET_TYPE_BLURB } from '~/lib/assetType'
 
 /**
  * Approving a server, with the two questions that make it usable.
@@ -37,6 +38,7 @@ export function ApproveServer({
   const [picked, setPicked] = useState<string[]>([])
   const [people, setPeople] = useState<string[]>([])
   const [extra, setExtra] = useState('')
+  const [type, setType] = useState<'server' | 'workstation'>('server')
 
   // Offer what the server reported, with the first ordinary account ticked:
   // on most servers that is the one person who set it up logs in as.
@@ -47,6 +49,9 @@ export function ApproveServer({
     setPicked(first ? [first] : [])
     setPeople([])
     setExtra('')
+    // A Windows desktop edition says so in its name; anything else starts as
+    // a server. The admin decides either way.
+    setType(/windows (10|11)|mac ?os/i.test(host?.os ?? '') ? 'workstation' : 'server')
   }, [host])
 
   const others = useMemo(
@@ -76,7 +81,7 @@ export function ApproveServer({
     try {
       res = await enrol.mutateAsync({
         hostname: host.hostname,
-        grant: { principals: picked, people },
+        grant: { principals: picked, people, kind: type },
       })
     } catch (err) {
       notifyError(`${host.hostname} was not added`, err)
@@ -112,6 +117,21 @@ export function ApproveServer({
           <Text size={FS.meta} c="dimmed" mt={-8}>
             {[host.os, host.addresses.join(', ')].filter(Boolean).join(' · ')}
           </Text>
+
+          <Stack gap="xs">
+            <Text fw={600} size="sm">What is it?</Text>
+            <SegmentedControl
+              fullWidth
+              aria-label="Type"
+              value={type}
+              onChange={(v) => setType(v as 'server' | 'workstation')}
+              data={[
+                { value: 'server', label: 'Server' },
+                { value: 'workstation', label: 'Workstation (laptop or PC)' },
+              ]}
+            />
+            <Text size={FS.meta} c="dimmed">{ASSET_TYPE_BLURB[type]}</Text>
+          </Stack>
 
           <Stack gap="xs">
             <Text fw={600} size="sm">Who can connect?</Text>

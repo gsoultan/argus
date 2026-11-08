@@ -7,7 +7,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useRouter } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconArrowLeft, IconDatabase, IconHourglass, IconLogin2, IconServer, IconSettings,
-  IconTableRow, IconTerminal2, IconX,
+  IconRefresh, IconTableRow, IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import {
   alertPrefsQuery, refreshAlertTarget, unreadAlertsQuery, type AlertKind, type AlertPrefs, type ConsoleAlert, type StreamStatus,
@@ -29,6 +29,7 @@ const KIND_ICON: Record<AlertKind, typeof IconHourglass> = {
   server: IconServer,
   backup: IconDatabase,
   data: IconTableRow,
+  updates: IconRefresh,
 }
 
 const TONE: Record<ConsoleAlert['severity'], string> = { info: 'slate', warning: 'amber', critical: 'rose' }
@@ -72,17 +73,19 @@ export default function AlertPanel({ status, onClose, fullScreen }: {
   fullScreen: boolean
 }) {
   const [view, setView] = useState<'list' | 'prefs'>('list')
-  const [tab, setTab] = useState<'unread' | 'all'>('unread')
+  const [tab, setTab] = useState<'unread' | 'all' | 'updates'>('unread')
   const unread = useQuery(unreadAlertsQuery())
-  const all = useInfiniteQuery({ ...allAlertsQuery(), enabled: tab === 'all' })
+  const all = useInfiniteQuery({ ...allAlertsQuery(), enabled: tab !== 'unread' })
   const mark = useMarkAlertsRead()
   const router = useRouter()
   const qc = useQueryClient()
   const st = STATUS[status]
 
+  // Updates: the daily digests of what is waiting to be updated, on their
+  // own, so they can be read without the rest of the bell.
   const alerts = tab === 'unread'
     ? unread.data?.alerts ?? []
-    : (all.data?.pages.flatMap((p) => p.alerts) ?? [])
+    : (all.data?.pages.flatMap((p) => p.alerts) ?? []).filter((a) => tab === 'all' || a.kind === 'updates')
   const loading = tab === 'unread' ? unread.isPending : all.isPending
   const failed = tab === 'unread' ? unread.error : all.error
   const newest = Math.max(0, ...(unread.data?.alerts.map((a) => a.seq) ?? []))
@@ -152,9 +155,9 @@ export default function AlertPanel({ status, onClose, fullScreen }: {
         <SegmentedControl
           size="xs"
           value={tab}
-          onChange={(v) => setTab(v as 'unread' | 'all')}
+          onChange={(v) => setTab(v as 'unread' | 'all' | 'updates')}
           data={[{ value: 'unread', label: count ? `Unread ${count >= 100 ? '99+' : count}` : 'Unread' },
-            { value: 'all', label: 'All' }]}
+            { value: 'all', label: 'All' }, { value: 'updates', label: 'Updates' }]}
         />
       </Box>
       <Divider />
@@ -165,7 +168,7 @@ export default function AlertPanel({ status, onClose, fullScreen }: {
           <Text size={FS.body} c="rose" p="md">Could not load alerts: {failed.message}</Text>
         ) : alerts.length === 0 ? (
           <Stack align="center" gap={SP.tight} py="xl" px="md">
-            <Text size={FS.body} fw={600}>{tab === 'unread' ? 'You are all caught up' : 'No alerts yet'}</Text>
+            <Text size={FS.body} fw={600}>{tab === 'unread' ? 'You are all caught up' : tab === 'updates' ? 'Nothing waiting to be updated' : 'No alerts yet'}</Text>
             <Text size={FS.meta} c="dimmed" ta="center">
               Approval requests, sign-ins and other events you can see appear here as they happen.
             </Text>

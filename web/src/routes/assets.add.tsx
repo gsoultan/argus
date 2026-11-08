@@ -87,7 +87,7 @@ function AddServer() {
   return (
     <Box>
       <PageHeader
-        crumbs={[{ label: 'Servers', to: '/assets' }, { label: 'Add server or device' }]}
+        crumbs={[{ label: 'Assets', to: '/assets' }, { label: 'Add server or device' }]}
         title="Add server or device"
       />
       <PageBody>

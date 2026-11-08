@@ -35,6 +35,7 @@ type Row struct {
 	PackageHolds              []string
 	LogCleanPaths             []string
 	LogProtectPaths           []string
+	ConnectRules              runtime.JSON
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -73,7 +74,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 15
+const nCols = 16
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -83,10 +84,11 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs         [6]string
-	tims         [4]time.Time
-	bools        [4]bool
-	ns, ntm, nbo uint8
+	strs              [6]string
+	tims              [4]time.Time
+	bools             [4]bool
+	jsns              [2]runtime.JSON
+	ns, ntm, nbo, njs uint8
 
 	anyStr [3][]string
 	nas    uint8
@@ -419,6 +421,7 @@ type Pred struct {
 	str    string
 	tim    time.Time
 	bol    bool
+	jsn    runtime.JSON
 	anyStr []string
 }
 
@@ -448,6 +451,7 @@ var (
 	PackageHolds              = TextArrayCol{12}
 	LogCleanPaths             = TextArrayCol{13}
 	LogProtectPaths           = TextArrayCol{14}
+	ConnectRules              = JSONCol{15}
 )
 
 // BoolCol addresses a bool column.
@@ -540,6 +544,25 @@ func (h TextArrayCol) ContainedBy(v ...string) Pred {
 func (h TextArrayCol) Overlaps(v ...string) Pred {
 	return Pred{col: h.c, op: opArrayOverlaps, anyStr: v}
 }
+
+// JSONCol addresses a jsonb column.
+type JSONCol struct{ c uint8 }
+
+func (h JSONCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h JSONCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h JSONCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h JSONCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h JSONCol) Contains(v runtime.JSON) Pred { return Pred{col: h.c, op: opJSONContains, jsn: v} }
+func (h JSONCol) ContainedBy(v runtime.JSON) Pred {
+	return Pred{col: h.c, op: opJSONContainedBy, jsn: v}
+}
+func (h JSONCol) HasAnyKey(v ...string) Pred  { return Pred{col: h.c, op: opHasAnyKey, anyStr: v} }
+func (h JSONCol) HasAllKeys(v ...string) Pred { return Pred{col: h.c, op: opHasAllKeys, anyStr: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -717,6 +740,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 15:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -810,6 +840,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 15:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -884,8 +921,16 @@ func (q Query) LogProtectPathsContainedBy(v ...string) Query {
 func (q Query) LogProtectPathsOverlaps(v ...string) Query {
 	return q.Where(LogProtectPaths.Overlaps(v...))
 }
+func (q Query) ConnectRulesContains(v runtime.JSON) Query { return q.Where(ConnectRules.Contains(v)) }
+func (q Query) ConnectRulesContainedBy(v runtime.JSON) Query {
+	return q.Where(ConnectRules.ContainedBy(v))
+}
+func (q Query) ConnectRulesHasAnyKey(v ...string) Query { return q.Where(ConnectRules.HasAnyKey(v...)) }
+func (q Query) ConnectRulesHasAllKeys(v ...string) Query {
+	return q.Where(ConnectRules.HasAllKeys(v...))
+}
 
-const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths" FROM "gateway_policy"`
+const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules" FROM "gateway_policy"`
 const countPrefix = `SELECT count(*) FROM "gateway_policy"`
 const existsPrefix = `SELECT 1 FROM "gateway_policy"`
 const existsSuffix = ` LIMIT 1`
@@ -1012,6 +1057,12 @@ var orderTable = [nCols][4]string{
 		"\"log_protect_paths\" ASC NULLS FIRST",
 		"\"log_protect_paths\" DESC NULLS LAST",
 	},
+	{ // connect_rules
+		"\"connect_rules\"",
+		"\"connect_rules\" DESC",
+		"\"connect_rules\" ASC NULLS FIRST",
+		"\"connect_rules\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1032,6 +1083,7 @@ var identTable = [nCols]string{
 	"\"package_holds\"",
 	"\"log_clean_paths\"",
 	"\"log_protect_paths\"",
+	"\"connect_rules\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1064,7 +1116,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [15][28]runtime.Frag{
+var fragTable = [16][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1515,6 +1567,36 @@ var fragTable = [15][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // connect_rules
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"connect_rules\" @> $", B: ""},
+		{A: "\"connect_rules\" <@ $", B: ""},
+		{A: "\"connect_rules\" ?| $", B: ""},
+		{A: "\"connect_rules\" ?& $", B: ""},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1696,6 +1778,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	if decErr != nil {
 		return decErr
 	}
+	r.ConnectRules = runtime.JSON(runtime.JSONB(rv[15], sl))
 	return decErr
 }
 
@@ -1704,6 +1787,7 @@ type binder struct {
 	strs   [6]string
 	tims   [4]time.Time
 	bools  [4]bool
+	jsns   [2]runtime.JSON
 	anyStr [3][]string
 	limit  int64
 	offset int64
@@ -1740,7 +1824,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, ntm, nbo, nas uint8
+	var ns, ntm, nbo, njs, nas uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1773,6 +1857,10 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 14:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 15:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1828,6 +1916,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 15:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v
@@ -1965,7 +2057,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths"`
+const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules"`
 
 const updatePrefix = `UPDATE "gateway_policy" SET `
 const deletePrefix = `DELETE FROM "gateway_policy"`
@@ -1987,9 +2079,10 @@ const (
 	dPackageHolds              uint64 = 1 << 11
 	dLogCleanPaths             uint64 = 1 << 12
 	dLogProtectPaths           uint64 = 1 << 13
+	dConnectRules              uint64 = 1 << 14
 )
 
-const nUpdatable = 14
+const nUpdatable = 15
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2007,6 +2100,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"package_holds\" = $", B: ""},                 // package_holds
 	{A: "\"log_clean_paths\" = $", B: ""},               // log_clean_paths
 	{A: "\"log_protect_paths\" = $", B: ""},             // log_protect_paths
+	{A: "\"connect_rules\" = $", B: ""},                 // connect_rules
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2027,6 +2121,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                   // package_holds has no server-side form
 	{},                                   // log_clean_paths has no server-side form
 	{},                                   // log_protect_paths has no server-side form
+	{},                                   // connect_rules has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2053,9 +2148,10 @@ const (
 	iPackageHolds              uint64 = 1 << 12
 	iLogCleanPaths             uint64 = 1 << 13
 	iLogProtectPaths           uint64 = 1 << 14
+	iConnectRules              uint64 = 1 << 15
 )
 
-const nInsertable = 15
+const nInsertable = 16
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2074,6 +2170,7 @@ var insCols = [nInsertable]string{
 	"\"package_holds\"",
 	"\"log_clean_paths\"",
 	"\"log_protect_paths\"",
+	"\"connect_rules\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2082,7 +2179,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"gateway_policy\""
-const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\""
+const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\", \"connect_rules\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2101,7 +2198,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\""
+const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\", \"connect_rules\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2244,6 +2341,12 @@ func (m *Mut) SetLogProtectPaths(v []string) {
 	m.expr &^= dLogProtectPaths
 }
 
+func (m *Mut) SetConnectRules(v runtime.JSON) {
+	m.row.ConnectRules = v
+	m.dirty |= dConnectRules
+	m.expr &^= dConnectRules
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2344,6 +2447,11 @@ func (n *Ins) SetLogProtectPaths(v []string) {
 	n.set |= iLogProtectPaths
 }
 
+func (n *Ins) SetConnectRules(v runtime.JSON) {
+	n.row.ConnectRules = v
+	n.set |= iConnectRules
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2389,7 +2497,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 14)
+	set := make([]string, 0, 15)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2433,6 +2541,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<14) != 0 {
 			set = append(set, "log_protect_paths")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "connect_rules")
 		}
 	}
 	return set
@@ -2496,6 +2607,7 @@ var assignFor = map[string]string{
 	"package_holds":                 "\"package_holds\" = EXCLUDED.\"package_holds\"",
 	"log_clean_paths":               "\"log_clean_paths\" = EXCLUDED.\"log_clean_paths\"",
 	"log_protect_paths":             "\"log_protect_paths\" = EXCLUDED.\"log_protect_paths\"",
+	"connect_rules":                 "\"connect_rules\" = EXCLUDED.\"connect_rules\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2569,6 +2681,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.LogCleanPaths)
 		case 14:
 			args = append(args, n.row.LogProtectPaths)
+		case 15:
+			args = append(args, n.row.ConnectRules)
 		}
 	}
 	var out Row
@@ -2606,7 +2720,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 15)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2622,6 +2736,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.PackageHolds)
 	args = append(args, r.LogCleanPaths)
 	args = append(args, r.LogProtectPaths)
+	args = append(args, r.ConnectRules)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2663,13 +2778,14 @@ var copyCols = []string{
 	"package_holds",
 	"log_clean_paths",
 	"log_protect_paths",
+	"connect_rules",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [15]any
+	buf  [16]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2702,6 +2818,7 @@ func (s *rowSource) Values() []any {
 	s.buf[12] = &r.PackageHolds
 	s.buf[13] = &r.LogCleanPaths
 	s.buf[14] = &r.LogProtectPaths
+	s.buf[15] = &r.ConnectRules
 	return s.buf[:]
 }
 
@@ -2747,8 +2864,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 12
 	mask |= 1 << 13
 	mask |= 1 << 14
+	mask |= 1 << 15
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 15)
+	args := make([]any, 0, 16)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2764,6 +2882,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.PackageHolds)
 	args = append(args, r.LogCleanPaths)
 	args = append(args, r.LogProtectPaths)
+	args = append(args, r.ConnectRules)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2827,6 +2946,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.LogCleanPaths)
 		case 14:
 			args = append(args, n.row.LogProtectPaths)
+		case 15:
+			args = append(args, n.row.ConnectRules)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2901,6 +3022,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.LogCleanPaths)
 		case 13:
 			args = append(args, m.row.LogProtectPaths)
+		case 14:
+			args = append(args, m.row.ConnectRules)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3011,6 +3134,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.LogCleanPaths)
 		case 13:
 			args = append(args, m.row.LogProtectPaths)
+		case 14:
+			args = append(args, m.row.ConnectRules)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3187,6 +3312,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.LogCleanPaths)
 		case 13:
 			args = append(args, m.row.LogProtectPaths)
+		case 14:
+			args = append(args, m.row.ConnectRules)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

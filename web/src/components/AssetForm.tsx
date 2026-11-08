@@ -5,7 +5,8 @@ import {
 import { useCreateAsset, useUpdateAsset } from '~/lib/queries'
 import { run } from '~/lib/notify'
 import { SP } from '~/theme'
-import { DEVICE_PRINCIPALS, type Asset, type AssetInput, type AssetProtocol, type ControlMode, type DesktopMode } from '~/types/domain'
+import { ASSET_TYPE_BLURB } from '~/lib/assetType'
+import { DEVICE_PRINCIPALS, type Asset, type AssetInput, type AssetKind, type AssetProtocol, type ControlMode, type DesktopMode } from '~/types/domain'
 
 /**
  * Adding a host to the inventory, and editing one.
@@ -49,6 +50,7 @@ function fromAsset(a: Asset): AssetInput {
     kind: a.kind ?? 'server',
     controlMode: a.controlMode,
     controlNeedsApproval: a.controlNeedsApproval,
+    connectAsk: a.connectAsk ?? null,
     rotationIntervalDays: a.rotationIntervalDays,
   }
 }
@@ -179,8 +181,49 @@ export function AssetForm({
         </Stack>
       ) : (
       <Stack gap="sm">
+        <Box>
+          <Text size="sm" fw={500}>Type</Text>
+          <Text size="xs" c="dimmed" mb={6}>
+            {ASSET_TYPE_BLURB[form.kind === 'workstation' ? 'workstation' : 'server']}
+          </Text>
+          <SegmentedControl
+            fullWidth
+            aria-label="Type"
+            value={form.kind === 'workstation' ? 'workstation' : 'server'}
+            onChange={(v) => set('kind', v as AssetKind)}
+            data={[
+              { value: 'server', label: 'Server' },
+              { value: 'workstation', label: 'Workstation (laptop or PC)' },
+            ]}
+          />
+        </Box>
+        <Box>
+          <Text size="sm" fw={500}>Before connecting</Text>
+          <Text size="xs" c="dimmed" mb={6}>
+            {form.connectAsk === 'never'
+              ? 'Opens without asking or telling anyone, like a server. For lab or kiosk machines nobody uses as their own.'
+              : form.connectAsk === 'ask'
+              ? 'Whoever is using it is asked first, on their screen. A terminal only tells them.'
+              : form.connectAsk === 'tell'
+              ? 'Opens at once; whoever is using it gets a notice naming who connected.'
+              : `As set for every ${form.kind === 'workstation' ? 'workstation' : 'server'} in Settings, Asset types.`}
+          </Text>
+          <SegmentedControl
+            fullWidth
+            aria-label="Before connecting"
+            value={form.connectAsk ?? 'type'}
+            onChange={(v) => set('connectAsk', v === 'type' ? null : (v as 'never' | 'ask' | 'tell'))}
+            data={[
+              { value: 'type', label: `Like other ${form.kind === 'workstation' ? 'workstations' : 'servers'}` },
+              { value: 'never', label: 'Never ask' },
+              { value: 'ask', label: 'Ask first' },
+              { value: 'tell', label: 'Tell them' },
+            ]}
+          />
+        </Box>
         <SegmentedControl
           fullWidth
+          aria-label="Connects by"
           value={form.protocol ?? 'ssh'}
           onChange={(v) => setProtocol(v as AssetProtocol)}
           data={[

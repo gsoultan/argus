@@ -124,8 +124,12 @@ const BUDGET_KB = {
    * (Home, Servers, Databases, Cloud, Settings and the like) out of the
    * entry into a small file each. The bytes are the same; the 3.6 kB is
    * the per-file overhead. The cloud pages themselves are in route chunks.
+   * 308.1 kB with update notices (307.5 before, same build): the Updates
+   * route in the route map, and the server cards' Needs updates filter and
+   * badges, with the small query they read. The Updates page and the bell's
+   * Updates tab are in route and lazy chunks.
    */
-  overview: 308,
+  overview: 309,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most

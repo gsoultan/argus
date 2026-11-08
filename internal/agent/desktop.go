@@ -43,6 +43,9 @@ const DefaultDesktopAddress = "127.0.0.1:3389"
 
 // DesktopConfig is what the desktop service needs.
 type DesktopConfig struct {
+	// Asker reaches the person at a workstation when the grant says to ask
+	// first; nil is this platform's. See ask.go.
+	Asker     Asker
 	Collector *Collector
 	Verifier  *tunnel.GrantVerifier
 	Hostname  string
@@ -171,6 +174,14 @@ func desktopService(cfg DesktopConfig, service string) TunnelService {
 		// logon yet, so none is half-opened.
 		if strings.ContainsAny(g.Principal, `\@/`) {
 			call.Refuse("only local accounts can be opened on this host for now, not " + g.Principal)
+			return
+		}
+		what := "open a Remote Desktop session as " + g.Principal
+		if service == ScreenService {
+			what = "see and use this computer's screen"
+		}
+		if err := askAtMachineFor(ctx, cfg.Asker, g, what, log); err != nil {
+			call.Refuse(err.Error())
 			return
 		}
 		var open tunnel.DesktopOpen

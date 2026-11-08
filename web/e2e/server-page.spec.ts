@@ -11,7 +11,7 @@ import { watchErrors } from './helpers'
 // one that did would hide failed assets from the listeners (see helpers.ts).
 test.use({ serviceWorkers: 'block' })
 
-const TABS = ['overview', 'access', 'sessions', 'apps', 'settings'] as const
+const TABS = ['overview', 'access', 'sessions', 'apps', 'agent', 'settings'] as const
 
 /** The first server's page, reached the way an admin reaches it. */
 async function serverPath(page: Page): Promise<string> {
@@ -32,7 +32,7 @@ for (const [label, viewport] of [
       const errs = watchErrors(page)
       await page.goto(tab === 'overview' ? path : `${path}?tab=${tab}`)
       await expect(page.getByRole('tab', { selected: true })).toHaveText(new RegExp(
-        { overview: 'Overview', access: 'Access', sessions: 'Sessions', apps: 'What runs here', settings: 'Settings' }[tab],
+        { overview: 'Overview', access: 'Access', sessions: 'Sessions', apps: 'Apps', agent: 'Agent', settings: 'Settings' }[tab],
       ))
       await page.waitForLoadState('networkidle')
       await errs.assertClean()

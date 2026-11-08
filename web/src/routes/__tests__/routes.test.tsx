@@ -17,7 +17,7 @@ const HOME = /^Good (morning|afternoon|evening)/
 
 const ROUTES: Array<[path: string, heading: string | RegExp]> = [
   ['/', HOME],
-  ['/assets', 'Servers'],
+  ['/assets', 'Assets'],
   ['/assets/add', 'Add server or device'],
   ['/approvals', 'Approvals'],
   ['/teams', 'Teams'],
@@ -31,8 +31,8 @@ const ROUTES: Array<[path: string, heading: string | RegExp]> = [
   ['/cloud/launch', 'Launch an instance'],
   ['/about', 'About Argus'],
   // Old addresses, kept so a bookmark lands somewhere sensible.
-  ['/mine', 'Servers'],
-  ['/coverage', 'Servers'],
+  ['/mine', 'Assets'],
+  ['/coverage', 'Assets'],
   ['/requests', 'Approvals'],
   ['/users', 'Teams'],
 ]
@@ -177,7 +177,7 @@ describe('navigation', () => {
   it('has one entry for servers, and no separate Connect', async () => {
     await renderRoute('/assets')
     const nav = await screen.findByRole('navigation', { name: 'Main' })
-    const servers = await within(nav).findByRole('link', { name: /^Servers/ })
+    const servers = await within(nav).findByRole('link', { name: /^Assets/ })
     expect(servers).toHaveAttribute('href', '/assets')
     expect(within(nav).queryByRole('link', { name: /connect/i })).not.toBeInTheDocument()
   })
@@ -190,16 +190,16 @@ describe('navigation', () => {
   })
 
   /** Adding a server is part of Servers, so Servers stays lit while doing it. */
-  it('lights exactly one item, and Servers while adding one', async () => {
+  it('lights exactly one item, and Assets while adding one', async () => {
     await renderRoute('/assets/add')
     await screen.findByRole('heading', { name: 'Add server or device' })
     const nav = screen.getByRole('navigation', { name: 'Main' })
-    await within(nav).findByRole('link', { name: /^Servers/ })
+    await within(nav).findByRole('link', { name: /^Assets/ })
     const current = within(nav)
       .getAllByRole('link')
       .filter((a) => a.hasAttribute('data-active'))
     expect(current).toHaveLength(1)
-    expect(current[0]).toHaveTextContent(/^Servers/)
+    expect(current[0]).toHaveTextContent(/^Assets/)
   })
 })
 

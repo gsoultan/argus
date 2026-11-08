@@ -271,7 +271,8 @@ func TestADeviceIsValidated(t *testing.T) {
 		{AssetInput{Hostname: "p1", Kind: "android", ControlMode: "sometimes"}, "attended or unattended"},
 		{AssetInput{Hostname: "s1", ControlMode: "unattended"}, "not a server"},
 		{AssetInput{Hostname: "s1", ControlNeedsApproval: true}, "not a server"},
-		{AssetInput{Hostname: "x1", Kind: "ios"}, "server or android"},
+		{AssetInput{Hostname: "x1", Kind: "ios"}, "server, workstation or android"},
+		{AssetInput{Hostname: "w1", Kind: "workstation", ControlMode: "attended"}, "not a workstation"},
 	} {
 		_, err := tc.in.normalise()
 		if err == nil || !strings.Contains(err.Error(), tc.bad) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,12 +159,27 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 
 	g := tunnel.NewGrant(email, host, principal, client)
 	g.Service = service
+	// A workstation is someone's: by its type's rule, or its own, whoever
+	// is using it is asked first, and the open waits for their answer as
+	// well as for the agent. A device's app asks on its own.
+	openWait := terminalOpenWait
+	if kind != "android" {
+		ask, err := a.askFor(ctx, host, email, true)
+		if err != nil {
+			fail("could not read who is asked before connecting: " + err.Error())
+			return
+		}
+		g.Ask = ask
+		if ask != nil && ask.Mode == tunnel.AskFirst {
+			openWait += time.Duration(ask.Seconds) * time.Second
+		}
+	}
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
 		fail("could not sign the session grant")
 		return
 	}
-	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
+	octx, cancel := context.WithTimeout(ctx, openWait)
 	st, answer, err := a.Tunnels.OpenWith(octx, host, tunnel.Header{
 		Service: service, Grant: grant,
 		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height,
@@ -184,6 +200,11 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	case tunnel.IsRefused(err) && service == agentAndroidService && answer.Error == "unknown service":
 		fail("what is connected as " + host + " is not the Argus app for Android, so it has " +
 			"no screen to share; check the device and its app")
+		return
+	case tunnel.IsRefused(err) && strings.HasPrefix(answer.Error, tunnel.AskRefusedPrefix):
+		a.auditAskRefused(ctx, email, host, what+" as "+principal, answer.Error)
+		fail(strings.TrimPrefix(answer.Error, tunnel.AskRefusedPrefix) + ", so the session did not open. " +
+			"Ask them, or try again later.")
 		return
 	case tunnel.IsRefused(err):
 		a.log.Warn("desktop: the agent refused the session", "host", host,

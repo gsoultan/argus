@@ -22,6 +22,9 @@ export const ALERT_KINDS: { kind: AlertKind; label: string; description: string;
   { kind: 'data', label: 'Data changes',
     description: 'Someone inserts, updates or deletes rows, empties or drops a table, in a database you are assigned to; told once the change is committed.',
     who: 'Admins, auditors, everyone assigned the database' },
+  { kind: 'updates', label: 'Updates',
+    description: 'Once a day: security fixes waiting, a new agent release with how many assets are behind, and assets that need a restart to finish updating.',
+    who: 'Admins, auditors' },
 ]
 
 /* ── Fixture ─────────────────────────────────────────────────────────────── */

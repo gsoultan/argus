@@ -73,6 +73,11 @@ func TestAlertVisibilityIsTheSameInSQLAndInMemory(t *testing.T) {
 						want = append(want, all[i].Seq)
 					}
 				}
+				// One page is at most 100: with every kind, an admin sees more,
+				// and the page is the newest 100 of them.
+				if len(want) > 100 {
+					want = want[:100]
+				}
 				if !slices.Equal(got, want) {
 					t.Fatalf("%s as %s with %+v: SQL shows %d alerts, memory %d", email, role, p, len(got), len(want))
 				}

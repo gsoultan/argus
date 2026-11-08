@@ -85,7 +85,7 @@ export function OverviewTab({ asset, sessions, onTab, canFreeSpace = false }: {
             ? agent.latest && agent.latest !== agent.agentVersion ? `${agent.latest} available` : 'Up to date'
             : asset.agentLastSeenAt ? `Checked in ${relTime(asset.agentLastSeenAt)}` : 'Never checked in'}
           tone={asset.agentState === 'healthy' ? 'ok' : 'warn'}
-          onClick={() => onTab('settings')}
+          onClick={() => onTab('agent')}
         />
       </SimpleGrid>
 
@@ -181,7 +181,7 @@ export function OverviewTab({ asset, sessions, onTab, canFreeSpace = false }: {
  * the same system call the card uses, so it says what the device reports,
  * not what the console set.
  */
-function DeviceSecurity({ asset }: { asset: Asset }) {
+export function DeviceSecurity({ asset }: { asset: Asset }) {
   const { data } = useQuery(systemQuery(asset))
   const sys = data?.system
   const engine = sys?.engine
@@ -227,7 +227,7 @@ function reachLabel(a: Asset): string {
   return { online: 'Online', slow: 'Slow', offline: 'Offline', blocked: 'Blocked' }[reachOf(a)]
 }
 
-function agentStateLabel(a: Asset): string {
+export function agentStateLabel(a: Asset): string {
   return { healthy: 'Connected', stale: 'Quiet', absent: 'None' }[a.agentState]
 }
 

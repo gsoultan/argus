@@ -194,7 +194,25 @@ func (s *Store) EnrolHost(
 	ctx context.Context, hostname, actor string, principals, people, teams []string,
 	personal bool,
 ) (string, error) {
-	return s.enrol(ctx, hostname, actor, principals, people, teams, personal, nil)
+	return s.EnrolHostAs(ctx, "server", hostname, actor, principals, people, teams, personal)
+}
+
+// EnrolHostAs is EnrolHost with the asset's kind: "server" or
+// "workstation". The two are stored and opened the same way; the kind says
+// whether a person sits at it, which the console shows and later decides
+// who is asked before a session opens. A device is EnrolDevice.
+func (s *Store) EnrolHostAs(
+	ctx context.Context, kind, hostname, actor string, principals, people, teams []string,
+	personal bool,
+) (string, error) {
+	switch kind {
+	case "":
+		kind = "server"
+	case "server", "workstation":
+	default:
+		return "", ErrInvalidAsset{Reason: "kind must be server or workstation; a device is enrolled as android"}
+	}
+	return s.enrol(ctx, hostname, actor, principals, people, teams, personal, kind, nil)
 }
 
 // DeviceEnrol is what an Android device is enrolled with beyond a server:
@@ -227,12 +245,12 @@ func (s *Store) EnrolDevice(
 			return "", ErrInvalidAsset{Reason: "a device has no accounts: give view, control or both"}
 		}
 	}
-	return s.enrol(ctx, hostname, actor, principals, people, teams, false, &dev)
+	return s.enrol(ctx, hostname, actor, principals, people, teams, false, "android", &dev)
 }
 
 func (s *Store) enrol(
 	ctx context.Context, hostname, actor string, principals, people, teams []string,
-	personal bool, dev *DeviceEnrol,
+	personal bool, kind string, dev *DeviceEnrol,
 ) (string, error) {
 	principals = dedupe(principals)
 	if len(principals) > maxPrincipals {
@@ -308,15 +326,18 @@ func (s *Store) enrol(
 		err = tx.QueryRow(ctx, `
 		INSERT INTO assets (hostname, address, port, os, agent_hostname,
 		                    agent_state, agent_last_seen_at, discovered_by,
-		                    host_key_state, principals, source)
-		VALUES ($1,$2,$3,$4,$5,'healthy',now(),$6,'unpinned',$7,'console')
+		                    host_key_state, principals, source, kind)
+		VALUES ($1,$2,$3,$4,$5,'healthy',now(),$6,'unpinned',$7,'console',$8)
 		ON CONFLICT (hostname) DO UPDATE SET
 			agent_hostname = EXCLUDED.agent_hostname,
 			source         = 'console',
+			-- A device row keeps its kind: what makes it a device is how it
+			-- is stored, which this path does not write.
+			kind           = CASE WHEN assets.kind = 'android' THEN assets.kind ELSE EXCLUDED.kind END,
 			principals     = ARRAY(SELECT DISTINCT unnest(assets.principals || EXCLUDED.principals)),
 			updated_at     = now()
 		RETURNING id::text`,
-			assetName, address, port, os, hostname, actor, principals).Scan(&id)
+			assetName, address, port, os, hostname, actor, principals, kind).Scan(&id)
 	} else {
 		// A device: stored the way it opens (see AssetInput.Kind), with the
 		// control mode chosen now. A row of the same name that was a server

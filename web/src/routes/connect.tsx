@@ -13,6 +13,7 @@ import {
 import { OwnTerminalCard, PendingDirectLogin, useOwnTerminal } from '~/components/ssh/OwnTerminal'
 import type { FilesState } from '~/components/FileBrowser'
 import { ButtonLink } from '~/components/links'
+import { SignedIn } from '~/components/connect/SignedIn'
 import { ReachBadge, kindOf, reachOf } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
 import { isElevatedAccount, principalLabel, seesWholeFleet } from '~/lib/roles'
@@ -249,7 +250,7 @@ function Connect() {
     return (
       <Box h="calc(100vh - var(--app-shell-header-offset, 56px))" style={{ display: 'flex', flexDirection: 'column' }}>
         <PageHeader
-          crumbs={[{ label: 'Servers', to: '/assets' }, { label: short }]}
+          crumbs={[{ label: 'Assets', to: '/assets' }, { label: short }]}
           title={`${principalLabel(session.principal, openedAsset)} on ${short}`}
           status={
             <Badge
@@ -480,6 +481,10 @@ function Connect() {
   }
 
   const noAccounts = principals.length === 0
+  // Who is asked before it opens: the asset's own setting, else its type's
+  // default. An admin may have changed the type's rule in Settings, which
+  // this page cannot read; the agent applies whatever the rule is.
+  const askMode = selected?.connectAsk ?? (selected?.kind === 'workstation' ? 'ask' : 'never')
   const canFiles = !!selected && viaAgent && !isRDPTarget && !noAccounts
   const showOwn = !!selected && !isRDPTarget
   const browserCard = (
@@ -572,6 +577,17 @@ function Connect() {
         </Alert>
       )}
 
+      {target && askMode !== 'never' && !isDeviceTarget && !noAccounts && (
+        <Alert color="azure" variant="light" icon={<IconDeviceDesktop size={16} />}
+          title={isRDPTarget && askMode === 'ask' ? 'Whoever is using it is asked first' : 'Whoever is using it is told'}>
+          <Text size={FS.body} lh={1.5}>
+            {isRDPTarget && askMode === 'ask'
+              ? 'If a person is signed in and using it, Argus asks them on their screen, naming you. It opens when they allow it; no answer in time is a no. If nobody is using it, it opens straight away.'
+              : 'It opens straight away, and anyone signed in at its screen gets a notice naming you.'}
+          </Text>
+        </Alert>
+      )}
+
       {target && isScreenTarget && !isDeviceTarget && !noAccounts && (
         <Alert color="amber" variant="light" icon={<IconDeviceDesktop size={16} />}
           title="Screen sharing, not Remote Desktop">
@@ -581,6 +597,10 @@ function Connect() {
             recording notes which Windows account was signed in.
           </Text>
         </Alert>
+      )}
+
+      {selected && viaAgent && !isDeviceTarget && !noAccounts && (
+        <SignedIn assetId={selected.id} principal={principal} />
       )}
 
       {target && isRDPTarget && !isScreenTarget && !isDeviceTarget && !noAccounts && (
@@ -626,7 +646,7 @@ function Connect() {
   return (
     <Box>
       <PageHeader
-        crumbs={[{ label: 'Servers', to: '/assets' }, { label: name || 'Connect' }]}
+        crumbs={[{ label: 'Assets', to: '/assets' }, { label: name || 'Connect' }]}
         title={selected ? `Connect to ${name}` : 'Connect'}
         status={selected && <ReachBadge reach={reachOf(selected)} />}
         description={selected

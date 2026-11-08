@@ -1,17 +1,11 @@
-/** The tabs of a server's page, in order. The first is the default. */
-export const SERVER_TABS = ['overview', 'access', 'sessions', 'apps', 'updates', 'disks', 'logs', 'settings'] as const
+/**
+ * The tabs of an asset's page, in order. The first is the default. Every type
+ * keeps this order; a tab that does not apply to a type is left out, never
+ * shown empty (see TABS_BY_TYPE in tabsByType.ts, kept apart so the route's
+ * search check, which is in the shell, does not pull in the type labels).
+ */
+export const SERVER_TABS = ['overview', 'access', 'sessions', 'apps', 'updates', 'disks', 'logs', 'agent', 'settings'] as const
 export type ServerTab = (typeof SERVER_TABS)[number]
-
-export const SERVER_TAB_LABEL: Record<ServerTab, string> = {
-  overview: 'Overview',
-  access: 'Access',
-  sessions: 'Sessions',
-  apps: 'What runs here',
-  updates: 'Updates',
-  disks: 'Disks',
-  logs: 'Logs',
-  settings: 'Settings',
-}
 
 /** A tab named in the address, or none for the default. */
 export function parseServerTab(v: unknown): ServerTab | undefined {

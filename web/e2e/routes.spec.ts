@@ -7,7 +7,7 @@ const HOME = /^Good (morning|afternoon|evening)/
 const ROUTES: Array<[string, string | RegExp]> = [
   ['/', HOME],
   ['/sessions', 'Activity'],
-  ['/assets', 'Servers'],
+  ['/assets', 'Assets'],
   ['/assets/add', 'Add server or device'],
   ['/approvals', 'Approvals'],
   ['/audit', 'Activity'],
@@ -16,8 +16,8 @@ const ROUTES: Array<[string, string | RegExp]> = [
   ['/connect', 'Connect'],
   ['/about', 'About Argus'],
   // Old addresses, kept working: My servers, Overview's Coverage, Requests, Users.
-  ['/mine', 'Servers'],
-  ['/coverage', 'Servers'],
+  ['/mine', 'Assets'],
+  ['/coverage', 'Assets'],
   ['/requests', 'Approvals'],
   ['/users', 'Teams'],
 ]
@@ -42,7 +42,7 @@ test('the designed fonts actually load', async ({ page }) => {
   // can draw before it has anything monospaced to show; this was `/` while
   // `/` redirected to Servers.
   await page.goto('/assets')
-  await expect(page.getByRole('heading', { name: 'Servers', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
   // Force both families to be used, then wait for the loads they trigger.
   await page.evaluate(async () => {
     await Promise.all([

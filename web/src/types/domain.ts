@@ -225,8 +225,9 @@ export interface Asset {
    */
   desktopMode?: DesktopMode
   /**
-   * What this row is: a `server`, or an `android` device driven through the
-   * Argus app on it. A device opens the way a shared Windows console does
+   * What this row is: a `server`, a `workstation` (a laptop or PC someone
+   * uses, stored and opened exactly as a server is), or an `android` device
+   * driven through the Argus app on it. A device opens the way a shared Windows console does
    * (protocol `rdp`, desktop mode `screen`) and has no accounts: its
    * principals are `view` and `control`. Absent from an older control
    * plane, which is `server`.
@@ -239,6 +240,8 @@ export interface Asset {
    * does on a server. `view` never does.
    */
   controlNeedsApproval?: boolean
+  /** Who is asked before connecting: null follows the type's rule. */
+  connectAsk?: 'never' | 'ask' | 'tell' | null
   /** Null when credentialMode is 'ca-certificate' — nothing to rotate. */
   credentialRotatedAt: ISOTime | null
   rotationIntervalDays: number | null
@@ -620,6 +623,8 @@ export interface AssetInput {
   kind?: AssetKind
   controlMode?: ControlMode
   controlNeedsApproval?: boolean
+  /** Null follows the type's rule in Settings › Asset types. */
+  connectAsk?: 'never' | 'ask' | 'tell' | null
   rotationIntervalDays?: number | null
 }
 
@@ -627,7 +632,7 @@ export interface AssetInput {
 export type DesktopMode = 'rdp' | 'screen'
 
 /** What an asset is; see Asset.kind. */
-export type AssetKind = 'server' | 'android'
+export type AssetKind = 'server' | 'workstation' | 'android'
 
 /**
  * How an Android device is controlled: `attended`, where whoever holds it

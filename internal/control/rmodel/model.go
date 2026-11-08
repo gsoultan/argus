@@ -239,6 +239,9 @@ type Asset struct {
 	ControlMode string
 	// ControlNeedsApproval makes "control" an elevated principal on a device.
 	ControlNeedsApproval bool
+	// ConnectAsk is nil to follow the type's connect rule, or never, ask or
+	// tell (migration 066).
+	ConnectAsk *string
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -272,11 +275,13 @@ func (m *Asset) Schema(t *storm.Table) {
 		"desktop_mode = ANY (ARRAY['rdp'::text, 'screen'::text])")
 	t.Col(&m.Kind).Default("'server'::text")
 	t.CheckNamed("assets_kind_check",
-		"kind = ANY (ARRAY['server'::text, 'android'::text])")
+		"kind = ANY (ARRAY['server'::text, 'workstation'::text, 'android'::text])")
 	t.Col(&m.ControlMode).Default("'attended'::text")
 	t.CheckNamed("assets_control_mode_check",
 		"control_mode = ANY (ARRAY['attended'::text, 'unattended'::text])")
 	t.Col(&m.ControlNeedsApproval).Default("false")
+	t.CheckNamed("assets_connect_ask_check",
+		"(connect_ask IS NULL) OR (connect_ask = ANY (ARRAY['never'::text, 'ask'::text, 'tell'::text]))")
 }
 
 // AssetAssignment is table asset_assignments: who may reach which host, as whom.
@@ -424,7 +429,7 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.Col(&m.Subject).Default("''::text")
 	t.Col(&m.Closed).Default("''::text")
 	t.CheckNamed("console_alerts_kind_check",
-		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text])")
+		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text, 'updates'::text])")
 	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
 	t.CheckNamed("console_alerts_audience_check", "audience = ANY (ARRAY['deciders'::text, 'admins'::text, 'person'::text])")
 	t.CheckNamed("console_alerts_link_check", "(link = ''::text) OR (link ~~ '/%'::text)")
@@ -534,6 +539,9 @@ type GatewayPolicy struct {
 	// extra places they never are (migration 055).
 	LogCleanPaths   []string
 	LogProtectPaths []string
+	// ConnectRules is who is asked before a session opens, per type of
+	// asset (migration 066).
+	ConnectRules storm.JSON
 }
 
 func (m *GatewayPolicy) Schema(t *storm.Table) {
@@ -556,6 +564,8 @@ func (m *GatewayPolicy) Schema(t *storm.Table) {
 	t.Col(&m.PackageHolds).Default("'{postgresql*,mysql-server*,mariadb-server*,docker-ce*,containerd.io}'::text[]")
 	t.Col(&m.LogCleanPaths).Default("'{}'::text[]")
 	t.Col(&m.LogProtectPaths).Default("'{}'::text[]")
+	t.Col(&m.ConnectRules).Default("'{}'::jsonb")
+	t.CheckNamed("gateway_policy_connect_rules_check", "jsonb_typeof(connect_rules) = 'object'::text")
 }
 
 // HostKeyPin is table host_key_pins.
