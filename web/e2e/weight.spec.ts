@@ -110,8 +110,11 @@ const BUDGET_KB = {
    * replace the band, the fleet map and the ring, in Home's own chunk. In
    * fixture mode the sample dashboard is one more small chunk; the stream
    * code rides the bell's lazy one.
+   * 302.7 kB with Cloud in the menu: the item and its icon, and the two
+   * cloud routes, their role guards and the tab names in the route map.
+   * The pages, the wizard and the cloud queries are in route chunks.
    */
-  overview: 302,
+  overview: 303,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -146,12 +149,12 @@ const BUDGET_KB = {
    * plus the device toolbar in the desktop view, which Watch live loads.
    * 402.3 kB with the live Home (401.8 before): its two calls and types in
    * the shared live and api modules.
-   * CLOUD_SD with Cloud in the menu: the item and its icon, the two cloud
+   * 403.7 kB with Cloud in the menu: the item and its icon, the two cloud
    * routes and their role guards in the route map, and the tab names the
    * page's search rule checks. The pages, the wizard and the cloud queries
    * are in route chunks.
    */
-  sessionDetail: 405,
+  sessionDetail: 404,
 }
 
 /**
