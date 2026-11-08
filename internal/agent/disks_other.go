@@ -34,9 +34,11 @@ type otherDiskOps struct{}
 func (otherDiskOps) scan(context.Context, string) (DiskReport, error) {
 	return DiskReport{}, errors.New(disksNotHere)
 }
-func (otherDiskOps) run(context.Context, diskCmd) (string, error) { return "", errors.New(disksNotHere) }
+func (otherDiskOps) run(context.Context, diskCmd) (string, error) {
+	return "", errors.New(disksNotHere)
+}
 func (otherDiskOps) steps(DiskGrowRequest, GrowPath) ([]diskCmd, error) {
 	return nil, errors.New(disksNotHere)
 }
 func (otherDiskOps) table(context.Context, GrowPath) (diskCmd, bool) { return diskCmd{}, false }
-func (otherDiskOps) rescanDisk(GrowPath) string                       { return "" }
+func (otherDiskOps) rescanDisk(GrowPath) string                      { return "" }

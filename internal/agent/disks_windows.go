@@ -17,7 +17,9 @@ import (
 
 type windowsDisks struct{ stateDir string }
 
-func hostDiskPlatform(_ string, stateDir string) diskPlatform { return &windowsDisks{stateDir: stateDir} }
+func hostDiskPlatform(_ string, stateDir string) diskPlatform {
+	return &windowsDisks{stateDir: stateDir}
+}
 
 func (p *windowsDisks) supported() string { return "" }
 
@@ -100,8 +102,12 @@ func (windowsDiskOps) run(ctx context.Context, c diskCmd) (string, error) {
 	return string(out), err
 }
 
-func (windowsDiskOps) steps(_ DiskGrowRequest, p GrowPath) ([]diskCmd, error) { return winGrowSteps(p), nil }
+func (windowsDiskOps) steps(_ DiskGrowRequest, p GrowPath) ([]diskCmd, error) {
+	return winGrowSteps(p), nil
+}
 
-func (windowsDiskOps) table(_ context.Context, p GrowPath) (diskCmd, bool) { return winTableCmd(p), true }
+func (windowsDiskOps) table(_ context.Context, p GrowPath) (diskCmd, bool) {
+	return winTableCmd(p), true
+}
 
 func (windowsDiskOps) rescanDisk(p GrowPath) string { return p.Disk }
