@@ -1283,11 +1283,123 @@ jobs:
             -scratch-db "postgres://argus:argus@localhost:5433/argus_drill?sslmode=disable" \
             /var/backups/argus/'"$run"
 
+          # Updating the control plane from the console, through the shipped
+          # units: the console asks, the root helper (argus-control-update.path
+          # and .service) installs and restarts, and the new version says it
+          # is ready; a version that cannot start is replaced by the one that
+          # was running. The releases are served from this runner, laid out
+          # as GitHub's are, with packages repacked from this build's.
+          rel="$tmp/releases"; mkdir -p "$rel"
+          base=$(ls dist/argus-control*linux_amd64.deb)
+          release() { # version, binary
+            local w="$tmp/pkg-$1"
+            dpkg-deb -R "$base" "$w"
+            cp "$2" "$w/usr/bin/argus-control"
+            sed -i "s/^Version: .*/Version: $1/" "$w/DEBIAN/control"
+            mkdir -p "$rel/v$1"
+            dpkg-deb -b --root-owner-group "$w" "$rel/v$1/argus-control_$1_linux_amd64.deb" >/dev/null
+            "$2" migrations -json > "$rel/v$1/argus-control_$1_migrations.json" || cp "$tmp/migrations.json" "$rel/v$1/argus-control_$1_migrations.json"
+            (cd "$rel/v$1" && sha256sum "argus-control_$1_linux_amd64.deb" > checksums.txt)
+          }
+          listed() { # the versions the release list shows
+            for v in "$@"; do
+              jq -n --arg v "$v" '{tag_name: ("v" + $v), draft: false, prerelease: false,
+                published_at: "2026-11-01T00:00:00Z", html_url: "",
+                assets: [{name: "checksums.txt"}, {name: ("argus-control_" + $v + "_linux_amd64.deb")}]}'
+            done | jq -s . > "$rel/releases.json"
+          }
+          for v in 9.8.0 9.9.0; do
+            go build -ldflags "-X main.version=$v" -o "$tmp/argus-control-$v" ./cmd/argus-control
+          done
+          "$tmp/argus-control-9.9.0" migrations -json > "$tmp/migrations.json"
+          mkdir -p "$tmp/broken"
+          printf 'package main\n\nimport "os"\n\nfunc main() { os.Exit(3) }\n' > "$tmp/broken/main.go"
+          (cd "$tmp/broken" && go mod init broken >/dev/null 2>&1 && go build -o argus-control .)
+          release 9.8.0 "$tmp/argus-control-9.8.0"
+          release 9.9.0 "$tmp/argus-control-9.9.0"
+          release 9.9.1 "$tmp/broken/argus-control"
+          listed 9.9.0
+          python3 -m http.server 8099 --bind 127.0.0.1 --directory "$rel" >"$tmp/http.log" 2>&1 &
+          echo 'ARGUS_CONTROL_RELEASES_URL=http://127.0.0.1:8099' | sudo tee /etc/argus/control-update.env >/dev/null
+          printf '\nagent_releases_url: "http://127.0.0.1:8099"\nagent_releases_api: "http://127.0.0.1:8099/releases.json"\n' |
+            sudo tee -a /var/lib/argus-control/control.yaml >/dev/null
+
+          # A snapshot's version is not a release's, so start from 9.8.0,
+          # installed by hand the old way. The control plane stays enabled.
+          sudo dpkg -i "$rel/v9.8.0/argus-control_9.8.0_linux_amd64.deb" >/dev/null
+          systemctl is-enabled --quiet argus-control || { echo "::error::a hand upgrade disabled argus-control"; exit 1; }
+          systemctl is-enabled --quiet argus-control-update.path
+          sudo systemd-analyze verify /lib/systemd/system/argus-control-update.path /lib/systemd/system/argus-control-update.service
+          # The package restarts the control plane about 10 seconds after a
+          # hand install; let that happen before asking for an update, so it
+          # does not land in the middle of one.
+          for i in $(seq 1 30); do
+            systemctl list-units --all --no-legend 'argus-control-upgrade-*' | grep -q . || break; sleep 1; done
+          sudo systemctl restart argus-control
+          up() { for i in $(seq 1 60); do
+            curl -fsS --cacert "$tmp/ca.crt" https://localhost:8080/healthz 2>/dev/null | grep -q '"ok"' && return; sleep 1; done
+            sudo journalctl -u argus-control --no-pager | tail -40; return 1; }
+          up
+          view() { $c https://localhost:8080/api/v1/platform/update; }
+          for i in $(seq 1 30); do
+            [ "$(view | jq -r '.newest.version // ""')" = 9.9.0 ] && break; sleep 1; done
+          view | jq .
+          [ "$(view | jq -r '.supported')" = true ] || { echo "::error::the packaged control plane cannot update itself"; exit 1; }
+          [ "$(view | jq -r '.rollback.known and (.rollback.breaking | length == 0)')" = true ] || {
+            echo "::error::9.9.0 adds no migrations, but going back is not said to be clean"; exit 1; }
+
+          # until <state...>: waits for the update to end in one of them.
+          until_state() { for i in $(seq 1 120); do
+            st=$(sudo jq -r .state /var/lib/argus-control/update/status.json 2>/dev/null || true)
+            for want in "$@"; do [ "$st" = "$want" ] && return; done
+            case "$st" in done|rolled_back|failed|cancelled) break ;; esac
+            sleep 2; done
+            sudo cat /var/lib/argus-control/update/status.json || true
+            sudo journalctl -u argus-control-update -u argus-control --no-pager | tail -60
+            echo "::error::the update ended '$st', not $*"; return 1; }
+
+          $c -X POST https://localhost:8080/api/v1/platform/update -d '{"version":"9.9.0","when":"now"}' >/dev/null
+          until_state done
+          [ "$(argus-control -version)" = "argus-control 9.9.0" ]
+          up
+          systemctl is-enabled --quiet argus-control
+          sudo journalctl -u argus-control-update --no-pager | grep -q 'backup taken' || {
+            echo "::error::the update did not take a backup first"; exit 1; }
+          for i in $(seq 1 30); do
+            n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'control.updated'")
+            [ "$n" = 1 ] && break; sleep 1; done
+          [ "$n" = 1 ] || { sudo journalctl -u argus-control --no-pager | grep -i 'update\|refused' | tail -20
+            echo "::error::the update was not recorded in the audit log"; exit 1; }
+
+          # A version that exits at once goes back to 9.9.0 by itself.
+          listed 9.9.0 9.9.1
+          sudo systemctl restart argus-control; up
+          for i in $(seq 1 30); do
+            [ "$(view | jq -r '.newest.version // ""')" = 9.9.1 ] && break; sleep 1; done
+          $c -X POST https://localhost:8080/api/v1/platform/update -d '{"version":"9.9.1","when":"now"}' >/dev/null
+          until_state rolled_back
+          [ "$(argus-control -version)" = "argus-control 9.9.0" ]
+          up
+          for i in $(seq 1 30); do
+            n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action = 'control.update_rolled_back'")
+            [ "$n" = 1 ] && break; sleep 1; done
+          [ "$n" = 1 ] || { sudo journalctl -u argus-control --no-pager | grep -i 'update\|refused' | tail -20
+            echo "::error::the rollback was not recorded in the audit log"; exit 1; }
+
       - name: Confirm the units are hardened
         run: |
           set -euo pipefail
           for unit in packaging/systemd/*.service; do
             echo "checking $unit"
+            # The update helper installs a package, so it writes /usr, /etc
+            # and /var and runs the package's scripts: no sandbox fits it,
+            # and NoNewPrivileges would stop rpm's SELinux transitions. It
+            # takes only a version from the control plane; see
+            # internal/controlupdate.
+            if [ "$unit" = packaging/systemd/argus-control-update.service ]; then
+              grep -q '^Type=oneshot$' "$unit"
+              continue
+            fi
             grep -q '^NoNewPrivileges=yes' "$unit"
             grep -q '^ProtectSystem=strict' "$unit"
             grep -q '^SystemCallArchitectures=native' "$unit"

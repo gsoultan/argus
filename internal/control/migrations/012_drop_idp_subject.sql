@@ -1,3 +1,4 @@
+-- argus:breaking: drops users.idp_subject
 -- Remove the last trace of single sign-on.
 --
 -- OIDC is gone from this product: the provider, the authorization-code flow,

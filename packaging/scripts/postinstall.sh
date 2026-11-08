@@ -45,6 +45,14 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
+# The watcher for updates asked from the console. It only starts the root
+# helper when the control plane writes a request, so it is on from install;
+# the control plane itself is still not started until it has been set up.
+if [ -x /usr/bin/argus-control ] && command -v systemctl >/dev/null 2>&1 &&
+   systemctl cat argus-control-update.path >/dev/null 2>&1; then
+    systemctl enable --now argus-control-update.path >/dev/null 2>&1 || true
+fi
+
 # An enrolled agent is one somebody set up, so after an upgrade it runs again,
 # on the new binary. Packages before this stopped and disabled it on every
 # upgrade, which left every SSH login refused while the sshd hook was in

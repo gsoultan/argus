@@ -31,6 +31,10 @@ before:
     - go vet ./...
     # The console ships inside argus-control. Built same-origin (VITE_CONTROL_URL=/)
     # because the control plane serves it and the session cookie depends on it.
+    # The migrations this release carries, published beside its packages: a
+    # control plane about to update to it reads them to say whether going
+    # back would be clean. See internal/control/migration_manifest.go.
+    - sh -c "mkdir -p dist-extra && go run ./cmd/argus-control migrations -json > dist-extra/argus-control_{{ .Version }}_migrations.json"
     - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn"
 
 builds:
@@ -236,6 +240,12 @@ nfpms:
         dst: /lib/systemd/system/argus-backup.service
       - src: packaging/systemd/argus-backup.timer
         dst: /lib/systemd/system/argus-backup.timer
+      # Updating from the console: the path unit watches for the console's
+      # request and starts the root helper. See internal/controlupdate.
+      - src: packaging/systemd/argus-control-update.path
+        dst: /lib/systemd/system/argus-control-update.path
+      - src: packaging/systemd/argus-control-update.service
+        dst: /lib/systemd/system/argus-control-update.service
       - src: packaging/config/control.yaml
         dst: /etc/argus/control.yaml
         type: config|noreplace
@@ -255,6 +265,8 @@ nfpms:
 # the least an access-management tool should offer.
 checksum:
   name_template: "checksums.txt"
+  extra_files:
+    - glob: ./dist-extra/*
 
 # Signing is on for real releases. A privileged-access product distributed
 # without a way to verify provenance is asking to become a supply-chain vector.
@@ -300,6 +312,8 @@ release:
     name: argus
   draft: true
   prerelease: auto
+  extra_files:
+    - glob: ./dist-extra/*
   footer: |
     ## Install
 

@@ -181,3 +181,34 @@ Servers.
 Store queries in `agent_update.go` used `s.pool` (the default organization)
 until this change. They must use `s.db(ctx)`, like every per-organization
 query.
+
+## Updating the control plane from the console (2026-11)
+
+Settings › Control plane › Updates (`web/src/components/ControlUpdate.tsx`,
+banner `ControlUpdateBanner.tsx` in the shell). Server: `internal/control/control_update.go`
+(`GET/POST/DELETE /api/v1/platform/update`, platformOwner; `GET /api/v1/control-update`
+for everyone's banner, state and version only). Helper: `internal/controlupdate`
+(`argus-control update-apply`), run as root by `argus-control-update.service`,
+started by `argus-control-update.path` watching `/var/lib/argus-control/update/request.json`.
+
+- The control plane is unprivileged and only writes the request (id, version).
+  The helper treats that directory as hostile: version regex, O_NOFOLLOW reads,
+  status written by CreateTemp+rename, packages in its own StateDirectory,
+  download URL only from root's `/etc/argus/control-update.env`.
+- Order: checksum-verified download (and the running version's package for
+  rollback, else a copy of the binary) → `argus-backup.service` (fails → nothing
+  changed) → install with `ARGUS_CONTROL_UPDATING=1` → restart → wait 90s for
+  `ready.json` (written by `API.ControlUpdateStarted` once serving) → else crash
+  loop (3 NRestarts) or timeout → reinstall old. Going back to a version without
+  ready.json counts 15s up and unrestarted.
+- Sessions: terminals on agents that hold (PR 170) pause; desktops, database
+  sessions and terminals on old agents end. "idle" waits for those up to 2h.
+- Rollback safety: migrations that take something away start with
+  `-- argus:breaking: <what>`; `TestMigrationsSayWhenTheyBreakRollback` enforces
+  it. Releases publish `argus-control_<v>_migrations.json` (goreleaser before
+  hook + extra_files); the page compares it with the running binary's list.
+- preremove.sh no longer stops/disables services on upgrade (deb `upgrade`,
+  rpm `1`); the helper re-enables the unit anyway, since the *old* package's
+  prerm is the one that runs.
+- Packaging CI job drills it: repacked 9.8.0 → 9.9.0 from the console, then a
+  9.9.1 that exits at once rolls back to 9.9.0, both audited.

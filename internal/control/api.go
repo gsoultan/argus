@@ -155,6 +155,9 @@ type API struct {
 	// Releases finds the newest agent release, so the console can offer a
 	// version newer than its own. Nil offers only Version.
 	Releases *ReleaseWatcher
+	// Updates is this control plane updating itself from the console; nil
+	// says it is not set up. See control_update.go.
+	Updates *ControlUpdater
 
 	// Settings reads and writes the configuration file for the console's
 	// Settings page. Nil leaves the page read-only; see settings_routes.go.
@@ -465,6 +468,10 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 
 	// Organizations. Platform owners only; see tenant_routes.go.
 	mux.HandleFunc("GET /api/v1/platform/status", a.getControlStatus)
+	mux.HandleFunc("GET /api/v1/platform/update", a.getControlUpdate)
+	mux.HandleFunc("POST /api/v1/platform/update", a.postControlUpdate)
+	mux.HandleFunc("DELETE /api/v1/platform/update", a.deleteControlUpdate)
+	mux.HandleFunc("GET /api/v1/control-update", a.getControlUpdateBanner)
 	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
 	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
 	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/disable", a.postTenantDisabled(true))

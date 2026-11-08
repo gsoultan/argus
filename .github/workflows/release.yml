@@ -83,7 +83,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # A release without agent packages is passed over by the console and by
+      # A release without agent and control plane packages is passed over by the console and by
       # the install script, so it must not look finished. Fail the run if
       # goreleaser left any out.
       - name: Check the agent packages were attached
@@ -93,7 +93,8 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           have=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
           missing=""
-          for want in checksums.txt \
+          for want in checksums.txt argus-control_${v}_migrations.json \
+            argus-control_${v}_linux_amd64.deb argus-control_${v}_linux_arm64.deb \
             argus-agent_${v}_linux_amd64.deb argus-agent_${v}_linux_arm64.deb \
             argus-agent_${v}_linux_amd64.rpm argus-agent_${v}_linux_arm64.rpm \
             argus-agent_${v}_linux_amd64.apk argus-agent_${v}_linux_arm64.apk; do

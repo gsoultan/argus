@@ -1,3 +1,4 @@
+-- argus:breaking: drops gateway_policy.allow_native_clients
 -- Agent only, with no switch.
 --
 -- Every session opens from the Argus console and reaches the server through

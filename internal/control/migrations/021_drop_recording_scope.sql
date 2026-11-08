@@ -1,3 +1,4 @@
+-- argus:breaking: drops assets.recording_scope and assets.agent_recording_scope
 -- Which logins are recorded, removed.
 --
 -- recording_scope let a direct sshd login through unrecorded ('argus_only').

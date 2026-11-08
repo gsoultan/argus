@@ -52,6 +52,7 @@ import {
 } from '~/components/nav'
 import { LogoMark } from '~/components/Logo'
 import { AlertBell } from '~/components/AlertBell'
+import { ControlUpdatingBanner, useControlUpdating } from '~/components/ControlUpdateBanner'
 import { ColorSchemeMenu } from '~/components/ColorSchemeMenu'
 import {
   argusVersion, controlPlaneHost, isConfigured, isLive, logout, signOutEverywhere, switchOrganization,
@@ -221,6 +222,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     serversWaiting: canSee(me?.role, 'admin') ? (cov?.unreviewedHosts ?? 0) : 0,
   }
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const updating = useControlUpdating(Boolean(me) && isConfigured())
   const items = navFor(me?.role)
 
   // Cmd-K anywhere. Captured on the document so it works while focus is inside
@@ -455,7 +457,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       </AppShell.Navbar>
 
       <AppShell.Main>
-        {source === 'unreachable' && <FallbackBanner />}
+        {/* An update of argus-control restarts it: say so, rather than that
+            it has stopped answering, while it does. */}
+        {updating
+          ? <ControlUpdatingBanner target={updating.target} unreachable={source === 'unreachable'} />
+          : source === 'unreachable' && <FallbackBanner />}
         {/* Full width: the page owns its own gutters (PageHeader, PageBody)
             and a workspace runs edge to edge. A centred 1200px column left a
             third of a wide screen empty while tables truncated. */}

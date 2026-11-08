@@ -1,0 +1,12 @@
+[Unit]
+Description=Argus control plane: watch for an update asked from the console
+Documentation=https://github.com/gsoultan/argus/blob/main/docs/install.md#upgrading
+
+# The console writes the request here; argus-control-update.service, as root,
+# carries it out. The control plane itself cannot install a package.
+[Path]
+PathChanged=/var/lib/argus-control/update/request.json
+Unit=argus-control-update.service
+
+[Install]
+WantedBy=multi-user.target
