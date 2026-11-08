@@ -1,5 +1,7 @@
 import { Box, Button, Code, Group, Stack, Text, ThemeIcon } from '@mantine/core'
-import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react'
+import { IconAlertTriangle, IconLogin, IconRefresh } from '@tabler/icons-react'
+import { ControlPlaneError } from '~/lib/live'
+import { NetworkError, errorText } from '~/lib/apiError'
 
 /**
  * What a route shows when it throws.
@@ -12,18 +14,27 @@ import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react'
  * The message is shown rather than swallowed. This console is operated by
  * people who run infrastructure; "something went wrong" wastes the one piece of
  * information that would let them tell a bug from an outage.
+ *
+ * It is said in words, though. A request the control plane refused shows what
+ * that means and what to do, with the path and status underneath for whoever
+ * needs them -- not "/api/v1/databases → 401" as the whole message, and not
+ * under a heading that blames the drawing of the page.
  */
 export function ErrorState({
   error,
   reset,
-  title = 'This page could not be rendered',
+  title,
 }: {
   error: unknown
   reset?: () => void
   title?: string
 }) {
-  const message =
-    error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unknown error'
+  const refused = error instanceof ControlPlaneError ? error : null
+  const fetched = refused !== null || error instanceof NetworkError
+  const message = errorText(error, 'Unknown error')
+  const heading = title ?? (refused?.signedOut
+    ? 'You are signed out'
+    : fetched ? 'This page could not be loaded' : 'This page could not be rendered')
 
   return (
     <Box className="grid place-items-center" mih="60vh" p="lg">
@@ -31,16 +42,35 @@ export function ErrorState({
         <ThemeIcon variant="light" color="rose" size={44} radius="md">
           <IconAlertTriangle size={22} />
         </ThemeIcon>
-        <Text fw={600} size="sm" ta="center">{title}</Text>
-        <Text size="xs" c="dimmed" ta="center">
-          Nothing was changed on any server or in the audit log — this failed while drawing
-          the page, not while carrying out an action.
-        </Text>
-        <Code block fz="xs" w="100%" style={{ whiteSpace: 'pre-wrap' }}>
-          {message}
-        </Code>
+        <Text fw={600} size="sm" ta="center">{heading}</Text>
+        {fetched ? (
+          <Text size="sm" ta="center">{message}</Text>
+        ) : (
+          <>
+            <Text size="xs" c="dimmed" ta="center">
+              Nothing was changed on any server or in the audit log — this failed while drawing
+              the page, not while carrying out an action.
+            </Text>
+            <Code block fz="xs" w="100%" style={{ whiteSpace: 'pre-wrap' }}>
+              {message}
+            </Code>
+          </>
+        )}
+        {refused && (
+          <Text size="xs" c="dimmed" ta="center" ff="monospace">
+            {refused.path} · {refused.status}
+          </Text>
+        )}
         <Group gap="xs" mt={4}>
-          {reset && (
+          {refused?.signedOut && (
+            // A document load, so the sign-in gate starts from scratch and
+            // brings the person back to this same address afterwards.
+            <Button size="xs" leftSection={<IconLogin size={14} />}
+              onClick={() => window.location.reload()}>
+              Sign in again
+            </Button>
+          )}
+          {reset && !refused?.signedOut && (
             <Button size="xs" variant="light" leftSection={<IconRefresh size={14} />}
               onClick={reset}>
               Try again

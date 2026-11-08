@@ -57,6 +57,7 @@ import {
   argusVersion, controlPlaneHost, isConfigured, isLive, logout, signOutEverywhere, switchOrganization,
   whoami, type Identity,
 } from '~/lib/live'
+import { onSessionExpired } from '~/lib/apiError'
 import { FS, SP } from '~/theme'
 
 const HEADER_H = 60
@@ -69,6 +70,9 @@ const HEADER_H = 60
  */
 function LoginGate({ children }: { children: React.ReactNode }) {
   const [identity, setIdentity] = useState<Identity | null>(null)
+  // Set when the session ended under an open page, so the form can say why it
+  // is back rather than looking like the console signed the person out.
+  const [expired, setExpired] = useState(false)
   const queryClient = useQueryClient()
   const router = useRouter()
 
@@ -82,6 +86,30 @@ function LoginGate({ children }: { children: React.ReactNode }) {
 
   useEffect(refresh, [refresh])
 
+  // A request came back 401 while the console was open: the session expired,
+  // was revoked, or was signed out from another tab. Without this the page
+  // kept drawing "/api/v1/databases → 401" until someone thought to reload.
+  //
+  // The 401 is only a hint. /auth/me decides, so a 401 that meant something
+  // else (a wrong password on a form) cannot sign anyone out. The address is
+  // left alone: the form is drawn in place of the page, and signing in again
+  // re-runs that page's loaders, which puts the person back where they were.
+  const authenticated = identity?.authenticated === true
+  useEffect(() => {
+    if (!authenticated) return
+    let checking = false
+    return onSessionExpired(() => {
+      if (checking) return
+      checking = true
+      void whoami().then((now) => {
+        checking = false
+        if (now.authenticated || now.unreachable) return
+        setExpired(true)
+        setIdentity(now)
+      })
+    })
+  }, [authenticated])
+
   // Route loaders do not wait for this gate. `/` calls ensureQueryData(stats)
   // while nobody is signed in, takes a 401, and the router commits that error
   // to the match; acquiring a session does not re-run it. So the console drew
@@ -94,6 +122,7 @@ function LoginGate({ children }: { children: React.ReactNode }) {
   // stored it. Doing this before setIdentity means the loaders re-run while
   // the form is still up, so the console renders once, with data.
   const handleSignedIn = useCallback(async () => {
+    setExpired(false)
     await queryClient.invalidateQueries()
     await router.invalidate()
     refresh()
@@ -111,7 +140,7 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     // First-run setup is the one page nobody can be signed in for. Read from
     // the location rather than the router: this gate sits above the routes.
     if (identity.unreachable) {
-      return <SignIn identity={identity} onSignedIn={handleSignedIn} />
+      return <SignIn identity={identity} onSignedIn={handleSignedIn} expired={expired} />
     }
     // First run sends everyone to /setup: a control plane with no
     // configuration has nothing else to show, and one with no accounts has
@@ -124,7 +153,7 @@ function LoginGate({ children }: { children: React.ReactNode }) {
     if (window.location.pathname === '/setup') {
       return <Setup />
     }
-    return <SignIn identity={identity} onSignedIn={handleSignedIn} />
+    return <SignIn identity={identity} onSignedIn={handleSignedIn} expired={expired} />
   }
 
   // Signed in with a temporary password: choosing one's own comes first,

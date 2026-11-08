@@ -115,7 +115,7 @@ describe('opening straight from a server card', () => {
       `/connect?host=${encodeURIComponent(ssh.hostname)}&as=${principal}&open=true`,
     )
     // The control plane's answer is shown, so the request was made.
-    expect(await screen.findByText(/refused for the test/)).toBeInTheDocument()
+    expect(await screen.findByText(/refused for the test/i)).toBeInTheDocument()
     expect(calls()).toHaveLength(1)
     expect(JSON.parse(String(calls()[0]![1]!.body))).toEqual({ target: ssh.hostname, principal })
   }, 15_000)

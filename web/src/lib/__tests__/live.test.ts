@@ -122,6 +122,25 @@ describe('ControlPlaneError', () => {
     expect(caught.refused).toBe(true)
     expect(caught.path).toContain('/api/v1/assets')
   })
+
+  it('reads as a sentence, not as a path and a status', async () => {
+    const { live, ControlPlaneError } = await loadLive()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(401, { error: 'unauthorized' })))
+
+    const caught = await live.assets().catch((e: unknown) => e)
+    expect(caught).toBeInstanceOf(ControlPlaneError)
+    const err = caught as InstanceType<typeof ControlPlaneError>
+    expect(err.message).toBe('Your session has ended. Sign in again to continue.')
+    expect(err.message).not.toContain('→')
+    expect(err.signedOut).toBe(true)
+  })
+
+  it('carries the control plane\'s own explanation when it gave one', async () => {
+    const { live } = await loadLive()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(403, { error: 'you need the auditor role' })))
+
+    await expect(live.assets()).rejects.toThrow('You need the auditor role.')
+  })
 })
 
 describe('falling back to the fixture', () => {
@@ -177,7 +196,7 @@ describe('writes that answer with no body', () => {
     const { removeDBAssignment } = await loadLive()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(404, { error: 'no such assignment' })))
 
-    await expect(removeDBAssignment('db1', 'x')).rejects.toThrow('no such assignment')
+    await expect(removeDBAssignment('db1', 'x')).rejects.toThrow('No such assignment.')
   })
 
   it('reports the status when a refusal has no JSON body', async () => {
@@ -186,6 +205,6 @@ describe('writes that answer with no body', () => {
       new Response('<html>bad gateway</html>', { status: 502 }),
     ))
 
-    await expect(deleteDatabase('db1')).rejects.toThrow('request failed (502)')
+    await expect(deleteDatabase('db1')).rejects.toThrow('The control plane is not available right now.')
   })
 })

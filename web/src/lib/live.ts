@@ -1,4 +1,5 @@
 import type { ChainInput } from '~/workers/chain.worker'
+import { NetworkError, errorText, humanizeError, noteResponse } from '~/lib/apiError'
 import type { MyServer,
   AccessRequest,
   Asset,
@@ -330,7 +331,7 @@ export async function changePassword(current: string, next: string): Promise<voi
 export async function whoami(): Promise<Identity> {
   if (!isConfigured()) return { authenticated: false }
   try {
-    const res = await fetch(`${BASE}/auth/me`, {
+    const res = await apiFetch(`${BASE}/auth/me`, {
       credentials: 'include',
       headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
     })
@@ -421,9 +422,9 @@ export async function install(input: InstallInput): Promise<InstallResult> {
 }
 
 export async function setupStatus(): Promise<SetupStatus> {
-  const res = await fetch(`${BASE}/auth/setup`, { credentials: 'include' })
+  const res = await apiFetch(`${BASE}/auth/setup`, { credentials: 'include' })
   const parsed = (await res.json()) as SetupStatus & { error?: string }
-  if (!res.ok) throw new Error(parsed.error ?? `request failed (${res.status})`)
+  if (!res.ok) throw new Error(humanizeError(res.status, parsed.error))
   return parsed
 }
 
@@ -443,7 +444,7 @@ export async function completeSetup(input: {
 
 export async function logout(): Promise<void> {
   if (!isConfigured()) return
-  await fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
+  await apiFetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
 }
 
 /**
@@ -454,7 +455,7 @@ export async function logout(): Promise<void> {
  * worth showing verbatim rather than replacing with something generic.
  */
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -484,7 +485,7 @@ export async function readReply<T>(res: Response): Promise<T> {
       parsed = undefined
     }
   }
-  if (!res.ok) throw new Error(parsed?.error ?? `request failed (${res.status})`)
+  if (!res.ok) throw new Error(humanizeError(res.status, parsed?.error))
   return parsed as T
 }
 
@@ -520,7 +521,7 @@ export async function terminalTicket(
   target: string,
   principal: string,
 ): Promise<{ ticket: string } | { error: string }> {
-  const res = await fetch(`${BASE}/api/v1/terminal/ticket`, {
+  const res = await apiFetch(`${BASE}/api/v1/terminal/ticket`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -530,7 +531,7 @@ export async function terminalTicket(
     body: JSON.stringify({ target, principal }),
   })
   const body = (await res.json()) as { ticket?: string; error?: string }
-  if (!res.ok || !body.ticket) return { error: body.error ?? `request failed (${res.status})` }
+  if (!res.ok || !body.ticket) return { error: humanizeError(res.status, body.error) }
   return { ticket: body.ticket }
 }
 
@@ -548,11 +549,22 @@ export class ControlPlaneError extends Error {
   readonly status: number
   readonly path: string
 
-  constructor(status: number, path: string) {
-    super(`${path} → ${status}`)
+  /**
+   * The message is for the person reading the screen: the control plane's own
+   * words when it gave some, a plain description of the status when not. The
+   * path and status stay on the error for code and for the detail line, rather
+   * than being the message -- "/api/v1/databases → 401" explained nothing.
+   */
+  constructor(status: number, path: string, serverMessage?: string) {
+    super(humanizeError(status, serverMessage))
     this.name = 'ControlPlaneError'
     this.status = status
     this.path = path
+  }
+
+  /** True when the session is gone and signing in again is the way forward. */
+  get signedOut(): boolean {
+    return this.status === 401
   }
 
   /** True when the caller is signed in but not permitted to do this. */
@@ -593,7 +605,7 @@ async function scopedTicket(
   body: Record<string, unknown>,
 ): Promise<{ ticket: string } | { error: string }> {
   if (!isConfigured()) return { error: 'the control plane is not configured' }
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -604,7 +616,7 @@ async function scopedTicket(
   })
   const parsed = (await res.json()) as { ticket?: string; error?: string }
   if (!res.ok || !parsed.ticket) {
-    return { error: parsed.error ?? `request failed (${res.status})` }
+    return { error: humanizeError(res.status, parsed.error) }
   }
   return { ticket: parsed.ticket }
 }
@@ -626,7 +638,7 @@ export async function terminateSession(
   if ('error' in minted) return minted
 
   try {
-    const res = await fetch(`${BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}/terminate`, {
+    const res = await apiFetch(`${BASE}/api/v1/sessions/${encodeURIComponent(sessionId)}/terminate`, {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -642,11 +654,11 @@ export async function terminateSession(
       } catch {
         // Not JSON; the status says enough.
       }
-      return { error: msg || `the control plane refused (${res.status})` }
+      return { error: humanizeError(res.status, msg) }
     }
     return { ok: true }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'the control plane is unreachable' }
+    return { error: errorText(err, 'The control plane could not be reached.') }
   }
 }
 
@@ -764,7 +776,7 @@ export async function removeAssetAssignment(id: string, email: string): Promise<
  * 204, so there is always something to read.
  */
 export async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method,
     credentials: 'include',
     headers: {
@@ -1072,7 +1084,7 @@ export async function rdpReplay(
   sessionId: string,
 ): Promise<{ buffer: ArrayBuffer; width: number; height: number; verified: string; activity: ReplayActivity[] } | null> {
   if (!isConfigured()) return null
-  const res = await fetch(`${BASE}/api/v1/sessions/${sessionId}/rdp-replay`, {
+  const res = await apiFetch(`${BASE}/api/v1/sessions/${sessionId}/rdp-replay`, {
     credentials: 'include',
     headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
   })
@@ -1094,10 +1106,41 @@ export async function rdpReplay(
   }
 }
 
+/**
+ * Every request to the control plane goes through here, so a session that
+ * ends while a page is open is noticed once, in one place, whichever page or
+ * call ran into it -- and the sign-in gate can take over instead of each page
+ * drawing its own 401.
+ */
+export async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  let res: Response
+  try {
+    res = await fetch(url, init)
+  } catch (err) {
+    // No answer at all. The browser's own wording ("Failed to fetch", "Load
+    // failed") names neither the cause nor the fix, and it is what every page
+    // would otherwise print. An abort is the caller's own doing and is left be.
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    throw new NetworkError(err)
+  }
+  noteResponse(url, res.status)
+  return res
+}
+
+/** The `error` a refusal carried, if its body was JSON with one. */
+async function serverError(res: Response): Promise<string | undefined> {
+  try {
+    const parsed = JSON.parse(await res.text()) as { error?: unknown }
+    return typeof parsed.error === 'string' ? parsed.error : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export async function get<T>(path: string): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await apiFetch(`${BASE}${path}`, {
       // Session cookie is the real credential; the bearer token is a development
       // fallback the control plane refuses once any account exists.
       credentials: 'include',
@@ -1119,7 +1162,7 @@ export async function get<T>(path: string): Promise<T> {
     reachable = false
   }
 
-  if (!res.ok) throw new ControlPlaneError(res.status, path)
+  if (!res.ok) throw new ControlPlaneError(res.status, path, await serverError(res))
   return (await res.json()) as T
 }
 
@@ -1280,7 +1323,7 @@ export async function waitForControlPlane(timeoutMs = 30_000): Promise<boolean> 
   await new Promise((r) => setTimeout(r, 1500))
   while (Date.now() < until) {
     try {
-      const res = await fetch(`${BASE}/healthz`, { cache: 'no-store' })
+      const res = await apiFetch(`${BASE}/healthz`, { cache: 'no-store' })
       if (res.ok) return true
     } catch {
       // Still restarting.
@@ -1410,10 +1453,10 @@ export const live = {
     // one page and stopping would be the same defect with better wording.
     for (;;) {
       const qs = `limit=${AUDIT_PAGE}${before > 0 ? `&before=${before}` : ''}`
-      const res = await fetch(`${BASE}/api/v1/audit?${qs}`, {
+      const res = await apiFetch(`${BASE}/api/v1/audit?${qs}`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       })
-      if (!res.ok) throw new Error(`audit: ${res.status}`)
+      if (!res.ok) throw new ControlPlaneError(res.status, '/api/v1/audit')
 
       // Only from the first response. It counts the whole log, and re-reading
       // it per page would let a mid-fetch write change the denominator.
@@ -1471,7 +1514,7 @@ export const live = {
     if (!isConfigured()) return null
     let res: Response
     try {
-      res = await fetch(`${BASE}/api/v1/sessions/${id}/recording`, {
+      res = await apiFetch(`${BASE}/api/v1/sessions/${id}/recording`, {
         // The session cookie is the credential, as for every other console
         // call; the bearer token is the development fallback.
         credentials: 'include',
@@ -1490,7 +1533,7 @@ export const live = {
       }
       return {
         kind: 'unavailable',
-        reason: reason || `The control plane answered ${res.status}.`,
+        reason: humanizeError(res.status, reason),
       }
     }
     return {
@@ -1673,7 +1716,7 @@ export async function databaseTicket(
   id: string,
   level?: DBLevel,
 ): Promise<{ ticket: string; level: DBLevel; role: string } | { error: string }> {
-  const res = await fetch(`${BASE}/api/v1/databases/${encodeURIComponent(id)}/ticket`, {
+  const res = await apiFetch(`${BASE}/api/v1/databases/${encodeURIComponent(id)}/ticket`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -1684,7 +1727,7 @@ export async function databaseTicket(
   })
   const body = (await res.json()) as { ticket?: string; level?: DBLevel; role?: string; error?: string }
   if (!res.ok || !body.ticket || !body.level || !body.role) {
-    return { error: body.error ?? `request failed (${res.status})` }
+    return { error: humanizeError(res.status, body.error) }
   }
   return { ticket: body.ticket, level: body.level, role: body.role }
 }
