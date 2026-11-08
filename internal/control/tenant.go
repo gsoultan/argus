@@ -379,7 +379,8 @@ type NewTenant struct {
 }
 
 // CreateTenant registers an organization, builds its schema with every
-// migration, and gives it its first owner.
+// migration, and gives it its first owner when one is named. With no owner
+// named, the caller is expected to add the creating administrator instead.
 //
 // The registry row, the schema and its tables are one transaction: an
 // organization exists whole or not at all. The owner and the first audit
@@ -387,13 +388,14 @@ type NewTenant struct {
 // land in its tables and start its chain.
 func (s *Store) CreateTenant(ctx context.Context, in NewTenant, by string) (*Tenant, error) {
 	in.Slug = strings.ToLower(strings.TrimSpace(in.Slug))
-	in.Name = strings.TrimSpace(in.Name)
 	if !ValidTenantSlug(in.Slug) {
 		return nil, errors.New("the short name must be 2 to 40 lowercase letters, digits or hyphens")
 	}
-	if in.Name == "" || len([]rune(in.Name)) > 120 {
-		return nil, errors.New("the name must be between 1 and 120 characters")
+	name, ok := validTenantName(in.Name)
+	if !ok {
+		return nil, errInvalidTenantName
 	}
+	in.Name = name
 	id, err := newTenantID()
 	if err != nil {
 		return nil, err
@@ -450,17 +452,86 @@ func (s *Store) CreateTenant(ctx context.Context, in NewTenant, by string) (*Ten
 	}
 
 	tctx := WithTenant(ctx, t)
-	if _, err := s.CreateAccount(tctx, in.OwnerEmail, in.OwnerName, "owner", in.OwnerPassword); err != nil {
-		return t, fmt.Errorf("the organization was created but its owner was not: %w", err)
+	detail := "Organization " + t.Name + " (" + t.Slug + ") created by the platform."
+	if in.OwnerEmail != "" {
+		if _, err := s.CreateAccount(tctx, in.OwnerEmail, in.OwnerName, "owner", in.OwnerPassword); err != nil {
+			return t, fmt.Errorf("the organization was created but its owner was not: %w", err)
+		}
+		detail = "Organization " + t.Name + " (" + t.Slug + ") created by the platform, with " +
+			normaliseEmail(in.OwnerEmail) + " as its first owner."
 	}
 	if _, err := s.AppendAudit(tctx, AuditEvent{
 		Action: "tenant.created", Severity: "notice", ActorEmail: by, Target: t.Slug,
-		Detail: "Organization " + t.Name + " (" + t.Slug + ") created by the platform, with " +
-			normaliseEmail(in.OwnerEmail) + " as its first owner.",
+		Detail: detail,
 	}); err != nil {
 		return t, err
 	}
 	return t, nil
+}
+
+// maxTenantNameLen bounds an organization's display name.
+const maxTenantNameLen = 120
+
+// validTenantName trims name and reports whether it is usable.
+func validTenantName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	return name, name != "" && len([]rune(name)) <= maxTenantNameLen
+}
+
+// RenameTenant changes an organization's display name. The short name its
+// people sign in with is not touched, so no sign-in, credential or link
+// changes with it. The default organization can be renamed too.
+func (s *Store) RenameTenant(ctx context.Context, id, name string) (*Tenant, error) {
+	name, ok := validTenantName(name)
+	if !ok {
+		return nil, errInvalidTenantName
+	}
+	t, err := scanTenant(s.pool.QueryRow(ctx, `
+		UPDATE argus_platform.tenants SET name = $2 WHERE id = $1
+		RETURNING `+tenantColumns, id, name))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUnknownTenant
+	}
+	if err != nil {
+		return nil, err
+	}
+	if t.ID == DefaultTenantID {
+		s.defName.mu.Lock()
+		s.defName.name, s.defName.at = t.Name, time.Now()
+		s.defName.mu.Unlock()
+	}
+	return &t, nil
+}
+
+// errInvalidTenantName is the one rule a display name has.
+var errInvalidTenantName = errors.New("the name must be between 1 and 120 characters")
+
+// defaultNameTTL is how long a replica trusts its copy of the default
+// organization's name before reading the registry again, so a rename made
+// through another replica shows up everywhere within it.
+const defaultNameTTL = 30 * time.Second
+
+// DefaultTenant is the default organization as the registry names it. The
+// name is cached briefly; if the registry cannot be read, the built-in name
+// is used rather than failing the request.
+func (s *Store) DefaultTenant(ctx context.Context) *Tenant {
+	t := defaultTenant()
+	if s == nil || s.pool == nil {
+		return t
+	}
+	s.defName.mu.Lock()
+	defer s.defName.mu.Unlock()
+	if s.defName.name == "" || time.Since(s.defName.at) > defaultNameTTL {
+		var name string
+		if err := s.pool.QueryRow(ctx,
+			`SELECT name FROM argus_platform.tenants WHERE id = $1`, DefaultTenantID).Scan(&name); err == nil && name != "" {
+			s.defName.name, s.defName.at = name, time.Now()
+		} else if s.defName.name == "" {
+			return t
+		}
+	}
+	t.Name = s.defName.name
+	return t
 }
 
 // SetTenantDisabled switches an organization off or back on. Never the

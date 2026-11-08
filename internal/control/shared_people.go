@@ -50,7 +50,7 @@ var (
 // tenantByIDOrDefault resolves an organization id, the default included.
 func (s *Store) tenantByIDOrDefault(ctx context.Context, id string) (*Tenant, error) {
 	if id == DefaultTenantID {
-		return defaultTenant(), nil
+		return s.DefaultTenant(ctx), nil
 	}
 	return s.TenantByID(ctx, id)
 }

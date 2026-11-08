@@ -49,7 +49,7 @@ func (a *API) scope(next http.Handler) http.Handler {
 		case slug != "" && slug != DefaultTenantID:
 			t, err = a.store.TenantBySlug(r.Context(), slug)
 		default:
-			t = defaultTenant()
+			t = a.store.DefaultTenant(r.Context())
 		}
 		switch {
 		case errors.Is(err, ErrUnknownTenant) && slug != "":
@@ -208,7 +208,8 @@ func managesPlatform(role string) bool { return role == "owner" || role == "admi
 
 type tenantView struct {
 	Tenant
-	Counts *TenantCounts `json:"counts,omitempty"`
+	Default bool          `json:"default"`
+	Counts  *TenantCounts `json:"counts,omitempty"`
 }
 
 func (a *API) getTenants(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +223,7 @@ func (a *API) getTenants(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]tenantView, 0, len(list))
 	for i := range list {
-		v := tenantView{Tenant: list[i]}
+		v := tenantView{Tenant: list[i], Default: list[i].IsDefault()}
 		if !list[i].Disabled() {
 			if c, err := a.store.CountsFor(r.Context(), &list[i]); err == nil {
 				v.Counts = &c
@@ -251,15 +252,21 @@ func (a *API) postTenant(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The first owner is optional. Left out, the administrator creating the
+	// organization is its owner, signing in with the account they already
+	// have, and no second password exists. Named, a new account is made for
+	// that person, with a password the administrator passes on.
 	email := normaliseEmail(in.OwnerEmail)
-	if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
-		writeErr(w, http.StatusBadRequest, "enter the owner's email address, such as you@example.com")
-		return
-	}
-	if len([]rune(in.OwnerPassword)) < auth.MinPasswordLength {
-		writeErr(w, http.StatusBadRequest,
-			"the owner's password must be at least "+itoa(auth.MinPasswordLength)+" characters")
-		return
+	if email != "" {
+		if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
+			writeErr(w, http.StatusBadRequest, "enter the owner's email address, such as you@example.com")
+			return
+		}
+		if len([]rune(in.OwnerPassword)) < auth.MinPasswordLength {
+			writeErr(w, http.StatusBadRequest,
+				"the owner's password must be at least "+itoa(auth.MinPasswordLength)+" characters")
+			return
+		}
 	}
 	t, err := a.store.CreateTenant(r.Context(), NewTenant{
 		Slug: in.Slug, Name: in.Name, OwnerEmail: email,
@@ -278,21 +285,89 @@ func (a *API) postTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	// The administrator who created it becomes one of its owners, signing in
 	// with the account they already have, so it appears in their organization
-	// menu at once instead of needing a second password. The new
-	// organization's owner can remove them like anyone else.
+	// menu at once. When nobody else was named they are its only owner, so
+	// failing to add them is an error rather than a warning.
 	if err := a.joinCreatedTenant(r, sess, t); err != nil {
+		if email == "" {
+			a.fail(w, "add you as the new organization's owner", err)
+			return
+		}
 		a.log.Warn("creator not added to the new organization", "tenant", t.ID, "error", err)
 	}
 	// The platform's own chain records it too, so both sides can show who
 	// created the organization and when.
+	detail := "Organization " + t.Name + " (" + t.Slug + ") created, with " + sess.Email + " as its owner."
+	if email != "" {
+		detail = "Organization " + t.Name + " (" + t.Slug + ") created, with " + email +
+			" as its first owner."
+	}
 	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action: "tenant.created", Severity: "notice", ActorEmail: sess.Email, Target: t.Slug,
-		Detail: "Organization " + t.Name + " (" + t.Slug + ") created, with " + email +
-			" as its first owner.",
+		Detail: detail,
 	}); err != nil {
 		a.log.Error("audit append failed", "error", err)
 	}
 	writeJSON(w, http.StatusCreated, t)
+}
+
+// postTenantName renames an organization. Only its display name: the short
+// name people sign in with stays, so nothing anyone has saved stops working.
+func (a *API) postTenantName(w http.ResponseWriter, r *http.Request) {
+	sess, ok := a.platformOwner(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id := r.PathValue("id")
+	before, err := a.tenantForRename(r, id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, ErrUnknownTenant.Error())
+		return
+	}
+	t, err := a.store.RenameTenant(r.Context(), id, in.Name)
+	switch {
+	case errors.Is(err, errInvalidTenantName):
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, ErrUnknownTenant):
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	case err != nil:
+		a.fail(w, "rename organization", err)
+		return
+	}
+	if before.Name != t.Name {
+		ev := AuditEvent{
+			Action: "tenant.renamed", Severity: "notice", ActorEmail: sess.Email, Target: t.Slug,
+			Detail: "Organization " + before.Name + " (" + t.Slug + ") renamed to " + t.Name + ".",
+		}
+		// The platform's chain, and the organization's own, so its people
+		// can see why the name in their console changed.
+		if _, err := a.store.AppendAudit(r.Context(), ev); err != nil {
+			a.log.Error("audit append failed", "error", err)
+		}
+		if t.ID != DefaultTenantID {
+			if _, err := a.store.AppendAudit(WithTenant(r.Context(), t), ev); err != nil {
+				a.log.Error("audit append failed", "tenant", t.ID, "error", err)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// tenantForRename reads an organization as it is before a rename, the
+// default one included.
+func (a *API) tenantForRename(r *http.Request, id string) (*Tenant, error) {
+	if id == DefaultTenantID {
+		return a.store.DefaultTenant(r.Context()), nil
+	}
+	return a.store.TenantByID(r.Context(), id)
 }
 
 func (a *API) postTenantDisabled(disabled bool) http.HandlerFunc {

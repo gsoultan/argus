@@ -443,4 +443,37 @@ test.describe('organizations', () => {
     await expect(page.getByRole('button', { name: /New organization/ })).toBeVisible()
     await expect(page.getByRole('table').getByText('Acme Logistics')).toBeVisible()
   })
+
+  test('an organization can be renamed, and a new one asks for no second password', async ({ page }) => {
+    await page.goto('/settings?section=organizations')
+    await signIn(page)
+    const table = page.getByRole('table')
+    await expect(table.getByText('Acme Logistics')).toBeVisible()
+
+    // Rename keeps the short name people sign in with.
+    await page.getByRole('button', { name: 'Actions for Acme Logistics' }).click()
+    await page.getByRole('menuitem', { name: 'Rename' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Rename organization' })
+    await expect(dialog.getByText('stays the same')).toBeVisible()
+    await dialog.getByLabel('Name').fill('Acme Freight')
+    await dialog.getByRole('button', { name: 'Rename' }).click()
+    await expect(page.getByText('It is now called Acme Freight')).toBeVisible()
+
+    // The default organization can be renamed too, but not disabled.
+    await page.getByRole('button', { name: 'Actions for Northwind' }).click()
+    await expect(page.getByRole('menuitem', { name: 'Rename' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Disable' })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    // Creating one: the creator is its owner, so no password field until
+    // they choose to set it up for someone else.
+    await page.getByRole('button', { name: /New organization/ }).click()
+    const create = page.getByRole('dialog', { name: 'New organization' })
+    await create.getByLabel('Name', { exact: true }).fill('Globex')
+    await expect(create.getByLabel('Their password')).toHaveCount(0)
+    await expect(create.getByRole('button', { name: 'Create organization' })).toBeEnabled()
+    await create.getByLabel('Set it up for someone else').check()
+    await expect(create.getByLabel('Their password')).toBeVisible()
+    await expect(create.getByRole('button', { name: 'Create organization' })).toBeDisabled()
+  })
 })

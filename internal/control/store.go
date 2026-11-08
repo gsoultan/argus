@@ -60,6 +60,14 @@ type Store struct {
 	// reported or an audit entry written, so Home's live dashboard can
 	// rebuild without waiting for its tick. Set once, before serving.
 	changed func(tenantID string)
+
+	// defName caches the default organization's display name, which every
+	// request in it is labelled with; see DefaultTenant.
+	defName struct {
+		mu   sync.Mutex
+		name string
+		at   time.Time
+	}
 }
 
 // notifyChanged tells changed, if anyone listens.
