@@ -41,4 +41,10 @@
     <string name="pair_host">Pairing address (host:port)</string>
     <string name="pair_code">Pairing code</string>
     <string name="pair">Pair and arm</string>
+    <string name="app_change_title">Argus: an app change to confirm</string>
+    <string name="app_install_ask">Your organisation asks to install %1$s. Tap to see Android\'s question.</string>
+    <string name="app_uninstall_ask">Your organisation asks to uninstall %1$s. Tap to see Android\'s question.</string>
+    <string name="install_on">Installing apps is allowed: Android asks you each time one is installed.</string>
+    <string name="install_off">Installing apps is not allowed yet: your organisation cannot install apps here.</string>
+    <string name="install_allow">Allow installing apps</string>
 </resources>

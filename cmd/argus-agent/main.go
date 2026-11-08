@@ -108,6 +108,11 @@ func main() {
 		plan := fs.String("plan", "", "the cleanup plan the daemon wrote")
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(agent.RunLogsClean(*plan))
+	case "software-query":
+		// Run by the software service outside the agent's sandbox: one
+		// question about installed or installable software on stdin, the
+		// answer on stdout. Nothing is installed here.
+		os.Exit(agent.RunSoftwareQuery(os.Stdin, os.Stdout))
 	case "packages-repair":
 		// Run by the daemon after an update run was cut short.
 		os.Exit(agent.RunPackagesRepair(os.Stdout))
@@ -272,6 +277,8 @@ func runDaemon(args []string) int {
 	// the agent's sandbox.
 	pkgs := agent.NewPackages(*stateDir, exe, log)
 	pkgs.Busy = func() bool { return updater.Restarting() }
+	// A library file (MSI, EXE) is fetched on the agent's own credential.
+	pkgs.Fetch = rep.Download
 	// Log cleanup: the same, from the same binary.
 	logs := agent.NewLogs(*stateDir, exe, log)
 	updater.Marker = agent.UpdateMarkerPath(*socket)
@@ -370,6 +377,14 @@ func runDaemon(args []string) int {
 		services[agent.DiscoverDBService] = agent.DiscoverDatabases(agent.DiscoverDBConfig{
 			Verifier: &tunnel.GrantVerifier{Host: hostname},
 			Log:      log,
+		})
+		// What is installed here, what the repositories offer, and what a
+		// change would do; the change itself is a package run on the
+		// heartbeat. See internal/agent/software.go.
+		services[agent.SoftwareService] = agent.Software(agent.SoftwareConfig{
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			Log:        log,
+			Executable: exe,
 		})
 		// Remote Desktop, to this host's own listener, on Windows: the agent is
 		// the RDP client and records the session before it is shown.

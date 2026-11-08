@@ -3,6 +3,7 @@ package com.gsoultan.argus
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -55,6 +56,9 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.enableInput).setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        findViewById<Button>(R.id.allowInstall).setOnClickListener {
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
         }
         findViewById<Button>(R.id.forget).setOnClickListener {
             AgentService.stop(this)
@@ -138,6 +142,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.unattended).text =
             getString(if (armed) R.string.unattended_disable else R.string.unattended_setup)
         findViewById<Button>(R.id.unattended).isEnabled = st?.enrolled == true
+        val canInstall = packageManager.canRequestPackageInstalls()
+        app.agent.setCanInstallApps(canInstall)
+        findViewById<TextView>(R.id.installState).text =
+            getString(if (canInstall) R.string.install_on else R.string.install_off)
+        findViewById<Button>(R.id.allowInstall).isEnabled = !canInstall
         findViewById<TextView>(R.id.log).text = app.log.takeLast(12).joinToString("\n")
     }
 

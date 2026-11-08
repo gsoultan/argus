@@ -28,6 +28,8 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/savedquery"
 	"github.com/gsoultan/argus/internal/control/rgen/serverlogin"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
+	"github.com/gsoultan/argus/internal/control/rgen/softwarescript"
+	"github.com/gsoultan/argus/internal/control/rgen/softwarescriptversion"
 	"github.com/gsoultan/argus/internal/control/rgen/team"
 	"github.com/gsoultan/argus/internal/control/rgen/teammember"
 	"github.com/gsoultan/argus/internal/control/rgen/user"
@@ -60,23 +62,27 @@ var FlushOrder = map[string]int{
 	"server_logins":             18,
 	"sessions":                  19,
 	"sign_in_devices":           20,
-	"teams":                     21,
-	"users":                     22,
-	"access_requests":           23,
-	"agent_credentials":         24,
-	"asset_assignments":         25,
-	"asset_team_assignments":    26,
-	"console_alert_reads":       27,
-	"database_assignments":      28,
-	"database_backup_schedules": 29,
-	"database_backups":          30,
-	"database_changes":          31,
-	"database_restores":         32,
-	"database_statements":       33,
-	"recovery_codes":            34,
-	"team_members":              35,
-	"database_backup_tests":     36,
-	"database_statement_items":  37,
+	"software_files":            21,
+	"software_previews":         22,
+	"software_scripts":          23,
+	"teams":                     24,
+	"users":                     25,
+	"access_requests":           26,
+	"agent_credentials":         27,
+	"asset_assignments":         28,
+	"asset_team_assignments":    29,
+	"console_alert_reads":       30,
+	"database_assignments":      31,
+	"database_backup_schedules": 32,
+	"database_backups":          33,
+	"database_changes":          34,
+	"database_restores":         35,
+	"database_statements":       36,
+	"recovery_codes":            37,
+	"software_script_versions":  38,
+	"team_members":              39,
+	"database_backup_tests":     40,
+	"database_statement_items":  41,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -3172,6 +3178,123 @@ func (p SessionWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) 
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "sessions", "databases")
 		}
 		out[i].Database = &targets[j]
+	}
+	return out, nil
+}
+
+// SoftwareScriptVersionWithScriptRow is software_script_versions with its Script loaded.
+type SoftwareScriptVersionWithScriptRow struct {
+	softwarescriptversion.Row
+	Script softwarescript.Row
+}
+
+type SoftwareScriptVersionWithScriptQuery struct {
+	q softwarescriptversion.Query
+}
+
+// SoftwareScriptVersionWithScript starts the plan.
+func SoftwareScriptVersionWithScript() SoftwareScriptVersionWithScriptQuery {
+	return SoftwareScriptVersionWithScriptQuery{q: softwarescriptversion.New()}
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) Where(ps ...softwarescriptversion.Pred) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) WhereIf(cond bool, pr softwarescriptversion.Pred) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) Any(ps ...softwarescriptversion.Pred) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) Not(pr softwarescriptversion.Pred) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) NotAny(ps ...softwarescriptversion.Pred) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) Order(ts ...softwarescriptversion.Sort) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) Limit(n int64) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p SoftwareScriptVersionWithScriptQuery) Offset(n int64) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p SoftwareScriptVersionWithScriptQuery) After(r SoftwareScriptVersionWithScriptRow) SoftwareScriptVersionWithScriptQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p SoftwareScriptVersionWithScriptQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p SoftwareScriptVersionWithScriptQuery) All(ctx context.Context, ex runtime.Executor) ([]SoftwareScriptVersionWithScriptRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]SoftwareScriptVersionWithScriptRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = SoftwareScriptVersionWithScriptRow{Row: r}
+		key := r.ScriptID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := softwarescript.New().Unordered().
+		Where(softwarescript.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.ScriptID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "software_script_versions", "software_scripts")
+		}
+		out[i].Script = targets[j]
 	}
 	return out, nil
 }

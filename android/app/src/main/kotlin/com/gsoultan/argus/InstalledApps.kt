@@ -36,13 +36,18 @@ object InstalledApps {
 
     private fun list(pm: PackageManager): JSONArray {
         val arr = JSONArray()
-        for (pkg in pm.getInstalledPackages(0)) {
+        // MATCH_UNINSTALLED_PACKAGES keeps a preinstalled app disabled for
+        // this user in the list, so the console can restore it.
+        for (pkg in pm.getInstalledPackages(PackageManager.MATCH_UNINSTALLED_PACKAGES)) {
             val info = pkg.applicationInfo ?: continue
+            val installed = info.flags and ApplicationInfo.FLAG_INSTALLED != 0
+            if (!installed && info.flags and ApplicationInfo.FLAG_SYSTEM == 0) continue
             val o = JSONObject()
             o.put("package", pkg.packageName)
             o.put("label", pm.getApplicationLabel(info).toString())
             pkg.versionName?.let { o.put("version", it) }
             o.put("source", source(pm, info, pkg.packageName))
+            if (!installed) o.put("disabled", true)
             arr.put(o)
         }
         return arr

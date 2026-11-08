@@ -46,6 +46,10 @@ type HostSystem struct {
 	// unattended engine needs and which listens on every interface on
 	// Android 11+. The console shows it so nobody finds it by surprise.
 	WirelessDebugging bool `json:"wireless_debugging,omitempty"`
+	// CanInstallApps is whether the Argus app may install apps: Android's
+	// "Install unknown apps" for it, which the person allows once. Nil from
+	// a server, or an app older than installing.
+	CanInstallApps *bool `json:"can_install_apps,omitempty"`
 }
 
 // HostInterface mirrors agent.NetInterface.
@@ -331,6 +335,7 @@ type SystemFacts struct {
 	// for a server. See HostSystem.
 	Engine            string `json:"engine,omitempty"`
 	WirelessDebugging bool   `json:"wirelessDebugging,omitempty"`
+	CanInstallApps    *bool  `json:"canInstallApps,omitempty"`
 }
 
 // SystemUsage is HostUsage as the console spells it.
@@ -389,7 +394,7 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 			Kernel: hs.Kernel, Arch: hs.Arch, CPUModel: hs.CPUModel, CPUs: hs.CPUs,
 			MemoryBytes: hs.MemoryBytes, Machine: hs.Machine, Hypervisor: hs.Hypervisor,
 			BootedAt: hs.BootedAt, TimeZone: hs.TimeZone, OffsetSeconds: hs.OffsetSeconds,
-			Engine: hs.Engine, WirelessDebugging: hs.WirelessDebugging,
+			Engine: hs.Engine, WirelessDebugging: hs.WirelessDebugging, CanInstallApps: hs.CanInstallApps,
 		}
 	}
 	out.Network = systemNetwork(hs.Interfaces, flat)

@@ -35,6 +35,10 @@ class AdbPairing(@Suppress("unused") private val ctx: Context) {
 class AdbExec(@Suppress("unused") private val ctx: Context, @Suppress("unused") private val key: File) {
     /** Runs one shell command through the paired ADB connection on loopback. */
     fun run(command: String): Unit = throw NotYetOnDevice("the ADB exec channel")
+
+    /** As run, streaming input to the command's standard input. */
+    fun runWithInput(command: String, @Suppress("UNUSED_PARAMETER") input: File): Unit =
+        throw NotYetOnDevice("the ADB exec channel")
 }
 
 /**

@@ -6,6 +6,7 @@ import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconApps, IconDatabasePlus } from '@tabler/icons-react'
 import { AddDatabase } from '~/components/DatabasesOnServer'
+import { InstalledSoftware } from '~/components/server/InstalledSoftware'
 import { EmptyState, SectionCard } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
 import { isConfigured } from '~/lib/live'
@@ -28,8 +29,19 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
   const { data: dbs } = useQuery(databasesOnAssetQuery(asset.id))
   const [adding, setAdding] = useState<{ engine: DBEngine; port?: number; poolerPort?: number; configPath?: string } | null>(null)
   const phone = useMediaQuery('(max-width: 48em)') ?? false
+  const [tab, setTab] = useState<string | null>('apps')
 
-  if (asset.protocol === 'rdp') return null
+  if (asset.protocol === 'rdp') {
+    // A Windows server: the programs Windows lists, and installing from the
+    // library or a reviewed PowerShell script.
+    if (!isConfigured()) return null
+    return (
+      <SectionCard title="What runs here" icon={IconApps}
+        description="The programs Windows lists under Apps, as the agent read them from the registry. Removing one runs its own quiet uninstaller.">
+        <InstalledSoftware asset={asset} canEdit={canEdit} apps={[]} active />
+      </SectionCard>
+    )
+  }
   const apps = data?.applications ?? []
   const listeners = data?.listeners ?? []
   const containers = data?.containers ?? []
@@ -54,9 +66,12 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
             ? 'This server has no agent. Install one and it reports what runs here within a few minutes.'
             : 'The agent on this server has not reported what runs on it. An agent older than this console does not look; upgrading it is enough.'} />
       ) : (
-        <Tabs defaultValue="apps" variant="pills" radius="sm">
+        <Tabs value={tab} onChange={setTab} variant="pills" radius="sm">
           <Tabs.List mb="xs" className="argus-tabs-scroll">
             <Tabs.Tab value="apps" fz={FS.meta}>Applications {apps.length}</Tabs.Tab>
+            {isConfigured() && (asset.protocol ?? 'ssh') === 'ssh' && (
+              <Tabs.Tab value="installed" fz={FS.meta}>Installed</Tabs.Tab>
+            )}
             <Tabs.Tab value="ports" fz={FS.meta}>Listening ports {listeners.length}</Tabs.Tab>
             <Tabs.Tab value="containers" fz={FS.meta} disabled={!data.sources.some((s) => s === 'docker' || s === 'podman')}>
               Containers {containers.length}
@@ -106,6 +121,12 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
               </Table.ScrollContainer>
             )}
           </Tabs.Panel>
+
+          {isConfigured() && (asset.protocol ?? 'ssh') === 'ssh' && (
+            <Tabs.Panel value="installed">
+              <InstalledSoftware asset={asset} canEdit={canEdit} apps={apps} active={tab === 'installed'} />
+            </Tabs.Panel>
+          )}
 
           <Tabs.Panel value="ports">
             <Table.ScrollContainer minWidth={0} type="native">

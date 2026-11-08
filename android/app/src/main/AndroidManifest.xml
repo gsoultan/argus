@@ -14,6 +14,11 @@
     <!-- Unattended: re-arm the helper after a reboot, since wireless
          debugging and the shell helper do not survive a restart. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Installing and uninstalling apps from the console's Apps tab. With
+         the attended engine Android asks whoever holds the device each time;
+         "Install unknown apps" is allowed for Argus once, from its screen. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -79,6 +84,10 @@
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
             android:screenOrientation="portrait"
             tools:replace="screenOrientation" />
+        <!-- Android's answer to an install or uninstall the app started. -->
+        <receiver
+            android:name=".AppInstallReceiver"
+            android:exported="false" />
         <receiver
             android:name=".BootReceiver"
             android:exported="true"

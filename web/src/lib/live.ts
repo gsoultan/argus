@@ -48,8 +48,8 @@ import type { MyServer,
 // '/' means same-origin; anything else is an absolute base. Same-origin is the
 // supported shape, because the session cookie depends on it.
 const RAW_BASE = import.meta.env.VITE_CONTROL_URL ?? ''
-const BASE = RAW_BASE === '/' ? '' : RAW_BASE.replace(/\/$/, '')
-const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
+export const BASE = RAW_BASE === '/' ? '' : RAW_BASE.replace(/\/$/, '')
+export const TOKEN = import.meta.env.VITE_CONTROL_TOKEN ?? ''
 
 interface RuntimeConfig { version?: string; fleetUrl?: string }
 
@@ -473,7 +473,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
  * An empty or non-JSON body is read as nothing, and a refusal still carries
  * the server's own message when it sent one.
  */
-async function readReply<T>(res: Response): Promise<T> {
+export async function readReply<T>(res: Response): Promise<T> {
   const text = res.status === 204 ? '' : await res.text()
   let parsed: (T & { error?: string }) | undefined
   if (text.trim() !== '') {
@@ -2108,7 +2108,8 @@ export interface PackageRun {
   hostname: string
   assetHostname: string
   assetId?: string
-  mode: 'all' | 'security' | 'selected'
+  mode: 'all' | 'security' | 'selected' | 'install' | 'remove' | 'script'
+    | 'file_install' | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore'
   packages: string[]
   holds: string[]
   reboot: PackageReboot
@@ -2132,6 +2133,39 @@ export interface PackageRun {
   log?: string
   batchId: string | null
   batchPosition: number | null
+  /** An install or a removal: what it was asked for, and how. */
+  items?: { name: string; version?: string; label?: string }[]
+  purge?: boolean
+  startServices?: boolean
+  /** The services an install started. */
+  started?: string[]
+  previewId?: string | null
+  undoOf?: string | null
+  /** An app install on a device: the library file it hands the device. */
+  softwareFileId?: string
+  softwareFileName?: string
+  /** A script run: which version, which part, its plain values, and what changed. */
+  scriptVersionId?: string
+  scriptName?: string
+  scriptAction?: 'install' | 'uninstall'
+  scriptParams?: Record<string, string>
+  scriptReport?: ScriptReport
+}
+
+/** What changed on a server while a script ran. */
+export interface ScriptReport {
+  exit: number
+  packages?: { kind: 'add' | 'upgrade' | 'downgrade' | 'remove'; name: string; from?: string; to?: string }[]
+  services_added?: string[]
+  services_removed?: string[]
+  ports_opened?: number[]
+  ports_closed?: number[]
+  folders_added?: string[]
+  folders_removed?: string[]
+  checked?: boolean
+  installed?: boolean
+  check_version?: string
+  check_error?: string
 }
 
 /** A server's Updates tab. */

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 /*
@@ -124,6 +126,14 @@ const (
 	PackagesAll      = "all"
 	PackagesSecurity = "security"
 	PackagesSelected = "selected"
+	// PackagesInstall and PackagesRemove install or remove what the console
+	// previewed (software_apply.go).
+	PackagesInstall = "install"
+	PackagesRemove  = "remove"
+	// PackagesScript runs a reviewed install script (software_script.go).
+	PackagesScript = "script"
+	// PackagesFileInstall installs an MSI or EXE from the library (Windows).
+	PackagesFileInstall = "file_install"
 )
 
 // PackageRunRequest is an install the console asked for.
@@ -138,6 +148,22 @@ type PackageRunRequest struct {
 	// Reboot is "if_needed" to reboot when the server asks for one after
 	// the install, else "never".
 	Reboot string `json:"reboot,omitempty"`
+	// Items, Purge, StartServices and Expect are for install and remove:
+	// what to install or remove, whether to delete configuration too,
+	// whether to start the services new packages bring, and the hash of the
+	// preview a person said yes to. The run stops when the server's own
+	// simulation no longer matches it.
+	Items         []tunnel.SoftwareItem `json:"items,omitempty"`
+	Purge         bool                  `json:"purge,omitempty"`
+	StartServices bool                  `json:"start_services,omitempty"`
+	Expect        string                `json:"expect,omitempty"`
+	// Script is a reviewed script to run, for mode script.
+	Script *ScriptOrder `json:"script,omitempty"`
+	// App is an app to change on an Android device, for the app_* modes
+	// (android_install.go).
+	App *AppOrder `json:"app,omitempty"`
+	// File is the library file of a file_install run.
+	File *FileOrder `json:"file,omitempty"`
 }
 
 // Package run states.
@@ -169,6 +195,10 @@ type PackageRunStatus struct {
 	Planned   int             `json:"planned,omitempty"`
 	Upgraded  []PackageChange `json:"upgraded,omitempty"`
 	Restarted []string        `json:"restarted,omitempty"`
+	// Started are the services an install started, for install runs.
+	Started []string `json:"started,omitempty"`
+	// Script is what changed while a script ran, for mode script.
+	Script *tunnel.ScriptReport `json:"script,omitempty"`
 	// RebootRequired is the server still wanting a reboot when the run
 	// ended without one.
 	RebootRequired bool `json:"reboot_required,omitempty"`
@@ -240,6 +270,9 @@ type Packages struct {
 	// Changed is called when there is something new to report, so it
 	// reaches the console without waiting for the next heartbeat.
 	Changed func()
+	// Fetch downloads a library file for a file_install run, on the
+	// agent's credential.
+	Fetch AppFetch
 	// Busy is whether the agent itself is updating: no run starts then.
 	Busy func() bool
 
@@ -271,6 +304,55 @@ func NewPackages(stateDir, executable string, log *slog.Logger) *Packages {
 		platform: hostPackagePlatform(executable, stateDir), now: time.Now}
 }
 
+// fetchThenLaunch downloads a library file and starts the run with it.
+func (p *Packages) fetchThenLaunch(ctx context.Context, req PackageRunRequest, plan PackagePlan, planPath, dir string) {
+	fctx, cancel := context.WithTimeout(ctx, packageRunTimeout)
+	path, err := fetchLibraryFile(fctx, p.Fetch, dir, req.ID, req.File)
+	cancel()
+	ended := false
+	defer func() {
+		if ended {
+			p.changed()
+		}
+	}()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.run.ID != req.ID || p.run.Finished() {
+		if path != "" {
+			_ = os.Remove(path)
+		}
+		return
+	}
+	st := p.run
+	fail := func(msg string) {
+		st.State, st.Message, st.FinishedAt, st.Unit = RunFailed, msg, p.now().UTC(), ""
+		st.At = st.FinishedAt
+		p.setRunLocked(st)
+		ended = true
+	}
+	if err != nil {
+		_ = os.Remove(planPath)
+		fail(err.Error())
+		return
+	}
+	f := *req.File
+	f.LocalPath = path
+	plan.File = &f
+	if err := writeFileAtomic(planPath, mustJSON(plan), 0o600); err != nil {
+		_ = os.Remove(path)
+		fail("cannot prepare the run: " + err.Error())
+		return
+	}
+	st.Step, st.Message, st.Unit, st.At = "starting", "starting", plan.Unit, p.now().UTC()
+	p.setRunLocked(st)
+	if err := p.platform.launch(ctx, planPath, plan.Unit); err != nil {
+		_ = os.Remove(path)
+		fail("cannot start the install: " + err.Error())
+		return
+	}
+	p.Log.Info("packages: run started", "id", req.ID, "mode", req.Mode, "unit", plan.Unit)
+}
+
 // PackageBeat is what rides the heartbeat.
 type PackageBeat struct {
 	Supported bool   `json:"supported"`
@@ -282,6 +364,33 @@ type PackageBeat struct {
 	// Checking is a check under way.
 	Checking bool              `json:"checking,omitempty"`
 	Run      *PackageRunStatus `json:"run,omitempty"`
+	// Installs are the software run modes a server that cannot be updated
+	// from the console can still do (a Windows server: remove, script,
+	// file_install). Empty where updates are supported, which can do all of
+	// them, or none.
+	Installs []string `json:"installs,omitempty"`
+}
+
+// installer is a platform that installs software though it does not update
+// the operating system.
+type installer interface {
+	installs() []string
+}
+
+// modeSupported says why this host cannot do a run of mode, "" when it can.
+func (p *Packages) modeSupported(mode string) string {
+	reason := p.platform.supported()
+	if reason == "" {
+		return ""
+	}
+	if in, ok := p.platform.(installer); ok {
+		for _, m := range in.installs() {
+			if m == mode {
+				return ""
+			}
+		}
+	}
+	return reason
 }
 
 // Beat is what to put on the next heartbeat.
@@ -294,6 +403,9 @@ func (p *Packages) Beat() PackageBeat {
 		b.Reason = reason
 	} else {
 		b.Supported = true
+	}
+	if in, ok := p.platform.(installer); ok && !b.Supported {
+		b.Installs = in.installs()
 	}
 	if p.report != nil && p.report.CheckedAt.After(p.sent) {
 		r := *p.report
@@ -362,7 +474,7 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 			"going", p.run.ID, "asked", req.ID)
 		return
 	}
-	if reason := p.platform.supported(); reason != "" {
+	if reason := p.modeSupported(req.Mode); reason != "" {
 		fail(reason)
 		return
 	}
@@ -379,6 +491,26 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 				return
 			}
 		}
+	case PackagesInstall, PackagesRemove:
+		if err := tunnel.ValidateSoftwareChange(req.Mode, req.Items, req.Purge); err != nil {
+			fail(err.Error())
+			return
+		}
+		if !reHash.MatchString(req.Expect) {
+			fail("the run does not say which preview it was approved from")
+			return
+		}
+	case PackagesScript:
+		if err := req.Script.validate(); err != nil {
+			fail(err.Error())
+			return
+		}
+	case PackagesFileInstall:
+		if err := req.File.validate(); err != nil {
+			fail(err.Error())
+			return
+		}
+		req.File.LocalPath = ""
 	default:
 		fail(fmt.Sprintf("%q is not a way to update", req.Mode))
 		return
@@ -410,6 +542,15 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 		return
 	}
 	st.State, st.Step, st.Message, st.Unit, st.BootID = RunStarting, "starting", "starting", unit, p.platform.bootID()
+	if req.Mode == PackagesFileInstall {
+		// The helper never talks to the control plane: the daemon fetches
+		// the file first, then starts it.
+		// No unit yet, so nothing calls the run interrupted while it downloads.
+		st.Step, st.Message, st.Unit = "download", fmt.Sprintf("downloading %s (%d MB)", req.File.Name, (req.File.Size+1<<20-1)>>20), ""
+		p.setRunLocked(st)
+		go p.fetchThenLaunch(ctx, req, plan, planPath, dir)
+		return
+	}
 	p.setRunLocked(st)
 	if err := p.platform.launch(ctx, planPath, unit); err != nil {
 		st.Unit = ""
@@ -422,6 +563,9 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 // rePackageName is a package name as apt, dnf and zypper spell them, with
 // an optional architecture.
 var rePackageName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._:~-]{0,199}$`)
+
+// reHash is a preview's hash: SHA-256 in hex.
+var reHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // reHoldGlob is a package name with * and ? allowed.
 var reHoldGlob = regexp.MustCompile(`^[A-Za-z0-9*?][A-Za-z0-9+._:~*?-]{0,199}$`)
@@ -444,6 +588,12 @@ func (p *Packages) loadLocked() {
 	if b, err := os.ReadFile(filepath.Join(p.StateDir, packagesRunFile)); err == nil {
 		var st PackageRunStatus
 		if json.Unmarshal(b, &st) == nil {
+			// A download the agent was doing when it stopped: nothing started.
+			if st.State == RunStarting && st.Step == "download" && st.Unit == "" {
+				now := p.now().UTC()
+				st.State, st.Message, st.FinishedAt, st.At = RunInterrupted,
+					"the agent restarted while it downloaded the file; nothing was installed", now, now
+			}
 			p.run = st
 		}
 	}

@@ -33,6 +33,9 @@ type AndroidApp struct {
 	Label   string `json:"label,omitempty"`
 	Version string `json:"version,omitempty"`
 	Source  string `json:"source,omitempty"`
+	// Disabled is a preinstalled app disabled for the device's user: still
+	// on the device, not usable, and restorable.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 const (
@@ -66,10 +69,11 @@ func (a *AndroidApps) bounded() *AndroidApps {
 			src = ""
 		}
 		out.Apps = append(out.Apps, AndroidApp{
-			Package: pkg,
-			Label:   clampText(app.Label, maxAndroidAppText),
-			Version: clampText(app.Version, maxAndroidAppText),
-			Source:  src,
+			Package:  pkg,
+			Label:    clampText(app.Label, maxAndroidAppText),
+			Version:  clampText(app.Version, maxAndroidAppText),
+			Source:   src,
+			Disabled: app.Disabled,
 		})
 	}
 	return out
@@ -99,6 +103,8 @@ type ServerAndroidApp struct {
 	Label   string `json:"label"`
 	Version string `json:"version"`
 	Source  string `json:"source"`
+	// Disabled is a preinstalled app disabled for the device's user.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // AndroidAppsFor reads what the app on device id reported installed.
@@ -132,7 +138,7 @@ func (s *Store) AndroidAppsFor(ctx context.Context, id string) (ServerAndroidApp
 	}
 	for _, a := range inv.Apps {
 		out.Apps = append(out.Apps, ServerAndroidApp{
-			Package: a.Package, Label: a.Label, Version: a.Version, Source: a.Source,
+			Package: a.Package, Label: a.Label, Version: a.Version, Source: a.Source, Disabled: a.Disabled,
 		})
 	}
 	return out, nil

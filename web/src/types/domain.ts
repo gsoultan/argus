@@ -402,6 +402,8 @@ export interface ServerAndroidApp {
   version: string
   /** Where it came from: 'play', 'preinstalled' or 'sideloaded' (or ''). */
   source: string
+  /** A preinstalled app disabled for the device's user: restorable. */
+  disabled?: boolean
 }
 
 /** What is installed on an Android device, from the app's last report. */
@@ -460,6 +462,8 @@ export interface ServerSystemFacts {
    * nobody finds it by surprise.
    */
   wirelessDebugging?: boolean
+  /** Whether the Argus app may install apps ("Install unknown apps"); absent from a server or an older app. */
+  canInstallApps?: boolean
 }
 
 export interface ServerDisk {

@@ -1135,6 +1135,10 @@ func All() []any {
 		&LogCleanupRule{},
 		&PackageRun{},
 		&PackageUpdateRule{},
+		&SoftwareFile{},
+		&SoftwarePreview{},
+		&SoftwareScript{},
+		&SoftwareScriptVersion{},
 		&RecoveryCode{},
 		&SavedQuery{},
 		&RedeemedTicket{},
@@ -1379,6 +1383,24 @@ type PackageRun struct {
 	BatchID        *[16]byte
 	BatchPosition  *int32
 	WindowStart    *time.Time
+	// Items to install or remove, as the preview named them, and how
+	// (migration 057).
+	Items         storm.JSON
+	Purge         bool
+	StartServices bool
+	Expect        string
+	PreviewID     *[16]byte
+	UndoOf        *[16]byte
+	Started       []string
+	// The library script version a script run executes, its part and
+	// parameters, and what it changed (migration 058).
+	ScriptVersionID *[16]byte
+	ScriptAction    string
+	ScriptParams    storm.JSON
+	ScriptSecrets   []byte
+	ScriptReport    *storm.JSON
+	// The library file an app install on a device hands it (migration 059).
+	SoftwareFileID *[16]byte
 }
 
 func (m *PackageRun) Schema(t *storm.Table) {
@@ -1397,7 +1419,14 @@ func (m *PackageRun) Schema(t *storm.Table) {
 	t.Col(&m.RebootRequired).Default("false")
 	t.Col(&m.Rebooted).Default("false")
 	t.Col(&m.Log).Default("''::text")
-	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text])")
+	t.Col(&m.Items).Default("'[]'::jsonb")
+	t.Col(&m.Purge).Default("false")
+	t.Col(&m.StartServices).Default("false")
+	t.Col(&m.Expect).Default("''::text")
+	t.Col(&m.Started).Default("'{}'::text[]")
+	t.Col(&m.ScriptAction).Default("''::text")
+	t.Col(&m.ScriptParams).Default("'{}'::jsonb")
+	t.CheckNamed("package_runs_mode_check", "mode = ANY (ARRAY['all'::text, 'security'::text, 'selected'::text, 'install'::text, 'remove'::text, 'script'::text, 'file_install'::text, 'app_install'::text, 'app_uninstall'::text, 'app_disable'::text, 'app_restore'::text])")
 	t.CheckNamed("package_runs_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_runs_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'waiting'::text, 'queued'::text, 'running'::text, 'rebooting'::text, 'done'::text, 'failed'::text, 'interrupted'::text, 'cancelled'::text, 'denied'::text])")
 	t.CheckNamed("package_runs_trigger_check", "trigger = ANY (ARRAY['manual'::text, 'automatic'::text])")
@@ -1434,4 +1463,138 @@ func (m *PackageUpdateRule) Schema(t *storm.Table) {
 	t.CheckNamed("package_update_rules_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_needed'::text])")
 	t.CheckNamed("package_update_rules_window_minutes_check", "(window_minutes >= 30) AND (window_minutes <= 1440)")
 	t.CheckNamed("package_update_rules_window_start_minute_check", "(window_start_minute >= 0) AND (window_start_minute <= 1439)")
+}
+
+// SoftwarePreview is table software_previews: what installing or removing
+// would change on one server, as its package manager simulated it (migration 057).
+type SoftwarePreview struct {
+	ID            [16]byte
+	Hostname      string
+	AssetHostname string
+	Action        string
+	Items         storm.JSON
+	Purge         bool
+	StartServices bool
+	Result        storm.JSON
+	Hash          string
+	Blocked       string
+	UndoOf        *[16]byte
+	CreatedBy     string
+	CreatedAt     time.Time
+}
+
+func (m *SoftwarePreview) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Purge).Default("false")
+	t.Col(&m.StartServices).Default("false")
+	t.Col(&m.Blocked).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("software_previews_action_check", "action = ANY (ARRAY['install'::text, 'remove'::text])")
+	t.Index(&m.CreatedAt).Named("software_previews_created")
+}
+
+// SoftwareScript is table software_scripts: an install script in the
+// Software library (migration 058).
+type SoftwareScript struct {
+	ID          [16]byte
+	Name        string
+	Platform    string
+	Description string
+	CreatedBy   string
+	CreatedAt   time.Time
+	ArchivedAt  *time.Time
+}
+
+func (m *SoftwareScript) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Description).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("software_scripts_platform_check", "platform = ANY (ARRAY['linux'::text, 'windows'::text])")
+	t.Index(storm.Lower(&m.Name)).Unique().Where("archived_at IS NULL").Named("software_scripts_name")
+}
+
+// SoftwareScriptVersion is table software_script_versions: one checked,
+// reviewed and signed version of a script (migration 058).
+type SoftwareScriptVersion struct {
+	ID             [16]byte
+	Script         SoftwareScript
+	Version        int32
+	Install        string
+	Uninstall      string
+	CheckText      string
+	Params         storm.JSON
+	RunAs          string
+	TimeoutSeconds int32
+	Reboot         string
+	InstallSha     string
+	UninstallSha   string
+	CheckSha       string
+	Findings       storm.JSON
+	Blocked        bool
+	Note           string
+	Author         string
+	CreatedAt      time.Time
+	ReviewedBy     *string
+	ReviewedAt     *time.Time
+	SelfReviewed   bool
+	Accepted       storm.JSON
+	Signature      string
+	TriedOn        *string
+	TriedAt        *time.Time
+	TriedRun       *[16]byte
+}
+
+func (m *SoftwareScriptVersion) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Script).ConstraintName("software_script_versions_script_id_fkey")
+	t.Col(&m.Uninstall).Default("''::text")
+	t.Col(&m.CheckText).Default("''::text")
+	t.Col(&m.Params).Default("'[]'::jsonb")
+	t.Col(&m.RunAs).Default("''::text")
+	t.Col(&m.TimeoutSeconds).Default("1800")
+	t.Col(&m.Reboot).Default("'never'::text")
+	t.Col(&m.UninstallSha).Default("''::text")
+	t.Col(&m.CheckSha).Default("''::text")
+	t.Col(&m.Findings).Default("'[]'::jsonb")
+	t.Col(&m.Blocked).Default("false")
+	t.Col(&m.Note).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.SelfReviewed).Default("false")
+	t.Col(&m.Accepted).Default("'[]'::jsonb")
+	t.Col(&m.Signature).Default("''::text")
+	t.UniqueNamed("software_script_versions_script_id_version_key", &m.Script, &m.Version)
+	t.CheckNamed("software_script_versions_reboot_check", "reboot = ANY (ARRAY['never'::text, 'if_asked'::text])")
+}
+
+// SoftwareFile is table software_files: an APK (and, with Windows, an MSI
+// or EXE) in the Software library (migration 059).
+type SoftwareFile struct {
+	ID         [16]byte
+	Platform   string
+	Kind       string
+	Name       string
+	FileName   string
+	Sha256     string
+	SizeBytes  int64
+	StorageKey string
+	Meta       storm.JSON
+	Note       string
+	CreatedBy  string
+	CreatedAt  time.Time
+	ArchivedAt *time.Time
+}
+
+func (m *SoftwareFile) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Meta).Default("'{}'::jsonb")
+	t.Col(&m.Note).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("software_files_kind_check", "kind = ANY (ARRAY['apk'::text, 'msi'::text, 'exe'::text])")
+	t.CheckNamed("software_files_platform_check", "platform = ANY (ARRAY['android'::text, 'windows'::text])")
+	t.CheckNamed("software_files_size_bytes_check", "size_bytes > 0")
+	t.Index(&m.Sha256).Unique().Where("archived_at IS NULL").Named("software_files_sha256")
 }

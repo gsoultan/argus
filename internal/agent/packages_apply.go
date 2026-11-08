@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,10 @@ type PackageApplier struct {
 	Restart func(ctx context.Context, svc string) error
 	Reboot  func() error
 	BootID  func() string
+	// Windows runs the plan the Windows way (winsoft.go), with
+	// WinInventory reading the installed programs.
+	Windows      bool
+	WinInventory winInventory
 
 	mu sync.Mutex
 	st PackageRunStatus
@@ -116,8 +121,13 @@ func RunPackagesApply(planPath string) int {
 		fmt.Fprintln(os.Stderr, "packages-apply: the plan cannot be read")
 		return 2
 	}
-	a := &PackageApplier{Plan: plan, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))}
-	ctx, cancel := context.WithTimeout(context.Background(), packageRunTimeout)
+	a := &PackageApplier{Plan: plan, Log: slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Windows: runtime.GOOS == "windows", WinInventory: hostWinInventory}
+	timeout := packageRunTimeout
+	if plan.Script != nil && plan.Script.timeout()+10*time.Minute > timeout {
+		timeout = plan.Script.timeout() + 10*time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	st := a.Apply(ctx)
 	_ = os.Remove(planPath)
@@ -162,6 +172,15 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 		StartedAt: now, At: now}
 	a.lw = &runLog{limit: maxRunLog, flush: a.flushLog}
 	a.save()
+	if a.Windows {
+		return a.applyWindows(ctx)
+	}
+	if a.Plan.Mode == PackagesInstall || a.Plan.Mode == PackagesRemove {
+		return a.applySoftware(ctx)
+	}
+	if a.Plan.Mode == PackagesScript {
+		return a.applyScript(ctx)
+	}
 
 	m := detectManager(a.Look)
 	if m == nil {

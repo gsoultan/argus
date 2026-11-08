@@ -35,6 +35,7 @@ function fixtureSystem(a: Asset): ServerSystem {
         bootedAt: null, timeZone: '', utcOffsetSeconds: 0,
         engine: a.controlMode === 'unattended' ? 'unattended' : 'attended',
         wirelessDebugging: a.controlMode === 'unattended',
+        canInstallApps: true,
       },
       usage: null, usageAt: a.agentLastSeenAt ?? null, network: [],
     }

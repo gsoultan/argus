@@ -608,6 +608,19 @@ func _assertPackageRunShape(m m0.PackageRun) {
 		m.BatchID,
 		m.BatchPosition,
 		m.WindowStart,
+		m.Items,
+		m.Purge,
+		m.StartServices,
+		m.Expect,
+		m.PreviewID,
+		m.UndoOf,
+		m.Started,
+		m.ScriptVersionID,
+		m.ScriptAction,
+		m.ScriptParams,
+		m.ScriptSecrets,
+		m.ScriptReport,
+		m.SoftwareFileID,
 	}
 }
 
@@ -748,6 +761,97 @@ func _assertSignInDeviceShape(m m0.SignInDevice) {
 		m.Fingerprint,
 		m.FirstSeenAt,
 		m.LastSeenAt,
+	}
+}
+
+// _assertSoftwareFileShape fails to compile if m0.SoftwareFile gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwareFileShape(m m0.SoftwareFile) {
+	type shape m0.SoftwareFile
+	_ = shape{
+		m.ID,
+		m.Platform,
+		m.Kind,
+		m.Name,
+		m.FileName,
+		m.Sha256,
+		m.SizeBytes,
+		m.StorageKey,
+		m.Meta,
+		m.Note,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.ArchivedAt,
+	}
+}
+
+// _assertSoftwarePreviewShape fails to compile if m0.SoftwarePreview gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwarePreviewShape(m m0.SoftwarePreview) {
+	type shape m0.SoftwarePreview
+	_ = shape{
+		m.ID,
+		m.Hostname,
+		m.AssetHostname,
+		m.Action,
+		m.Items,
+		m.Purge,
+		m.StartServices,
+		m.Result,
+		m.Hash,
+		m.Blocked,
+		m.UndoOf,
+		m.CreatedBy,
+		m.CreatedAt,
+	}
+}
+
+// _assertSoftwareScriptShape fails to compile if m0.SoftwareScript gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwareScriptShape(m m0.SoftwareScript) {
+	type shape m0.SoftwareScript
+	_ = shape{
+		m.ID,
+		m.Name,
+		m.Platform,
+		m.Description,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.ArchivedAt,
+	}
+}
+
+// _assertSoftwareScriptVersionShape fails to compile if m0.SoftwareScriptVersion gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSoftwareScriptVersionShape(m m0.SoftwareScriptVersion) {
+	type shape m0.SoftwareScriptVersion
+	_ = shape{
+		m.ID,
+		m.Script,
+		m.Version,
+		m.Install,
+		m.Uninstall,
+		m.CheckText,
+		m.Params,
+		m.RunAs,
+		m.TimeoutSeconds,
+		m.Reboot,
+		m.InstallSha,
+		m.UninstallSha,
+		m.CheckSha,
+		m.Findings,
+		m.Blocked,
+		m.Note,
+		m.Author,
+		m.CreatedAt,
+		m.ReviewedBy,
+		m.ReviewedAt,
+		m.SelfReviewed,
+		m.Accepted,
+		m.Signature,
+		m.TriedOn,
+		m.TriedAt,
+		m.TriedRun,
 	}
 }
 

@@ -51,6 +51,8 @@ class ArgusApp : Application() {
             Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "",
         )
         unattended = UnattendedEngine(this, agent)
+        agent.setInstaller(AppInstaller(this))
+        agent.setCanInstallApps(packageManager.canRequestPackageInstalls())
         bridge.unattended = unattended
         activity = ActivityReporter(this)
         activity.register()
