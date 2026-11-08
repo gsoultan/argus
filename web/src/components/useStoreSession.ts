@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DBLevel, Database } from '~/types/domain'
 
 /*
@@ -166,7 +166,11 @@ export function useStoreSession(
 
   const lastId = useCallback(() => nextId.current - 1, [])
 
-  return { status, fatal, ready, ask, cancel, lastId }
+  // The same object until something in it changes: workspaces build their
+  // refresh callbacks on it, and a new object every render would make those
+  // effects fire again on every answer, which floods the agent with requests
+  // until its per-session rate limit refuses them.
+  return useMemo(() => ({ status, fatal, ready, ask, cancel, lastId }), [status, fatal, ready, ask, cancel, lastId])
 }
 
 /** redis-cli's way of printing a reply, for the command console. */
