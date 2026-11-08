@@ -39,6 +39,10 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 722.1 kB with the Disks tab (722.0 before, same build): its name in the
  * server page's tab list and the shared stylesheet. The tab, its dialog and
  * Settings › Disk growing are in chunks that are not stored.
+ * 722.7 kB with assets by type (722.1 before, same build): the Updates route's
+ * guard and search rule in the entry, the bell's Updates tab, and the asset
+ * type in the shared modules. The Updates page and Asset types settings are
+ * in chunks that are not stored.
  */
 const MAX_ENTRIES = 10
 const MAX_KB = 723
