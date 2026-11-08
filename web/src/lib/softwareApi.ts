@@ -1,4 +1,4 @@
-import { BASE, TOKEN, get, readReply, send, type PackageRun } from '~/lib/live'
+import { BASE, TOKEN, apiFetch, get, readReply, send, type PackageRun } from '~/lib/live'
 
 /*
  * Installing and removing software on a Linux server. Here rather than in
@@ -301,7 +301,7 @@ export async function runScript(assetId: string, body: {
  * live.ts, which every route loads, because only the library uploads.
  */
 async function upload<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'POST',
     credentials: 'include',
     headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},

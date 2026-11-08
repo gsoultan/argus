@@ -2,7 +2,7 @@ import { useState } from 'react'
 import {
   Alert, Box, Button, PasswordInput, Stack, Text, TextInput, Title,
 } from '@mantine/core'
-import { IconAlertTriangle, IconKey } from '@tabler/icons-react'
+import { IconAlertTriangle, IconClock, IconKey } from '@tabler/icons-react'
 import {
   passwordLogin, setSignInOrg, verifyMFA, type Identity,
 } from '~/lib/live'
@@ -22,9 +22,11 @@ import { AuthLayout } from '~/components/AuthLayout'
  * refusal, and it is shown verbatim rather than reworded into something that
  * might imply more than the server said.
  */
-export function SignIn({ identity, onSignedIn }: {
+export function SignIn({ identity, onSignedIn, expired = false }: {
   identity: Identity
   onSignedIn: () => void
+  /** The session ended while a page was open; signing in returns to it. */
+  expired?: boolean
 }) {
   const [email, setEmail] = useState('')
   const [org, setOrg] = useState('')
@@ -162,6 +164,14 @@ export function SignIn({ identity, onSignedIn }: {
             )}
             {identity.passwordEnabled && identity.accountsExist !== false && (
               <form onSubmit={submitPassword}>
+                {expired && !error && (
+                  <Alert color="sky" variant="light" icon={<IconClock size={15} />} mb="md">
+                    <Text size="xs">
+                      Your session has ended. Sign in again and you will be taken back
+                      to the page you were on.
+                    </Text>
+                  </Alert>
+                )}
                 {error && <ErrorNote>{error}</ErrorNote>}
                 <Stack gap="sm">
                   {identity.multiOrg && (

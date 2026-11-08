@@ -113,8 +113,13 @@ const BUDGET_KB = {
    * 302.7 kB with Cloud in the menu: the item and its icon, and the two
    * cloud routes, their role guards and the tab names in the route map.
    * The pages, the wizard and the cloud queries are in route chunks.
+   * 303.8 kB with readable errors and sign-in on an expired session (302.7
+   * before, same build): the plain-language description of each status, the
+   * 401 listener the sign-in gate subscribes to, its "your session has ended"
+   * note, and the error screen's sign-in button. All of it has to be in the
+   * shell, because any page can be the one whose request finds the session gone.
    */
-  overview: 303,
+  overview: 305,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -153,8 +158,10 @@ const BUDGET_KB = {
    * routes and their role guards in the route map, and the tab names the
    * page's search rule checks. The pages, the wizard and the cloud queries
    * are in route chunks.
+   * 404.8 kB with readable errors and sign-in on an expired session, the
+   * same shared weight as the overview.
    */
-  sessionDetail: 404,
+  sessionDetail: 406,
 }
 
 /**
