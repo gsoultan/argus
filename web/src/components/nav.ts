@@ -1,5 +1,5 @@
 import {
-  IconCirclePlus, IconClipboardCheck, IconDatabase, IconHistory, IconHome, IconInfoCircle, IconServer2, IconSettings, IconStack2,
+  IconCirclePlus, IconClipboardCheck, IconCloud, IconDatabase, IconHistory, IconHome, IconInfoCircle, IconServer2, IconSettings, IconStack2,
   IconUsersGroup,
   type IconProps,
 } from '@tabler/icons-react'
@@ -18,6 +18,8 @@ import type { UserRole } from '~/types/domain'
  *   also adds and manages them here.
  * - **Databases**: every database you can open, in a query workspace. Listed
  *   next to Servers because people think "open orders", not "open core-db-01".
+ * - **Cloud**: the connected AWS accounts and what is in them, and which
+ *   instances have an Argus server. For whoever sees the whole fleet.
  * - **Approvals**: everything waiting on a person. Logins straight to a server
  *   that the rule holds, root asked for, and access asked for. It is a menu
  *   item of its own, with a count, because someone is waiting at a terminal.
@@ -74,6 +76,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Brokers',
     icon: IconStack2,
     blurb: 'RabbitMQ: queues, routing and who is connected; every action is recorded',
+  },
+  {
+    to: '/cloud',
+    label: 'Cloud',
+    icon: IconCloud,
+    blurb: 'AWS accounts: instances, disks and firewalls, and what has no Argus server',
+    audience: 'fleet',
   },
   {
     to: '/approvals',

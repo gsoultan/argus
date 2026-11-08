@@ -207,7 +207,7 @@ describe('the menu follows the role', () => {
   it('shows an administrator the eight', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'Brokers', 'Approvals', 'Teams', 'Activity', 'Settings'])
+    expect(await menu()).toEqual(['Home', 'Servers', 'Databases', 'Brokers', 'Cloud', 'Approvals', 'Teams', 'Activity', 'Settings'])
   })
 
   it.each([
