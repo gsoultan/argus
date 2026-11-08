@@ -181,6 +181,9 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	if a.Plan.Mode == PackagesScript {
 		return a.applyScript(ctx)
 	}
+	if a.Plan.Mode == PackagesReboot {
+		return a.applyReboot()
+	}
 
 	m := detectManager(a.Look)
 	if m == nil {
@@ -290,6 +293,23 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 			s.Message += "; the server needs a reboot for all of it to take effect"
 		}
 	})
+}
+
+// applyReboot reboots and installs nothing. The agent that comes back
+// reads "rebooting" and a new boot, and calls the run done; the same boot
+// means the reboot never happened, and it says so.
+func (a *PackageApplier) applyReboot() PackageRunStatus {
+	a.update(func(s *PackageRunStatus) {
+		s.State, s.Step, s.Message = RunRebooting, "reboot", "rebooting, as asked from the console"
+	})
+	fmt.Fprintln(a.lw, "argus: rebooting, as asked from the console")
+	a.lw.Flush()
+	if err := a.Reboot(); err != nil {
+		return a.finish(RunFailed, "the reboot failed: "+err.Error(), func(s *PackageRunStatus) {
+			s.RebootRequired = true
+		})
+	}
+	return a.snapshot()
 }
 
 // targets is what to upgrade: names, or all with holds left out.

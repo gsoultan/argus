@@ -26,14 +26,14 @@ export async function checkPackages(assetId: string): Promise<{ checkId: string 
 
 export async function startPackageRun(
   assetId: string,
-  body: { mode: 'all' | 'security' | 'selected'; packages?: string[]; reboot: PackageReboot },
+  body: { mode: 'all' | 'security' | 'selected' | 'reboot'; packages?: string[]; reboot: PackageReboot },
 ): Promise<PackageRun> {
   return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/packages/runs`, body)
 }
 
 export async function startPackageRuns(body: {
   assetIds: string[]
-  mode: 'all' | 'security'
+  mode: 'all' | 'security' | 'reboot'
   reboot: PackageReboot
 }): Promise<PackageRun[]> {
   return send('POST', '/api/v1/package-runs', body)

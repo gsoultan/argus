@@ -922,3 +922,91 @@ func writeFileAtomicT(t *testing.T, path string, v any) {
 		t.Fatal(err)
 	}
 }
+
+// A reboot asked for on its own installs nothing: no refresh, no install.
+func TestApplyRebootOnly(t *testing.T) {
+	f := newFakeApt()
+	rebooted := false
+	a, dir := applier(t, f, PackageRunRequest{ID: "run-reboot-only", Mode: PackagesReboot})
+	a.Reboot = func() error { rebooted = true; return nil }
+	st := a.Apply(context.Background())
+	if !rebooted || st.State != RunRebooting || st.Step != "reboot" {
+		t.Fatalf("rebooted=%v state=%+v", rebooted, st)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("a reboot ran the package manager: %v", f.calls)
+	}
+	if disk := readRunFile(t, dir); disk.State != RunRebooting {
+		t.Errorf("on disk: %+v", disk)
+	}
+}
+
+func TestApplyRebootOnlyFails(t *testing.T) {
+	f := newFakeApt()
+	a, _ := applier(t, f, PackageRunRequest{ID: "run-reboot-fails", Mode: PackagesReboot})
+	a.Reboot = func() error { return errors.New("Failed to connect to bus") }
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || !st.RebootRequired || !strings.Contains(st.Message, "Failed to connect to bus") {
+		t.Fatalf("state = %+v", st)
+	}
+}
+
+func TestDaemonStartsARebootRun(t *testing.T) {
+	fp := &fakePlatform{boot: "b1", isActive: true}
+	p, _ := daemon(t, fp)
+	if !p.Beat().Reboot {
+		t.Error("a server that can be updated should say it can reboot")
+	}
+	p.Handle(context.Background(), &PackageOrders{Run: &PackageRunRequest{ID: "34343434-1", Mode: PackagesReboot}})
+	if len(fp.launched) != 1 {
+		t.Fatalf("launched %d", len(fp.launched))
+	}
+	if st := p.Beat().Run; st == nil || st.State != RunStarting {
+		t.Fatalf("run = %+v", st)
+	}
+}
+
+func TestDaemonRefusesARebootItCannotDo(t *testing.T) {
+	fp := &fakePlatform{reason: "the agent is not running as root, so it cannot install packages"}
+	p, _ := daemon(t, fp)
+	if p.Beat().Reboot {
+		t.Error("a server that cannot be updated said it can reboot")
+	}
+	p.Handle(context.Background(), &PackageOrders{Run: &PackageRunRequest{ID: "45454545-1", Mode: PackagesReboot}})
+	if len(fp.launched) != 0 {
+		t.Error("rebooted a server that cannot be updated")
+	}
+	if st := p.Beat().Run; st == nil || st.State != RunFailed {
+		t.Fatalf("run = %+v", st)
+	}
+}
+
+// Back from a reboot asked for on its own: done, said plainly, and a fresh
+// look so the console stops saying a reboot is needed.
+func TestDaemonFinishesARebootOnlyRun(t *testing.T) {
+	fp := &fakePlatform{boot: "b2"}
+	p, clock := daemon(t, fp)
+	writeFileAtomicT(t, filepath.Join(p.StateDir, packagesRunFile), PackageRunStatus{ID: "56565656-1",
+		State: RunRebooting, Step: "reboot", Unit: "u", BootID: "b1", StartedAt: clock.Add(-time.Minute)})
+	p.tick(context.Background())
+	st := p.Beat().Run
+	if st == nil || st.State != RunDone || !st.Rebooted || st.Message != "the server rebooted" {
+		t.Fatalf("run = %+v", st)
+	}
+	if fp.checks != 1 {
+		t.Errorf("checks = %d: a reboot should be followed by a fresh look", fp.checks)
+	}
+}
+
+func TestDaemonRebootOnlyThatNeverHappened(t *testing.T) {
+	fp := &fakePlatform{boot: "b1"}
+	p, clock := daemon(t, fp)
+	writeFileAtomicT(t, filepath.Join(p.StateDir, packagesRunFile), PackageRunStatus{ID: "67676767-1",
+		State: RunRebooting, Step: "reboot", Unit: "u", BootID: "b1", StartedAt: clock.Add(-time.Minute)})
+	p.tick(context.Background())
+	st := p.Beat().Run
+	if st == nil || st.State != RunDone || !st.RebootRequired || st.Rebooted ||
+		st.Message != "the reboot did not happen, so the server still needs one" {
+		t.Fatalf("run = %+v", st)
+	}
+}

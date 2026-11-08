@@ -2223,7 +2223,7 @@ export interface PackageRun {
   hostname: string
   assetHostname: string
   assetId?: string
-  mode: 'all' | 'security' | 'selected' | 'install' | 'remove' | 'script'
+  mode: 'all' | 'security' | 'selected' | 'reboot' | 'install' | 'remove' | 'script'
     | 'file_install' | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore'
   packages: string[]
   holds: string[]
@@ -2291,6 +2291,8 @@ export interface PackagesView {
   reported: boolean
   supported: boolean
   reason?: string
+  /** Its agent reboots when asked; an older one must be updated first. */
+  canReboot: boolean
   checking: boolean
   checkAsked: boolean
   report: PackageReport | null
@@ -2314,6 +2316,7 @@ export interface PackageFleetRow {
   updates: number
   security: number
   rebootRequired: boolean
+  canReboot: boolean
   mode: PackageMode
   run: PackageRun | null
 }

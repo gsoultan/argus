@@ -164,6 +164,7 @@ func TestPackageWanted(t *testing.T) {
 func TestPackageRunRequestValidate(t *testing.T) {
 	ok := []runRequest{
 		{Mode: "all"}, {Mode: "security", Reboot: "if_needed"}, {Mode: "selected", Packages: []string{"openssl", "curl.x86_64"}},
+		{Mode: "reboot"}, {Mode: "reboot", Reboot: "never"},
 	}
 	for _, in := range ok {
 		if err := in.validate(); err != nil {
@@ -910,5 +911,129 @@ func TestPackageReportBounded(t *testing.T) {
 		r.UTCOffsetMinutes != 0 {
 		t.Errorf("bounded: %d updates, name %d, error %d, offset %d", len(r.Updates), len(r.Updates[0].Name),
 			len(r.Error), r.UTCOffsetMinutes)
+	}
+}
+
+// A reboot asked for on its own, start to finish: offered only by an agent
+// that can do one, sent as a reboot whatever was said about rebooting,
+// audited as a reboot, and the "needs a reboot" alert closed once it is
+// done.
+func TestPackageRebootByHand(t *testing.T) {
+	e := packagesAPI(t)
+	asset, cred := e.server(t)
+	now := time.Now().UTC()
+	alerts := func(open bool) int {
+		var n int
+		_ = e.s.pool.QueryRow(context.Background(), `SELECT count(*) FROM console_alerts
+			WHERE title = $1 AND (closed_at IS NULL) = $2`, asset.Hostname+" needs a reboot", open).Scan(&n)
+		return n
+	}
+
+	// An agent that does not say it can reboot is not asked to.
+	needs := pkgReport(now, vim)
+	needs.RebootRequired = true
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Report: needs})
+	if v := e.view(t, asset); v.CanReboot {
+		t.Fatalf("an older agent was taken to reboot: %+v", v)
+	}
+	w := do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/packages/runs", "admin-token", `{"mode":"reboot"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "too old to reboot") {
+		t.Fatalf("reboot on an older agent: %d %s", w.Code, w.Body)
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/package-runs", "admin-token",
+		`{"assetIds":["`+asset.ID+`"],"mode":"reboot"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "too old to reboot") {
+		t.Fatalf("fleet reboot on an older agent: %d %s", w.Code, w.Body)
+	}
+
+	// An update run that left the server needing one raises the alert.
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true})
+	if v := e.view(t, asset); !v.CanReboot {
+		t.Fatalf("view = %+v", v)
+	}
+	up := e.ask(t, asset, "admin-token", `{"mode":"all"}`, http.StatusAccepted)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true})
+	fin := time.Now().UTC()
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Run: &PackageRunStatus{ID: up.ID,
+		State: "done", Upgraded: []PackageChange{{Name: "vim", To: vim.Available}}, RebootRequired: true,
+		StartedAt: &fin, FinishedAt: &fin}})
+	if n := alerts(true); n != 1 {
+		t.Fatalf("open reboot alerts = %d", n)
+	}
+
+	// Operators and auditors cannot reboot.
+	e.ask(t, asset, "operator-token", `{"mode":"reboot"}`, http.StatusForbidden)
+	e.ask(t, asset, "auditor-token", `{"mode":"reboot"}`, http.StatusForbidden)
+
+	run := e.ask(t, asset, "admin-token", `{"mode":"reboot","reboot":"never","packages":["vim"]}`, http.StatusAccepted)
+	if run.Mode != PackagesReboot || run.Reboot != "if_needed" || len(run.Packages) != 0 {
+		t.Fatalf("run = %+v", run)
+	}
+	if a := lastAuditOn(t, e.s, asset.Hostname); a.Action != "packages.run_requested" ||
+		a.Detail != "Asked to reboot "+asset.Hostname+"." {
+		t.Errorf("audit = %s: %s", a.Action, a.Detail)
+	}
+	// One at a time, as for any run.
+	e.ask(t, asset, "admin-token", `{"mode":"reboot"}`, http.StatusConflict)
+	_, o := e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true})
+	if o == nil || o.Run == nil || o.Run.ID != run.ID || o.Run.Mode != PackagesReboot {
+		t.Fatalf("orders = %+v", o)
+	}
+
+	started := time.Now().UTC()
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Run: &PackageRunStatus{ID: run.ID,
+		State: "rebooting", Step: "reboot", Message: "rebooting, as asked from the console", StartedAt: &started}})
+	if got := e.run(t, run.ID); got.State != RunRebooting {
+		t.Fatalf("rebooting = %+v", got)
+	}
+	back := time.Now().UTC()
+	after := pkgReport(back, vim)
+	_, o = e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Report: after,
+		Run: &PackageRunStatus{ID: run.ID, State: "done", Rebooted: true, Message: "the server rebooted",
+			StartedAt: &started, FinishedAt: &back}})
+	if o.Run != nil {
+		t.Fatalf("a finished reboot was sent again: %+v", o.Run)
+	}
+	if got := e.run(t, run.ID); got.State != RunDone || !got.Rebooted {
+		t.Fatalf("done = %+v", got)
+	}
+	a := lastAuditOn(t, e.s, asset.Hostname)
+	if a.Action != "packages.run_finished" || !strings.HasPrefix(a.Detail, "The reboot of "+asset.Hostname) ||
+		strings.Contains(a.Detail, "package") {
+		t.Errorf("audit = %s: %s", a.Action, a.Detail)
+	}
+	if n := alerts(true); n != 0 {
+		t.Errorf("the reboot alert is still open after the reboot (%d)", n)
+	}
+	if v := e.view(t, asset); v.Report == nil || v.Report.RebootRequired {
+		t.Errorf("the server still shows a reboot needed: %+v", v.Report)
+	}
+}
+
+// A reboot that failed is said plainly, and the server still needs one.
+func TestPackageRebootFails(t *testing.T) {
+	e := packagesAPI(t)
+	asset, cred := e.server(t)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Report: pkgReport(time.Now())})
+	run := e.ask(t, asset, "admin-token", `{"mode":"reboot"}`, http.StatusAccepted)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true})
+	now := time.Now().UTC()
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Run: &PackageRunStatus{ID: run.ID,
+		State: "failed", Message: "the reboot failed: Failed to connect to bus", RebootRequired: true,
+		StartedAt: &now, FinishedAt: &now}})
+	if got := e.run(t, run.ID); got.State != RunFailed || !got.RebootRequired {
+		t.Fatalf("run = %+v", got)
+	}
+	var title string
+	_ = e.s.pool.QueryRow(context.Background(), `SELECT title FROM console_alerts WHERE title LIKE $1
+		ORDER BY seq DESC LIMIT 1`, "Rebooting "+asset.Hostname+"%").Scan(&title)
+	if title != "Rebooting "+asset.Hostname+" failed" {
+		t.Errorf("alert = %q", title)
+	}
+	// Supported false (the agent lost root) means no reboot either, even
+	// if it says it can.
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: false, Reason: "not root", Reboot: true})
+	if v := e.view(t, asset); v.CanReboot {
+		t.Errorf("a server that cannot be updated offers a reboot")
 	}
 }

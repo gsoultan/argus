@@ -155,6 +155,8 @@ type PackageBeat struct {
 	// from the console still does: a Windows server's remove, script and
 	// file_install.
 	Installs []string `json:"installs,omitempty"`
+	// Reboot is an agent that does a reboot-only run.
+	Reboot bool `json:"reboot,omitempty"`
 }
 
 // packagesState is agents.packages_state: what the agent last said about
@@ -164,6 +166,7 @@ type packagesState struct {
 	Reason    string   `json:"reason,omitempty"`
 	Checking  bool     `json:"checking,omitempty"`
 	Installs  []string `json:"installs,omitempty"`
+	Reboot    bool     `json:"reboot,omitempty"`
 }
 
 // Run states.
@@ -320,6 +323,10 @@ const (
 	PackagesSecurity = "security"
 	PackagesAll      = "all"
 )
+
+// PackagesReboot is a run that installs nothing and reboots the server,
+// for one waiting for a reboot after its updates.
+const PackagesReboot = "reboot"
 
 // PackageRule says what happens on servers with a tag.
 type PackageRule struct {
@@ -592,7 +599,7 @@ func (s *Store) assetForAgent(ctx context.Context, agentHost string) (id, hostna
 func (s *Store) recordPackageBeat(ctx context.Context, host string, b PackageBeat) (prev *PackageReport,
 	err error) {
 	st, err := json.Marshal(packagesState{Supported: b.Supported, Reason: b.Reason, Checking: b.Checking,
-		Installs: validInstalls(b.Installs)})
+		Installs: validInstalls(b.Installs), Reboot: b.Reboot && b.Supported})
 	if err != nil {
 		return nil, err
 	}
@@ -1161,7 +1168,10 @@ type PackagesView struct {
 	// Installs are what a server that cannot be updated here still does
 	// (Windows): remove, script, file_install.
 	Installs []string `json:"installs,omitempty"`
-	Checking bool     `json:"checking"`
+	// CanReboot is an agent that reboots on its own when asked; an older
+	// one does not, and is asked to update first.
+	CanReboot bool `json:"canReboot"`
+	Checking  bool `json:"checking"`
 	// CheckAsked is a check the console asked for, not yet answered.
 	CheckAsked bool           `json:"checkAsked"`
 	Report     *PackageReport `json:"report"`
@@ -1214,6 +1224,7 @@ type PackageFleetRow struct {
 	Updates        int        `json:"updates"`
 	Security       int        `json:"security"`
 	RebootRequired bool       `json:"rebootRequired"`
+	CanReboot      bool       `json:"canReboot"`
 	Mode           string     `json:"mode"`
 	// Run is the run going or waiting on the server, if any.
 	Run *PackageRun `json:"run"`
@@ -1258,6 +1269,7 @@ func (s *Store) PackageFleet(ctx context.Context) ([]PackageFleetRow, error) {
 			var st packagesState
 			if json.Unmarshal(sb, &st) == nil {
 				p.row.Reported, p.row.Supported, p.row.Reason = true, st.Supported, st.Reason
+				p.row.CanReboot = st.Reboot
 			}
 		}
 		if len(rb) > 0 {

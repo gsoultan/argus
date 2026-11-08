@@ -134,6 +134,9 @@ const (
 	PackagesScript = "script"
 	// PackagesFileInstall installs an MSI or EXE from the library (Windows).
 	PackagesFileInstall = "file_install"
+	// PackagesReboot installs nothing and reboots: for a server that says
+	// it needs a reboot once the updates are in.
+	PackagesReboot = "reboot"
 )
 
 // PackageRunRequest is an install the console asked for.
@@ -369,6 +372,9 @@ type PackageBeat struct {
 	// file_install). Empty where updates are supported, which can do all of
 	// them, or none.
 	Installs []string `json:"installs,omitempty"`
+	// Reboot says this agent does a reboot-only run, so the console offers
+	// one. An older agent leaves it out and is never sent one.
+	Reboot bool `json:"reboot,omitempty"`
 }
 
 // installer is a platform that installs software though it does not update
@@ -407,6 +413,7 @@ func (p *Packages) Beat() PackageBeat {
 	if in, ok := p.platform.(installer); ok && !b.Supported {
 		b.Installs = in.installs()
 	}
+	b.Reboot = b.Supported
 	if p.report != nil && p.report.CheckedAt.After(p.sent) {
 		r := *p.report
 		b.Report = &r
@@ -479,7 +486,7 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 		return
 	}
 	switch req.Mode {
-	case PackagesAll, PackagesSecurity:
+	case PackagesAll, PackagesSecurity, PackagesReboot:
 	case PackagesSelected:
 		if len(req.Packages) == 0 {
 			fail("no packages were named")
@@ -690,10 +697,19 @@ func (p *Packages) settle(ctx context.Context, st PackageRunStatus) PackageRunSt
 	case st.State == RunRebooting && rebooted:
 		st.State, st.Rebooted, st.RebootRequired, st.Step = RunDone, true, false, ""
 		st.Message = "installed, and the server rebooted"
+		if len(st.Upgraded) == 0 {
+			st.Message = "the server rebooted"
+		}
+		// What waits for a reboot is gone now: look again, so the console
+		// stops saying one is needed.
+		p.askCheckAfter(st.ID)
 	case st.State == RunRebooting:
 		st.State, st.Step = RunDone, ""
 		st.RebootRequired = true
 		st.Message = "installed; the reboot did not happen, so the server still needs one"
+		if len(st.Upgraded) == 0 {
+			st.Message = "the reboot did not happen, so the server still needs one"
+		}
 	default:
 		st.State, st.Step = RunInterrupted, ""
 		why := "the update stopped before it finished"
@@ -707,17 +723,23 @@ func (p *Packages) settle(ctx context.Context, st PackageRunStatus) PackageRunSt
 			st.Message = why + ". What the package manager left half done was finished; " +
 				"the packages still waiting are listed again"
 		}
-		p.mu.Lock()
-		if p.checkID == "" {
-			p.checkID = "after-" + st.ID
-		}
-		p.mu.Unlock()
+		p.askCheckAfter(st.ID)
 	}
 	if err := writeFileAtomic(filepath.Join(p.StateDir, packagesRunFile), mustJSON(st), 0o600); err != nil {
 		p.Log.Error("packages: cannot keep the run's state", "error", err)
 	}
 	p.Log.Warn("packages: run settled without its helper", "id", st.ID, "state", st.State, "message", st.Message)
 	return st
+}
+
+// askCheckAfter looks for updates again once a run has ended, unless the
+// console already asked for a look.
+func (p *Packages) askCheckAfter(id string) {
+	p.mu.Lock()
+	if p.checkID == "" {
+		p.checkID = "after-" + id
+	}
+	p.mu.Unlock()
 }
 
 // maybeCheck looks for updates when the console asked for it now, or when

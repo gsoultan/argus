@@ -33,6 +33,12 @@ fixture.
   hours interrupted (`step = 'stale'`), freeing the server. A late report from
   the agent still lands on such a run and is audited as the real outcome.
 
+- A reboot by itself is a run with mode `reboot`: nothing is installed, the
+  helper reboots, and the agent that comes back settles it on the new boot id
+  and looks for updates again (so "reboot needed" clears). Only offered when
+  the agent's beat says `reboot: true`; the "needs a reboot" alert has subject
+  `package-reboot:<agent>` and is closed by a run that rebooted.
+
 ## Rules
 
 - One rule per tag, first match by position wins, plus exactly one rule with
