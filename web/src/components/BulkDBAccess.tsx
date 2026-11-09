@@ -7,12 +7,15 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { IconCheck, IconClock, IconDotsVertical, IconUser, IconUsersGroup, IconX } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { EngineMark } from '~/components/EngineMark'
+import { targetName } from '~/lib/dbTarget'
 import { LABEL_COLOR } from '~/components/StoreChrome'
 import { notifyError, notifyOk } from '~/lib/notify'
 import {
-  assetDBAccessQuery, dbAssignmentsQuery, planDBAccessQuery, teamsQuery, useGiveDBAccess, useRemoveDBAccess, useRemoveDBAssignment,
-  useRemoveDBRule, useSetDBAssignment, usersQuery,
+  dbAssignmentsQuery, teamsQuery, useRemoveDBAssignment, useSetDBAssignment, usersQuery,
 } from '~/lib/queries'
+import {
+  assetDBAccessQuery, planDBAccessQuery, useGiveDBAccess, useRemoveDBAccess, useRemoveDBRule,
+} from '~/lib/dbAccessQueries'
 import { engineOf, isBroker, levelName } from '~/lib/engines'
 import { FS } from '~/theme'
 import type { BulkAccessLine, BulkApproval, DBAssignment, DBLevel, Database, DatabaseRule } from '~/types/domain'
@@ -27,16 +30,6 @@ import type { BulkAccessLine, BulkApproval, DBAssignment, DBLevel, Database, Dat
  */
 
 const LEVELS: DBLevel[] = ['read', 'write', 'owner', 'dba']
-
-/** A database or broker's name the way its own page titles it. */
-export function targetName(d: Pick<Database, 'engine' | 'dbname'>): string {
-  if (d.engine === 'redis') return `Redis · db ${d.dbname}`
-  if (d.engine === 'rabbitmq') return `RabbitMQ · ${d.dbname}`
-  if (d.engine === 'kafka') return `Kafka · ${d.dbname === '*' ? 'every topic' : d.dbname}`
-  if (d.engine === 'mysql') return `MySQL · ${d.dbname}`
-  if (d.engine === 'mongodb') return `MongoDB · ${d.dbname}`
-  return d.dbname
-}
 
 /** "3 databases, 2 brokers", "1 broker". */
 export function countKinds(list: Pick<Database, 'engine'>[]): string {

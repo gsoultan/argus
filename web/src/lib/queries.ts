@@ -21,11 +21,6 @@ import {
   deleteDatabase as liveDeleteDatabase,
   setDBAssignment as liveSetDBAssignment,
   removeDBAssignment as liveRemoveDBAssignment,
-  planDBAccess as livePlanDBAccess,
-  giveDBAccess as liveGiveDBAccess,
-  removeDBAccess as liveRemoveDBAccess,
-  assetDBAccess as liveAssetDBAccess,
-  removeDBRule as liveRemoveDBRule,
   requestDatabaseAccess as liveRequestDatabaseAccess,
   agentUpdate as liveAgentUpdate,
   requestAgentUpdate as liveRequestAgentUpdate,
@@ -709,46 +704,6 @@ export function useRemoveDBAssignment() {
       void qc.invalidateQueries({ queryKey: dbqk.databases })
       void qc.invalidateQueries({ queryKey: ['database-access'] })
     },
-  })
-}
-
-/** Every grant and rule on one server's databases, for Who has what. */
-export const assetDBAccessQuery = (assetId: string) =>
-  queryOptions({ queryKey: ['database-access', assetId] as const, queryFn: () => liveAssetDBAccess(assetId), enabled: isConfigured() })
-
-/** What a grant on many databases would change; nothing is written. */
-export const planDBAccessQuery = (input: Parameters<typeof livePlanDBAccess>[0], enabled: boolean) =>
-  queryOptions({
-    queryKey: ['database-access', 'plan', input] as const,
-    queryFn: () => livePlanDBAccess(input),
-    enabled: enabled && isConfigured(),
-    staleTime: 0,
-    gcTime: 0,
-    retry: false,
-  })
-
-/** After a change to many databases' access, every view of it is stale. */
-function invalidateDBAccess(qc: ReturnType<typeof useQueryClient>) {
-  void qc.invalidateQueries({ queryKey: ['database'] })
-  void qc.invalidateQueries({ queryKey: ['database-access'] })
-  void qc.invalidateQueries({ queryKey: dbqk.databases })
-}
-
-export function useGiveDBAccess() {
-  const qc = useQueryClient()
-  return useMutation({ mutationFn: liveGiveDBAccess, onSuccess: () => invalidateDBAccess(qc) })
-}
-
-export function useRemoveDBAccess() {
-  const qc = useQueryClient()
-  return useMutation({ mutationFn: liveRemoveDBAccess, onSuccess: () => invalidateDBAccess(qc) })
-}
-
-export function useRemoveDBRule() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (v: { assetId: string; ruleId: string; takeAway: boolean }) => liveRemoveDBRule(v.assetId, v.ruleId, v.takeAway),
-    onSuccess: () => invalidateDBAccess(qc),
   })
 }
 

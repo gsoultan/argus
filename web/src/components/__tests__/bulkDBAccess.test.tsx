@@ -13,8 +13,9 @@ import type { BulkAccessLine, DBAssignment, Database } from '~/types/domain'
  * unless told otherwise, and uses broker words for brokers.
  */
 
-const api = vi.hoisted(() => ({ planDBAccess: vi.fn(), giveDBAccess: vi.fn(), isConfigured: () => true }))
-vi.mock('~/lib/live', async (orig) => ({ ...(await orig<typeof import('~/lib/live')>()), ...api }))
+const api = vi.hoisted(() => ({ planDBAccess: vi.fn(), giveDBAccess: vi.fn() }))
+vi.mock('~/lib/dbAccessApi', () => api)
+vi.mock('~/lib/live', async (orig) => ({ ...(await orig<typeof import('~/lib/live')>()), isConfigured: () => true }))
 
 const db = (id: string, dbname: string, engine: Database['engine'] = 'postgres', assetId = 'a1') =>
   ({ id, dbname, engine, assetId, hostname: 'db-01.impack.local', label: 'production' }) as Database
