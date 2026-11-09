@@ -1182,7 +1182,9 @@ func All() []any {
 		&AuditEvent{},
 		&CloudAccount{},
 		&CloudAccess{},
+		&CloudBudget{},
 		&CloudChange{},
+		&CloudCost{},
 		&CloudKeepRunning{},
 		&CloudResource{},
 		&CloudSchedule{},
@@ -1823,6 +1825,52 @@ func (m *CloudAccount) Schema(t *storm.Table) {
 	t.CheckNamed("cloud_accounts_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("cloud_accounts_provider_check", "provider = 'aws'::text")
 	t.Index(&m.Provider, &m.AccountID).Unique().Where("archived_at IS NULL").Named("cloud_accounts_one_active")
+}
+
+// CloudBudget is table cloud_budgets: a monthly budget for one account,
+// or for every account when Account is nil, and which of its alerts have
+// gone out this month.
+type CloudBudget struct {
+	ID           [16]byte
+	Account      *CloudAccount
+	Name         string
+	Amount       storm.Decimal
+	Thresholds   []int32
+	Forecast     bool
+	CreatedBy    string
+	CreatedAt    time.Time
+	AlertedMonth string
+	Alerted      []int32
+}
+
+func (m *CloudBudget) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Account).ConstraintName("cloud_budgets_account_id_fkey")
+	t.Col(&m.Thresholds).Default("'{80,100}'::integer[]")
+	t.Col(&m.Forecast).Default("true")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.AlertedMonth).Default("''::text")
+	t.Col(&m.Alerted).Default("'{}'::integer[]")
+	t.CheckNamed("cloud_budgets_amount_check", "amount > (0)::numeric")
+	t.CheckNamed("cloud_budgets_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.Index(&m.Account).Named("cloud_budgets_account")
+}
+
+// CloudCost is table cloud_costs: an account's last billing read.
+type CloudCost struct {
+	Account CloudAccount
+	ReadAt  *time.Time
+	Costs   *storm.JSON
+	Error   string
+	ErrorAt *time.Time
+	AskedAt *time.Time
+}
+
+func (m *CloudCost) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Account)
+	t.Col(&m.Account).ConstraintName("cloud_costs_account_id_fkey")
+	t.Col(&m.Error).Default("''::text")
 }
 
 // CloudChange is table cloud_changes: one change Argus made or was asked

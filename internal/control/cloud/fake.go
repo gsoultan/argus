@@ -44,6 +44,11 @@ type Fake struct {
 	StorageErr map[Action]error
 	// Missing is what ManageMissing answers.
 	Missing []string
+	// CostRows is what the account is billed, CostForecast its month-end
+	// forecast, and CostErr a billing read's failure.
+	CostRows     []CostRow
+	CostForecast *float64
+	CostErr      error
 
 	reqs, launched, made int
 }

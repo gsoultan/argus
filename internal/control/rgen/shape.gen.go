@@ -269,6 +269,24 @@ func _assertCloudAccountShape(m m0.CloudAccount) {
 	}
 }
 
+// _assertCloudBudgetShape fails to compile if m0.CloudBudget gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudBudgetShape(m m0.CloudBudget) {
+	type shape m0.CloudBudget
+	_ = shape{
+		m.ID,
+		m.Account,
+		m.Name,
+		m.Amount,
+		m.Thresholds,
+		m.Forecast,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.AlertedMonth,
+		m.Alerted,
+	}
+}
+
 // _assertCloudChangeShape fails to compile if m0.CloudChange gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertCloudChangeShape(m m0.CloudChange) {
@@ -296,6 +314,20 @@ func _assertCloudChangeShape(m m0.CloudChange) {
 		m.RequestID,
 		m.Result,
 		m.Error,
+	}
+}
+
+// _assertCloudCostShape fails to compile if m0.CloudCost gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudCostShape(m m0.CloudCost) {
+	type shape m0.CloudCost
+	_ = shape{
+		m.Account,
+		m.ReadAt,
+		m.Costs,
+		m.Error,
+		m.ErrorAt,
+		m.AskedAt,
 	}
 }
 

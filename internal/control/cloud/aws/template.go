@@ -22,6 +22,7 @@ var ReadPolicy = []string{
 	"iam:Get*", "iam:List*", "iam:GenerateCredentialReport",
 	"cloudtrail:LookupEvents",
 	"pricing:GetProducts",
+	"ce:GetCostAndUsage", "ce:GetCostForecast",
 	"ssm:DescribeInstanceInformation",
 }
 
