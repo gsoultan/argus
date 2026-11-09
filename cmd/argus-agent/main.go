@@ -496,7 +496,7 @@ func runDaemon(args []string) int {
 	// decides which direct logins are a person's own until the next heartbeat.
 	personalFile := *stateDir + "/personal-accounts.json"
 	provisioner := &agent.Provisioner{
-		Sudoers: "/etc/sudoers.d/argus-personal",
+		Sudoers: personalSudoers,
 		Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
@@ -562,7 +562,7 @@ func runDaemon(args []string) int {
 	}
 	// Removing this server in the console asks, on a heartbeat, for the agent
 	// to take itself off; see selfUninstall.
-	removed := &selfUninstall{stateDir: *stateDir, rep: rep, uploads: uploads, log: log}
+	removed := &selfUninstall{stateDir: *stateDir, rep: rep, uploads: uploads, log: log, accounts: provisioner}
 	col.OnSession = func(rec agent.SessionRecord) {
 		// Always keep the local copy. The control plane is where a session
 		// becomes visible, not where it becomes real.
@@ -750,7 +750,9 @@ func runDaemon(args []string) int {
 		// Only a delivered reply changes anything. An unreachable control
 		// plane leaves the last setting in place, not a default chosen by an
 		// outage.
-		if ok && len(reply.PersonalAccounts) > 0 && string(reply.PersonalAccounts) != "null" {
+		// Once the console's uninstall has begun it is locking these
+		// accounts; a reply that still lists them must not open them again.
+		if ok && !removed.started() && len(reply.PersonalAccounts) > 0 && string(reply.PersonalAccounts) != "null" {
 			var list []agent.PersonalAccount
 			if err := json.Unmarshal(reply.PersonalAccounts, &list); err != nil {
 				log.Error("personal accounts: cannot read the list", "error", err)

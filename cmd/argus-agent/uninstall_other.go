@@ -29,8 +29,9 @@ func startAgent() error {
 }
 
 // removeAgentService disables the unit. The unit file and the binary belong to
-// the package, so removing them is the package manager's job.
-func removeAgentService() ([]string, error) {
+// the package, so removing them is the package manager's job; run by that
+// removal (fromPackage) there is nothing to tell anyone.
+func removeAgentService(fromPackage bool) ([]string, error) {
 	var left []string
 	if haveUnit() {
 		if err := systemctl("disable", agentUnit); err != nil {
@@ -38,6 +39,7 @@ func removeAgentService() ([]string, error) {
 		}
 	}
 	switch {
+	case fromPackage:
 	case quiet("dpkg-query", "-W", "-f=${Status}", "argus-agent"):
 		left = append(left, "Remove the package: apt purge argus-agent "+
 			"(purge also removes /etc/argus/agent.env)")

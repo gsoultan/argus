@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 	"unsafe"
@@ -152,6 +153,10 @@ func (windowsScreenHost) SecureAttention() error {
 				perr = err
 				return
 			}
+			// Said where an uninstall will look, so it puts the policy back
+			// as it was rather than leaving a change nobody asked for.
+			_ = os.WriteFile(filepath.Join(DefaultStateDir, SASPolicyMarker),
+				[]byte("SoftwareSASGeneration was not set; the agent set it to 1\r\n"), 0o600)
 			slog.Default().Info("screen sharing: allowed services to send Ctrl+Alt+Del " +
 				"(SoftwareSASGeneration = 1), so the console's sign-in screen can be reached")
 		case err != nil:

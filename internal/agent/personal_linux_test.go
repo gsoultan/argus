@@ -364,3 +364,48 @@ func TestProvisionerDeletesOnlyItsOwnUnwantedAccounts(t *testing.T) {
 		t.Errorf("an absent account: %q, ran %v", got, h.ran)
 	}
 }
+
+// Uninstalling locks every account the agent made and takes back the sudo it
+// gave; an account it did not make is not touched. Left open, they kept a key
+// that let people in unrecorded and a NOPASSWD rule nothing rewrote any more.
+func TestLockAllShutsEveryAccountTheAgentMadeAndItsSudo(t *testing.T) {
+	h := newFakeHost(t, "root:x:0:0:root:/root:/bin/bash")
+	h.write(h.line("root", "root"), h.line("ana", commentFor("ana@corp.example")),
+		h.line("deploy", commentFor(SharedLoginOwner)), h.line("ops", "Ops team"))
+	_ = os.MkdirAll(filepath.Join(h.dir, "sudoers.d"), 0o750)
+	p := h.provisioner()
+	p.Reconcile(context.Background(), []PersonalAccount{
+		{Name: "ana", Owner: "ana@corp.example", Sudo: true, Direct: DirectSSHAllow, Keys: []string{aKey}},
+		{Name: "deploy", Owner: SharedLoginOwner, Direct: DirectSSHAllow, Keys: []string{aKey}},
+	})
+	if _, err := os.Stat(p.Sudoers); err != nil {
+		t.Fatalf("set-up: no sudoers file: %v", err)
+	}
+	managed, err := p.Managed()
+	if err != nil || strings.Join(managed, ",") != "ana,deploy" {
+		t.Fatalf("Managed() = %v, %v; want ana,deploy", managed, err)
+	}
+
+	h.ran = nil
+	states := p.LockAll(context.Background())
+	for _, name := range []string{"ana", "deploy"} {
+		if got := stateOf(states, name); got != "locked" {
+			t.Errorf("%s is %q after LockAll; want locked", name, got)
+		}
+		if k := h.keys(name); strings.Contains(k, "ssh-ed25519") {
+			t.Errorf("%s kept its keys: %q", name, k)
+		}
+		if !h.ranAny("usermod --lock --expiredate 1 " + name) {
+			t.Errorf("%s was not locked: ran %v", name, h.ran)
+		}
+	}
+	if stateOf(states, "ops") != "" || h.ranAny("usermod --lock --expiredate 1 ops") {
+		t.Errorf("an account Argus did not make was touched: %v", h.ran)
+	}
+	if _, err := os.Stat(p.Sudoers); !os.IsNotExist(err) {
+		t.Errorf("the sudoers drop-in survived LockAll: %v", err)
+	}
+	if h.ranAny("userdel") {
+		t.Errorf("LockAll deleted an account: %v", h.ran)
+	}
+}

@@ -377,3 +377,38 @@ func firstLine(out []byte, err error) string {
 	}
 	return s
 }
+
+// LockAll is uninstalling: every account this agent made is locked as one
+// nobody wants any more -- its key emptied, locked and expired, whatever runs
+// as it stopped -- and the sudo it gave is taken back. Homes stay, as they do
+// for any locked account: they are the person's files and their history.
+//
+// Left as they were, these accounts outlive the agent that kept them: keys
+// that let people in unrecorded and a NOPASSWD sudo rule nothing rewrites any
+// more. On a platform without personal accounts it does nothing.
+func (p *Provisioner) LockAll(ctx context.Context) []PersonalAccountState {
+	if !personalSupported {
+		return nil
+	}
+	return p.ReconcileDeleting(ctx, nil, nil)
+}
+
+// Managed lists the accounts on this host an Argus agent made, by the marker
+// in their comment field. Empty on a platform without personal accounts.
+func (p *Provisioner) Managed() ([]string, error) {
+	if !personalSupported {
+		return nil, nil
+	}
+	existing, err := readPasswdEntries(p.passwd())
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for name, e := range existing {
+		if e.ours() {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}

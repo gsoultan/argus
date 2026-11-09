@@ -30,18 +30,54 @@ object ArgusHelper {
     const val SOCKET = "argus-helper"
     const val MAX_SIDE = 1280
 
+    /** How often the helper checks the app is still installed. */
+    private const val WATCH_MILLIS = 5_000L
+
     @JvmStatic
     fun main(args: Array<String>) {
+        // The app passes its own uid and this helper's file. Without them
+        // the helper does not start: an abstract socket has no permissions,
+        // so the peer's uid is the only thing that keeps another app on the
+        // device from connecting and getting the screen and a shell finger.
+        val allowed = Access.parse(args) ?: run {
+            log("refusing to start: usage: ArgusHelper <app uid> <helper dex path>")
+            return
+        }
+        // Uninstalling the app deletes the file; nothing else would stop a
+        // process running as shell, so the helper stops itself.
+        Thread {
+            while (true) {
+                Thread.sleep(WATCH_MILLIS)
+                if (!java.io.File(allowed.dex).exists()) {
+                    log("the Argus app is gone; stopping")
+                    System.exit(0)
+                }
+            }
+        }.apply { isDaemon = true }.start()
+
         // app_process has no Looper; the display mirror needs one.
         if (Looper.myLooper() == null) Looper.prepareMainLooper()
         val server = LocalServerSocket(SOCKET)
-        log("listening on @$SOCKET")
+        log("listening on @$SOCKET for uid ${allowed.uid}")
         while (true) {
             val socket = try {
                 server.accept()
             } catch (e: Exception) {
                 log("accept failed: ${e.message}")
                 break
+            }
+            val peer = try {
+                socket.peerCredentials.uid
+            } catch (e: Exception) {
+                -1
+            }
+            if (!allowed.admits(peer)) {
+                log("refused a connection from uid $peer")
+                try {
+                    socket.close()
+                } catch (_: Exception) {
+                }
+                continue
             }
             try {
                 serve(socket)

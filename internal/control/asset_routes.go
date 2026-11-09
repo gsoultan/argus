@@ -212,8 +212,15 @@ func (a *API) deleteAsset(w http.ResponseWriter, r *http.Request) {
 	if agentAsked {
 		state = "uninstalling"
 		agent = "Its agent was asked to uninstall itself, which it does when it next checks in: " +
-			"it takes itself out of sshd, so plain SSH works again, and revokes its own " +
-			"credential. Adding the server back means installing the agent again."
+			"it takes itself out of sshd, so plain SSH works again, locks the accounts Argus " +
+			"made on it, and revokes its own credential. Adding the server back means " +
+			"installing the agent again."
+		if asset.Kind == "android" {
+			agent = "Its Argus app was asked to take the device off Argus, which it does when it " +
+				"next checks in: it revokes its own link, turns off unattended control and the " +
+				"accessibility service, and asks whoever holds the device to uninstall the app. " +
+				"Adding the device back means linking the app again."
+		}
 	}
 	a.auditAsset(r, AuditEvent{
 		Action:     "asset.archived",

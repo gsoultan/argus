@@ -126,9 +126,11 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-// remainingSSHWaysIn is sshWaysIn for this host. known is false when sshd is
-// not installed or would not say what it does, and there is nothing to check.
-func remainingSSHWaysIn() (ways []string, known bool) {
+// remainingSSHWaysIn is sshWaysIn for this host, leaving out the keys of the
+// accounts in exclude, which the uninstall is about to lock. known is false
+// when sshd is not installed or would not say what it does, and there is
+// nothing to check.
+func remainingSSHWaysIn(exclude map[string]bool) (ways []string, known bool) {
 	sshd := sshdBinary()
 	if sshd == "" {
 		return nil, false
@@ -138,5 +140,15 @@ func remainingSSHWaysIn() (ways []string, known bool) {
 		return nil, false
 	}
 	p, _ := agent.Scan(agent.DefaultScanConfig(""))
-	return sshWaysIn(parseSSHDT(string(out)), p.UnmanagedKeys), true
+	keys := p.UnmanagedKeys[:0:0]
+	for _, k := range p.UnmanagedKeys {
+		if !exclude[k.User] {
+			keys = append(keys, k)
+		}
+	}
+	return sshWaysIn(parseSSHDT(string(out)), keys), true
 }
+
+// undoHostChanges has nothing to put back here: beyond sshd and the accounts,
+// which have their own steps, the agent changes no setting of the host's.
+func undoHostChanges() (notes, left []string) { return nil, nil }

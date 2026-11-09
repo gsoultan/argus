@@ -10,7 +10,7 @@ import { run } from '~/lib/notify'
 import { useArchiveAsset } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
-import { assetNoun } from '~/lib/assetType'
+import { ASSET_TYPE_LABEL, assetNoun, assetTypeOf } from '~/lib/assetType'
 
 /**
  * The controls an asset needs rarely: its details, its host key, and taking
@@ -132,22 +132,55 @@ function HostKey({ asset }: { asset: Asset }) {
 }
 
 /**
- * Takes a server out of Argus. Its recordings and its activity stay; nobody
- * can connect to it from here any more, and its agent uninstalls itself so
- * plain SSH works again. Left running, the agent kept refusing direct logins
- * to a server the console could no longer open.
+ * Takes a server, workstation or device out of Argus. Its recordings and its
+ * activity stay; nobody can connect to it from here any more, and its agent
+ * takes itself off. Left running, a server's agent kept refusing direct logins
+ * to a server the console could no longer open, and a device's app kept its
+ * link, its unattended engine and its accessibility service.
+ *
+ * What the agent then does depends on what it is, so the words do too: a
+ * Linux host comes out of sshd and its Argus-made accounts are locked; a
+ * Windows host has nothing in SSH to take out; a device is the Argus app.
  */
+export function removalWords(asset: Asset, connected: boolean): { what: string; then: string; later: string } {
+  const noun = assetNoun(asset)
+  if (asset.kind === 'android') {
+    return {
+      what: 'Takes it out of Argus, and the Argus app on it takes itself off. Adding it back means linking the app again.',
+      then: connected
+        ? 'The Argus app on the device then takes it off Argus: it revokes its own link, turns off unattended control and forgets its pairing, switches off its accessibility service, and asks whoever holds the device to uninstall the app.'
+        : 'The device is not connected right now, so the app takes it off Argus when it next connects. To do it now, open the Argus app on the device and tap Remove from Argus.',
+      later: `Once removed, this device cannot simply be switched back on. To add it to Argus again, link the Argus app on it again from Assets, Add server or device.`,
+    }
+  }
+  const windows = asset.protocol === 'rdp'
+  return {
+    what: 'Takes it out of Argus and uninstalls the agent from it. Adding it back means installing the agent again.',
+    then: connected
+      ? windows
+        ? `The agent then uninstalls itself from the ${noun}: it revokes its own credential, puts back the Ctrl+Alt+Del policy if it set it, and switches itself off. The program stays in Apps until someone removes it there.`
+        : `The agent then uninstalls itself from the ${noun}: it takes itself out of SSH, so people can log in directly again, locks the accounts Argus made on it, and switches itself off.`
+      : windows
+        ? `The agent is not connected right now, so it uninstalls itself when it next connects. To do it now, remove Argus agent from Apps on the ${noun}.`
+        : `The agent is not connected right now, so it uninstalls itself when it next connects. To do it now, run "sudo argus-agent uninstall" on the ${noun}.`,
+    later: `Once removed, this ${noun} cannot simply be switched back on. To add it to Argus again, install and enroll the agent on it again from Assets, Add server or device.`,
+  }
+}
+
 export function RemoveServer({ asset }: { asset: Asset }) {
   const navigate = useNavigate()
   const archive = useArchiveAsset()
   const [open, modal] = useDisclosure(false)
   const connected = asset.tunnelConnected === true
+  const device = asset.kind === 'android'
+  const Noun = ASSET_TYPE_LABEL[assetTypeOf(asset)].one
+  const words = removalWords(asset, connected)
+  const agent = device ? 'its Argus app' : 'its agent'
   return (
     <Card padding="md" style={{ borderColor: 'var(--mantine-color-rose-3)' }}>
       <Group justify="space-between" wrap="wrap" gap="md">
         <Text size={FS.body} lh={1.5} style={{ flex: '1 1 240px' }}>
-          Takes it out of Argus and uninstalls the agent from it. Adding it back means installing
-          the agent again.
+          {words.what}
         </Text>
         <Button variant="light" color="rose" leftSection={<IconTrash size={16} />} onClick={modal.open}>
           Remove
@@ -159,16 +192,10 @@ export function RemoveServer({ asset }: { asset: Asset }) {
             Everyone loses access to it from Argus, right away. Its recordings and activity are
             kept.
           </Text>
-          <Text size="sm">
-            {connected
-              ? 'The agent then uninstalls itself from the server: it takes itself out of SSH, so people can log in to the server directly again, and switches itself off.'
-              : 'The agent is not connected right now, so it uninstalls itself when it next connects. To do it now, run "sudo argus-agent uninstall" on the server.'}
-          </Text>
-          <Alert color="amber" icon={<IconAlertTriangle size={16} />} title="Adding it back means installing the agent again">
-            <Text size={FS.meta} lh={1.5}>
-              Once removed, this server cannot simply be switched back on. To add it to Argus
-              again, install and enroll the agent on it again from Servers, Add a server.
-            </Text>
+          <Text size="sm">{words.then}</Text>
+          <Alert color="amber" icon={<IconAlertTriangle size={16} />}
+            title={device ? 'Adding it back means linking the app again' : 'Adding it back means installing the agent again'}>
+            <Text size={FS.meta} lh={1.5}>{words.later}</Text>
           </Alert>
         </Stack>
         <Group justify="flex-end">
@@ -178,17 +205,17 @@ export function RemoveServer({ asset }: { asset: Asset }) {
             loading={archive.isPending}
             onClick={() =>
               void run(() => archive.mutateAsync(asset.id), {
-                failure: 'Server not removed',
+                failure: `${Noun} not removed`,
                 success: [
-                  'Server removed',
+                  `${Noun} removed`,
                   connected
-                    ? `${asset.hostname} is out of Argus, and its agent is uninstalling itself.`
-                    : `${asset.hostname} is out of Argus. Its agent uninstalls itself when it next connects.`,
+                    ? `${asset.hostname} is out of Argus, and ${agent} is taking itself off.`
+                    : `${asset.hostname} is out of Argus. ${device ? 'Its Argus app' : 'Its agent'} takes itself off when it next connects.`,
                 ],
               }).then((ok) => { if (ok) void navigate({ to: '/assets' }) })
             }
           >
-            Remove and uninstall agent
+            {device ? 'Remove device' : 'Remove and uninstall agent'}
           </Button>
         </Group>
       </Modal>

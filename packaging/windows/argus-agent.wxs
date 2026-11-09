@@ -26,8 +26,9 @@
   unenrolled until `argus-agent enroll` is run.
 
   Removing it (Apps, or msiexec /x) runs `argus-agent uninstall -yes`: it
-  ships what has not reached the control plane, revokes this server's
-  credential and deletes it, and refuses, leaving the agent running, when
+  ships what has not reached the control plane, puts back the Ctrl+Alt+Del
+  policy where the agent set it, revokes this server's credential and
+  deletes it, and refuses, leaving the agent running, when
   recordings would be stranded, unless FORCE=1. Recordings in
   C:\ProgramData\Argus are never removed: removing the software must not
   destroy the evidence it produced. An upgrade does none of that; the
@@ -135,10 +136,10 @@
     <!-- Removal, not an upgrade: take the agent off the server properly. -->
     <SetProperty Id="UninstallAgent" Sequence="execute" Before="UninstallAgent"
                  Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND NOT FORCE"
-                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; uninstall --yes" />
+                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; uninstall --yes --from-package" />
     <SetProperty Id="UninstallAgentForce" Sequence="execute" Before="UninstallAgentForce"
                  Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND FORCE"
-                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; uninstall --yes --force" />
+                 Value="&quot;[INSTALLFOLDER]argus-agent.exe&quot; uninstall --yes --force --from-package" />
     <CustomAction Id="UninstallAgent" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec"
                   Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="UninstallAgentForce" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixQuietExec"
