@@ -13,6 +13,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
+	"github.com/gsoultan/argus/internal/control/rgen/cloudaccess"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudaccount"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudchange"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudkeeprunning"
@@ -85,20 +86,21 @@ var FlushOrder = map[string]int{
 	"agent_credentials":         34,
 	"asset_assignments":         35,
 	"asset_team_assignments":    36,
-	"cloud_schedule_runs":       37,
-	"console_alert_reads":       38,
-	"database_access_rules":     39,
-	"database_assignments":      40,
-	"database_backup_schedules": 41,
-	"database_backups":          42,
-	"database_changes":          43,
-	"database_restores":         44,
-	"database_statements":       45,
-	"recovery_codes":            46,
-	"software_script_versions":  47,
-	"team_members":              48,
-	"database_backup_tests":     49,
-	"database_statement_items":  50,
+	"cloud_access":              37,
+	"cloud_schedule_runs":       38,
+	"console_alert_reads":       39,
+	"database_access_rules":     40,
+	"database_assignments":      41,
+	"database_backup_schedules": 42,
+	"database_backups":          43,
+	"database_changes":          44,
+	"database_restores":         45,
+	"database_statements":       46,
+	"recovery_codes":            47,
+	"software_script_versions":  48,
+	"team_members":              49,
+	"database_backup_tests":     50,
+	"database_statement_items":  51,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -701,6 +703,123 @@ func (p AssetTeamAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Ex
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "asset_team_assignments", "teams")
 		}
 		out[i].Team = targets[j]
+	}
+	return out, nil
+}
+
+// CloudAccessWithAccountRow is cloud_access with its Account loaded.
+type CloudAccessWithAccountRow struct {
+	cloudaccess.Row
+	Account cloudaccount.Row
+}
+
+type CloudAccessWithAccountQuery struct {
+	q cloudaccess.Query
+}
+
+// CloudAccessWithAccount starts the plan.
+func CloudAccessWithAccount() CloudAccessWithAccountQuery {
+	return CloudAccessWithAccountQuery{q: cloudaccess.New()}
+}
+
+func (p CloudAccessWithAccountQuery) Where(ps ...cloudaccess.Pred) CloudAccessWithAccountQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CloudAccessWithAccountQuery) WhereIf(cond bool, pr cloudaccess.Pred) CloudAccessWithAccountQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CloudAccessWithAccountQuery) Any(ps ...cloudaccess.Pred) CloudAccessWithAccountQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CloudAccessWithAccountQuery) Not(pr cloudaccess.Pred) CloudAccessWithAccountQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CloudAccessWithAccountQuery) NotAny(ps ...cloudaccess.Pred) CloudAccessWithAccountQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CloudAccessWithAccountQuery) Order(ts ...cloudaccess.Sort) CloudAccessWithAccountQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CloudAccessWithAccountQuery) Limit(n int64) CloudAccessWithAccountQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CloudAccessWithAccountQuery) Offset(n int64) CloudAccessWithAccountQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CloudAccessWithAccountQuery) After(r CloudAccessWithAccountRow) CloudAccessWithAccountQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CloudAccessWithAccountQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CloudAccessWithAccountQuery) All(ctx context.Context, ex runtime.Executor) ([]CloudAccessWithAccountRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CloudAccessWithAccountRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CloudAccessWithAccountRow{Row: r}
+		key := r.AccountID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := cloudaccount.New().Unordered().
+		Where(cloudaccount.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AccountID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "cloud_access", "cloud_accounts")
+		}
+		out[i].Account = targets[j]
 	}
 	return out, nil
 }

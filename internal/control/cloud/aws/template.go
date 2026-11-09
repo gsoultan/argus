@@ -3,6 +3,8 @@ package aws
 import (
 	"fmt"
 	"strings"
+
+	"github.com/gsoultan/argus/internal/control/cloud"
 )
 
 // ReadPolicy is what the read role may do: describe and list, never read
@@ -63,7 +65,7 @@ const (
 func Template(principal, externalID string, manage bool) string {
 	desc := "Lets Argus read this account's inventory, as the person who asked."
 	if manage {
-		desc = "Lets Argus read this account's inventory and change its instances, disks, images, addresses, firewalls and load balancer targets, as the person who asked."
+		desc = "Lets Argus read this account's inventory and change its instances, disks, images, addresses, firewalls and load balancer targets, as the person who asked, and open time-limited console sessions for people someone approved."
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `AWSTemplateFormatVersion: "2010-09-09"
@@ -75,6 +77,8 @@ Resources:
 	b.WriteString(roleYAML("ArgusRead", ReadRoleName, "argus-read", principal, externalID, ReadPolicy))
 	if manage {
 		b.WriteString(roleYAML("ArgusManage", ManageRoleName, "argus-manage", principal, externalID, ManagePolicy))
+		b.WriteString(consoleRoleYAML("ArgusConsoleRead", ConsoleReadRoleName, principal, externalID, consolePolicy[cloud.ConsoleRead]))
+		b.WriteString(consoleRoleYAML("ArgusConsoleOperate", ConsoleOperateRoleName, principal, externalID, consolePolicy[cloud.ConsoleOperate]))
 	}
 	b.WriteString(`Outputs:
   ReadRoleArn:
@@ -139,4 +143,34 @@ func DeployCommand(principal, externalID string, manage bool) string {
 // control plane made, but they are quoted anyway.
 func yamlQuote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// consoleRoleYAML is a console role: the same trust as the others, an AWS
+// managed policy, and sessions of an hour at most. Argus opens a session on
+// it only for a person whose grant is in force, and only for what the
+// grant has left.
+func consoleRoleYAML(logical, name, principal, externalID, policyARN string) string {
+	return fmt.Sprintf(`  %s:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: %s
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: %s
+            Action:
+              - sts:AssumeRole
+              - sts:SetSourceIdentity
+              - sts:TagSession
+            Condition:
+              StringEquals:
+                sts:ExternalId: %s
+              "Null":
+                sts:SourceIdentity: "false"
+      ManagedPolicyArns:
+        - %s
+`, logical, name, yamlQuote(principal), yamlQuote(externalID), policyARN)
 }

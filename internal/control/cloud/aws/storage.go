@@ -358,8 +358,9 @@ var actionNeeds = map[cloud.Action][]string{
 func (p *Provider) Needs(a cloud.Action) []string { return actionNeeds[a] }
 
 // ManageMissing reads the manage role's policy with the read role (which
-// may iam:GetRolePolicy) and answers the ManagePolicy actions it lacks. A
-// stack deployed before this phase lacks the storage ones.
+// may iam:GetRolePolicy) and answers the ManagePolicy actions it lacks, and
+// the console roles the account lacks as "role:Name". A stack deployed
+// before a phase lacks that phase's.
 func (p *Provider) ManageMissing(ctx context.Context, read cloud.Account, manageRoleARN string) ([]string, error) {
 	cfg, err := p.assumed(ctx, read, cloud.SyncActor, "us-east-1")
 	if err != nil {
@@ -371,7 +372,16 @@ func (p *Provider) ManageMissing(ctx context.Context, read cloud.Account, manage
 	if err != nil {
 		return nil, errors.New(plain(err))
 	}
-	return MissingFrom(awssdk.ToString(out.PolicyDocument))
+	missing, err := MissingFrom(awssdk.ToString(out.PolicyDocument))
+	if err != nil {
+		return nil, err
+	}
+	// The console roles came with phase 5; an older stack has neither.
+	roles, err := consoleRolesMissing(ctx, iam.NewFromConfig(cfg))
+	if err != nil {
+		return nil, err
+	}
+	return append(missing, roles...), nil
 }
 
 // MissingFrom is the ManagePolicy actions a policy document (URL-encoded,
