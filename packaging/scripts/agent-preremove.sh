@@ -9,21 +9,43 @@ case "${1:-remove}" in
     *) removing=0 ;;
 esac
 
-# A ForceCommand still pointing at the agent refuses every SSH login once the
-# binary is gone, and the machine's own console becomes the only way back in.
-# `argus-agent uninstall` takes it out, checks sshd accepts the result, and
-# revokes this host's credential; removing the package does none of that.
+# Removing the package takes the agent off the host properly, as removing the
+# Windows installer does: `argus-agent uninstall` ships what has not reached
+# the control plane, takes the agent out of sshd (checking sshd accepts the
+# result), locks the accounts Argus made and takes back their sudo, revokes
+# this host's credential and deletes it. Removing only the files did none of
+# that: the console went on listing an enrolled agent that would never call
+# again, and agent-made accounts kept their keys and a NOPASSWD sudo rule with
+# nothing recording them.
+#
+# It refuses, and the package stays, when recordings would be stranded or
+# nobody could log in over SSH afterwards. ARGUS_FORCE=1 removes it anyway;
+# recordings always stay in /var/lib/argus.
 if [ "$removing" = 1 ]; then
+    hooked=0
     for f in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
         [ -f "$f" ] || continue
         if grep -Eiq '^[[:space:]]*ForceCommand[[:space:]=]+"?[^[:space:]"]*/argus[^[:space:]"/]*("|[[:space:]]|$)' "$f"; then
-            echo "argus-agent: $f still sends every SSH login to the agent." >&2
-            echo "Removing the package now would refuse every login to this host." >&2
-            echo "Run this first, then remove the package:" >&2
-            echo "  sudo argus-agent uninstall" >&2
-            exit 1
+            hooked=1
         fi
     done
+    # Already uninstalled (`argus-agent uninstall`, perhaps with
+    # --keep-accounts) leaves neither, and is not done again.
+    if [ -f /var/lib/argus/enrollment.json ] || [ "$hooked" = 1 ]; then
+        set -- --yes --from-package
+        if [ "${ARGUS_FORCE:-}" = 1 ]; then
+            set -- "$@" --force
+        fi
+        if [ -x /usr/bin/argus-agent ] && /usr/bin/argus-agent uninstall "$@"; then
+            :
+        else
+            echo "argus-agent: the agent could not be taken off this host, so the package" >&2
+            echo "was not removed (see above). Fix what it says and remove it again, or:" >&2
+            echo "  sudo ARGUS_FORCE=1 <your package manager> remove argus-agent" >&2
+            echo "to remove it anyway (recordings stay in /var/lib/argus)." >&2
+            exit 1
+        fi
+    fi
 fi
 
 # Only on removal. An upgrade used to stop and disable the agent here, and

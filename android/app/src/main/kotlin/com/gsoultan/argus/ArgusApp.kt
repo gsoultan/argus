@@ -52,6 +52,7 @@ class ArgusApp : Application() {
         )
         unattended = UnattendedEngine(this, agent)
         agent.setInstaller(AppInstaller(this))
+        agent.setRemoved(Removal(this))
         agent.setCanInstallApps(packageManager.canRequestPackageInstalls())
         bridge.unattended = unattended
         activity = ActivityReporter(this)

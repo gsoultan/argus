@@ -60,10 +60,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.allowInstall).setOnClickListener {
             startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
         }
-        findViewById<Button>(R.id.forget).setOnClickListener {
-            AgentService.stop(this)
-            thread { Mobile.forget(app.stateDir); handler.post { refresh() } }
-        }
+        findViewById<Button>(R.id.forget).setOnClickListener { leaveDialog() }
         findViewById<Button>(R.id.unattended).setOnClickListener {
             if (app.unattended.armed) {
                 thread { app.unattended.disarm(); handler.post { refresh() } }
@@ -104,6 +101,7 @@ class MainActivity : AppCompatActivity() {
                 val c = Mobile.parseEnrolCode(code)
                 val name = c.name.ifBlank { "${Build.MANUFACTURER}-${Build.MODEL}".lowercase().replace(Regex("[^a-z0-9-]+"), "-") }
                 Mobile.enroll(c.getURL(), c.token, c.pin, name, app.stateDir)
+                Removal.clear(this)
                 handler.post {
                     Toast.makeText(this, R.string.enrolled_ok, Toast.LENGTH_LONG).show()
                     findViewById<EditText>(R.id.code).setText("")
@@ -129,7 +127,7 @@ class MainActivity : AppCompatActivity() {
                 else -> getString(R.string.notif_connecting)
             }
         } else {
-            status.text = getString(R.string.status_not_enrolled)
+            status.text = Removal.lastSummary(this) ?: getString(R.string.status_not_enrolled)
             connection.text = ""
         }
         findViewById<Button>(R.id.forget).isEnabled = st?.enrolled == true
@@ -148,6 +146,52 @@ class MainActivity : AppCompatActivity() {
             getString(if (canInstall) R.string.install_on else R.string.install_off)
         findViewById<Button>(R.id.allowInstall).isEnabled = !canInstall
         findViewById<TextView>(R.id.log).text = app.log.takeLast(12).joinToString("\n")
+    }
+
+    /**
+     * Remove from Argus: the agent ships what is waiting, revokes and deletes
+     * the link, and Removal takes down what the app set up. If something has
+     * not reached Argus the holder is asked again, since once the link is
+     * gone nothing can send it.
+     */
+    private fun leaveDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.leave_title)
+            .setMessage(R.string.leave_explain)
+            .setPositiveButton(R.string.leave_ok) { _, _ -> leave(false) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun leave(force: Boolean) {
+        findViewById<Button>(R.id.forget).isEnabled = false
+        Toast.makeText(this, R.string.leave_working, Toast.LENGTH_SHORT).show()
+        thread {
+            try {
+                val summary = app.agent.leave(force)
+                handler.post { leftDialog(summary) }
+            } catch (e: Exception) {
+                handler.post {
+                    refresh()
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.leave_anyway_title)
+                        .setMessage(e.message ?: e.toString())
+                        .setPositiveButton(R.string.leave_anyway) { _, _ -> leave(true) }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun leftDialog(summary: String) {
+        refresh()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.left_title)
+            .setMessage(summary + "\n\n" + getString(R.string.left_next))
+            .setPositiveButton(R.string.uninstall_app) { _, _ -> startActivity(Removal.uninstallIntent(this)) }
+            .setNegativeButton(android.R.string.ok, null)
+            .show()
     }
 
     /**

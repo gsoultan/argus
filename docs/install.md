@@ -377,8 +377,9 @@ installer asks nothing and installs that way.
 - **Removing** it, from Settings > Apps or with
   `msiexec /x argus-agent_<version>_windows_amd64.msi /qn`, runs
   `argus-agent uninstall --yes`: it ships what has not reached the control
-  plane, revokes the server's credential, and removes the service and the
-  program. When recordings would be stranded it refuses and leaves the agent
+  plane, puts back the `SoftwareSASGeneration` policy if the agent set it (for
+  the console's Ctrl+Alt+Del), revokes the server's credential, and removes the
+  service and the program. When recordings would be stranded it refuses and leaves the agent
   running; `FORCE=1` removes it anyway, leaving them on the server. Recordings
   in `C:\ProgramData\Argus` are always kept.
 
@@ -593,13 +594,35 @@ is captured before they accept. The session is recorded on the device,
 sealed, and shipped like a server's; **Watch live** and the player show it
 as a desktop recording whose protocol is `android`.
 
+### Removing an Android device
+
+**From the console:** open the device and choose **Remove** under Settings. On
+its next heartbeat the Argus app takes the device off Argus: it sends what is
+still queued, revokes its own link and deletes it, turns off unattended control
+(the shell helper stopped, wireless debugging switched back off, the pairing
+key deleted, so it does not re-arm at boot), switches off its accessibility
+service, and asks whoever holds the device to uninstall the app. If the control
+plane cannot be told, the link is kept and it tries again later.
+
+**On the device:** open the Argus app and tap **Remove from Argus**. The same
+steps run; if recordings or reports have not reached Argus it says so and asks
+before going on, since nothing can send them once the link is gone.
+
+Android lets no app uninstall itself, or take back "Install unknown apps" for
+itself, so the last step is the holder's: the app offers Android's own
+uninstall question. If wireless debugging was used, revoke its authorisations
+in Developer options. The unattended helper serves only the Argus app that
+started it, by uid, and stops itself within seconds of the app being
+uninstalled.
+
 ### Uninstalling the agent
 
 **From the console:** open the server under **Servers** and choose **Remove
 server**. It leaves Argus at once, and its agent uninstalls itself on its next
 heartbeat: it takes itself out of sshd (checked with `sshd -t`, then reloaded),
-sends what is still queued, revokes its own credential, deletes it, and
-switches its service off. Plain SSH works again. Recordings stay on the server,
+locks the accounts Argus made on the server, sends what is still queued,
+revokes its own credential, deletes it, and switches its service off. Plain SSH
+works again. Recordings stay on the server,
 and the package stays installed but off; remove it whenever you like. An agent
 that is not connected does this when it next connects. To add the server back,
 install and enroll the agent again.
@@ -630,20 +653,39 @@ It asks first (pass `--yes` from a script), then, in this order:
    read, the files are put back as they were, the agent is started again, and
    it stops. Then it reloads sshd. A `ForceCommand` left pointing at a removed
    binary would refuse every SSH login.
-5. **Revokes this server's credential** with the control plane. This writes
+5. **Locks the accounts Argus made** on the server: personal accounts and the
+   login accounts made from the console, known by `argus-managed` in their
+   comment field. Each one's `authorized_keys` is emptied, it is locked and
+   expired, and whatever still runs as it is stopped; its home is kept.
+   `/etc/sudoers.d/argus-personal` is deleted. Left open, they kept keys that
+   let people in with nothing recording, and a `NOPASSWD` sudo rule nothing
+   would rewrite. Step 1 does not count these accounts as a way in, since they
+   are about to be locked. `usermod --unlock --expiredate '' <name>` opens one
+   again; `--keep-accounts` leaves them all as they are.
+6. **Puts back what the agent changed** on its own: on Windows, the
+   `SoftwareSASGeneration` policy, where the agent set it and it still holds
+   the agent's value.
+7. **Revokes this server's credential** with the control plane. This writes
    `agent.uninstalled` to the audit log, with who ran it as the server reports
    it. If the control plane cannot be reached, it says to revoke the server in
    the console instead.
-6. **Deletes the credential**, the CA and grant key it trusted, and its
+8. **Deletes the credential**, the CA and grant key it trusted, and its
    working state, then **unregisters the service** (systemd, launchd or the
    Windows service).
 
 Recordings, `sessions.jsonl` and the report spool stay in the state
 directory. Delete them yourself once you are sure they are no longer needed.
 Last, it prints what is left for you to do, usually removing the package
-(`apt purge argus-agent`, `dnf remove argus-agent`, `apk del argus-agent`) or
-deleting the binary. The package refuses to be removed while a `ForceCommand`
-still runs the agent, and says to run `argus-agent uninstall` first.
+(`apt purge argus-agent`, `dnf remove argus-agent`, `apk del argus-agent`),
+removing **Argus agent** from Apps on a Windows server the installer set up, or
+deleting the binary.
+
+**Removing the package runs all of this.** `apt remove`, `dnf remove` and
+`apk del` run `argus-agent uninstall --yes` first, as removing the Windows
+installer does, so a server is never left with an enrolled agent the console
+waits for, or with Argus-made accounts nobody manages. If it refuses (stranded
+recordings, or nobody could log in over SSH afterwards) the package stays and
+it says why; `sudo ARGUS_FORCE=1 apt remove argus-agent` removes it anyway.
 
 `--force` uninstalls even when reports or recordings have not reached the
 control plane (they stay on the server), or when nobody could log in over SSH

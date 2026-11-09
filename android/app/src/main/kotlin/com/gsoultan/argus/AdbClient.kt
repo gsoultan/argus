@@ -59,11 +59,17 @@ class AdbClient(private val ctx: Context) {
     fun startHelper(): String? {
         if (!paired()) return "this device has not paired for wireless debugging yet"
         copyHelperDex()
+        // One helper at a time: one left from before an update still holds
+        // the socket, and would be the one the engine reached.
+        stopHelper()
         return try {
             AdbExec(ctx, pairingFile()).run(
                 // app_process runs the dex as the shell user; the helper then
-                // opens its abstract socket for the engine to connect to.
-                "CLASSPATH=${helperDex.absolutePath} app_process / com.gsoultan.argus.helper.ArgusHelper",
+                // opens its abstract socket for the engine to connect to. It
+                // is told this app's uid and its own file: it serves only this
+                // app, and exits once the app (and so the file) is gone.
+                "CLASSPATH=${helperDex.absolutePath} app_process / com.gsoultan.argus.helper.ArgusHelper " +
+                    "${android.os.Process.myUid()} ${helperDex.absolutePath}",
             )
             null
         } catch (e: Exception) {
@@ -77,6 +83,26 @@ class AdbClient(private val ctx: Context) {
             AdbExec(ctx, pairingFile()).run("pkill -f com.gsoultan.argus.helper.ArgusHelper")
         } catch (_: Exception) {
         }
+    }
+
+    /**
+     * Leaving Argus: stops the helper, turns wireless debugging back off (the
+     * shell user may; an ordinary app may not), and deletes the pairing key
+     * and the helper, so nothing here can reach adbd again. The device's own
+     * list of debugging keys keeps this app's until someone revokes them in
+     * Developer options, which the app tells them.
+     */
+    fun forget() {
+        if (paired()) {
+            stopHelper()
+            try {
+                AdbExec(ctx, pairingFile()).run("settings put global adb_wifi_enabled 0")
+            } catch (e: Exception) {
+                Log.w(ArgusApp.TAG, "could not turn wireless debugging off: ${e.message}")
+            }
+        }
+        pairingFile().delete()
+        helperDex.delete()
     }
 
     /** Runs a shell command, with input on its standard input when given. */

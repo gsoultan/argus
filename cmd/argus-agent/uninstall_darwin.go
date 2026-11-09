@@ -38,7 +38,7 @@ func startAgent() error {
 
 // removeAgentService deletes the launchd job and the binary, which were
 // installed by hand rather than by a package.
-func removeAgentService() ([]string, error) {
+func removeAgentService(bool) ([]string, error) {
 	var left []string
 	if err := os.Remove(launchdPlist); err != nil && !os.IsNotExist(err) {
 		left = append(left, "Delete "+launchdPlist+".")

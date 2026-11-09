@@ -209,6 +209,32 @@ session opens with no consent prompt because there is no one to ask.
   typeWindowStateChanged|typeViewTextChanged. `ArgusApp` holds `activity:
   ActivityReporter`, registered in onCreate.
 
+## Leaving Argus (uninstall)
+
+- mobile: `Agent.Leave(force)` (the app's **Remove from Argus**) and
+  `leaveForConsole()` (heartbeat `reply.Uninstall`, single-flight, ≤ every
+  10 min) share `leave()`: `stopAndWait` (Stop, then `collectorClosed` so
+  recordings are sealed) → fresh reporter Drain + `Uploads.Pass` → refuse
+  without force while anything is pending (agent restarted) → `Deregister`
+  (app: a failure is reported in the summary; console: keep the credential,
+  restart, retry) → delete `agent.SecretStateFiles` (shared with the server
+  agent; recordings kept) → `Removed.Removed(byConsole, summary)`, set with
+  `SetRemoved`. `mobile.Forget` is kept but the app no longer calls it.
+  Tests: `mobile/leave_test.go`.
+- Kotlin `Removal.kt` (the `Removed`): `unattended.forget()` (disarm,
+  `AdbClient.forget`: pkill helper, `settings put global adb_wifi_enabled 0`,
+  delete pairing key + dex), `InputService.disableSelf()`, stop the service,
+  notification with Android's uninstall question (`ACTION_DELETE`); the
+  summary is kept in prefs and shown as the status until re-linked.
+- Helper: `ArgusHelper <app uid> <dex path>` (`Access.kt`, JVM-tested in
+  `AccessTest.kt`): refuses to start without them, serves only a peer whose
+  `peerCredentials.uid` is the app's (an abstract socket has no permissions,
+  so any app could otherwise get the screen and shell input), and exits once
+  the dex is gone (app uninstalled). `startHelper` pkills an older helper
+  first so it never keeps the socket.
+- Console: `removalWords(asset, connected)` in `SettingsTab.tsx` — device /
+  Windows / Linux wording; the archive audit entry says what a device does.
+
 ## Not yet (later PRs)
 
 5. Linux USB relay. Also: H.264 instead of tiles, an IME for text beyond the

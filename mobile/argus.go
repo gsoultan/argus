@@ -77,6 +77,20 @@ type Installer interface {
 	Restore(pkg string) error
 }
 
+// Removed is how the app hears that this device has left Argus, from the
+// console or from the app's own Remove button. By the time it is called the
+// credential is revoked (or the control plane could not be told, which
+// summary says) and deleted, and the agent has stopped; what is left is the
+// app's own part: turn off the unattended engine and forget its pairing,
+// switch off the accessibility service, stop the foreground service, and
+// tell whoever holds the device.
+type Removed interface {
+	// Removed says the device left Argus. byConsole is true when an
+	// administrator removed it in the console. summary is a sentence for
+	// whoever holds the device.
+	Removed(byConsole bool, summary string)
+}
+
 // Logger receives the agent's log lines, for the app's log.
 type Logger interface {
 	Log(level, msg string)
@@ -211,6 +225,16 @@ type Agent struct {
 	// person allows once; reported so the console says it is not set up.
 	canInstall atomic.Int32
 	apps       *agent.AppRuns
+
+	// removed is told when the device leaves Argus; nil until SetRemoved.
+	removed Removed
+	// collectorClosed is closed once the running agent's recordings are
+	// sealed after Stop, so leaving ships them whole.
+	collectorClosed chan struct{}
+	// leaving is held while the device leaves Argus, so the console's
+	// request and the app's button do not run it twice at once.
+	leaving   sync.Mutex
+	lastLeave time.Time
 }
 
 // NewAgent makes the agent for stateDir, with the device the app provides.
@@ -321,6 +345,13 @@ func (a *Agent) Start() error {
 				Run: apps.Status()}
 		}
 		reply, ok := rep.HeartbeatWithReply(ctx, beat)
+		if ok && reply.Uninstall {
+			// Removed in the console: the device takes itself off Argus,
+			// as a server's agent does. Not on this goroutine, which
+			// leaving stops.
+			go a.leaveForConsole()
+			return
+		}
 		if !ok || apps == nil || len(reply.Packages) == 0 {
 			return
 		}
@@ -379,9 +410,12 @@ func (a *Agent) Start() error {
 			}
 		}
 	}()
+	closed := make(chan struct{})
+	a.collectorClosed = closed
 	go func() {
 		<-ctx.Done()
 		_ = col.Close()
+		close(closed)
 	}()
 	log.Info("argus app starting", "version", Version, "control", enr.ControlURL, "hostname", hostname)
 	return nil
@@ -440,6 +474,154 @@ func (a *Agent) SetCanInstallApps(on bool) {
 		a.canInstall.Store(1)
 	} else {
 		a.canInstall.Store(2)
+	}
+}
+
+// SetRemoved gives the agent the app's Removed. Called before Start.
+func (a *Agent) SetRemoved(r Removed) {
+	a.mu.Lock()
+	a.removed = r
+	a.mu.Unlock()
+}
+
+// Leave takes this device off Argus, from the app: the Remove button. As
+// `argus-agent uninstall` does on a server, in the same order: the agent
+// stops, so every open recording is sealed; what has not reached the control
+// plane is shipped; the credential is revoked and deleted; and the app is
+// told through Removed. Recordings shipped stay until the app is uninstalled.
+//
+// Without force it refuses while recordings or reports have not reached the
+// control plane, since once the credential is gone nothing can send them, and
+// the agent is started again. With force it goes on, and a control plane that
+// cannot be told is left to an administrator to revoke in the console; the
+// summary says which. Blocks for as long as shipping takes, up to two minutes.
+func (a *Agent) Leave(force bool) (string, error) {
+	return a.leave(force, false, "whoever holds the device, from the Argus app", 2*time.Minute)
+}
+
+// leaveForConsole is the console's removal, asked on a heartbeat. Evidence
+// that cannot be shipped stays on the device, as on a server; a control plane
+// that cannot be told is asked again on a later heartbeat, at most every ten
+// minutes, since the credential is still needed to tell it.
+func (a *Agent) leaveForConsole() {
+	a.mu.Lock()
+	recent := time.Since(a.lastLeave) < 10*time.Minute
+	if !recent {
+		a.lastLeave = time.Now()
+	}
+	a.mu.Unlock()
+	if recent {
+		return
+	}
+	a.log.Warn("this device was removed from Argus; taking it off")
+	if _, err := a.leave(true, true, "the Argus console (device removed)", 10*time.Minute); err != nil {
+		a.log.Error("leaving Argus: " + err.Error() + "; will try again")
+	}
+}
+
+func (a *Agent) leave(force, byConsole bool, ranBy string, limit time.Duration) (string, error) {
+	if !a.leaving.TryLock() {
+		return "", errors.New("this device is already leaving Argus")
+	}
+	defer a.leaving.Unlock()
+
+	enr, err := agent.LoadEnrollment(a.stateDir)
+	if err != nil {
+		return "", err
+	}
+	if enr == nil {
+		a.Stop()
+		a.tellRemoved(byConsole, "This device is not linked to Argus.")
+		return "This device is not linked to Argus.", nil
+	}
+	wasRunning := a.Running()
+	a.stopAndWait()
+	restart := func() {
+		if wasRunning {
+			if err := a.Start(); err != nil {
+				a.log.Error("the agent could not be started again", "error", err)
+			}
+		}
+	}
+
+	tlsCfg, err := enr.TLS()
+	if err != nil {
+		restart()
+		return "", fmt.Errorf("the enrolment's TLS configuration failed: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	rep := reporter.NewWithTLS(enr.ControlURL, enr.Credential,
+		filepath.Join(a.stateDir, "report-spool.jsonl"), tlsCfg, a.log)
+	rep.Drain(ctx)
+	recordings := agent.NewUploads(a.stateDir, rep, a.log).Pass(ctx)
+	reports := rep.Spooled()
+	var kept string
+	if recordings > 0 || reports > 0 {
+		if !force {
+			restart()
+			return "", fmt.Errorf("%d recording(s) and %d report(s) have not reached Argus at %s "+
+				"yet, and once this device's link is revoked nothing can send them. Connect to a "+
+				"network that reaches Argus and try again, or remove it anyway and they stay on "+
+				"this device until the app is uninstalled", recordings, reports, enr.ControlURL)
+		}
+		kept = fmt.Sprintf(" %d recording(s) and %d report(s) never reached Argus and stay on "+
+			"this device until the app is uninstalled.", recordings, reports)
+		a.log.Warn("leaving Argus: some evidence never reached the control plane; it stays on the device",
+			"recordings", recordings, "reports", reports)
+	}
+
+	dctx, dcancel := context.WithTimeout(ctx, 30*time.Second)
+	err = rep.Deregister(dctx, map[string]string{"hostname": enr.Hostname, "ran_by": ranBy})
+	dcancel()
+	told := " Argus revoked its link."
+	if err != nil {
+		if byConsole {
+			// The credential is how the control plane is told; keep it.
+			restart()
+			return "", fmt.Errorf("the control plane could not be told: %w", err)
+		}
+		told = " Argus could not be told (" + err.Error() + "): an administrator should remove " +
+			enr.Hostname + " in the console."
+	}
+	for _, name := range agent.SecretStateFiles {
+		p := filepath.Join(a.stateDir, name)
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			a.log.Error("leaving Argus: could not delete "+name, "error", err)
+		}
+	}
+	summary := "This device has left Argus." + told + kept
+	if byConsole {
+		summary = "An administrator removed this device from Argus." + told + kept
+	}
+	a.log.Warn(summary)
+	a.tellRemoved(byConsole, summary)
+	return summary, nil
+}
+
+func (a *Agent) tellRemoved(byConsole bool, summary string) {
+	a.mu.Lock()
+	r := a.removed
+	a.mu.Unlock()
+	if r != nil {
+		r.Removed(byConsole, summary)
+	}
+}
+
+// stopAndWait is Stop, then waiting for every open recording to be sealed,
+// so leaving ships it whole. Bounded: a recording that will not seal in half
+// a minute is shipped as far as it got on the next try.
+func (a *Agent) stopAndWait() {
+	a.mu.Lock()
+	closed := a.collectorClosed
+	a.mu.Unlock()
+	a.Stop()
+	if closed == nil {
+		return
+	}
+	select {
+	case <-closed:
+	case <-time.After(30 * time.Second):
 	}
 }
 

@@ -28,6 +28,30 @@ const EnrollmentFile = "enrollment.json"
 // the control plane handed one over.
 const enrolledCAFile = "control-ca.pem"
 
+// SecretStateFiles are what an uninstall deletes from the state directory:
+// the credential, what it trusts, and state that only meant something while
+// the agent ran. Everything else in there is evidence and is kept. The same
+// list for a server's agent and for the Android app.
+var SecretStateFiles = []string{
+	EnrollmentFile,
+	enrolledCAFile,
+	GrantKeyFile,
+	"console-only",
+	"direct-ssh",
+	"direct-ssh.json",
+	"personal-accounts.json",
+	"heartbeat.json",
+	"posture.json",
+	"facts.json",
+	"applications.json",
+}
+
+// SASPolicyMarker is the file, in the state directory, that says this agent
+// set Windows' SoftwareSASGeneration policy itself, where nobody had set it:
+// so an uninstall puts it back as it found it, and leaves a value an
+// administrator set alone.
+const SASPolicyMarker = "sas-policy-set"
+
 // Enrollment is what `argus-agent enroll` writes and the daemon reads.
 type Enrollment struct {
 	ControlURL string    `json:"controlUrl"`

@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	xterm "golang.org/x/term"
@@ -24,6 +26,7 @@ import (
 Taking the agent off a server.
 
 	stop the service ─▶ ship what is still queued ─▶ take out the sshd hook
+	      ─▶ lock the accounts it made ─▶ undo the policy it set
 	      ─▶ revoke this host's credential ─▶ delete it ─▶ unregister the service
 
 The order is the point. The service stops first so it seals every open
@@ -34,25 +37,79 @@ goes before anything that cannot be undone: a ForceCommand left pointing at a
 binary that is about to be removed refuses every SSH login, and the machine's
 own console becomes the only way back in.
 
+The accounts the agent made (personal accounts, and login accounts an admin
+made from the console) are locked, not deleted, and the sudo it gave them is
+taken back. Left open, each kept a key that let someone in with nobody
+recording, and a NOPASSWD rule nothing would rewrite again. Their homes stay.
+--keep-accounts leaves them as they are, for a host that is moving to being
+managed some other way.
+
 Recordings, the local session log and the report spool stay where they are.
 Removing the software must never destroy the evidence it produced -- that is
 what someone covering their tracks would reach for -- so deleting them is left
 to a person, deliberately, with the path printed.
 */
 
-// secretStateFiles are what an uninstall deletes from the state directory:
-// the credential, what it trusts, and state that only meant something while
-// the agent ran. Everything else in there is evidence and is kept.
-var secretStateFiles = []string{
-	agent.EnrollmentFile,
-	"control-ca.pem",
-	agent.GrantKeyFile,
-	"console-only",
-	"direct-ssh",
-	"heartbeat.json",
-	"posture.json",
-	"facts.json",
-	"applications.json",
+// secretStateFiles are what an uninstall deletes from the state directory;
+// see agent.SecretStateFiles.
+var secretStateFiles = agent.SecretStateFiles
+
+// personalSudoers is the drop-in that gives sudo to the accounts the agent
+// made.
+const personalSudoers = "/etc/sudoers.d/argus-personal"
+
+// hostProvisioner is the account keeper for a pass run here, as root and
+// outside any sandbox: the uninstall command, or the package's removal.
+func hostProvisioner(log *slog.Logger) *agent.Provisioner {
+	return &agent.Provisioner{
+		Sudoers: personalSudoers,
+		Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		},
+		Log: log,
+	}
+}
+
+// lockAccounts locks every account p made and takes back their sudo. notes
+// are what was done, left what a person still has to do.
+func lockAccounts(ctx context.Context, p *agent.Provisioner) (notes, left []string) {
+	for _, st := range p.LockAll(ctx) {
+		switch st.State {
+		case "locked":
+			notes = append(notes, "locked "+st.Name+" (its home is kept; usermod --unlock "+
+				"--expiredate '' "+st.Name+" opens it again)")
+		case "failed":
+			left = append(left, "Lock "+st.Name+", an account Argus made: "+st.Detail+".")
+		}
+	}
+	if !fileGone(p.Sudoers) {
+		left = append(left, "Delete "+p.Sudoers+": it gives sudo to accounts Argus made.")
+	} else if len(notes) > 0 {
+		notes = append(notes, "took back the sudo Argus gave them")
+	}
+	return notes, left
+}
+
+func fileGone(path string) bool {
+	if path == "" {
+		return true
+	}
+	_, err := os.Stat(path)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// managedSet is the accounts the agent made, as a set, for leaving them out
+// of the ways in that survive an uninstall that is about to lock them.
+func managedSet(p *agent.Provisioner) map[string]bool {
+	names, err := p.Managed()
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
 }
 
 func runUninstall(args []string) int {
@@ -62,6 +119,10 @@ func runUninstall(args []string) int {
 	force := fs.Bool("force", false,
 		"uninstall even when recordings or reports have not reached the control plane "+
 			"(they stay on this host), or when nobody could log in over SSH afterwards")
+	keepAccounts := fs.Bool("keep-accounts", false,
+		"leave the accounts Argus made on this host, and their sudo, as they are")
+	fromPackage := fs.Bool("from-package", false,
+		"run by the package's removal, which takes the program away itself")
 	_ = fs.Parse(args)
 
 	if !isPrivileged() {
@@ -77,9 +138,16 @@ func runUninstall(args []string) int {
 	if enr != nil {
 		hostname = enr.Hostname
 	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	accounts := hostProvisioner(log)
+	// The accounts about to be locked are no way in afterwards.
+	var locking map[string]bool
+	if !*keepAccounts {
+		locking = managedSet(accounts)
+	}
 	// Before anything changes: once the agent is gone, plain SSH is how people
 	// get in, and a host where nobody can is one only its console reaches.
-	ways, known := remainingSSHWaysIn()
+	ways, known := remainingSSHWaysIn(locking)
 	if known && len(ways) == 0 && !*force {
 		fmt.Fprintln(os.Stderr, "argus-agent uninstall: once the agent is gone nobody could "+
 			"log in to this host over SSH: no account has a key in authorized_keys and "+
@@ -88,11 +156,10 @@ func runUninstall(args []string) int {
 			"anyway. Nothing was changed.")
 		return 1
 	}
-	if !*yes && !confirm(hostname, enr, ways) {
+	if !*yes && !confirm(hostname, enr, ways, len(locking)) {
 		fmt.Fprintln(os.Stderr, "argus-agent uninstall: nothing was changed")
 		return 1
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	step("stopping the agent, so it seals its open recordings")
 	if err := stopAgent(); err != nil {
@@ -144,6 +211,26 @@ func runUninstall(args []string) int {
 		fmt.Println("  " + h)
 	}
 
+	// The agent kept these accounts; with it gone nothing would. Locked
+	// rather than deleted, so this can still be walked back by hand.
+	if !*keepAccounts && len(locking) > 0 {
+		step("locking the accounts Argus made on this host")
+		notes, more := lockAccounts(context.Background(), accounts)
+		for _, n := range notes {
+			fmt.Println("  " + n)
+		}
+		left = append(left, more...)
+	} else if *keepAccounts && len(managedSet(accounts)) > 0 {
+		left = append(left, "The accounts Argus made are still open (--keep-accounts), "+
+			"and nothing manages their keys or sudo now.")
+	}
+	step("putting back the settings the agent changed")
+	notes, more := undoHostChanges()
+	for _, n := range notes {
+		fmt.Println("  " + n)
+	}
+	left = append(left, more...)
+
 	// Nothing below can be undone, and nothing below stops the uninstall.
 	if rep != nil {
 		step("revoking this host's credential")
@@ -167,7 +254,7 @@ func runUninstall(args []string) int {
 	}
 
 	step("unregistering the service")
-	more, err := removeAgentService()
+	more, err = removeAgentService(*fromPackage)
 	if err != nil {
 		warn("%v", err)
 	}
@@ -191,7 +278,7 @@ func runUninstall(args []string) int {
 
 // confirm asks the person at the terminal. Without one, --yes is required:
 // a script that meant to uninstall says so.
-func confirm(hostname string, enr *agent.Enrollment, ways []string) bool {
+func confirm(hostname string, enr *agent.Enrollment, ways []string, accounts int) bool {
 	if !xterm.IsTerminal(int(os.Stdin.Fd())) {
 		fmt.Fprintln(os.Stderr, "argus-agent uninstall: no terminal to confirm on; pass --yes")
 		return false
@@ -203,6 +290,10 @@ func confirm(hostname string, enr *agent.Enrollment, ways []string) bool {
 	}
 	if enr != nil {
 		fmt.Printf("  - its credential with %s is revoked\n", enr.ControlURL)
+	}
+	if accounts > 0 {
+		fmt.Printf("  - the %d account(s) Argus made here are locked, and their sudo taken back "+
+			"(homes are kept)\n", accounts)
 	}
 	if len(ways) > 0 {
 		fmt.Println("Plain SSH will work for: " + strings.Join(ways, ", "))
@@ -236,8 +327,8 @@ func warn(format string, a ...any) {
 // selfUninstall is the agent taking itself off this host because its server
 // was removed from Argus in the console. The same steps as `argus-agent
 // uninstall`, in the same order, from inside the running daemon: out of sshd
-// first, so plain SSH works whatever happens next, then what is still queued,
-// then the credential, then the service.
+// first, so plain SSH works whatever happens next, then the accounts it made,
+// then what is still queued, then the credential, then the service.
 //
 // A step that fails leaves the rest for the next heartbeat that asks again,
 // at most every ten minutes, rather than revoking a credential the agent may
@@ -247,16 +338,27 @@ type selfUninstall struct {
 	rep      *reporter.Client
 	uploads  *agent.Uploads
 	log      *slog.Logger
+	// accounts is the daemon's own account keeper, which reaches outside its
+	// sandbox to lock them. Nil where there is none.
+	accounts *agent.Provisioner
 	// The host-wide steps, replaced in tests: nil is the real one.
 	sshdHook func() (notes, left []string, err error)
-	waysIn   func() ([]string, bool)
+	waysIn   func(exclude map[string]bool) ([]string, bool)
 	stopSelf func() error
+	lockAll  func(ctx context.Context) (managed map[string]bool, notes, left []string)
+	undo     func() (notes, left []string)
 
 	mu      sync.Mutex
 	running bool
 	lastTry time.Time
 	done    bool
+	// begun is set once the uninstall has started: from then on the
+	// heartbeat no longer makes or reopens accounts it is locking.
+	begun atomic.Bool
 }
+
+// started reports whether the console's uninstall has begun on this host.
+func (u *selfUninstall) started() bool { return u != nil && u.begun.Load() }
 
 func (u *selfUninstall) start(ctx context.Context) {
 	u.mu.Lock()
@@ -265,6 +367,7 @@ func (u *selfUninstall) start(ctx context.Context) {
 		return
 	}
 	u.running, u.lastTry = true, time.Now()
+	u.begun.Store(true)
 	u.mu.Unlock()
 	go func() {
 		ok := u.run(ctx)
@@ -278,16 +381,30 @@ func (u *selfUninstall) run(ctx context.Context) bool {
 	log := u.log
 	log.Warn("this server was removed from Argus; uninstalling the agent")
 
-	hook, waysIn, stopSelf := removeSSHDHook, remainingSSHWaysIn, stopSelfForGood
+	hook, waysIn, stopSelf, lockAll, undo := removeSSHDHook, remainingSSHWaysIn, stopSelfForGood, u.lockHostAccounts, undoHostChanges
 	if u.sshdHook != nil {
 		hook, waysIn, stopSelf = u.sshdHook, u.waysIn, u.stopSelf
 	}
-	ways, known := waysIn()
+	if u.lockAll != nil {
+		lockAll = u.lockAll
+	}
+	if u.undo != nil {
+		undo = u.undo
+	}
+	var managed map[string]bool
+	if u.accounts != nil {
+		managed = managedSet(u.accounts)
+	}
+	ways, known := waysIn(managed)
 	notes, left, err := hook()
 	if err != nil {
 		log.Error("uninstall: sshd's configuration could not be changed; will try again", "error", err)
 		return false
 	}
+	_, more, extra := lockAll(ctx)
+	notes, left = append(notes, more...), append(left, extra...)
+	more, extra = undo()
+	notes, left = append(notes, more...), append(left, extra...)
 	for _, n := range notes {
 		log.Info("uninstall: " + n)
 	}
@@ -328,11 +445,24 @@ func (u *selfUninstall) run(ctx context.Context) bool {
 			log.Error("uninstall: could not delete "+p, "error", err)
 		}
 	}
-	log.Warn("uninstalled: plain SSH works, the credential is revoked, and the service is "+
-		"switched off; recordings stay on this host. The package can be removed at any time.",
-		"recordings", u.stateDir)
+	log.Warn("uninstalled: plain SSH works, the accounts Argus made are locked, the credential "+
+		"is revoked, and the service is switched off; recordings stay on this host. The package "+
+		"can be removed at any time.", "recordings", u.stateDir)
 	if err := stopSelf(); err != nil {
 		log.Error("uninstall: the service could not switch itself off", "error", err)
 	}
 	return true
+}
+
+// lockHostAccounts is the daemon's account keeper locking what it made.
+func (u *selfUninstall) lockHostAccounts(ctx context.Context) (map[string]bool, []string, []string) {
+	if u.accounts == nil {
+		return nil, nil, nil
+	}
+	managed := managedSet(u.accounts)
+	if len(managed) == 0 {
+		return nil, nil, nil
+	}
+	notes, left := lockAccounts(ctx, u.accounts)
+	return managed, notes, left
 }

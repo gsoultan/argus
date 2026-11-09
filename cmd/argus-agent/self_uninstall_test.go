@@ -12,8 +12,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gsoultan/argus/internal/agent"
 	"github.com/gsoultan/argus/internal/agent/reporter"
@@ -51,7 +53,7 @@ func TestARemovedServersAgentRevokesItselfAndKeepsTheEvidence(t *testing.T) {
 	stopped := false
 	u := &selfUninstall{stateDir: dir, rep: rep, uploads: agent.NewUploads(dir, rep, log), log: log,
 		sshdHook: func() ([]string, []string, error) { return nil, nil, nil },
-		waysIn:   func() ([]string, bool) { return []string{"ana with 1 key(s)"}, true },
+		waysIn:   func(map[string]bool) ([]string, bool) { return []string{"ana with 1 key(s)"}, true },
 		stopSelf: func() error { stopped = true; return nil }}
 	if !u.run(context.Background()) {
 		t.Fatal("the uninstall did not finish")
@@ -93,7 +95,7 @@ func TestASelfUninstallThatCannotRevokeKeepsTheCredential(t *testing.T) {
 	rep := reporter.New(srv.URL, "argus-agent-test", filepath.Join(dir, "report-spool.jsonl"), log)
 	u := &selfUninstall{stateDir: dir, rep: rep, uploads: agent.NewUploads(dir, rep, log), log: log,
 		sshdHook: func() ([]string, []string, error) { return nil, nil, nil },
-		waysIn:   func() ([]string, bool) { return nil, false },
+		waysIn:   func(map[string]bool) ([]string, bool) { return nil, false },
 		stopSelf: func() error { t.Error("stopped without revoking"); return nil }}
 	if u.run(context.Background()) {
 		t.Fatal("reported done without revoking")
@@ -116,9 +118,68 @@ func TestASelfUninstallStopsWhenSSHDCannotBeChanged(t *testing.T) {
 	rep := reporter.New(srv.URL, "argus-agent-test", filepath.Join(dir, "report-spool.jsonl"), log)
 	u := &selfUninstall{stateDir: dir, rep: rep, uploads: agent.NewUploads(dir, rep, log), log: log,
 		sshdHook: func() ([]string, []string, error) { return nil, nil, errors.New("sshd -t failed") },
-		waysIn:   func() ([]string, bool) { return nil, false },
+		waysIn:   func(map[string]bool) ([]string, bool) { return nil, false },
 		stopSelf: func() error { t.Error("stopped"); return nil }}
 	if u.run(context.Background()) || called {
 		t.Fatalf("went on past a failed sshd change (control plane called: %v)", called)
+	}
+}
+
+// The accounts the agent made are locked as part of the console's uninstall,
+// after sshd and before the credential goes, and the ways in it reports leave
+// them out: once locked they let nobody in. From the moment it begins the
+// heartbeat stops reopening them.
+func TestARemovedServersAgentLocksTheAccountsItMade(t *testing.T) {
+	var order []string
+	var mu sync.Mutex
+	note := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		note("deregister")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = io.WriteString(w, `{"state":"revoked"}`)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, agent.EnrollmentFile), []byte("{}"), 0o600)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rep := reporter.New(srv.URL, "argus-agent-test", filepath.Join(dir, "report-spool.jsonl"), log)
+	var excluded map[string]bool
+	u := &selfUninstall{stateDir: dir, rep: rep, uploads: agent.NewUploads(dir, rep, log), log: log,
+		sshdHook: func() ([]string, []string, error) { note("sshd"); return nil, nil, nil },
+		waysIn: func(ex map[string]bool) ([]string, bool) {
+			excluded = ex
+			return []string{"root with 1 key(s)"}, true
+		},
+		lockAll: func(context.Context) (map[string]bool, []string, []string) {
+			note("lock")
+			return map[string]bool{"ana": true}, []string{"locked ana"}, nil
+		},
+		undo:     func() ([]string, []string) { note("undo"); return nil, nil },
+		stopSelf: func() error { note("stop"); return nil }}
+	if u.started() {
+		t.Fatal("started before anything asked")
+	}
+	u.start(context.Background())
+	if !u.started() {
+		t.Fatal("the heartbeat would go on reopening accounts while they are locked")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		u.mu.Lock()
+		done := u.done
+		u.mu.Unlock()
+		if done || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := "sshd,lock,undo,deregister,stop"; strings.Join(order, ",") != want {
+		t.Fatalf("steps ran as %v; want %s", order, want)
+	}
+	if excluded != nil {
+		t.Errorf("with no account keeper there is nothing to leave out, got %v", excluded)
 	}
 }

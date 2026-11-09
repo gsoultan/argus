@@ -109,6 +109,18 @@ class UnattendedEngine(private val ctx: Context, private val agent: Agent) {
         Log.i(ArgusApp.TAG, "unattended engine disarmed")
     }
 
+    /**
+     * Leaving Argus: disarmed, wireless debugging turned back off and the
+     * pairing forgotten, so the device does not re-arm on the next boot and
+     * no shell helper is left behind.
+     */
+    @Synchronized
+    fun forget() {
+        if (armed) disarm()
+        adb.forget()
+        agent.setWirelessDebugging(false)
+    }
+
     /** The agent's Device.play when unattended: send it to the helper. */
     fun play(json: String) {
         val o = out ?: throw IllegalStateException("the unattended helper is not connected")
