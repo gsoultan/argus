@@ -162,7 +162,7 @@ export function HomeTiles() {
         testid="tile-live"
         label="Live sessions"
         value={live?.count}
-        sub={live ? (live.count === 0 ? 'Nobody is on a server' : [live.root > 0 && `${live.root} as root`, live.database > 0 && plural(live.database, 'database')].filter(Boolean).join(' · ') || 'None as root') : undefined}
+        sub={live ? (live.count === 0 ? 'Nobody is on a server' : [live.root > 0 && `${live.root} as root`, live.database > 0 && plural(live.database, 'database'), (live.broker ?? 0) > 0 && plural(live.broker ?? 0, 'broker')].filter(Boolean).join(' · ') || 'None as root') : undefined}
         viz={<Line values={trends?.live} label="Live sessions, last hour" />}
         to={() => void navigate({ to: '/activity' })}
       />
@@ -288,7 +288,7 @@ function useSecond() {
   }, [])
 }
 
-const KIND_WORD: Record<string, string> = { terminal: 'Terminal', desktop: 'Desktop', database: 'Database', files: 'Files' }
+const KIND_WORD: Record<string, string> = { terminal: 'Terminal', desktop: 'Desktop', database: 'Database', broker: 'Broker', files: 'Files' }
 
 export function LiveNow() {
   const list = useHome((s) => s.liveList)

@@ -142,7 +142,7 @@ export function Overview({ needs }: { needs: Attention[] }) {
             </Card>
           ))}
           {!nodes && can('overview') && (
-            <Text size={FS.micro} c="dimmed">Node memory and disk need RabbitMQ's monitoring tag, which DBA level has.</Text>
+            <Text size={FS.micro} c="dimmed">Node memory and disk need RabbitMQ's monitoring tag, which the Admin level has.</Text>
           )}
         </Stack>
       </Box>

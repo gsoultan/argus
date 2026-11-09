@@ -26,7 +26,8 @@ import { cloudChangesQuery } from '~/lib/cloud'
 import { ChangeReview, ChangesTable } from '~/components/ChangeReview'
 import { ImpactText } from '~/components/ChangeImpact'
 import { impactOf } from '~/lib/changeApproval'
-import type { AccessRequest, DirectLogin, StatementAsk } from '~/types/domain'
+import { levelName } from '~/lib/engines'
+import type { AccessRequest, DBLevel, DirectLogin, StatementAsk } from '~/types/domain'
 
 /**
  * Everything waiting on a person, in one place: logins straight to a server
@@ -472,7 +473,7 @@ function RequestCard({ request: r, canDecide, mine, onReview, onDecided }: {
                 </Badge>
               </Tooltip>
             ) : r.principal.startsWith('db:') ? (
-              <Badge size="xs" variant="light" color="azure">{r.principal.slice(3)} on a database</Badge>
+              <Badge size="xs" variant="light" color="azure">{r.broker ? `${levelName(r.principal.slice(3) as DBLevel, 'rabbitmq')} on a broker` : `${r.principal.slice(3)} on a database`}</Badge>
             ) : (
               <Badge size="xs" variant="outline" color="slate">as {r.principal}</Badge>
             )}

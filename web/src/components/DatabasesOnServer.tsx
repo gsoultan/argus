@@ -63,7 +63,8 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
                 <Table.Td ta="right">
                   <Group gap="xs" justify="flex-end" wrap="nowrap">
                     {canEdit && (
-                      <ButtonLink to="/databases/$dbId/settings" params={{ dbId: d.id }} size="compact-xs" variant="subtle">
+                      <ButtonLink {...(isBroker(d.engine) ? { to: '/brokers/$brokerId/settings', params: { brokerId: d.id } } as const : { to: '/databases/$dbId/settings', params: { dbId: d.id } } as const)}
+                        size="compact-xs" variant="subtle">
                         Who can connect
                       </ButtonLink>
                     )}

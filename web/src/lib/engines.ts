@@ -93,7 +93,7 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       read: 'See topics, partitions and consumer lag, and peek at messages. Nothing is committed for any group.',
       write: 'Publish messages too.',
       owner: 'Create and delete topics in the scope, and change their settings.',
-      dba: 'The same as owner. Nothing on the cluster itself: no brokers, no other users, no ACLs.',
+      dba: 'The same as Manage. Nothing on the cluster itself: no brokers, no other users, no ACLs.',
     },
   },
 }
@@ -125,4 +125,14 @@ export function engineVersion(engine: string | undefined, version: string): stri
   if (engine !== 'mysql') return `Postgres ${v}`
   const n = v.split('-')[0]
   return /mariadb/i.test(version) ? `MariaDB ${n}` : `MySQL ${n}`
+}
+
+/**
+ * A level's name as the person reads it. The levels are the same four
+ * everywhere, but "Owner" and "DBA" are database words: on a broker they are
+ * Manage and Admin, which say what they let you do there.
+ */
+export function levelName(level: DBLevel, engine?: string): string {
+  if (isBroker(engine)) return { read: 'Read', write: 'Write', owner: 'Manage', dba: 'Admin' }[level]
+  return { read: 'Read', write: 'Write', owner: 'Owner', dba: 'DBA' }[level]
 }

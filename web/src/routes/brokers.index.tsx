@@ -15,7 +15,7 @@ import type { DBLabel } from '~/types/domain'
 import { LevelBadge } from '~/components/LevelBadge'
 import { LABEL_COLOR } from '~/components/StoreChrome'
 import { EngineMark } from '~/components/EngineMark'
-import { isBroker } from '~/lib/engines'
+import { isBroker, levelName } from '~/lib/engines'
 
 /**
  * Brokers: every RabbitMQ vhost and Kafka entry this person may open, apart from the
@@ -113,12 +113,12 @@ function Brokers() {
                     <Badge variant="light" color={LABEL_COLOR[d.label]} radius="sm">{d.label}</Badge>
                     {writesNeedApproval(d) && <ApprovalBadge />}
                   </Group></Table.Td>
-                  <Table.Td><LevelBadge level={acc?.level} />
-                    {!acc?.level && acc?.approvable && <Text span size={FS.micro} c="dimmed" ml={6}>{acc.approvable} needs approval</Text>}</Table.Td>
+                  <Table.Td><LevelBadge level={acc?.level} engine={d.engine} />
+                    {!acc?.level && acc?.approvable && <Text span size={FS.micro} c="dimmed" ml={6}>{levelName(acc.approvable, d.engine)} needs approval</Text>}</Table.Td>
                   <Table.Td><Text size={FS.meta} c={d.tunnelConnected ? 'dimmed' : 'rose'}>{d.tunnelConnected ? 'connected' : 'offline'}</Text></Table.Td>
                   <Table.Td><Group justify="flex-end" gap="xs" wrap="nowrap">
                     {admin && (
-                      <ButtonLink to="/databases/$dbId/settings" params={{ dbId: d.id }} size="xs" variant="subtle">Who can connect</ButtonLink>
+                      <ButtonLink to="/brokers/$brokerId/settings" params={{ brokerId: d.id }} size="xs" variant="subtle">Who can connect</ButtonLink>
                     )}
                     <Button size="xs" disabled={!canOpen && Boolean(acc?.level)}
                       title={!acc?.level ? 'Ask for access from the broker page' : !d.tunnelConnected ? 'The agent is offline' : undefined}

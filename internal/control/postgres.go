@@ -78,7 +78,7 @@ func (a *API) handleDatabaseTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if level == "" {
-		writeErr(w, http.StatusForbidden, "you are not assigned this database"+
+		writeErr(w, http.StatusForbidden, "you are not assigned this "+db.Noun()+
 			map[bool]string{true: " at that level", false: ""}[in.Level != ""])
 		return
 	}
@@ -229,6 +229,8 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		_ = conn.Close(websocket.StatusNormalClosure, "refused")
 	}
 
+	// what the person opened, in the words the console uses for it.
+	what := db.Noun()
 	pg := db.Engine == "" || db.Engine == tunnel.EnginePostgres
 	// sqlish is an engine that speaks the Postgres session's frames: its
 	// requests are PGRequests, checked and gated the same way.
@@ -243,7 +245,9 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 	g.DB = &tunnel.GrantDB{ID: db.ID, Name: db.Name, Host: db.Host, Port: db.Port, Level: level,
 		PoolHost: db.PoolerHost, PoolPort: db.PoolerPort,
 		StatementTimeoutMS: db.Policy.StatementTimeoutS * 1000, IdleTxTimeoutMS: db.Policy.IdleTxTimeoutS * 1000,
-		MaxRows: db.Policy.MaxRows, IdleTimeoutS: db.Policy.IdleTimeoutS, MaxSessionS: db.Policy.MaxSessionS}
+		MaxRows: db.Policy.MaxRows, IdleTimeoutS: db.Policy.IdleTimeoutS, MaxSessionS: db.Policy.MaxSessionS,
+		// The relay below joins an answer sent in parts.
+		AnswerParts: true}
 	if !pg {
 		// A Postgres grant names no engine, so an older agent reads it as it
 		// always has; the others say which they are.
@@ -262,7 +266,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 	switch {
 	case errors.Is(err, ErrNoTunnel):
 		fail("the agent on " + db.Hostname + " is not connected to this control plane, so the " +
-			"database cannot open through it; check the agent is running and shows as connected under Servers")
+			what + " cannot open through it; check the agent is running and shows as connected under Servers")
 		return
 	case tunnel.IsRefused(err):
 		a.log.Warn(protocol+": the agent refused the session", "host", db.Hostname, "database", db.Name,
@@ -465,13 +469,32 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 
 	// Agent → browser.
 	fr := tunnel.NewFrameReader(st)
+	var join tunnel.AnswerJoiner
+	agentGone := func() {
+		_ = sendJSON(pgBrowserMessage{Type: "error",
+			Data: "the connection to the agent ended; open the " + what + " again"})
+		_ = conn.Close(websocket.StatusGoingAway, "agent gone")
+	}
 	for {
 		typ, p, err := fr.Next()
 		if err != nil {
-			_ = sendJSON(pgBrowserMessage{Type: "error",
-				Data: "the connection to the agent ended; open the database again"})
-			_ = conn.Close(websocket.StatusGoingAway, "agent gone")
+			agentGone()
 			return
+		}
+		if typ == tunnel.FramePGAnswerPart {
+			if join.Part(p) != nil {
+				a.log.Warn(protocol+": the agent sent an answer past the limit", "session", sessionID)
+				agentGone()
+				return
+			}
+			continue
+		}
+		if typ == tunnel.FramePGAnswer {
+			if p, err = join.Answer(p); err != nil {
+				a.log.Warn(protocol+": the agent sent an answer past the limit", "session", sessionID)
+				agentGone()
+				return
+			}
 		}
 		switch typ {
 		case tunnel.FramePGRows:

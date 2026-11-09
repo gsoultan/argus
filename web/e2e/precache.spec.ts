@@ -46,9 +46,12 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 723.4 kB with cloud schedules: the schedule editor's route guard and search
  * rule in the entry, and the Schedules tab name. The tab, the editor and the
  * schedule queries are in chunks that are not stored.
+ * 724.3 kB with broker settings under Brokers: the new route's guard and
+ * search rule in the entry, and the broker names for levels that the bell and
+ * search use. The settings page itself is in a chunk that is not stored.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 724
+const MAX_KB = 725
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')

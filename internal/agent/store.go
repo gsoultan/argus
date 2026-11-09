@@ -101,6 +101,7 @@ func storeService(cfg StoreConfig, service, engine string, open openStore) Tunne
 			call.Refuse("the session could not be recorded, so it was not opened: " + err.Error())
 			return
 		}
+		rec.parts = g.DB.AnswerParts
 		octx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		eng, err := open(octx, g, id)
 		cancel()
@@ -275,6 +276,9 @@ type stmtRecorder struct {
 	prev   string
 	stream tunnel.Stream
 	closed bool
+	// parts says an answer larger than a frame may go in parts: the
+	// control plane that signed the grant joins them.
+	parts bool
 }
 
 func newStmtRecorder(dir, id string) (*stmtRecorder, error) {
@@ -364,12 +368,30 @@ func (r *stmtRecorder) send(a tunnel.StoreAnswer) error {
 	if err != nil {
 		return err
 	}
+	return r.answer(b, func() ([]byte, error) {
+		return json.Marshal(tunnel.StoreAnswer{ID: a.ID, Type: "error", Error: tunnel.ErrAnswerTooLarge.Error()})
+	})
+}
+
+// answer sends one encoded answer, in parts when it is larger than a frame
+// and the control plane joins parts. One that cannot be sent at all goes as
+// what instead makes, an error naming the request: written as it was, it
+// failed, and that failure ended the whole session over one large answer.
+func (r *stmtRecorder) answer(b []byte, instead func() ([]byte, error)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stream == nil {
 		return errors.New("no stream")
 	}
-	return tunnel.WriteFrame(r.stream, tunnel.FramePGAnswer, b)
+	err := tunnel.WriteAnswer(r.stream, b, r.parts)
+	if !errors.Is(err, tunnel.ErrAnswerTooLarge) {
+		return err
+	}
+	nb, err := instead()
+	if err != nil {
+		return err
+	}
+	return tunnel.WriteFrame(r.stream, tunnel.FramePGAnswer, nb)
 }
 
 // frame sends one frame on the session's stream, in order with the

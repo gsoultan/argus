@@ -45,6 +45,9 @@ const (
 	FramePGAnswer  byte = 'a'
 	FramePGRows    byte = 'r'
 	FramePGRecord  byte = 'l'
+	// FramePGAnswerPart is the front of an answer too large for one frame;
+	// the FramePGAnswer that follows it carries the rest. See WriteAnswer.
+	FramePGAnswerPart byte = 'p'
 )
 
 // PostgresService is the tunnel service name.
@@ -506,6 +509,11 @@ type GrantDB struct {
 	ConfigPath string `json:"configPath,omitempty"`
 	// KeysLimit is the largest Redis db KEYS may run on. 0 = the default.
 	KeysLimit int `json:"keysLimit,omitempty"`
+	// AnswerParts says the control plane joins an answer sent in parts
+	// (FramePGAnswerPart). Without it an agent sends an answer that does
+	// not fit one frame as an error instead, since a control plane that
+	// predates parts would drop them.
+	AnswerParts bool `json:"answerParts,omitempty"`
 }
 
 // EngineOf is the grant's engine, with the old empty value read as postgres.

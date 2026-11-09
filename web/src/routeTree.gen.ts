@@ -36,6 +36,7 @@ import { Route as DatabasesIndexRouteImport } from './routes/databases.index'
 import { Route as DatabasesDbIdRouteImport } from './routes/databases.$dbId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
+import { Route as BrokersBrokerIdSettingsRouteImport } from './routes/brokers.$brokerId_.settings'
 import { Route as DatabasesDbIdSettingsRouteImport } from './routes/databases.$dbId_.settings'
 
 const IndexRoute = IndexRouteImport.update({
@@ -173,6 +174,11 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   path: '/sessions/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BrokersBrokerIdSettingsRoute = BrokersBrokerIdSettingsRouteImport.update({
+  id: '/brokers/$brokerId_/settings',
+  path: '/brokers/$brokerId/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DatabasesDbIdSettingsRoute = DatabasesDbIdSettingsRouteImport.update({
   id: '/databases/$dbId_/settings',
   path: '/databases/$dbId/settings',
@@ -207,6 +213,7 @@ export interface FileRoutesByFullPath {
   '/cloud/': typeof CloudIndexRoute
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/brokers/$brokerId/settings': typeof BrokersBrokerIdSettingsRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRoutesByTo {
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/cloud': typeof CloudIndexRoute
   '/databases': typeof DatabasesIndexRoute
   '/sessions': typeof SessionsIndexRoute
+  '/brokers/$brokerId/settings': typeof BrokersBrokerIdSettingsRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRoutesById {
@@ -268,6 +276,7 @@ export interface FileRoutesById {
   '/cloud/': typeof CloudIndexRoute
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/brokers/$brokerId_/settings': typeof BrokersBrokerIdSettingsRoute
   '/databases/$dbId_/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRouteTypes {
@@ -300,6 +309,7 @@ export interface FileRouteTypes {
     | '/cloud/'
     | '/databases/'
     | '/sessions/'
+    | '/brokers/$brokerId/settings'
     | '/databases/$dbId/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -330,6 +340,7 @@ export interface FileRouteTypes {
     | '/cloud'
     | '/databases'
     | '/sessions'
+    | '/brokers/$brokerId/settings'
     | '/databases/$dbId/settings'
   id:
     | '__root__'
@@ -360,6 +371,7 @@ export interface FileRouteTypes {
     | '/cloud/'
     | '/databases/'
     | '/sessions/'
+    | '/brokers/$brokerId_/settings'
     | '/databases/$dbId_/settings'
   fileRoutesById: FileRoutesById
 }
@@ -391,6 +403,7 @@ export interface RootRouteChildren {
   CloudIndexRoute: typeof CloudIndexRoute
   DatabasesIndexRoute: typeof DatabasesIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
+  BrokersBrokerIdSettingsRoute: typeof BrokersBrokerIdSettingsRoute
   DatabasesDbIdSettingsRoute: typeof DatabasesDbIdSettingsRoute
 }
 
@@ -585,6 +598,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/brokers/$brokerId_/settings': {
+      id: '/brokers/$brokerId_/settings'
+      path: '/brokers/$brokerId/settings'
+      fullPath: '/brokers/$brokerId/settings'
+      preLoaderRoute: typeof BrokersBrokerIdSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/databases/$dbId_/settings': {
       id: '/databases/$dbId_/settings'
       path: '/databases/$dbId/settings'
@@ -623,6 +643,7 @@ const rootRouteChildren: RootRouteChildren = {
   CloudIndexRoute: CloudIndexRoute,
   DatabasesIndexRoute: DatabasesIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
+  BrokersBrokerIdSettingsRoute: BrokersBrokerIdSettingsRoute,
   DatabasesDbIdSettingsRoute: DatabasesDbIdSettingsRoute,
 }
 export const routeTree = rootRouteImport

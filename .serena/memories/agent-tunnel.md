@@ -74,6 +74,21 @@ child with credentials as root elsewhere, unchanged when there is no rabbitmq
 account or the agent is not root. Do not fix this by giving the unit
 SETUID/SETGID: that hands every agent child the means to become anyone.
 
+**Broker sessions that ended early (2026-11).** Two causes, both fixed. (1) A
+store answer (RabbitMQ, Redis, MongoDB, Kafka, MySQL) may carry MaxStoreAnswer
+(16 MB) but a frame is MaxFrame (256 KB); writing a larger one failed and ended
+the session ("the connection to the agent ended"). Now `tunnel.WriteAnswer`
+sends it as FramePGAnswerPart frames ending in a FramePGAnswer, the relay joins
+them (`tunnel.AnswerJoiner`, bound MaxAnswer), and only when the grant says
+`answerParts` (old controls would drop parts); otherwise the request gets an
+error and the session goes on. (2) One RabbitMQ user per person and level
+serves every vhost on a broker, but permissions were set only when the user was
+made, so a second vhost was refused with 401, which ended the session. Admins
+never saw it: the administrator tag skips RabbitMQ's vhost check. Now
+`rabbitFactory.vhosts` counts sessions per vhost, sets permissions on a vhost's
+first, clears them at its last, and a 401 ends the session only when
+`/api/whoami` also refuses.
+
 Browser protocol is the gateway's (JSON control messages) except output is
 **binary** WebSocket messages; `LiveTerminal` handles both. The console picks
 the agent path when `asset.tunnelConnected` (EXISTS on a fresh, unrevoked

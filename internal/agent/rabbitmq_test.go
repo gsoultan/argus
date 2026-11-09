@@ -69,8 +69,16 @@ func (f *fakeRabbit) ctl(_ context.Context, args []string, stdin string) ([]byte
 	case "set_permissions":
 		// -p vhost user conf write read
 		f.perms[args[3]+"@"+args[2]] = [3]string{args[4], args[5], args[6]}
+	case "clear_permissions":
+		// -p vhost user
+		delete(f.perms, args[3]+"@"+args[2])
 	case "delete_user":
 		delete(f.users, args[1])
+		for k := range f.perms {
+			if strings.HasPrefix(k, args[1]+"@") {
+				delete(f.perms, k)
+			}
+		}
 	}
 	return nil, nil
 }

@@ -10,6 +10,7 @@ import { PageBody, PageHeader } from '~/components/page'
 import { notifyError } from '~/lib/notify'
 import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
 import { databaseQuery, meQuery } from '~/lib/queries'
+import { levelName } from '~/lib/engines'
 import { canSee } from '~/lib/roles'
 import type { DBLevel } from '~/types/domain'
 import { AskModal } from '~/components/DatabaseAskModal'
@@ -83,12 +84,12 @@ function BrokerPage() {
         <PageBody>
           <Stack gap="md" maw={560}>
             <Alert color="azure" variant="light" icon={<IconInfoCircle size={16} />}>
-              You can ask for <b>{access.approvable}</b> on {kafka ? 'these topics' : 'this vhost'}. An approver gets it straight away, and you can open it as soon as
+              You can ask for <b>{access.approvable ? levelName(access.approvable, database.engine) : ''}</b> on {kafka ? 'these topics' : 'this vhost'}. An approver gets it straight away, and you can open it as soon as
               they say yes.
             </Alert>
             <Button onClick={ask.open} style={{ alignSelf: 'flex-start' }}>Ask for access</Button>
           </Stack>
-          <AskModal dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable ?? 'read'} />
+          <AskModal what="broker" engine={data?.database.engine} dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable ?? 'read'} />
         </PageBody>
       </Box>
     )
@@ -109,7 +110,7 @@ function BrokerPage() {
           onNavigate={(s) => void navigate({ search: { tab: s.tab === 'overview' ? undefined : s.tab, topic: s.topic } })}
           settingsLink={canSee(me?.role, 'admin')}
         />
-        {access.approvable && <AskModal dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable} />}
+        {access.approvable && <AskModal what="broker" engine={data?.database.engine} dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable} />}
       </>
     )
   }
@@ -128,7 +129,7 @@ function BrokerPage() {
         onNavigate={(s) => void navigate({ search: { tab: s.tab === 'overview' ? undefined : s.tab, queue: s.queue, exchange: s.exchange } })}
         settingsLink={canSee(me?.role, 'admin')}
       />
-      {access.approvable && <AskModal dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable} />}
+      {access.approvable && <AskModal what="broker" engine={data?.database.engine} dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable} />}
     </>
   )
 }

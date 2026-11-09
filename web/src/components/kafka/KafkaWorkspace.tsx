@@ -15,6 +15,7 @@ import {
 } from '~/lib/kafka'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { FS, INK } from '~/theme'
+import { levelName } from '~/lib/engines'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 
 /*
@@ -118,14 +119,14 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
               leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
               {s.status === 'ready' ? 'Connected · recording' : s.status === 'connecting' ? 'Connecting' : 'Closed'}
             </Badge>
-            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">{level ? level.toUpperCase() : '…'}</Badge>
+            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">{level ? levelName(level, database.engine) : '…'}</Badge>
             {access.approvable && onAskForAccess && (
               <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
-                {narrow ? 'Ask' : `Ask for ${access.approvable}`}
+                {narrow ? 'Ask' : `Ask for ${levelName(access.approvable, database.engine)}`}
               </Button>
             )}
             {props.settingsLink && !narrow && (
-              <ButtonLink size="xs" variant="subtle" to="/databases/$dbId/settings" params={{ dbId: database.id }}>Who can connect</ButtonLink>
+              <ButtonLink size="xs" variant="subtle" to="/brokers/$brokerId/settings" params={{ brokerId: database.id }}>Who can connect</ButtonLink>
             )}
             {can('publish') && (
               <Button size="xs" leftSection={<IconSend size={14} />} onClick={() => setPublishing(topic ?? '')}>

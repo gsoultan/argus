@@ -11,6 +11,7 @@ import {
   attention, deadLetterQueues, items, type Binding, type Exchange, type Node, type Queue, type VhostStats,
 } from '~/lib/rabbit'
 import { FS, INK } from '~/theme'
+import { levelName } from '~/lib/engines'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import './broker.css'
 import { Connections } from './Connections'
@@ -49,7 +50,8 @@ interface BrokerCtx {
   vhost: VhostStats | null
   nodes: Node[] | null
   loaded: boolean
-  reload: () => Promise<void>
+  /** Refreshes the lists; full also fetches exchanges and bindings now. */
+  reload: (full?: boolean) => Promise<void>
   openQueue: (name: string | null) => void
   goTab: (t: BrokerTab, extra?: { exchange?: string }) => void
   confirm: (c: Confirm) => void
@@ -80,6 +82,15 @@ export interface BrokerWorkspaceProps {
 }
 
 const POLL_MS = 5000
+/**
+ * Exchanges and bindings change when someone declares or binds, not from
+ * second to second, and the vhost's whole binding list is the largest thing
+ * the workspace asks for. They are refreshed this often, and at once after an
+ * action or on opening Exchanges & routing; queues and rates every POLL_MS.
+ * Every request waits its turn on the agent, so the five-second poll is kept
+ * to what moves.
+ */
+const TOPOLOGY_MS = 30_000
 
 export function BrokerWorkspace(props: BrokerWorkspaceProps) {
   const { database, access, getTicket, endpoint, onAskForAccess, tab, queue, exchange, onNavigate } = props
@@ -99,22 +110,34 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
   const [confirming, setConfirming] = useState<Confirm | null>(null)
   const [publishing, setPublishing] = useState<PublishPreset | null>(null)
   const busy = useRef(false)
+  // When exchanges and bindings were last fetched; 0 is never, or stale.
+  const topologyAt = useRef(0)
+  const again = useRef(false)
 
-  const reload = useCallback(async () => {
-    if (busy.current) return
+  const reload = useCallback(async (full = false) => {
+    if (full) topologyAt.current = 0
+    if (busy.current) {
+      // Asked for while a refresh is out, after an action say: run once more
+      // when it is back, so what the action changed is shown.
+      again.current = true
+      return
+    }
     busy.current = true
     try {
+      const topology = Date.now() - topologyAt.current >= TOPOLOGY_MS
+      const none: StoreAnswer = { id: 0, type: 'result' }
       const [q, e, b, o] = await Promise.all([
         s.ask({ op: 'queues', count: 500 }),
-        s.ask({ op: 'exchanges', count: 500 }),
-        s.ask({ op: 'bindings' }),
+        topology ? s.ask({ op: 'exchanges', count: 500 }) : Promise.resolve(none),
+        topology ? s.ask({ op: 'bindings' }) : Promise.resolve(none),
         s.ask({ op: 'overview' }),
       ])
       if (q.type !== 'result') { setErr(q.error ?? 'could not list queues'); return }
       setErr(null)
       setQueues(items<Queue>(q.data))
-      if (e.type === 'result') setExchanges(items<Exchange>(e.data))
-      if (b.type === 'result') setBindings(items<Binding>(b.data))
+      if (topology && e.type === 'result' && b.type === 'result') topologyAt.current = Date.now()
+      if (topology && e.type === 'result') setExchanges(items<Exchange>(e.data))
+      if (topology && b.type === 'result') setBindings(items<Binding>(b.data))
       if (o.type === 'result') {
         const d = o.data as { vhost?: VhostStats; nodes?: Node[] | null }
         setVhost(d.vhost ?? null)
@@ -123,6 +146,10 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
       setLoaded(true)
     } finally {
       busy.current = false
+      if (again.current) {
+        again.current = false
+        void reload()
+      }
     }
   }, [s])
 
@@ -133,6 +160,11 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
     return () => window.clearInterval(t)
   }, [s.status, s.ready, reload])
 
+  // Exchanges & routing shows the topology, so it is fetched fresh there.
+  useEffect(() => {
+    if (tab === 'routing' && s.status === 'ready' && s.ready) void reload(true)
+  }, [tab, s.status, s.ready, reload])
+
   const dlq = useMemo(() => deadLetterQueues(queues, bindings), [queues, bindings])
   const needs = useMemo(() => attention(queues, bindings, vhost, nodes), [queues, bindings, vhost, nodes])
 
@@ -140,7 +172,7 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
     const a = await s.ask(req)
     if (a.type === 'result') {
       notifyOk('Done', `${ok} It is in the session's recording.`)
-      void reload()
+      void reload(true)
     } else if (!a.needsConfirm) {
       notifyError('Not done', new Error(a.error ?? 'failed'))
     }
@@ -180,14 +212,14 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
                 leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
                 {s.status === 'ready' ? 'Connected · recording' : s.status === 'connecting' ? 'Connecting' : 'Closed'}
               </Badge>
-              <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">{level ? level.toUpperCase() : '…'}</Badge>
+              <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">{level ? levelName(level, database.engine) : '…'}</Badge>
               {access.approvable && onAskForAccess && (
                 <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
-                  {narrow ? 'Ask' : `Ask for ${access.approvable}`}
+                  {narrow ? 'Ask' : `Ask for ${levelName(access.approvable, database.engine)}`}
                 </Button>
               )}
               {props.settingsLink && !narrow && (
-                <ButtonLink size="xs" variant="subtle" to="/databases/$dbId/settings" params={{ dbId: database.id }}>
+                <ButtonLink size="xs" variant="subtle" to="/brokers/$brokerId/settings" params={{ brokerId: database.id }}>
                   Who can connect
                 </ButtonLink>
               )}

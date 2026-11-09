@@ -299,7 +299,7 @@ func (a *API) postCancel(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "cancel request", err)
 		return
 	}
-	detail := "Cancelled their request for " + describeAsk(out.Principal, out.AssetHostnames) + " before it was decided."
+	detail := "Cancelled their request for " + describeAsk(out) + " before it was decided."
 	if out.DecisionNote != nil {
 		detail += " " + *out.DecisionNote
 	}

@@ -150,10 +150,22 @@ type refusal struct{ why string }
 func (r *refusal) Error() string { return r.why }
 
 func (h *storeHarness) answer() tunnel.StoreAnswer {
+	var join tunnel.AnswerJoiner
 	for {
 		typ, p, err := h.fr.Next()
 		if err != nil {
 			h.t.Fatal(err)
+		}
+		switch typ {
+		case tunnel.FramePGAnswerPart:
+			if err := join.Part(p); err != nil {
+				h.t.Fatal(err)
+			}
+			continue
+		case tunnel.FramePGAnswer:
+			if p, err = join.Answer(p); err != nil {
+				h.t.Fatal(err)
+			}
 		}
 		switch typ {
 		case tunnel.FramePGRecord:

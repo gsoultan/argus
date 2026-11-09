@@ -263,6 +263,20 @@ func (d *Database) validateRedis() error {
 // SQL says the entry speaks SQL through the Postgres session's frames:
 // Postgres and MySQL. Its statements can wait for approval and its sessions
 // open the SQL workspace.
+// Broker reports whether the entry is a message broker (RabbitMQ, Kafka),
+// which the console lists under Brokers rather than Databases.
+func (d Database) Broker() bool {
+	return d.Engine == tunnel.EngineRabbitMQ || d.Engine == tunnel.EngineKafka
+}
+
+// Noun is what the console calls the entry in a sentence.
+func (d Database) Noun() string {
+	if d.Broker() {
+		return "broker"
+	}
+	return "database"
+}
+
 func (d Database) SQL() bool {
 	return d.Engine == "" || d.Engine == tunnel.EnginePostgres || d.Engine == tunnel.EngineMySQL
 }
@@ -692,7 +706,7 @@ func (s *Store) CreateDatabaseRequest(ctx context.Context, email, dbID, level, j
 			"with approval, before asking for it", level, d.Name)
 	}
 	r := AccessRequest{RequesterEmail: email, AssetHostnames: []string{d.Hostname},
-		Principal: "db:" + level, Justification: justification, DurationMinutes: minutes}
+		Principal: "db:" + level, Justification: justification, DurationMinutes: minutes, Broker: d.Broker()}
 	err = s.db(ctx).QueryRow(ctx, `
 		INSERT INTO access_requests
 			(requester_email, asset_hostnames, principal, justification,

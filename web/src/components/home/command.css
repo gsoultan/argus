@@ -134,6 +134,7 @@
 }
 .argus-kind[data-kind='desktop'] { color: var(--mantine-color-violet-text); background: var(--mantine-color-violet-light); }
 .argus-kind[data-kind='database'] { color: var(--mantine-color-cyan-text); background: var(--mantine-color-cyan-light); }
+.argus-kind[data-kind='broker'] { color: var(--mantine-color-amber-text); background: var(--mantine-color-amber-light); }
 .argus-feedrow[data-fresh] { animation: argus-arrive 2s ease-out; }
 @keyframes argus-arrive {
   from { background: var(--color-brand-wash); box-shadow: inset 3px 0 0 var(--color-brand); }

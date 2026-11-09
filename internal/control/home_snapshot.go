@@ -53,6 +53,9 @@ type HomeLive struct {
 	Count    int `json:"count"`
 	Root     int `json:"root"`
 	Database int `json:"database"`
+	// Broker counts RabbitMQ and Kafka sessions, which the console calls
+	// brokers, not databases.
+	Broker int `json:"broker"`
 	// Silent are active on paper and unheard from; never counted as live.
 	Silent int `json:"silent"`
 }
@@ -174,7 +177,9 @@ func (s *Store) homeFast(ctx context.Context, h *HomeSnapshot) error {
 	h.Servers.Answering = max(0, h.Servers.Total-h.Servers.Down-h.Servers.Quiet)
 
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT id::text, user_email, principal, asset_hostname, kind, started_at
+		SELECT id::text, user_email, principal, asset_hostname,
+		       CASE WHEN kind = 'database' AND protocol IN ('rabbitmq', 'kafka') THEN 'broker' ELSE kind END,
+		       started_at
 		  FROM sessions
 		 WHERE state = 'active' AND last_reported_at > now() - $1::interval
 		 ORDER BY started_at DESC`, silence)
@@ -192,8 +197,11 @@ func (s *Store) homeFast(ctx context.Context, h *HomeSnapshot) error {
 		if isAdminAccount(x.Principal) {
 			h.Live.Root++
 		}
-		if x.Kind == "database" {
+		switch x.Kind {
+		case "database":
 			h.Live.Database++
+		case "broker":
+			h.Live.Broker++
 		}
 		if len(h.LiveList) < homeLiveMax {
 			x.StartedAt = x.StartedAt.UTC()
