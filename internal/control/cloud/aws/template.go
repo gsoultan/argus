@@ -24,8 +24,11 @@ var ReadPolicy = []string{
 }
 
 // ManagePolicy is what the manage role may do: the changes Argus makes to
-// instances, and nothing else. No IAM, so a change cannot grant itself
-// more; no iam:PassRole, so an instance cannot be launched with a role.
+// instances, disks, snapshots, images and Elastic IPs, and nothing else. No
+// IAM, so a change cannot grant itself more; no iam:PassRole, so an
+// instance cannot be launched with a role. New disks use the account's
+// default EBS key, whose key policy already lets EBS use it for anyone in
+// the account, so no KMS permission is needed either.
 var ManagePolicy = []string{
 	"ec2:Describe*",
 	"ec2:RunInstances",
@@ -33,7 +36,10 @@ var ManagePolicy = []string{
 	"ec2:TerminateInstances",
 	"ec2:ModifyInstanceAttribute",
 	"ec2:CreateTags", "ec2:DeleteTags",
-	"ec2:CreateSnapshot",
+	"ec2:CreateSnapshot", "ec2:DeleteSnapshot",
+	"ec2:CreateVolume", "ec2:ModifyVolume", "ec2:AttachVolume", "ec2:DetachVolume", "ec2:DeleteVolume",
+	"ec2:CreateImage", "ec2:DeregisterImage",
+	"ec2:AllocateAddress", "ec2:AssociateAddress", "ec2:DisassociateAddress", "ec2:ReleaseAddress",
 }
 
 // ReadRoleName and ManageRoleName are the roles the template makes.
@@ -52,7 +58,7 @@ const (
 func Template(principal, externalID string, manage bool) string {
 	desc := "Lets Argus read this account's inventory, as the person who asked."
 	if manage {
-		desc = "Lets Argus read this account's inventory and change its instances, as the person who asked."
+		desc = "Lets Argus read this account's inventory and change its instances, disks, images and addresses, as the person who asked."
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `AWSTemplateFormatVersion: "2010-09-09"

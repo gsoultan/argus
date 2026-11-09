@@ -37,6 +37,10 @@ func (p *Provider) Inventory(ctx context.Context, a cloud.Account, region string
 			got, err = subnets(ctx, c, region)
 		case cloud.KindAddress:
 			got, err = addresses(ctx, c, region)
+		case cloud.KindSnapshot:
+			got, err = snapshots(ctx, c, region)
+		case cloud.KindImage:
+			got, err = images(ctx, c, region)
 		default:
 			err = fmt.Errorf("AWS has no inventory of %q yet", k)
 		}
@@ -111,6 +115,7 @@ func Instance(i types.Instance, region string) cloud.Resource {
 	set(r.Details, "keyPair", awssdk.ToString(i.KeyName))
 	set(r.Details, "lifecycle", string(i.InstanceLifecycle))
 	set(r.Details, "rootDevice", string(i.RootDeviceType))
+	set(r.Details, "rootDeviceName", awssdk.ToString(i.RootDeviceName))
 	if i.IamInstanceProfile != nil {
 		set(r.Details, "instanceProfile", awssdk.ToString(i.IamInstanceProfile.Arn))
 	}
@@ -312,6 +317,95 @@ func Address(a types.Address, region string) cloud.Resource {
 	}
 	if ip := awssdk.ToString(a.PrivateIpAddress); ip != "" {
 		r.Addresses = []string{ip}
+	}
+	return r
+}
+
+func snapshots(ctx context.Context, c *ec2.Client, region string) ([]cloud.Resource, error) {
+	var out []cloud.Resource
+	pg := ec2.NewDescribeSnapshotsPaginator(c, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}})
+	for pg.HasMorePages() {
+		page, err := pg.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range page.Snapshots {
+			out = append(out, Snapshot(s, region))
+		}
+	}
+	return out, nil
+}
+
+// Snapshot maps one EBS snapshot this account owns.
+func Snapshot(s types.Snapshot, region string) cloud.Resource {
+	id := awssdk.ToString(s.SnapshotId)
+	tags := tagMap(s.Tags)
+	r := cloud.Resource{
+		Kind: cloud.KindSnapshot, ID: id, Name: cloud.Name(tags, id), Region: region,
+		State: string(s.State), CreatedAt: s.StartTime, Tags: tags,
+		Size: fmt.Sprintf("%d GiB", awssdk.ToInt32(s.VolumeSize)), Details: map[string]string{},
+	}
+	// A snapshot copied from elsewhere names a volume id that is not real.
+	if v := awssdk.ToString(s.VolumeId); v != "" && v != "vol-ffffffff" {
+		r.Links = append(r.Links, cloud.Ref{Kind: cloud.KindVolume, ID: v})
+	}
+	set(r.Details, "description", awssdk.ToString(s.Description))
+	set(r.Details, "encrypted", yesNo(awssdk.ToBool(s.Encrypted)))
+	set(r.Details, "progress", awssdk.ToString(s.Progress))
+	set(r.Details, "storageTier", string(s.StorageTier))
+	return r
+}
+
+func images(ctx context.Context, c *ec2.Client, region string) ([]cloud.Resource, error) {
+	var out []cloud.Resource
+	pg := ec2.NewDescribeImagesPaginator(c, &ec2.DescribeImagesInput{Owners: []string{"self"}})
+	for pg.HasMorePages() {
+		page, err := pg.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, im := range page.Images {
+			out = append(out, OwnImage(im, region))
+		}
+	}
+	return out, nil
+}
+
+// OwnImage maps one image this account owns.
+func OwnImage(im types.Image, region string) cloud.Resource {
+	id := awssdk.ToString(im.ImageId)
+	tags := tagMap(im.Tags)
+	name := awssdk.ToString(im.Name)
+	if name == "" {
+		name = cloud.Name(tags, id)
+	}
+	r := cloud.Resource{Kind: cloud.KindImage, ID: id, Name: name, Region: region, State: string(im.State),
+		Tags: tags, Details: map[string]string{}}
+	if t, err := time.Parse(time.RFC3339, awssdk.ToString(im.CreationDate)); err == nil {
+		r.CreatedAt = &t
+	}
+	var gb int32
+	for _, b := range im.BlockDeviceMappings {
+		if b.Ebs == nil {
+			continue
+		}
+		gb += awssdk.ToInt32(b.Ebs.VolumeSize)
+		if s := awssdk.ToString(b.Ebs.SnapshotId); s != "" {
+			r.Links = append(r.Links, cloud.Ref{Kind: cloud.KindSnapshot, ID: s, Name: awssdk.ToString(b.DeviceName)})
+		}
+	}
+	if gb > 0 {
+		r.Size = fmt.Sprintf("%d GiB", gb)
+	}
+	set(r.Details, "description", awssdk.ToString(im.Description))
+	set(r.Details, "architecture", string(im.Architecture))
+	set(r.Details, "platform", awssdk.ToString(im.PlatformDetails))
+	set(r.Details, "rootDevice", string(im.RootDeviceType))
+	if awssdk.ToBool(im.Public) {
+		r.Details["public"] = "yes"
+	}
+	if t := tags["argus:from-instance"]; t != "" {
+		r.Links = append(r.Links, cloud.Ref{Kind: cloud.KindInstance, ID: t})
 	}
 	return r
 }

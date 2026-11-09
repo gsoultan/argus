@@ -117,5 +117,25 @@ func (a *API) SyncCloudAccount(ctx context.Context, c CloudAccount) bool {
 	if err := a.store.SetCloudSynced(ctx, c.ID, time.Now().UTC(), errs); err != nil {
 		a.log.Error("cloud sync: cannot record the sync", "account", c.AccountID, "error", err)
 	}
+	a.checkCloudManageRole(ctx, p, acct, c)
 	return true
+}
+
+// checkCloudManageRole reads what the manage role may do from its own
+// policy, so an account connected before a phase added permissions says so
+// before a change fails, and stops saying so once its stack is updated.
+// The call is free; a failure leaves the last answer.
+func (a *API) checkCloudManageRole(ctx context.Context, p cloud.Provider, read cloud.Account, c CloudAccount) {
+	pc, ok := p.(cloud.PolicyChecker)
+	if !ok || c.ManageRoleARN == "" {
+		return
+	}
+	missing, err := pc.ManageMissing(ctx, read, c.ManageRoleARN)
+	if err != nil {
+		a.log.Warn("cloud sync: cannot read the manage role's policy", "account", c.AccountID, "error", err)
+		return
+	}
+	if err := a.store.SetCloudManageMissing(ctx, c.ID, missing); err != nil {
+		a.log.Error("cloud sync: cannot record the manage role's permissions", "account", c.AccountID, "error", err)
+	}
 }

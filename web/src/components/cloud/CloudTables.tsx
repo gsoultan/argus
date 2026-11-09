@@ -1,5 +1,5 @@
 import { Badge, Group, SegmentedControl, Stack, Table, Text, Tooltip } from '@mantine/core'
-import { IconDeviceFloppy, IconNetwork, IconServer2 } from '@tabler/icons-react'
+import { IconCamera, IconDeviceFloppy, IconNetwork, IconPhoto, IconServer2 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { DataTable, EmptyState } from '~/components/page'
 import { relTime, rowNav } from '~/components/primitives'
@@ -56,8 +56,7 @@ export function InstancesTable({ items, loading, names, filtered }: TableProps) 
   )
 }
 
-export function DisksTable({ items, loading, names, filtered }: TableProps) {
-  const { show, drawer } = useDrawer(names)
+function DisksTable({ items, loading, names, filtered, show }: TableProps & { show: (it: CloudItem) => void }) {
   return (
     <>
       <DataTable minWidth={820} loading={loading} isEmpty={(items?.length ?? 0) === 0}
@@ -86,8 +85,85 @@ export function DisksTable({ items, loading, names, filtered }: TableProps) {
           )
         })}
       </DataTable>
-      {drawer}
     </>
+  )
+}
+
+type StorageView = 'disks' | 'snapshots' | 'images'
+
+/** Disks, and the snapshots and images made from them. */
+export function StorageTables({ volumes, snapshots, images, loading, names, filtered }: {
+  volumes?: CloudItem[]
+  snapshots?: CloudItem[]
+  images?: CloudItem[]
+  loading: boolean
+  names: Map<string, string>
+  filtered: boolean
+}) {
+  const [view, setView] = useState<StorageView>('disks')
+  const { show, drawer } = useDrawer(names)
+  const imageOf = new Map<string, string>()
+  for (const im of images ?? []) for (const l of im.resource.links ?? []) if (l.kind === 'snapshot') imageOf.set(l.id, im.resource.name)
+  return (
+    <Stack gap="md">
+      <SegmentedControl value={view} onChange={(v) => setView(v as StorageView)} w="fit-content"
+        data={[
+          { value: 'disks', label: `Disks${volumes ? ` · ${volumes.length}` : ''}` },
+          { value: 'snapshots', label: `Snapshots${snapshots ? ` · ${snapshots.length}` : ''}` },
+          { value: 'images', label: `Images${images ? ` · ${images.length}` : ''}` },
+        ]} />
+      {view === 'disks' && <DisksTable items={volumes} loading={loading} names={names} filtered={filtered} show={show} />}
+      {view === 'snapshots' && (
+        <DataTable minWidth={820} loading={loading} isEmpty={(snapshots?.length ?? 0) === 0}
+          empty={<EmptyState icon={IconCamera} title="No snapshots" description={emptyText(filtered, 'snapshots owned by these accounts')} />}
+          columns={['Snapshot', 'Account and region', 'Size', 'State', 'Of disk', 'Used by', 'Taken']}>
+          {snapshots?.map((it) => {
+            const r = it.resource
+            const of = r.links?.find((l) => l.kind === 'volume')
+            const used = imageOf.get(r.id)
+            return (
+              <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+                <Table.Td maw={260}><NameCell r={r} /></Table.Td>
+                <Table.Td><WhereCell it={it} /></Table.Td>
+                <Table.Td><Text size={FS.meta} ff="monospace">{r.size}</Text></Table.Td>
+                <Table.Td>
+                  {r.state === 'pending'
+                    ? <Badge variant="light" color="sky" radius="sm">Taking {r.details?.progress ?? ''}</Badge>
+                    : <StateBadge state={r.state} />}
+                </Table.Td>
+                <Table.Td><Text size={FS.meta} c={of ? undefined : 'dimmed'}>{of ? names.get(of.id) ?? of.id : '—'}</Text></Table.Td>
+                <Table.Td>{used ? <Text size={FS.meta}>Image {used}</Text> : <Text size={FS.meta} c="dimmed">—</Text>}</Table.Td>
+                <Table.Td><Text size={FS.meta} c="dimmed">{relTime(r.createdAt ?? null)}</Text></Table.Td>
+              </Table.Tr>
+            )
+          })}
+        </DataTable>
+      )}
+      {view === 'images' && (
+        <DataTable minWidth={760} loading={loading} isEmpty={(images?.length ?? 0) === 0}
+          empty={<EmptyState icon={IconPhoto} title="No images" description={emptyText(filtered, 'images owned by these accounts')} />}
+          columns={['Image', 'Account and region', 'Size', 'State', 'Shared', 'Made']}>
+          {images?.map((it) => {
+            const r = it.resource
+            return (
+              <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+                <Table.Td maw={260}><NameCell r={r} /></Table.Td>
+                <Table.Td><WhereCell it={it} /></Table.Td>
+                <Table.Td><Text size={FS.meta} ff="monospace">{r.size ?? '—'}</Text></Table.Td>
+                <Table.Td><StateBadge state={r.state} /></Table.Td>
+                <Table.Td>
+                  {r.details?.public === 'yes'
+                    ? <Tooltip label="Anyone with an AWS account can launch it, and read what is on its disks"><Badge variant="light" color="rose" radius="sm">Public</Badge></Tooltip>
+                    : <Text size={FS.meta} c="dimmed">This account</Text>}
+                </Table.Td>
+                <Table.Td><Text size={FS.meta} c="dimmed">{relTime(r.createdAt ?? null)}</Text></Table.Td>
+              </Table.Tr>
+            )
+          })}
+        </DataTable>
+      )}
+      {drawer}
+    </Stack>
   )
 }
 

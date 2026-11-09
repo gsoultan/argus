@@ -10,6 +10,7 @@ import {
 import { FS, INK, SP } from '~/theme'
 import { InstanceActions } from './InstanceActions'
 import { InstanceSchedule } from './Schedules'
+import { StorageActions } from './StorageActions'
 
 export function EnvBadge({ env }: { env: CloudEnvironment }) {
   return <Badge variant="light" color={ENV_COLOR[env]} radius="sm">{ENV_LABEL[env]}</Badge>
@@ -92,6 +93,7 @@ export function ResourceDrawer({ it, onClose, names }: {
           </Group>
           {r.kind === 'instance' && <InstanceActions it={it} />}
           {r.kind === 'instance' && <InstanceSchedule it={it} />}
+          {(r.kind === 'volume' || r.kind === 'snapshot' || r.kind === 'image' || r.kind === 'address') && <StorageActions it={it} />}
           <Box style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Id"><Text size={FS.meta} ff="monospace" style={{ overflowWrap: 'anywhere' }}>{r.id}</Text></Field>
             <Field label="Account"><Text size={FS.meta}>{it.accountName}</Text></Field>
@@ -132,7 +134,7 @@ export function ResourceDrawer({ it, onClose, names }: {
 }
 
 const LINK_LABEL: Record<string, string> = {
-  firewall: 'Firewall', subnet: 'Subnet', volume: 'Disk', instance: 'Instance', network: 'Network',
+  firewall: 'Firewall', subnet: 'Subnet', volume: 'Disk', instance: 'Instance', network: 'Network', snapshot: 'Snapshot', image: 'Image',
 }
 
 function KeyValues({ m }: { m: Record<string, string> }) {

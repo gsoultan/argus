@@ -40,8 +40,12 @@ type Fake struct {
 	// PowerErr fails starting or stopping one instance, by id, in Power
 	// and in any PowerMany that names it.
 	PowerErr map[string]error
+	// StorageErr fails the next storage call of an action.
+	StorageErr map[Action]error
+	// Missing is what ManageMissing answers.
+	Missing []string
 
-	reqs, launched int
+	reqs, launched, made int
 }
 
 // ErrAccessDenied is the fake's answer to a role it would not let in.
@@ -123,12 +127,25 @@ func (f *Fake) CallLog() []string {
 // Inventory sees them, and every call is recorded with its actor.
 
 func (f *Fake) find(region, id string) (int, error) {
+	return f.findKind(region, KindInstance, id)
+}
+
+func (f *Fake) findKind(region string, kind Kind, id string) (int, error) {
 	for i, r := range f.Resources[region] {
-		if r.ID == id && r.Kind == KindInstance {
+		if r.ID == id && r.Kind == kind {
 			return i, nil
 		}
 	}
-	return -1, errors.New("InvalidInstanceID.NotFound: no instance " + id + " in " + region)
+	return -1, fmt.Errorf("NotFound: no %s %s in %s", kind, id, region)
+}
+
+func (f *Fake) findAny(region, id string) (int, error) {
+	for i, r := range f.Resources[region] {
+		if r.ID == id {
+			return i, nil
+		}
+	}
+	return -1, errors.New("NotFound: no resource " + id + " in " + region)
 }
 
 func (f *Fake) request() string {
@@ -254,7 +271,7 @@ func (f *Fake) SetTags(_ context.Context, a Account, actor Actor, region, id str
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	i, err := f.find(region, id)
+	i, err := f.findAny(region, id)
 	if err != nil {
 		return Result{}, err
 	}
