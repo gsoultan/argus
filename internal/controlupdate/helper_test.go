@@ -31,6 +31,8 @@ type fakeHost struct {
 	calls    []string
 	noBackup bool
 	backupKO bool
+	// backupLog is what the failed backup run printed, as the journal has it.
+	backupLog string
 }
 
 func (f *fakeHost) run(name string, args ...string) error {
@@ -82,6 +84,10 @@ func (f *fakeHost) output(name string, args ...string) ([]byte, error) {
 		return []byte("argus-control " + f.version + "\n"), nil
 	case name == "dpkg-query":
 		return []byte("install ok installed"), nil
+	case name == "systemctl" && len(args) > 0 && args[0] == "show" && f.backupLog != "":
+		return []byte("3f2a9c\n"), nil
+	case name == "journalctl" && len(args) > 0 && args[0] == "_SYSTEMD_INVOCATION_ID=3f2a9c":
+		return []byte(f.backupLog), nil
 	}
 	return nil, errors.New("not here")
 }
@@ -275,6 +281,40 @@ func TestFailedBackupChangesNothing(t *testing.T) {
 	for _, c := range host.calls {
 		if strings.HasPrefix(c, "dpkg") {
 			t.Fatalf("installed after a failed backup: %s", c)
+		}
+	}
+}
+
+// The console shows why the backup failed, not systemd's "see journalctl".
+func TestFailedBackupSaysWhy(t *testing.T) {
+	host := &fakeHost{t: t, version: "0.8.2", backupKO: true, backupLog: "" +
+		"pg_dump: error: aborting because of server version mismatch\n" +
+		"argus-control: pg_dump: exit status 1\n"}
+	h := newHelper(t, host, releases(t, "0.8.2", "0.9.0").URL)
+	h.Apply(context.Background())
+	st, _ := ReadStatus(h.Dir)
+	if !strings.Contains(st.Message, "nothing was changed: pg_dump: exit status 1") {
+		t.Fatalf("message %q", st.Message)
+	}
+
+	// Without a journal to read, systemctl's own error is all there is.
+	host = &fakeHost{t: t, version: "0.8.2", backupKO: true}
+	h = newHelper(t, host, releases(t, "0.8.2", "0.9.0").URL)
+	h.Apply(context.Background())
+	if st, _ := ReadStatus(h.Dir); !strings.Contains(st.Message, "exit status 1") {
+		t.Fatalf("message %q", st.Message)
+	}
+}
+
+func TestLastError(t *testing.T) {
+	for log, want := range map[string]string{
+		"backing up to /x\nargus-control: pg_dump is not installed\n": "pg_dump is not installed",
+		"pg_dump: error: connection refused\n\n":                      "pg_dump: error: connection refused",
+		"":                                                            "",
+		"argus-control: verify audit chain: x\nsomething after\n": "verify audit chain: x",
+	} {
+		if got := lastError(log); got != want {
+			t.Errorf("lastError(%q) = %q, want %q", log, got, want)
 		}
 	}
 }

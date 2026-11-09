@@ -163,7 +163,11 @@ func (h *Helper) Apply(ctx context.Context) string {
 	if h.unitExists(h.BackupUnit) {
 		h.step(StateBackingUp, "taking a backup")
 		if err := h.run("systemctl", "start", h.BackupUnit); err != nil {
-			return h.fail("the backup did not finish, so nothing was changed: " + err.Error() +
+			why := h.backupFailure()
+			if why == "" {
+				why = err.Error()
+			}
+			return h.fail("the backup did not finish, so nothing was changed: " + why +
 				". See: journalctl -u " + h.BackupUnit)
 		}
 		h.step(StateBackingUp, "backup taken")
@@ -286,6 +290,48 @@ func (h *Helper) format() string {
 // FileName is the release's name for the control plane's package.
 func FileName(version, arch, format string) string {
 	return fmt.Sprintf("argus-control_%s_linux_%s.%s", version, arch, format)
+}
+
+// backupFailure is why the backup unit's last run failed, in its own words.
+// systemctl only says the control process exited with an error code, which
+// gives the person reading the console nothing to act on; the reason --
+// pg_dump missing or too old, a broken chain, storage that cannot be read --
+// is in what the run printed. Empty when the journal has no answer.
+func (h *Helper) backupFailure() string {
+	id, err := h.output("systemctl", "show", "--property=InvocationID", "--value", h.BackupUnit)
+	if err != nil || strings.TrimSpace(string(id)) == "" {
+		return ""
+	}
+	out, err := h.output("journalctl", "_SYSTEMD_INVOCATION_ID="+strings.TrimSpace(string(id)),
+		"--output=cat", "--no-pager", "--lines=40")
+	if err != nil {
+		return ""
+	}
+	return lastError(string(out))
+}
+
+// lastError picks the line that explains a failed run out of its log:
+// argus-control's own "argus-control: ..." if it printed one, otherwise the
+// last thing printed (pg_dump's complaint, say).
+func lastError(log string) string {
+	var reason, last string
+	for _, line := range strings.Split(log, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		last = line
+		if r, ok := strings.CutPrefix(line, "argus-control: "); ok {
+			reason = r
+		}
+	}
+	if reason == "" {
+		reason = last
+	}
+	if len(reason) > 400 {
+		reason = reason[:400] + "…"
+	}
+	return reason
 }
 
 func (h *Helper) unitExists(unit string) bool {
