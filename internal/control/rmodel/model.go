@@ -818,6 +818,9 @@ type DatabaseAssignment struct {
 	NeedsApproval bool
 	GrantedBy     string
 	GrantedAt     time.Time
+	// Rule is the server's rule for databases added later that wrote the
+	// row; nil once an admin sets it by hand (migration 069).
+	Rule *DatabaseAccessRule
 }
 
 func (m *DatabaseAssignment) Schema(t *storm.Table) {
@@ -836,6 +839,45 @@ func (m *DatabaseAssignment) Schema(t *storm.Table) {
 	t.Index(&m.Database).Named("database_assignments_db_idx")
 	t.Index(&m.Database, &m.Team).Unique().Where("team_id IS NOT NULL").Named("database_assignments_team_key")
 	t.Index(&m.Database, &m.UserEmail).Unique().Where("user_email IS NOT NULL").Named("database_assignments_user_key")
+	t.Col(&m.Rule).ConstraintName("database_assignments_rule_id_fkey")
+	t.Col(&m.Rule).OnDelete(storm.SetNull)
+	t.Index(&m.Rule).Where("rule_id IS NOT NULL").Named("database_assignments_rule_idx")
+}
+
+// DatabaseAccessRule is table database_access_rules: every database (or
+// broker) added to a server from now on goes to a team or a person at a
+// level (migration 069).
+type DatabaseAccessRule struct {
+	ID        [16]byte
+	Asset     Asset
+	Team      *Team
+	UserEmail *string
+	Kind      string
+	Level     string
+	Approval  string
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+func (m *DatabaseAccessRule) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Asset).ConstraintName("database_access_rules_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Team).ConstraintName("database_access_rules_team_id_fkey")
+	t.Col(&m.Team).OnDelete(storm.Cascade)
+	t.Col(&m.Team).NoIndex()
+	t.Col(&m.Approval).Default("'label'::text")
+	t.Col(&m.CreatedBy).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("database_access_rules_who_check", "(team_id IS NULL) <> (user_email IS NULL)")
+	t.CheckNamed("database_access_rules_kind_check", "kind = ANY (ARRAY['database'::text, 'broker'::text])")
+	t.CheckNamed("database_access_rules_level_check",
+		"level = ANY (ARRAY['read'::text, 'write'::text, 'owner'::text, 'dba'::text])")
+	t.CheckNamed("database_access_rules_approval_check",
+		"approval = ANY (ARRAY['label'::text, 'always'::text, 'never'::text])")
+	t.Index(&m.Asset).Named("database_access_rules_asset_idx")
+	t.Index(&m.Asset, &m.Kind, &m.Team).Unique().Where("team_id IS NOT NULL").Named("database_access_rules_team_key")
+	t.Index(&m.Asset, &m.Kind, &m.UserEmail).Unique().Where("user_email IS NOT NULL").Named("database_access_rules_user_key")
 }
 
 // DatabaseBackupSchedule is table database_backup_schedules: when a database
@@ -1145,6 +1187,7 @@ func All() []any {
 		&CloudSchedule{},
 		&CloudScheduleRun{},
 		&Database{},
+		&DatabaseAccessRule{},
 		&DatabaseAssignment{},
 		&DatabaseBackup{},
 		&DatabaseBackupSchedule{},

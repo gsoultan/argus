@@ -114,6 +114,7 @@ func (a *API) postDatabase(w http.ResponseWriter, r *http.Request, actor string)
 	}
 	a.auditDB(r.Context(), "db.added", "notice", actor, db.Hostname,
 		"Added "+engineName(db.Engine)+" "+db.Name+" ("+db.Label+") on "+db.Hostname+" at "+db.Host+":"+itoa(db.Port)+".")
+	a.applyRulesTo(r.Context(), db, actor)
 	writeJSON(w, http.StatusCreated, db)
 }
 

@@ -4,18 +4,21 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconDatabase, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
+import { IconDatabase, IconPlus, IconRefresh, IconSearch, IconTable } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { EmptyState, SectionCard } from '~/components/page'
 import { discoverDatabases, isConfigured } from '~/lib/live'
 import { bytes } from '~/components/primitives'
 import { notifyError, notifyOk } from '~/lib/notify'
-import { databasesOnAssetQuery, useCreateDatabase } from '~/lib/queries'
+import { databasesOnAssetQuery, useCreateDatabase, usersQuery } from '~/lib/queries'
+import { assetDBAccessQuery } from '~/lib/dbAccessQueries'
+import { GiveAccessMany, RemoveAccessMany, SelectionBar, TickAll, WhoHasWhat, whoHasIt } from '~/components/BulkDBAccess'
+import { targetName } from '~/lib/dbTarget'
 import { FS } from '~/theme'
 import { ENGINES, engineOf, isBroker } from '~/lib/engines'
 import { kafkaCovered } from '~/lib/kafka'
-import type { Asset, DBEngine, DBLabel } from '~/types/domain'
+import type { Asset, DBAssignment, DBEngine, DBLabel } from '~/types/domain'
 
 /**
  * The databases Argus opens on one server, on that server's page: adding one
@@ -26,17 +29,32 @@ import type { Asset, DBEngine, DBLabel } from '~/types/domain'
  */
 export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   const { data } = useQuery(databasesOnAssetQuery(asset.id))
+  const { data: access } = useQuery({ ...assetDBAccessQuery(asset.id), enabled: canEdit && isConfigured() })
+  const { data: users } = useQuery({ ...usersQuery(), enabled: canEdit })
   const [adding, add] = useDisclosure(false)
+  const [selected, setSelected] = useState<string[]>([])
+  const [dialog, setDialog] = useState<null | { kind: 'give'; who: string[]; ids: string[] } | { kind: 'remove' } | { kind: 'grid' }>(null)
   if (!isConfigured()) return null
   const list = data?.databases ?? []
+  const picked = list.filter((d) => selected.includes(d.id))
+  const ids = list.map((d) => d.id)
+  const byDB = new Map<string, DBAssignment[]>()
+  for (const g of access?.assignments ?? []) byDB.set(g.databaseId, [...(byDB.get(g.databaseId) ?? []), g])
+  const name = (k: string) => k.startsWith('u:') ? users?.find((u) => u.email === k.slice(2))?.displayName ?? k.slice(2) : k
+  const toggle = (id: string) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id])
   return (
     <SectionCard
-      title="Databases"
+      title="Databases and brokers"
       icon={IconDatabase}
-      description="Postgres databases, Redis and RabbitMQ on this server that people can open in the browser. Every session is recorded command by command."
+      description="Postgres databases, Redis and RabbitMQ on this server that people can open in the browser. Tick several to give a team access to all of them at once. Every session is recorded command by command."
     >
       {canEdit && (
-        <Group justify="flex-end" mb="xs">
+        <Group justify="flex-end" gap="xs" mb="xs">
+          {list.length > 0 && (
+            <Button size="compact-xs" variant="default" leftSection={<IconTable size={12} />} onClick={() => setDialog({ kind: 'grid' })}>
+              Who has what
+            </Button>
+          )}
           <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={add.open}>
             Add
           </Button>
@@ -49,22 +67,40 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
             : 'An admin can add one from here.'} />
       ) : (
         <Table verticalSpacing="xs">
+          {canEdit && (
+            <Table.Thead><Table.Tr>
+              <Table.Th w={32}><TickAll ids={ids} selected={selected} onChange={setSelected} label="Select every database and broker" /></Table.Th>
+              <Table.Th>Name</Table.Th><Table.Th>Label</Table.Th><Table.Th visibleFrom="sm">Who can connect</Table.Th><Table.Th />
+            </Table.Tr></Table.Thead>
+          )}
           <Table.Tbody>
             {list.map((d) => (
-              <Table.Tr key={d.id}>
+              <Table.Tr key={d.id} bg={selected.includes(d.id) ? 'var(--mantine-primary-color-light)' : undefined}>
+                {canEdit && (
+                  <Table.Td w={32}>
+                    <Checkbox size="xs" checked={selected.includes(d.id)} onChange={() => toggle(d.id)} aria-label={`Select ${targetName(d)}`} />
+                  </Table.Td>
+                )}
                 <Table.Td>
-                  <Text size={FS.body} fw={600}>{d.engine === 'redis' ? `Redis · db ${d.dbname}` : d.engine === 'rabbitmq' ? `RabbitMQ · ${d.dbname}` : d.engine === 'kafka' ? `Kafka · ${d.dbname === '*' ? 'every topic' : d.dbname}` : d.dbname}</Text>
+                  <Text size={FS.body} fw={600}>{targetName(d)}</Text>
                   <Text size={FS.micro} c="dimmed" ff="monospace">{engineOf(d.engine).label} · {d.host}:{d.port}</Text>
                 </Table.Td>
                 <Table.Td>
                   <Badge size="xs" variant="light" radius="sm"
                     color={{ production: 'rose', staging: 'amber', development: 'teal' }[d.label]}>{d.label}</Badge>
                 </Table.Td>
+                {canEdit && (
+                  <Table.Td visibleFrom="sm" maw={320}>
+                    <Text size={FS.micro} c={byDB.get(d.id)?.length ? undefined : 'dimmed'} lineClamp={2}>
+                      {access ? whoHasIt(byDB.get(d.id), d.engine, name) : ''}
+                    </Text>
+                  </Table.Td>
+                )}
                 <Table.Td ta="right">
                   <Group gap="xs" justify="flex-end" wrap="nowrap">
                     {canEdit && (
                       <ButtonLink {...(isBroker(d.engine) ? { to: '/brokers/$brokerId/settings', params: { brokerId: d.id } } as const : { to: '/databases/$dbId/settings', params: { dbId: d.id } } as const)}
-                        size="compact-xs" variant="subtle">
+                        size="compact-xs" variant="subtle" visibleFrom="sm">
                         Who can connect
                       </ButtonLink>
                     )}
@@ -77,7 +113,26 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
           </Table.Tbody>
         </Table>
       )}
+      {canEdit && (
+        <Box mt="xs">
+          <SelectionBar selected={picked} total={list.length} onAll={() => setSelected(ids)} onClear={() => setSelected([])}
+            onGive={() => setDialog({ kind: 'give', who: [], ids: selected })} onRemove={() => setDialog({ kind: 'remove' })} />
+        </Box>
+      )}
       {canEdit && <AddDatabase asset={asset} opened={adding} onClose={add.close} />}
+      {canEdit && dialog?.kind === 'give' && (
+        <GiveAccessMany opened initialWho={dialog.who} targets={list.filter((d) => dialog.ids.includes(d.id))}
+          onClose={() => { setDialog(null); setSelected([]) }} />
+      )}
+      {canEdit && dialog?.kind === 'remove' && (
+        <RemoveAccessMany opened targets={picked} onClose={() => { setDialog(null); setSelected([]) }} />
+      )}
+      {canEdit && dialog?.kind === 'grid' && (
+        <Modal opened onClose={() => setDialog(null)} size="calc(100vw - 4rem)" title={`Who has what on ${asset.hostname.split('.')[0]}`}>
+          <WhoHasWhat hostname={asset.hostname} assetId={asset.id} databases={list}
+            onChangeAll={(who) => setDialog({ kind: 'give', who: [who], ids })} />
+        </Modal>
+      )}
     </SectionCard>
   )
 }

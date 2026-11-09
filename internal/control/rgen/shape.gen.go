@@ -419,6 +419,23 @@ func _assertDatabaseShape(m m0.Database) {
 	}
 }
 
+// _assertDatabaseAccessRuleShape fails to compile if m0.DatabaseAccessRule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseAccessRuleShape(m m0.DatabaseAccessRule) {
+	type shape m0.DatabaseAccessRule
+	_ = shape{
+		m.ID,
+		m.Asset,
+		m.Team,
+		m.UserEmail,
+		m.Kind,
+		m.Level,
+		m.Approval,
+		m.CreatedBy,
+		m.CreatedAt,
+	}
+}
+
 // _assertDatabaseAssignmentShape fails to compile if m0.DatabaseAssignment gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertDatabaseAssignmentShape(m m0.DatabaseAssignment) {
@@ -432,6 +449,7 @@ func _assertDatabaseAssignmentShape(m m0.DatabaseAssignment) {
 		m.NeedsApproval,
 		m.GrantedBy,
 		m.GrantedAt,
+		m.Rule,
 	}
 }
 

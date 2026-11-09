@@ -128,8 +128,13 @@ const BUDGET_KB = {
    * route in the route map, and the server cards' Needs updates filter and
    * badges, with the small query they read. The Updates page and the bell's
    * Updates tab are in route and lazy chunks.
+   * 309.1 kB with giving many databases at once (308.9 before, same build):
+   * the entry's map of the three chunks it added, the give-many dialogs,
+   * Combobox's shared code and the debounce hook. The dialogs, their calls
+   * and their queries are in chunks of their own, kept out of the shared
+   * live and queries modules.
    */
-  overview: 309,
+  overview: 310,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -176,8 +181,13 @@ const BUDGET_KB = {
    * and search rule in the route map, and the Schedules tab name the cloud
    * page's search rule checks. The tab, the editor and their queries are in
    * route chunks.
+   * 410.1 kB with giving many databases at once (409.3 before, same build):
+   * the overview's 0.2 kB, and Select now fetched as two files. The
+   * database page's Who became a MultiSelect, so a route reaches MultiSelect
+   * without Select and the bundler splits the Combobox code both share out
+   * of Select's chunk. The bytes are the same; the rest is the extra file.
    */
-  sessionDetail: 410,
+  sessionDetail: 411,
 }
 
 /**

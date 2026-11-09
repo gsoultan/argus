@@ -690,6 +690,7 @@ export function useSetDBAssignment() {
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: dbqk.dbAssignments(v.id) })
       void qc.invalidateQueries({ queryKey: dbqk.databases })
+      void qc.invalidateQueries({ queryKey: ['database-access'] })
     },
   })
 }
@@ -701,6 +702,7 @@ export function useRemoveDBAssignment() {
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: dbqk.dbAssignments(v.id) })
       void qc.invalidateQueries({ queryKey: dbqk.databases })
+      void qc.invalidateQueries({ queryKey: ['database-access'] })
     },
   })
 }
