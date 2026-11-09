@@ -326,6 +326,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/databases/{id}/assignments", a.getDBAssignments)
 	mux.HandleFunc("PUT /api/v1/databases/{id}/assignments", a.dbAdmin(a.putDBAssignment))
 	mux.HandleFunc("DELETE /api/v1/databases/{id}/assignments/{assignment}", a.dbAdmin(a.deleteDBAssignment))
+	mux.HandleFunc("POST /api/v1/database-access/plan", a.dbAdmin(a.postDBAccessPlan))
+	mux.HandleFunc("POST /api/v1/database-access", a.dbAdmin(a.postDBAccess))
+	mux.HandleFunc("POST /api/v1/database-access/remove", a.dbAdmin(a.postDBAccessRemove))
+	mux.HandleFunc("GET /api/v1/assets/{id}/database-access", a.getAssetDBAccess)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}/database-rules/{rule}", a.dbAdmin(a.deleteDBRule))
 	mux.HandleFunc("POST /api/v1/databases/{id}/requests", a.postDatabaseRequest)
 	// Backups and restores; see backup_routes.go.
 	mux.HandleFunc("GET /api/v1/databases/{id}/backups", a.withDatabase(tunnel.LevelRead, a.getBackups))

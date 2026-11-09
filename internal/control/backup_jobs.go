@@ -506,6 +506,7 @@ func (a *API) RunRestore(ctx context.Context, db Database, b DatabaseBackup, r D
 			AdminUser: db.AdminUser, Label: db.Label, Policy: db.Policy, PoolerHost: db.PoolerHost, PoolerPort: db.PoolerPort}
 		if made, err := a.store.CreateDatabase(ctx, nd, r.RequestedBy); err == nil {
 			created = made.ID
+			a.applyRulesTo(ctx, made, r.RequestedBy)
 		} else {
 			a.log.Warn("restore: the new database was restored but could not be added to Argus", "name", r.NewName, "error", err)
 		}

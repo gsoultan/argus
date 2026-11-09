@@ -22,6 +22,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/consolealert"
 	"github.com/gsoultan/argus/internal/control/rgen/consolealertread"
 	"github.com/gsoultan/argus/internal/control/rgen/database"
+	"github.com/gsoultan/argus/internal/control/rgen/databaseaccessrule"
 	"github.com/gsoultan/argus/internal/control/rgen/databaseassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackup"
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackupschedule"
@@ -86,17 +87,18 @@ var FlushOrder = map[string]int{
 	"asset_team_assignments":    36,
 	"cloud_schedule_runs":       37,
 	"console_alert_reads":       38,
-	"database_assignments":      39,
-	"database_backup_schedules": 40,
-	"database_backups":          41,
-	"database_changes":          42,
-	"database_restores":         43,
-	"database_statements":       44,
-	"recovery_codes":            45,
-	"software_script_versions":  46,
-	"team_members":              47,
-	"database_backup_tests":     48,
-	"database_statement_items":  49,
+	"database_access_rules":     39,
+	"database_assignments":      40,
+	"database_backup_schedules": 41,
+	"database_backups":          42,
+	"database_changes":          43,
+	"database_restores":         44,
+	"database_statements":       45,
+	"recovery_codes":            46,
+	"software_script_versions":  47,
+	"team_members":              48,
+	"database_backup_tests":     49,
+	"database_statement_items":  50,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -1288,6 +1290,248 @@ func (p ConsoleAlertReadWithSeqQuery) All(ctx context.Context, ex runtime.Execut
 	return out, nil
 }
 
+// DatabaseAccessRuleWithAssetRow is database_access_rules with its Asset loaded.
+type DatabaseAccessRuleWithAssetRow struct {
+	databaseaccessrule.Row
+	Asset asset.Row
+}
+
+type DatabaseAccessRuleWithAssetQuery struct {
+	q databaseaccessrule.Query
+}
+
+// DatabaseAccessRuleWithAsset starts the plan.
+func DatabaseAccessRuleWithAsset() DatabaseAccessRuleWithAssetQuery {
+	return DatabaseAccessRuleWithAssetQuery{q: databaseaccessrule.New()}
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) Where(ps ...databaseaccessrule.Pred) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) WhereIf(cond bool, pr databaseaccessrule.Pred) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) Any(ps ...databaseaccessrule.Pred) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) Not(pr databaseaccessrule.Pred) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) NotAny(ps ...databaseaccessrule.Pred) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) Order(ts ...databaseaccessrule.Sort) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) Limit(n int64) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseAccessRuleWithAssetQuery) Offset(n int64) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseAccessRuleWithAssetQuery) After(r DatabaseAccessRuleWithAssetRow) DatabaseAccessRuleWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseAccessRuleWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseAccessRuleWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseAccessRuleWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseAccessRuleWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseAccessRuleWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_access_rules", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseAccessRuleWithTeamRow is database_access_rules with its Team loaded.
+type DatabaseAccessRuleWithTeamRow struct {
+	databaseaccessrule.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Team, which is different from having one that failed to load.
+	Team *team.Row
+}
+
+type DatabaseAccessRuleWithTeamQuery struct {
+	q databaseaccessrule.Query
+}
+
+// DatabaseAccessRuleWithTeam starts the plan.
+func DatabaseAccessRuleWithTeam() DatabaseAccessRuleWithTeamQuery {
+	return DatabaseAccessRuleWithTeamQuery{q: databaseaccessrule.New()}
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) Where(ps ...databaseaccessrule.Pred) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) WhereIf(cond bool, pr databaseaccessrule.Pred) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) Any(ps ...databaseaccessrule.Pred) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) Not(pr databaseaccessrule.Pred) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) NotAny(ps ...databaseaccessrule.Pred) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) Order(ts ...databaseaccessrule.Sort) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) Limit(n int64) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseAccessRuleWithTeamQuery) Offset(n int64) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseAccessRuleWithTeamQuery) After(r DatabaseAccessRuleWithTeamRow) DatabaseAccessRuleWithTeamQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseAccessRuleWithTeamQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseAccessRuleWithTeamQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseAccessRuleWithTeamRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseAccessRuleWithTeamRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseAccessRuleWithTeamRow{Row: r}
+		key, ok := r.TeamID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := team.New().Unordered().
+		Where(team.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.TeamID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_access_rules", "teams")
+		}
+		out[i].Team = &targets[j]
+	}
+	return out, nil
+}
+
 // DatabaseAssignmentWithDatabaseRow is database_assignments with its Database loaded.
 type DatabaseAssignmentWithDatabaseRow struct {
 	databaseassignment.Row
@@ -1401,6 +1645,131 @@ func (p DatabaseAssignmentWithDatabaseQuery) All(ctx context.Context, ex runtime
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_assignments", "databases")
 		}
 		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseAssignmentWithRuleRow is database_assignments with its Rule loaded.
+type DatabaseAssignmentWithRuleRow struct {
+	databaseassignment.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Rule, which is different from having one that failed to load.
+	Rule *databaseaccessrule.Row
+}
+
+type DatabaseAssignmentWithRuleQuery struct {
+	q databaseassignment.Query
+}
+
+// DatabaseAssignmentWithRule starts the plan.
+func DatabaseAssignmentWithRule() DatabaseAssignmentWithRuleQuery {
+	return DatabaseAssignmentWithRuleQuery{q: databaseassignment.New()}
+}
+
+func (p DatabaseAssignmentWithRuleQuery) Where(ps ...databaseassignment.Pred) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithRuleQuery) WhereIf(cond bool, pr databaseassignment.Pred) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseAssignmentWithRuleQuery) Any(ps ...databaseassignment.Pred) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithRuleQuery) Not(pr databaseassignment.Pred) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseAssignmentWithRuleQuery) NotAny(ps ...databaseassignment.Pred) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseAssignmentWithRuleQuery) Order(ts ...databaseassignment.Sort) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseAssignmentWithRuleQuery) Limit(n int64) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseAssignmentWithRuleQuery) Offset(n int64) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseAssignmentWithRuleQuery) After(r DatabaseAssignmentWithRuleRow) DatabaseAssignmentWithRuleQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseAssignmentWithRuleQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseAssignmentWithRuleQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseAssignmentWithRuleRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseAssignmentWithRuleRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseAssignmentWithRuleRow{Row: r}
+		key, ok := r.RuleID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := databaseaccessrule.New().Unordered().
+		Where(databaseaccessrule.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.RuleID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_assignments", "database_access_rules")
+		}
+		out[i].Rule = &targets[j]
 	}
 	return out, nil
 }

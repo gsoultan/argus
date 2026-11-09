@@ -28,6 +28,7 @@ type Row struct {
 	NeedsApproval bool
 	GrantedBy     string
 	GrantedAt     time.Time
+	RuleID        runtime.Null[[16]byte]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -66,7 +67,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 8
+const nCols = 9
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -235,6 +236,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.GrantedAt
 		q.ntm++
+	case 8:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.RuleID.V
+		q.nr++
 	}
 }
 
@@ -409,6 +417,7 @@ var (
 	NeedsApproval = BoolCol{5}
 	GrantedBy     = TextCol{6}
 	GrantedAt     = TimeCol{7}
+	RuleID        = NullUUIDCol{8}
 )
 
 // UUIDCol addresses a uuid column.
@@ -730,6 +739,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 8:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -795,6 +811,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 8:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -857,8 +880,14 @@ func (q Query) GrantedAtGt(v time.Time) Query       { return q.Where(GrantedAt.G
 func (q Query) GrantedAtGte(v time.Time) Query      { return q.Where(GrantedAt.Gte(v)) }
 func (q Query) GrantedAtLt(v time.Time) Query       { return q.Where(GrantedAt.Lt(v)) }
 func (q Query) GrantedAtLte(v time.Time) Query      { return q.Where(GrantedAt.Lte(v)) }
+func (q Query) RuleIDEq(v [16]byte) Query           { return q.Where(RuleID.Eq(v)) }
+func (q Query) RuleIDNotEq(v [16]byte) Query        { return q.Where(RuleID.NotEq(v)) }
+func (q Query) RuleIDIn(v ...[16]byte) Query        { return q.Where(RuleID.In(v...)) }
+func (q Query) RuleIDNotIn(v ...[16]byte) Query     { return q.Where(RuleID.NotIn(v...)) }
+func (q Query) RuleIDIsNull() Query                 { return q.Where(RuleID.IsNull()) }
+func (q Query) RuleIDIsNotNull() Query              { return q.Where(RuleID.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "database_id", "team_id", "user_email", "level", "needs_approval", "granted_by", "granted_at" FROM "database_assignments"`
+const selectPrefix = `SELECT "id", "database_id", "team_id", "user_email", "level", "needs_approval", "granted_by", "granted_at", "rule_id" FROM "database_assignments"`
 const countPrefix = `SELECT count(*) FROM "database_assignments"`
 const existsPrefix = `SELECT 1 FROM "database_assignments"`
 const existsSuffix = ` LIMIT 1`
@@ -943,6 +972,12 @@ var orderTable = [nCols][4]string{
 		"\"granted_at\" ASC NULLS FIRST",
 		"\"granted_at\" DESC NULLS LAST",
 	},
+	{ // rule_id
+		"\"rule_id\"",
+		"\"rule_id\" DESC",
+		"\"rule_id\" ASC NULLS FIRST",
+		"\"rule_id\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -956,6 +991,7 @@ var identTable = [nCols]string{
 	"\"needs_approval\"",
 	"\"granted_by\"",
 	"\"granted_at\"",
+	"\"rule_id\"",
 }
 
 var lowering = runtime.Lowering{
@@ -988,7 +1024,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [8][28]runtime.Frag{
+var fragTable = [9][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1229,6 +1265,36 @@ var fragTable = [8][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // rule_id
+		{}, // opNone
+		{A: "\"rule_id\" = $", B: ""},
+		{A: "\"rule_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"rule_id\" = ANY($", B: ")"},
+		{A: "\"rule_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"rule_id\" IS NULL", B: ""},
+		{A: "\"rule_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1393,6 +1459,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.NeedsApproval = runtime.Bool(rv[5])
 	r.GrantedBy = sl.Str(rv[6])
 	r.GrantedAt = runtime.Timestamptz(rv[7])
+	r.RuleID = runtime.Nullable(rv[8], runtime.UUID)
 	return nil
 }
 
@@ -1482,6 +1549,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 8:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
 			}
 			continue
 		}
@@ -1518,6 +1589,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 8:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
 		}
 	}
 	b.vals = v
@@ -1655,7 +1730,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "database_assignments" ("id", "database_id", "team_id", "user_email", "level", "needs_approval", "granted_by", "granted_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING "id", "database_id", "team_id", "user_email", "level", "needs_approval", "granted_by", "granted_at"`
+const insertSQL = `INSERT INTO "database_assignments" ("id", "database_id", "team_id", "user_email", "level", "needs_approval", "granted_by", "granted_at", "rule_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING "id", "database_id", "team_id", "user_email", "level", "needs_approval", "granted_by", "granted_at", "rule_id"`
 
 const updatePrefix = `UPDATE "database_assignments" SET `
 const deletePrefix = `DELETE FROM "database_assignments"`
@@ -1670,9 +1745,10 @@ const (
 	dNeedsApproval uint64 = 1 << 4
 	dGrantedBy     uint64 = 1 << 5
 	dGrantedAt     uint64 = 1 << 6
+	dRuleID        uint64 = 1 << 7
 )
 
-const nUpdatable = 7
+const nUpdatable = 8
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1683,6 +1759,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"needs_approval\" = $", B: ""}, // needs_approval
 	{A: "\"granted_by\" = $", B: ""},     // granted_by
 	{A: "\"granted_at\" = $", B: ""},     // granted_at
+	{A: "\"rule_id\" = $", B: ""},        // rule_id
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1696,6 +1773,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                   // needs_approval has no server-side form
 	{},                                   // granted_by has no server-side form
 	{A: "\"granted_at\" = now()", B: ""}, // granted_at = the database's clock
+	{},                                   // rule_id has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1715,9 +1793,10 @@ const (
 	iNeedsApproval uint64 = 1 << 5
 	iGrantedBy     uint64 = 1 << 6
 	iGrantedAt     uint64 = 1 << 7
+	iRuleID        uint64 = 1 << 8
 )
 
-const nInsertable = 8
+const nInsertable = 9
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1729,6 +1808,7 @@ var insCols = [nInsertable]string{
 	"\"needs_approval\"",
 	"\"granted_by\"",
 	"\"granted_at\"",
+	"\"rule_id\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1737,7 +1817,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"database_assignments\""
-const insReturning = " RETURNING \"id\", \"database_id\", \"team_id\", \"user_email\", \"level\", \"needs_approval\", \"granted_by\", \"granted_at\""
+const insReturning = " RETURNING \"id\", \"database_id\", \"team_id\", \"user_email\", \"level\", \"needs_approval\", \"granted_by\", \"granted_at\", \"rule_id\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1756,7 +1836,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"database_id\", \"team_id\", \"user_email\", \"level\", \"needs_approval\", \"granted_by\", \"granted_at\""
+const updReturning = " RETURNING \"id\", \"database_id\", \"team_id\", \"user_email\", \"level\", \"needs_approval\", \"granted_by\", \"granted_at\", \"rule_id\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -1873,6 +1953,20 @@ func (m *Mut) SetGrantedAtNow() {
 	m.dirty &^= dGrantedAt
 }
 
+func (m *Mut) SetRuleID(v [16]byte) {
+	m.row.RuleID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dRuleID
+	m.expr &^= dRuleID
+}
+
+// SetRuleIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetRuleIDNull() {
+	m.row.RuleID = runtime.Null[[16]byte]{}
+	m.dirty |= dRuleID
+	m.expr &^= dRuleID
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -1952,6 +2046,18 @@ func (n *Ins) SetGrantedAt(v time.Time) {
 	n.set |= iGrantedAt
 }
 
+func (n *Ins) SetRuleID(v [16]byte) {
+	n.row.RuleID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iRuleID
+}
+
+// SetRuleIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetRuleIDNull() {
+	n.row.RuleID = runtime.Null[[16]byte]{}
+	n.set |= iRuleID
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -1999,7 +2105,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 7)
+	set := make([]string, 0, 8)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2023,6 +2129,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<7) != 0 {
 			set = append(set, "granted_at")
 		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "rule_id")
+		}
 	case 1:
 		if mask&(1<<3) != 0 {
 			set = append(set, "user_email")
@@ -2039,6 +2148,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<7) != 0 {
 			set = append(set, "granted_at")
 		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "rule_id")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "team_id")
@@ -2054,6 +2166,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<7) != 0 {
 			set = append(set, "granted_at")
+		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "rule_id")
 		}
 	}
 	return set
@@ -2130,6 +2245,7 @@ var assignFor = map[string]string{
 	"needs_approval": "\"needs_approval\" = EXCLUDED.\"needs_approval\"",
 	"granted_by":     "\"granted_by\" = EXCLUDED.\"granted_by\"",
 	"granted_at":     "\"granted_at\" = EXCLUDED.\"granted_at\"",
+	"rule_id":        "\"rule_id\" = EXCLUDED.\"rule_id\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2189,6 +2305,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.GrantedBy)
 		case 7:
 			args = append(args, n.row.GrantedAt)
+		case 8:
+			args = append(args, n.row.RuleID.Arg())
 		}
 	}
 	var out Row
@@ -2226,7 +2344,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 8)
+	args := make([]any, 0, 9)
 	args = append(args, r.ID)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.TeamID.Arg())
@@ -2235,6 +2353,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.NeedsApproval)
 	args = append(args, r.GrantedBy)
 	args = append(args, r.GrantedAt)
+	args = append(args, r.RuleID.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2269,13 +2388,14 @@ var copyCols = []string{
 	"needs_approval",
 	"granted_by",
 	"granted_at",
+	"rule_id",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [8]any
+	buf  [9]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2301,6 +2421,7 @@ func (s *rowSource) Values() []any {
 	s.buf[5] = &r.NeedsApproval
 	s.buf[6] = &r.GrantedBy
 	s.buf[7] = &r.GrantedAt
+	s.buf[8] = r.RuleID.Ptr()
 	return s.buf[:]
 }
 
@@ -2339,8 +2460,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 5
 	mask |= 1 << 6
 	mask |= 1 << 7
+	mask |= 1 << 8
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 8)
+	args := make([]any, 0, 9)
 	args = append(args, r.ID)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.TeamID.Arg())
@@ -2349,6 +2471,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.NeedsApproval)
 	args = append(args, r.GrantedBy)
 	args = append(args, r.GrantedAt)
+	args = append(args, r.RuleID.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2398,6 +2521,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.GrantedBy)
 		case 7:
 			args = append(args, n.row.GrantedAt)
+		case 8:
+			args = append(args, n.row.RuleID.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2458,6 +2583,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.GrantedBy)
 		case 6:
 			args = append(args, m.row.GrantedAt)
+		case 7:
+			args = append(args, m.row.RuleID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2554,6 +2681,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.GrantedBy)
 		case 6:
 			args = append(args, m.row.GrantedAt)
+		case 7:
+			args = append(args, m.row.RuleID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2716,6 +2845,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.GrantedBy)
 		case 6:
 			args = append(args, m.row.GrantedAt)
+		case 7:
+			args = append(args, m.row.RuleID.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

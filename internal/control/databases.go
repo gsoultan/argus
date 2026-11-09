@@ -99,6 +99,9 @@ type DBAssignment struct {
 	NeedsApproval bool      `json:"needsApproval"`
 	GrantedBy     string    `json:"grantedBy"`
 	GrantedAt     time.Time `json:"grantedAt"`
+	// RuleID names the server's rule for databases added later that wrote
+	// this row; nil once an admin sets it by hand.
+	RuleID *string `json:"ruleId,omitempty"`
 }
 
 // DBAccess is what one person may do on one database right now.
@@ -605,7 +608,7 @@ func (s *Store) DatabaseAccess(ctx context.Context, email, dbID string) (DBAcces
 func (s *Store) DBAssignments(ctx context.Context, dbID string) ([]DBAssignment, error) {
 	rows, err := s.db(ctx).Query(ctx, `
 		SELECT g.id::text, g.database_id::text, g.team_id::text, coalesce(t.name, ''), g.user_email,
-		       g.level, g.needs_approval, g.granted_by, g.granted_at
+		       g.level, g.needs_approval, g.granted_by, g.granted_at, g.rule_id::text
 		FROM database_assignments g LEFT JOIN teams t ON t.id = g.team_id
 		WHERE g.database_id = $1::uuid
 		ORDER BY g.team_id IS NULL, t.name, g.user_email`, dbID)
@@ -617,7 +620,7 @@ func (s *Store) DBAssignments(ctx context.Context, dbID string) ([]DBAssignment,
 	for rows.Next() {
 		var g DBAssignment
 		if err := rows.Scan(&g.ID, &g.DatabaseID, &g.TeamID, &g.TeamName, &g.UserEmail, &g.Level,
-			&g.NeedsApproval, &g.GrantedBy, &g.GrantedAt); err != nil {
+			&g.NeedsApproval, &g.GrantedBy, &g.GrantedAt, &g.RuleID); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -638,7 +641,7 @@ func (s *Store) SetDBAssignment(ctx context.Context, g DBAssignment, actor strin
 			VALUES ($1::uuid, $2::uuid, $3, $4, $5)
 			ON CONFLICT (database_id, team_id) WHERE team_id IS NOT NULL
 			DO UPDATE SET level = EXCLUDED.level, needs_approval = EXCLUDED.needs_approval,
-			              granted_by = EXCLUDED.granted_by, granted_at = now()`,
+			              granted_by = EXCLUDED.granted_by, granted_at = now(), rule_id = NULL`,
 			g.DatabaseID, *g.TeamID, g.Level, g.NeedsApproval, actor)
 		return dbAssignErr(err)
 	case g.UserEmail != nil && g.TeamID == nil:
@@ -651,7 +654,7 @@ func (s *Store) SetDBAssignment(ctx context.Context, g DBAssignment, actor strin
 			VALUES ($1::uuid, $2, $3, $4, $5)
 			ON CONFLICT (database_id, user_email) WHERE user_email IS NOT NULL
 			DO UPDATE SET level = EXCLUDED.level, needs_approval = EXCLUDED.needs_approval,
-			              granted_by = EXCLUDED.granted_by, granted_at = now()`,
+			              granted_by = EXCLUDED.granted_by, granted_at = now(), rule_id = NULL`,
 			g.DatabaseID, email, g.Level, g.NeedsApproval, actor)
 		return dbAssignErr(err)
 	}
