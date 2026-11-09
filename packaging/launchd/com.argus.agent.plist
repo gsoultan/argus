@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Argus host agent on macOS. Install as root:
+  Argus host agent on macOS. The release's argus-agent_<version>_darwin_<arch>.pkg
+  installs it (sudo installer -pkg <file> -target /). From the archive instead,
+  as root:
 
     install -m 0755 argus-agent /usr/local/bin/argus-agent
     install -m 0644 com.argus.agent.plist /Library/LaunchDaemons/
