@@ -264,7 +264,7 @@ type cloudTagsSpec struct {
 }
 
 // cloudTaggable are the kinds Argus tags.
-var cloudTaggable = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindImage, cloud.KindAddress}
+var cloudTaggable = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindImage, cloud.KindAddress, cloud.KindFirewall}
 
 type cloudRemoveSpec struct {
 	FinalSnapshots bool `json:"finalSnapshots"`
@@ -391,6 +391,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	}
 	if cloud.IsStorage(in.Action) {
 		return a.planStorage(r, m, in, ch)
+	}
+	if cloud.IsNetwork(in.Action) {
+		return a.planNetwork(r, m, in, ch)
 	}
 	kind := cloud.KindInstance
 	if in.Action == cloud.ActionTags && in.Kind != "" {
@@ -723,6 +726,8 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 	default:
 		if cloud.IsStorage(ch.Action) {
 			res, err = a.applyStorage(ctx, m, ch)
+		} else if cloud.IsNetwork(ch.Action) {
+			res, err = a.applyNetwork(ctx, m, ch)
 		} else {
 			err = fmt.Errorf("%q is not a change Argus makes", ch.Action)
 		}
@@ -746,7 +751,7 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 		if res.ResourceID != "" && ch.Action == cloud.ActionLaunch {
 			detail += "; instance " + res.ResourceID
 		}
-		if res.ResourceID != "" && (ch.Action == cloud.ActionVolumeCreate || ch.Action == cloud.ActionAddressAllocate) {
+		if res.ResourceID != "" && (ch.Action == cloud.ActionVolumeCreate || ch.Action == cloud.ActionAddressAllocate || ch.Action == cloud.ActionFirewallCreate) {
 			detail += "; made " + res.ResourceID
 		}
 		if len(res.Snapshots) > 0 {

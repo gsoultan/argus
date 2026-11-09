@@ -293,7 +293,7 @@ func TestCloudTagsOnADisk(t *testing.T) {
 	if c.State != "applied" || c.ResourceName != "spare" {
 		t.Fatalf("tags on a disk: %+v", c)
 	}
-	e.ask(t, "admin-token", e.storage("tags", spare, `,"kind":"firewall","spec":{"set":{"Team":"payments"}}`), http.StatusBadRequest)
+	e.ask(t, "admin-token", e.storage("tags", spare, `,"kind":"network","spec":{"set":{"Team":"payments"}}`), http.StatusBadRequest)
 	e.ask(t, "admin-token", e.storage("stop", spare, `,"kind":"volume"`), http.StatusNotFound)
 }
 

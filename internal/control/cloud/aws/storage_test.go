@@ -22,16 +22,16 @@ func TestMissingFromThePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(missing) != 12 || missing[0] != "ec2:DeleteSnapshot" {
+	if len(missing) != 20 || missing[0] != "ec2:DeleteSnapshot" {
 		t.Fatalf("missing: %v", missing)
 	}
 	now := `{"Statement":[{"Effect":"Allow","Action":["` + strings.Join(ManagePolicy, `","`) + `"]}]}`
 	if missing, _ := MissingFrom(now); len(missing) != 0 {
 		t.Fatalf("today's template lacks %v", missing)
 	}
-	// Every storage action's permissions are in the template.
+	// Every storage and network action's permissions are in the template.
 	p := &Provider{}
-	for _, a := range cloud.StorageActions {
+	for _, a := range append(append([]cloud.Action(nil), cloud.StorageActions...), cloud.NetworkActions...) {
 		for _, need := range p.Needs(a) {
 			found := false
 			for _, have := range ManagePolicy {
