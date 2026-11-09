@@ -21,6 +21,7 @@ import {
 import { requestOutcome, settledMeanwhile } from '~/lib/requestOutcome'
 import { canSee } from '~/lib/roles'
 import { LoginAsPicker } from '~/components/LoginAsPicker'
+import { AccessQueue } from '~/components/cloud/Access'
 import { ChangesList } from '~/components/cloud/ChangesList'
 import { cloudChangesQuery } from '~/lib/cloud'
 import { ChangeReview, ChangesTable } from '~/components/ChangeReview'
@@ -166,6 +167,7 @@ function Approvals() {
         )}
 
         {decides && tab === 'pending' && <CloudQueue />}
+        {decides && tab === 'pending' && <AccessQueue />}
 
         {decides && (
           <Group gap={SP.cozy}>
