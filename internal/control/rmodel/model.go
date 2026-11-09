@@ -1719,6 +1719,10 @@ type CloudAccount struct {
 	ArchivedBy  *string
 	// ManageRoleArn is the role changes are made with (migration 062).
 	ManageRoleArn *string
+	// ManageMissing is the permissions the manage role lacks, and
+	// ManageCheckedAt when its policy was last read (migration 070).
+	ManageMissing   []string
+	ManageCheckedAt *time.Time
 }
 
 func (m *CloudAccount) Schema(t *storm.Table) {
@@ -1730,6 +1734,7 @@ func (m *CloudAccount) Schema(t *storm.Table) {
 	t.Col(&m.Regions).Default("'{}'::text[]")
 	t.Col(&m.ConnectedAt).Default("now()")
 	t.Col(&m.SyncErrors).Default("'{}'::jsonb")
+	t.Col(&m.ManageMissing).Default("'{}'::text[]")
 	t.CheckNamed("cloud_accounts_access_check", "access = ANY (ARRAY['read'::text, 'manage'::text])")
 	t.CheckNamed("cloud_accounts_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("cloud_accounts_provider_check", "provider = 'aws'::text")
@@ -1737,7 +1742,7 @@ func (m *CloudAccount) Schema(t *storm.Table) {
 }
 
 // CloudChange is table cloud_changes: one change Argus made or was asked
-// to make in a cloud account (migration 062).
+// to make in a cloud account (migrations 062 and 070).
 type CloudChange struct {
 	ID           [16]byte
 	Account      CloudAccount
@@ -1777,7 +1782,7 @@ func (m *CloudChange) Schema(t *storm.Table) {
 	t.Col(&m.RequestID).Default("''::text")
 	t.Col(&m.Result).Default("'{}'::jsonb")
 	t.Col(&m.Error).Default("''::text")
-	t.CheckNamed("cloud_changes_action_check", "action = ANY (ARRAY['launch'::text, 'start'::text, 'stop'::text, 'reboot'::text, 'resize'::text, 'tags'::text, 'protect'::text, 'unprotect'::text, 'remove'::text])")
+	t.CheckNamed("cloud_changes_action_check", "action = ANY (ARRAY['launch'::text, 'start'::text, 'stop'::text, 'reboot'::text, 'resize'::text, 'tags'::text, 'protect'::text, 'unprotect'::text, 'remove'::text, 'volume-create'::text, 'volume-grow'::text, 'volume-attach'::text, 'volume-detach'::text, 'volume-delete'::text, 'snapshot-create'::text, 'snapshot-delete'::text, 'image-create'::text, 'image-delete'::text, 'address-allocate'::text, 'address-associate'::text, 'address-disassociate'::text, 'address-release'::text])")
 	t.CheckNamed("cloud_changes_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("cloud_changes_level_check", "level = ANY (ARRAY['operate'::text, 'change'::text, 'remove'::text])")
 	t.CheckNamed("cloud_changes_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text, 'applied'::text, 'failed'::text, 'declined'::text, 'cancelled'::text])")

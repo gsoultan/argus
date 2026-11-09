@@ -556,7 +556,9 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{Action: "cloud.account.manage_allowed", Severity: "notice", ActorEmail: actor,
 		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
-		Detail: "Argus may now change instances in this account, through " + in.RoleARN + "."})
+		Detail: "Argus may now change instances, disks, images and addresses in this account, through " + in.RoleARN + "."})
+	// Read what the role may do now, as an update to the stack changes it.
+	a.syncCloudAccountSoon(r.Context(), c)
 	writeJSON(w, http.StatusOK, c)
 }
 

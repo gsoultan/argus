@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Group, Select, Stack, Tabs, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Box, Button, Group, Select, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconBrandAws, IconCalendarTime, IconCirclePlus, IconInfoCircle, IconSearch } from '@tabler/icons-react'
@@ -6,7 +6,8 @@ import { useMemo, useState } from 'react'
 import { CloudOverview } from '~/components/cloud/CloudOverview'
 import { ChangesList } from '~/components/cloud/ChangesList'
 import { SchedulesList } from '~/components/cloud/Schedules'
-import { DisksTable, InstancesTable, NetworkTables } from '~/components/cloud/CloudTables'
+import { InstancesTable, NetworkTables, StorageTables } from '~/components/cloud/CloudTables'
+import { NewAddress, NewDisk } from '~/components/cloud/StorageActions'
 import { CLOUD_TABS, CLOUD_TAB_LABEL, parseCloudTab, type CloudTab } from '~/components/cloud/tabs'
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader, Toolbar } from '~/components/page'
@@ -30,7 +31,7 @@ export const Route = createFileRoute('/cloud/')({
   component: Cloud,
 })
 
-const KINDS: CloudKind[] = ['instance', 'volume', 'firewall', 'network', 'subnet', 'address']
+const KINDS: CloudKind[] = ['instance', 'volume', 'firewall', 'network', 'subnet', 'address', 'snapshot', 'image']
 
 function Cloud() {
   const navigate = useNavigate({ from: Route.fullPath })
@@ -50,7 +51,10 @@ function Cloud() {
     network: useQuery(cloudItemsQuery('network')),
     subnet: useQuery(cloudItemsQuery('subnet')),
     address: useQuery(cloudItemsQuery('address')),
+    snapshot: useQuery(cloudItemsQuery('snapshot')),
+    image: useQuery(cloudItemsQuery('image')),
   }
+  const [making, setMaking] = useState<'disk' | 'address' | null>(null)
   const [account, setAccount] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
@@ -59,7 +63,7 @@ function Cloud() {
     const m = new Map<string, string>()
     for (const k of KINDS) for (const it of q[k].data ?? []) if (it.resource.name !== it.resource.id) m.set(it.resource.id, it.resource.name)
     return m
-  }, [q.instance.data, q.volume.data, q.firewall.data, q.network.data, q.subnet.data, q.address.data])
+  }, [q.instance.data, q.volume.data, q.firewall.data, q.network.data, q.subnet.data, q.address.data, q.snapshot.data, q.image.data])
 
   const narrow = (list?: CloudItem[]) => {
     if (!list) return list
@@ -72,7 +76,7 @@ function Cloud() {
   const list = accounts.data?.accounts ?? []
   const newest = list.map((a) => a.syncedAt).filter(Boolean).sort().at(-1) ?? null
 
-  const description = 'Every instance, disk and firewall in your AWS accounts, and which instances have an Argus server. Launch, stop, resize and remove instances, with approval where the environment asks for it.'
+  const description = 'Every instance, disk, image and firewall in your AWS accounts, and which instances have an Argus server. Launch, stop and resize instances, and make, grow, snapshot and remove disks, with approval where the environment asks for it.'
   if (!isConfigured()) {
     return (
       <Box>
@@ -101,7 +105,9 @@ function Cloud() {
           <Group gap="xs">
             <ButtonLink to="/cloud/connect" size="sm" variant="default" leftSection={<IconBrandAws size={16} />}>Connect an account</ButtonLink>
             {canChange && tab === 'schedules' && <ButtonLink to="/cloud/schedule" size="sm" leftSection={<IconCalendarTime size={16} />}>Make a schedule</ButtonLink>}
-            {canChange && tab !== 'schedules' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
+            {canChange && tab === 'disks' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('disk')}>New disk</Button>}
+            {canChange && tab === 'network' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('address')}>Allocate an Elastic IP</Button>}
+            {canChange && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
           </Group>
         ) : undefined}
         tabs={hasAccounts ? (
@@ -149,12 +155,17 @@ function Cloud() {
             <ChangesList changes={changes.data} loading={changes.isPending}
               empty={{ title: 'No changes yet', text: 'Launching, stopping, resizing and removing instances from Argus shows up here, with who asked, who approved and what AWS said.' }} />
           )}
-          {tab === 'disks' && <DisksTable items={narrow(q.volume.data)} loading={q.volume.isPending} names={names} filtered={filtered} />}
+          {tab === 'disks' && (
+            <StorageTables volumes={narrow(q.volume.data)} snapshots={narrow(q.snapshot.data)} images={narrow(q.image.data)}
+              loading={q.volume.isPending} names={names} filtered={filtered} />
+          )}
           {tab === 'network' && (
             <NetworkTables firewalls={narrow(q.firewall.data)} networks={narrow(q.network.data)} subnets={q.subnet.data}
               addresses={narrow(q.address.data)} loading={q.firewall.isPending} names={names} filtered={filtered} />
           )}
         </Stack>
+        {making === 'disk' && <NewDisk onClose={() => setMaking(null)} />}
+        {making === 'address' && <NewAddress onClose={() => setMaking(null)} />}
       </PageBody>
     </Box>
   )

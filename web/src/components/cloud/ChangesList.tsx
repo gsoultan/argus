@@ -1,7 +1,8 @@
 import { Badge, Box, Button, Card, Flex, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconCirclePlus, IconHistory, IconLock, IconLockOpen, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash,
+  IconCamera, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconPhoto, IconPlayerPlay,
+  IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconWorld,
 } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
@@ -14,8 +15,15 @@ import { EnvBadge } from './common'
 const ICON: Record<CloudAction, typeof IconTrash> = {
   launch: IconCirclePlus, start: IconPlayerPlay, stop: IconPlayerStop, reboot: IconRefresh, resize: IconResize,
   tags: IconTag, protect: IconLock, unprotect: IconLockOpen, remove: IconTrash,
+  'volume-create': IconDeviceFloppy, 'volume-grow': IconResize, 'volume-attach': IconLink, 'volume-detach': IconLinkOff,
+  'volume-delete': IconTrash, 'snapshot-create': IconCamera, 'snapshot-delete': IconTrash, 'image-create': IconPhoto,
+  'image-delete': IconTrash, 'address-allocate': IconWorld, 'address-associate': IconLink, 'address-disassociate': IconLinkOff,
+  'address-release': IconTrash,
 }
-const ICON_COLOR: Partial<Record<CloudAction, string>> = { launch: 'teal', remove: 'rose', stop: 'amber' }
+const ICON_COLOR: Partial<Record<CloudAction, string>> = {
+  launch: 'teal', remove: 'rose', stop: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',
+  'volume-delete': 'rose', 'snapshot-delete': 'rose', 'image-delete': 'rose', 'address-release': 'rose',
+}
 
 /**
  * Cloud changes as cards: what, where, who asked and why, and what came of

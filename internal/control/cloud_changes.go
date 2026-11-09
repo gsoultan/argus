@@ -47,7 +47,7 @@ type CloudChange struct {
 
 // ErrCloudChangeBusy is a resource that already has a change waiting or
 // running.
-var ErrCloudChangeBusy = errors.New("this instance already has a change waiting or running; let that one finish first")
+var ErrCloudChangeBusy = errors.New("this resource already has a change waiting or running; let that one finish first")
 
 // ErrCloudChangeNotFound is an unknown change.
 var ErrCloudChangeNotFound = errors.New("no such cloud change")
@@ -205,12 +205,18 @@ func (s *Store) FinishCloudChange(ctx context.Context, id string, ok bool, res c
 
 // CloudInstance reads one instance as Argus last saw it.
 func (s *Store) CloudInstance(ctx context.Context, accountID, region, id string) (cloud.Resource, error) {
+	return s.CloudResourceOf(ctx, accountID, region, cloud.KindInstance, id)
+}
+
+// CloudResourceOf reads one present resource of a kind as Argus last saw
+// it.
+func (s *Store) CloudResourceOf(ctx context.Context, accountID, region string, kind cloud.Kind, id string) (cloud.Resource, error) {
 	var data []byte
 	err := s.db(ctx).QueryRow(ctx, `SELECT data FROM cloud_resources
-		WHERE account_id::text = $1 AND region = $2 AND kind = 'instance' AND provider_id = $3 AND gone_at IS NULL`,
-		accountID, region, id).Scan(&data)
+		WHERE account_id::text = $1 AND region = $2 AND kind = $3 AND provider_id = $4 AND gone_at IS NULL`,
+		accountID, region, string(kind), id).Scan(&data)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return cloud.Resource{}, errors.New("Argus has not seen instance " + id + " in " + region + "; read the account again")
+		return cloud.Resource{}, errors.New("Argus has not seen " + string(kind) + " " + id + " in " + region + "; read the account again")
 	}
 	if err != nil {
 		return cloud.Resource{}, err

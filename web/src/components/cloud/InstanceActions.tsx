@@ -1,21 +1,21 @@
-import {
-  ActionIcon, Alert, Badge, Box, Button, Checkbox, Group, Menu, Modal, Select, Stack, Table, Text, TextInput, Textarea,
-} from '@mantine/core'
+import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Group, Menu, Select, Stack, Table, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconDots, IconLock, IconLockOpen, IconPlayerPlay, IconPlayerStop, IconPlus, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck, IconX,
+  IconDots, IconLock, IconLockOpen, IconPhoto, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
 } from '@tabler/icons-react'
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  cloudAccountsQuery, cloudChangesQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf, needsApproval,
-  useAskCloudChange, type CloudAction, type CloudChange, type CloudChangeInput, type CloudEnvironment, type CloudItem,
+  ACTION_LEVEL, cloudAccountsQuery, cloudChangesQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
+  type CloudAction, type CloudEnvironment, type CloudItem,
 } from '~/lib/cloud'
-import { notifyError, notifyOk } from '~/lib/notify'
 import { meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { FS, INK } from '~/theme'
-import { EnvBadge } from './common'
+import { ChangeModal, reportChange, TagsChange, useSubmit } from './ChangeModal'
+import { ImageCreate } from './StorageActions'
+
+export { reportChange }
 
 /*
  * What can be done to one instance, from its panel. Shown only to admins and
@@ -24,17 +24,6 @@ import { EnvBadge } from './common'
  * has to approve it first and says so in its answer.
  */
 
-const LEVEL: Record<CloudAction, CloudChange['level']> = {
-  launch: 'change', start: 'operate', stop: 'operate', reboot: 'operate', tags: 'operate',
-  resize: 'change', protect: 'change', unprotect: 'change', remove: 'remove',
-}
-
-/** Tells the person what happened to the change they asked for. */
-export function reportChange(c: CloudChange, done: string) {
-  if (c.state === 'awaiting_approval') notifyOk('Asked for approval', `${c.summary}. Someone else approves it on Approvals or Cloud › Changes.`)
-  else if (c.state === 'failed') notifyError('AWS refused the change', new Error(c.error || 'No reason was given.'))
-  else notifyOk(done, c.summary)
-}
 
 export function InstanceActions({ it }: { it: CloudItem }) {
   const { data: me } = useQuery(meQuery())
@@ -80,6 +69,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
             <Menu.Dropdown>
               <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on termination protection</Menu.Item>
               <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off termination protection</Menu.Item>
+              <Menu.Item leftSection={<IconPhoto size={14} />} onClick={() => setOpen('image-create')}>Make an image…</Menu.Item>
               <Menu.Divider />
               <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('remove')}>Remove instance…</Menu.Item>
             </Menu.Dropdown>
@@ -92,6 +82,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
       {open === 'resize' && <ResizeChange it={it} env={env} onClose={close} />}
       {open === 'tags' && <TagsChange it={it} env={env} onClose={close} />}
       {open === 'remove' && <RemoveChange it={it} onClose={close} />}
+      {open === 'image-create' && <ImageCreate it={it} env={env} onClose={close} />}
     </Stack>
   )
 }
@@ -104,67 +95,12 @@ const SIMPLE: Record<string, { title: string; verb: string; done: string; text: 
   unprotect: { title: 'Turn off termination protection for', verb: 'Turn off', done: 'Protection off', color: 'amber', text: 'The instance can be removed again. Removing it from Argus still needs its name typed, and approval where its environment asks for it.' },
 }
 
-/** The frame every change shares: what it does, who must approve, and why. */
-function ChangeModal({ title, env, level, reason, setReason, children, onClose, onSubmit, submit, color, busy, disabled }: {
-  title: ReactNode
-  env: CloudEnvironment
-  level: CloudChange['level']
-  reason: string
-  setReason: (s: string) => void
-  children: ReactNode
-  onClose: () => void
-  onSubmit: () => void
-  submit: string
-  color?: string
-  busy: boolean
-  disabled?: boolean
-}) {
-  const approval = needsApproval(env, level)
-  return (
-    <Modal opened onClose={onClose} centered size="lg" title={<Text fw={700}>{title}</Text>}>
-      <Stack gap="md">
-        {children}
-        {approval && (
-          <Alert color="amber" variant="light" icon={<IconUserCheck size={16} />} p="sm">
-            <Group gap={6} mb={2}><EnvBadge env={env} /><Text size={FS.meta} fw={600}>Someone else approves this</Text></Group>
-            <Text size={FS.meta}>
-              Nothing changes in AWS until another admin, owner or approver approves it. It then runs as you, and the audit log has both of you.
-            </Text>
-          </Alert>
-        )}
-        <Textarea label={approval ? 'Why' : 'Why (optional)'} description={approval ? 'The approver sees this.' : 'Kept with the change in the audit log.'}
-          autosize minRows={2} value={reason} onChange={(e) => setReason(e.currentTarget.value)} />
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button color={color} loading={busy} disabled={disabled || (approval && reason.trim().length < 5)} onClick={onSubmit}>
-            {approval ? 'Ask for approval' : submit}
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
-  )
-}
-
-function useSubmit(onClose: () => void) {
-  const ask = useAskCloudChange()
-  const submit = async (in_: CloudChangeInput, done: string) => {
-    try {
-      const c = await ask.mutateAsync(in_)
-      reportChange(c, done)
-      onClose()
-    } catch (err) {
-      notifyError('Could not make the change', err)
-    }
-  }
-  return { submit, busy: ask.isPending }
-}
-
 function SimpleChange({ it, env, action, onClose }: { it: CloudItem; env: CloudEnvironment; action: CloudAction; onClose: () => void }) {
   const s = SIMPLE[action]!
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   return (
-    <ChangeModal title={`${s.title} ${it.resource.name}?`} env={env} level={LEVEL[action]} reason={reason} setReason={setReason}
+    <ChangeModal title={`${s.title} ${it.resource.name}?`} env={env} level={ACTION_LEVEL[action]} reason={reason} setReason={setReason}
       onClose={onClose} busy={busy} submit={s.verb} color={s.color}
       onSubmit={() => void submit({ accountId: it.accountId, region: it.resource.region, action, resourceId: it.resource.id, reason }, s.done)}>
       <Text size={FS.body} lh={1.55}>{s.text}</Text>
@@ -195,44 +131,6 @@ function ResizeChange({ it, env, onClose }: { it: CloudItem; env: CloudEnvironme
           data={(opts.data?.sizes ?? []).filter((x) => x !== r.size)} disabled={!stopped} nothingFoundMessage="No such size"
           styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
       </Group>
-    </ChangeModal>
-  )
-}
-
-function TagsChange({ it, env, onClose }: { it: CloudItem; env: CloudEnvironment; onClose: () => void }) {
-  const r = it.resource
-  const start = Object.entries(r.tags ?? {}).filter(([k]) => !k.startsWith('aws:')).sort(([a], [b]) => a.localeCompare(b))
-  const [rows, setRows] = useState<[string, string][]>(start.length ? start : [['', '']])
-  const [reason, setReason] = useState('')
-  const { submit, busy } = useSubmit(onClose)
-  const before = new Map(start)
-  const after = new Map(rows.filter(([k]) => k.trim()).map(([k, v]) => [k.trim(), v]))
-  const set: Record<string, string> = {}
-  for (const [k, v] of after) if (before.get(k) !== v) set[k] = v
-  const remove = [...before.keys()].filter((k) => !after.has(k))
-  const envKey = (k: string) => ['environment', 'env'].includes(k.toLowerCase())
-  const touchesEnv = Object.keys(set).some(envKey) || remove.some(envKey)
-  const changed = Object.keys(set).length + remove.length
-  const edit = (i: number, j: 0 | 1, v: string) => setRows(rows.map((row, n) => n === i ? (j === 0 ? [v, row[1]] : [row[0], v]) : row))
-  return (
-    <ChangeModal title={`Tags on ${r.name}`} env={env} level={touchesEnv ? 'change' : 'operate'} reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit={changed ? `Save ${changed} change${changed === 1 ? '' : 's'}` : 'Save'} disabled={changed === 0}
-      onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'tags', resourceId: r.id,
-        spec: { set, remove }, reason }, 'Tags saved')}>
-      <Stack gap={6}>
-        {rows.map(([k, v], i) => (
-          <Group key={i} gap="xs" wrap="nowrap">
-            <TextInput placeholder="Key" value={k} onChange={(e) => edit(i, 0, e.currentTarget.value)} style={{ flex: 2 }} aria-label="Tag key"
-              error={k.toLowerCase().startsWith('aws:') ? 'AWS keeps aws: tags' : undefined} />
-            <TextInput placeholder="Value" value={v} onChange={(e) => edit(i, 1, e.currentTarget.value)} style={{ flex: 3 }} aria-label="Tag value" />
-            <ActionIcon variant="subtle" color="gray" aria-label="Remove tag" onClick={() => setRows(rows.filter((_, n) => n !== i))}><IconX size={14} /></ActionIcon>
-          </Group>
-        ))}
-        <Button variant="subtle" size="xs" w="fit-content" leftSection={<IconPlus size={13} />} onClick={() => setRows([...rows, ['', '']])}>Add a tag</Button>
-      </Stack>
-      {touchesEnv && (
-        <Text size={FS.meta} c={INK.pending}>Changing the Environment tag changes which rules apply to this instance, so it counts as a bigger change.</Text>
-      )}
     </ChangeModal>
   )
 }

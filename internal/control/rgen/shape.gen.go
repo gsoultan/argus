@@ -240,6 +240,8 @@ func _assertCloudAccountShape(m m0.CloudAccount) {
 		m.ArchivedAt,
 		m.ArchivedBy,
 		m.ManageRoleArn,
+		m.ManageMissing,
+		m.ManageCheckedAt,
 	}
 }
 

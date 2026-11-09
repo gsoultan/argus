@@ -224,12 +224,14 @@ func (a *API) agentUserData(r *http.Request, hostname, token string) (string, st
 
 // cloudChangeIn is a request for a change.
 type cloudChangeIn struct {
-	AccountID  string          `json:"accountId"`
-	Region     string          `json:"region"`
-	Action     cloud.Action    `json:"action"`
-	ResourceID string          `json:"resourceId"`
-	Spec       json.RawMessage `json:"spec"`
-	Reason     string          `json:"reason"`
+	AccountID  string       `json:"accountId"`
+	Region     string       `json:"region"`
+	Action     cloud.Action `json:"action"`
+	ResourceID string       `json:"resourceId"`
+	// Kind is what ResourceID is, for tags; an instance when empty.
+	Kind   cloud.Kind      `json:"kind"`
+	Spec   json.RawMessage `json:"spec"`
+	Reason string          `json:"reason"`
 	// Confirm is the instance's name, typed, for a remove.
 	Confirm string `json:"confirm"`
 }
@@ -257,7 +259,12 @@ type cloudResizeSpec struct {
 type cloudTagsSpec struct {
 	Set    map[string]string `json:"set"`
 	Remove []string          `json:"remove"`
+	// Kind is what is tagged, when not an instance.
+	Kind cloud.Kind `json:"kind,omitempty"`
 }
+
+// cloudTaggable are the kinds Argus tags.
+var cloudTaggable = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindImage, cloud.KindAddress}
 
 type cloudRemoveSpec struct {
 	FinalSnapshots bool `json:"finalSnapshots"`
@@ -382,9 +389,22 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	if in.Action == cloud.ActionLaunch {
 		return a.planLaunch(r, m, actor, in, ch)
 	}
-	inst, err := a.store.CloudInstance(r.Context(), m.acct.ID, in.Region, in.ResourceID)
+	if cloud.IsStorage(in.Action) {
+		return a.planStorage(r, m, in, ch)
+	}
+	kind := cloud.KindInstance
+	if in.Action == cloud.ActionTags && in.Kind != "" {
+		if !slices.Contains(cloudTaggable, in.Kind) {
+			return ch, http.StatusBadRequest, fmt.Errorf("Argus does not tag a %s", in.Kind)
+		}
+		kind = in.Kind
+	}
+	inst, err := a.store.CloudResourceOf(r.Context(), m.acct.ID, in.Region, kind, in.ResourceID)
 	if err != nil {
 		return ch, http.StatusNotFound, err
+	}
+	if kind != cloud.KindInstance && in.Action != cloud.ActionTags {
+		return ch, http.StatusBadRequest, fmt.Errorf("%q is for instances", in.Action)
 	}
 	ch.ResourceID, ch.ResourceName = inst.ID, inst.Name
 	ch.Environment = cloudEnvOf(inst.Tags, m.acct.Environment)
@@ -433,6 +453,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 			if !cloud.ValidTagKey(k) {
 				return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be removed from here", k)
 			}
+		}
+		if kind != cloud.KindInstance {
+			s.Kind = kind
 		}
 		ch.Spec, _ = json.Marshal(s)
 		ch.Summary = "Change tags on " + inst.Name + ": " + tagWords(s)
@@ -698,7 +721,11 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 			return a.mustReread(r, ch)
 		}
 	default:
-		err = fmt.Errorf("%q is not a change Argus makes", ch.Action)
+		if cloud.IsStorage(ch.Action) {
+			res, err = a.applyStorage(ctx, m, ch)
+		} else {
+			err = fmt.Errorf("%q is not a change Argus makes", ch.Action)
+		}
 	}
 	cause := ""
 	if err != nil {
@@ -718,6 +745,9 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 		}
 		if res.ResourceID != "" && ch.Action == cloud.ActionLaunch {
 			detail += "; instance " + res.ResourceID
+		}
+		if res.ResourceID != "" && (ch.Action == cloud.ActionVolumeCreate || ch.Action == cloud.ActionAddressAllocate) {
+			detail += "; made " + res.ResourceID
 		}
 		if len(res.Snapshots) > 0 {
 			detail += "; final snapshots " + strings.Join(sortedMapValues(res.Snapshots), ", ")

@@ -9,7 +9,7 @@ import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query
 import { get, isConfigured, send } from '~/lib/live'
 
 export type CloudEnvironment = 'production' | 'staging' | 'development'
-export type CloudKind = 'instance' | 'volume' | 'firewall' | 'network' | 'subnet' | 'address'
+export type CloudKind = 'instance' | 'volume' | 'firewall' | 'network' | 'subnet' | 'address' | 'snapshot' | 'image'
 
 export interface CloudAccount {
   id: string
@@ -28,6 +28,9 @@ export interface CloudAccount {
   syncedAt: string | null
   syncErrors: Record<string, string>
   counts: Partial<Record<CloudKind, number>>
+  /** Permissions the manage role lacks, read from its policy at each sync. */
+  manageMissing: string[]
+  manageCheckedAt: string | null
 }
 
 export interface CloudBase {
@@ -175,7 +178,11 @@ export function useMakeCloudReadOnly() {
 
 /* ── Changes ────────────────────────────────────────────────────────────── */
 
-export type CloudAction = 'launch' | 'start' | 'stop' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'remove'
+export type CloudStorageAction =
+  | 'volume-create' | 'volume-grow' | 'volume-attach' | 'volume-detach' | 'volume-delete'
+  | 'snapshot-create' | 'snapshot-delete' | 'image-create' | 'image-delete'
+  | 'address-allocate' | 'address-associate' | 'address-disassociate' | 'address-release'
+export type CloudAction = 'launch' | 'start' | 'stop' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'remove' | CloudStorageAction
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled'
 
 export interface CloudChange {
@@ -242,6 +249,8 @@ export interface CloudChangeInput {
   region: string
   action: CloudAction
   resourceId?: string
+  /** What resourceId is, for tags on something other than an instance. */
+  kind?: CloudKind
   spec?: Record<string, unknown>
   reason?: string
   confirm?: string
@@ -617,4 +626,67 @@ export function transitionWhen(at: string, zone: string): string {
 
 export function money(n: number): string {
   return n >= 100 ? `$${Math.round(n).toLocaleString('en-US')}` : `$${n.toFixed(2)}`
+}
+
+/* ── Disks, snapshots, images and Elastic IPs ───────────────────────────── */
+
+/** How much each change can do; the control plane decides, this only says so up front. */
+export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
+  launch: 'change', start: 'operate', stop: 'operate', reboot: 'operate', tags: 'operate',
+  resize: 'change', protect: 'change', unprotect: 'change', remove: 'remove',
+  'volume-create': 'change', 'volume-grow': 'change', 'volume-attach': 'change', 'volume-detach': 'change', 'volume-delete': 'remove',
+  'snapshot-create': 'operate', 'snapshot-delete': 'remove', 'image-create': 'change', 'image-delete': 'remove',
+  'address-allocate': 'change', 'address-associate': 'change', 'address-disassociate': 'change', 'address-release': 'remove',
+}
+
+/** The permissions each storage change takes, as the manage role must grant them. */
+export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
+  'volume-create': ['ec2:CreateVolume', 'ec2:AttachVolume'], 'volume-grow': ['ec2:ModifyVolume'],
+  'volume-attach': ['ec2:AttachVolume'], 'volume-detach': ['ec2:DetachVolume'], 'volume-delete': ['ec2:DeleteVolume'],
+  'snapshot-create': ['ec2:CreateSnapshot'], 'snapshot-delete': ['ec2:DeleteSnapshot'],
+  'image-create': ['ec2:CreateImage'], 'image-delete': ['ec2:DeregisterImage', 'ec2:DeleteSnapshot'],
+  'address-allocate': ['ec2:AllocateAddress'], 'address-associate': ['ec2:AssociateAddress'],
+  'address-disassociate': ['ec2:DisassociateAddress'], 'address-release': ['ec2:ReleaseAddress'],
+}
+
+/** Whether an account's manage role lacks what an action takes. */
+export function roleLacks(a: CloudAccount | undefined, action: CloudAction): boolean {
+  return Boolean(a?.manageMissing?.length && ACTION_NEEDS[action]?.some((p) => a.manageMissing.includes(p)))
+}
+
+export const VOLUME_TYPES: { value: string; label: string; perGb: number }[] = [
+  { value: 'gp3', label: 'gp3 · general purpose SSD', perGb: 0.08 },
+  { value: 'gp2', label: 'gp2 · older general purpose SSD', perGb: 0.10 },
+  { value: 'io2', label: 'io2 · provisioned IOPS SSD', perGb: 0.125 },
+  { value: 'io1', label: 'io1 · older provisioned IOPS SSD', perGb: 0.125 },
+  { value: 'st1', label: 'st1 · throughput HDD, 125 GiB and up', perGb: 0.045 },
+  { value: 'sc1', label: 'sc1 · cold HDD, 125 GiB and up', perGb: 0.015 },
+]
+
+/** About what a month costs, at us-east-1 list prices. */
+export const PRICE = { snapshotPerGb: 0.05, elasticIp: 3.65 }
+
+export function volumeMonthly(type: string, gb: number): number {
+  return (VOLUME_TYPES.find((t) => t.value === type)?.perGb ?? 0.08) * gb
+}
+
+/** A disk's size and type from its inventory size, "100 GiB gp3". */
+export function volumeOf(r: CloudResource): { gb: number; type: string } {
+  const m = /^(\d+) GiB\s*(\S*)/.exec(r.size ?? '')
+  return { gb: m ? Number(m[1]) : 0, type: m?.[2] ?? '' }
+}
+
+/** The instance a disk or address is attached to, and as what. */
+export function attachment(r: CloudResource): CloudRef | undefined {
+  return r.links?.find((l) => l.kind === 'instance')
+}
+
+/** The device names Argus attaches disks as, and the first one an instance does not use. */
+export function freeDevice(inst: CloudResource): string {
+  const used = new Set((inst.links ?? []).filter((l) => l.kind === 'volume').flatMap((l) => {
+    const d = l.name ?? ''
+    return d.startsWith('/dev/xvd') ? [d, '/dev/sd' + d.slice(8)] : [d]
+  }))
+  for (const c of 'fghijklmnop') if (!used.has(`/dev/sd${c}`)) return `/dev/sd${c}`
+  return ''
 }

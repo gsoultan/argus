@@ -45,6 +45,10 @@ type CloudAccount struct {
 	SyncErrors    map[string]string `json:"syncErrors"`
 	// Counts is how many of each kind are present now, by kind.
 	Counts map[string]int `json:"counts"`
+	// ManageMissing is the permissions the manage role lacks, read from its
+	// policy; ManageCheckedAt is when, nil when it could not be read.
+	ManageMissing   []string   `json:"manageMissing"`
+	ManageCheckedAt *time.Time `json:"manageCheckedAt"`
 }
 
 // ErrCloudAccountExists is an account that is already connected.
@@ -57,13 +61,15 @@ const cloudAccountCols = `a.id::text, a.provider, a.name, a.account_id, a.role_a
 	a.identity_arn, a.regions, a.connected_by, a.connected_at, a.synced_at, a.sync_errors,
 	COALESCE((SELECT jsonb_object_agg(kind, n) FROM (
 		SELECT kind, count(*) AS n FROM cloud_resources r
-		WHERE r.account_id = a.id AND r.gone_at IS NULL GROUP BY kind) c), '{}'::jsonb)`
+		WHERE r.account_id = a.id AND r.gone_at IS NULL GROUP BY kind) c), '{}'::jsonb),
+	a.manage_missing, a.manage_checked_at`
 
 func scanCloudAccount(row pgx.Row) (CloudAccount, error) {
 	var c CloudAccount
 	var errs, counts []byte
 	if err := row.Scan(&c.ID, &c.Provider, &c.Name, &c.AccountID, &c.RoleARN, &c.ManageRoleARN, &c.Access, &c.Environment,
-		&c.IdentityARN, &c.Regions, &c.ConnectedBy, &c.ConnectedAt, &c.SyncedAt, &errs, &counts); err != nil {
+		&c.IdentityARN, &c.Regions, &c.ConnectedBy, &c.ConnectedAt, &c.SyncedAt, &errs, &counts,
+		&c.ManageMissing, &c.ManageCheckedAt); err != nil {
 		return CloudAccount{}, err
 	}
 	c.SyncErrors, c.Counts = map[string]string{}, map[string]int{}
@@ -71,6 +77,9 @@ func scanCloudAccount(row pgx.Row) (CloudAccount, error) {
 	_ = json.Unmarshal(counts, &c.Counts)
 	if c.Regions == nil {
 		c.Regions = []string{}
+	}
+	if c.ManageMissing == nil {
+		c.ManageMissing = []string{}
 	}
 	return c, nil
 }
@@ -243,4 +252,15 @@ func (s *Store) CloudResources(ctx context.Context, kind cloud.Kind) ([]CloudIte
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// SetCloudManageMissing records what the manage role lacks, as read from
+// its policy now.
+func (s *Store) SetCloudManageMissing(ctx context.Context, id string, missing []string) error {
+	if missing == nil {
+		missing = []string{}
+	}
+	_, err := s.db(ctx).Exec(ctx, `UPDATE cloud_accounts SET manage_missing = $2, manage_checked_at = now()
+		WHERE id::text = $1`, id, missing)
+	return err
 }

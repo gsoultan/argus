@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Button, Card, Flex, Group, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Flex, Group, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core'
 import {
   IconAlertTriangle, IconBrandAws, IconCircleCheck, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
 } from '@tabler/icons-react'
@@ -128,6 +128,7 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
   const sync = useSyncCloudAccount()
   const [confirm, setConfirm] = useState(false)
   const [access, setAccess] = useState(false)
+  const [update, setUpdate] = useState(false)
   const stale = staleness(a)
   const counts = [
     [a.counts.instance ?? 0, 'instance'], [a.counts.volume ?? 0, 'disk'], [a.counts.firewall ?? 0, 'firewall'],
@@ -142,6 +143,11 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
             {a.access === 'manage'
               ? <Badge variant="light" color="azure" radius="sm" tt="none" fw={500}>Can change</Badge>
               : <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>}
+            {a.access === 'manage' && a.manageMissing?.length > 0 && (
+              <Tooltip label={`The manage role lacks ${a.manageMissing.join(', ')}, so Argus cannot change disks, images or addresses here yet.`} multiline w={300}>
+                <Badge variant="light" color="amber" radius="sm" tt="none" fw={500}>Role needs an update</Badge>
+              </Tooltip>
+            )}
           </Group>
           <Text size={FS.micro} c="dimmed" ff="monospace" mt={2}>{a.accountId.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3')} · {a.regions.length} region{a.regions.length === 1 ? '' : 's'}</Text>
           <Text size={FS.meta} c="dimmed" mt={SP.tight}>
@@ -158,6 +164,9 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
                 success: ['Reading again', `${a.name} is being read; this page updates when it is done.`] })}>
               Read now
             </Button>
+            {a.access === 'manage' && a.manageMissing?.length > 0 && (
+              <Button size="xs" variant="light" color="amber" leftSection={<IconPencil size={13} />} onClick={() => setUpdate(true)}>Update role</Button>
+            )}
             {a.access === 'manage'
               ? <Button size="xs" variant="subtle" color="gray" onClick={() => setAccess(true)}>Make read only</Button>
               : <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
@@ -169,6 +178,7 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
       {access && (a.access === 'manage'
         ? <ReadOnly a={a} onClose={() => setAccess(false)} />
         : <AllowChanges a={a} onClose={() => setAccess(false)} />)}
+      {update && <AllowChanges a={a} update onClose={() => setUpdate(false)} />}
     </Box>
   )
 }
@@ -177,18 +187,26 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
  * Lets Argus change an account: the same stack, updated to add the manage
  * role, and that role pasted back. Argus assumes it before saving.
  */
-function AllowChanges({ a, onClose }: { a: CloudAccount; onClose: () => void }) {
+function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolean; onClose: () => void }) {
   const prepared = useQuery({ queryKey: ['cloud', 'prepare-manage', a.accountId], queryFn: () => prepareCloudAccount(a.accountId, true), gcTime: 0 })
   const allow = useAllowCloudChanges()
-  const [arn, setArn] = useState('')
+  const [arn, setArn] = useState(update ? a.manageRoleArn ?? '' : '')
   return (
-    <Modal opened onClose={onClose} size="xl" centered title={<Text fw={700}>Allow changes in {a.name}</Text>}>
+    <Modal opened onClose={onClose} size="xl" centered title={<Text fw={700}>{update ? `Update the manage role in ${a.name}` : `Allow changes in ${a.name}`}</Text>}>
       <Stack gap="md">
-        <Text size={FS.body} lh={1.55}>
-          Argus gets a second role, <Text span ff="monospace">ArgusManage</Text>, that can launch, start, stop, resize, tag and remove
-          instances and nothing else. Every change is made as the person who asked, waits for approval where
-          the environment asks for it, and goes in the audit log.
-        </Text>
+        {update ? (
+          <Text size={FS.body} lh={1.55}>
+            The <Text span ff="monospace">ArgusManage</Text> role in this account was made before Argus could change disks, snapshots,
+            images and Elastic IPs. It lacks {a.manageMissing.join(', ')}. Deploy the template below over the same stack; the role
+            keeps its ARN, so check it again below once the update is done. Argus also notices by itself at its next read.
+          </Text>
+        ) : (
+          <Text size={FS.body} lh={1.55}>
+            Argus gets a second role, <Text span ff="monospace">ArgusManage</Text>, that can change instances, disks, snapshots, images
+            and Elastic IPs and nothing else: no IAM, so it cannot grant itself more. Every change is made as the person who asked,
+            waits for approval where the environment asks for it, and goes in the audit log.
+          </Text>
+        )}
         {prepared.error && <Alert color="rose" variant="light">{(prepared.error as Error).message}</Alert>}
         {prepared.data ? <RoleSetup prepared={prepared.data} update /> : !prepared.error && <Text size={FS.meta} c="dimmed">Making the template…</Text>}
         <TextInput label="Manage role ARN" description="The stack's ManageRoleArn output, once the update is done."
@@ -198,8 +216,9 @@ function AllowChanges({ a, onClose }: { a: CloudAccount; onClose: () => void }) 
           <Button variant="default" onClick={onClose}>Cancel</Button>
           <Button disabled={!arn.trim().startsWith('arn:')} loading={allow.isPending}
             onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn.trim() }), { failure: 'Argus could not use that role',
-              success: ['Changes allowed', `Admins can now launch and change instances in ${a.name}.`] }).then((ok) => ok && onClose())}>
-            Check and allow
+              success: update ? ['Checking the role', `Argus is reading what the role in ${a.name} may do now.`]
+                : ['Changes allowed', `Admins can now launch and change instances, disks and addresses in ${a.name}.`] }).then((ok) => ok && onClose())}>
+            {update ? 'Check again' : 'Check and allow'}
           </Button>
         </Group>
       </Stack>
