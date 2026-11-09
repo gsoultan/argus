@@ -126,6 +126,7 @@ func MySQL(cfg MySQLConfig) TunnelService {
 			call.Refuse("the session could not be recorded, so it was not opened: " + err.Error())
 			return
 		}
+		rec.parts = g.DB.AnswerParts
 		octx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		s, err := f.open(octx, g, id)
 		cancel()
@@ -644,7 +645,9 @@ func (s *mysqlSession) send(a tunnel.PGAnswer) error {
 	if err != nil {
 		return err
 	}
-	return s.rec.frame(tunnel.FramePGAnswer, b)
+	return s.rec.answer(b, func() ([]byte, error) {
+		return json.Marshal(tunnel.PGAnswer{ID: a.ID, Type: "error", Error: tunnel.ErrAnswerTooLarge.Error()})
+	})
 }
 
 func (s *mysqlSession) serve(ctx context.Context, st tunnel.Stream) {

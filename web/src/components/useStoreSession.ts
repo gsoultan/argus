@@ -83,6 +83,9 @@ export function useStoreSession(
   useEffect(() => {
     let ws: WebSocket | null = null
     let disposed = false
+    // Whether the control plane said ready: a socket that closes before it
+    // never opened a session, which is not the same as one that ended.
+    let opened = false
     void (async () => {
       const t = await getTicket()
       if (disposed) return
@@ -102,6 +105,7 @@ export function useStoreSession(
         if (typeof ev.data !== 'string') return
         const m = JSON.parse(ev.data) as { type: string; ans?: StoreAnswer; data?: string }
         if (m.type === 'ready') {
+          opened = true
           setStatus('ready')
           for (const frame of queue.current) ws?.send(frame)
           queue.current = []
@@ -132,9 +136,11 @@ export function useStoreSession(
         }
       }
       ws.onclose = () => {
+        if (disposed) return
+        const why = opened ? 'the session ended' : 'the session could not be opened: the connection closed before it was ready'
         setStatus('closed')
-        setFatal((f) => f ?? 'the session ended')
-        failPending('the session ended')
+        setFatal((f) => f ?? why)
+        failPending(why)
       }
     })()
     return () => {

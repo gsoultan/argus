@@ -39,6 +39,9 @@ type AccessRequest struct {
 	// AsEditor is set on a change request the reader may decide as an
 	// editor of its database, rather than by their role.
 	AsEditor bool `json:"asEditor,omitempty"`
+	// Broker is set when the request is for a message broker (RabbitMQ,
+	// Kafka) rather than a database, so it is described as one.
+	Broker bool `json:"broker,omitempty"`
 }
 
 var (
@@ -86,13 +89,15 @@ func (e requestClosed) Error() string {
 // requestColumns are an AccessRequest's columns, in scanRequest's order.
 const requestColumns = `id::text, requester_email, asset_hostnames, principal,
 	justification, duration_minutes, state, created_at, decided_at,
-	decided_by_email, decision_note, expires_at, break_glass, restore_id::text`
+	decided_by_email, decision_note, expires_at, break_glass, restore_id::text,
+	COALESCE((SELECT d.engine IN ('rabbitmq', 'kafka') FROM databases d
+	          WHERE d.id = access_requests.database_id), false)`
 
 func scanRequest(row pgx.Row) (AccessRequest, error) {
 	var r AccessRequest
 	err := row.Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
 		&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
-		&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID)
+		&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID, &r.Broker)
 	return r, err
 }
 
@@ -241,7 +246,7 @@ func (s *Store) Request(ctx context.Context, id string) (AccessRequest, string, 
 	err := s.db(ctx).QueryRow(ctx, `SELECT `+requestColumns+`, database_id::text
 		FROM access_requests WHERE id = $1`, id).Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
 		&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
-		&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID, &dbID)
+		&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID, &r.Broker, &dbID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AccessRequest{}, "", ErrRequestNotFound
 	}

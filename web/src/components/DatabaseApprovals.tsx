@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { isSQLEngine } from '~/lib/engines'
+import { isSQLEngine, levelName } from '~/lib/engines'
 import {
   Alert, Anchor, Badge, Box, Button, Checkbox, Divider, Group, Modal, Paper, Radio, SegmentedControl, Select, Stack, Switch, Text,
   ThemeIcon,
@@ -42,7 +42,6 @@ function CanDo({ icon, title, waits, detail }: { icon: ReactNode; title: string;
   )
 }
 
-const LEVEL_WORD: Record<DBLevel, string> = { read: 'Read', write: 'Write', owner: 'Owner', dba: 'DBA' }
 
 export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, people, onSafety }: {
   dbId: string; db: Database; levels: { value: DBLevel; label: string; blurb: string }[]; opened: boolean; onClose: () => void
@@ -71,7 +70,7 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
     try {
       await set.mutateAsync({ id: dbId, level, needsApproval: effectiveApproval,
         ...(kind === 'team' ? { teamId: who } : { userEmail: who }) })
-      notifyOk('Access given', `${LEVEL_WORD[level]} on ${db.dbname}${effectiveApproval ? ', with approval before each session' : ''}.`)
+      notifyOk('Access given', `${levelName(level, db.engine)} on ${db.dbname}${effectiveApproval ? ', with approval before each session' : ''}.`)
       onClose()
       setWho(null); setTouched(false); setLevel('read')
     } catch (err) {
@@ -125,7 +124,7 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
             : 'Optional, stricter than the database, for this grant only.'} />
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => void submit()} loading={set.isPending} disabled={!who}>Give {LEVEL_WORD[level]} access</Button>
+          <Button onClick={() => void submit()} loading={set.isPending} disabled={!who}>Give {levelName(level, db.engine)} access</Button>
         </Group>
       </Stack>
     </Modal>

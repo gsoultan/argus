@@ -12,9 +12,11 @@ import (
 // same event; see console_alerts.go.
 
 // describeAsk is what a request asks for, in words.
-func describeAsk(principal string, hosts []string) string {
-	on := joinHosts(hosts)
+func describeAsk(req AccessRequest) string {
+	principal, on := req.Principal, joinHosts(req.AssetHostnames)
 	switch {
+	case req.Broker && strings.HasPrefix(principal, "db:"):
+		return brokerLevel(strings.TrimPrefix(principal, "db:")) + " access to a broker on " + on
 	case principal == "db:restore":
 		return "a restore of a database on " + on
 	case principal == statementPrincipal:
@@ -26,9 +28,21 @@ func describeAsk(principal string, hosts []string) string {
 	}
 }
 
+// brokerLevel is a level as the console names it on a broker: owner and
+// dba are database words, Manage and Admin there.
+func brokerLevel(level string) string {
+	switch level {
+	case "owner":
+		return "manage"
+	case "dba":
+		return "admin"
+	}
+	return level
+}
+
 // alertRequestWaiting tells whoever may decide it that a request is waiting.
 func (a *API) alertRequestWaiting(ctx context.Context, req AccessRequest) {
-	sev, title := "warning", req.RequesterEmail+" asks for "+describeAsk(req.Principal, req.AssetHostnames)
+	sev, title := "warning", req.RequesterEmail+" asks for "+describeAsk(req)
 	if req.BreakGlass {
 		sev, title = "critical", "Break-glass: "+title
 	}
@@ -67,7 +81,7 @@ func (a *API) closeRequestAlerts(ctx context.Context, req AccessRequest) {
 
 // alertRequestDecided tells the person who asked.
 func (a *API) alertRequestDecided(ctx context.Context, req AccessRequest, decision, by, note string) {
-	what := describeAsk(req.Principal, req.AssetHostnames)
+	what := describeAsk(req)
 	al := ConsoleAlert{Kind: AlertApproval, Audience: AudiencePerson, Recipient: req.RequesterEmail,
 		Actor: by, Link: changeLink(req.ID)}
 	if decision == "approved" {

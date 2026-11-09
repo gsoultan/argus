@@ -1,5 +1,6 @@
 import { Box, Button, Group, Modal, SegmentedControl, Stack, Text, Textarea } from '@mantine/core'
 import { useState } from 'react'
+import { levelName } from '~/lib/engines'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { useRequestDatabaseAccess } from '~/lib/queries'
 import { FS } from '~/theme'
@@ -8,7 +9,13 @@ import type { DBLevel } from '~/types/domain'
 /** Ask for a level on a database or a broker, for a while, with a reason an approver reads. */
 const LEVELS: DBLevel[] = ['read', 'write', 'owner', 'dba']
 
-export function AskModal({ dbId, opened, onClose, top }: { dbId: string; opened: boolean; onClose: () => void; top: DBLevel }) {
+export function AskModal({ dbId, opened, onClose, top, what = 'database', engine }: {
+  dbId: string; opened: boolean; onClose: () => void; top: DBLevel
+  /** The entry's engine, so the levels carry its names. */
+  engine?: string
+  /** What is being asked for, in a sentence: database, or broker. */
+  what?: string
+}) {
   const [level, setLevel] = useState<DBLevel>(top)
   const [minutes, setMinutes] = useState('60')
   const [why, setWhy] = useState('')
@@ -17,7 +24,7 @@ export function AskModal({ dbId, opened, onClose, top }: { dbId: string; opened:
   const submit = async () => {
     try {
       await req.mutateAsync({ id: dbId, level, justification: why, durationMinutes: Number(minutes) })
-      notifyOk('Request sent', 'An approver has it. You will be able to open the database as soon as they say yes.')
+      notifyOk('Request sent', `An approver has it. You will be able to open the ${what} as soon as they say yes.`)
       onClose()
     } catch (err) {
       notifyError('Not sent', err)
@@ -29,7 +36,7 @@ export function AskModal({ dbId, opened, onClose, top }: { dbId: string; opened:
         <Box>
           <Text size={FS.micro} c="dimmed" mb={4}>Access</Text>
           <SegmentedControl value={level} onChange={(v) => setLevel(v as DBLevel)}
-            data={options.map((l) => ({ label: l[0]!.toUpperCase() + l.slice(1), value: l }))} />
+            data={options.map((l) => ({ label: levelName(l, engine), value: l }))} />
         </Box>
         <Box>
           <Text size={FS.micro} c="dimmed" mb={4}>For</Text>

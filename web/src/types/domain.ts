@@ -803,6 +803,8 @@ export interface AccessRequest {
   statement?: StatementAsk
   /** Set on a change the reader may decide as an editor of its database. */
   asEditor?: boolean
+  /** Set when the request is for a message broker (RabbitMQ, Kafka), not a database. */
+  broker?: boolean
 }
 
 /** One statement of an ask to run statements on a database whose changes need approval. */
@@ -1258,7 +1260,7 @@ export interface BackupsView {
  */
 export interface HomeSnapshot {
   servers: { total: number; answering: number; quiet: number; down: number }
-  live: { count: number; root: number; database: number; silent: number }
+  live: { count: number; root: number; database: number; broker?: number; silent: number }
   /** The last 24 hours. `hours` is oldest first, each [terminal, desktop, database]. */
   sessions: { last24h: number; weekAgo: number; hours: [number, number, number][]; kinds: [number, number, number] }
   waiting: { count: number; oldestAt: string | null }

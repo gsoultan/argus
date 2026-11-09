@@ -27,7 +27,7 @@ interface Item {
   id: string
   label: string
   hint?: string
-  kind: 'Page' | 'Host' | 'Database' | 'Session' | 'User'
+  kind: 'Page' | 'Host' | 'Database' | 'Broker' | 'Session' | 'User'
   icon?: ComponentType<IconProps>
   go: () => void
 }
@@ -86,12 +86,13 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
 
       for (const d of dbs?.databases ?? []) {
         if (!`${d.dbname} ${d.hostname} ${d.label}`.toLowerCase().includes(needle)) continue
-        if (out.filter((i) => i.kind === 'Database').length >= PER_GROUP) break
+        const kind = isBroker(d.engine) ? 'Broker' : 'Database'
+        if (out.filter((i) => i.kind === kind).length >= PER_GROUP) continue
         out.push({
           id: `db:${d.id}`,
           label: d.dbname,
           hint: `${d.hostname.split('.')[0]} · ${d.label} · ${dbs?.access[d.id]?.level || 'ask for access'}`,
-          kind: 'Database',
+          kind,
           go: () => isBroker(d.engine)
             ? navigate({ to: '/brokers/$brokerId', params: { brokerId: d.id } })
             : navigate({ to: '/databases/$dbId', params: { dbId: d.id } }),

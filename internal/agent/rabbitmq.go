@@ -61,7 +61,7 @@ func RabbitMQ(cfg RabbitConfig) TunnelService {
 	if cfg.Ctl == nil {
 		cfg.Ctl = runRabbitmqctl
 	}
-	f := &rabbitFactory{cfg: cfg, uses: &userUse{}}
+	f := &rabbitFactory{cfg: cfg, uses: &userUse{}, vhosts: map[string]map[string]int{}}
 	return storeService(cfg.StoreConfig, tunnel.RabbitMQService, tunnel.EngineRabbitMQ, f.open)
 }
 
@@ -73,6 +73,11 @@ type rabbitFactory struct {
 	// rabbitmqctl call starts an Erlang VM, so this happens once per agent
 	// start rather than at every session.
 	swept bool
+	// vhosts counts, per user (rabbitSession.key), the open sessions on
+	// each vhost. One user serves every vhost a person opens at a level on
+	// this broker, and only the first session on a vhost may skip setting
+	// the user's permissions there. Held under mu.
+	vhosts map[string]map[string]int
 }
 
 type rabbitSession struct {
@@ -204,8 +209,20 @@ func (s *rabbitSession) giveUser(ctx context.Context) error {
 	}
 	s.pw = pw
 	if !fresh {
+		// The user is another session's, which may be on another vhost:
+		// the permissions were set for that one only, and without them here
+		// every request on this vhost is refused.
+		if s.f.vhosts[s.key][s.vhost] == 0 {
+			if _, err := ctl(ctx, []string{"set_permissions", "-p", s.vhost, s.user,
+				s.perms.Configure, s.perms.Write, s.perms.Read}, ""); err != nil {
+				s.f.uses.add(s.key, -1)
+				return fmt.Errorf("could not prepare your RabbitMQ user: %w", err)
+			}
+		}
+		s.f.holdVhost(s.key, s.vhost)
 		return nil
 	}
+	delete(s.f.vhosts, s.key)
 	fail := func(err error) error {
 		_, _ = ctl(context.WithoutCancel(ctx), []string{"delete_user", s.user}, "")
 		s.f.uses.add(s.key, -1)
@@ -226,7 +243,32 @@ func (s *rabbitSession) giveUser(ctx context.Context) error {
 		s.perms.Configure, s.perms.Write, s.perms.Read}, ""); err != nil {
 		return fail(err)
 	}
+	s.f.holdVhost(s.key, s.vhost)
 	return nil
+}
+
+// holdVhost counts one more session of user key on vhost; releaseVhost one
+// fewer, reporting whether it was the last there. Both under f.mu.
+func (f *rabbitFactory) holdVhost(key, vhost string) {
+	m := f.vhosts[key]
+	if m == nil {
+		m = map[string]int{}
+		f.vhosts[key] = m
+	}
+	m[vhost]++
+}
+
+func (f *rabbitFactory) releaseVhost(key, vhost string) bool {
+	m := f.vhosts[key]
+	if m[vhost] <= 1 {
+		delete(m, vhost)
+		if len(m) == 0 {
+			delete(f.vhosts, key)
+		}
+		return true
+	}
+	m[vhost]--
+	return false
 }
 
 func (s *rabbitSession) ready() tunnel.StoreAnswer {
@@ -240,9 +282,19 @@ func (s *rabbitSession) close(ctx context.Context) {
 	s.http.CloseIdleConnections()
 	s.f.mu.Lock()
 	defer s.f.mu.Unlock()
+	lastHere := s.f.releaseVhost(s.key, s.vhost)
 	if s.f.uses.add(s.key, -1) > 0 {
+		// The user lives on for a session on another vhost; this one's
+		// permissions go with its last session.
+		if lastHere {
+			if _, err := s.f.cfg.Ctl(ctx, []string{"clear_permissions", "-p", s.vhost, s.user}, ""); err != nil {
+				s.f.cfg.Log.Warn("rabbitmq: could not clear a user's permissions on a vhost after its session",
+					"user", s.user, "vhost", s.vhost, "error", err)
+			}
+		}
 		return
 	}
+	delete(s.f.vhosts, s.key)
 	if _, err := s.f.cfg.Ctl(ctx, []string{"delete_user", s.user}, ""); err != nil {
 		s.f.cfg.Log.Error("rabbitmq: could not delete a user after its session", "user", s.user, "error", err,
 			"detail", "it is removed the next time the agent starts a RabbitMQ session")
@@ -669,10 +721,26 @@ func (s *rabbitSession) move(ctx context.Context, from, to string, n int) (moveR
 
 // failed answers a browse that did not work. A user RabbitMQ no longer
 // knows -- deleted by an administrator mid-session -- ends the session.
-func (s *rabbitSession) failed(_ context.Context, err error) (tunnel.StoreAnswer, error) {
+// RabbitMQ also answers 401 when the user is known but refused on the
+// vhost, so a 401 ends the session only when the user cannot sign in at all;
+// otherwise it is this request's refusal, and the session goes on.
+func (s *rabbitSession) failed(ctx context.Context, err error) (tunnel.StoreAnswer, error) {
 	var re errRabbit
 	if errors.As(err, &re) && re.status == http.StatusUnauthorized {
-		return tunnel.StoreAnswer{}, errors.New("RabbitMQ no longer accepts this session's user")
+		var who struct {
+			Name string `json:"name"`
+		}
+		if _, werr := s.call(ctx, http.MethodGet, "/api/whoami", nil, &who); werr != nil {
+			var we errRabbit
+			if errors.As(werr, &we) && we.status == http.StatusUnauthorized {
+				return tunnel.StoreAnswer{}, errors.New("RabbitMQ no longer accepts this session's user")
+			}
+		}
+		why := "RabbitMQ refused this request"
+		if re.reason != "" && re.reason != "RabbitMQ did not accept your session's user" {
+			why += ": " + re.reason
+		}
+		return tunnel.StoreAnswer{Type: "error", Error: why}, nil
 	}
 	return tunnel.StoreAnswer{Type: "error", Error: err.Error()}, nil
 }
