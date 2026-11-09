@@ -86,6 +86,20 @@ func askAtMachine(ctx context.Context, a Asker, g tunnel.Grant, what string, log
 	return nil
 }
 
+// consoleLogons is the logins on the machine's own screen, one per account,
+// in the order the host listed them: whom a Unix asker asks or tells.
+func consoleLogons(all []tunnel.Logon) []tunnel.Logon {
+	var out []tunnel.Logon
+	seen := map[string]bool{}
+	for _, l := range all {
+		if l.Console && !seen[l.Account] {
+			seen[l.Account] = true
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 func shortAccount(a string) string {
 	if i := strings.LastIndexByte(a, '\\'); i >= 0 {
 		return a[i+1:]
