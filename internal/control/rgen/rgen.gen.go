@@ -15,7 +15,10 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudaccount"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudchange"
+	"github.com/gsoultan/argus/internal/control/rgen/cloudkeeprunning"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudresource"
+	"github.com/gsoultan/argus/internal/control/rgen/cloudschedule"
+	"github.com/gsoultan/argus/internal/control/rgen/cloudschedulerun"
 	"github.com/gsoultan/argus/internal/control/rgen/consolealert"
 	"github.com/gsoultan/argus/internal/control/rgen/consolealertread"
 	"github.com/gsoultan/argus/internal/control/rgen/database"
@@ -50,47 +53,50 @@ var FlushOrder = map[string]int{
 	"audit_events":              3,
 	"cloud_accounts":            4,
 	"cloud_changes":             5,
-	"cloud_resources":           6,
-	"console_alert_prefs":       7,
-	"console_alerts":            8,
-	"databases":                 9,
-	"direct_login_requests":     10,
-	"disk_grow_rules":           11,
-	"disk_grow_runs":            12,
-	"gateway_policy":            13,
-	"host_key_pins":             14,
-	"log_cleanup_rules":         15,
-	"log_cleanup_runs":          16,
-	"package_runs":              17,
-	"package_update_rules":      18,
-	"redeemed_tickets":          19,
-	"revoked_sessions":          20,
-	"saved_queries":             21,
-	"schema_migrations":         22,
-	"server_logins":             23,
-	"sessions":                  24,
-	"sign_in_devices":           25,
-	"software_files":            26,
-	"software_previews":         27,
-	"software_scripts":          28,
-	"teams":                     29,
-	"users":                     30,
-	"access_requests":           31,
-	"agent_credentials":         32,
-	"asset_assignments":         33,
-	"asset_team_assignments":    34,
-	"console_alert_reads":       35,
-	"database_assignments":      36,
-	"database_backup_schedules": 37,
-	"database_backups":          38,
-	"database_changes":          39,
-	"database_restores":         40,
-	"database_statements":       41,
-	"recovery_codes":            42,
-	"software_script_versions":  43,
-	"team_members":              44,
-	"database_backup_tests":     45,
-	"database_statement_items":  46,
+	"cloud_keep_running":        6,
+	"cloud_resources":           7,
+	"cloud_schedules":           8,
+	"console_alert_prefs":       9,
+	"console_alerts":            10,
+	"databases":                 11,
+	"direct_login_requests":     12,
+	"disk_grow_rules":           13,
+	"disk_grow_runs":            14,
+	"gateway_policy":            15,
+	"host_key_pins":             16,
+	"log_cleanup_rules":         17,
+	"log_cleanup_runs":          18,
+	"package_runs":              19,
+	"package_update_rules":      20,
+	"redeemed_tickets":          21,
+	"revoked_sessions":          22,
+	"saved_queries":             23,
+	"schema_migrations":         24,
+	"server_logins":             25,
+	"sessions":                  26,
+	"sign_in_devices":           27,
+	"software_files":            28,
+	"software_previews":         29,
+	"software_scripts":          30,
+	"teams":                     31,
+	"users":                     32,
+	"access_requests":           33,
+	"agent_credentials":         34,
+	"asset_assignments":         35,
+	"asset_team_assignments":    36,
+	"cloud_schedule_runs":       37,
+	"console_alert_reads":       38,
+	"database_assignments":      39,
+	"database_backup_schedules": 40,
+	"database_backups":          41,
+	"database_changes":          42,
+	"database_restores":         43,
+	"database_statements":       44,
+	"recovery_codes":            45,
+	"software_script_versions":  46,
+	"team_members":              47,
+	"database_backup_tests":     48,
+	"database_statement_items":  49,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -814,6 +820,123 @@ func (p CloudChangeWithAccountQuery) All(ctx context.Context, ex runtime.Executo
 	return out, nil
 }
 
+// CloudKeepRunningWithAccountRow is cloud_keep_running with its Account loaded.
+type CloudKeepRunningWithAccountRow struct {
+	cloudkeeprunning.Row
+	Account cloudaccount.Row
+}
+
+type CloudKeepRunningWithAccountQuery struct {
+	q cloudkeeprunning.Query
+}
+
+// CloudKeepRunningWithAccount starts the plan.
+func CloudKeepRunningWithAccount() CloudKeepRunningWithAccountQuery {
+	return CloudKeepRunningWithAccountQuery{q: cloudkeeprunning.New()}
+}
+
+func (p CloudKeepRunningWithAccountQuery) Where(ps ...cloudkeeprunning.Pred) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CloudKeepRunningWithAccountQuery) WhereIf(cond bool, pr cloudkeeprunning.Pred) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CloudKeepRunningWithAccountQuery) Any(ps ...cloudkeeprunning.Pred) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CloudKeepRunningWithAccountQuery) Not(pr cloudkeeprunning.Pred) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CloudKeepRunningWithAccountQuery) NotAny(ps ...cloudkeeprunning.Pred) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CloudKeepRunningWithAccountQuery) Order(ts ...cloudkeeprunning.Sort) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CloudKeepRunningWithAccountQuery) Limit(n int64) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CloudKeepRunningWithAccountQuery) Offset(n int64) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CloudKeepRunningWithAccountQuery) After(r CloudKeepRunningWithAccountRow) CloudKeepRunningWithAccountQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CloudKeepRunningWithAccountQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CloudKeepRunningWithAccountQuery) All(ctx context.Context, ex runtime.Executor) ([]CloudKeepRunningWithAccountRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CloudKeepRunningWithAccountRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CloudKeepRunningWithAccountRow{Row: r}
+		key := r.AccountID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := cloudaccount.New().Unordered().
+		Where(cloudaccount.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AccountID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "cloud_keep_running", "cloud_accounts")
+		}
+		out[i].Account = targets[j]
+	}
+	return out, nil
+}
+
 // CloudResourceWithAccountRow is cloud_resources with its Account loaded.
 type CloudResourceWithAccountRow struct {
 	cloudresource.Row
@@ -927,6 +1050,123 @@ func (p CloudResourceWithAccountQuery) All(ctx context.Context, ex runtime.Execu
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "cloud_resources", "cloud_accounts")
 		}
 		out[i].Account = targets[j]
+	}
+	return out, nil
+}
+
+// CloudScheduleRunWithScheduleRow is cloud_schedule_runs with its Schedule loaded.
+type CloudScheduleRunWithScheduleRow struct {
+	cloudschedulerun.Row
+	Schedule cloudschedule.Row
+}
+
+type CloudScheduleRunWithScheduleQuery struct {
+	q cloudschedulerun.Query
+}
+
+// CloudScheduleRunWithSchedule starts the plan.
+func CloudScheduleRunWithSchedule() CloudScheduleRunWithScheduleQuery {
+	return CloudScheduleRunWithScheduleQuery{q: cloudschedulerun.New()}
+}
+
+func (p CloudScheduleRunWithScheduleQuery) Where(ps ...cloudschedulerun.Pred) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CloudScheduleRunWithScheduleQuery) WhereIf(cond bool, pr cloudschedulerun.Pred) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CloudScheduleRunWithScheduleQuery) Any(ps ...cloudschedulerun.Pred) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CloudScheduleRunWithScheduleQuery) Not(pr cloudschedulerun.Pred) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CloudScheduleRunWithScheduleQuery) NotAny(ps ...cloudschedulerun.Pred) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CloudScheduleRunWithScheduleQuery) Order(ts ...cloudschedulerun.Sort) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CloudScheduleRunWithScheduleQuery) Limit(n int64) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CloudScheduleRunWithScheduleQuery) Offset(n int64) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CloudScheduleRunWithScheduleQuery) After(r CloudScheduleRunWithScheduleRow) CloudScheduleRunWithScheduleQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CloudScheduleRunWithScheduleQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CloudScheduleRunWithScheduleQuery) All(ctx context.Context, ex runtime.Executor) ([]CloudScheduleRunWithScheduleRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CloudScheduleRunWithScheduleRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CloudScheduleRunWithScheduleRow{Row: r}
+		key := r.ScheduleID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := cloudschedule.New().Unordered().
+		Where(cloudschedule.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.ScheduleID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "cloud_schedule_runs", "cloud_schedules")
+		}
+		out[i].Schedule = targets[j]
 	}
 	return out, nil
 }

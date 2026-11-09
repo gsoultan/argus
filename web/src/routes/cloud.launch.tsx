@@ -12,7 +12,7 @@ import { EnvBadge } from '~/components/cloud/common'
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader } from '~/components/page'
 import {
-  cloudAccountsQuery, cloudLaunchOptionsQuery, openToInternet, useAskCloudChange, type CloudImage,
+  SCHEDULE_TAG, cloudAccountsQuery, cloudLaunchOptionsQuery, cloudSchedulesQuery, openToInternet, useAskCloudChange, windowWords, type CloudImage,
 } from '~/lib/cloud'
 import { guard } from '~/lib/guard'
 import { notifyError } from '~/lib/notify'
@@ -61,6 +61,8 @@ function Launch() {
   const [protect, setProtect] = useState(true)
   const [agent, setAgent] = useState(true)
   const [reason, setReason] = useState('')
+  const [schedule, setSchedule] = useState<string | null>(null)
+  const schedules = useQuery(cloudSchedulesQuery())
   const ask = useAskCloudChange()
 
   // A new region has other images, subnets and groups.
@@ -86,7 +88,7 @@ function Launch() {
     try {
       const c = await ask.mutateAsync({
         accountId: accountId!, region: region!, action: 'launch', reason,
-        spec: { name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect, agent },
+        spec: { name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect, agent, ...(schedule ? { tags: { [SCHEDULE_TAG]: schedule } } : {}) },
       })
       reportChange(c, 'Launching')
       void navigate({ to: '/cloud', search: { tab: 'changes' } })
@@ -212,6 +214,11 @@ function Launch() {
               )}
               <Switch mt="md" checked={protect} onChange={(e) => setProtect(e.currentTarget.checked)} label="Termination protection"
                 description="Nobody can remove it, from Argus or AWS, until this is turned off." />
+              {(schedules.data?.schedules.length ?? 0) > 0 && (
+                <Select mt="md" label="Schedule" placeholder="None: it runs until someone stops it" clearable value={schedule} onChange={setSchedule}
+                  description={`Tags it ${SCHEDULE_TAG}=<name>, so the schedule starts and stops it.`}
+                  data={schedules.data!.schedules.filter((s) => s.state !== 'awaiting_approval').map((s) => ({ value: s.name, label: `${s.name} · ${s.windows.map(windowWords).join('; ')}` }))} />
+              )}
             </Section>
           </Stack>
 
@@ -232,6 +239,7 @@ function Launch() {
               <Row k="Public address" v={publicIp ? 'Yes' : 'No'} />
               <Row k="Argus agent" v={agent ? 'Installs and enrolls' : 'No'} />
               <Row k="Protection" v={protect ? 'On' : 'Off'} />
+              {schedule && <Row k="Schedule" v={schedule} mono />}
             </Stack>
             {exposed.length > 0 && (
               <Text size={FS.meta} c={INK.denied} mt="sm">{exposed.map((g) => g.resource.name).join(', ')} let anyone on the internet in.</Text>

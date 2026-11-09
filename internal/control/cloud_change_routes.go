@@ -441,6 +441,11 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		if _, ok := s.Set["Environment"]; ok || slices.Contains(s.Remove, "Environment") {
 			ch.Level = cloud.LevelChange
 		}
+		// So is putting it on a schedule or taking it off one: a schedule
+		// stops and starts it from then on.
+		if _, ok := s.Set[cloud.ScheduleTag]; ok || slices.Contains(s.Remove, cloud.ScheduleTag) {
+			ch.Level = cloud.LevelChange
+		}
 	case cloud.ActionRemove:
 		var s cloudRemoveSpec
 		if len(in.Spec) > 0 {

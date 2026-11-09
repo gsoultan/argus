@@ -31,6 +31,7 @@ import { Route as BrokersBrokerIdRouteImport } from './routes/brokers.$brokerId'
 import { Route as CloudIndexRouteImport } from './routes/cloud.index'
 import { Route as CloudConnectRouteImport } from './routes/cloud.connect'
 import { Route as CloudLaunchRouteImport } from './routes/cloud.launch'
+import { Route as CloudScheduleRouteImport } from './routes/cloud.schedule'
 import { Route as DatabasesIndexRouteImport } from './routes/databases.index'
 import { Route as DatabasesDbIdRouteImport } from './routes/databases.$dbId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
@@ -147,6 +148,11 @@ const CloudLaunchRoute = CloudLaunchRouteImport.update({
   path: '/cloud/launch',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CloudScheduleRoute = CloudScheduleRouteImport.update({
+  id: '/cloud/schedule',
+  path: '/cloud/schedule',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DatabasesIndexRoute = DatabasesIndexRouteImport.update({
   id: '/databases/',
   path: '/databases/',
@@ -193,6 +199,7 @@ export interface FileRoutesByFullPath {
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
   '/cloud/launch': typeof CloudLaunchRoute
+  '/cloud/schedule': typeof CloudScheduleRoute
   '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
@@ -222,6 +229,7 @@ export interface FileRoutesByTo {
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
   '/cloud/launch': typeof CloudLaunchRoute
+  '/cloud/schedule': typeof CloudScheduleRoute
   '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets': typeof AssetsIndexRoute
@@ -252,6 +260,7 @@ export interface FileRoutesById {
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
   '/cloud/launch': typeof CloudLaunchRoute
+  '/cloud/schedule': typeof CloudScheduleRoute
   '/databases/$dbId': typeof DatabasesDbIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/assets/': typeof AssetsIndexRoute
@@ -283,6 +292,7 @@ export interface FileRouteTypes {
     | '/brokers/$brokerId'
     | '/cloud/connect'
     | '/cloud/launch'
+    | '/cloud/schedule'
     | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets/'
@@ -312,6 +322,7 @@ export interface FileRouteTypes {
     | '/brokers/$brokerId'
     | '/cloud/connect'
     | '/cloud/launch'
+    | '/cloud/schedule'
     | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets'
@@ -341,6 +352,7 @@ export interface FileRouteTypes {
     | '/brokers/$brokerId'
     | '/cloud/connect'
     | '/cloud/launch'
+    | '/cloud/schedule'
     | '/databases/$dbId'
     | '/sessions/$sessionId'
     | '/assets/'
@@ -371,6 +383,7 @@ export interface RootRouteChildren {
   BrokersBrokerIdRoute: typeof BrokersBrokerIdRoute
   CloudConnectRoute: typeof CloudConnectRoute
   CloudLaunchRoute: typeof CloudLaunchRoute
+  CloudScheduleRoute: typeof CloudScheduleRoute
   DatabasesDbIdRoute: typeof DatabasesDbIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   AssetsIndexRoute: typeof AssetsIndexRoute
@@ -537,6 +550,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CloudLaunchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/cloud/schedule': {
+      id: '/cloud/schedule'
+      path: '/cloud/schedule'
+      fullPath: '/cloud/schedule'
+      preLoaderRoute: typeof CloudScheduleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/databases/': {
       id: '/databases/'
       path: '/databases'
@@ -595,6 +615,7 @@ const rootRouteChildren: RootRouteChildren = {
   BrokersBrokerIdRoute: BrokersBrokerIdRoute,
   CloudConnectRoute: CloudConnectRoute,
   CloudLaunchRoute: CloudLaunchRoute,
+  CloudScheduleRoute: CloudScheduleRoute,
   DatabasesDbIdRoute: DatabasesDbIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   AssetsIndexRoute: AssetsIndexRoute,

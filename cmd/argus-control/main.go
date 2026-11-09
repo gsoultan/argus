@@ -607,6 +607,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	go api.RunRecordingArchive(ctx, time.Hour)
 	api.SetCloudProvider(awscloud.New(cfg.Cloud.awsOptions()))
 	go api.RunCloudSync(ctx, control.CloudSyncInterval)
+	go api.RunCloudSchedules(ctx, time.Minute)
 	// The bell's daily digest of what is waiting to be updated.
 	go api.RunUpdateDigest(ctx, control.UpdateDigestInterval)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,

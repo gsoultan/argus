@@ -110,6 +110,7 @@ func Instance(i types.Instance, region string) cloud.Resource {
 	set(r.Details, "architecture", string(i.Architecture))
 	set(r.Details, "keyPair", awssdk.ToString(i.KeyName))
 	set(r.Details, "lifecycle", string(i.InstanceLifecycle))
+	set(r.Details, "rootDevice", string(i.RootDeviceType))
 	if i.IamInstanceProfile != nil {
 		set(r.Details, "instanceProfile", awssdk.ToString(i.IamInstanceProfile.Arn))
 	}

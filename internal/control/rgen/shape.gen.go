@@ -273,6 +273,20 @@ func _assertCloudChangeShape(m m0.CloudChange) {
 	}
 }
 
+// _assertCloudKeepRunningShape fails to compile if m0.CloudKeepRunning gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudKeepRunningShape(m m0.CloudKeepRunning) {
+	type shape m0.CloudKeepRunning
+	_ = shape{
+		m.Account,
+		m.InstanceID,
+		m.Until,
+		m.Reason,
+		m.SetBy,
+		m.SetAt,
+	}
+}
+
 // _assertCloudResourceShape fails to compile if m0.CloudResource gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertCloudResourceShape(m m0.CloudResource) {
@@ -286,6 +300,54 @@ func _assertCloudResourceShape(m m0.CloudResource) {
 		m.FirstSeen,
 		m.SeenAt,
 		m.GoneAt,
+	}
+}
+
+// _assertCloudScheduleShape fails to compile if m0.CloudSchedule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudScheduleShape(m m0.CloudSchedule) {
+	type shape m0.CloudSchedule
+	_ = shape{
+		m.ID,
+		m.Name,
+		m.Timezone,
+		m.Windows,
+		m.SkipDates,
+		m.AccountIds,
+		m.Regions,
+		m.Mode,
+		m.Owner,
+		m.State,
+		m.PausedReason,
+		m.Pending,
+		m.PendingBy,
+		m.PendingAt,
+		m.Reason,
+		m.CheckedAt,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
+// _assertCloudScheduleRunShape fails to compile if m0.CloudScheduleRun gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudScheduleRunShape(m m0.CloudScheduleRun) {
+	type shape m0.CloudScheduleRun
+	_ = shape{
+		m.ID,
+		m.Schedule,
+		m.DueAt,
+		m.Action,
+		m.State,
+		m.Targets,
+		m.RequestIds,
+		m.Detail,
+		m.Attempts,
+		m.NextAt,
+		m.StartedAt,
+		m.FinishedAt,
 	}
 }
 

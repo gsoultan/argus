@@ -147,6 +147,16 @@ type Manager interface {
 	Remove(ctx context.Context, a Account, actor Actor, region, id string, finalSnapshots bool) (Result, error)
 }
 
+// BulkPower is a Manager that starts or stops many instances of one region
+// in one call, as schedules do. The call succeeds or fails as a whole;
+// callers that need to know which instance failed try them one by one.
+type BulkPower interface {
+	PowerMany(ctx context.Context, a Account, actor Actor, region string, ids []string, act Action) (Result, error)
+}
+
+// MaxBulkPower is the most instances one PowerMany call names.
+const MaxBulkPower = 50
+
 // ErrProtected is an instance with termination protection on.
 var ErrProtected = errors.New("termination protection is on; turn it off first, which is its own change")
 
