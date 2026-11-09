@@ -39,8 +39,8 @@ type Level string
 
 const (
 	LevelOperate Level = "operate" // start, stop, reboot, tags, snapshot a disk
-	LevelChange  Level = "change"  // launch, resize, protection, disks, images, addresses
-	LevelRemove  Level = "remove"  // terminate, delete a disk, snapshot or image, release an address
+	LevelChange  Level = "change"  // launch, resize, protection, disks, images, addresses, firewalls, targets
+	LevelRemove  Level = "remove"  // terminate, delete a disk, snapshot, image or firewall, release an address
 )
 
 // LevelOf is the level an action needs, or "" for an unknown action.
@@ -50,9 +50,11 @@ func LevelOf(a Action) Level {
 		return LevelOperate
 	case ActionLaunch, ActionResize, ActionProtect, ActionUnprotect,
 		ActionVolumeCreate, ActionVolumeGrow, ActionVolumeAttach, ActionVolumeDetach, ActionImageCreate,
-		ActionAddressAllocate, ActionAddressAssociate, ActionAddressDisassociate:
+		ActionAddressAllocate, ActionAddressAssociate, ActionAddressDisassociate,
+		ActionFirewallCreate, ActionFirewallRules, ActionInstanceFirewalls, ActionTargetRegister, ActionTargetDeregister:
 		return LevelChange
-	case ActionRemove, ActionVolumeDelete, ActionSnapshotDelete, ActionImageDelete, ActionAddressRelease:
+	case ActionRemove, ActionVolumeDelete, ActionSnapshotDelete, ActionImageDelete, ActionAddressRelease,
+		ActionFirewallDelete:
 		return LevelRemove
 	}
 	return ""

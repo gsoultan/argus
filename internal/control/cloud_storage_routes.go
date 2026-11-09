@@ -95,7 +95,8 @@ func liveInstance(r cloud.Resource) bool {
 // cloudKindWord is how a kind reads in a sentence.
 var cloudKindWord = map[cloud.Kind]string{
 	cloud.KindInstance: "instance", cloud.KindVolume: "disk", cloud.KindSnapshot: "snapshot",
-	cloud.KindImage: "image", cloud.KindAddress: "Elastic IP",
+	cloud.KindImage: "image", cloud.KindAddress: "Elastic IP", cloud.KindFirewall: "security group",
+	cloud.KindTargetGroup: "target group", cloud.KindLoadBalancer: "load balancer",
 }
 
 // storageMissing refuses an action the manage role lacks the permissions

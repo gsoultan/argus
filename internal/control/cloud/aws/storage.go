@@ -328,7 +328,8 @@ func (p *Provider) ReleaseAddress(ctx context.Context, a cloud.Account, actor cl
 	return cloud.Result{ResourceID: address, RequestID: requestID(out.ResultMetadata)}, nil
 }
 
-// actionNeeds is the manage permissions each storage action takes.
+// actionNeeds is the manage permissions each storage and network action
+// takes.
 var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionVolumeCreate:        {"ec2:CreateVolume", "ec2:AttachVolume"},
 	cloud.ActionVolumeGrow:          {"ec2:ModifyVolume"},
@@ -343,6 +344,14 @@ var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionAddressAssociate:    {"ec2:AssociateAddress"},
 	cloud.ActionAddressDisassociate: {"ec2:DisassociateAddress"},
 	cloud.ActionAddressRelease:      {"ec2:ReleaseAddress"},
+	cloud.ActionFirewallCreate: {"ec2:CreateSecurityGroup", "ec2:AuthorizeSecurityGroupIngress",
+		"ec2:AuthorizeSecurityGroupEgress"},
+	cloud.ActionFirewallRules: {"ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+		"ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress"},
+	cloud.ActionFirewallDelete:    {"ec2:DeleteSecurityGroup"},
+	cloud.ActionInstanceFirewalls: {"ec2:ModifyInstanceAttribute"},
+	cloud.ActionTargetRegister:    {"elasticloadbalancing:RegisterTargets"},
+	cloud.ActionTargetDeregister:  {"elasticloadbalancing:DeregisterTargets"},
 }
 
 // Needs is the permissions an action takes.

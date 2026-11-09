@@ -22,6 +22,8 @@ func (p *Provider) Inventory(ctx context.Context, a cloud.Account, region string
 	}
 	c := ec2.NewFromConfig(cfg)
 	snap := cloud.Snapshot{Region: region, Kinds: kinds, ReadAt: time.Now().UTC()}
+	var lbs, tgs []cloud.Resource
+	balanced := false
 	for _, k := range kinds {
 		var got []cloud.Resource
 		switch k {
@@ -41,6 +43,15 @@ func (p *Provider) Inventory(ctx context.Context, a cloud.Account, region string
 			got, err = snapshots(ctx, c, region)
 		case cloud.KindImage:
 			got, err = images(ctx, c, region)
+		case cloud.KindLoadBalancer, cloud.KindTargetGroup:
+			if !balanced {
+				lbs, tgs, err = balancing(ctx, cfg, region)
+				balanced = err == nil
+			}
+			got = lbs
+			if k == cloud.KindTargetGroup {
+				got = tgs
+			}
 		default:
 			err = fmt.Errorf("AWS has no inventory of %q yet", k)
 		}

@@ -4,12 +4,13 @@ import { AnchorLink } from '~/components/links'
 import type { ReactNode } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  ENV_COLOR, ENV_LABEL, openToInternet, portText, stateColor, stateLabel,
+  ENV_COLOR, ENV_LABEL, openToInternet, portText, ruleExposure, stateColor, stateLabel,
   type CloudEnvironment, type CloudItem, type CloudResource,
 } from '~/lib/cloud'
 import { FS, INK, SP } from '~/theme'
 import { InstanceActions } from './InstanceActions'
 import { InstanceSchedule } from './Schedules'
+import { FirewallActions, TargetActions } from './NetworkActions'
 import { StorageActions } from './StorageActions'
 
 export function EnvBadge({ env }: { env: CloudEnvironment }) {
@@ -94,6 +95,8 @@ export function ResourceDrawer({ it, onClose, names }: {
           {r.kind === 'instance' && <InstanceActions it={it} />}
           {r.kind === 'instance' && <InstanceSchedule it={it} />}
           {(r.kind === 'volume' || r.kind === 'snapshot' || r.kind === 'image' || r.kind === 'address') && <StorageActions it={it} />}
+          {r.kind === 'firewall' && <FirewallActions it={it} />}
+          {r.kind === 'target-group' && <TargetActions it={it} />}
           <Box style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Id"><Text size={FS.meta} ff="monospace" style={{ overflowWrap: 'anywhere' }}>{r.id}</Text></Field>
             <Field label="Account"><Text size={FS.meta}>{it.accountName}</Text></Field>
@@ -135,6 +138,7 @@ export function ResourceDrawer({ it, onClose, names }: {
 
 const LINK_LABEL: Record<string, string> = {
   firewall: 'Firewall', subnet: 'Subnet', volume: 'Disk', instance: 'Instance', network: 'Network', snapshot: 'Snapshot', image: 'Image',
+  'load-balancer': 'Load balancer', 'target-group': 'Target group',
 }
 
 function KeyValues({ m }: { m: Record<string, string> }) {
@@ -159,11 +163,12 @@ function RulesTable({ r }: { r: CloudResource }) {
       {list.length === 0 ? <Text size={FS.meta} c="dimmed">None</Text> : (
         <Stack gap={SP.tight} mt={4}>
           {list.map((x, i) => {
-            const open = x.inbound && (x.source === '0.0.0.0/0' || x.source === '::/0')
+            const open = x.source === '0.0.0.0/0' || x.source === '::/0'
+            const risky = ruleExposure(x) !== ''
             return (
               <Group key={i} gap="xs" wrap="nowrap" justify="space-between">
-                <Code fz={FS.meta} c={open ? INK.denied : undefined}>{portText(x)}</Code>
-                <Text size={FS.meta} ff="monospace" c={open ? INK.denied : 'dimmed'} truncate>
+                <Code fz={FS.meta} c={risky ? INK.denied : undefined}>{portText(x)}</Code>
+                <Text size={FS.meta} ff="monospace" c={risky ? INK.denied : 'dimmed'} truncate>
                   {x.inbound ? 'from' : 'to'} {open ? 'anywhere' : x.source}
                 </Text>
               </Group>

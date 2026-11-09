@@ -22,10 +22,12 @@ import { ChangeModal, TagsChange, useSubmit } from './ChangeModal'
  * someone else, and runs it as the person who asked.
  */
 
-const KIND_WORD: Record<string, string> = { volume: 'disk', snapshot: 'snapshot', image: 'image', address: 'Elastic IP' }
+const KIND_WORD: Record<string, string> = {
+  volume: 'disk', snapshot: 'snapshot', image: 'image', address: 'Elastic IP', firewall: 'security group', 'target-group': 'target group',
+}
 
 /** The account an item is in, when the person may change it there. */
-function useChangeable(it: CloudItem) {
+export function useChangeable(it: CloudItem) {
   const { data: me } = useQuery(meQuery())
   const accounts = useQuery(cloudAccountsQuery())
   const pending = useQuery(cloudChangesQuery({ pending: true }))
@@ -34,7 +36,7 @@ function useChangeable(it: CloudItem) {
   return { admin: canSee(me?.role, 'admin'), account, waiting }
 }
 
-function Gate({ it, account, children }: { it: CloudItem; account?: CloudAccount; children: React.ReactNode }) {
+export function Gate({ it, account, children }: { it: CloudItem; account?: CloudAccount; children: React.ReactNode }) {
   if (!account) return null
   if (account.access !== 'manage') {
     return (

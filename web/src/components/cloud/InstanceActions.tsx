@@ -1,7 +1,7 @@
 import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Group, Menu, Select, Stack, Table, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconDots, IconLock, IconLockOpen, IconPhoto, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
+  IconDots, IconLock, IconLockOpen, IconPhoto, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
@@ -13,6 +13,7 @@ import { meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { FS, INK } from '~/theme'
 import { ChangeModal, reportChange, TagsChange, useSubmit } from './ChangeModal'
+import { InstanceFirewalls } from './NetworkActions'
 import { ImageCreate } from './StorageActions'
 
 export { reportChange }
@@ -70,6 +71,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
               <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on termination protection</Menu.Item>
               <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off termination protection</Menu.Item>
               <Menu.Item leftSection={<IconPhoto size={14} />} onClick={() => setOpen('image-create')}>Make an image…</Menu.Item>
+              <Menu.Item leftSection={<IconShield size={14} />} onClick={() => setOpen('instance-firewalls')}>Change security groups…</Menu.Item>
               <Menu.Divider />
               <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('remove')}>Remove instance…</Menu.Item>
             </Menu.Dropdown>
@@ -83,6 +85,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
       {open === 'tags' && <TagsChange it={it} env={env} onClose={close} />}
       {open === 'remove' && <RemoveChange it={it} onClose={close} />}
       {open === 'image-create' && <ImageCreate it={it} env={env} onClose={close} />}
+      {open === 'instance-firewalls' && <InstanceFirewalls it={it} env={env} onClose={close} />}
     </Stack>
   )
 }

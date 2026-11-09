@@ -26,6 +26,10 @@ func (f *Fake) storageCall(a Account, act Action, what string, actor Actor) erro
 func (f *Fake) add(region string, r Resource) string {
 	f.made++
 	r.ID = fmt.Sprintf("%s-fake%04d", map[Kind]string{KindVolume: "vol", KindSnapshot: "snap", KindImage: "ami", KindAddress: "eipalloc"}[r.Kind], f.made)
+	if r.Kind == KindFirewall {
+		// Security group ids are hex, and rules tell them from addresses by it.
+		r.ID = fmt.Sprintf("sg-0000fa4e%04d", f.made)
+	}
 	r.Region = region
 	if r.Name == "" {
 		r.Name = r.ID
@@ -342,9 +346,9 @@ func (f *Fake) ManageMissing(_ context.Context, a Account, _ string) ([]string, 
 	return append([]string{}, f.Missing...), nil
 }
 
-// Needs names each storage action's permission as AWS would.
+// Needs names each storage and network action's permission as AWS would.
 func (f *Fake) Needs(a Action) []string {
-	if IsStorage(a) {
+	if IsStorage(a) || IsNetwork(a) {
 		return []string{"ec2:" + string(a)}
 	}
 	return nil
