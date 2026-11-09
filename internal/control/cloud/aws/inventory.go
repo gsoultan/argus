@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -136,7 +137,28 @@ func Instance(i types.Instance, region string) cloud.Resource {
 	if i.StateReason != nil {
 		set(r.Details, "stateReason", awssdk.ToString(i.StateReason.Message))
 	}
+	if i.State != nil && i.State.Name == types.InstanceStateNameStopped {
+		set(r.Details, "stoppedAt", stoppedAt(awssdk.ToString(i.StateTransitionReason)))
+	}
 	return r
+}
+
+// reTransition is the time in a state transition reason: "User initiated
+// (2026-10-01 12:00:00 GMT)".
+var reTransition = regexp.MustCompile(`\((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) GMT\)`)
+
+// stoppedAt is when an instance stopped, from its transition reason, as
+// RFC 3339; "" when AWS did not say.
+func stoppedAt(reason string) string {
+	m := reTransition.FindStringSubmatch(reason)
+	if m == nil {
+		return ""
+	}
+	t, err := time.Parse(time.DateTime, m[1])
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func volumes(ctx context.Context, c *ec2.Client, region string) ([]cloud.Resource, error) {
