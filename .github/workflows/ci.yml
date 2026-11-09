@@ -287,10 +287,15 @@ jobs:
           printf 'ci-admin-password-0123456789\n' | \
             "$tmp/argus-control" -config "$tmp/control.yaml" users add admin@ci.example --role admin
 
-          # Installed as the archive's launchd job says to.
-          sudo install -m 0755 "$tmp/argus-agent" /usr/local/bin/argus-agent
-          sudo install -m 0644 packaging/launchd/com.argus.agent.plist /Library/LaunchDaemons/
+          # Installed by the .pkg the release attaches, built the same way.
+          ./packaging/macos/build-pkg.sh "$tmp/argus-agent" 0.0.0 "$tmp/argus-agent.pkg"
+          sudo installer -pkg "$tmp/argus-agent.pkg" -target / | tee "$tmp/install.log"
+          pkgutil --pkg-info com.argus.agent
           plutil -lint /Library/LaunchDaemons/com.argus.agent.plist
+          cmp "$tmp/argus-agent" /usr/local/bin/argus-agent
+          # Not enrolled yet, so the installer leaves it stopped.
+          if sudo launchctl print system/com.argus.agent >/dev/null 2>&1; then
+            echo "::error::the installer started an agent that is not enrolled"; exit 1; fi
 
           c="curl -fsS --cacert $tmp/ca.crt -c $tmp/jar -b $tmp/jar -H Content-Type:application/json"
           $c -X POST https://localhost:8080/auth/password \
@@ -356,9 +361,24 @@ jobs:
           [ "$who" = admin@ci.example ] || {
             echo "::error::the session was reported as '$who', not the person it was opened for"; exit 1; }
 
-          # Stopping it through launchd seals and exits cleanly.
-          sudo launchctl bootout system/com.argus.agent
+          # Upgrading over itself: the installer stops the agent and, since
+          # it is enrolled, starts it again.
+          sudo installer -pkg "$tmp/argus-agent.pkg" -target / >/dev/null
+          sudo launchctl print system/com.argus.agent >/dev/null || {
+            echo "::error::an upgrade left an enrolled agent stopped"; exit 1; }
+
+          # Uninstalling stops it (sealing its recordings), takes out the job,
+          # the binary and the installer's receipt, and keeps the evidence.
+          sudo /usr/local/bin/argus-agent uninstall --yes --force
           sudo tail -5 /var/log/argus-agent.log
+          if sudo launchctl print system/com.argus.agent >/dev/null 2>&1; then
+            echo "::error::uninstall left the agent running"; exit 1; fi
+          [ ! -e /Library/LaunchDaemons/com.argus.agent.plist ] && [ ! -e /usr/local/bin/argus-agent ] || {
+            echo "::error::uninstall left the job or the binary behind"; exit 1; }
+          ! pkgutil --pkg-info com.argus.agent >/dev/null 2>&1 || {
+            echo "::error::uninstall left the installer's receipt"; exit 1; }
+          sudo test -d /var/db/argus/recordings || {
+            echo "::error::uninstall removed the recordings"; exit 1; }
 
   # The same drill on Windows: the agent installed as a service running as
   # LocalSystem, enrolled, holding its tunnel, opening a console session as a

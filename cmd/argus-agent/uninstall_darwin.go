@@ -11,6 +11,8 @@ import (
 const (
 	launchdLabel = "system/com.argus.agent"
 	launchdPlist = "/Library/LaunchDaemons/com.argus.agent.plist"
+	// pkgID is the identifier packaging/macos/build-pkg.sh gives the .pkg.
+	pkgID = "com.argus.agent"
 )
 
 // stopAgent unloads the job, which stops the daemon and waits for it to seal
@@ -36,8 +38,10 @@ func startAgent() error {
 	return nil
 }
 
-// removeAgentService deletes the launchd job and the binary, which were
-// installed by hand rather than by a package.
+// removeAgentService deletes the launchd job and the binary, and the
+// installer's receipt when the .pkg put them there, so the Mac no longer
+// lists the agent as installed and a later install starts clean. The .pkg
+// has no remove step of its own, so fromPackage changes nothing here.
 func removeAgentService(bool) ([]string, error) {
 	var left []string
 	if err := os.Remove(launchdPlist); err != nil && !os.IsNotExist(err) {
@@ -46,6 +50,12 @@ func removeAgentService(bool) ([]string, error) {
 	if exe, err := os.Executable(); err == nil {
 		if err := os.Remove(exe); err != nil {
 			left = append(left, "Delete the binary: rm "+exe)
+		}
+	}
+	if exec.Command("pkgutil", "--pkg-info", pkgID).Run() == nil {
+		if out, err := exec.Command("pkgutil", "--forget", pkgID).CombinedOutput(); err != nil {
+			left = append(left, "Forget the installer's receipt: sudo pkgutil --forget "+pkgID+
+				" ("+strings.TrimSpace(string(out))+")")
 		}
 	}
 	return left, nil

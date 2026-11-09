@@ -1,0 +1,13 @@
+#!/bin/sh
+# Start the agent if this Mac is already enrolled (an upgrade, or a reinstall).
+# A new install is enrolled first; until then a started agent has nothing to
+# report to, so it is left stopped and the next step is printed.
+plist=/Library/LaunchDaemons/com.argus.agent.plist
+if [ -f /var/db/argus/enrollment.json ]; then
+	launchctl bootstrap system "$plist" 2>/dev/null || launchctl kickstart -k system/com.argus.agent
+else
+	echo "argus-agent installed. Enroll it, then start it:"
+	echo "  sudo argus-agent enroll --control-url https://<control> --pin <pin> --token <token>"
+	echo "  sudo launchctl bootstrap system $plist"
+fi
+exit 0
