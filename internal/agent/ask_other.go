@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package agent
 
@@ -30,15 +30,7 @@ func (u unixAsker) InUse(ctx context.Context) ([]tunnel.Logon, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []tunnel.Logon
-	seen := map[string]bool{}
-	for _, l := range res.Logons {
-		if l.Console && !seen[l.Account] {
-			seen[l.Account] = true
-			out = append(out, l)
-		}
-	}
-	return out, nil
+	return consoleLogons(res.Logons), nil
 }
 
 func (unixAsker) Ask(context.Context, tunnel.Logon, string, string, int) (bool, bool, error) {
