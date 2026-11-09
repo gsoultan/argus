@@ -131,8 +131,8 @@ type cloudBudgetView struct {
 	AccountName string `json:"accountName,omitempty"`
 	// Spent is this month's spend in the budget's accounts so far.
 	Spent float64 `json:"spent"`
-	// Forecast is the month's expected end, nil when an account has none.
-	Forecast *float64 `json:"forecast"`
+	// Projected is the month's expected end, nil when an account has none.
+	Projected *float64 `json:"projected"`
 	// Unread counts the budget's accounts with no read for this month.
 	Unread int `json:"unread"`
 }
@@ -166,7 +166,7 @@ func standing(budgets []CloudBudget, reads []CloudCostRead, now time.Time) []clo
 		v.Spent = math.Round(v.Spent*100) / 100
 		if whole {
 			f := math.Round(forecast*100) / 100
-			v.Forecast = &f
+			v.Projected = &f
 		}
 		out = append(out, v)
 	}
@@ -219,13 +219,13 @@ func (a *API) checkCloudBudgets(ctx context.Context, now time.Time) {
 			}
 			continue
 		}
-		if v.Forecast != nil && v.forecastOver() {
+		if v.Projected != nil && v.forecastOver() {
 			ok, err := a.store.MarkCloudBudgetAlerted(ctx, v.ID, month, 0)
 			if err == nil && ok {
 				a.raiseAlert(ctx, ConsoleAlert{Kind: AlertServer, Severity: "warning", Audience: AudienceAdmins,
 					Title: fmt.Sprintf("Budget %q is forecast to run over", v.Name),
 					Detail: fmt.Sprintf("AWS expects %s by the end of %s against %s; %s spent so far in %s.",
-						money(*v.Forecast), monthWords(now), money(v.Amount), money(v.Spent), budgetScope(v)),
+						money(*v.Projected), monthWords(now), money(v.Amount), money(v.Spent), budgetScope(v)),
 					Link: "/cloud?tab=costs", Subject: "cloud-budget:" + v.ID})
 			}
 		}
@@ -235,7 +235,7 @@ func (a *API) checkCloudBudgets(ctx context.Context, now time.Time) {
 // forecastOver reports whether the forecast, and not yet the spend,
 // runs over the amount and the budget asks to hear of it.
 func (v cloudBudgetView) forecastOver() bool {
-	return v.CloudBudget.Forecast && v.Forecast != nil && *v.Forecast > v.Amount && v.Spent < v.Amount
+	return v.Forecast && v.Projected != nil && *v.Projected > v.Amount && v.Spent < v.Amount
 }
 
 func budgetScope(v cloudBudgetView) string {
