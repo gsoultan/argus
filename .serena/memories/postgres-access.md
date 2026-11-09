@@ -35,6 +35,20 @@ payload, row encoding, recording chain), `internal/agent/postgres*.go`
   peer`, which refuses our roles; loopback is usually scram. Most servers need
   no pg_hba change; `argus-agent install` prints the line if they do.
 
+## Many at once, and the ones added later (2026-11)
+
+`database_bulk.go`: `POST /api/v1/database-access` (and `/plan`, `/remove`)
+gives teams and people a level on many databases and brokers in one
+transaction. It writes ordinary `database_assignments` rows, one audit entry
+per row written, and never lowers anyone unless `lower` is set; the plan and
+the write share `planGive`, so the console's preview is what is written.
+`later` adds a `database_access_rules` row (migration 069) per who and kind
+(database or broker) on that one server; `applyRulesTo` writes rows for it
+when a database is added (console or restore-into-new). Rows remember
+`rule_id`; a hand edit through the single PUT clears it, so taking a rule
+away with `takeAway` takes back only what is still its own. Deciding whether
+a session opens never reads the rules table.
+
 ## Living beside other applications
 
 - Argus only ever creates and alters roles that carry its `argus-managed`

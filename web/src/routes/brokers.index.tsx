@@ -1,6 +1,6 @@
 import { ApprovalBadge } from '~/components/ChangeImpact'
 import { writesNeedApproval } from '~/lib/changeApproval'
-import { Alert, Badge, Box, Button, Group, SegmentedControl, Stack, Table, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Box, Button, Checkbox, Group, SegmentedControl, Select, Stack, Table, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconInfoCircle, IconPlus, IconSearch, IconStack2 } from '@tabler/icons-react'
@@ -16,6 +16,7 @@ import { LevelBadge } from '~/components/LevelBadge'
 import { LABEL_COLOR } from '~/components/StoreChrome'
 import { EngineMark } from '~/components/EngineMark'
 import { isBroker, levelName } from '~/lib/engines'
+import { GiveAccessMany, RemoveAccessMany, SelectionBar, TickAll } from '~/components/BulkDBAccess'
 
 /**
  * Brokers: every RabbitMQ vhost and Kafka entry this person may open, apart from the
@@ -40,13 +41,19 @@ function Brokers() {
   const navigate = useNavigate()
   const [label, setLabel] = useState<'all' | DBLabel>('all')
   const [q, setQ] = useState('')
+  const [server, setServer] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [dialog, setDialog] = useState<null | 'give' | 'remove'>(null)
 
   const all = useMemo(() => (data?.databases ?? []).filter((d) => isBroker(d.engine)), [data])
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    return all.filter((d) => (label === 'all' || d.label === label) &&
+    return all.filter((d) => (label === 'all' || d.label === label) && (!server || d.assetId === server) &&
       (!needle || d.dbname.toLowerCase().includes(needle) || d.hostname.toLowerCase().includes(needle)))
-  }, [all, label, q])
+  }, [all, label, q, server])
+  const servers = useMemo(() => [...new Map(all.map((d) => [d.assetId, d.hostname])).entries()]
+    .map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)), [all])
+  const picked = all.filter((d) => selected.includes(d.id))
 
   const description = "Open a RabbitMQ vhost or Kafka topics you've been given to see whether messages keep moving: queues and routing, or topics, partitions and consumer lag. Everything you do is recorded."
   if (!isConfigured()) {
@@ -78,6 +85,10 @@ function Brokers() {
               onChange={(e) => setQ(e.currentTarget.value)} w={{ base: '100%', sm: 320 }} aria-label="Find a broker" />
             <SegmentedControl value={label} onChange={(v) => setLabel(v as 'all' | DBLabel)}
               data={[{ label: 'All', value: 'all' }, { label: 'Production', value: 'production' }, { label: 'Staging', value: 'staging' }, { label: 'Development', value: 'development' }]} />
+            {servers.length > 1 && (
+              <Select placeholder="Every server" aria-label="Server" clearable searchable data={servers} value={server}
+                onChange={setServer} w={{ base: '100%', sm: 200 }} />
+            )}
           </Toolbar>
           {error && <Alert color="rose" variant="light">{(error as Error).message}</Alert>}
           <DataTable
@@ -93,13 +104,20 @@ function Brokers() {
                   : 'When an admin gives you a RabbitMQ vhost or Kafka topics they appear here.'}
               />
             }
-            columns={['Broker', 'Label', 'Your access', 'Agent', { label: '', hidden: true }]}
+            columns={[...(admin ? [{ label: <TickAll ids={rows.map((d) => d.id)} selected={selected} onChange={setSelected} label="Select every broker shown" />, width: 36 }] : []),
+              'Broker', 'Label', 'Your access', 'Agent', { label: '', hidden: true }]}
           >
             {rows.map((d) => {
               const acc = data?.access[d.id]
               const canOpen = Boolean(acc?.level) && d.tunnelConnected
               return (
-                <Table.Tr key={d.id}>
+                <Table.Tr key={d.id} bg={selected.includes(d.id) ? 'var(--mantine-primary-color-light)' : undefined}>
+                  {admin && (
+                    <Table.Td>
+                      <Checkbox size="xs" checked={selected.includes(d.id)} aria-label={`Select ${d.dbname} on ${d.hostname}`}
+                        onChange={() => setSelected((s) => s.includes(d.id) ? s.filter((x) => x !== d.id) : [...s, d.id])} />
+                    </Table.Td>
+                  )}
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
                       <EngineMark engine={d.engine} size={28} />
@@ -130,6 +148,12 @@ function Brokers() {
               )
             })}
           </DataTable>
+          {admin && (
+            <SelectionBar selected={picked} total={rows.length} onAll={() => setSelected(rows.map((d) => d.id))}
+              onClear={() => setSelected([])} onGive={() => setDialog('give')} onRemove={() => setDialog('remove')} />
+          )}
+          {dialog === 'give' && <GiveAccessMany opened targets={picked} onClose={() => { setDialog(null); setSelected([]) }} />}
+          {dialog === 'remove' && <RemoveAccessMany opened targets={picked} onClose={() => { setDialog(null); setSelected([]) }} />}
           <Text size={FS.micro} c="dimmed">
             Queue counts, consumer lag and health are shown when you open one; this list does not open a session.
           </Text>

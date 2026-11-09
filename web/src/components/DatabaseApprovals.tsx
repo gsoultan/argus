@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { isSQLEngine, levelName } from '~/lib/engines'
+import { isBroker, isSQLEngine, levelName } from '~/lib/engines'
 import {
-  Alert, Anchor, Badge, Box, Button, Checkbox, Divider, Group, Modal, Paper, Radio, SegmentedControl, Select, Stack, Switch, Text,
+  Alert, Anchor, Badge, Box, Button, Checkbox, Divider, Group, Modal, MultiSelect, Paper, Radio, SegmentedControl, Stack, Switch, Text,
   ThemeIcon,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
@@ -10,7 +10,9 @@ import { EnvBadge, People } from '~/components/ChangeImpact'
 import { SectionCard } from '~/components/page'
 import { LABEL_NAME, approvalIsDefault, shortName, writesNeedApproval } from '~/lib/changeApproval'
 import { notifyError, notifyOk } from '~/lib/notify'
-import { changeApprovalQuery, useSetDBAssignment } from '~/lib/queries'
+import { changeApprovalQuery, databasesOnAssetQuery, useGiveDBAccess, useSetDBAssignment } from '~/lib/queries'
+import { EngineMark } from '~/components/EngineMark'
+import { targetName } from '~/components/BulkDBAccess'
 import { FS } from '~/theme'
 import type { DBLabel, DBLevel, DBPolicy, Database } from '~/types/domain'
 
@@ -47,32 +49,50 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
   dbId: string; db: Database; levels: { value: DBLevel; label: string; blurb: string }[]; opened: boolean; onClose: () => void
   teams: { value: string; label: string }[]; people: { value: string; label: string }[]; onSafety: () => void
 }) {
-  const [kind, setKind] = useState<'team' | 'person'>('person')
-  const [who, setWho] = useState<string | null>(null)
+  // Who is any number of teams and people: "t:<team id>" or "u:<email>".
+  const [picked, setPicked] = useState<string[]>([])
   const [level, setLevel] = useState<DBLevel>('read')
   const [touched, setTouched] = useState(false)
   const [approval, setApproval] = useState(false)
+  // Others of the same kind on this server, given the same in one go.
+  const [also, setAlso] = useState<string[]>([])
   const set = useSetDBAssignment()
+  const giveMany = useGiveDBAccess()
+  const { data: here } = useQuery({ ...databasesOnAssetQuery(db.assetId), enabled: opened })
+  const siblings = (here?.databases ?? []).filter((d) => d.id !== db.id && isBroker(d.engine) === isBroker(db.engine))
+  const kind: 'team' | 'person' = picked.length === 1 && picked[0]!.startsWith('t:') ? 'team' : 'person'
+  const who = picked.length === 1 ? picked[0]!.slice(2) : null
   const { data: changes } = useQuery({ ...changeApprovalQuery(dbId), enabled: opened && isSQLEngine(db.engine) })
   // Production defaults to approval for write and above, unless the admin
   // decided otherwise for this row.
   const effectiveApproval = touched ? approval : db.label === 'production' && level !== 'read'
   const changesWait = writesNeedApproval(db)
   const env = LABEL_NAME[db.label] ?? db.label
-  const pick = (kind === 'team' ? teams : people).find((x) => x.value === who)
-  const name = !pick ? (kind === 'team' ? 'the team' : 'they') : kind === 'team' ? pick.label : shortName(pick.value)
-  const whose = !pick ? (kind === 'team' ? "the team's" : 'their') : kind === 'team' ? `${pick.label}'s` : `${shortName(pick.value)}'s`
+  const pick = picked.length === 1 ? (kind === 'team' ? teams : people).find((x) => x.value === who) : undefined
+  const name = !pick ? 'they' : kind === 'team' ? pick.label : shortName(pick.value)
+  const whose = !pick ? 'their' : kind === 'team' ? `${pick.label}'s` : `${shortName(pick.value)}'s`
   const deciders = changes?.approvers === 'editors' || db.policy?.writeApprovers === 'editors'
     ? `an admin, an approver or another editor of ${db.dbname}` : 'an admin or an approver'
   const changeWhat = level === 'dba' ? 'Change data, tables, roles and grants' : level === 'owner' ? 'Change data and tables' : 'Change data'
   const submit = async () => {
-    if (!who) return
+    if (picked.length === 0) return
     try {
-      await set.mutateAsync({ id: dbId, level, needsApproval: effectiveApproval,
-        ...(kind === 'team' ? { teamId: who } : { userEmail: who }) })
-      notifyOk('Access given', `${levelName(level, db.engine)} on ${db.dbname}${effectiveApproval ? ', with approval before each session' : ''}.`)
+      if (picked.length === 1 && also.length === 0) {
+        await set.mutateAsync({ id: dbId, level, needsApproval: effectiveApproval,
+          ...(kind === 'team' ? { teamId: who! } : { userEmail: who! }) })
+      } else {
+        // Untouched, each one follows its own label, as a single grant would.
+        await giveMany.mutateAsync({
+          databaseIds: [dbId, ...also], level, brokerLevel: level,
+          teams: picked.filter((k) => k.startsWith('t:')).map((k) => k.slice(2)),
+          people: picked.filter((k) => k.startsWith('u:')).map((k) => k.slice(2)),
+          approval: touched ? (approval ? 'always' : 'never') : 'label',
+        })
+      }
+      const n = also.length + 1
+      notifyOk('Access given', `${levelName(level, db.engine)} on ${n === 1 ? db.dbname : `${n} ${isBroker(db.engine) ? 'brokers' : 'databases'}`}${effectiveApproval ? ', with approval before each session' : ''}.`)
       onClose()
-      setWho(null); setTouched(false); setLevel('read')
+      setPicked([]); setAlso([]); setTouched(false); setLevel('read')
     } catch (err) {
       notifyError('Not given', err)
     }
@@ -81,10 +101,12 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
     <Modal opened={opened} onClose={onClose} centered size="lg"
       title={<Group gap="xs"><Text fw={650}>Give access to {db.dbname}</Text><EnvBadge label={db.label} /></Group>}>
       <Stack gap="sm">
-        <SegmentedControl value={kind} onChange={(v) => { setKind(v as 'team' | 'person'); setWho(null) }}
-          data={[{ label: 'A team', value: 'team' }, { label: 'A person', value: 'person' }]} />
-        <Select label={kind === 'team' ? 'Team' : 'Person'} data={kind === 'team' ? teams : people} value={who}
-          onChange={setWho} searchable placeholder={kind === 'team' ? 'Pick a team' : 'Pick a person'} />
+        <MultiSelect label="Who" searchable value={picked} onChange={setPicked}
+          placeholder={picked.length ? 'Add a team or person' : 'Pick teams and people'} nothingFoundMessage="Nobody by that name"
+          data={[
+            { group: 'Teams', items: teams.map((t) => ({ value: `t:${t.value}`, label: t.label })) },
+            { group: 'People', items: people.map((p) => ({ value: `u:${p.value}`, label: p.label })) },
+          ]} />
         <Box>
           <Text size={FS.micro} c="dimmed" mb={4}>What they can do</Text>
           <SegmentedControl value={level} onChange={(v) => setLevel(v as DBLevel)} fullWidth
@@ -116,6 +138,20 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
             </Text>
           )}
         </Paper>
+        {siblings.length > 0 && (
+          <Paper withBorder radius="md" p="sm">
+            <Text size={FS.meta} fw={600}>Also on other {isBroker(db.engine) ? 'brokers' : 'databases'} on {db.hostname.split('.')[0]}</Text>
+            <Text size={FS.micro} c="dimmed" mb={6}>The same level, in one go. Each gets its own grant you can change later.</Text>
+            <Stack gap={4}>
+              {siblings.map((d) => (
+                <Checkbox key={d.id} size="xs" checked={also.includes(d.id)}
+                  onChange={(e) => { const on = e.currentTarget.checked; setAlso((a) => on ? [...a, d.id] : a.filter((x) => x !== d.id)) }}
+                  label={<Group gap={6} wrap="nowrap"><EngineMark engine={d.engine} size={16} /><Text size={FS.meta}>{targetName(d)}</Text>
+                    <Text size={FS.micro} c="dimmed">{d.label}</Text></Group>} />
+              ))}
+            </Stack>
+          </Paper>
+        )}
         <Checkbox checked={effectiveApproval}
           label={`Also ask an approver before each of ${whose} sessions`}
           onChange={(e) => { setTouched(true); setApproval(e.currentTarget.checked) }}
@@ -124,7 +160,9 @@ export function GiveAccess({ dbId, db, levels: LEVELS, opened, onClose, teams, p
             : 'Optional, stricter than the database, for this grant only.'} />
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => void submit()} loading={set.isPending} disabled={!who}>Give {levelName(level, db.engine)} access</Button>
+          <Button onClick={() => void submit()} loading={set.isPending || giveMany.isPending} disabled={picked.length === 0}>
+            Give {levelName(level, db.engine)} access{also.length ? ` on ${also.length + 1}` : ''}
+          </Button>
         </Group>
       </Stack>
     </Modal>

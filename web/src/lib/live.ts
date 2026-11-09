@@ -32,7 +32,7 @@ import type { MyServer,
   TemporaryPasswordOutcome,
   User,
   BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseRestore, TestCheck,
-  Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
+  BulkAccessInput, BulkAccessLine, Database, DatabaseRule, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
   StatementAsk, StatementItem, ChangeApproval,
 } from '~/types/domain'
 
@@ -1693,6 +1693,32 @@ export async function setDBAssignment(
   input: { teamId?: string; userEmail?: string; level: DBLevel; needsApproval: boolean },
 ): Promise<DBAssignment[]> {
   return send<DBAssignment[]>('PUT', `/api/v1/databases/${encodeURIComponent(id)}/assignments`, input)
+}
+
+/** What a grant on many databases would change. Writes nothing. */
+export async function planDBAccess(input: BulkAccessInput): Promise<{ lines: BulkAccessLine[] }> {
+  return post<{ lines: BulkAccessLine[] }>('/api/v1/database-access/plan', input)
+}
+
+/** Give teams and people a level on many databases at once. */
+export async function giveDBAccess(input: BulkAccessInput): Promise<{ lines: BulkAccessLine[]; rules: DatabaseRule[] | null }> {
+  return post<{ lines: BulkAccessLine[]; rules: DatabaseRule[] | null }>('/api/v1/database-access', input)
+}
+
+/** Take teams and people off many databases at once. */
+export async function removeDBAccess(input: { databaseIds: string[]; teams: string[]; people: string[] }): Promise<{ lines: BulkAccessLine[] | null }> {
+  return post<{ lines: BulkAccessLine[] | null }>('/api/v1/database-access/remove', input)
+}
+
+/** Every grant and rule on one server's databases. */
+export async function assetDBAccess(assetId: string): Promise<{ assignments: DBAssignment[]; rules: DatabaseRule[] }> {
+  return get<{ assignments: DBAssignment[]; rules: DatabaseRule[] }>(`/api/v1/assets/${encodeURIComponent(assetId)}/database-access`)
+}
+
+/** Stop a rule; with takeAway, also take back what it gave. */
+export async function removeDBRule(assetId: string, ruleId: string, takeAway: boolean): Promise<{ lines: BulkAccessLine[] | null }> {
+  return send<{ lines: BulkAccessLine[] | null }>('DELETE',
+    `/api/v1/assets/${encodeURIComponent(assetId)}/database-rules/${encodeURIComponent(ruleId)}${takeAway ? '?takeAway=1' : ''}`)
 }
 
 export async function removeDBAssignment(id: string, assignmentId: string): Promise<void> {

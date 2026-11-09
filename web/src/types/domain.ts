@@ -1073,6 +1073,60 @@ export interface DBAssignment {
   needsApproval: boolean
   grantedBy: string
   grantedAt: string
+  /** The server's rule for databases added later that wrote this row. */
+  ruleId?: UUID
+}
+
+/** Whether sessions wait for an approver: as each label says, always, never. */
+export type BulkApproval = 'label' | 'always' | 'never'
+
+/** Teams and people given a level on many databases at once. */
+export interface BulkAccessInput {
+  databaseIds: UUID[]
+  teams: UUID[]
+  people: string[]
+  /** For databases; brokerLevel for brokers. */
+  level: DBLevel
+  brokerLevel?: DBLevel
+  approval?: BulkApproval
+  /** Also lower anyone who has more. */
+  lower?: boolean
+  /** Also every database (or broker) added to the same server from now on. */
+  later?: boolean
+}
+
+/** One team or person on one database: what they have and will have. */
+export interface BulkAccessLine {
+  databaseId: UUID
+  databaseName: string
+  engine: string
+  hostname: string
+  label: DBLabel
+  teamId?: UUID
+  teamName?: string
+  userEmail?: string
+  before: DBLevel | ''
+  beforeApproval: boolean
+  after: DBLevel | ''
+  afterApproval: boolean
+  change: 'new' | 'raised' | 'approval' | 'same' | 'kept' | 'lowered' | 'removed'
+}
+
+/** Every database (or broker) added to a server from now on goes to a team or person. */
+export interface DatabaseRule {
+  id: UUID
+  assetId: UUID
+  hostname: string
+  teamId?: UUID
+  teamName?: string
+  userEmail?: string
+  kind: 'database' | 'broker'
+  level: DBLevel
+  approval: BulkApproval
+  createdBy: string
+  createdAt: string
+  /** Rows it gave that are still its own. */
+  gave: number
 }
 
 /* ── Database backups ────────────────────────────────────────────────────── */

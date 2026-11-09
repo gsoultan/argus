@@ -1,6 +1,6 @@
 import { ApprovalBadge } from '~/components/ChangeImpact'
 import { writesNeedApproval } from '~/lib/changeApproval'
-import { Alert, Badge, Box, Button, Group, SegmentedControl, SimpleGrid, Stack, Table, Text, TextInput, UnstyledButton } from '@mantine/core'
+import { Alert, Badge, Box, Button, Checkbox, Group, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, UnstyledButton } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -18,6 +18,7 @@ import { engineOf, isBroker } from '~/lib/engines'
 import { FS, INK } from '~/theme'
 import { EngineMark } from '~/components/EngineMark'
 import { loadRecentDatabases } from '~/lib/recentDatabases'
+import { GiveAccessMany, RemoveAccessMany, SelectionBar, TickAll } from '~/components/BulkDBAccess'
 import type { DBAccess, DBEngine, DBLabel, Database, DatabaseBackup } from '~/types/domain'
 
 /**
@@ -63,6 +64,9 @@ function Databases() {
   const [label, setLabel] = useState<'all' | DBLabel>('all')
   const [engine, setEngine] = useState<'all' | DBEngine>('all')
   const [q, setQ] = useState('')
+  const [server, setServer] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [dialog, setDialog] = useState<null | 'give' | 'remove'>(null)
   const [recentIds] = useState(loadRecentDatabases)
   const narrow = useMediaQuery('(max-width: 48em)')
 
@@ -75,9 +79,10 @@ function Databases() {
     return list.filter((d) =>
       (label === 'all' || d.label === label) &&
       (engine === 'all' || d.engine === engine) &&
+      (!server || d.assetId === server) &&
       (!needle || d.dbname.toLowerCase().includes(needle) || d.hostname.toLowerCase().includes(needle)),
     )
-  }, [all, label, engine, q])
+  }, [all, label, engine, q, server])
 
   // Grouped by environment, production first, so which world a row is in
   // is the first thing read, not one badge among six columns.
@@ -89,6 +94,11 @@ function Databases() {
     const list = all
     return ENGINE_ORDER.map((e) => ({ engine: e, n: list.filter((d) => d.engine === e).length })).filter((x) => x.n > 0)
   }, [all])
+
+  const servers = useMemo(() => [...new Map(all.map((d) => [d.assetId, d.hostname])).entries()]
+    .map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)), [all])
+  const picked = all.filter((d) => selected.includes(d.id))
+  const select = admin && !narrow
 
   // Opened recently in this browser, and still listed for this person.
   const recent = useMemo(() => {
@@ -181,6 +191,10 @@ function Databases() {
                 { label: 'Development', value: 'development' },
               ]}
             />
+            {servers.length > 1 && (
+              <Select placeholder="Every server" aria-label="Server" clearable searchable data={servers} value={server}
+                onChange={setServer} w={{ base: '100%', sm: 200 }} />
+            )}
             {engines.length > 1 && (
               <SegmentedControl
                 value={engine}
@@ -230,12 +244,13 @@ function Databases() {
                 }
               />
             }
-            columns={['Database', 'Your access', 'Last backup', 'Agent', { label: '', hidden: true }]}
+            columns={[...(select ? [{ label: <TickAll ids={rows.map((d) => d.id)} selected={selected} onChange={setSelected} label="Select every database shown" />, width: 36 }] : []),
+              'Database', 'Your access', 'Last backup', 'Agent', { label: '', hidden: true }]}
           >
             {groups.map((g) => (
               <Fragment key={g.label}>
                 <Table.Tr aria-label={`${LABEL_TITLE[g.label]}, ${g.items.length}`}>
-                  <Table.Td colSpan={5} py={6} style={{ background: 'var(--color-raised)' }}>
+                  <Table.Td colSpan={select ? 6 : 5} py={6} style={{ background: 'var(--color-raised)' }}>
                     <Group gap={8} wrap="nowrap">
                       <Box w={3} h={14} style={{ borderRadius: 2, background: `var(--mantine-color-${LABEL_COLOR[g.label]}-6)` }} />
                       <Text size={FS.meta} fw={650}>{LABEL_TITLE[g.label]}</Text>
@@ -247,7 +262,14 @@ function Databases() {
                   const acc = data?.access[d.id]
                   const canOpen = Boolean(acc?.level) && d.tunnelConnected
                   return (
-                    <Table.Tr key={d.id} style={d.tunnelConnected ? undefined : { opacity: 0.72 }}>
+                    <Table.Tr key={d.id} style={d.tunnelConnected ? undefined : { opacity: 0.72 }}
+                      bg={selected.includes(d.id) ? 'var(--mantine-primary-color-light)' : undefined}>
+                      {select && (
+                        <Table.Td>
+                          <Checkbox size="xs" checked={selected.includes(d.id)} aria-label={`Select ${displayName(d)} on ${d.hostname}`}
+                            onChange={() => setSelected((s) => s.includes(d.id) ? s.filter((x) => x !== d.id) : [...s, d.id])} />
+                        </Table.Td>
+                      )}
                       <Table.Td>
                         <Group gap="sm" wrap="nowrap">
                           <EngineMark engine={d.engine} />
@@ -299,6 +321,12 @@ function Databases() {
               </Fragment>
             ))}
           </DataTable>}
+          {select && (
+            <SelectionBar selected={picked} total={rows.length} onAll={() => setSelected(rows.map((d) => d.id))}
+              onClear={() => setSelected([])} onGive={() => setDialog('give')} onRemove={() => setDialog('remove')} />
+          )}
+          {dialog === 'give' && <GiveAccessMany opened targets={picked} onClose={() => { setDialog(null); setSelected([]) }} />}
+          {dialog === 'remove' && <RemoveAccessMany opened targets={picked} onClose={() => { setDialog(null); setSelected([]) }} />}
           <Text size={FS.micro} c="dimmed">
             Only databases you may open are listed. Your access is what you can do without asking; anything more is
             one request away. Last opened times are on each session under Activity{data ? `, as of ${relTime(new Date().toISOString())}` : ''}.
