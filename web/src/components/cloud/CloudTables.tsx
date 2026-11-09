@@ -1,5 +1,5 @@
 import { Badge, Group, SegmentedControl, Stack, Table, Text, Tooltip } from '@mantine/core'
-import { IconCamera, IconDeviceFloppy, IconNetwork, IconPhoto, IconServer2 } from '@tabler/icons-react'
+import { IconArrowsSplit, IconCamera, IconDeviceFloppy, IconNetwork, IconPhoto, IconServer2 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { DataTable, EmptyState } from '~/components/page'
 import { relTime, rowNav } from '~/components/primitives'
@@ -167,13 +167,17 @@ export function StorageTables({ volumes, snapshots, images, loading, names, filt
   )
 }
 
-type NetView = 'firewalls' | 'networks' | 'addresses'
+type NetView = 'firewalls' | 'networks' | 'addresses' | 'balancers' | 'targets'
 
-export function NetworkTables({ firewalls, networks, subnets, addresses, loading, names, filtered }: {
+const TG_COLOR: Record<string, string> = { healthy: 'teal', degraded: 'rose', empty: 'amber', unused: 'slate' }
+
+export function NetworkTables({ firewalls, networks, subnets, addresses, balancers, targetGroups, loading, names, filtered }: {
   firewalls?: CloudItem[]
   networks?: CloudItem[]
   subnets?: CloudItem[]
   addresses?: CloudItem[]
+  balancers?: CloudItem[]
+  targetGroups?: CloudItem[]
   loading: boolean
   names: Map<string, string>
   filtered: boolean
@@ -187,6 +191,8 @@ export function NetworkTables({ firewalls, networks, subnets, addresses, loading
           { value: 'firewalls', label: `Firewalls${firewalls ? ` · ${firewalls.length}` : ''}` },
           { value: 'networks', label: `Networks${networks ? ` · ${networks.length}` : ''}` },
           { value: 'addresses', label: `Elastic IPs${addresses ? ` · ${addresses.length}` : ''}` },
+          { value: 'balancers', label: `Load balancers${balancers ? ` · ${balancers.length}` : ''}` },
+          { value: 'targets', label: `Target groups${targetGroups ? ` · ${targetGroups.length}` : ''}` },
         ]} />
       {view === 'firewalls' && (
         <DataTable minWidth={760} loading={loading} isEmpty={(firewalls?.length ?? 0) === 0}
@@ -250,6 +256,63 @@ export function NetworkTables({ firewalls, networks, subnets, addresses, loading
                   {to ? <Text size={FS.meta}>{names.get(to.id) ?? to.id}</Text>
                     : r.state === 'attached' ? <Text size={FS.meta} c="dimmed">A network interface</Text>
                       : <Tooltip label="Billed while it is not attached"><Badge variant="light" color="amber" radius="sm">Not attached</Badge></Tooltip>}
+                </Table.Td>
+              </Table.Tr>
+            )
+          })}
+        </DataTable>
+      )}
+      {view === 'balancers' && (
+        <DataTable minWidth={820} loading={loading} isEmpty={(balancers?.length ?? 0) === 0}
+          empty={<EmptyState icon={IconArrowsSplit} title="No load balancers" description={emptyText(filtered, 'application or network load balancers')} />}
+          columns={['Load balancer', 'Account and region', 'Kind', 'Reached from', 'Target groups', 'State']}>
+          {balancers?.map((it) => {
+            const r = it.resource
+            const tgs = (targetGroups ?? []).filter((t) => t.accountId === it.accountId && r.links?.some((l) => l.kind === 'target-group' && l.id === t.resource.id))
+            return (
+              <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+                <Table.Td maw={260}><Text fw={600} size={FS.body} truncate>{r.name}</Text><Text size={FS.micro} c="dimmed" ff="monospace" truncate>{r.details?.dnsName}</Text></Table.Td>
+                <Table.Td><WhereCell it={it} /></Table.Td>
+                <Table.Td><Text size={FS.meta} tt="capitalize">{r.size}</Text></Table.Td>
+                <Table.Td>
+                  {r.details?.scheme === 'internet-facing'
+                    ? <Badge variant="light" color="sky" radius="sm">The internet</Badge>
+                    : <Text size={FS.meta} c="dimmed">Inside the network</Text>}
+                </Table.Td>
+                <Table.Td>
+                  {tgs.length === 0 ? <Text size={FS.meta} c="dimmed">—</Text> : (
+                    <Group gap={4}>
+                      {tgs.map((t) => (
+                        <Badge key={t.resource.id} variant="light" color={TG_COLOR[t.resource.state ?? ''] ?? 'slate'} radius="sm" tt="none" fw={500}>
+                          {t.resource.name} · {t.resource.details?.healthy ?? 0}/{t.resource.details?.targets ?? 0}
+                        </Badge>
+                      ))}
+                    </Group>
+                  )}
+                </Table.Td>
+                <Table.Td><StateBadge state={r.state} /></Table.Td>
+              </Table.Tr>
+            )
+          })}
+        </DataTable>
+      )}
+      {view === 'targets' && (
+        <DataTable minWidth={760} loading={loading} isEmpty={(targetGroups?.length ?? 0) === 0}
+          empty={<EmptyState icon={IconArrowsSplit} title="No target groups" description={emptyText(filtered, 'target groups')} />}
+          columns={['Target group', 'Account and region', 'Protocol and port', 'Load balancer', 'Healthy']}>
+          {targetGroups?.map((it) => {
+            const r = it.resource
+            const lbs = (r.links ?? []).filter((l) => l.kind === 'load-balancer')
+            return (
+              <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+                <Table.Td maw={260}><Text fw={600} size={FS.body} truncate>{r.name}</Text><Text size={FS.micro} c="dimmed">{r.details?.targetType ?? ''} targets</Text></Table.Td>
+                <Table.Td><WhereCell it={it} /></Table.Td>
+                <Table.Td><Text size={FS.meta} ff="monospace">{r.size}</Text></Table.Td>
+                <Table.Td><Text size={FS.meta} c={lbs.length ? undefined : 'dimmed'}>{lbs.length ? lbs.map((l) => l.name ?? l.id).join(', ') : 'None'}</Text></Table.Td>
+                <Table.Td>
+                  <Badge variant="light" color={TG_COLOR[r.state ?? ''] ?? 'slate'} radius="sm">
+                    {r.state === 'unused' ? 'Not in use' : `${r.details?.healthy ?? 0} of ${r.details?.targets ?? 0}`}
+                  </Badge>
                 </Table.Td>
               </Table.Tr>
             )

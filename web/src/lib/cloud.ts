@@ -10,6 +10,7 @@ import { get, isConfigured, send } from '~/lib/live'
 
 export type CloudEnvironment = 'production' | 'staging' | 'development'
 export type CloudKind = 'instance' | 'volume' | 'firewall' | 'network' | 'subnet' | 'address' | 'snapshot' | 'image'
+  | 'load-balancer' | 'target-group'
 
 export interface CloudAccount {
   id: string
@@ -182,7 +183,10 @@ export type CloudStorageAction =
   | 'volume-create' | 'volume-grow' | 'volume-attach' | 'volume-detach' | 'volume-delete'
   | 'snapshot-create' | 'snapshot-delete' | 'image-create' | 'image-delete'
   | 'address-allocate' | 'address-associate' | 'address-disassociate' | 'address-release'
-export type CloudAction = 'launch' | 'start' | 'stop' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'remove' | CloudStorageAction
+export type CloudNetworkAction =
+  | 'firewall-create' | 'firewall-rules' | 'firewall-delete' | 'instance-firewalls' | 'target-register' | 'target-deregister'
+export type CloudAction = 'launch' | 'start' | 'stop' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'remove'
+  | CloudStorageAction | CloudNetworkAction
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled'
 
 export interface CloudChange {
@@ -341,8 +345,9 @@ export const CHANGE_STATE: Record<CloudChangeState, { label: string; color: stri
 
 /** Ports that should never be open to the whole internet. */
 export const RISKY_PORTS: Record<number, string> = {
-  22: 'SSH', 3389: 'Remote Desktop', 5432: 'PostgreSQL', 3306: 'MySQL', 1433: 'SQL Server',
-  27017: 'MongoDB', 6379: 'Redis', 9200: 'Elasticsearch',
+  21: 'FTP', 22: 'SSH', 23: 'Telnet', 445: 'SMB', 1433: 'SQL Server', 2375: 'Docker', 3306: 'MySQL',
+  3389: 'Remote Desktop', 5432: 'PostgreSQL', 5900: 'VNC', 6379: 'Redis', 9200: 'Elasticsearch',
+  11211: 'Memcached', 27017: 'MongoDB',
 }
 
 /** What a firewall lets the whole internet reach, by name. */
@@ -350,6 +355,7 @@ export function openToInternet(r: CloudResource): string[] {
   const out = new Set<string>()
   for (const rule of r.rules ?? []) {
     if (!rule.inbound || (rule.source !== '0.0.0.0/0' && rule.source !== '::/0')) continue
+    if (rule.protocol === 'all') { out.add('every port'); continue }
     for (const [port, name] of Object.entries(RISKY_PORTS)) {
       const p = Number(port)
       if (rule.protocol === 'all' || (rule.protocol === 'tcp' && rule.fromPort <= p && p <= rule.toPort)) out.add(name)
@@ -637,6 +643,8 @@ export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
   'volume-create': 'change', 'volume-grow': 'change', 'volume-attach': 'change', 'volume-detach': 'change', 'volume-delete': 'remove',
   'snapshot-create': 'operate', 'snapshot-delete': 'remove', 'image-create': 'change', 'image-delete': 'remove',
   'address-allocate': 'change', 'address-associate': 'change', 'address-disassociate': 'change', 'address-release': 'remove',
+  'firewall-create': 'change', 'firewall-rules': 'change', 'firewall-delete': 'remove', 'instance-firewalls': 'change',
+  'target-register': 'change', 'target-deregister': 'change',
 }
 
 /** The permissions each storage change takes, as the manage role must grant them. */
@@ -647,6 +655,10 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'image-create': ['ec2:CreateImage'], 'image-delete': ['ec2:DeregisterImage', 'ec2:DeleteSnapshot'],
   'address-allocate': ['ec2:AllocateAddress'], 'address-associate': ['ec2:AssociateAddress'],
   'address-disassociate': ['ec2:DisassociateAddress'], 'address-release': ['ec2:ReleaseAddress'],
+  'firewall-create': ['ec2:CreateSecurityGroup', 'ec2:AuthorizeSecurityGroupIngress', 'ec2:AuthorizeSecurityGroupEgress'],
+  'firewall-rules': ['ec2:AuthorizeSecurityGroupIngress', 'ec2:AuthorizeSecurityGroupEgress', 'ec2:RevokeSecurityGroupIngress', 'ec2:RevokeSecurityGroupEgress'],
+  'firewall-delete': ['ec2:DeleteSecurityGroup'], 'instance-firewalls': ['ec2:ModifyInstanceAttribute'],
+  'target-register': ['elasticloadbalancing:RegisterTargets'], 'target-deregister': ['elasticloadbalancing:DeregisterTargets'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */
@@ -689,4 +701,74 @@ export function freeDevice(inst: CloudResource): string {
   }))
   for (const c of 'fghijklmnop') if (!used.has(`/dev/sd${c}`)) return `/dev/sd${c}`
   return ''
+}
+
+/* ── Security groups and load balancer targets ──────────────────────────── */
+
+const RANK: Record<CloudEnvironment, number> = { development: 0, staging: 1, production: 2 }
+
+/** The stricter of two environments. */
+export function stricterEnv(a: CloudEnvironment, b: CloudEnvironment): CloudEnvironment {
+  return RANK[b] > RANK[a] ? b : a
+}
+
+export function isOpenRule(r: CloudRule): boolean {
+  return r.inbound && (r.source === '0.0.0.0/0' || r.source === '::/0')
+}
+
+/**
+ * What an inbound rule lets the whole internet reach, in words, or '' when
+ * it does not. Web ports alone are not an exposure. The control plane says
+ * the same, and raises such a change so it needs a second person.
+ */
+export function ruleExposure(r: CloudRule): string {
+  if (!isOpenRule(r) || r.protocol === 'icmp') return ''
+  if (r.protocol === 'all') return 'every port'
+  if (r.protocol === 'tcp' && (r.fromPort === 80 || r.fromPort === 443) && r.fromPort === r.toPort) return ''
+  const names = Object.entries(RISKY_PORTS).filter(([p]) => r.fromPort <= Number(p) && Number(p) <= r.toPort)
+    .map(([p, n]) => `${n} (${p})`)
+  return names.length ? names.join(', ') : portText(r)
+}
+
+export function exposures(rules: CloudRule[]): string[] {
+  return [...new Set(rules.map(ruleExposure).filter(Boolean))]
+}
+
+/** Whether two rules allow the same traffic, whatever their descriptions say. */
+export function sameRule(a: CloudRule, b: CloudRule): boolean {
+  return a.inbound === b.inbound && a.protocol === b.protocol && a.fromPort === b.fromPort && a.toPort === b.toPort &&
+    a.source.toLowerCase() === b.source.toLowerCase()
+}
+
+/** A rule's source as people write it: an address becomes a /32 or /128. */
+export function normalSource(s: string): string {
+  const t = s.trim()
+  if (/^(sg|pl)-[0-9a-f]+$/.test(t) || t.includes('/')) return t
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(t)) return `${t}/32`
+  if (t.includes(':')) return `${t}/128`
+  return t
+}
+
+/** Whether a source is a range, an address, a security group or a prefix list. */
+export function validSource(s: string): boolean {
+  const t = s.trim()
+  return /^sg-[0-9a-f]{8,17}$/.test(t) || /^pl-[0-9a-f]{8,17}$/.test(t) ||
+    /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(t) || /^[0-9a-f:]+:[0-9a-f:]*(\/\d{1,3})?$/i.test(t)
+}
+
+/** Every live instance and load balancer that uses a security group. */
+export function firewallUsers(g: CloudItem, instances: CloudItem[] = [], balancers: CloudItem[] = []): CloudItem[] {
+  return [...instances, ...balancers].filter((x) => x.accountId === g.accountId && x.resource.region === g.resource.region &&
+    x.resource.state !== 'terminated' && x.resource.state !== 'shutting-down' &&
+    (x.resource.links ?? []).some((l) => l.kind === 'firewall' && l.id === g.resource.id))
+}
+
+/** A group's environment is the strictest of its own and of what uses it. */
+export function firewallEnv(g: CloudItem, users: CloudItem[]): CloudEnvironment {
+  return users.reduce((env, u) => stricterEnv(env, envOf(u.resource.tags, u.environment)), envOf(g.resource.tags, g.environment))
+}
+
+/** The instances behind a target group, with their health. */
+export function targetsOf(tg: CloudResource): { id: string; health: string }[] {
+  return (tg.links ?? []).filter((l) => l.kind === 'instance').map((l) => ({ id: l.id, health: l.name ?? 'unknown' }))
 }
