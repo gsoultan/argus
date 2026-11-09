@@ -19,6 +19,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/notify"
+	"github.com/gsoultan/argus/internal/recorder"
 	"github.com/gsoultan/argus/internal/storage"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -976,9 +977,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// every account it is not given.
 	reply := map[string]any{"status": "ok", "console_only": true,
 		// This control plane verifies and stores a recording shipped as
-		// zstd; an agent sends one plain to a control plane that does not
-		// say so.
-		"recording_encodings": []string{"zstd"}}
+		// zstd, packed or not; an agent sends one plain to a control plane
+		// that does not say so.
+		"recording_encodings": []string{"zstd", recorder.EncodingPacked}}
 	switch k := a.AgentKeepRecordings; {
 	case k < 0:
 		reply["keep_recordings_hours"] = 0

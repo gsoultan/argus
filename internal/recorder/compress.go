@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"errors"
@@ -38,8 +39,15 @@ on real terminal recordings; see the PR that introduced this file):
     level with a 128 MB window, which finds the screens and output a session
     repeats minutes apart.
 
+A desktop recording is also packed inside the zstd frame: its base64 taken
+back out to the bytes it encodes, which zstd compresses three times better
+(packed.go has the measurements). Anything that reads through Open sees the
+same lines either way.
+
 The decoder is bounded to the archive window, so a hostile file cannot make a
-reader allocate more than that.
+reader allocate more than that. That window is also what reading a recording
+costs in memory: readers stream, and nothing in the product holds a whole
+recording.
 */
 
 // CompressedExt is appended to a recording's own extension once it is
@@ -90,7 +98,16 @@ func Open(r io.Reader) (io.ReadCloser, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open compressed recording: %w", err)
 		}
-		return zstdReadCloser{zr}, nil
+		zb := bufio.NewReaderSize(zr, 64<<10)
+		if inner, _ := zb.Peek(len(packedMagic)); bytes.Equal(inner, packedMagic) {
+			u, err := newUnpacker(zb)
+			if err != nil {
+				zr.Close()
+				return nil, fmt.Errorf("open compressed recording: %w", err)
+			}
+			return readCloser{u, zr.Close}, nil
+		}
+		return readCloser{zb, zr.Close}, nil
 	case isGzip(head):
 		zr, err := gzip.NewReader(br)
 		if err != nil {
@@ -101,11 +118,15 @@ func Open(r io.Reader) (io.ReadCloser, error) {
 	return io.NopCloser(br), nil
 }
 
-type zstdReadCloser struct{ *zstd.Decoder }
+type readCloser struct {
+	io.Reader
+	close func()
+}
 
-func (z zstdReadCloser) Close() error { z.Decoder.Close(); return nil }
+func (r readCloser) Close() error { r.close(); return nil }
 
-// Compress writes src to dst as zstd at the given level.
+// Compress writes src to dst as zstd at the given level, packed (see
+// packed.go) when its first lines show it is a recording that packs.
 func Compress(dst io.Writer, src io.Reader, lvl Level) error {
 	opts := []zstd.EOption{
 		zstd.WithEncoderLevel(zstd.SpeedBetterCompression),
@@ -124,7 +145,16 @@ func Compress(dst io.Writer, src io.Reader, lvl Level) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(zw, src); err != nil {
+	br := bufio.NewReaderSize(src, packChunk)
+	// The first lines decide: a desktop recording's first screen is in them,
+	// and a terminal's or a database session's never has a line that packs.
+	head, _ := br.Peek(packChunk)
+	if packable(head) {
+		err = pack(zw, br)
+	} else {
+		_, err = io.Copy(zw, br)
+	}
+	if err != nil {
 		zw.Close()
 		return err
 	}

@@ -60,7 +60,20 @@ func (c *Client) UploadRecording(ctx context.Context, id, chainHead, path string
 	var body io.Reader = f
 	size := info.Size()
 	compressed := strings.HasSuffix(path, recorder.CompressedExt)
-	if compressed && !c.shipZstd.Load() {
+	ship := compressed && c.shipZstd.Load()
+	if ship && !c.shipPacked.Load() {
+		// zstd, but packed inside, to a control plane that reads zstd and
+		// not that: it goes plain, as to one that reads no zstd at all.
+		packed, err := recorder.IsPacked(f)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		ship = !packed
+	}
+	if compressed && !ship {
 		// Kept compressed on this host, sent plain to a control plane that
 		// has not said it reads zstd. The length is unknown, so it is sent
 		// chunked.
@@ -109,6 +122,10 @@ func (c *Client) UploadRecording(ctx context.Context, id, chainHead, path string
 // SetShipZstd records whether the control plane reads zstd recordings, from
 // its heartbeat reply.
 func (c *Client) SetShipZstd(ok bool) { c.shipZstd.Store(ok) }
+
+// SetShipPacked records whether the control plane reads packed zstd
+// recordings, from its heartbeat reply.
+func (c *Client) SetShipPacked(ok bool) { c.shipPacked.Store(ok) }
 
 func extOf(path string) string {
 	if i := strings.LastIndexByte(path, '.'); i >= 0 && !strings.ContainsAny(path[i:], `/\`) {

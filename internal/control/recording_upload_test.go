@@ -278,7 +278,7 @@ func TestTheHeartbeatSaysRecordingsMayShipCompressed(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("heartbeat: %d %s", w.Code, w.Body)
 	}
-	if !strings.Contains(w.Body.String(), `"recording_encodings":["zstd"]`) {
-		t.Errorf("reply %s does not offer zstd", w.Body)
+	if !strings.Contains(w.Body.String(), `"recording_encodings":["zstd","zstd-packed"]`) {
+		t.Errorf("reply %s does not offer zstd, packed and not", w.Body)
 	}
 }
