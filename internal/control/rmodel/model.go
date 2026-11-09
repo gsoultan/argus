@@ -1181,6 +1181,7 @@ func All() []any {
 		&AssetTeamAssignment{},
 		&AuditEvent{},
 		&CloudAccount{},
+		&CloudAccess{},
 		&CloudChange{},
 		&CloudKeepRunning{},
 		&CloudResource{},
@@ -1740,6 +1741,46 @@ func (m *SoftwareFile) Schema(t *storm.Table) {
 	t.CheckNamed("software_files_platform_check", "platform = ANY (ARRAY['android'::text, 'windows'::text])")
 	t.CheckNamed("software_files_size_bytes_check", "size_bytes > 0")
 	t.Index(&m.Sha256).Unique().Where("archived_at IS NULL").Named("software_files_sha256")
+}
+
+// CloudAccess is table cloud_access: a just-in-time grant to an account's
+// AWS console and command line, which ends on its own.
+//
+// The table name is not what storm would derive from the type, so it is
+// set explicitly in Schema — otherwise the first diff would rename it.
+type CloudAccess struct {
+	ID            [16]byte
+	Account       CloudAccount
+	Level         string
+	Environment   string
+	Minutes       int32
+	Reason        string
+	State         string
+	RequestedBy   string
+	RequestedAt   time.Time
+	DecidedBy     *string
+	DecidedAt     *time.Time
+	StartsAt      *time.Time
+	EndsAt        *time.Time
+	EndedBy       *string
+	Sessions      int32
+	LastSessionAt *time.Time
+}
+
+func (m *CloudAccess) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Name("cloud_access")
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Account).ConstraintName("cloud_access_account_id_fkey")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.Sessions).Default("0")
+	t.CheckNamed("cloud_access_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
+	t.CheckNamed("cloud_access_level_check", "level = ANY (ARRAY['read'::text, 'operate'::text])")
+	t.CheckNamed("cloud_access_minutes_check", "(minutes >= 15) AND (minutes <= 720)")
+	t.CheckNamed("cloud_access_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'active'::text, 'declined'::text, 'cancelled'::text, 'ended'::text])")
+	t.Index(&m.Account).Where("state = ANY (ARRAY['awaiting_approval'::text, 'active'::text])").Named("cloud_access_open")
+	t.Index(&m.RequestedBy, storm.Desc(&m.RequestedAt)).Named("cloud_access_requester")
 }
 
 // CloudAccount is table cloud_accounts: an account Argus reaches by

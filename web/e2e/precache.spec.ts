@@ -49,9 +49,12 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 724.3 kB with broker settings under Brokers: the new route's guard and
  * search rule in the entry, and the broker names for levels that the bell and
  * search use. The settings page itself is in a chunk that is not stored.
+ * 725.0 kB with Cloud's Console access tab: its name in the tab list. The
+ * tab, its queries and the console-session code are in chunks that are not
+ * stored.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 725
+const MAX_KB = 726
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
