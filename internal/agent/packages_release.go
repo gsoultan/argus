@@ -125,7 +125,7 @@ const (
 	// releaseMinFree is the free space / and /var need. Ubuntu's upgrader
 	// and leapp check for themselves and stop before changing anything;
 	// this says it in the console, and is the only check Debian gets.
-	releaseMinFree = 3 << 30
+	releaseMinFree  = 3 << 30
 	releaseDepsFile = "release-deps.json"
 )
 
@@ -609,9 +609,9 @@ var toolFallbacks = map[string]map[string][]string{
 	"apt": {
 		"sshd": {"openssh-server"}, "sftp-server": {"openssh-sftp-server", "openssh-server"},
 		"pg_dump": {"postgresql-client"}, "pg_restore": {"postgresql-client"}, "psql": {"postgresql-client"},
-		"mysql": {"default-mysql-client", "mysql-client", "mariadb-client"},
+		"mysql":     {"default-mysql-client", "mysql-client", "mariadb-client"},
 		"mysqldump": {"default-mysql-client", "mysql-client", "mariadb-client"},
-		"mariadb": {"mariadb-client"}, "mariadb-dump": {"mariadb-client"},
+		"mariadb":   {"mariadb-client"}, "mariadb-dump": {"mariadb-client"},
 	},
 	"dnf": {
 		"sshd": {"openssh-server"}, "sftp-server": {"openssh-server"},
