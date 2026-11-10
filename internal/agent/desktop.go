@@ -372,7 +372,10 @@ func connectDesktop(cfg DesktopConfig, g tunnel.Grant, open tunnel.DesktopOpen,
 		Width: width, Height: height, Depth: 16,
 		SelectedProtocol: protocol,
 		Logon:            logon,
-		Log:              log,
+		// A screen nobody is touching sends nothing; that must not end a
+		// session someone is reading.
+		KeepIdle: true,
+		Log:      log,
 	}
 	if open.Graphics {
 		info.Graphics = &GraphicsSink{}
