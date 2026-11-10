@@ -90,7 +90,7 @@ func (a *API) backupKeyFor(ctx context.Context) (*ecdh.PrivateKey, error) {
 func (a *API) backupGrant(ctx context.Context, email string, db Database, b tunnel.GrantBackup) (string, tunnel.Grant, error) {
 	b.DatabaseID, b.Name, b.Host, b.Port, b.AdminUser = db.ID, db.Name, db.Host, db.Port, db.AdminUser
 	b.Organization = tenantIDOf(ctx)
-	g := tunnel.NewGrant(email, db.Hostname, "backup", "")
+	g := tunnel.NewGrant(email, db.agent(), "backup", "")
 	g.Service = tunnel.BackupService
 	g.Backup = &b
 	tok, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
@@ -101,7 +101,7 @@ func (a *API) backupGrant(ctx context.Context, email string, db Database, b tunn
 func (a *API) openBackupStream(ctx context.Context, db Database, grant string) (tunnel.Stream, tunnel.Answer, error) {
 	octx, cancel := context.WithTimeout(ctx, backupOpenWait)
 	defer cancel()
-	st, ans, err := a.Tunnels.OpenWith(octx, db.Hostname, tunnel.Header{Service: tunnel.BackupService, Grant: grant})
+	st, ans, err := a.Tunnels.OpenWith(octx, db.agent(), tunnel.Header{Service: tunnel.BackupService, Grant: grant})
 	switch {
 	case errors.Is(err, ErrNoTunnel):
 		return nil, ans, fmt.Errorf("the agent on %s is not connected, so nothing can run there", db.Hostname)

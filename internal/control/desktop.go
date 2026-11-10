@@ -157,7 +157,12 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 		logon.Graphics = logon.Video
 	}
 
-	g := tunnel.NewGrant(email, host, principal, client)
+	agentHost, err := a.agentOf(ctx, host)
+	if err != nil {
+		fail("could not find the agent on " + host + ": " + err.Error())
+		return
+	}
+	g := tunnel.NewGrant(email, agentHost, principal, client)
 	g.Service = service
 	// A workstation is someone's: by its type's rule, or its own, whoever
 	// is using it is asked first, and the open waits for their answer as
@@ -180,7 +185,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 		return
 	}
 	octx, cancel := context.WithTimeout(ctx, openWait)
-	st, answer, err := a.Tunnels.OpenWith(octx, host, tunnel.Header{
+	st, answer, err := a.Tunnels.OpenWith(octx, agentHost, tunnel.Header{
 		Service: service, Grant: grant,
 		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height,
 			Graphics: logon.Graphics},

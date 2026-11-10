@@ -34,6 +34,30 @@ const empty: AssetInput = {
   desktopMode: 'rdp',
 }
 
+/**
+ * What the hostname field says. Renaming a server in Argus does not rename
+ * the machine: its agent keeps the name it was enrolled under, and the
+ * console reaches it by that name, so the rename is safe to make and the
+ * form says so instead of leaving the administrator to wonder.
+ */
+export function hostnameNote(asset: Asset | undefined, hostname: string): string {
+  const base = 'The name Argus knows this host by, and what a certificate would name.'
+  if (!asset) return base
+  const next = hostname.trim().toLowerCase()
+  const agent = asset.agentHostname || asset.hostname
+  if (!next || next === asset.hostname) {
+    return asset.agentHostname
+      ? `${base} Its agent goes by ${asset.agentHostname}.`
+      : base
+  }
+  if (asset.agentState === 'absent' && !asset.tunnelConnected && !asset.agentHostname) {
+    return `Renaming it keeps who can connect and its approvals. ${asset.hostname} stays on its past sessions.`
+  }
+  return next === agent.toLowerCase()
+    ? `Renaming it back to its agent's own name. Who can connect, approvals and sessions carry over.`
+    : `Renaming it keeps its agent, who can connect, approvals and databases. The agent still goes by ${agent}; ${asset.hostname} stays on its past sessions.`
+}
+
 function fromAsset(a: Asset): AssetInput {
   return {
     hostname: a.hostname,
@@ -236,14 +260,14 @@ export function AssetForm({
           <TextInput
             required
             label="Hostname"
-            description="The name Argus knows this host by, and what a certificate would name."
+            description={hostnameNote(asset, form.hostname)}
             placeholder="pay-01.payments.example"
             value={form.hostname}
             onChange={(e) => set('hostname', e.currentTarget.value)}
           />
           <TextInput
             label="Address"
-            description="Where to dial it. Defaults to the hostname."
+            description="Its IP or DNS name on your network. Defaults to the hostname. Sessions go through its agent, so changing it does not cut them off."
             placeholder="192.0.2.10"
             value={form.address}
             onChange={(e) => set('address', e.currentTarget.value)}

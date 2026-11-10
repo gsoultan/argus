@@ -121,7 +121,12 @@ func (a *API) relayFiles(ctx context.Context, conn *websocket.Conn,
 		_ = conn.Close(websocket.StatusNormalClosure, "refused")
 	}
 
-	g := tunnel.NewGrant(email, host, principal, client)
+	agentHost, err := a.agentOf(ctx, host)
+	if err != nil {
+		fail("could not find the agent on " + host + ": " + err.Error())
+		return
+	}
+	g := tunnel.NewGrant(email, agentHost, principal, client)
 	g.Service = agentFilesService
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
@@ -129,7 +134,7 @@ func (a *API) relayFiles(ctx context.Context, conn *websocket.Conn,
 		return
 	}
 	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
-	st, answer, err := a.Tunnels.OpenWith(octx, host,
+	st, answer, err := a.Tunnels.OpenWith(octx, agentHost,
 		tunnel.Header{Service: agentFilesService, Grant: grant})
 	cancel()
 	switch {

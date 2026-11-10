@@ -116,7 +116,12 @@ func (a *API) discoverDatabases(ctx context.Context, actor, hostname string, d t
 		ans.State, ans.Error = "failed", "this control plane cannot reach agents: set signing_secret"
 		return ans
 	}
-	g := tunnel.NewGrant(actor, hostname, "discover", "")
+	agentHost, err := a.agentOf(ctx, hostname)
+	if err != nil {
+		ans.State, ans.Error = "failed", "could not find the agent on "+hostname+": "+err.Error()
+		return ans
+	}
+	g := tunnel.NewGrant(actor, agentHost, "discover", "")
 	g.Service = tunnel.DiscoverService
 	g.Discover = &d
 	tok, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
@@ -126,7 +131,7 @@ func (a *API) discoverDatabases(ctx context.Context, actor, hostname string, d t
 	}
 	octx, cancel := context.WithTimeout(ctx, discoverWait)
 	defer cancel()
-	st, open, err := a.Tunnels.OpenWith(octx, hostname, tunnel.Header{Service: tunnel.DiscoverService, Grant: tok})
+	st, open, err := a.Tunnels.OpenWith(octx, agentHost, tunnel.Header{Service: tunnel.DiscoverService, Grant: tok})
 	switch {
 	case errors.Is(err, ErrNoTunnel):
 		ans.State, ans.Error = "offline", "the agent on "+hostname+" is not connected"

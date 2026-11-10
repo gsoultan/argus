@@ -307,7 +307,7 @@ func (s *Store) recordAgentUpdate(ctx context.Context, hostname string,
 func (s *Store) AgentHostname(ctx context.Context, hostname string) (string, error) {
 	var h string
 	err := s.db(ctx).QueryRow(ctx, `
-		SELECT COALESCE(NULLIF(agent_hostname, ''), hostname) FROM assets WHERE hostname = $1`,
+		SELECT `+agentNameSQL+` FROM assets a WHERE a.hostname = $1`,
 		hostname).Scan(&h)
 	return h, err
 }

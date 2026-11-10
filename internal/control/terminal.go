@@ -320,7 +320,12 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 		_ = conn.Close(websocket.StatusNormalClosure, "refused")
 	}
 
-	g := tunnel.NewGrant(email, host, principal, client)
+	agentHost, err := a.agentOf(ctx, host)
+	if err != nil {
+		fail("could not find the agent on " + host + ": " + err.Error())
+		return
+	}
+	g := tunnel.NewGrant(email, agentHost, principal, client)
 	// On a workstation whoever is at its screen is told who opened a
 	// terminal, by its type's rule or its own; a terminal takes nothing
 	// from them, so it never waits on an answer.
@@ -336,7 +341,7 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 		return
 	}
 	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
-	st, answer, err := a.Tunnels.OpenWith(octx, host,
+	st, answer, err := a.Tunnels.OpenWith(octx, agentHost,
 		tunnel.Header{Service: agentTerminalService, Grant: grant, Hold: a.terminalHold()})
 	cancel()
 	switch {
@@ -493,13 +498,17 @@ func (a *API) resumeFromAgent(ctx context.Context, conn *websocket.Conn,
 // openResume asks host's agent for the held terminal id, from output byte from.
 func (a *API) openResume(ctx context.Context, email, host, principal, client, id string,
 	from int64) (tunnel.Stream, tunnel.Answer, error) {
-	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), tunnel.NewGrant(email, host, principal, client))
+	agentHost, err := a.agentOf(ctx, host)
+	if err != nil {
+		return nil, tunnel.Answer{}, err
+	}
+	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), tunnel.NewGrant(email, agentHost, principal, client))
 	if err != nil {
 		return nil, tunnel.Answer{}, err
 	}
 	octx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	return a.Tunnels.OpenWith(octx, host, tunnel.Header{Service: tunnel.TerminalResumeService,
+	return a.Tunnels.OpenWith(octx, agentHost, tunnel.Header{Service: tunnel.TerminalResumeService,
 		Grant: grant, Resume: &tunnel.TermResume{Session: id, From: from}})
 }
 
@@ -884,6 +893,16 @@ func (ts *termSession) end(code websocket.StatusCode, why string, msgs ...termin
 			att.closeWith(code, why)
 		}
 	})
+}
+
+// agentOf is the name the agent on host goes by, which a grant has to name
+// and its tunnel is found under. host is what the console calls the server,
+// and stays what the session, its recording and the audit chain are about.
+func (a *API) agentOf(ctx context.Context, host string) (string, error) {
+	if a.store == nil {
+		return host, nil
+	}
+	return a.store.AgentNameFor(ctx, host)
 }
 
 // agentTerminalService is the agent's name for it; see agent.TerminalService.

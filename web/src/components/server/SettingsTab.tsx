@@ -32,6 +32,12 @@ export function SettingsTab({ asset, canEdit, onEdit }: {
           <Stack gap="sm">
             <Detail label="Name"><Text size={FS.meta} style={{ overflowWrap: 'anywhere' }}>{asset.hostname}</Text></Detail>
             <Detail label="Address"><Mono>{asset.address}{asset.port ? `:${asset.port}` : ''}</Mono></Detail>
+            {asset.agentHostname && (
+              <Detail label="Agent name">
+                <Mono>{asset.agentHostname}</Mono>
+                <Text size={FS.micro} c="dimmed">The name its agent was installed under. Sessions reach it by this name.</Text>
+              </Detail>
+            )}
             <Detail label={device ? 'Connects by' : 'Protocol'}>
               <Text size={FS.meta}>{device ? connectsBy(asset) : asset.protocol === 'rdp' ? 'RDP' : 'SSH'}</Text>
             </Detail>
