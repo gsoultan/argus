@@ -1,19 +1,21 @@
 import '../ssh/ssh.css'
 import './connect.css'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
-import { ActionIcon, Box, Button, Center, Group, Loader, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { ActionIcon, Box, Button, Center, Group, Loader, Menu, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
-  IconArrowLeft, IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
+  IconArrowLeft, IconCheck, IconChevronDown, IconCircleCheck, IconClipboard, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
   IconLayoutColumns, IconMaximize, IconMinimize, IconPin, IconPinFilled, IconPlugConnectedX, IconPlus,
   IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import type { FilesState } from '~/components/FileBrowser'
 import type { TerminalState } from '~/components/LiveTerminal'
-import type { RDPControls, RDPStats } from '~/components/RDPScreen'
+import type { ClipboardNote, RDPControls, RDPStats } from '~/components/RDPScreen'
+import type { ClipboardRule } from '~/lib/clipboard'
 import { StateCard } from '~/components/connect/ConnectPanel'
+import { chord, isMac, loadKeyboardPrefs, saveKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
 import { assetsQuery, meQuery } from '~/lib/queries'
 import { desktopEndpoint, filesEndpoint, terminalEndpoint } from '~/lib/live'
 import { seesWholeFleet } from '~/lib/roles'
@@ -334,6 +336,19 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
   const [full, setFull] = useState(false)
   const [pinned, setPinned] = useState(false)
   const [visible, setVisible] = useState(true)
+  const [menuOpen, setMenuOpen] = useState(false)
+  // Files slides in beside the screen and stays mounted once opened, so a
+  // transfer keeps going while it is closed.
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [filesMounted, setFilesMounted] = useState(false)
+  const filesAllowed = !readOnly && !device
+  const toggleFiles = () => {
+    setFilesMounted(true)
+    setFilesOpen((o) => {
+      if (o) controls.current?.focus()
+      return !o
+    })
+  }
   const hideTimer = useRef<number | undefined>(undefined)
 
   // The toolbar steps out of the way after a few seconds and comes back when
@@ -354,22 +369,72 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
     return () => document.removeEventListener('fullscreenchange', onFs)
   }, [rootRef])
 
+  // In full screen the keyboard is the remote's whole: Esc, Alt+Tab, the
+  // Windows key and ⌘Tab reach it instead of the browser, where the browser
+  // allows (Chrome and Edge). Holding Esc still leaves full screen.
   const toggleFull = () => {
-    if (document.fullscreenElement) void document.exitFullscreen()
-    else void rootRef.current?.requestFullscreen?.().catch(() => undefined)
+    const kb = (navigator as Navigator & { keyboard?: { lock?: () => Promise<void>; unlock?: () => void } }).keyboard
+    if (document.fullscreenElement) {
+      kb?.unlock?.()
+      void document.exitFullscreen()
+    } else {
+      void rootRef.current?.requestFullscreen?.()
+        .then(() => (!device && !readOnly ? kb?.lock?.() : undefined))
+        .catch(() => undefined)
+    }
     controls.current?.focus()
+  }
+
+  const mac = isMac()
+  const [keyboard, setKeyboard] = useState<KeyboardPrefs>(loadKeyboardPrefs)
+  const setPref = (p: Partial<KeyboardPrefs>) => {
+    const next = { ...keyboard, ...p }
+    setKeyboard(next)
+    saveKeyboardPrefs(next)
+    controls.current?.focus()
+  }
+  const send = (keys: KeyOut[]) => controls.current?.sendKeys(keys)
+
+  // The clipboard's rule for this server, and a few words when something
+  // crossed, shown on the toolbar for a moment.
+  const [clipRule, setClipRule] = useState<ClipboardRule | null>(null)
+  const [clipSaid, setClipSaid] = useState<string | null>(null)
+  const clipTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(clipTimer.current), [])
+  const host = session.target.split('.')[0]
+  const onClipboard = (n: ClipboardNote) => {
+    if (n.kind === 'rule') {
+      setClipRule(n.rule)
+      return
+    }
+    const said = {
+      copied: n.kind === 'copied' && n.written ? `Copied from ${host}` : `Copied on ${host}: click the screen to take it`,
+      sent: `Clipboard sent to ${host}`,
+      'too-long': 'Too long to paste here; use Files',
+      unreadable: 'Allow clipboard access in the browser to paste',
+    }[n.kind]
+    setClipSaid(said)
+    wake()
+    window.clearTimeout(clipTimer.current)
+    clipTimer.current = window.setTimeout(() => setClipSaid(null), 3000)
+  }
+  const CLIP_LABEL: Record<ClipboardRule, string> = {
+    both: 'Copy and paste work both ways.',
+    to: 'You can paste into this server. What is copied there stays there.',
+    from: 'You can copy out of this server. Pasting into it is off.',
+    off: 'Copy and paste are off for this server.',
   }
 
   const rtt = stats?.rttMs
   const quality = rtt === undefined ? 'unknown' : rtt > 300 ? 'poor' : rtt > 150 ? 'fair' : 'good'
 
   return (
-    <Box className="argus-ws-desktop"
+    <Box className="argus-ws-desktop" data-files={filesOpen || undefined}
       onMouseMove={(e) => {
         const top = (e.currentTarget as HTMLElement).getBoundingClientRect().top
         if (e.clientY - top < 72) wake()
       }}>
-      <div className="argus-ws-toolbar" data-hidden={(!visible && !pinned && live) || undefined}
+      <div className="argus-ws-toolbar" data-hidden={(!visible && !pinned && !menuOpen && live) || undefined}
         role="toolbar" aria-label="Session controls" onMouseEnter={wake}>
         <Tooltip label={stats ? `${stats.fps} fps · ${stats.mbit.toFixed(1)} Mbit/s · ${stats.video ? 'H.264' : 'exact pixels'}` : 'Measuring'}>
           <span className="argus-ws-signal" data-q={quality} data-testid="desktop-signal">
@@ -380,10 +445,91 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
         <span className="argus-ws-sep" />
         {!readOnly && !device && (
           <UnstyledButton className="argus-ws-tb" disabled={!live} onClick={() => controls.current?.ctrlAltDel()}>
-            <IconKeyboard size={15} />Ctrl+Alt+Del
+            Ctrl+Alt+Del
           </UnstyledButton>
         )}
+        {!readOnly && !device && (
+          // Not in a portal: in full screen only the workspace is on screen.
+          <Menu withinPortal={false} position="bottom" shadow="md" width={250}
+            onOpen={() => setMenuOpen(true)} onClose={() => { setMenuOpen(false); wake() }}>
+            <Menu.Target>
+              <UnstyledButton className="argus-ws-tb" aria-label="Keys and keyboard">
+                <IconKeyboard size={15} />Keys<IconChevronDown size={12} />
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Send to the server</Menu.Label>
+              <Menu.Item disabled={!live} onClick={() => send(chord('MetaLeft'))}>Windows key</Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('AltLeft', 'Tab'))}>Alt+Tab</Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('ControlLeft', 'ShiftLeft', 'Escape'))}>
+                Task Manager (Ctrl+Shift+Esc)
+              </Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('PrintScreen'))}>Print Screen</Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('MetaLeft', 'KeyL'))}>Lock (Windows+L)</Menu.Item>
+              <Menu.Divider />
+              <Menu.Label>This keyboard</Menu.Label>
+              {mac && (
+                <Menu.Item closeMenuOnClick={false} role="menuitemcheckbox" aria-checked={keyboard.macShortcuts}
+                  rightSection={keyboard.macShortcuts ? <IconCheck size={14} /> : null}
+                  onClick={() => setPref({ macShortcuts: !keyboard.macShortcuts })}>
+                  Mac shortcuts (⌘C copies)
+                </Menu.Item>
+              )}
+              <Menu.Item closeMenuOnClick={false} role="menuitemcheckbox" aria-checked={keyboard.chars}
+                rightSection={keyboard.chars ? <IconCheck size={14} /> : null}
+                onClick={() => setPref({ chars: !keyboard.chars })}>
+                Type characters, not key positions
+              </Menu.Item>
+              <Text size="xs" c="dimmed" px="sm" pb={6}>
+                {keyboard.chars
+                  ? 'What is printed on your keys arrives, whatever layout the server has.'
+                  : 'Keys go by position, and the server\'s own layout applies, as on a PC there.'}
+              </Text>
+            </Menu.Dropdown>
+          </Menu>
+        )}
         {readOnly && <span className="argus-ws-tb argus-ws-ro">Watch only</span>}
+        {!readOnly && !device && (
+          <Menu withinPortal={false} position="bottom" shadow="md" width={270}
+            onOpen={() => setMenuOpen(true)} onClose={() => { setMenuOpen(false); wake() }}>
+            <Menu.Target>
+              <UnstyledButton className="argus-ws-tb" aria-label="Clipboard">
+                <IconClipboard size={15} />{clipSaid ?? 'Clipboard'}<IconChevronDown size={12} />
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Text size="xs" c="dimmed" px="sm" py={6}>
+                {!clipRule ? 'Waiting for the server.'
+                  : session.way === 'screen' && clipRule !== 'off' && clipRule !== 'from'
+                    ? 'Screen sharing has no shared clipboard yet. Paste as typing types what you copied.'
+                    : session.way === 'screen' ? 'Pasting into this computer is off.' : CLIP_LABEL[clipRule]}
+              </Text>
+              {session.way !== 'screen' && (clipRule === 'both' || clipRule === 'to') && (
+                <Menu.Item disabled={!live} onClick={() => void controls.current?.sendClipboard()}>
+                  Send my clipboard to {host}
+                </Menu.Item>
+              )}
+              {(clipRule === 'both' || clipRule === 'to') && (
+                <Menu.Item disabled={!live} onClick={() => void controls.current?.pasteAsTyping()}>
+                  Paste as typing
+                </Menu.Item>
+              )}
+              {(clipRule === 'both' || clipRule === 'to') && (
+                <Text size="xs" c="dimmed" px="sm" pb={6}>
+                  {session.way === 'screen'
+                    ? 'For a sign-in box or anywhere paste does not work.'
+                    : `${mac ? '⌘V' : 'Ctrl+V'} on the screen pastes what you copied. Paste as typing is for boxes that refuse paste, such as the Windows sign-in.`}
+                </Text>
+              )}
+            </Menu.Dropdown>
+          </Menu>
+        )}
+        {filesAllowed && (
+          <UnstyledButton className="argus-ws-tb" aria-pressed={filesOpen} data-on={filesOpen || undefined}
+            onClick={toggleFiles}>
+            <IconFolders size={15} />Files
+          </UnstyledButton>
+        )}
         <UnstyledButton className="argus-ws-tb" onClick={toggleFull}>
           {full ? <IconMinimize size={15} /> : <IconMaximize size={15} />}{full ? 'Exit full screen' : 'Full screen'}
         </UnstyledButton>
@@ -407,14 +553,33 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
         getTicket={getTicket}
         takePassword={takePassword}
         controls={controls}
+        keyboard={keyboard}
+        onClipboard={onClipboard}
+        clipboardSync={session.way !== 'screen'}
         onStats={setStats}
         onStateChange={(s, d) => {
           setLive(s === 'live')
           onState(s, d)
         }}
       />
+      {filesMounted && (
+        <aside className="argus-ws-files" hidden={!filesOpen} aria-label={`Files on ${host}`}>
+          <Group justify="space-between" px="sm" py={6} className="argus-ws-files-head">
+            <Text size={FS.meta} fw={600}>Files on {host}</Text>
+            <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close files" onClick={toggleFiles}>
+              <IconX size={14} />
+            </ActionIcon>
+          </Group>
+          <Box className="argus-ws-files-body">
+            <Suspense fallback={<Loading />}>
+              <FileBrowser endpoint={filesEndpoint()} getTicket={getTicket} target={session.target}
+                principal={session.principal} compact />
+            </Suspense>
+          </Box>
+        </aside>
+      )}
       {/* Only the tab in front takes the keyboard. */}
-      {active && <FocusOnShow controls={controls} />}
+      {active && !filesOpen && <FocusOnShow controls={controls} />}
     </Box>
   )
 }

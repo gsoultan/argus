@@ -86,7 +86,7 @@ func TestScancodesAreKeyedOnPhysicalPosition(t *testing.T) {
 	}
 	// An unmapped code must be reported, not silently sent as zero — scancode
 	// zero is a real key.
-	if _, _, ok := ScancodeFor("F24"); ok {
+	if _, _, ok := ScancodeFor("BrowserSearch"); ok {
 		t.Error("an unmapped key reported success")
 	}
 }
@@ -162,6 +162,54 @@ func TestSyncEvent(t *testing.T) {
 	_, body := decodeInput(t, pdu)
 	if body[0]>>5 != inputEventSync || len(body) != 1 {
 		t.Errorf("event = % x, want a lone sync header", body)
+	}
+}
+
+// The browser's Caps Lock and Num Lock go with the sync, so the target's
+// match them before the first key: a password is typed as the hands mean it.
+func TestSyncCarriesTheLockKeys(t *testing.T) {
+	pdu, err := EncodeInput(InputEvent{Kind: "sync", Locks: LockCaps | LockNum})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body := decodeInput(t, pdu)
+	if len(body) != 1 || body[0]>>5 != inputEventSync || body[0]&0x1F != LockCaps|LockNum {
+		t.Errorf("event = % x, want a sync header with caps and num set", body)
+	}
+}
+
+// A character typed as itself: the code unit little-endian after the header,
+// and the release flag on the way up.
+func TestUnicodeEvent(t *testing.T) {
+	for _, down := range []bool{true, false} {
+		pdu, err := EncodeInput(InputEvent{Kind: "unicode", Unicode: 0x00E9, Down: down})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body := decodeInput(t, pdu)
+		wantFlags := byte(0)
+		if !down {
+			wantFlags = keyRelease
+		}
+		if len(body) != 3 || body[0]>>5 != inputEventUnicode || body[0]&0x1F != wantFlags ||
+			body[1] != 0xE9 || body[2] != 0x00 {
+			t.Errorf("down=%v: event = % x, want unicode é", down, body)
+		}
+	}
+}
+
+// The keys of ISO, Japanese and Brazilian boards, and the extended ones a
+// full-size keyboard has, all reach the target.
+func TestNationalAndExtraKeysHaveScancodes(t *testing.T) {
+	for code, want := range map[string]scancodeEntry{
+		"IntlBackslash": {0x56, false}, "IntlRo": {0x73, false}, "IntlYen": {0x7D, false},
+		"PrintScreen": {0x37, true}, "F13": {0x64, false}, "F24": {0x76, false},
+		"OSLeft": {0x5B, true}, "AudioVolumeUp": {0x30, true},
+	} {
+		sc, ext, ok := ScancodeFor(code)
+		if !ok || sc != want.code || ext != want.extended {
+			t.Errorf("%s = %#x ext=%v ok=%v, want %#x ext=%v", code, sc, ext, ok, want.code, want.extended)
+		}
 	}
 }
 

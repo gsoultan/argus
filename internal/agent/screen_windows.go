@@ -51,6 +51,7 @@ var (
 	procOpenInputDesktop      = modUser32.NewProc("OpenInputDesktop")
 	procSetThreadDesktop      = modUser32.NewProc("SetThreadDesktop")
 	procSendInput             = modUser32.NewProc("SendInput")
+	procGetKeyState           = modUser32.NewProc("GetKeyState")
 	procGetCursorInfo         = modUser32.NewProc("GetCursorInfo")
 	procGetIconInfo           = modUser32.NewProc("GetIconInfo")
 	procDrawIconEx            = modUser32.NewProc("DrawIconEx")
@@ -89,6 +90,7 @@ const (
 	keyExtendedKey = 0x0001
 	keyUp          = 0x0002
 	keyScancode    = 0x0008
+	keyUnicode     = 0x0004
 
 	genericAll = 0x10000000
 )
@@ -770,6 +772,45 @@ func (p *inputPlayer) play(e rdp.InputEvent) error {
 			k.Flags |= keyUp
 		}
 		return send(&in)
+	case "unicode":
+		// A character as itself, whatever the console's keyboard layout.
+		in := sendInput{Type: inputKeyboard}
+		k := (*keybdInputT)(unsafe.Pointer(&in.Mi))
+		k.Scan = e.Unicode
+		k.Flags = keyUnicode
+		if !e.Down {
+			k.Flags |= keyUp
+		}
+		return send(&in)
+	case "sync":
+		// The console's lock keys set to the browser's: each that differs is
+		// tapped, since SendInput can only press keys, not set their state.
+		// By virtual key: as a scancode Num Lock is easily read as Pause.
+		for _, l := range []struct {
+			bit      uint8
+			vk       uint16
+			extended bool
+		}{{rdp.LockCaps, 0x14, false}, {rdp.LockNum, 0x90, true}, {rdp.LockScroll, 0x91, false}} {
+			r, _, _ := procGetKeyState.Call(uintptr(l.vk))
+			if (r&1 == 1) == (e.Locks&l.bit != 0) {
+				continue
+			}
+			for _, up := range []bool{false, true} {
+				in := sendInput{Type: inputKeyboard}
+				k := (*keybdInputT)(unsafe.Pointer(&in.Mi))
+				k.Vk = l.vk
+				if l.extended {
+					k.Flags |= keyExtendedKey
+				}
+				if up {
+					k.Flags |= keyUp
+				}
+				if err := send(&in); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	case "mouse", "button", "wheel":
 		width, height := metric(smCXVirtualScreen), metric(smCYVirtualScreen)
 		if width <= 1 || height <= 1 {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/gsoultan/argus/internal/agent/credssp"
 	"github.com/gsoultan/argus/internal/rdp"
@@ -89,6 +90,32 @@ type DesktopInfo struct {
 	// Android is a device's screen through the Argus app on it; see
 	// android.go.
 	Android bool
+	// Clipboard holds text copied on the desktop until it is sent on, when
+	// the session has a clipboard; ClipboardRule is which way text may go.
+	Clipboard     *ClipboardSink
+	ClipboardRule string
+}
+
+// ClipboardSink holds the desktop's latest copied text until runDesktop sends
+// it. Like GraphicsSink it is filled inside NextBitmaps and emptied after,
+// on the same goroutine, so it needs no lock; only the newest copy matters.
+type ClipboardSink struct {
+	text    string
+	pending bool
+}
+
+// Set is the rdp.ClientConfig.Clipboard callback.
+func (c *ClipboardSink) Set(text string) { c.text, c.pending = text, true }
+
+func (c *ClipboardSink) take() (string, bool) {
+	t, ok := c.text, c.pending
+	c.text, c.pending = "", false
+	return t, ok
+}
+
+// desktopClipboard is a desktop the console can paste into.
+type desktopClipboard interface {
+	SetClipboard(text string) error
 }
 
 // GraphicsSink holds graphics commands read but not yet sent, as display
@@ -275,7 +302,7 @@ func desktopService(cfg DesktopConfig, service string) TunnelService {
 		if err := call.Accept(d.ID()); err != nil {
 			_ = client.Close()
 		}
-		runDesktop(call.Stream, client, info.Graphics, d, dlog)
+		runDesktop(call.Stream, client, info, d, dlog)
 	}
 }
 
@@ -312,6 +339,11 @@ func desktopFlags(info DesktopInfo) []string {
 		// The person met the Windows sign-in screen, unauthenticated until
 		// they typed something into it.
 		flags = append(flags, "no-network-level-auth")
+	}
+	if info.Clipboard != nil {
+		// Text could cross the clipboard, this way: what crossed is in the
+		// audit log, not in the recording.
+		flags = append(flags, "clipboard-"+info.ClipboardRule)
 	}
 	return flags
 }
@@ -381,6 +413,15 @@ func connectDesktop(cfg DesktopConfig, g tunnel.Grant, open tunnel.DesktopOpen,
 		info.Graphics = &GraphicsSink{}
 		ccfg.Graphics = info.Graphics.Add
 	}
+	if rule := open.Clipboard; tunnel.ClipboardAllows(rule, true) || tunnel.ClipboardAllows(rule, false) {
+		// The channel opens for either direction; what the desktop copies
+		// is kept only if it may leave.
+		info.Clipboard, info.ClipboardRule = &ClipboardSink{}, rule
+		ccfg.Clipboard = func(string) {}
+		if tunnel.ClipboardAllows(rule, false) {
+			ccfg.Clipboard = info.Clipboard.Set
+		}
+	}
 	client, err := rdp.Connect(conn, ccfg)
 	if err != nil {
 		_ = conn.Close()
@@ -421,6 +462,42 @@ type desktopInput struct {
 	Delta  int    `json:"delta"`
 	// Frame is the mark a browser acknowledges ("ack").
 	Frame uint32 `json:"frame"`
+	// Char is a character typed as itself ("char"), for a remote whose
+	// keyboard layout differs from the browser's.
+	Char string `json:"char"`
+	// Locks is the browser's Caps, Num and Scroll Lock ("sync").
+	Locks uint8 `json:"locks"`
+	// Text is the console's clipboard ("clipboard"), to paste on the desktop.
+	Text string `json:"text"`
+}
+
+// desktopEvents turns one browser input message into what the desktop plays.
+// A character becomes a press and release of each of its UTF-16 code units,
+// so one outside the BMP (an emoji) goes as its surrogate pair. ok is false
+// for a key this keyboard table does not know, which is dropped: scancode zero
+// is a real key.
+func desktopEvents(m desktopInput) (events []rdp.InputEvent, ok bool) {
+	switch m.Type {
+	case "char":
+		for _, u := range utf16.Encode([]rune(m.Char)) {
+			events = append(events,
+				rdp.InputEvent{Kind: "unicode", Unicode: u, Down: true},
+				rdp.InputEvent{Kind: "unicode", Unicode: u, Down: false})
+		}
+		return events, len(events) > 0
+	case "sync":
+		return []rdp.InputEvent{{Kind: "sync", Locks: m.Locks & 0x0F}}, true
+	}
+	e := rdp.InputEvent{Kind: m.Type, Down: m.Down, X: m.X, Y: m.Y,
+		Button: m.Button, WheelDelta: m.Delta}
+	if m.Type == "key" {
+		code, extended, found := rdp.ScancodeFor(m.Code)
+		if !found {
+			return nil, false
+		}
+		e.Scancode, e.Extended = code, extended
+	}
+	return []rdp.InputEvent{e}, true
 }
 
 // desktopFramer is a desktop whose frames are paced by the browser: a mark
@@ -434,8 +511,9 @@ type desktopFramer interface {
 
 // runDesktop relays until the desktop or the stream ends, then seals the
 // recording and says how it ended.
-func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *DesktopRecording,
+func runDesktop(st tunnel.Stream, client DesktopClient, info DesktopInfo, d *DesktopRecording,
 	log *slog.Logger) {
+	gfx, clip := info.Graphics, info.Clipboard
 	var wmu sync.Mutex
 	write := func(typ byte, p []byte) error {
 		wmu.Lock()
@@ -482,18 +560,26 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 					}
 					continue
 				}
-				e := rdp.InputEvent{Kind: m.Type, Down: m.Down, X: m.X, Y: m.Y,
-					Button: m.Button, WheelDelta: m.Delta}
-				if m.Type == "key" {
-					code, extended, ok := rdp.ScancodeFor(m.Code)
-					if !ok {
-						// Scancode zero is a real key; an unmapped one is dropped.
-						continue
+				if m.Type == "clipboard" {
+					// Paste from the console, if the rule lets text in.
+					// Too much text, or no channel, is dropped rather than
+					// ending the session.
+					if c, ok := client.(desktopClipboard); ok && clip != nil &&
+						tunnel.ClipboardAllows(info.ClipboardRule, true) {
+						if err := c.SetClipboard(m.Text); err != nil {
+							log.Info("tunnel: clipboard not set on the desktop", "session", d.ID(), "error", err)
+						}
 					}
-					e.Scancode, e.Extended = code, extended
+					continue
 				}
-				if client.Send(e) != nil {
-					return
+				events, ok := desktopEvents(m)
+				if !ok {
+					continue
+				}
+				for _, e := range events {
+					if client.Send(e) != nil {
+						return
+					}
 				}
 			case tunnel.FrameRefresh:
 				if err := client.Refresh(); err != nil {
@@ -526,6 +612,13 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 			// the size bitmaps go in.
 			for b := gfx.take(desktopBatch); b != nil && err == nil; b = gfx.take(desktopBatch) {
 				err = write(tunnel.FrameOutput, b)
+			}
+		}
+		// Copied on the desktop: on to the console, newest only.
+		if clip != nil && err == nil {
+			if t, ok := clip.take(); ok && len(t) <= rdp.ClipboardMax &&
+				tunnel.ClipboardAllows(info.ClipboardRule, false) {
+				err = write(tunnel.FrameClipboard, []byte(t))
 			}
 		}
 		// A frame that just ended is marked, after all of its rectangles.

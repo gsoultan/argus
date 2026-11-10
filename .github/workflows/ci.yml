@@ -442,6 +442,7 @@ jobs:
           go build -o "$tmp/argus-control.exe" ./cmd/argus-control
           go build -o "$tmp/argus-agent.exe" ./cmd/argus-agent
           go build -o "$tmp/termdrill.exe" ./scripts/tools/termdrill
+          go build -o "$tmp/filedrill.exe" ./scripts/tools/filedrill
           go build -o "$tmp/totp.exe" ./scripts/tools/totp
           go build -o "$tmp/deskdrill.exe" ./scripts/tools/deskdrill
           go build -o "$tmp/replaydump.exe" ./scripts/tools/replaydump
@@ -559,6 +560,24 @@ jobs:
                -ticket "$tkt" -target "$host" -principal 'CORP\ana' -literal-cr -input 'exit\r' 2>&1; then
             echo "::error::a session for a domain account was opened"; exit 1
           fi
+
+          # Files as the account: an upload lands in its home, owned by it,
+          # and comes back whole in a listing and a download.
+          tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+            -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+          "$tmp/filedrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+            -ticket "$tkt" -target "$host" -principal argusdrill -name through-argus-files.txt || {
+            tail -40 "$log"; echo "::error::files did not go through the tunnel as the account"; exit 1; }
+          owner=$(powershell -NoProfile -Command "(Get-Acl 'C:\Users\argusdrill\through-argus-files.txt').Owner")
+          grep -qi 'argusdrill' <<<"$owner" || {
+            echo "::error::the uploaded file is owned by '$owner', not the account"; exit 1; }
+          for i in $(seq 1 15); do
+            n=$(psql "$PGURL" -tAc "SELECT count(*) FROM audit_events WHERE action LIKE 'file.%'
+                 AND detail LIKE '%through-argus-files.txt%'")
+            [ "$n" -ge 2 ] && break
+            sleep 1
+          done
+          [ "$n" -ge 2 ] || { echo "::error::the file transfers are not in the audit log ($n)"; exit 1; }
 
           # The caret's blink is a screen update every half second, which the
           # desktop measurement below would take for a keystroke's answer.

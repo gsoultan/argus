@@ -236,7 +236,9 @@ function Choose({ asset, initialPrincipal, initialWay, autoOpen, phone, inDrawer
                   <Text size="sm" fw={600}>{m.label}</Text>
                   {m.key && !phone && <Text className="argus-way-key" size={FS.micro} c="dimmed" ff="monospace">{m.key.toUpperCase()}</Text>}
                 </Group>
-                <Text size={FS.meta} c="dimmed" mt={4} lh={1.35}>{m.hint}</Text>
+                <Text size={FS.meta} c="dimmed" mt={4} lh={1.35}>
+                  {asset.protocol === 'rdp' && w === 'terminal' ? 'PowerShell or Command Prompt' : m.hint}
+                </Text>
               </UnstyledButton>
             )
           })}

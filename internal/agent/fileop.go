@@ -173,7 +173,8 @@ func renameNoReplace(from, to string) error {
 // isRootish is a path whose deletion the console never asks for.
 func isRootish(p string) bool {
 	clean := filepath.Clean(p)
-	if clean == "/" || clean == "." {
+	// "/" here, a drive's root (C:\) on Windows: each is its own parent.
+	if clean == "/" || clean == "." || filepath.Dir(clean) == clean {
 		return true
 	}
 	home, _ := os.UserHomeDir()

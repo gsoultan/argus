@@ -46,6 +46,10 @@ type ConnectRule struct {
 	Terminal string `json:"terminal"`
 	// Seconds is how long a question waits before it is a no.
 	Seconds int `json:"seconds"`
+	// Clipboard is which way text may cross a desktop's clipboard: both,
+	// to (paste into the asset only), from (copy out of it only) or off.
+	// Empty, as rules stored before it have, is both.
+	Clipboard string `json:"clipboard"`
 }
 
 // ConnectRules is every type's rule.
@@ -57,8 +61,10 @@ type ConnectRules struct {
 // DefaultConnectRules: nobody sits at a server; someone uses a workstation.
 func DefaultConnectRules() ConnectRules {
 	return ConnectRules{
-		Server:      ConnectRule{Desktop: ConnectNever, Terminal: ConnectNever, Seconds: workstationAskSeconds},
-		Workstation: ConnectRule{Desktop: ConnectAsk, Terminal: ConnectTell, Seconds: workstationAskSeconds},
+		Server: ConnectRule{Desktop: ConnectNever, Terminal: ConnectNever, Seconds: workstationAskSeconds,
+			Clipboard: tunnel.ClipboardBoth},
+		Workstation: ConnectRule{Desktop: ConnectAsk, Terminal: ConnectTell, Seconds: workstationAskSeconds,
+			Clipboard: tunnel.ClipboardBoth},
 	}
 }
 
@@ -72,6 +78,11 @@ func (r ConnectRule) validate(kind string) error {
 	case ConnectNever, ConnectTell:
 	default:
 		return fmt.Errorf("%s: a terminal is never told or told; it is never asked", kind)
+	}
+	switch r.Clipboard {
+	case "", tunnel.ClipboardBoth, tunnel.ClipboardToAsset, tunnel.ClipboardFromAsset, tunnel.ClipboardOff:
+	default:
+		return fmt.Errorf("%s: the clipboard crosses both ways, to the asset, from it, or not at all", kind)
 	}
 	if r.Seconds < 10 || r.Seconds > tunnel.MaxAskSeconds {
 		return fmt.Errorf("%s: a question waits between 10 and %d seconds", kind, tunnel.MaxAskSeconds)
@@ -119,6 +130,11 @@ func (s *Store) ConnectRules(ctx context.Context) (ConnectRules, error) {
 	}
 	if r, ok := stored["workstation"]; ok && r.validate("workstation") == nil {
 		out.Workstation = r
+	}
+	for _, r := range []*ConnectRule{&out.Server, &out.Workstation} {
+		if r.Clipboard == "" {
+			r.Clipboard = tunnel.ClipboardBoth
+		}
 	}
 	return out, nil
 }
@@ -190,6 +206,24 @@ func (a *API) askFor(ctx context.Context, host, email string, desktop bool) (*tu
 		return &tunnel.GrantAsk{Mode: tunnel.TellOnly, Who: email}, nil
 	}
 	return nil, nil
+}
+
+// clipboardFor is which way text may cross host's desktop clipboard, by its
+// type's rule. A device, or a type with no rule, has none.
+func (a *API) clipboardFor(ctx context.Context, host string) (string, error) {
+	kind, _, err := a.store.assetConnect(ctx, host)
+	if err != nil {
+		return tunnel.ClipboardOff, err
+	}
+	rules, err := a.store.ConnectRules(ctx)
+	if err != nil {
+		return tunnel.ClipboardOff, err
+	}
+	rule, ok := rules.forKind(kind)
+	if !ok || rule.Clipboard == "" {
+		return tunnel.ClipboardOff, nil
+	}
+	return rule.Clipboard, nil
 }
 
 /* ── Routes ──────────────────────────────────────────────────────────────── */
