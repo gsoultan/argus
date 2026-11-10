@@ -34,6 +34,7 @@ import {
   type AVC420,
   type Rect,
 } from './gfx'
+import { withoutReordering } from './spsRewrite'
 
 export interface DirtyRect {
   x: number
@@ -88,6 +89,10 @@ interface Job {
   dest: Rect
   regions: Rect[]
   done: () => void
+  /** exactEpoch when the picture was queued. */
+  epoch: number
+  /** The end of its frame stopped waiting for it. */
+  late: boolean
 }
 
 export class GraphicsRenderer {
@@ -96,6 +101,13 @@ export class GraphicsRenderer {
   private jobs = new Map<number, Job>()
   private pending: Promise<void>[] = []
   private nextJob = 0
+  /**
+   * Counts the screen updates drawn straight onto the screen, around this
+   * renderer (screen sharing's exact tiles). A picture that comes out after
+   * its frame stopped waiting for it, with such updates drawn since, is
+   * older than what they drew and is not shown over them.
+   */
+  private exactEpoch = 0
   /** Codecs seen that this console does not draw, reported once each. */
   readonly unknownCodecs = new Set<number>()
   /**
@@ -295,6 +307,11 @@ export class GraphicsRenderer {
     }
   }
 
+  /** Says that pixels were just drawn onto the screen without this renderer. */
+  exactDrawn() {
+    this.exactEpoch++
+  }
+
   /** Releases every decoder. */
   close() {
     for (const s of this.surfaces.values()) closeSurface(s)
@@ -310,7 +327,10 @@ export class GraphicsRenderer {
   private decode(s: Surface, stream: 'main' | 'aux', planes: boolean, dest: Rect, avc: AVC420 | null) {
     if (!avc || avc.h264.byteLength === 0) return
     const st = s[stream]
-    const key = hasKeyFrame(avc.h264)
+    // Told that no picture is reordered, the decoder shows each one as it
+    // is decoded instead of holding several back.
+    const h264 = withoutReordering(avc.h264)
+    const key = hasKeyFrame(h264)
     if (!st.decoder || st.decoder.state === 'closed') {
       st.decoder = this.newDecoder()
       st.needKey = true
@@ -329,14 +349,23 @@ export class GraphicsRenderer {
     const id = this.nextJob++
     this.pending.push(
       new Promise<void>((done) => {
-        this.jobs.set(id, { surface: s, stream, planes, dest, regions: avc.regions, done })
+        this.jobs.set(id, {
+          surface: s,
+          stream,
+          planes,
+          dest,
+          regions: avc.regions,
+          done,
+          epoch: this.exactEpoch,
+          late: false,
+        })
       }),
     )
     try {
       if (st.decoder.state === 'unconfigured') {
-        st.decoder.configure({ ...H264_CONFIG, codec: codecString(avc.h264) ?? H264_CONFIG.codec })
+        st.decoder.configure({ ...H264_CONFIG, codec: codecString(h264) ?? H264_CONFIG.codec })
       }
-      st.decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: id, data: avc.h264 }))
+      st.decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: id, data: h264 }))
     } catch (err) {
       this.stats.lastError = err instanceof Error ? err.message : String(err)
       this.fail(s, stream)
@@ -356,7 +385,7 @@ export class GraphicsRenderer {
         this.stats.colourSpace ||= JSON.stringify(frame.colorSpace.toJSON())
         this.stats.format ||= `${frame.format ?? 'opaque'} ${frame.codedWidth}x${frame.codedHeight}`
         if (!job.planes) {
-          this.drawn(drawPicture(job, frame))
+          this.drawn(drawPicture(job, frame, !(job.late && job.epoch !== this.exactEpoch)))
           frame.close()
           job.done()
           return
@@ -515,6 +544,8 @@ export class GraphicsRenderer {
       }),
     ])
     clearTimeout(timer)
+    // Whatever is still decoding now comes out after the frame is painted.
+    for (const job of this.jobs.values()) job.late = true
     this.combine()
   }
 
@@ -549,7 +580,7 @@ export class GraphicsRenderer {
  * Draws a decoded picture's updated regions onto its surface. Returns how
  * many were drawn, and how many lay outside the picture.
  */
-function drawPicture(job: Job, frame: VideoFrame): [number, number] {
+function drawPicture(job: Job, frame: VideoFrame, show = true): [number, number] {
   let drawn = 0
   let outside = 0
   const { surface: s, dest } = job
@@ -570,7 +601,9 @@ function drawPicture(job: Job, frame: VideoFrame): [number, number] {
       continue
     }
     s.ctx.drawImage(frame, sx, sy, w, h, r.left, r.top, w, h)
-    s.dirty.push(r)
+    // Kept on the surface, for what later pictures copy from it, but not
+    // shown when it is older than what is on the screen.
+    if (show) s.dirty.push(r)
     drawn++
   }
   return [drawn, outside]

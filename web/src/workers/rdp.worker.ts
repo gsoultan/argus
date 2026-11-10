@@ -189,6 +189,7 @@ async function handle(buf: ArrayBuffer) {
         }
         if (screen) screen.putImageData(new ImageData(rgba, width, height), x, y)
         else pending.push(bitmapRect(new ImageData(rgba, width, height), x, y))
+        graphics?.exactDrawn()
         continue
       }
 
@@ -258,6 +259,7 @@ async function handle(buf: ArrayBuffer) {
       const raw = new Uint8ClampedArray(buf, at + HEADER, bytes)
       if (screen) screen.putImageData(new ImageData(raw, width, height), x, y)
       else pending.push(bitmapRect(new ImageData(raw, width, height), x, y))
+      graphics?.exactDrawn()
 
       at += HEADER + bytes
     }
