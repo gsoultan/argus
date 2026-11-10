@@ -240,7 +240,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		protocol = db.Engine
 	}
 	service := tunnel.ServiceForEngine(protocol)
-	g := tunnel.NewGrant(email, db.Hostname, role, client)
+	g := tunnel.NewGrant(email, db.agent(), role, client)
 	g.Service = service
 	g.DB = &tunnel.GrantDB{ID: db.ID, Name: db.Name, Host: db.Host, Port: db.Port, Level: level,
 		PoolHost: db.PoolerHost, PoolPort: db.PoolerPort,
@@ -260,7 +260,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		return
 	}
 	octx, cancel := context.WithTimeout(ctx, terminalOpenWait)
-	st, answer, err := a.Tunnels.OpenWith(octx, db.Hostname,
+	st, answer, err := a.Tunnels.OpenWith(octx, db.agent(),
 		tunnel.Header{Service: service, Grant: grant})
 	cancel()
 	switch {

@@ -2,7 +2,9 @@ package control
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -155,7 +157,7 @@ func (a *API) patchAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	asset, err := a.store.UpdateAsset(r.Context(), id, in)
+	asset, rename, err := a.store.updateAsset(r.Context(), id, in)
 	if err != nil {
 		a.failAsset(w, "update asset", err)
 		return
@@ -169,6 +171,21 @@ func (a *API) patchAsset(w http.ResponseWriter, r *http.Request) {
 		detail = "Changed the principals on " + asset.Hostname + " from " +
 			describePrincipals(before.Principals) + " to " +
 			describePrincipals(asset.Principals) + "."
+	}
+	// A rename is said with both names, so the history under the old one
+	// can be found from the new one and the other way round.
+	if rename.From != "" {
+		detail = "Renamed " + rename.From + " to " + asset.Hostname + ". " + detail
+		if rename.Agent != "" {
+			detail += " Its agent still goes by " + rename.Agent + ", and is reached under that name."
+		}
+		if rename.Requests > 0 {
+			detail += fmt.Sprintf(" %d open access request(s) now name %s.", rename.Requests, asset.Hostname)
+		}
+	}
+	if before.Address != asset.Address || before.Port != asset.Port {
+		detail += " Its address is now " + asset.Address + ":" + strconv.Itoa(asset.Port) +
+			" (was " + before.Address + ":" + strconv.Itoa(before.Port) + ")."
 	}
 	a.auditAsset(r, AuditEvent{
 		Action:     "asset.updated",
@@ -202,7 +219,13 @@ func (a *API) deleteAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	// Its agent goes too. Left running, it kept sshd's hook and refused
 	// direct logins to a server the console could no longer open.
-	agentAsked, uerr := a.store.RequestAgentUninstall(r.Context(), asset.Hostname, sess.Email)
+	agentName := asset.Hostname
+	if asset.AgentHostname != "" {
+		// Renamed in Argus, or added under its full name: the agent's
+		// credential is under the name it was enrolled with.
+		agentName = asset.AgentHostname
+	}
+	agentAsked, uerr := a.store.RequestAgentUninstall(r.Context(), agentName, sess.Email)
 	if uerr != nil {
 		a.log.Error("asking the agent to uninstall failed", "hostname", asset.Hostname, "error", uerr)
 	}

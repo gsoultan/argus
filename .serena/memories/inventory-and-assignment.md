@@ -129,3 +129,24 @@ the page's own buttons.
 hosts and break-glass reasons to any signed-in account. The console titles the
 page "My access requests" for them and shows Approve/Deny only to deciders, and
 never on the decider's own request (the API refuses self-approval).
+
+## Renaming a server (2026-11)
+Renaming a server in Argus does not rename the machine. Its agent keeps the
+name it was enrolled under: its credential, every grant it accepts
+(`GrantVerifier.Host`) and its tunnel (`TunnelHub.byHost`) are under it. A
+rename used to rewrite only `hostname`, which left the server "not connected"
+and refused every terminal, desktop, file and database session.
+
+- `updateAsset` keeps the agent's old name in `agent_hostname` (cleared when
+  the server is renamed back to it) and moves open access requests (pending,
+  or approved and unexpired) to the new name. Decided-and-over ones keep the
+  name they were decided under. The audit entry names both.
+- Every path that signs a grant or opens a stream resolves the agent through
+  `agentNameSQL` / `Store.AgentNameFor` / `Database.agent()`, never
+  `asset.Hostname`. A live credential decides between agent_hostname, the
+  hostname and the short name, so a stale agent_hostname cannot misroute.
+- `RecordSession` matches `agent_hostname` too, so sessions the agent reports
+  after a rename land on the server. Sessions and audit entries keep the
+  name they were made under.
+- A removed server keeps its name (`hostname` is unique across archived
+  rows); renaming to it says so (`hostnameTaken`).

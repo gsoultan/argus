@@ -251,6 +251,12 @@ export interface Asset {
    */
   tunnelConnected?: boolean
   /**
+   * The name the server's agent goes by when it is not the hostname: the one
+   * it had before it was renamed in Argus, or the short name a discovered
+   * server's agent reports. Sessions still reach it under that name.
+   */
+  agentHostname?: string
+  /**
    * Whether the agent said, at its last check-in, that it refuses logins that
    * did not come through Argus. Null until it says: unconfirmed, never applied.
    */

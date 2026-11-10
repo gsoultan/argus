@@ -373,10 +373,17 @@ func (s *Store) UpsertSession(ctx context.Context, in Session) error {
 // once, not once per report.
 func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, err error) {
 	// Resolve the asset by hostname so a reporter never needs to know its id.
+	// An agent reports under the name it was enrolled with, which is the
+	// server's agent_hostname once the server is renamed in Argus; without
+	// it, every session after a rename landed on no server at all. A live
+	// server wins over a removed one that once had the same name.
 	var assetID *string
 	var id string
-	err = s.db(ctx).QueryRow(ctx,
-		`SELECT id::text FROM assets WHERE hostname = $1`, in.AssetHostname).Scan(&id)
+	err = s.db(ctx).QueryRow(ctx, `
+		SELECT id::text FROM assets
+		 WHERE hostname = $1 OR agent_hostname = $1
+		 ORDER BY archived_at IS NULL DESC, hostname = $1 DESC
+		 LIMIT 1`, in.AssetHostname).Scan(&id)
 	if err == nil {
 		assetID = &id
 	} else if err != pgx.ErrNoRows {
@@ -674,6 +681,12 @@ type Asset struct {
 	// make, or failed. Nil from an agent older than them; left out for
 	// anyone who does not see the whole fleet, since it names other people.
 	AgentPersonalAccounts []PersonalAccountState `json:"agentPersonalAccounts,omitempty"`
+	// AgentHostname is the name this server's agent goes by when it is not
+	// the hostname: the short name a discovered server's agent reports, or
+	// the name it had when an administrator renamed it. The agent's
+	// credential, its grants and its tunnel all stay under that name, so a
+	// rename keeps the same machine. Empty when the agent uses the hostname.
+	AgentHostname string `json:"agentHostname,omitempty"`
 	// TunnelConnected is whether this host's agent holds a live tunnel, by
 	// the database's clock, so the console can open sessions through it.
 	TunnelConnected bool `json:"tunnelConnected"`

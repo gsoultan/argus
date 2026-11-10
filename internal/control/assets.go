@@ -37,8 +37,10 @@ const assetSelect = `
 	       a.unmanaged_key_count, a.agent_console_only,
 	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts, a.direct_ssh_accounts,
 	       a.desktop_mode, a.kind, a.control_mode, a.control_needs_approval, a.connect_ask,
+	       COALESCE(a.agent_hostname, ''),
 	       EXISTS (SELECT 1 FROM agent_credentials c
-	                WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
+	                WHERE lower(c.hostname) IN (lower(a.hostname), lower(a.agent_hostname))
+	                  AND c.revoked_at IS NULL
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
 	FROM assets a`
 
@@ -51,7 +53,8 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.Health, &a.LastCheckedAt, &a.Principals,
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
 		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts, &a.DirectSSHAccounts,
-		&a.DesktopMode, &a.Kind, &a.ControlMode, &a.ControlNeedsApproval, &a.ConnectAsk, &a.TunnelConnected)
+		&a.DesktopMode, &a.Kind, &a.ControlMode, &a.ControlNeedsApproval, &a.ConnectAsk, &a.AgentHostname,
+		&a.TunnelConnected)
 	return a, err
 }
 
@@ -384,34 +387,133 @@ func (s *Store) CreateAsset(ctx context.Context, in AssetInput) (Asset, error) {
 // Observed state is untouched: host-key pins, agent liveness and posture are
 // facts reported by something that looked, not settings.
 func (s *Store) UpdateAsset(ctx context.Context, id string, in AssetInput) (Asset, error) {
+	asset, _, err := s.updateAsset(ctx, id, in)
+	return asset, err
+}
+
+// AssetRename is what renaming a server carried over to its new name.
+type AssetRename struct {
+	// From is the hostname before the edit; empty when it did not change.
+	From string
+	// Agent is the name the server's agent still goes by, or empty when it
+	// has none or goes by the new hostname.
+	Agent string
+	// Requests is how many open access requests now name the new hostname.
+	Requests int64
+}
+
+// updateAsset is UpdateAsset, saying what a rename carried over.
+//
+// Renaming a server in Argus does not rename the machine. Its agent was
+// enrolled under the old name, holds its credential under it, checks every
+// grant against it and keeps its tunnel open under it, so a rename that only
+// rewrote the hostname cut the server off from its own agent: terminals,
+// desktops, files and databases all failed with "not connected", and an
+// approved access request for it stopped applying. The agent's name is kept
+// in agent_hostname instead, which every path that reaches the agent already
+// resolves through (see AgentHostname), and the open access requests follow
+// the new name. Sessions and the audit chain keep the name they were made
+// under: that is what happened at the time.
+func (s *Store) updateAsset(ctx context.Context, id string, in AssetInput) (Asset, AssetRename, error) {
 	v, err := in.normalise()
 	if err != nil {
-		return Asset{}, err
+		return Asset{}, AssetRename{}, err
 	}
 
-	tag, err := s.db(ctx).Exec(ctx, `
+	tx, err := s.db(ctx).Begin(ctx)
+	if err != nil {
+		return Asset{}, AssetRename{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The agent's name before the edit: one set by hand or by discovery, else
+	// a live credential or an agent that reported under the hostname or its
+	// short form, the same three ways a heartbeat finds its asset.
+	var old, agentName string
+	err = tx.QueryRow(ctx, `
+		SELECT a.hostname, COALESCE(NULLIF(a.agent_hostname, ''), c.hostname, g.hostname, '')
+		  FROM assets a
+		  LEFT JOIN LATERAL (
+		       SELECT c.hostname FROM agent_credentials c
+		        WHERE c.revoked_at IS NULL
+		          AND lower(c.hostname) IN (lower(a.hostname), lower(split_part(a.hostname, '.', 1)))
+		        ORDER BY lower(c.hostname) = lower(a.hostname) DESC, c.created_at DESC
+		        LIMIT 1) c ON true
+		  LEFT JOIN LATERAL (
+		       SELECT g.hostname FROM agents g
+		        WHERE lower(g.hostname) IN (lower(a.hostname), lower(split_part(a.hostname, '.', 1)))
+		        ORDER BY lower(g.hostname) = lower(a.hostname) DESC, g.last_seen_at DESC
+		        LIMIT 1) g ON true
+		 WHERE a.id = $1::uuid AND a.archived_at IS NULL
+		   FOR UPDATE OF a`, id).Scan(&old, &agentName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Asset{}, AssetRename{}, ErrAssetNotFound
+	}
+	if err != nil {
+		return Asset{}, AssetRename{}, err
+	}
+
+	var rename AssetRename
+	renamed := !strings.EqualFold(old, v.Hostname)
+	if renamed {
+		rename.From = old
+		if agentName != "" && !strings.EqualFold(agentName, v.Hostname) {
+			rename.Agent = agentName
+		}
+	}
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE assets SET
 			hostname = $2, address = $3, port = $4, protocol = $5, os = $6,
 			tags = $7, group_name = $8, principals = $9, credential_mode = $10,
 			credential_ref = $11, domain = $12, rotation_interval_days = $13,
 			desktop_mode = $14, kind = $15, control_mode = $16, control_needs_approval = $17,
-			connect_ask = $18, source = 'console', updated_at = now()
+			connect_ask = $18, source = 'console', updated_at = now(),
+			agent_hostname = CASE WHEN $19 THEN NULLIF($20, '') ELSE agent_hostname END
 		WHERE id = $1::uuid AND archived_at IS NULL`,
 		id, v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval, v.ConnectAsk)
+		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval, v.ConnectAsk,
+		renamed, rename.Agent)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return Asset{}, ErrInvalidAsset{
-				Reason: v.Hostname + " is already in the inventory",
+			if strings.Contains(err.Error(), "assets_agent_hostname_idx") {
+				return Asset{}, AssetRename{}, ErrInvalidAsset{
+					Reason: "another server in the inventory is already reached through the agent " +
+						rename.Agent + "; remove that one first, or rename this one back",
+				}
 			}
+			return Asset{}, AssetRename{}, ErrInvalidAsset{Reason: s.hostnameTaken(ctx, v.Hostname)}
 		}
-		return Asset{}, err
+		return Asset{}, AssetRename{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		return Asset{}, ErrAssetNotFound
+		return Asset{}, AssetRename{}, ErrAssetNotFound
 	}
-	return s.AssetByID(ctx, id)
+
+	if renamed {
+		// A request names its hosts by hostname, and a grant is checked by
+		// the name the console opens it under. Left on the old name, an
+		// approval given for this server an hour ago would stop opening it.
+		// Decided-and-over requests keep the name they were decided under.
+		tag, err := tx.Exec(ctx, `
+			UPDATE access_requests
+			   SET asset_hostnames = array_replace(asset_hostnames, $1::text, $2::text)
+			 WHERE $1::text = ANY(asset_hostnames)
+			   AND (state = 'pending'
+			        OR (state = 'approved' AND (expires_at IS NULL OR expires_at > now())))`,
+			old, v.Hostname)
+		if err != nil {
+			return Asset{}, AssetRename{}, err
+		}
+		rename.Requests = tag.RowsAffected()
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Asset{}, AssetRename{}, err
+	}
+	asset, err := s.AssetByID(ctx, id)
+	return asset, rename, err
 }
 
 // ArchiveAsset retires an asset without deleting it.
@@ -447,6 +549,21 @@ func (s *Store) AssetByID(ctx context.Context, id string) (Asset, error) {
 		return Asset{}, ErrAssetNotFound
 	}
 	return scanAsset(rows)
+}
+
+// hostnameTaken says why hostname cannot be used. A server removed from Argus
+// keeps its row, and its name, so its sessions and audit entries still name
+// it; "already in the inventory" about a server nobody can see sent the
+// administrator looking for one that is not there.
+func (s *Store) hostnameTaken(ctx context.Context, hostname string) string {
+	var archived bool
+	err := s.db(ctx).QueryRow(ctx,
+		`SELECT archived_at IS NOT NULL FROM assets WHERE hostname = $1`, hostname).Scan(&archived)
+	if err == nil && archived {
+		return hostname + " was the name of a server removed from Argus, and its recordings " +
+			"and activity still go by it; pick another name"
+	}
+	return hostname + " is already in the inventory"
 }
 
 func isUniqueViolation(err error) bool {
@@ -768,4 +885,46 @@ func (s *Store) ControlNeedsApproval(ctx context.Context, target string) (bool, 
 		return false, nil
 	}
 	return needs, err
+}
+
+/* ── The agent behind a name ─────────────────────────────────────────────── */
+
+// agentNameSQL is the name the agent on asset a goes by, for a query that
+// has the asset as a.
+//
+// The agent checks every grant against the name it was enrolled under and
+// keeps its tunnel under it. That is the hostname, unless the server was
+// renamed in Argus (agent_hostname keeps the old one) or added from
+// discovery under its full name while its agent knows only the short one.
+// A live credential decides between them, so a server whose old agent was
+// replaced by one enrolled under the new name reaches the new one.
+const agentNameSQL = `COALESCE(
+	(SELECT c.hostname FROM agent_credentials c
+	  WHERE c.revoked_at IS NULL AND lower(c.hostname) = lower(NULLIF(a.agent_hostname, ''))),
+	(SELECT c.hostname FROM agent_credentials c
+	  WHERE c.revoked_at IS NULL AND lower(c.hostname) = lower(a.hostname)),
+	(SELECT c.hostname FROM agent_credentials c
+	  WHERE c.revoked_at IS NULL AND lower(c.hostname) = lower(split_part(a.hostname, '.', 1))),
+	NULLIF(a.agent_hostname, ''), a.hostname)`
+
+// AgentNameFor is the name the agent on target goes by (see agentNameSQL),
+// for signing a grant it will accept and finding its tunnel.
+//
+// target is a name the console opens a session under: the server's hostname,
+// its short form, or the agent's own name. A target that names no live
+// server is its own answer, as it was before servers could be renamed.
+func (s *Store) AgentNameFor(ctx context.Context, target string) (string, error) {
+	var name string
+	err := s.db(ctx).QueryRow(ctx, `
+		SELECT `+agentNameSQL+`
+		  FROM assets a
+		 WHERE a.archived_at IS NULL
+		   AND (a.hostname = lower($1) OR a.agent_hostname = $1
+		        OR split_part(a.hostname, '.', 1) = lower($1))
+		 ORDER BY (a.hostname = lower($1)) DESC, (a.agent_hostname = $1) DESC NULLS LAST
+		 LIMIT 1`, target).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return target, nil
+	}
+	return name, err
 }

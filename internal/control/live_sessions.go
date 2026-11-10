@@ -229,8 +229,13 @@ func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
 		return
 	}
 	host := subject.AssetHostname
+	agentHost, err := a.agentOf(ctx, host)
+	if err != nil {
+		refuseWatch(ctx, conn, "could not find the agent on "+host+": "+err.Error())
+		return
+	}
 
-	g := tunnel.NewGrant(email, host, subject.Principal, client)
+	g := tunnel.NewGrant(email, agentHost, subject.Principal, client)
 	g.Service, g.Session = agentWatchService, id
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
 	if err != nil {
@@ -238,7 +243,7 @@ func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
 		return
 	}
 	octx, cancel := context.WithTimeout(ctx, watchOpenWait)
-	st, answer, err := a.Tunnels.OpenWith(octx, host,
+	st, answer, err := a.Tunnels.OpenWith(octx, agentHost,
 		tunnel.Header{Service: agentWatchService, Grant: grant})
 	cancel()
 	switch {

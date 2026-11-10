@@ -52,6 +52,10 @@ type Database struct {
 	// TunnelConnected says the server's agent is reachable, so the database
 	// can be opened now.
 	TunnelConnected bool `json:"tunnelConnected"`
+	// AgentHost is the name the server's agent goes by, which its grants
+	// name and its tunnel is found under; Hostname is what Argus calls the
+	// server. They differ once a server is renamed. See Store.AgentNameFor.
+	AgentHost string `json:"-"`
 }
 
 // DBPolicy is the safety settings of one database. Zero means the default.
@@ -400,14 +404,25 @@ func (d *Database) validateKafka() error {
 
 const databaseCols = `d.id::text, d.asset_id::text, a.hostname, d.engine, d.host, d.port, d.pooler_host, d.pooler_port, d.config_path, d.dbname,
 	d.admin_user, d.label, d.policy, d.created_by, d.created_at,
-	EXISTS (SELECT 1 FROM agent_credentials c WHERE lower(c.hostname) = lower(a.hostname)
-	        AND c.revoked_at IS NULL AND c.tunnel_seen_at > now() - $1::interval)`
+	EXISTS (SELECT 1 FROM agent_credentials c
+	         WHERE lower(c.hostname) IN (lower(a.hostname), lower(a.agent_hostname))
+	           AND c.revoked_at IS NULL AND c.tunnel_seen_at > now() - $1::interval),
+	` + agentNameSQL
+
+// agent is the name db's server's agent goes by: the one a grant names and
+// its tunnel is found under.
+func (d Database) agent() string {
+	if d.AgentHost != "" {
+		return d.AgentHost
+	}
+	return d.Hostname
+}
 
 func scanDatabase(row pgx.Row) (Database, error) {
 	var d Database
 	var policy []byte
 	if err := row.Scan(&d.ID, &d.AssetID, &d.Hostname, &d.Engine, &d.Host, &d.Port, &d.PoolerHost, &d.PoolerPort, &d.ConfigPath, &d.Name,
-		&d.AdminUser, &d.Label, &policy, &d.CreatedBy, &d.CreatedAt, &d.TunnelConnected); err != nil {
+		&d.AdminUser, &d.Label, &policy, &d.CreatedBy, &d.CreatedAt, &d.TunnelConnected, &d.AgentHost); err != nil {
 		return d, err
 	}
 	_ = json.Unmarshal(policy, &d.Policy)
