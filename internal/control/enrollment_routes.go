@@ -93,7 +93,7 @@ func (a *API) mayReportFor(w http.ResponseWriter, r *http.Request, hostname stri
 		return true
 	}
 	a.log.Warn("agent credential reported for a host it is not bound to",
-		"credential_host", bound, "reported_host", hostname, "remote", r.RemoteAddr)
+		"credential_host", bound, "reported_host", hostname, "remote", a.clientAddr(r))
 	writeErr(w, http.StatusForbidden,
 		"this agent is enrolled as "+bound+" and may only report for that host")
 	return false
@@ -274,14 +274,14 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 		// Not charged as a failure: the token was good, and someone
 		// re-installing a host should be able to revoke and retry.
 		a.log.Warn("enrollment refused: host already enrolled",
-			"hostname", in.Hostname, "remote", r.RemoteAddr)
+			"hostname", in.Hostname, "remote", a.clientAddr(r))
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, ErrEnrollTokenInvalid), errors.Is(err, ErrEnrollTokenExpired),
 		errors.Is(err, ErrEnrollTokenUsed), errors.Is(err, ErrEnrollTokenWrongHost):
 		a.RecordAuthFailure(r)
 		a.log.Warn("enrollment refused", "hostname", in.Hostname,
-			"remote", r.RemoteAddr, "reason", err.Error())
+			"remote", a.clientAddr(r), "reason", err.Error())
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	case err != nil && strings.Contains(err.Error(), "hostname is required"):
@@ -298,7 +298,7 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 		Severity:   "info",
 		ActorEmail: enr.TokenCreatedBy,
 		Target:     in.Hostname,
-		Detail: "An agent on " + in.Hostname + " enrolled from " + r.RemoteAddr +
+		Detail: "An agent on " + in.Hostname + " enrolled from " + a.clientAddr(r) +
 			" with a token made by " + enr.TokenCreatedBy + " (token " + enr.TokenID +
 			", credential " + enr.CredentialID + "). It may report only as " +
 			in.Hostname + ".",
