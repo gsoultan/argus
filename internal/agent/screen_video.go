@@ -39,11 +39,14 @@ const (
 	// motion, so the tail of a drag does not flip between the two.
 	screenVideoLinger = 150 * time.Millisecond
 	// screenSettle is how long a tile shown as video stays unchanged before
-	// it is sent again exactly.
-	screenSettle = 250 * time.Millisecond
-	// screenRefineMax bounds how many tiles one frame re-sends exactly, so
-	// sharpening a whole screen is spread over a few frames.
-	screenRefineMax = 128
+	// it is sent again exactly. A quarter of a second left text soft for
+	// long enough to notice after every scroll; an eighth is past the
+	// pause between a scroll's steps and still reads as instant.
+	screenSettle = 120 * time.Millisecond
+	// screenRefineMax bounds how many tiles one frame re-sends exactly. A
+	// full HD screen is 510 tiles, so it sharpens in one frame rather than
+	// four, where each quarter came in with the next credit.
+	screenRefineMax = 512
 	// screenMaxRegions is how many rectangles a picture names before one
 	// around them all is cheaper.
 	screenMaxRegions = 128

@@ -579,34 +579,57 @@ export class GraphicsRenderer {
 /**
  * Draws a decoded picture's updated regions onto its surface. Returns how
  * many were drawn, and how many lay outside the picture.
+ *
+ * The picture is drawn whole, once, through a clip of its regions, and never
+ * a part of it by a source rectangle. Safari ignores the source rectangle of
+ * a VideoFrame (WebKit bug 260459) and draws the whole picture, shrunk, into
+ * each region: every strip that changed then held a small copy of the entire
+ * screen. A clip is honoured everywhere, and is one draw where there were
+ * as many as regions.
  */
-function drawPicture(job: Job, frame: VideoFrame, show = true): [number, number] {
-  let drawn = 0
+export function drawPicture(job: PictureJob, frame: VideoFrame, show = true): [number, number] {
   let outside = 0
   const { surface: s, dest } = job
   // Windows says which parts of the picture changed; an empty list means all
   // of it.
   const regions = job.regions.length > 0 ? job.regions : [dest]
+  const inside: Rect[] = []
   for (const region of regions) {
     const r = clip(region, s)
     if (!r) continue
-    const w = r.right - r.left
-    const h = r.bottom - r.top
     // Region rectangles are in surface coordinates, and the picture starts at
     // the destination's corner.
     const sx = r.left - dest.left
     const sy = r.top - dest.top
-    if (sx < 0 || sy < 0 || sx + w > frame.displayWidth || sy + h > frame.displayHeight) {
+    if (sx < 0 || sy < 0 || r.right - dest.left > frame.displayWidth || r.bottom - dest.top > frame.displayHeight) {
       outside++
       continue
     }
-    s.ctx.drawImage(frame, sx, sy, w, h, r.left, r.top, w, h)
-    // Kept on the surface, for what later pictures copy from it, but not
-    // shown when it is older than what is on the screen.
-    if (show) s.dirty.push(r)
-    drawn++
+    inside.push(r)
   }
-  return [drawn, outside]
+  if (inside.length === 0) return [0, outside]
+  s.ctx.save()
+  s.ctx.beginPath()
+  for (const r of inside) s.ctx.rect(r.left, r.top, r.right - r.left, r.bottom - r.top)
+  s.ctx.clip()
+  s.ctx.drawImage(frame, dest.left, dest.top, frame.displayWidth, frame.displayHeight)
+  s.ctx.restore()
+  // Kept on the surface, for what later pictures copy from it, but not
+  // shown when it is older than what is on the screen.
+  if (show) s.dirty.push(...inside)
+  return [inside.length, outside]
+}
+
+/** What drawPicture needs of a picture's job. */
+export interface PictureJob {
+  surface: {
+    width: number
+    height: number
+    ctx: Pick<OffscreenCanvasRenderingContext2D, 'save' | 'restore' | 'beginPath' | 'rect' | 'clip' | 'drawImage'>
+    dirty: Rect[]
+  }
+  dest: Rect
+  regions: Rect[]
 }
 
 function meanOf(b: Uint8Array): number {
