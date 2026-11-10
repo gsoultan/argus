@@ -130,6 +130,13 @@ func main() {
 	case "packages-repair":
 		// Run by the daemon after an update run was cut short.
 		os.Exit(agent.RunPackagesRepair(os.Stdout))
+	case "packages-release-finish":
+		// Run by the daemon on the boot after a release upgrade: finish what
+		// the package manager left and bring back what the agent uses.
+		fs := flag.NewFlagSet("packages-release-finish", flag.ExitOnError)
+		state := fs.String("state", "/var/lib/argus", "the agent's state directory")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunPackagesReleaseFinish(*state, os.Stdout))
 	case "pg-backup":
 		// Run by the backup service as the postgres account: one dump,
 		// restore or catalog, with the archive on stdout or stdin.

@@ -2209,6 +2209,25 @@ export interface PackageReport {
   security_patches?: number
   reboot_required?: boolean
   utc_offset_minutes: number
+  /** The operating system's release and the next one it can move to; absent from an older agent. */
+  release?: ReleaseInfo
+}
+
+/** A server's operating system release, and the next one, as its agent works it out. */
+export interface ReleaseInfo {
+  distro: string
+  /** What runs now: "Ubuntu 22.04.5 LTS", and its version, "22.04". */
+  current: string
+  version: string
+  /** The version an upgrade ends on ("24.04") and how to say it; absent when none is newer. */
+  next?: string
+  next_name?: string
+  /** What does the upgrade: do-release-upgrade, apt or leapp. */
+  tool?: string
+  /** Why this server cannot be upgraded from the console at all. */
+  reason?: string
+  /** Why not now: each something a person can fix first. */
+  blockers?: string[]
 }
 
 export type PackageMode = 'off' | 'notify' | 'security' | 'all'
@@ -2243,7 +2262,9 @@ export interface PackageRun {
   assetHostname: string
   assetId?: string
   mode: 'all' | 'security' | 'selected' | 'reboot' | 'install' | 'remove' | 'script'
-    | 'file_install' | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore'
+    | 'file_install' | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore' | 'release_upgrade'
+  /** A release upgrade: the version it goes to, as it was approved. */
+  release?: string
   packages: string[]
   holds: string[]
   reboot: PackageReboot
@@ -2312,6 +2333,8 @@ export interface PackagesView {
   reason?: string
   /** Its agent reboots when asked; an older one must be updated first. */
   canReboot: boolean
+  /** Its agent upgrades the operating system to its next release; an older one must be updated first. */
+  canUpgradeRelease: boolean
   checking: boolean
   checkAsked: boolean
   report: PackageReport | null

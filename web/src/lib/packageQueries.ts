@@ -11,7 +11,7 @@ import {
   startPackageRun,
   startPackageRuns,
 } from '~/lib/packageApi'
-import { isConfigured, type PackagePolicy, type PackageReboot } from '~/lib/live'
+import { isConfigured, type PackagePolicy } from '~/lib/live'
 
 const viewKey = (assetId: string) => ['packages', 'asset', assetId] as const
 const fleetKey = ['packages', 'fleet'] as const
@@ -64,8 +64,7 @@ export function useCheckPackages(assetId: string) {
 export function useStartPackageRun(assetId: string) {
   const done = useInvalidate()
   return useMutation({
-    mutationFn: (body: { mode: 'all' | 'security' | 'selected' | 'reboot'; packages?: string[]; reboot: PackageReboot }) =>
-      startPackageRun(assetId, body),
+    mutationFn: (body: Parameters<typeof startPackageRun>[1]) => startPackageRun(assetId, body),
     onSettled: done,
   })
 }

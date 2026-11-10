@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert, Badge, Box, Button, Card, Checkbox, Code, Group, Loader, Modal, Radio, ScrollArea, SegmentedControl,
-  SimpleGrid, Skeleton, Stack, Table, Text, ThemeIcon,
+  Alert, Badge, Box, Button, Card, Checkbox, Code, Group, List, Loader, Modal, Radio, ScrollArea, SegmentedControl,
+  SimpleGrid, Skeleton, Stack, Table, Text, TextInput, ThemeIcon,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { IconCheck, IconCircleDashed, IconPackage, IconPower, IconRefresh, IconX } from '@tabler/icons-react'
+import {
+  IconArrowBigUpLines, IconCheck, IconCircleDashed, IconPackage, IconPower, IconRefresh, IconX,
+} from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { absTime, relTime, Stat } from '~/components/primitives'
 import {
   isConfigured,
-  type PackageReboot, type PackageRule, type PackageRun, type PackageUpdate, type PackagesView,
+  type PackageReboot, type PackageRule, type PackageRun, type PackageUpdate, type PackagesView, type ReleaseInfo,
 } from '~/lib/live'
 import { run as notifyRun } from '~/lib/notify'
 import {
@@ -76,8 +78,11 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
         <>
           {active && <ActiveRun run={active} canEdit={canEdit} />}
           <Summary view={v} />
-          {v.report?.reboot_required && active?.mode !== 'reboot' && (
+          {v.report?.reboot_required && active?.mode !== 'reboot' && active?.mode !== 'release_upgrade' && (
             <RebootNeeded view={v} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
+          )}
+          {v.report?.release && active?.mode !== 'release_upgrade' && (
+            <ReleaseUpgrade view={v} release={v.report.release} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
           )}
           <Packages view={v} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
         </>
@@ -206,6 +211,130 @@ function ConfirmReboot({ assetId, view: v, onClose }: { assetId: string; view: P
             },
           ).then((ok) => ok && onClose())}>
             Reboot {v.hostname}
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  )
+}
+
+/* ── A new release ───────────────────────────────────────────────────────── */
+
+const RELEASE_TOOL: Record<string, string> = {
+  'do-release-upgrade': "Ubuntu's own do-release-upgrade, without removing anything the new release no longer ships",
+  apt: "Debian's documented way: apt is pointed at the new release, then upgrade and full-upgrade",
+  leapp: 'leapp, after its preupgrade check finds nothing that stops it; the upgrade itself runs during the reboot',
+}
+
+/**
+ * The next major release of the server's operating system: what it is, what
+ * stands in the way, and the button that moves the server to it. Only for a
+ * release the agent says the server offers, and only when the server is
+ * ready: the reasons it is not are the agent's own, each something to fix.
+ */
+function ReleaseUpgrade({ view: v, release: rel, assetId, canEdit, busy }: {
+  view: PackagesView
+  release: ReleaseInfo
+  assetId: string
+  canEdit: boolean
+  busy: boolean
+}) {
+  const [asking, setAsking] = useState(false)
+  // A distribution Argus does not upgrade says nothing here; one it does,
+  // without its tool or with upgrades turned off, says what to change.
+  if (!rel.next) {
+    if (!rel.reason || !rel.tool) return null
+    return (
+      <Card padding="md">
+        <Text size={FS.body} c="dimmed" lh={1.5}>
+          <Text span inherit fw={600}>Release upgrades.</Text> {rel.current}: {rel.reason}.
+        </Text>
+      </Card>
+    )
+  }
+  const blockers = rel.blockers ?? []
+  const why = !canEdit ? 'An admin or owner can upgrade it from here.'
+    : !v.canUpgradeRelease ? "This server's agent is too old to upgrade the operating system. Update the agent from the Settings tab first."
+      : busy ? 'It can be upgraded once the run going now has ended.'
+        : null
+  return (
+    <SectionCard title="New release available" icon={IconArrowBigUpLines}
+      badge={<Badge size="sm" variant="light" color={blockers.length ? 'amber' : 'azure'}>{rel.next_name}</Badge>}
+      description={`${rel.current} can move to ${rel.next_name}.`}
+      action={canEdit && v.canUpgradeRelease ? (
+        <Button size="compact-sm" leftSection={<IconArrowBigUpLines size={14} />}
+          disabled={busy || blockers.length > 0} onClick={() => setAsking(true)}>
+          Upgrade to {rel.next_name}…
+        </Button>
+      ) : undefined}>
+      <Stack gap={SP.cozy}>
+        {blockers.length > 0 ? (
+          <Alert color="amber" p="xs" title="Not ready yet">
+            <List size="sm" spacing={4}>
+              {blockers.map((b) => <List.Item key={b}>{b[0]?.toUpperCase() + b.slice(1)}.</List.Item>)}
+            </List>
+          </Alert>
+        ) : (
+          <Text size={FS.body} lh={1.5}>
+            Ready. The upgrade uses {RELEASE_TOOL[rel.tool ?? ''] ?? rel.tool}. The server reboots into the new
+            release, and Argus calls it done only once the server says it is on {rel.next_name}.
+          </Text>
+        )}
+        {why && <Text size={FS.meta} c="dimmed">{why}</Text>}
+      </Stack>
+      {asking && <ConfirmRelease assetId={assetId} view={v} release={rel} onClose={() => setAsking(false)} />}
+    </SectionCard>
+  )
+}
+
+function ConfirmRelease({ assetId, view: v, release: rel, onClose }: {
+  assetId: string
+  view: PackagesView
+  release: ReleaseInfo
+  onClose: () => void
+}) {
+  const start = useStartPackageRun(assetId)
+  const [typed, setTyped] = useState('')
+  const short = v.hostname.split('.')[0] ?? v.hostname
+  const confirmed = typed.trim() === short || typed.trim() === v.hostname
+  return (
+    <Modal opened onClose={onClose} title={`Upgrade ${v.hostname} to ${rel.next_name}?`} size="lg">
+      <Stack gap="sm">
+        <Text size={FS.body} lh={1.5}>
+          {rel.current} becomes {rel.next_name}. Every package moves to the new release, then the server reboots into
+          it. Expect it to be busy for an hour or more; what it serves may stop working part way, and sessions to it
+          drop at the reboot. Once it starts it cannot be stopped or undone from here, so take a backup or snapshot
+          of the server first.
+        </Text>
+        <List size="sm" spacing={4}>
+          <List.Item>The upgrade uses {RELEASE_TOOL[rel.tool ?? ''] ?? rel.tool}.</List.Item>
+          <List.Item>Configuration files changed on the server are kept, including the SSH settings that send logins through Argus.</List.Item>
+          <List.Item>Holds do not apply: a new release replaces every package.</List.Item>
+          <List.Item>
+            After the reboot the agent checks the server is on {rel.next_name}, and installs again what it uses there
+            (the SSH server, the database clients) if the upgrade took it away.
+          </List.Item>
+        </List>
+        {v.rule.needsApproval && (
+          <Alert color="azure" p="xs">
+            <Text size={FS.body}>This server's rule asks for a second admin: the upgrade waits until another admin approves it.</Text>
+          </Alert>
+        )}
+        <TextInput label="Type the server name to confirm" placeholder={short} value={typed}
+          onChange={(e) => setTyped(e.currentTarget.value)} autoComplete="off" />
+        <Group justify="flex-end" gap="sm">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button color="rose" leftSection={<IconArrowBigUpLines size={16} />} disabled={!confirmed}
+            loading={start.isPending} onClick={() => void notifyRun(
+              () => start.mutateAsync({ mode: 'release_upgrade', release: rel.next, reboot: 'if_needed' }),
+              {
+                failure: 'Upgrade not started',
+                success: v.rule.needsApproval
+                  ? ['Waiting for approval', 'Another admin approves the upgrade before it starts.']
+                  : ['Upgrade asked for', 'The server starts at its next check-in, within 30 seconds.'],
+              },
+            ).then((ok) => ok && onClose())}>
+            Upgrade to {rel.next_name}
           </Button>
         </Group>
       </Stack>
@@ -439,6 +568,12 @@ function ConfirmRun({ assetId, mode, names, view: v, onClose }: {
 
 /* ── A run going ─────────────────────────────────────────────────────────── */
 
+const RELEASE_STEPS: { key: string; label: string; detail: string }[] = [
+  { key: 'preflight', label: 'Check the server is ready', detail: 'and that it still offers the release approved' },
+  { key: 'upgrade', label: 'Upgrade every package', detail: 'changed configuration files are kept as they are' },
+  { key: 'reboot', label: 'Reboot into the new release', detail: 'Argus confirms the server is on it once it is back' },
+]
+
 const REBOOT_STEPS: { key: string; label: string; detail: string }[] = [
   { key: 'reboot', label: 'Reboot', detail: 'the server restarts; Argus confirms it came back on a new boot' },
 ]
@@ -452,6 +587,7 @@ const STEPS: { key: string; label: string; detail: string }[] = [
 
 export function runTitle(r: PackageRun): string {
   if (r.mode === 'reboot') return 'Reboot'
+  if (r.mode === 'release_upgrade') return `Release upgrade · to ${r.release ?? 'the next release'}`
   if (r.mode === 'script') return `Script · ${r.scriptName ?? ''}`
   if (r.mode === 'install' || r.mode === 'remove') {
     const names = (r.items ?? []).map((i) => i.name)
@@ -484,12 +620,14 @@ function ActiveRun({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) {
   const started = r.state === 'running' || r.state === 'rebooting'
   const { data: full } = useQuery(packageRunQuery(r.id, started))
   const reboot = r.mode === 'reboot'
-  const steps = reboot ? REBOOT_STEPS : STEPS
+  const release = r.mode === 'release_upgrade'
+  const steps = reboot ? REBOOT_STEPS : release ? RELEASE_STEPS : STEPS
   const at = steps.findIndex((s) => s.key === (r.state === 'rebooting' || reboot ? 'reboot' : r.step))
   return (
-    <SectionCard title={reboot ? 'Reboot' : 'Update run'} icon={reboot ? IconPower : IconPackage} badge={<RunState state={r.state} />}
-      description={reboot
-        ? `Asked by ${r.requestedBy} ${relTime(r.requestedAt)}`
+    <SectionCard title={reboot ? 'Reboot' : release ? 'Release upgrade' : 'Update run'}
+      icon={reboot ? IconPower : release ? IconArrowBigUpLines : IconPackage} badge={<RunState state={r.state} />}
+      description={reboot || release
+        ? `${release ? `To ${r.release ?? 'the next release'} · ` : ''}Asked by ${r.requestedBy} ${relTime(r.requestedAt)}`
         : `${runTitle(r)} · ${r.trigger === 'automatic' ? 'started by its rule' : `asked by ${r.requestedBy}`} ${relTime(r.requestedAt)}${r.reboot === 'if_needed' ? ' · reboot if needed' : ''}`}
       action={<RunActions run={r} canEdit={canEdit} />}>
       {!started ? (
@@ -497,6 +635,7 @@ function ActiveRun({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) {
           {r.state === 'awaiting_approval' ? 'Another admin approves this run before the server is asked to start it.'
             : r.state === 'waiting' ? 'Servers in this batch go one at a time; this one goes when the one before it is done.'
               : reboot ? 'Asked. The server reboots at its next check-in, within 30 seconds.'
+                : release ? 'Asked. The server starts the upgrade at its next check-in, within 30 seconds.'
                 : 'Asked. The server starts at its next check-in, within 30 seconds.'}
         </Text>
       ) : (
@@ -598,10 +737,13 @@ function RecentRuns({ runs, canEdit }: { runs: PackageRun[]; canEdit: boolean })
 
 function RunRow({ run: r, open, onToggle }: { run: PackageRun; open: boolean; canEdit: boolean; onToggle: () => void }) {
   const { data: full } = useQuery(packageRunQuery(r.id, open))
-  const outcome = [
-    r.upgraded.length > 0 ? `${r.upgraded.length} upgraded` : r.state === 'done' ? 'nothing to install' : '',
-    r.rebooted ? 'rebooted' : r.rebootRequired ? 'reboot needed' : '',
-  ].filter(Boolean).join(' · ')
+  const outcome = r.mode === 'release_upgrade'
+    ? [r.state === 'done' && r.rebooted ? `on ${r.release ?? 'the new release'}` : '', r.rebootRequired ? 'reboot needed' : '']
+      .filter(Boolean).join(' · ')
+    : [
+      r.upgraded.length > 0 ? `${r.upgraded.length} upgraded` : r.state === 'done' ? 'nothing to install' : '',
+      r.rebooted ? 'rebooted' : r.rebootRequired ? 'reboot needed' : '',
+    ].filter(Boolean).join(' · ')
   return (
     <>
       <Table.Tr style={{ cursor: 'pointer' }} onClick={onToggle} aria-expanded={open}>

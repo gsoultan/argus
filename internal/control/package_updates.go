@@ -74,6 +74,22 @@ type PackageReport struct {
 	SecurityPatches  int             `json:"security_patches,omitempty"`
 	RebootRequired   bool            `json:"reboot_required,omitempty"`
 	UTCOffsetMinutes int             `json:"utc_offset_minutes"`
+	// Release is the server's operating system release and the next one it
+	// can be upgraded to; absent from an older agent.
+	Release *ReleaseInfo `json:"release,omitempty"`
+}
+
+// ReleaseInfo is a server's release and the one it can move to, as the
+// agent works it out (internal/agent/packages_release.go).
+type ReleaseInfo struct {
+	Distro   string   `json:"distro"`
+	Current  string   `json:"current"`
+	Version  string   `json:"version"`
+	Next     string   `json:"next,omitempty"`
+	NextName string   `json:"next_name,omitempty"`
+	Tool     string   `json:"tool,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
+	Blockers []string `json:"blockers,omitempty"`
 }
 
 // maxPackageUpdates bounds a stored report, whatever an agent sends.
@@ -98,6 +114,21 @@ func (r *PackageReport) bounded() {
 	clip(&r.Error, 1000)
 	clip(&r.Reason, 500)
 	clip(&r.Manager, 20)
+	if rel := r.Release; rel != nil {
+		clip(&rel.Distro, 40)
+		clip(&rel.Current, 120)
+		clip(&rel.Version, 40)
+		clip(&rel.Next, 40)
+		clip(&rel.NextName, 120)
+		clip(&rel.Tool, 40)
+		clip(&rel.Reason, 500)
+		if len(rel.Blockers) > 20 {
+			rel.Blockers = rel.Blockers[:20]
+		}
+		for i := range rel.Blockers {
+			clip(&rel.Blockers[i], 500)
+		}
+	}
 	if r.UTCOffsetMinutes < -14*60 || r.UTCOffsetMinutes > 14*60 {
 		r.UTCOffsetMinutes = 0
 	}
@@ -157,6 +188,9 @@ type PackageBeat struct {
 	Installs []string `json:"installs,omitempty"`
 	// Reboot is an agent that does a reboot-only run.
 	Reboot bool `json:"reboot,omitempty"`
+	// ReleaseUpgrade is an agent that upgrades its server's operating
+	// system to the next release.
+	ReleaseUpgrade bool `json:"release_upgrade,omitempty"`
 }
 
 // packagesState is agents.packages_state: what the agent last said about
@@ -167,6 +201,7 @@ type packagesState struct {
 	Checking  bool     `json:"checking,omitempty"`
 	Installs  []string `json:"installs,omitempty"`
 	Reboot    bool     `json:"reboot,omitempty"`
+	Release   bool     `json:"release,omitempty"`
 }
 
 // Run states.
@@ -242,6 +277,8 @@ type PackageRun struct {
 	// and by the name the library shows.
 	SoftwareFileID   *string `json:"softwareFileId,omitempty"`
 	SoftwareFileName string  `json:"softwareFileName,omitempty"`
+	// Release is the version a release upgrade goes to, as it was approved.
+	Release string `json:"release,omitempty"`
 }
 
 const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
@@ -290,6 +327,9 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	if fileName != nil {
 		r.SoftwareFileName = *fileName
 	}
+	if r.Mode == PackagesRelease {
+		r.Release = r.expect
+	}
 	if r.Items == nil {
 		r.Items = []tunnel.SoftwareItem{}
 	}
@@ -327,6 +367,11 @@ const (
 // PackagesReboot is a run that installs nothing and reboots the server,
 // for one waiting for a reboot after its updates.
 const PackagesReboot = "reboot"
+
+// PackagesRelease upgrades the server's operating system to its next
+// release. The run's expect is the version a person said yes to; the agent
+// stops if the server offers another by the time it starts.
+const PackagesRelease = "release_upgrade"
 
 // PackageRule says what happens on servers with a tag.
 type PackageRule struct {
@@ -599,7 +644,8 @@ func (s *Store) assetForAgent(ctx context.Context, agentHost string) (id, hostna
 func (s *Store) recordPackageBeat(ctx context.Context, host string, b PackageBeat) (prev *PackageReport,
 	err error) {
 	st, err := json.Marshal(packagesState{Supported: b.Supported, Reason: b.Reason, Checking: b.Checking,
-		Installs: validInstalls(b.Installs), Reboot: b.Reboot && b.Supported})
+		Installs: validInstalls(b.Installs), Reboot: b.Reboot && b.Supported,
+		Release: b.ReleaseUpgrade && b.Supported})
 	if err != nil {
 		return nil, err
 	}
@@ -1133,9 +1179,16 @@ func (s *Store) CancelPackageRun(ctx context.Context, id, by string) (PackageRun
 func (s *Store) expireStaleRuns(ctx context.Context, host string) ([]PackageRun, error) {
 	rows, err := s.db(ctx).Query(ctx, `
 		UPDATE package_runs SET state = 'interrupted', step = 'stale', finished_at = now(), updated_at = now(),
-		       message = 'the server stopped reporting on this run for three hours; look at the server ' ||
-		                 'before trying again'
-		 WHERE state IN ('running','rebooting') AND updated_at < now() - interval '3 hours'
+		       message = CASE WHEN mode = 'release_upgrade'
+		                 THEN 'the server stopped reporting on this release upgrade for eight hours; it may be ' ||
+		                      'part way between releases, so look at the server before trying again'
+		                 ELSE 'the server stopped reporting on this run for three hours; look at the server ' ||
+		                      'before trying again' END
+		 WHERE state IN ('running','rebooting')
+		   -- A release upgrade goes quiet for longer: leapp upgrades in a
+		   -- boot of its own, with no agent running.
+		   AND updated_at < now() - CASE WHEN mode = 'release_upgrade' THEN interval '8 hours'
+		                                 ELSE interval '3 hours' END
 		   AND ($1 = '' OR lower(hostname) = lower($1))
 		RETURNING `+packageRunCols, host)
 	if err != nil {
@@ -1171,7 +1224,10 @@ type PackagesView struct {
 	// CanReboot is an agent that reboots on its own when asked; an older
 	// one does not, and is asked to update first.
 	CanReboot bool `json:"canReboot"`
-	Checking  bool `json:"checking"`
+	// CanUpgradeRelease is an agent that upgrades the operating system to
+	// its next release; an older one is asked to update first.
+	CanUpgradeRelease bool `json:"canUpgradeRelease"`
+	Checking          bool `json:"checking"`
 	// CheckAsked is a check the console asked for, not yet answered.
 	CheckAsked bool           `json:"checkAsked"`
 	Report     *PackageReport `json:"report"`

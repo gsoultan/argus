@@ -69,6 +69,7 @@ func (c PackageChecker) listInto(ctx context.Context, m pkgManager, r PackageRep
 	}
 	r.Updates, r.SecurityPatches = ups, patches
 	r.RebootRequired = m.rebootWanted(ctx, c.Run)
+	r.Release = c.release(ctx, r)
 	return r, nil
 }
 
@@ -124,6 +125,9 @@ func RunPackagesApply(planPath string) int {
 	a := &PackageApplier{Plan: plan, Log: slog.New(slog.NewTextHandler(os.Stderr, nil)),
 		Windows: runtime.GOOS == "windows", WinInventory: hostWinInventory}
 	timeout := packageRunTimeout
+	if plan.Mode == PackagesRelease {
+		timeout = releaseRunTimeout
+	}
 	if plan.Script != nil && plan.Script.timeout()+10*time.Minute > timeout {
 		timeout = plan.Script.timeout() + 10*time.Minute
 	}
@@ -183,6 +187,9 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	}
 	if a.Plan.Mode == PackagesReboot {
 		return a.applyReboot()
+	}
+	if a.Plan.Mode == PackagesRelease {
+		return a.applyRelease(ctx)
 	}
 
 	m := detectManager(a.Look)

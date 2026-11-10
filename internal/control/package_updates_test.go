@@ -1037,3 +1037,136 @@ func TestPackageRebootFails(t *testing.T) {
 		t.Errorf("a server that cannot be updated offers a reboot")
 	}
 }
+
+// A release upgrade, start to finish: offered only by an agent that can do
+// one and only for the release the server offers, refused while the server
+// is not ready, sent with the release a person said yes to, never for a
+// fleet, and audited as a release upgrade.
+func TestPackageReleaseUpgrade(t *testing.T) {
+	e := packagesAPI(t)
+	asset, cred := e.server(t)
+	now := time.Now().UTC()
+	jammy := func(blockers ...string) *PackageReport {
+		r := pkgReport(now)
+		r.Release = &ReleaseInfo{Distro: "ubuntu", Current: "Ubuntu 22.04.5 LTS", Version: "22.04", Next: "24.04",
+			NextName: "Ubuntu 24.04.1 LTS", Tool: "do-release-upgrade", Blockers: blockers}
+		return r
+	}
+
+	// An agent that does not say it can is not asked to.
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Report: jammy()})
+	if v := e.view(t, asset); v.CanUpgradeRelease || v.Report == nil || v.Report.Release == nil ||
+		v.Report.Release.Next != "24.04" {
+		t.Fatalf("view = %+v", v)
+	}
+	w := do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/packages/runs", "admin-token",
+		`{"mode":"release_upgrade","release":"24.04"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "too old to upgrade") {
+		t.Fatalf("older agent: %d %s", w.Code, w.Body)
+	}
+
+	// Not ready: the agent's own reasons, word for word.
+	now = now.Add(time.Second)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true,
+		Report: jammy("reboot it first: an update already installed waits for a reboot")})
+	w = do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/packages/runs", "admin-token",
+		`{"mode":"release_upgrade","release":"24.04"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "reboot it first") {
+		t.Fatalf("not ready: %d %s", w.Code, w.Body)
+	}
+
+	now = now.Add(time.Second)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true, Report: jammy()})
+	// A release the server does not offer, or none at all.
+	w = do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/packages/runs", "admin-token",
+		`{"mode":"release_upgrade","release":"24.10"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "offers 24.04, not 24.10") {
+		t.Fatalf("other release: %d %s", w.Code, w.Body)
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/packages/runs", "admin-token",
+		`{"mode":"release_upgrade"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("no release: %d %s", w.Code, w.Body)
+	}
+	// Never several servers at once.
+	w = do(t, e.h, http.MethodPost, "/api/v1/package-runs", "admin-token",
+		`{"assetIds":["`+asset.ID+`"],"mode":"release_upgrade"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "one server at a time") {
+		t.Fatalf("fleet: %d %s", w.Code, w.Body)
+	}
+	e.ask(t, asset, "operator-token", `{"mode":"release_upgrade","release":"24.04"}`, http.StatusForbidden)
+
+	run := e.ask(t, asset, "admin-token", `{"mode":"release_upgrade","release":"24.04","reboot":"never","packages":["vim"]}`,
+		http.StatusAccepted)
+	if run.Mode != PackagesRelease || run.Release != "24.04" || run.Reboot != "if_needed" || len(run.Packages) != 0 ||
+		len(run.Holds) != 0 {
+		t.Fatalf("run = %+v", run)
+	}
+	if a := lastAuditOn(t, e.s, asset.Hostname); a.Action != "packages.run_requested" ||
+		a.Detail != "Asked to upgrade "+asset.Hostname+" to release 24.04 and reboot into it." {
+		t.Errorf("audit = %s: %s", a.Action, a.Detail)
+	}
+	_, o := e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true})
+	if o == nil || o.Run == nil || o.Run.ID != run.ID || o.Run.Mode != PackagesRelease || o.Run.Expect != "24.04" {
+		t.Fatalf("orders = %+v", o.Run)
+	}
+
+	started := time.Now().UTC()
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true,
+		Run: &PackageRunStatus{ID: run.ID, State: "rebooting", Step: "reboot",
+			Message: "upgraded to Ubuntu 24.04.1 LTS; rebooting into it", StartedAt: &started}})
+	back := time.Now().UTC()
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true,
+		Run: &PackageRunStatus{ID: run.ID, State: "done", Rebooted: true, StartedAt: &started, FinishedAt: &back,
+			Message: "upgraded from Ubuntu 22.04.5 LTS to Ubuntu 24.04.1 LTS, and the server rebooted into it"}})
+	got := e.run(t, run.ID)
+	if got.State != RunDone || !got.Rebooted || got.Release != "24.04" {
+		t.Fatalf("done = %+v", got)
+	}
+	a := lastAuditOn(t, e.s, asset.Hostname)
+	if a.Action != "packages.run_finished" ||
+		!strings.HasPrefix(a.Detail, "The release upgrade of "+asset.Hostname+" to 24.04 (asked by ") ||
+		!strings.Contains(a.Detail, "to Ubuntu 24.04.1 LTS") {
+		t.Errorf("audit = %s: %s", a.Action, a.Detail)
+	}
+}
+
+// A release upgrade that did not take is an alert that says so.
+func TestPackageReleaseUpgradeFails(t *testing.T) {
+	e := packagesAPI(t)
+	asset, cred := e.server(t)
+	r := pkgReport(time.Now().UTC())
+	r.Release = &ReleaseInfo{Distro: "debian", Current: "Debian GNU/Linux 12 (bookworm)", Version: "12", Next: "13",
+		NextName: "Debian 13 (trixie)", Tool: "apt"}
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, ReleaseUpgrade: true, Report: r})
+	run := e.ask(t, asset, "admin-token", `{"mode":"release_upgrade","release":"13"}`, http.StatusAccepted)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, ReleaseUpgrade: true})
+	now := time.Now().UTC()
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, ReleaseUpgrade: true, Run: &PackageRunStatus{
+		ID: run.ID, State: "failed", StartedAt: &now, FinishedAt: &now,
+		Message: "the server rebooted, but it is still on 12: the upgrade to Debian 13 (trixie) did not happen"}})
+	var title string
+	_ = e.s.pool.QueryRow(context.Background(), `SELECT title FROM console_alerts WHERE title LIKE $1
+		ORDER BY seq DESC LIMIT 1`, "Upgrading the release of "+asset.Hostname+"%").Scan(&title)
+	if title != "Upgrading the release of "+asset.Hostname+" failed" {
+		t.Errorf("alert = %q", title)
+	}
+}
+
+func TestPackageReleaseRequestValidate(t *testing.T) {
+	for _, in := range []runRequest{{Mode: "release_upgrade", Release: "24.04"}, {Mode: "release_upgrade", Release: "9"}} {
+		if err := in.validate(); err != nil {
+			t.Errorf("%+v: %v", in, err)
+		}
+	}
+	for _, in := range []runRequest{{Mode: "release_upgrade"}, {Mode: "release_upgrade", Release: "noble"},
+		{Mode: "release_upgrade", Release: "24.04 && reboot"}} {
+		if err := in.validate(); err == nil {
+			t.Errorf("%+v was taken", in)
+		}
+	}
+	in := runRequest{Mode: "all", Release: "24.04"}
+	if err := in.validate(); err != nil || in.Release != "" {
+		t.Errorf("an update run kept a release: %+v %v", in, err)
+	}
+}
