@@ -30,7 +30,7 @@ describe('opening a terminal', () => {
   it("goes through the server's agent when it is connected", async () => {
     withHost(true)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByText(/server.s own agent opens the\s+session/i)).toBeInTheDocument()
+    expect(await screen.findByRole('radio', { name: /^Terminal/ })).toBeChecked()
     expect(screen.queryByText('Gateway endpoint')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^open (terminal|desktop)$/i })).toBeEnabled()
   }, 15_000)
@@ -65,10 +65,10 @@ describe('opening a desktop', () => {
   it('shares the screen without asking for a password when the server is set to', async () => {
     withHost(true, { ...rdp, desktopMode: 'screen' })
     await renderRoute(`/connect?host=${encodeURIComponent(rdp.hostname)}`)
-    expect(await screen.findByText(/screen sharing, not remote desktop/i)).toBeInTheDocument()
-    expect(screen.getByText(/anyone in front of the server sees what you do/i)).toBeInTheDocument()
+    expect(await screen.findByRole('radio', { name: /^Their screen/ })).toBeChecked()
+    expect(screen.getByText(/anyone in front of it sees what you do/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/windows password for/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^open (terminal|desktop)$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^open screen$/i })).toBeEnabled()
   }, 15_000)
 
   it('does not open when the agent is not connected', async () => {
@@ -83,7 +83,9 @@ describe('console-only', () => {
   it('offers file transfer through the agent, and no native client', async () => {
     withHost(true)
     await renderRoute(`/connect?host=${encodeURIComponent(ssh.hostname)}`)
-    expect(await screen.findByRole('button', { name: /open files/i })).toBeEnabled()
+    const files = await screen.findByRole('radio', { name: /^Files/ })
+    files.click()
+    expect(await screen.findByRole('button', { name: /^open files$/i })).toBeEnabled()
     expect(screen.queryByText(/prefer your own client/i)).not.toBeInTheDocument()
   }, 15_000)
 

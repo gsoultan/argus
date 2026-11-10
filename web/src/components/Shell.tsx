@@ -11,6 +11,7 @@ import {
   IconSearch, IconShieldLock,
 } from '@tabler/icons-react'
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
+import { SessionsProvider, useSessions } from '~/lib/sessions'
 import { coverageQuery, directLoginsQuery, meQuery, myServerAccountQuery, statsQuery } from '~/lib/queries'
 import { SignIn } from '~/components/SignIn'
 // Eager on purpose: lazy, it pulled seven shared Mantine pieces out into chunks
@@ -26,6 +27,13 @@ import type { UserRole } from '~/types/domain'
  * compressed — 3.4 kB for a panel most sessions never see. Same reasoning as
  * the terminal and the replay players.
  */
+/** Only fetched once a session is open, or the Connect drawer is. */
+const Workspace = lazy(() =>
+  import('~/components/connect/Workspace').then((m) => ({ default: m.Workspace })),
+)
+const ConnectDrawer = lazy(() =>
+  import('~/components/connect/ConnectDrawer').then((m) => ({ default: m.ConnectDrawer })),
+)
 const CommandPalette = lazy(() =>
   import('~/components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
@@ -186,7 +194,9 @@ function LoginGate({ children }: { children: React.ReactNode }) {
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <LoginGate>
-      <ShellInner>{children}</ShellInner>
+      <SessionsProvider>
+        <ShellInner>{children}</ShellInner>
+      </SessionsProvider>
     </LoginGate>
   )
 }
@@ -222,6 +232,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     serversWaiting: canSee(me?.role, 'admin') ? (cov?.unreviewedHosts ?? 0) : 0,
   }
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const live = useSessions()
   const updating = useControlUpdating(Boolean(me) && isConfigured())
   const items = navFor(me?.role)
 
@@ -291,6 +302,15 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 orgs={me.orgs?.length ? me.orgs : [{ ...me.org, role: me.role, home: true }]}
                 canManage={me.platformOwner === true}
               />
+            )}
+
+            {/* Your own open sessions keep running on other pages; this is
+                the way back to them. */}
+            {live.sessions.length > 0 && pathname !== '/connect' && (
+              <Button size="xs" color="rose" variant="light" component={Link} to="/connect"
+                leftSection={<Box w={7} h={7} style={{ borderRadius: '50%', background: 'var(--mantine-color-rose-6)' }} />}>
+                {live.sessions.length === 1 ? '1 session open' : `${live.sessions.length} sessions open`}
+              </Button>
             )}
 
             {whole && stats && stats.sessionsActive > 0 && (
@@ -469,6 +489,17 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           {children}
         </Box>
       </AppShell.Main>
+
+      {live.sessions.length > 0 && (
+        <Suspense fallback={null}>
+          <Workspace />
+        </Suspense>
+      )}
+      {live.drawerFor !== null && (
+        <Suspense fallback={null}>
+          <ConnectDrawer />
+        </Suspense>
+      )}
 
       {/* Mounted only while open, so the chunk is fetched on the first ⌘K
           rather than on every page load. */}

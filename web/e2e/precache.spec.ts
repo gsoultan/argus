@@ -52,9 +52,12 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 725.0 kB with Cloud's Console access tab: its name in the tab list. The
  * tab, its queries and the console-session code are in chunks that are not
  * stored.
+ * 729.4 kB with session tabs: the sessions store and the header's "sessions
+ * open" link in the entry, so sessions outlive the page they opened on. The
+ * Connect drawer, the workspace and their stylesheet are not stored.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 726
+const MAX_KB = 730
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')

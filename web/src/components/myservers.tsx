@@ -18,6 +18,7 @@ import { ButtonLink } from '~/components/links'
 import { now, relTime } from '~/components/primitives'
 import { assetsQuery, meQuery, myServersQuery, requestsQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
+import { useSessions } from '~/lib/sessions'
 import type { Asset, MyServer } from '~/types/domain'
 import { isUp, kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
 import { ASSET_TYPES, ASSET_TYPE_LABEL, assetTypeOf, type AssetType } from '~/lib/assetType'
@@ -104,6 +105,7 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
   low?: ResourcesLowRow
 }) {
   const navigate = useNavigate()
+  const { ask } = useSessions()
   const reach = reachOf(a)
   const rdp = a.protocol === 'rdp'
   const kind = kindOf(a)
@@ -280,8 +282,8 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
                     </Menu.Item>
                     <Menu.Divider />
                     <Menu.Item leftSection={<IconSettings size={18} />}
-                      onClick={() => void navigate({ to: '/connect', search: { host: a.hostname } })}>
-                      <MenuText title="All connect options…" sub="Opens the connect page" />
+                      onClick={() => ask(a.hostname)}>
+                      <MenuText title="All connect options…" sub="Ways in, accounts, what happens" />
                     </Menu.Item>
                   </Menu.Dropdown>
                 </Menu>

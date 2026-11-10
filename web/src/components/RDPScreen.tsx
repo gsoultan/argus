@@ -38,6 +38,22 @@ export interface RDPScreenProps {
    */
   device?: boolean
   onStateChange?: (state: RDPState, detail?: string) => void
+  /**
+   * Leaves out the status row above the screen, for the session workspace,
+   * whose floating toolbar shows the same things. The device keys stay.
+   */
+  bare?: boolean
+  /** The last second's frames, round trip and bandwidth, once a second. */
+  onStats?: (stats: RDPStats) => void
+  /** Filled with what the workspace's toolbar can do to this screen. */
+  controls?: React.MutableRefObject<RDPControls | null>
+}
+
+export interface RDPStats { fps: number; rttMs: number; mbit: number; video: boolean }
+
+export interface RDPControls {
+  ctrlAltDel: () => void
+  focus: () => void
 }
 
 /** The device keys a phone has and a keyboard does not, as the agent names them. */
@@ -111,6 +127,9 @@ export function RDPScreen({
   shadowSessionId,
   device = false,
   onStateChange,
+  bare = false,
+  onStats,
+  controls,
 }: RDPScreenProps) {
   // The canvas is made here rather than rendered by React. A canvas handed
   // to a worker can be handed over once and can no longer be resized from
@@ -130,9 +149,10 @@ export function RDPScreen({
   const [size, setSize] = useState({ width: 1024, height: 768 })
   // Frames a second, the round trip and the bandwidth, over the last second.
   // Only a shared console's frames are counted (they carry marks).
-  const [stats, setStats] = useState<{ fps: number; rttMs: number; mbit: number; video: boolean } | null>(
-    null,
-  )
+  const [stats, setStats] = useState<RDPStats | null>(null)
+  // Read from the once-a-second tick without re-arming the session's effect.
+  const statsRef = useRef(onStats)
+  statsRef.current = onStats
 
   useEffect(() => {
     const box = boxRef.current
@@ -178,7 +198,8 @@ export function RDPScreen({
       const full = document.fullscreenElement === frame
       const roomW = frame.clientWidth || width
       const top = full ? 0 : frame.getBoundingClientRect().top
-      const roomH = Math.max(window.innerHeight - top - (full ? 0 : 16), 160)
+      // In the workspace the screen runs to the window's edge, with no margin.
+      const roomH = Math.max(window.innerHeight - top - (full || bare ? 0 : 16), 160)
       const { w, h } = fitScreen(width, height, roomW, roomH)
       canvas.style.width = `${w}px`
       canvas.style.height = `${h}px`
@@ -236,7 +257,11 @@ export function RDPScreen({
     let marked = false
     let video = false
     const tick = window.setInterval(() => {
-      if (marked) setStats({ fps: frames, rttMs, mbit: (bytes * 8) / 1e6, video })
+      if (marked) {
+        const now = { fps: frames, rttMs, mbit: (bytes * 8) / 1e6, video }
+        setStats(now)
+        statsRef.current?.(now)
+      }
       frames = 0
       bytes = 0
       video = false
@@ -499,6 +524,10 @@ export function RDPScreen({
     canvasRef.current?.focus()
   }
 
+  if (controls) {
+    controls.current = { ctrlAltDel: sendCtrlAltDel, focus: () => canvasRef.current?.focus() }
+  }
+
   /**
    * A device key, which the app plays as the key itself: Back, Home and the
    * rest are not on a keyboard, and Power and Lock are what a thumb does
@@ -524,8 +553,8 @@ export function RDPScreen({
   }
 
   return (
-    <Stack gap="xs">
-      <Group justify="space-between">
+    <Stack gap="xs" h={bare ? '100%' : undefined}>
+      {!bare && <Group justify="space-between">
         <Group gap="xs">
           {state === 'connecting' && <Loader size="xs" />}
           <Badge
@@ -561,7 +590,7 @@ export function RDPScreen({
             </Button>
           )}
         </Group>
-      </Group>
+      </Group>}
       {device && !readOnly && state === 'live' && (
         <Group gap="xs" wrap="wrap" aria-label="Device keys" data-testid="device-toolbar">
           <Group gap={4} wrap="nowrap">
@@ -607,6 +636,9 @@ export function RDPScreen({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          // In the workspace the screen has the window to itself: no frame,
+          // and it fills what the tab bar leaves.
+          ...(bare ? { border: 0, borderRadius: 0, flex: 1, minHeight: 0 } : {}),
         }}
       >
         <div ref={boxRef} style={{ display: 'flex', justifyContent: 'center' }} />
