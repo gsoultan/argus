@@ -228,6 +228,15 @@ nfpms:
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
+    # Backups (and so updates from the console, which take one first) run
+    # pg_dump. Recommended rather than required: the database may be on
+    # another host, and the client has to be at the server's major version or
+    # newer, which the distribution's default may not be.
+    overrides:
+      deb:
+        recommends: [postgresql-client]
+      rpm:
+        recommends: [postgresql]
     contents:
       - src: packaging/systemd/argus-control.service
         dst: /lib/systemd/system/argus-control.service

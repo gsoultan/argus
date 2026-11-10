@@ -913,7 +913,12 @@ starts `argus-control-update.service` as root, which:
 1. downloads the release's package from GitHub, or from the mirror in
    `ARGUS_CONTROL_RELEASES_URL` in `/etc/argus/control-update.env`, and checks
    it against the release's `checksums.txt`;
-2. runs `argus-backup.service`, and changes nothing if the backup fails;
+2. runs `argus-backup.service`, and changes nothing if the backup fails. If
+   `pg_dump` is missing it first installs the distribution's PostgreSQL client
+   (`postgresql-client`, or `postgresql` on RHEL); if that client is older
+   than your database server, the backup fails with a version mismatch and
+   you install the matching one, e.g. `postgresql-client-16` from the
+   PostgreSQL repository;
 3. installs the package and restarts `argus-control`;
 4. waits up to 90 seconds for the new version to say it is listening with its
    database, and if it does not, or it exits three times, reinstalls the

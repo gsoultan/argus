@@ -142,6 +142,7 @@ func newHelper(t *testing.T, host *fakeHost, url string) *Helper {
 	h := &Helper{
 		Dir: dir, Work: filepath.Join(t.TempDir(), "work"), ReleasesURL: url, Executable: exe,
 		Run: host.run, Output: host.output, Arch: "amd64",
+		LookPath: func(string) (string, error) { return "/usr/bin/pg_dump", nil },
 		Restarts: func() int {
 			host.mu.Lock()
 			defer host.mu.Unlock()
@@ -315,6 +316,41 @@ func TestLastError(t *testing.T) {
 	} {
 		if got := lastError(log); got != want {
 			t.Errorf("lastError(%q) = %q, want %q", log, got, want)
+		}
+	}
+}
+
+// A host without pg_dump gets the PostgreSQL client before the backup runs,
+// instead of an update that stops until someone installs it by hand.
+func TestMissingPgDumpIsInstalled(t *testing.T) {
+	host := &fakeHost{t: t, version: "0.8.2"}
+	h := newHelper(t, host, releases(t, "0.8.2", "0.9.0").URL)
+	h.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	if got := h.Apply(context.Background()); got != StateDone {
+		st, _ := ReadStatus(h.Dir)
+		t.Fatalf("state %q: %s", got, st.Message)
+	}
+	install, backup := -1, -1
+	for i, c := range host.calls {
+		switch c {
+		case "apt-get install -y --no-install-recommends postgresql-client":
+			install = i
+		case "systemctl start argus-backup.service":
+			backup = i
+		}
+	}
+	if install < 0 || backup < install {
+		t.Fatalf("client not installed before the backup: %v", host.calls)
+	}
+
+	// With pg_dump already there, nothing is installed.
+	host = &fakeHost{t: t, version: "0.8.2"}
+	h = newHelper(t, host, releases(t, "0.8.2", "0.9.0").URL)
+	h.LookPath = func(string) (string, error) { return "/usr/bin/pg_dump", nil }
+	h.Apply(context.Background())
+	for _, c := range host.calls {
+		if strings.HasPrefix(c, "apt-get") {
+			t.Fatalf("installed with pg_dump present: %s", c)
 		}
 	}
 }
