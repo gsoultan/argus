@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,7 +113,11 @@ func Enroll(ctx context.Context, opts EnrollOptions) (Enrollment, error) {
 	case opts.CAFile != "":
 		tlsCfg, err = tlsconfig.Client(tlsconfig.ClientOptions{CAFile: opts.CAFile})
 	case opts.Pin != "":
-		tlsCfg, err = tlsconfig.Pinned(opts.Pin)
+		// The pinned key, or a public certificate for this name: the pin is
+		// the control plane's guess at what this server meets at its
+		// address, made from the control plane's own network, and behind a
+		// Cloudflare Tunnel with split DNS that guess is wrong outside it.
+		tlsCfg, err = tlsconfig.PinnedOrPublic(opts.Pin)
 	default:
 		tlsCfg, err = tlsconfig.Client(tlsconfig.ClientOptions{})
 	}
@@ -187,7 +190,7 @@ func Enroll(ctx context.Context, opts EnrollOptions) (Enrollment, error) {
 			return Enrollment{}, err
 		}
 		enr.CAFile = caPath
-	case resp.TLS != nil && verifiesWithSystemRoots(*resp.TLS, u.Hostname()):
+	case resp.TLS != nil && tlsconfig.VerifiesWithSystemRoots(*resp.TLS, u.Hostname()) == nil:
 		// A public certificate after all; the pin was belt and braces.
 	default:
 		// Works now, and stops working when the control plane's key changes.
@@ -232,22 +235,6 @@ func (e *Enrollment) TLS() (*tls.Config, error) {
 	default:
 		return tlsconfig.Client(tlsconfig.ClientOptions{})
 	}
-}
-
-// verifiesWithSystemRoots reports whether the system trust store alone would
-// have accepted this server.
-func verifiesWithSystemRoots(cs tls.ConnectionState, serverName string) bool {
-	if len(cs.PeerCertificates) == 0 {
-		return false
-	}
-	inter := x509.NewCertPool()
-	for _, c := range cs.PeerCertificates[1:] {
-		inter.AddCert(c)
-	}
-	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{
-		Intermediates: inter, DNSName: serverName,
-	})
-	return err == nil
 }
 
 // writePrivate writes a file only root can read, replacing it atomically so a
