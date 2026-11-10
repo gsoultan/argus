@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -206,5 +207,56 @@ func TestInterfaceReportIsBounded(t *testing.T) {
 	b := (&HostSystem{Interfaces: ifs}).bounded().Interfaces
 	if len(b) != maxInterfaces || len(b[0].Name) != 64 || b[0].MAC != "" || len(b[0].Addresses) != maxIfaceAddrs {
 		t.Errorf("%d interfaces, first %q mac %q with %d addresses", len(b), b[0].Name, b[0].MAC, len(b[0].Addresses))
+	}
+}
+
+// The assets list carries each server's reported addresses for those who see
+// the fleet, and never for an operator: the same rule as the System card.
+func TestAssetsListCarriesReportedAddresses(t *testing.T) {
+	a, s, h, _ := enrollAPI(t)
+	operator, _ := newAccount(t, s, "operator")
+	a.UserTokens["operator-token"] = operator
+	asset, cred := enrolledAsset(t, s, h)
+	facts := `{"hostname":"` + asset.Hostname + `","os":"Ubuntu 24.04.1 LTS","system":{"kernel":"6.8",` +
+		`"interfaces":[{"name":"eth0","addresses":["203.0.113.10/24","10.0.0.5/16"]},` +
+		`{"name":"eth1","addresses":["10.0.0.5/16","fd00::5/64"]}]}}`
+	if w := do(t, h, http.MethodPost, "/api/v1/report/facts", cred, facts); w.Code != http.StatusOK {
+		t.Fatalf("facts: %d %s", w.Code, w.Body)
+	}
+	list := func(token string) map[string]Asset {
+		t.Helper()
+		w := do(t, h, http.MethodGet, "/api/v1/assets", token, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET assets as %s: %d %s", token, w.Code, w.Body)
+		}
+		var got []Asset
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		by := map[string]Asset{}
+		for _, a := range got {
+			by[a.ID] = a
+		}
+		return by
+	}
+
+	got, ok := list("admin-token")[asset.ID]
+	if !ok {
+		t.Fatal("the asset is missing from the admin's list")
+	}
+	// Each address once, in interface order, with what kind it is.
+	if a := fmt.Sprint(got.Addresses); a != "[{203.0.113.10 ipv4 true eth0} {10.0.0.5 ipv4 false eth0} {fd00::5 ipv6 false eth1}]" {
+		t.Errorf("addresses = %s", a)
+	}
+
+	if err := s.SetAssignment(context.Background(), asset.ID, operator, []string{"ops"}, "admin@corp.example"); err != nil {
+		t.Fatalf("SetAssignment: %v", err)
+	}
+	mine, ok := list("operator-token")[asset.ID]
+	if !ok {
+		t.Fatal("the operator's assigned asset is missing from their list")
+	}
+	if mine.Addresses != nil {
+		t.Errorf("an operator was sent the agent's addresses: %v", mine.Addresses)
 	}
 }

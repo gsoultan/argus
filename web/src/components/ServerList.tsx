@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router'
 import { IconBrandWindows, IconDeviceMobile, IconSearch, IconTerminal2 } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { ReachBadge, isUp, kindOf, reachOf, shortName } from '~/components/myservers'
+import { addressesOf } from '~/lib/assetAddresses'
 import { assetsQuery } from '~/lib/queries'
 import { FS } from '~/theme'
 
@@ -25,7 +26,8 @@ export function ServerList({ currentId }: { currentId: string }) {
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return (assets ?? [])
-      .filter((a) => !needle || a.hostname.toLowerCase().includes(needle) || a.tags.some((t) => t.toLowerCase().includes(needle)))
+      .filter((a) => !needle || a.hostname.toLowerCase().includes(needle) || a.tags.some((t) => t.toLowerCase().includes(needle)) ||
+        addressesOf(a).some((x) => x.address.toLowerCase().includes(needle)))
       .filter((a) => {
         if (show === 'all') return true
         return show === 'online' ? isUp(reachOf(a)) : !isUp(reachOf(a))
@@ -41,7 +43,7 @@ export function ServerList({ currentId }: { currentId: string }) {
       <Box p="sm" style={{ borderBottom: '1px solid var(--color-line)' }}>
         <TextInput
           size="sm"
-          placeholder="Find a server"
+          placeholder="Find by name or IP"
           aria-label="Find a server in the list"
           leftSection={<IconSearch size={14} />}
           value={q}
@@ -81,7 +83,10 @@ export function ServerList({ currentId }: { currentId: string }) {
             </Box>
             <Box style={{ minWidth: 0, flex: 1 }}>
               <Text size="sm" fw={600} truncate>{shortName(a.hostname)}</Text>
-              <Text size={FS.micro} c="dimmed" truncate>{a.os || KIND_NAME[kindOf(a)]}</Text>
+              <Text size={FS.micro} c="dimmed" truncate>
+                {a.os || KIND_NAME[kindOf(a)]}
+                {addressesOf(a)[0] && <> · <Text span inherit ff="monospace">{addressesOf(a)[0]!.address}</Text></>}
+              </Text>
             </Box>
             <ReachBadge reach={reachOf(a)} />
           </Link>

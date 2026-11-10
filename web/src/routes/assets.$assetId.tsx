@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconPencil, IconServer2 } from '@tabler/icons-react'
 import { ReachBadge, reachOf } from '~/components/myservers'
+import { AssetAddresses } from '~/components/AssetAddresses'
 import { ServerList } from '~/components/ServerList'
 import { SplitView } from '~/components/SplitView'
 import { EmptyState, PageBody, PageHeader } from '~/components/page'
@@ -133,8 +134,9 @@ function AssetDetail() {
         description={
           <Group gap={SP.snug} wrap="wrap">
             <Text span size="sm" c="dimmed">
-              {ASSET_TYPE_LABEL[assetTypeOf(asset)].one} · {asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')} · {asset.address}
+              {ASSET_TYPE_LABEL[assetTypeOf(asset)].one} · {asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')}
             </Text>
+            <AssetAddresses asset={asset} withEntered size="sm" />
             {asset.tags.map((t) => (
               <Badge key={t} size="xs" variant="outline" color="slate">{t}</Badge>
             ))}

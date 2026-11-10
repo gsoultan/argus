@@ -272,6 +272,22 @@ export interface Asset {
   directSshAccounts?: Record<string, DirectSsh>
   /** What the agent said about the personal accounts it keeps. Admins only. */
   agentPersonalAccounts?: PersonalAccountState[]
+  /**
+   * The addresses the server's agent last reported, each once, in interface
+   * order. Only for those who see the whole fleet; absent for everyone else,
+   * from an older control plane, and when the agent reported none.
+   */
+  addresses?: AssetAddress[]
+}
+
+/** One address a server's agent reported, as the assets list carries it. */
+export interface AssetAddress {
+  address: string
+  family: 'ipv4' | 'ipv6'
+  /** Globally routable: not private, carrier NAT or reserved. */
+  public: boolean
+  /** Absent for an older agent's flat list. */
+  interface?: string
 }
 
 /**
