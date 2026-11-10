@@ -582,7 +582,7 @@ func (a *API) reporter(next func(http.ResponseWriter, *http.Request)) http.Handl
 			peer := servertls.PeerIdentity(r.TLS)
 			if peer == "" {
 				a.log.Warn("reporter call without a client certificate",
-					"remote", r.RemoteAddr, "path", r.URL.Path)
+					"remote", a.clientAddr(r), "path", r.URL.Path)
 				writeErr(w, http.StatusUnauthorized,
 					"a client certificate is required for reporter endpoints")
 				return
