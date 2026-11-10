@@ -217,7 +217,15 @@ esac
 
 say "Linking this server to Argus"
 if [ -n "$PIN" ]; then
-  argus-agent enroll --control-url "$CONTROL" --pin "$PIN" --token "$TOKEN"
+  # The pin is the control plane's guess at what this server meets at
+  # CONTROL, made from the control plane's own network. Behind a Cloudflare
+  # Tunnel with split DNS, a server outside that network meets Cloudflare's
+  # certificate instead. A failed handshake does not spend the token, so the
+  # address's public certificate is tried next, verified the ordinary way.
+  if ! argus-agent enroll --control-url "$CONTROL" --pin "$PIN" --token "$TOKEN"; then
+    say "Trying ${CONTROL}'s public certificate instead of the pin"
+    argus-agent enroll --control-url "$CONTROL" --token "$TOKEN"
+  fi
 else
   argus-agent enroll --control-url "$CONTROL" --token "$TOKEN"
 fi

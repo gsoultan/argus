@@ -95,3 +95,67 @@ func VerifiesServer(caPEM []byte, cs tls.ConnectionState, serverName string) err
 	})
 	return err
 }
+
+// PinnedOrPublic trusts the pinned key, or a certificate the system trust
+// store accepts for the name being dialled.
+//
+// For an agent enrolling with a pin it was handed. The pin is of the control
+// plane's own key, and whether it is in the command at all is the control
+// plane's guess at what a server will meet at its address -- made from the
+// control plane's own network. Behind a Cloudflare Tunnel with split DNS (the
+// name resolves to the control plane inside the office, to Cloudflare outside)
+// the guess is right for servers inside and wrong for every server outside,
+// which meet Cloudflare's certificate and were refused. A publicly trusted
+// certificate for the exact name is what curl, a browser and an unpinned
+// agent already accept there; the pin keeps working where the control plane
+// is reached directly with a certificate nothing public vouches for.
+func PinnedOrPublic(pin string) (*tls.Config, error) {
+	return pinnedOrRoots(pin, nil)
+}
+
+// pinnedOrRoots is PinnedOrPublic with the roots given (nil: the system's),
+// so a test can stand in for a public CA.
+func pinnedOrRoots(pin string, roots *x509.CertPool) (*tls.Config, error) {
+	cfg, err := Pinned(pin)
+	if err != nil {
+		return nil, err
+	}
+	pinned := cfg.VerifyConnection
+	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+		perr := pinned(cs)
+		if perr == nil {
+			return nil
+		}
+		if verifyWith(roots, cs, cs.ServerName) == nil {
+			return nil
+		}
+		return perr
+	}
+	return cfg, nil
+}
+
+// VerifiesWithSystemRoots reports whether the system trust store alone
+// accepts the server certificate in cs for serverName.
+func VerifiesWithSystemRoots(cs tls.ConnectionState, serverName string) error {
+	return verifyWith(nil, cs, serverName)
+}
+
+// verifyWith checks cs's leaf against roots (nil: the system's) for
+// serverName. An empty serverName is refused: a chain that names no one
+// proves nothing about the address dialled.
+func verifyWith(roots *x509.CertPool, cs tls.ConnectionState, serverName string) error {
+	if len(cs.PeerCertificates) == 0 {
+		return errors.New("server presented no certificate")
+	}
+	if serverName == "" {
+		return errors.New("no server name to verify the certificate for")
+	}
+	inter := x509.NewCertPool()
+	for _, c := range cs.PeerCertificates[1:] {
+		inter.AddCert(c)
+	}
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{
+		Roots: roots, Intermediates: inter, DNSName: serverName,
+	})
+	return err
+}

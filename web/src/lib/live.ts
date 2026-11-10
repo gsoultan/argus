@@ -873,8 +873,13 @@ export function installOneLiner(t: EnrollToken, version: string): string {
   // so curl and the agent verify it the ordinary way. The script is told too,
   // or it would hand the agent the control plane's own pin.
   if (!t.curlPin) q.set('pin', 'off')
-  const pin = t.curlPin ? `-k --pinnedpubkey '${t.curlPin}' ` : ''
-  return `curl -fsSL ${pin}'${base}/api/v1/install/agent.sh?${q.toString()}' | sudo sh`
+  const url = `'${base}/api/v1/install/agent.sh?${q.toString()}'`
+  if (!t.curlPin) return `curl -fsSL ${url} | sudo sh`
+  // The pin is the control plane's guess at what a server meets at this
+  // address, made from its own network. Behind a Cloudflare Tunnel with split
+  // DNS, a server outside that network meets Cloudflare's certificate and the
+  // pinned fetch fails, so the ordinary, verified fetch is tried next.
+  return `{ curl -fsSL -k --pinnedpubkey '${t.curlPin}' ${url} 2>/dev/null || curl -fsSL ${url}; } | sudo sh`
 }
 
 /**

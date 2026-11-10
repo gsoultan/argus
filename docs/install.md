@@ -852,6 +852,16 @@ public authority signed, so the command it shows has no pin: curl and the agent
 check that certificate the ordinary way, as a browser does. The server's page
 says "Connected over WebSocket".
 
+When the control plane reaches `argus.example.com` itself rather than
+Cloudflare (a local DNS record, a hosts entry, or a router that resolves the
+name to it), it sees its own certificate there and puts its pin in the
+command. Servers on that network meet the same certificate; servers anywhere
+else meet Cloudflare's. The command and the agent therefore accept either the
+pinned key or a publicly trusted certificate for that exact name, so the same
+command works from inside the network and from outside it. Before this, a
+server outside stopped with curl's `public key does not match pinned public
+key`.
+
 What this costs is QUIC. Measured, a WebSocket carries what the HTTPS fallback
 does (see [capacity](capacity.md#what-one-tunnel-carries)): typing feels the
 same, and one large download is bounded by the round trip to Cloudflare's edge

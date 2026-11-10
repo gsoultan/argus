@@ -128,6 +128,16 @@ func runInstallScript(t *testing.T, body, machine, sshdConfig string) (log, conf
 // script's failure returned rather than failing the test.
 func execInstallScript(t *testing.T, body, machine, sshdConfig, curl string) (log, conf, out string, err error) {
 	t.Helper()
+	return execInstallScriptAgent(t, body, machine, sshdConfig, curl, stubAgent)
+}
+
+// stubAgent stands in for argus-agent: every enroll works, and install prints
+// the ForceCommand line.
+const stubAgent = `[ "$1" = install ] && echo 'ForceCommand /usr/bin/argus-agent shim'; exit 0`
+
+// execInstallScriptAgent is execInstallScript with argus-agent's stub given.
+func execInstallScriptAgent(t *testing.T, body, machine, sshdConfig, curl, agent string) (log, conf, out string, err error) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the script is for Linux; its stubs are POSIX sh")
 	}
@@ -157,7 +167,7 @@ func execInstallScript(t *testing.T, body, machine, sshdConfig, curl string) (lo
 	stub("apt-get", "")
 	stub("systemctl", "")
 	stub("sshd", "")
-	stub("argus-agent", `[ "$1" = install ] && echo 'ForceCommand /usr/bin/argus-agent shim'; exit 0`)
+	stub("argus-agent", agent)
 
 	confPath := filepath.Join(dir, "sshd_config")
 	if err := os.WriteFile(confPath, []byte(sshdConfig), 0o644); err != nil {
@@ -407,5 +417,38 @@ func TestTheInstallScriptInstallsTheNewestKnownRelease(t *testing.T) {
 	}
 	if _, body := installScript(t, installAPI(), goodToken, "latest", "https://argus.example.com"); !strings.Contains(body, "VERSION='latest'") {
 		t.Error("with no release known, latest should be left for the script to find")
+	}
+}
+
+// Behind a Cloudflare Tunnel with split DNS the control plane meets itself at
+// its own address and puts its pin in the command, while a server outside its
+// network meets Cloudflare there. The pinned enroll fails on that server, and
+// the install used to stop with "public key does not match pinned public key".
+// A failed handshake spends no token, so the script enrols again with the
+// address's public certificate.
+func TestTheInstallScriptEnrolsWithoutThePinWhenThePinFails(t *testing.T) {
+	a := pinAPI("", nil)
+	_, body := installScript(t, a, goodToken, "1.4.0", "https://argus.example.com")
+	if !strings.Contains(body, "PIN='sha256:") {
+		t.Fatalf("the script carries no pin to fall back from:\n%s", body)
+	}
+	pinRefused := `case "$*" in *--pin*) exit 1 ;; esac
+` + stubAgent
+	log, _, out, err := execInstallScriptAgent(t, body, "x86_64", "PasswordAuthentication no\n", stubCurl, pinRefused)
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	unpinned := "argus-agent enroll --control-url https://argus.example.com --token " + goodToken
+	if !strings.Contains(log, "--pin sha256:") || !strings.Contains(log, unpinned+"\n") {
+		t.Fatalf("did not try the pin and then the public certificate:\n%s", log)
+	}
+	if !strings.Contains(log, "systemctl enable --now argus-agent") {
+		t.Errorf("the agent was not started after enrolling:\n%s", log)
+	}
+
+	// A pin that works is used alone.
+	log, _ = runInstallScript(t, body, "x86_64", "PasswordAuthentication no\n")
+	if strings.Count(log, "argus-agent enroll") != 1 {
+		t.Errorf("enrolled more than once with a pin that worked:\n%s", log)
 	}
 }
