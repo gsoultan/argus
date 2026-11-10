@@ -9,7 +9,7 @@ import {
   parseCommand,
   parseWireToSurface1,
 } from '~/lib/gfx'
-import { clip, codecString, merge } from '~/lib/gfxRenderer'
+import { clip, codecString, paints } from '~/lib/gfxRenderer'
 
 /** Little-endian bytes, built a field at a time. */
 class Bytes {
@@ -135,10 +135,19 @@ describe('dirty rectangles', () => {
     expect(clip({ left: 50, top: 0, right: 60, bottom: 10 }, { width: 40, height: 40 })).toBeNull()
   })
 
-  it('covers many with one', () => {
+  it('paints a few one by one', () => {
     const few = [{ left: 0, top: 0, right: 1, bottom: 1 }]
-    expect(merge(few)).toBe(few)
-    const many = Array.from({ length: 40 }, (_, i) => ({ left: i, top: i, right: i + 2, bottom: i + 3 }))
-    expect(merge(many)).toEqual([{ left: 0, top: 0, right: 41, bottom: 42 }])
+    expect(paints(few)).toEqual([{ box: few[0], parts: null }])
+  })
+
+  // Screen sharing draws exact tiles straight onto the screen, so the surface
+  // holds older pictures between the dirty rectangles. Painting the whole box
+  // around many rectangles put those old pictures back on screen.
+  it('paints many in one bitmap, but only where they are', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ left: i * 10, top: 0, right: i * 10 + 2, bottom: 3 }))
+    const out = paints(many)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.box).toEqual({ left: 0, top: 0, right: 392, bottom: 3 })
+    expect(out[0]?.parts).toEqual(many)
   })
 })

@@ -79,6 +79,16 @@ async function wantsGraphics(): Promise<boolean> {
 }
 
 /**
+ * The size to show a screen of width by height at, in a room of roomW by
+ * roomH: all of it, at its own aspect, and never larger than it is.
+ */
+export function fitScreen(width: number, height: number, roomW: number, roomH: number): { w: number; h: number } {
+  if (width <= 0 || height <= 0) return { w: 0, h: 0 }
+  const scale = Math.min(roomW / width, roomH / height, 1)
+  return { w: Math.max(Math.floor(width * scale), 1), h: Math.max(Math.floor(height * scale), 1) }
+}
+
+/**
  * A Remote Desktop session in a canvas.
  *
  * Decoding and drawing happen in a worker (rdp.worker.ts), which is handed
@@ -136,9 +146,8 @@ export function RDPScreen({
     Object.assign(canvas.style, {
       // Scaled by the browser rather than by resampling pixels in
       // JavaScript, and never scaled up past its own resolution — the
-      // desktop is shown at full fidelity or letterboxed, not blurred.
-      width: '100%',
-      height: 'auto',
+      // desktop is shown at full fidelity or letterboxed, not blurred. Its
+      // size is set by place() below, so the whole screen is always in view.
       display: 'block',
       outline: 'none',
       cursor: readOnly ? 'default' : 'crosshair',
@@ -156,12 +165,28 @@ export function RDPScreen({
         canvas.width = width
         canvas.height = height
       }
-      // A phone is taller than it is wide: shown no taller than the window,
-      // or its top is all that is seen and every tap needs a scroll first.
-      const cap = device ? Math.min(width, Math.floor(((window.innerHeight - 240) * width) / height)) : width
-      canvas.style.maxWidth = `${Math.max(cap, 160)}px`
-      canvas.style.aspectRatio = `${width} / ${height}`
+      place()
     }
+
+    // The whole screen fits the room it has, as wide as the frame and no
+    // lower than the window's bottom edge (or the display's, full screen):
+    // the page around a session clips what overflows, so a canvas sized by
+    // width alone lost the bottom of a screen taller than what was left.
+    const place = () => {
+      const { width, height } = sizeRef.current
+      const frame = box.parentElement ?? box
+      const full = document.fullscreenElement === frame
+      const roomW = frame.clientWidth || width
+      const top = full ? 0 : frame.getBoundingClientRect().top
+      const roomH = Math.max(window.innerHeight - top - (full ? 0 : 16), 160)
+      const { w, h } = fitScreen(width, height, roomW, roomH)
+      canvas.style.width = `${w}px`
+      canvas.style.height = `${h}px`
+    }
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(place) : null
+    observer?.observe(box.parentElement ?? box)
+    window.addEventListener('resize', place)
+    document.addEventListener('fullscreenchange', place)
 
     const setStatus = (s: RDPState, d?: string) => {
       stateRef.current = s
@@ -346,6 +371,9 @@ export function RDPScreen({
     return () => {
       disposed = true
       window.clearInterval(tick)
+      observer?.disconnect()
+      window.removeEventListener('resize', place)
+      document.removeEventListener('fullscreenchange', place)
       wsRef.current?.close()
       worker.terminate()
       for (const r of pending) r.bitmap.close()
@@ -448,6 +476,20 @@ export function RDPScreen({
    * passes the keys on as the secure attention sequence, and a shared
    * console's agent sends that sequence itself.
    */
+  const frameRef = useRef<HTMLDivElement>(null)
+  const [full, setFull] = useState(false)
+  useEffect(() => {
+    const on = () => setFull(document.fullscreenElement !== null && document.fullscreenElement === frameRef.current)
+    document.addEventListener('fullscreenchange', on)
+    return () => document.removeEventListener('fullscreenchange', on)
+  }, [])
+  /** The screen alone on the display, as a remote desktop app shows it. Esc leaves. */
+  const toggleFull = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+    else void frameRef.current?.requestFullscreen?.().catch(() => undefined)
+    canvasRef.current?.focus()
+  }
+
   const sendCtrlAltDel = () => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
@@ -508,6 +550,11 @@ export function RDPScreen({
               {detail}
             </Text>
           )}
+          {state === 'live' && typeof document.documentElement.requestFullscreen === 'function' && (
+            <Button size="compact-xs" variant="default" onClick={toggleFull}>
+              {full ? 'Exit full screen' : 'Full screen'}
+            </Button>
+          )}
           {!readOnly && !device && state === 'live' && (
             <Button size="compact-xs" variant="default" onClick={sendCtrlAltDel}>
               Ctrl+Alt+Del
@@ -548,19 +595,21 @@ export function RDPScreen({
         </Group>
       )}
       <Box
+        ref={frameRef}
         style={{
           background: '#05080c',
           border: '1px solid var(--color-line)',
           borderRadius: 8,
           overflow: 'hidden',
           lineHeight: 0,
-          // A phone sits in the middle of the dark surface rather than
-          // against its left edge.
-          display: device ? 'flex' : undefined,
-          justifyContent: device ? 'center' : undefined,
+          // The screen sits in the middle of the dark surface rather than
+          // against its left edge, in a window and full screen alike.
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
         }}
       >
-        <div ref={boxRef} style={device ? { width: '100%', display: 'flex', justifyContent: 'center' } : undefined} />
+        <div ref={boxRef} style={{ display: 'flex', justifyContent: 'center' }} />
       </Box>
     </Stack>
   )

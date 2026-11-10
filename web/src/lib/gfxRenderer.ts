@@ -528,18 +528,15 @@ export class GraphicsRenderer {
         this.stats.unmapped++
         continue
       }
-      for (const r of merge(dirty)) {
-        const width = r.right - r.left
-        const height = r.bottom - r.top
-        const at = s.output
+      const at = s.output
+      for (const p of paints(dirty)) {
+        const { box } = p
+        const width = box.right - box.left
+        const height = box.bottom - box.top
         out.push(
-          createImageBitmap(s.canvas, r.left, r.top, width, height).then((bitmap) => ({
-            x: at.x + r.left,
-            y: at.y + r.top,
-            width,
-            height,
-            bitmap,
-          })),
+          (p.parts ? masked(s.canvas, box, p.parts) : createImageBitmap(s.canvas, box.left, box.top, width, height)).then(
+            (bitmap) => ({ x: at.x + box.left, y: at.y + box.top, width, height, bitmap }),
+          ),
         )
       }
     }
@@ -601,19 +598,39 @@ export function clip(r: Rect, s: { width: number; height: number }): Rect | null
 }
 
 /**
- * Fewer, larger rectangles: past MAX_DIRTY, the one rectangle covering them
- * all. Repainting a little extra costs less than a bitmap per rectangle.
+ * What one frame paints from a surface onto the screen: each dirty rectangle
+ * on its own, or past MAX_DIRTY one bitmap of the box around them that holds
+ * only their pixels (parts) and is transparent everywhere else.
+ *
+ * Never the whole box. The screen is not only this surface: screen sharing
+ * draws its exact tiles straight onto it, so the surface still holds older
+ * pictures wherever a tile was sent exactly since. Painting the box painted
+ * those old pictures back over the screen, as smeared copies of earlier frames.
  */
-export function merge(rects: Rect[]): Rect[] {
-  if (rects.length <= MAX_DIRTY) return rects
-  return [
-    rects.reduce((a, r) => ({
-      left: Math.min(a.left, r.left),
-      top: Math.min(a.top, r.top),
-      right: Math.max(a.right, r.right),
-      bottom: Math.max(a.bottom, r.bottom),
-    })),
-  ]
+export function paints(rects: Rect[]): Array<{ box: Rect; parts: Rect[] | null }> {
+  if (rects.length <= MAX_DIRTY) return rects.map((r) => ({ box: r, parts: null }))
+  const box = rects.reduce((a, r) => ({
+    left: Math.min(a.left, r.left),
+    top: Math.min(a.top, r.top),
+    right: Math.max(a.right, r.right),
+    bottom: Math.max(a.bottom, r.bottom),
+  }))
+  return [{ box, parts: rects }]
+}
+
+/**
+ * A bitmap of box holding the surface's pixels in parts only; the rest is
+ * transparent, so drawing it leaves the screen there as it is.
+ */
+function masked(src: OffscreenCanvas, box: Rect, parts: Rect[]): Promise<ImageBitmap> {
+  const c = new OffscreenCanvas(box.right - box.left, box.bottom - box.top)
+  const ctx = c.getContext('2d')
+  for (const r of parts) {
+    const w = r.right - r.left
+    const h = r.bottom - r.top
+    ctx?.drawImage(src, r.left, r.top, w, h, r.left - box.left, r.top - box.top, w, h)
+  }
+  return createImageBitmap(c)
 }
 
 function snapshot(src: OffscreenCanvas, r: Rect): OffscreenCanvas {

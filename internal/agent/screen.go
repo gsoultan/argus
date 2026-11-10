@@ -649,9 +649,19 @@ func (m *motion) send(s screenShot, d *screenDiffer, sharp *screenSharpener, job
 		tiles := make([]int, len(jobs))
 		for i, j := range jobs {
 			tiles[i] = j.index
-			sharp.mark(j.index, now)
 		}
 		regions = tileRegions(d.cols, s.width, s.height, tiles)
+		// Every tile the picture is drawn over is now video, not only the
+		// ones that changed: past screenMaxRegions the picture covers one
+		// rectangle around them all, and a tile inside it that did not
+		// change would otherwise stay soft until it next changes.
+		for _, r := range regions {
+			for ty := r.Min.Y / screenTile; ty <= (r.Max.Y-1)/screenTile; ty++ {
+				for tx := r.Min.X / screenTile; tx <= (r.Max.X-1)/screenTile; tx++ {
+					sharp.mark(ty*d.cols+tx, now)
+				}
+			}
+		}
 	}
 	if err := writeScreenMsg(m.out, scrVideo, encodeVideoMsg(key, s.width, s.height, regions, h264)); err != nil {
 		return false, err
