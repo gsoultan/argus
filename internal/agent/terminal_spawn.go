@@ -215,19 +215,7 @@ func spawnSystemd(a loginAccount, tty *os.File, actor string) (shellProc, error)
 	// which is what lets its exit status be read once systemd-run returns.
 	// systemd-run's own exit code does not carry it on every version (255
 	// returned 1 for a shell that exited 7).
-	run := exec.Command("systemd-run", "--wait",
-		"--service-type=exec", "--unit="+unit,
-		"--uid="+a.name,
-		// A login: PAM account and session, limits, a logind session.
-		"-p", "PAMName=login",
-		"-p", "TTYPath="+tty.Name(),
-		"-p", "StandardInput=tty", "-p", "StandardOutput=tty", "-p", "StandardError=tty",
-		"-p", "WorkingDirectory=~",
-		"-p", "SendSIGHUP=yes",
-		"-p", "TimeoutStopSec="+strconv.Itoa(int(hangupWait.Seconds()))+"s",
-		"--setenv=TERM=xterm-256color",
-		"--setenv=ARGUS_SESSION_FOR="+actor,
-		"/bin/sh", "-c", launcher, a.shell, fifo)
+	run := exec.Command("systemd-run", sessionUnitArgs(unit, a, tty.Name(), actor, fifo)...)
 	var stderr bytes.Buffer
 	run.Stdout, run.Stderr = &stderr, &stderr
 	if err := run.Start(); err != nil {
@@ -274,6 +262,32 @@ func spawnSystemd(a loginAccount, tty *os.File, actor string) (shellProc, error)
 		return nil, fmt.Errorf("the session unit did not start: %s", strings.TrimSpace(stderr.String()))
 	}
 	return p, nil
+}
+
+// sessionUnitArgs is what systemd-run is given for one login shell.
+func sessionUnitArgs(unit string, a loginAccount, ttyPath, actor, fifo string) []string {
+	// Type=simple, not exec. A login unit's start under exec waits for
+	// systemd to see the launcher's execve, and with PAMName and a TTY some
+	// systemd versions never see it: the job sat in "activating" until
+	// DefaultTimeoutStartSec, 90 seconds, then systemd killed the unit and
+	// every session ended at 1m30s with exit 129. Nothing is lost: the
+	// launcher is /bin/sh, and the login shell it execs later is outside
+	// what exec could check anyway. TimeoutStartSec=infinity as well, so a
+	// host whose default is shorter cannot do the same to a slow PAM stack.
+	return []string{"--wait",
+		"--service-type=simple", "--unit=" + unit,
+		"-p", "TimeoutStartSec=infinity",
+		"--uid=" + a.name,
+		// A login: PAM account and session, limits, a logind session.
+		"-p", "PAMName=login",
+		"-p", "TTYPath=" + ttyPath,
+		"-p", "StandardInput=tty", "-p", "StandardOutput=tty", "-p", "StandardError=tty",
+		"-p", "WorkingDirectory=~",
+		"-p", "SendSIGHUP=yes",
+		"-p", "TimeoutStopSec=" + strconv.Itoa(int(hangupWait.Seconds())) + "s",
+		"--setenv=TERM=xterm-256color",
+		"--setenv=ARGUS_SESSION_FOR=" + actor,
+		"/bin/sh", "-c", launcher, a.shell, fifo}
 }
 
 func (p *systemdProc) Pid() int { return p.pid }
