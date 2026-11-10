@@ -360,6 +360,16 @@ export function FidelityBadge({ fidelity }: { fidelity: RecordingFidelity }) {
       </Tooltip>
     )
   }
+  if (fidelity === 'rdp') {
+    // Remote Desktop, a shared console screen and an Android device all
+    // record this way. It used to fall through to "not recorded", so every
+    // desktop session said it was not recorded while its replay played.
+    return (
+      <Tooltip label="Every screen update, recorded as it was sent, under the same hash chain as a terminal.">
+        <Badge color="teal" leftSection={<IconLock size={11} />}>desktop</Badge>
+      </Tooltip>
+    )
+  }
   return <Badge color="rose">not recorded</Badge>
 }
 

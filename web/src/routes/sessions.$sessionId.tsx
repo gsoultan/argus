@@ -51,10 +51,10 @@ import { buildCast } from '~/lib/cast'
 import { downloadText, stamp } from '~/lib/download'
 import { isStatementProtocol } from '~/lib/engines'
 import { notifyOk } from '~/lib/notify'
-import type { ReplayActivity } from '~/types/domain'
+import type { ReplayActivity, Session } from '~/types/domain'
 import type { KernelExec } from '~/lib/castDecode'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
-import { live, rdpReplay, shadowTicket, watchEndpoint } from '~/lib/live'
+import { isConfigured, live, rdpReplay, shadowTicket, watchEndpoint } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 
 export const Route = createFileRoute('/sessions/$sessionId')({
@@ -70,7 +70,14 @@ function SessionDetail() {
   // ran otherwise kept saying there was nothing to replay until reloaded.
   const { data: session } = useQuery({
     ...sessionQuery(sessionId),
-    refetchInterval: (q) => (q.state.data?.state === 'active' ? 5_000 : false),
+    // And while an ended session's recording is still on its way from the
+    // host: it lands a few seconds to minutes after the end, and the replay
+    // below waits on it.
+    refetchInterval: (q) => {
+      const s = q.state.data
+      if (s?.state === 'active') return 5_000
+      return s && !s.recordingKey ? 10_000 : false
+    },
   })
   const terminate = useTerminateSession()
   const [confirmOpen, confirm] = useDisclosure(false)
@@ -91,6 +98,7 @@ function SessionDetail() {
     activity?: ReplayActivity[]
   } | null>(null)
   const [rdpError, setRdpError] = useState<string>()
+  const [rdpProgress, setRdpProgress] = useState<{ received: number; total: number | null }>()
   // Why the control plane would not give us the recording, in its own words.
   // Set only when one answered -- an unconfigured console has nothing to say.
   const [castError, setCastError] = useState<string>()
@@ -106,8 +114,17 @@ function SessionDetail() {
   // and ?h= because the stream carries none.
   const rdpUrl = new URLSearchParams(window.location.search).get('rdp')
 
+  // Fetched once the session has ended and its recording has reached the
+  // control plane. It used to be fetched once, whenever the page opened: a
+  // page opened during a screen share, or in the minute after it while the
+  // agent was still shipping the file, said the recording was not available
+  // and kept saying so after it had landed.
+  const rdpReady = session?.state !== 'active' && !!session?.recordingKey
   useEffect(() => {
     if (session?.protocol !== 'rdp' || rdpFrames) return
+    // Without a control plane there is nothing to wait for; rdpReplay says so.
+    if (!rdpUrl && !rdpReady && isConfigured()) return
+    setRdpError(undefined)
     let cancelled = false
     void (async () => {
       try {
@@ -125,7 +142,9 @@ function SessionDetail() {
           })
           return
         }
-        const got = await rdpReplay(session.id)
+        const got = await rdpReplay(session.id, (received, total) => {
+          if (!cancelled) setRdpProgress({ received, total })
+        })
         if (cancelled) return
         if (!got) {
           setRdpError('This recording is not available for replay.')
@@ -141,7 +160,7 @@ function SessionDetail() {
     return () => {
       cancelled = true
     }
-  }, [session?.id, session?.protocol, rdpFrames, rdpUrl])
+  }, [session?.id, session?.protocol, rdpFrames, rdpUrl, rdpReady])
 
   useEffect(() => {
     let cancelled = false
@@ -475,7 +494,7 @@ function SessionDetail() {
                 ) : (
                   <Box p="lg">
                     <Text size={FS.meta} c="dimmed">
-                      {rdpError ?? 'Decoding the recording…'}
+                      {rdpError ?? rdpWaiting(session, rdpProgress)}
                     </Text>
                   </Box>
                 )
@@ -785,4 +804,26 @@ function renderExec(e: KernelExec): string {
     .map((a) => (a === '' ? "''" : /[\s'"\\$`]/.test(a) ? `'${a.replaceAll("'", `'\\''`)}'` : a))
     .join(' ')
   return e.truncated ? `${rendered} …[truncated]` : rendered
+}
+
+/**
+ * What the desktop player says before it has frames: why it is waiting, or
+ * how far the download has got.
+ */
+function rdpWaiting(
+  session: Pick<Session, 'state' | 'recordingKey'>,
+  progress: { received: number; total: number | null } | undefined,
+): string {
+  if (!isConfigured()) return 'Decoding the recording…'
+  if (session.state === 'active') {
+    return 'This session is still being recorded. The replay opens here once it ends.'
+  }
+  if (!session.recordingKey) {
+    return 'Recorded. The recording is on its way from the server and opens here when it arrives.'
+  }
+  if (!progress || progress.received === 0) return 'Decoding the recording…'
+  const got = bytes(progress.received)
+  return progress.total
+    ? `Loading the recording… ${got} of ${bytes(progress.total)}`
+    : `Loading the recording… ${got}`
 }

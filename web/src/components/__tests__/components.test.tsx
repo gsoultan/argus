@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { PlayerControls } from '~/components/PlayerControls'
 import { ErrorState } from '~/components/ErrorState'
-import { Stat, rowNav } from '~/components/primitives'
+import { FidelityBadge, Stat, rowNav } from '~/components/primitives'
 import { renderWithProviders as ui } from '~/test/render'
 
 const base = {
@@ -138,5 +138,20 @@ describe('Stat', () => {
     const { container } = ui(<Stat label="Hosts outside the inventory" value={0} />)
     expect(screen.getByText('0')).toBeInTheDocument()
     expect(container.querySelector('.mantine-Skeleton-root')).not.toBeInTheDocument()
+  })
+})
+
+describe('FidelityBadge', () => {
+  // A Remote Desktop, shared-screen or Android session is recorded as
+  // "rdp". It fell through to "not recorded" while its replay played.
+  it('does not call a desktop recording "not recorded"', () => {
+    ui(<FidelityBadge fidelity="rdp" />)
+    expect(screen.getByText('desktop')).toBeInTheDocument()
+    expect(screen.queryByText('not recorded')).not.toBeInTheDocument()
+  })
+
+  it('still says so for a session that was not recorded', () => {
+    ui(<FidelityBadge fidelity="none" />)
+    expect(screen.getByText('not recorded')).toBeInTheDocument()
   })
 })
