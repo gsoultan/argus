@@ -52,10 +52,13 @@ export default defineConfig({
         // rails on Activity and Audit, the broker workspace) arrive with those
         // chunks, so they are fetched on demand like the chunks themselves
         // rather than pushed at every first visit. So do the file browser's
-        // and the server cards' own (FileBrowser, myservers).
+        // and the server cards' own (FileBrowser, myservers), and the Connect
+        // drawer's and session workspace's (ConnectPanel, Workspace,
+        // ConnectDrawer), which load with the drawer or the first session.
         globIgnores: [
           'assets/routes-*.css', 'assets/SplitView-*.css', 'assets/Rails-*.css', 'assets/brokers-*.css',
           'assets/FileBrowser-*.css', 'assets/myservers-*.css',
+          'assets/ConnectPanel-*.css', 'assets/Workspace-*.css', 'assets/ConnectDrawer-*.css',
         ],
         // Anything the control plane serves must reach the control plane.
         //

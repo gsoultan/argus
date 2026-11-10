@@ -133,8 +133,12 @@ const BUDGET_KB = {
    * Combobox's shared code and the debounce hook. The dialogs, their calls
    * and their queries are in chunks of their own, kept out of the shared
    * live and queries modules.
+   * 311.2 kB with session tabs (309.9 before): the sessions store and the
+   * header's "sessions open" link, which have to be in the shell so a
+   * terminal or desktop keeps running while you move between pages. The
+   * Connect drawer and the workspace are lazy chunks.
    */
-  overview: 310,
+  overview: 312,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -186,8 +190,9 @@ const BUDGET_KB = {
    * database page's Who became a MultiSelect, so a route reaches MultiSelect
    * without Select and the bundler splits the Combobox code both share out
    * of Select's chunk. The bytes are the same; the rest is the extra file.
+   * 412.1 kB with session tabs: the overview's sessions store and header link.
    */
-  sessionDetail: 411,
+  sessionDetail: 413,
 }
 
 /**
