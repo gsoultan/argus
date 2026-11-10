@@ -51,8 +51,6 @@ import {
   requestControlUpdate as liveRequestControlUpdate,
   cancelControlUpdate as liveCancelControlUpdate,
   checkControlUpdate as liveCheckControlUpdate,
-  setControlBackupKeep as liveSetControlBackupKeep,
-  runControlBackup as liveRunControlBackup,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -182,27 +180,6 @@ export function useCancelControlUpdate() {
   return useMutation({
     mutationFn: liveCancelControlUpdate,
     onSettled: () => void qc.invalidateQueries({ queryKey: controlUpdateKey }),
-  })
-}
-
-export const controlBackupsKey = ['platform', 'backups'] as const
-
-/** Sets how many of the control plane's own backups are kept. */
-export function useSetControlBackupKeep() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: liveSetControlBackupKeep,
-    onSuccess: (v) => qc.setQueryData(controlBackupsKey, v),
-  })
-}
-
-/** Asks for a backup of the control plane now. */
-export function useRunControlBackup() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: liveRunControlBackup,
-    onSuccess: (v) => qc.setQueryData(controlBackupsKey, v),
-    onSettled: () => void qc.invalidateQueries({ queryKey: controlBackupsKey }),
   })
 }
 

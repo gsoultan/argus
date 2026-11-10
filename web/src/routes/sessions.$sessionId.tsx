@@ -54,7 +54,7 @@ import { notifyOk } from '~/lib/notify'
 import type { ReplayActivity, Session } from '~/types/domain'
 import type { KernelExec } from '~/lib/castDecode'
 import { sessionQuery, useTerminateSession } from '~/lib/queries'
-import { isConfigured, live, rdpReplay, shadowTicket, watchEndpoint } from '~/lib/live'
+import { isConfigured, live, shadowTicket, watchEndpoint } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 
 export const Route = createFileRoute('/sessions/$sessionId')({
@@ -142,6 +142,8 @@ function SessionDetail() {
           })
           return
         }
+        const { rdpReplay } = await import('~/lib/rdpReplayFetch')
+        if (cancelled) return
         const got = await rdpReplay(session.id, (received, total) => {
           if (!cancelled) setRdpProgress({ received, total })
         })

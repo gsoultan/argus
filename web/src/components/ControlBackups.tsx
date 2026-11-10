@@ -9,9 +9,10 @@ import {
 import { SectionCard } from '~/components/page'
 import { ErrorState } from '~/components/ErrorState'
 import { Mono, absTime, bytes, relTime } from '~/components/primitives'
-import { controlBackups, type ControlBackupsView } from '~/lib/live'
+import {
+  controlBackups, controlBackupsKey, useRunControlBackup, useSetControlBackupKeep, type ControlBackupsView,
+} from '~/lib/controlBackups'
 import { notifyOk, run } from '~/lib/notify'
-import { controlBackupsKey, useRunControlBackup, useSetControlBackupKeep } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 
 /**

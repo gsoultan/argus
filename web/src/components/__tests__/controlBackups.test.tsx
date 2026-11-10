@@ -1,10 +1,10 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ControlBackupsPanel } from '~/components/ControlBackups'
-import type { ControlBackupsView } from '~/lib/live'
+import type { ControlBackupsView } from '~/lib/controlBackups'
 import { renderWithProviders } from '~/test/render'
 
-const live = vi.hoisted(() => ({ setControlBackupKeep: vi.fn(), runControlBackup: vi.fn() }))
+const live = vi.hoisted(() => ({ send: vi.fn() }))
 
 vi.mock('~/lib/live', async (orig) => ({
   ...(await orig<typeof import('~/lib/live')>()),
@@ -65,13 +65,13 @@ describe('The control plane\'s own backups', () => {
   })
 
   it('saves how many to keep', async () => {
-    live.setControlBackupKeep.mockResolvedValue(view({ keep: 5, keepSetHere: true }))
+    live.send.mockResolvedValue(view({ keep: 5, keepSetHere: true }))
     renderWithProviders(<ControlBackupsPanel v={view()} />)
     const save = screen.getByTestId('backup-keep-save') as HTMLButtonElement
     expect(save.disabled).toBe(true)
     fireEvent.change(screen.getByTestId('backup-keep'), { target: { value: '5' } })
     await waitFor(() => expect(save.disabled).toBe(false))
     fireEvent.click(save)
-    await waitFor(() => expect(live.setControlBackupKeep.mock.calls[0]?.[0]).toBe(5))
+    await waitFor(() => expect(live.send).toHaveBeenCalledWith('PUT', '/api/v1/platform/backups/settings', { keep: 5 }))
   })
 })
