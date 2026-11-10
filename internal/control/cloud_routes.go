@@ -213,7 +213,7 @@ func (a *API) cloudPrepare(ctx context.Context, provider, accountID string, mana
 	base := a.cloudBase(ctx, p)
 	if base.Error != "" {
 		return CloudPrepared{}, http.StatusConflict, errors.New("argus-control has no AWS identity of its own yet: " + base.Error +
-			". Run it on EC2 with an instance profile, or set cloud.aws.profile or cloud.aws.credentials_file in its config")
+			". Run it on EC2 with an instance profile, or give it an IAM user's access key under Settings › Cloud identities")
 	}
 	ext, err := a.cloudExternalID(ctx, provider, accountID)
 	if err != nil {

@@ -6,7 +6,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  IconAlertTriangle, IconArchive, IconBell, IconCertificate, IconCloudUpload, IconDatabase,
+  IconAlertTriangle, IconArchive, IconBell, IconBrandAws, IconCertificate, IconCloud, IconCloudUpload, IconDatabase,
   IconDownload, IconKey, IconLogin, IconNetwork, IconServer2, IconShieldLock, type IconProps,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
@@ -14,8 +14,10 @@ import { Mono } from '~/components/primitives'
 import { PemField } from '~/components/Install'
 import {
   controlSettings, saveControlSettings,
-  testDatabase, testEmail, waitForControlPlane, type ControlSettings as Settings,
+  testCloudIdentity, testDatabase, testEmail, waitForControlPlane, type AWSIdentity,
+  type CloudIdentityCheck, type ControlSettings as Settings,
 } from '~/lib/live'
+import { cloudAccountsQuery } from '~/lib/cloud'
 import { downloadText } from '~/lib/download'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
 import { FS, INK } from '~/theme'
@@ -23,7 +25,7 @@ import { FS, INK } from '~/theme'
 const settingsKey = ['control-settings'] as const
 
 export type ControlSectionId =
-  | 'addresses' | 'signin' | 'security' | 'database' | 'certificate' | 'storage' | 'alerts'
+  | 'addresses' | 'signin' | 'security' | 'database' | 'certificate' | 'storage' | 'alerts' | 'cloud'
 
 export interface ControlSectionSpec {
   id: ControlSectionId
@@ -44,6 +46,7 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
   { id: 'storage', label: 'Recordings', icon: IconCloudUpload, keys: ['storage', 'agentKeepRecordingsDays', 'archive'] },
   { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts'] },
+  { id: 'cloud', label: 'Cloud identities', icon: IconCloud, keys: ['cloud'] },
 ]
 
 export type ControlSettingsState = ReturnType<typeof useControlSettings>
@@ -138,6 +141,7 @@ export function ControlSection({ id, ctl }: { id: ControlSectionId; ctl: Control
       {id === 'certificate' && <Certificate {...card} />}
       {id === 'storage' && <Storage {...card} />}
       {id === 'alerts' && <Alerts {...card} />}
+      {id === 'cloud' && <CloudIdentities {...card} />}
       <Text size={FS.micro} c="dimmed">
         Saved to <Mono>{s.configFile}</Mono>. Saving restarts the control plane on the new
         settings in a few seconds: people stay signed in and agents reconnect. Settings it
@@ -859,6 +863,168 @@ function Security({ s, edit }: CardProps) {
             description="A sign-in works only in the browser that made it. If its cookie turns up in another browser or a script, Argus refuses it, signs that session out and tells administrators. A browser updating itself is fine." />
         </Grid.Col>
       </Grid>
+    </SectionCard>
+  )
+}
+
+/** What the IAM user behind an access key needs: to assume Argus's roles, and nothing else. */
+const AWS_BASE_POLICY = `{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"],
+    "Resource": "arn:aws:iam::*:role/Argus*"
+  }]
+}`
+
+const AWS_SOURCES: { value: AWSIdentity['source']; label: string; detail: string }[] = [
+  { value: 'default', label: 'From where argus-control runs',
+    detail: 'An EC2 instance profile, a container task role, or AWS_ environment variables set for the service.' },
+  { value: 'key', label: 'An access key',
+    detail: 'For a control plane that is not on AWS. Make an IAM user that can only assume the Argus roles, and give it one access key.' },
+  { value: 'file', label: 'A profile or credentials file',
+    detail: 'A named profile on this host, for example IAM Roles Anywhere through credential_process, or a credentials file only argus-control can read.' },
+]
+
+/**
+ * Who argus-control is to each cloud. One identity per cloud for the whole
+ * platform: every organization's accounts trust it, each only together with
+ * an external id derived for that organization and account.
+ */
+function CloudIdentities({ s, edit }: CardProps) {
+  const accounts = useQuery(cloudAccountsQuery())
+  const [busy, setBusy] = useState(false)
+  const [checked, setChecked] = useState<CloudIdentityCheck | null>(null)
+  if (!s.cloud) {
+    return (
+      <SectionCard title="Cloud identities" icon={IconCloud}>
+        <Text size={FS.body} c="dimmed">
+          The identity argus-control uses for each cloud is shared by every organization, so it is set from the
+          default organization by the platform&apos;s owner.
+        </Text>
+      </SectionCard>
+    )
+  }
+  const a = s.cloud.aws
+  const set = (patch: Partial<AWSIdentity>) => {
+    setChecked(null)
+    edit({ cloud: { aws: { ...a, ...patch } } })
+  }
+  const base = accounts.data?.bases.find((b) => b.provider === 'aws')
+  const connected = accounts.data?.accounts.length ?? 0
+  const missing = a.source === 'key'
+    ? [!a.accessKeyId.trim() && 'access key id', !a.secretAccessKeySet && !a.secretAccessKey && 'secret access key']
+        .filter((m): m is string => Boolean(m))
+    : a.source === 'file' && !a.profile.trim() && !a.credentialsFile.trim() ? ['a profile or a credentials file'] : []
+  const test = async () => {
+    setBusy(true)
+    setChecked(null)
+    try {
+      const r = await testCloudIdentity('aws', { aws: a })
+      setChecked(r)
+      notifyOk('AWS answered', `As ${r.arn}.`)
+    } catch (err) {
+      notifyError('AWS did not accept it', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  // A new principal is one the connected accounts' roles do not trust yet.
+  const moves = Boolean(checked && base?.principal && checked.principal !== base.principal && connected > 0)
+  return (
+    <SectionCard title="Cloud identities" icon={IconCloud}
+      description="Who argus-control is to each cloud, before it steps into the role in a connected account. One per cloud for the whole platform: each organization's accounts trust it only together with an external id made for that organization and account, so one organization can never reach another's.">
+      <Stack gap="sm">
+        <Group gap="xs" wrap="nowrap" align="flex-start">
+          <IconBrandAws size={20} style={{ flexShrink: 0, marginTop: 2 }} />
+          <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+            <Group gap="xs">
+              <Text fw={600} size={FS.body}>AWS</Text>
+              {accounts.isPending ? null : base?.principal ? (
+                <Badge size="sm" variant="light" color="teal">Working</Badge>
+              ) : (
+                <Badge size="sm" variant="light" color="amber">No identity</Badge>
+              )}
+            </Group>
+            {base?.principal ? (
+              <Text size={FS.meta} c="dimmed" style={{ overflowWrap: 'anywhere' }}>
+                Now <Mono>{base.principal}</Mono>, from {base.source}.
+                {connected > 0 && ` ${connected} connected account${connected === 1 ? '' : 's'} trust it.`}
+              </Text>
+            ) : base?.error ? (
+              <Text size={FS.meta} c="dimmed" style={{ overflowWrap: 'anywhere' }}>{base.error}</Text>
+            ) : null}
+          </Stack>
+        </Group>
+        <Radio.Group value={a.source} onChange={(v) => set({ source: v as AWSIdentity['source'] })}>
+          <Stack gap="xs">
+            {AWS_SOURCES.map((o) => (
+              <Radio key={o.value} size="xs" value={o.value} label={o.label} description={o.detail} />
+            ))}
+          </Stack>
+        </Radio.Group>
+        {a.source === 'key' && (
+          <Grid gap="xs">
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <TextInput size="xs" label="Access key id" placeholder="AKIA…" autoComplete="off" withAsterisk
+                value={a.accessKeyId} onChange={(e) => set({ accessKeyId: e.currentTarget.value })} />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <SecretInput label="Secret access key" set={a.secretAccessKeySet} value={a.secretAccessKey} required
+                onChange={(v) => set({ secretAccessKey: v })} />
+            </Grid.Col>
+            <Grid.Col span={12}>
+              <Text size={FS.meta} c="dimmed" mb={4}>
+                The IAM user needs this policy and nothing more. Each account&apos;s argus-access stack decides what the
+                role can do there.
+              </Text>
+              <Textarea size="xs" readOnly autosize minRows={4} value={AWS_BASE_POLICY}
+                styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
+            </Grid.Col>
+          </Grid>
+        )}
+        {a.source === 'file' && (
+          <Grid gap="xs">
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <TextInput size="xs" label="Profile" placeholder="argus" value={a.profile}
+                onChange={(e) => set({ profile: e.currentTarget.value })} />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <TextInput size="xs" label="Credentials file" placeholder="/var/lib/argus-control/aws-credentials"
+                description="Mode 600, owned by the argus user." value={a.credentialsFile}
+                onChange={(e) => set({ credentialsFile: e.currentTarget.value })} />
+            </Grid.Col>
+          </Grid>
+        )}
+        <Grid gap="xs">
+          <Grid.Col span={{ base: 12, sm: 6 }}>
+            <TextInput size="xs" label="Home region" placeholder="us-east-1"
+              description="Where STS is asked. Change it only for another partition, such as GovCloud."
+              value={a.homeRegion} onChange={(e) => set({ homeRegion: e.currentTarget.value })} />
+          </Grid.Col>
+        </Grid>
+        {checked && (
+          <Alert color={moves ? 'amber' : 'teal'} variant="light" p="xs"
+            icon={moves ? <IconAlertTriangle size={16} /> : undefined}
+            title={moves ? 'The connected accounts do not trust this identity yet' : 'AWS knows this identity'}>
+            <Text size={FS.meta} style={{ overflowWrap: 'anywhere' }}>
+              It answers as <Mono>{checked.arn}</Mono>, from {checked.source}.
+              {moves
+                ? ` After saving, update each account's argus-access stack from its row on the Cloud overview, or Argus stops reaching those ${connected} accounts.`
+                : ' Accounts you connect will trust '}
+              {!moves && <Mono>{checked.principal}</Mono>}
+              {!moves && '.'}
+            </Text>
+          </Alert>
+        )}
+        <Group justify="space-between" align="center">
+          <FormNote missing={missing}>Test asks AWS who this is without saving it. Saving restarts argus-control on it.</FormNote>
+          <Button size="xs" variant="light" loading={busy} disabled={missing.length > 0} onClick={() => void test()}>
+            Test
+          </Button>
+        </Group>
+        <Text size={FS.micro} c="dimmed">Only AWS can be connected so far.</Text>
+      </Stack>
     </SectionCard>
   )
 }

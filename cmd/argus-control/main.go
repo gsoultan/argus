@@ -1201,16 +1201,26 @@ func runAuditVerify(configPath string) error {
 
 // cloudConfig is the cloud block of the config.
 type cloudConfig struct {
-	AWS struct {
-		// Profile is a named profile in the shared AWS config, for example
-		// one whose credential_process is IAM Roles Anywhere's helper.
-		Profile string `yaml:"profile,omitempty"`
-		// CredentialsFile is a shared credentials file for a control plane
-		// that is not on AWS. Refused unless only its owner can read it.
-		CredentialsFile string `yaml:"credentials_file,omitempty"`
-		// HomeRegion is where STS is asked; us-east-1 when empty.
-		HomeRegion string `yaml:"home_region,omitempty"`
-	} `yaml:"aws"`
+	AWS awsCloudConfig `yaml:"aws"`
+}
+
+// awsCloudConfig is where AWS's base identity comes from. An access key
+// entered under Settings › Cloud identities wins over the rest; with none of
+// them set, the SDK's default chain decides.
+type awsCloudConfig struct {
+	// AccessKeyID and SecretAccessKey are an IAM user's key, for a control
+	// plane that is not on AWS. The secret is a ${file:...} reference to an
+	// owner-only file in the secrets directory, never the key itself.
+	AccessKeyID     string `yaml:"access_key_id,omitempty"`
+	SecretAccessKey string `yaml:"secret_access_key,omitempty"`
+	// Profile is a named profile in the shared AWS config, for example
+	// one whose credential_process is IAM Roles Anywhere's helper.
+	Profile string `yaml:"profile,omitempty"`
+	// CredentialsFile is a shared credentials file for a control plane
+	// that is not on AWS. Refused unless only its owner can read it.
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
+	// HomeRegion is where STS is asked; us-east-1 when empty.
+	HomeRegion string `yaml:"home_region,omitempty"`
 }
 
 // awsOptions is the AWS provider's options; a missing block is the SDK's
@@ -1219,5 +1229,10 @@ func (c *cloudConfig) awsOptions() awscloud.Options {
 	if c == nil {
 		return awscloud.Options{}
 	}
-	return awscloud.Options{Profile: c.AWS.Profile, CredentialsFile: c.AWS.CredentialsFile, HomeRegion: c.AWS.HomeRegion}
+	return c.AWS.options()
+}
+
+func (a awsCloudConfig) options() awscloud.Options {
+	return awscloud.Options{AccessKeyID: a.AccessKeyID, SecretAccessKey: a.SecretAccessKey,
+		Profile: a.Profile, CredentialsFile: a.CredentialsFile, HomeRegion: a.HomeRegion}
 }

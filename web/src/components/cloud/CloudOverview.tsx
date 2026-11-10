@@ -299,11 +299,15 @@ function FirstAccount({ admin, base }: { admin: boolean; base?: CloudBase }) {
         {base?.error && (
           <Alert color="amber" variant="light" w="100%" title="argus-control has no AWS identity yet">
             <Text size={FS.meta}>
-              It needs one to assume roles in your accounts: run it on EC2 with an instance profile, or set
-              {' '}<Text span ff="monospace" size={FS.meta}>cloud.aws.profile</Text> or{' '}
-              <Text span ff="monospace" size={FS.meta}>cloud.aws.credentials_file</Text> in its config.
+              It needs one to assume roles in your accounts. On EC2 it uses the instance profile; anywhere else, give it
+              an IAM user's access key under Settings › Cloud identities.
             </Text>
             <Text size={FS.micro} c="dimmed" mt={4}>{base.error}</Text>
+            {admin && (
+              <ButtonLink to="/settings" search={{ section: 'cloud' }} size="compact-sm" variant="light" mt="xs">
+                Set the AWS identity
+              </ButtonLink>
+            )}
           </Alert>
         )}
         {admin ? (

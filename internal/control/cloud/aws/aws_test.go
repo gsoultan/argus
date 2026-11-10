@@ -10,6 +10,7 @@ import (
 	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"gopkg.in/yaml.v3"
 
@@ -213,5 +214,34 @@ func TestManageTemplate(t *testing.T) {
 	}
 	if _, ok := doc.Outputs["ManageRoleArn"]; !ok {
 		t.Fatal("no ManageRoleArn output")
+	}
+}
+
+func TestDescribeSourceStaticKey(t *testing.T) {
+	if got := describeSource(credentials.StaticCredentialsName); !strings.Contains(got, "Cloud identities") {
+		t.Errorf("describeSource(static) = %q, want it to name Settings", got)
+	}
+}
+
+// A key entered in Settings is the identity, ahead of anything on the host,
+// and a key id without its secret is refused rather than half-used.
+func TestStaticKeyIsTheBase(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAENVIRONMENTXXXXX")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "from-the-environment")
+	p := New(Options{AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"})
+	cfg, err := p.base(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := cfg.Credentials.Retrieve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.AccessKeyID != "AKIAIOSFODNN7EXAMPLE" || creds.Source != credentials.StaticCredentialsName {
+		t.Errorf("credentials = %s from %q, want the entered key", creds.AccessKeyID, creds.Source)
+	}
+
+	if _, err := New(Options{AccessKeyID: "AKIAIOSFODNN7EXAMPLE"}).base(context.Background()); err == nil {
+		t.Error("a key id without its secret was accepted")
 	}
 }

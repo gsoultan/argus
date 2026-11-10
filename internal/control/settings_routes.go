@@ -72,6 +72,51 @@ type Settings struct {
 	// are then kept as configured, for the same reason.
 	ServerAlerts *ServerAlertSettings `json:"serverAlerts,omitempty"`
 	Security     *SecuritySettings    `json:"security,omitempty"`
+	// Cloud is the identity argus-control has for each cloud. Nil from a
+	// console older than it, which keeps what is configured.
+	Cloud *CloudSettings `json:"cloud,omitempty"`
+}
+
+// CloudSettings is the control plane's own identity for each cloud: who it
+// is before it assumes a role in any connected account. One per cloud for
+// the whole control plane; every organization's accounts trust it only
+// together with an external id derived for that organization and account.
+type CloudSettings struct {
+	AWS AWSIdentitySettings `json:"aws"`
+}
+
+// Where an identity comes from.
+const (
+	// IdentityDefault is whatever the host gives it: an EC2 instance
+	// profile, a container role, AWS_ environment variables.
+	IdentityDefault = "default"
+	// IdentityKey is an access key entered here.
+	IdentityKey = "key"
+	// IdentityFile is a profile or credentials file named in the config.
+	IdentityFile = "file"
+)
+
+// AWSIdentitySettings is AWS's base identity. The secret access key is
+// write-only.
+type AWSIdentitySettings struct {
+	Source             string  `json:"source"`
+	AccessKeyID        string  `json:"accessKeyId"`
+	SecretAccessKeySet bool    `json:"secretAccessKeySet"`
+	SecretAccessKey    *string `json:"secretAccessKey,omitempty"`
+	Profile            string  `json:"profile"`
+	CredentialsFile    string  `json:"credentialsFile"`
+	HomeRegion         string  `json:"homeRegion"`
+}
+
+// CloudIdentityCheck is who a cloud says an identity is.
+type CloudIdentityCheck struct {
+	Provider string `json:"provider"`
+	// ARN is the caller's own ARN, as STS answered it.
+	ARN string `json:"arn"`
+	// Principal is what an account's trust policy names for it.
+	Principal string `json:"principal"`
+	// Source says where the credentials came from, in words.
+	Source string `json:"source"`
 }
 
 // RecordingArchiveSettings is when a stored recording is recompressed and
@@ -224,6 +269,9 @@ type SettingsBackend interface {
 	// TestEmail sends one message with e, unsaved, to its recipients. A
 	// secret e leaves out is the one configured.
 	TestEmail(ctx context.Context, e EmailSettings) error
+	// TestCloud asks the provider who in would be, without saving it. A
+	// secret in leaves out is the one configured.
+	TestCloud(ctx context.Context, provider string, in CloudSettings) (CloudIdentityCheck, error)
 }
 
 func (a *API) admin(w http.ResponseWriter, r *http.Request, what string) (string, bool) {
@@ -252,6 +300,11 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "settings", err)
 		return
 	}
+	if !platformScope(r.Context()) {
+		// Every organization's accounts trust this identity; only the
+		// platform sees or changes it.
+		s.Cloud = nil
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, s)
 }
@@ -265,6 +318,9 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if !platformScope(r.Context()) {
+		in.Cloud = nil // kept as configured
 	}
 	changed, err := a.Settings.SaveSettings(r.Context(), in, actor)
 	if err != nil {
@@ -327,3 +383,38 @@ func (a *API) postTestEmail(w http.ResponseWriter, r *http.Request) {
 	a.log.Info("test email sent", "by", actor, "via", in.Via, "to", len(in.To))
 	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "to": in.To})
 }
+
+// postTestCloud asks a cloud who the identity on the form is, so an
+// administrator sees the ARN accounts will trust before saving it.
+func (a *API) postTestCloud(w http.ResponseWriter, r *http.Request) {
+	actor, ok := a.admin(w, r, "testing a cloud identity")
+	if !ok {
+		return
+	}
+	if !platformScope(r.Context()) {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	provider := r.PathValue("provider")
+	if provider != "aws" {
+		writeErr(w, http.StatusBadRequest, "only AWS has an identity to test so far")
+		return
+	}
+	var in CloudSettings
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	check, err := a.Settings.TestCloud(r.Context(), provider, in)
+	if err != nil {
+		a.log.Info("cloud identity test failed", "by", actor, "provider", provider, "error", err)
+		writeErr(w, http.StatusBadRequest, "AWS did not accept that identity: "+err.Error())
+		return
+	}
+	a.log.Info("cloud identity tested", "by", actor, "provider", provider, "arn", check.ARN)
+	writeJSON(w, http.StatusOK, check)
+}
+
+// platformScope says the request is in the default organization, where the
+// platform-wide settings that every organization depends on are edited.
+func platformScope(ctx context.Context) bool { return tenantIDOf(ctx) == DefaultTenantID }

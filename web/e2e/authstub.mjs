@@ -239,6 +239,10 @@ const SETTINGS = {
   fcm: { enabled: false, credentialsSet: false, projectId: '', topic: '', tokens: [] },
   tls: { enabled: false, managed: false, canIssue: false, mutualTls: false },
   signInAlerts: { admins: true, person: true, when: 'new_device' },
+  // A control plane off AWS, as most self-hosted ones are: nothing from the
+  // host, so no AWS identity until one is entered.
+  cloud: { aws: { source: 'default', accessKeyId: '', secretAccessKeySet: false, profile: '',
+    credentialsFile: '', homeRegion: '' } },
 }
 
 /**
@@ -365,6 +369,20 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: 'the test email was not sent: alerts.email: not configured: set panmail.api_key' })
       }
       return json(res, 200, { sent: true, to: body.to ?? [] })
+    }
+    // Who AWS says the form's identity is: an IAM user for a well-formed key,
+    // the instance metadata timeout for the host's own chain, as off EC2.
+    if (path === '/api/v1/settings/test-cloud/aws' && req.method === 'POST') {
+      const aws = /** @type {any} */ (await readBody(req)).aws ?? {}
+      if (aws.source === 'key' && /^AKIA[A-Z0-9]{16}$/.test(aws.accessKeyId ?? '')) {
+        const arn = 'arn:aws:iam::123456789012:user/argus-control'
+        return json(res, 200, { provider: 'aws', arn, principal: arn, source: 'the access key in Settings › Cloud identities' })
+      }
+      return json(res, 400, { error: 'AWS did not accept that identity: this control plane has no identity for the provider: no EC2 IMDS role found' })
+    }
+    if (path === '/api/v1/cloud/accounts' && req.method === 'GET') {
+      return json(res, 200, { accounts: [], bases: [{ provider: 'aws',
+        error: 'this control plane has no identity for the provider: no EC2 IMDS role found' }] })
     }
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)

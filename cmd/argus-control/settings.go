@@ -136,6 +136,8 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 	}
 	s.Email.To, s.Telegram.ChatIDs, s.FCM.Tokens = nonNil(s.Email.To), nonNil(s.Telegram.ChatIDs), nonNil(s.FCM.Tokens)
 
+	s.Cloud = cloudSettingsOf(c.Cloud)
+
 	pki := b.loc.pki()
 	s.TLS.CanIssue = pki.HasCAKey()
 	if ca, err := os.ReadFile(pki.CACert()); err == nil {
@@ -316,6 +318,9 @@ func (b *settingsBackend) apply(ctx context.Context, c *config, in control.Setti
 		return err
 	}
 	if err := applyAlerts(c, in, st); err != nil {
+		return err
+	}
+	if err := applyCloud(c, in.Cloud, st); err != nil {
 		return err
 	}
 	return b.applyTLS(c, in)
