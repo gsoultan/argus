@@ -5,7 +5,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconArrowRight, IconCheck, IconCircleDashed, IconExclamationMark, IconLoader2,
-  IconRefresh, IconX,
+  IconRefresh, IconSearch, IconX,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
 import { ErrorState } from '~/components/ErrorState'
@@ -13,8 +13,10 @@ import { Mono, absTime, relTime } from '~/components/primitives'
 import {
   controlUpdate, type ControlUpdateState, type ControlUpdateStatus, type ControlUpdateView,
 } from '~/lib/live'
-import { run } from '~/lib/notify'
-import { controlUpdateKey, useCancelControlUpdate, useRequestControlUpdate } from '~/lib/queries'
+import { notifyOk, notifyWarn, run } from '~/lib/notify'
+import {
+  controlUpdateKey, useCancelControlUpdate, useCheckControlUpdate, useRequestControlUpdate,
+} from '~/lib/queries'
 import { FS, SP } from '~/theme'
 
 /**
@@ -64,7 +66,7 @@ export function ControlUpdatePanel({ v, unreachable }: { v: ControlUpdateView; u
   const recent = u && !running && Date.now() - new Date(u.at).getTime() < 24 * 3600_000 ? u : null
   return (
     <Stack gap="sm" data-testid="control-update">
-      <Versions v={v} />
+      <Versions v={v} busy={running} />
       {running && u && <Progressing u={u} v={v} unreachable={unreachable} />}
       {!running && recent && <Outcome u={recent} />}
       {!running && <Offer v={v} />}
@@ -72,11 +74,12 @@ export function ControlUpdatePanel({ v, unreachable }: { v: ControlUpdateView; u
   )
 }
 
-function Versions({ v }: { v: ControlUpdateView }) {
+function Versions({ v, busy }: { v: ControlUpdateView; busy: boolean }) {
   return (
     <SectionCard title="This control plane"
       description={<>argus-control on <Mono>{v.hostname || 'this host'}</Mono>. With more than one replica, each is
-        updated from its own address.</>}>
+        updated from its own address.</>}
+      action={v.releaseChecks ? <CheckNow disabled={busy} /> : undefined}>
       <Group gap="xl" align="flex-end" wrap="wrap">
         <Box>
           <Text size={FS.meta} c="dimmed">Running</Text>
@@ -104,6 +107,26 @@ function Versions({ v }: { v: ControlUpdateView }) {
           : v.checkedAt ? <>Checked for releases {relTime(v.checkedAt)}.</> : <>Release checks are off.</>}
       </Text>
     </SectionCard>
+  )
+}
+
+/**
+ * Looks for a newer release now rather than at the next check, and says what
+ * it found: a release to update to, nothing newer, or why it could not ask.
+ */
+function CheckNow({ disabled }: { disabled: boolean }) {
+  const check = useCheckControlUpdate()
+  return (
+    <Button size="xs" variant="default" leftSection={<IconSearch size={14} />} loading={check.isPending}
+      disabled={disabled} data-testid="update-check"
+      onClick={() => void run(async () => {
+        const v = await check.mutateAsync()
+        if (v.checkFailure) notifyWarn('Could not check for releases', v.checkFailure)
+        else if (v.newer && v.newest) notifyOk(`argus-control ${v.newest.version} is out`, `This control plane runs ${v.running}.`)
+        else notifyOk('Up to date', `${v.running} is the newest release.`)
+      }, { failure: 'Could not check for releases' })}>
+      Check for updates
+    </Button>
   )
 }
 

@@ -2106,6 +2106,8 @@ export interface ControlUpdateView {
   reason?: string
   newest: { version: string; publishedAt: string; page: string } | null
   newer: boolean
+  /** Whether this control plane looks for releases, and so can be asked to look now. */
+  releaseChecks: boolean
   checkedAt?: string
   checkFailure?: string
   rollback?: {
@@ -2121,6 +2123,11 @@ export interface ControlUpdateView {
 
 export async function controlUpdate(): Promise<ControlUpdateView> {
   return get<ControlUpdateView>('/api/v1/platform/update')
+}
+
+/** Asks for the newest release now; answers with the page as it then stands. */
+export async function checkControlUpdate(): Promise<ControlUpdateView> {
+  return send<ControlUpdateView>('POST', '/api/v1/platform/update/check')
 }
 
 export async function requestControlUpdate(body: { version: string; when: 'idle' | 'now' }): Promise<ControlUpdateStatus> {

@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -49,6 +50,10 @@ type ReleaseWatcher struct {
 	// Every is how often it asks; zero is six hours.
 	Every time.Duration
 	Log   *slog.Logger
+
+	// asking is held through a check someone asked for, so a burst of
+	// clicks asks GitHub once.
+	asking sync.Mutex
 
 	mu      sync.Mutex
 	latest  *AgentRelease
@@ -133,6 +138,29 @@ func (w *ReleaseWatcher) Check(ctx context.Context) error {
 		w.control = c
 	}
 	return nil
+}
+
+// manualCheckGap is how recent a check may be for one someone asks for to
+// reuse it instead of asking again. GitHub allows an unauthenticated address
+// sixty requests an hour.
+const manualCheckGap = 15 * time.Second
+
+// CheckNow is Check for someone who asked from the console: it asks again
+// unless a check finished within manualCheckGap, and concurrent asks share
+// one request. It returns that check's failure, if any.
+func (w *ReleaseWatcher) CheckNow(ctx context.Context) error {
+	w.asking.Lock()
+	defer w.asking.Unlock()
+	w.mu.Lock()
+	recent, failure := !w.checked.IsZero() && time.Since(w.checked) < manualCheckGap, w.failure
+	w.mu.Unlock()
+	if recent {
+		if failure != "" {
+			return errors.New(failure)
+		}
+		return nil
+	}
+	return w.Check(ctx)
 }
 
 type ghRelease struct {

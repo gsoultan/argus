@@ -1,9 +1,23 @@
-import { screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { ControlUpdatePanel } from '~/components/ControlUpdate'
 import { ControlUpdatingBanner } from '~/components/ControlUpdateBanner'
 import type { ControlUpdateView } from '~/lib/live'
 import { renderWithProviders } from '~/test/render'
+
+const live = vi.hoisted(() => ({ checkControlUpdate: vi.fn() }))
+
+vi.mock('~/lib/live', async (orig) => ({
+  ...(await orig<typeof import('~/lib/live')>()),
+  ...live,
+}))
+
+const notify = vi.hoisted(() => ({ notifyOk: vi.fn(), notifyWarn: vi.fn() }))
+
+vi.mock('~/lib/notify', async (orig) => ({
+  ...(await orig<typeof import('~/lib/notify')>()),
+  ...notify,
+}))
 
 /**
  * Settings › Control plane › Updates says, before anything starts, what the
@@ -17,6 +31,7 @@ const view = (over: Partial<ControlUpdateView> = {}): ControlUpdateView => ({
   supported: true,
   newest: { version: '0.9.0', publishedAt: '2026-11-04T09:00:00Z', page: 'https://example.com/v0.9.0' },
   newer: true,
+  releaseChecks: true,
   checkedAt: '2026-11-06T07:00:00Z',
   rollback: { known: true, added: 3, breaking: [] },
   sessions: { held: 2, ending: 0, terminals: 0, desktops: 0, databases: 0 },
@@ -101,5 +116,39 @@ describe('Updating the control plane', () => {
     renderWithProviders(<ControlUpdatingBanner target="0.9.0" unreachable />)
     expect(screen.getByTestId('control-updating-banner').textContent).toContain('restarting on 0.9.0')
     expect(screen.getByTestId('control-updating-banner').textContent).toContain('sample data')
+  })
+
+  it('checks for a newer release on demand, and shows what it found', async () => {
+    live.checkControlUpdate.mockResolvedValueOnce(view({
+      running: '0.9.0',
+      newest: { version: '0.9.1', publishedAt: '2026-11-09T09:00:00Z', page: '' },
+      checkedAt: new Date().toISOString(),
+    }))
+    renderWithProviders(<ControlUpdatePanel v={view({ running: '0.9.0', newer: false, rollback: undefined })} />)
+    fireEvent.click(screen.getByTestId('update-check'))
+    await waitFor(() => expect(live.checkControlUpdate).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(notify.notifyOk).toHaveBeenCalledWith('argus-control 0.9.1 is out', 'This control plane runs 0.9.0.'))
+  })
+
+  it('says why a check failed', async () => {
+    live.checkControlUpdate.mockResolvedValueOnce(view({ newer: false, checkFailure: 'api.github.com answered 403 Forbidden' }))
+    renderWithProviders(<ControlUpdatePanel v={view({ newer: false, rollback: undefined })} />)
+    fireEvent.click(screen.getByTestId('update-check'))
+    await waitFor(() => expect(notify.notifyWarn).toHaveBeenCalledWith(
+      'Could not check for releases', 'api.github.com answered 403 Forbidden'))
+  })
+
+  it('offers no check when this control plane does not look for releases', () => {
+    renderWithProviders(<ControlUpdatePanel v={view({ releaseChecks: false, checkedAt: undefined })} />)
+    expect(screen.queryByTestId('update-check')).toBeNull()
+    expect(screen.getByText('Release checks are off.')).toBeTruthy()
+  })
+
+  it('does not check while an update runs', () => {
+    const at = new Date().toISOString()
+    renderWithProviders(<ControlUpdatePanel v={view({
+      update: { id: 'u1', from: '0.8.2', target: '0.9.0', state: 'installing', message: 'installing', at, steps: [] },
+    })} />)
+    expect((screen.getByTestId('update-check') as HTMLButtonElement).disabled).toBe(true)
   })
 })

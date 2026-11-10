@@ -192,18 +192,21 @@ type ControlUpdateSessions struct {
 
 // ControlUpdateView is the Updates page.
 type ControlUpdateView struct {
-	Running      string                `json:"running"`
-	Hostname     string                `json:"hostname"`
-	Supported    bool                  `json:"supported"`
-	Reason       string                `json:"reason,omitempty"`
-	Newest       *AgentRelease         `json:"newest"`
-	Newer        bool                  `json:"newer"`
-	CheckedAt    *time.Time            `json:"checkedAt,omitempty"`
-	CheckFailure string                `json:"checkFailure,omitempty"`
-	Rollback     *ControlRollback      `json:"rollback,omitempty"`
-	Sessions     ControlUpdateSessions `json:"sessions"`
-	Update       *controlupdate.Status `json:"update"`
-	HelperLate   bool                  `json:"helperLate,omitempty"`
+	Running   string        `json:"running"`
+	Hostname  string        `json:"hostname"`
+	Supported bool          `json:"supported"`
+	Reason    string        `json:"reason,omitempty"`
+	Newest    *AgentRelease `json:"newest"`
+	Newer     bool          `json:"newer"`
+	// ReleaseChecks is whether this control plane looks for releases at all,
+	// and so whether the console can ask it to look now.
+	ReleaseChecks bool                  `json:"releaseChecks"`
+	CheckedAt     *time.Time            `json:"checkedAt,omitempty"`
+	CheckFailure  string                `json:"checkFailure,omitempty"`
+	Rollback      *ControlRollback      `json:"rollback,omitempty"`
+	Sessions      ControlUpdateSessions `json:"sessions"`
+	Update        *controlupdate.Status `json:"update"`
+	HelperLate    bool                  `json:"helperLate,omitempty"`
 }
 
 func (a *API) updateSessions() ControlUpdateSessions {
@@ -240,6 +243,7 @@ func (a *API) controlUpdateView(ctx context.Context) ControlUpdateView {
 		v.HelperLate = st.State == controlupdate.StateRequested && time.Since(st.At) > helperLate
 	}
 	if a.Releases != nil {
+		v.ReleaseChecks = true
 		_, checked, failure := a.Releases.Latest()
 		if !checked.IsZero() {
 			v.CheckedAt = &checked
@@ -288,6 +292,28 @@ func (a *API) rollbackFor(ctx context.Context, version string) *ControlRollback 
 func (a *API) getControlUpdate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.platformOwner(w, r); !ok {
 		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, a.controlUpdateView(r.Context()))
+}
+
+// postControlUpdateCheck asks for the newest release now, rather than at the
+// watcher's next turn, and answers with the Updates page as it then stands.
+// A check that fails is not a refusal: the page says why, as it does for the
+// watcher's own checks.
+func (a *API) postControlUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.platformOwner(w, r); !ok {
+		return
+	}
+	if a.Releases == nil {
+		writeErr(w, http.StatusConflict, "release checks are off on this control plane "+
+			"(agent_release_check is false, or agent_releases_url names a mirror without agent_releases_api)")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := a.Releases.CheckNow(ctx); err != nil {
+		a.log.Warn("checking for a newer release, asked from the console", "error", err)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, a.controlUpdateView(r.Context()))

@@ -488,6 +488,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/platform/status", a.getControlStatus)
 	mux.HandleFunc("GET /api/v1/platform/update", a.getControlUpdate)
 	mux.HandleFunc("POST /api/v1/platform/update", a.postControlUpdate)
+	mux.HandleFunc("POST /api/v1/platform/update/check", a.postControlUpdateCheck)
 	mux.HandleFunc("DELETE /api/v1/platform/update", a.deleteControlUpdate)
 	mux.HandleFunc("GET /api/v1/control-update", a.getControlUpdateBanner)
 	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
