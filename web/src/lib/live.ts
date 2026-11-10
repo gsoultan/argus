@@ -454,7 +454,7 @@ export async function logout(): Promise<void> {
  * the grant it is turned into. So a refusal here is the authoritative one, and its message is
  * worth showing verbatim rather than replacing with something generic.
  */
-async function post<T>(path: string, body: unknown): Promise<T> {
+export async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await apiFetch(`${BASE}${path}`, {
     method: 'POST',
     credentials: 'include',

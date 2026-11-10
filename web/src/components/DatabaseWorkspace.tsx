@@ -51,7 +51,7 @@ import { writesNeedApproval, type CheckLike } from '~/lib/changeApproval'
 import { ImportData, type ImportRun } from '~/components/ImportData'
 import { ChangesPanel } from '~/components/DatabaseChanges'
 import type { EditTarget } from '~/lib/rowEdit'
-import { GenerateContext, NewTableButton, ObjectGenMenu, TableDesigner, type GenAction, type GenContext } from '~/components/SqlGenerate'
+import { GenerateContext, NewSchemaButton, NewSchemaDialog, NewTableButton, ObjectGenMenu, TableDesigner, type GenAction, type GenContext } from '~/components/SqlGenerate'
 import { DESIGN_SQL, blankColumn, ddlQuery, parseDesign, qualify, tableTemplate, type Design } from '~/lib/sqlGen'
 import { TARGET_BY_NAME_SQL, parseTarget } from '~/lib/rowEdit'
 
@@ -1131,6 +1131,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // The tree's generators: what they write opens in a new tab, to be read and
   // run there. The catalogue is read as the person's role, like anything else.
   const [designer, setDesigner] = useState<Design | null>(null)
+  const [newSchema, setNewSchema] = useState(false)
   const [importing, setImporting] = useState<EditTarget | null>(null)
   const [building, setBuilding] = useState<{ start?: { schema: string; name: string } } | null>(null)
   const genAct = useCallback(async (a: GenAction) => {
@@ -1138,6 +1139,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     const show = (text: string, name: string) => {
       if (openTab({ sql: text, name })) { setPanel('query'); setView('query') }
     }
+    if (a.what === 'new-schema') { setNewSchema(true); return }
     if (a.what === 'new-table') {
       setDesigner({ schema: a.schema, name: 'new_table', columns: [{ ...blankColumn(1), name: 'id', type: 'bigint', default: 'GENERATED ALWAYS AS IDENTITY', pk: true, notNull: true }] })
       return
@@ -1167,7 +1169,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     if (a.what === 'import') { setImporting(t); return }
     show(tableTemplate(t, a.what), `${a.what} ${a.name}`)
   }, [collect, openTab, narrow, tree])
-  const gen: GenContext = useMemo(() => ({ act: (a) => void genAct(a), canWrite: Boolean(level) && level !== 'read' }), [genAct, level])
+  const ownerRole = (level === 'owner' || level === 'dba') ? ready?.levels?.owner : undefined
+  const gen: GenContext = useMemo(() => ({ act: (a) => void genAct(a), canWrite: Boolean(level) && level !== 'read', ownerRole }), [genAct, level, ownerRole])
 
   const bar = (
     <MySQLDialect.Provider value={mysql}><GenerateContext.Provider value={mysql ? null : gen}><LeftBar
@@ -1475,6 +1478,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       )}
       {designer && <TableDesigner start={designer} narrow={narrow} onClose={() => setDesigner(null)}
         onOpen={(text, name) => { setDesigner(null); if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />}
+      {newSchema && ownerRole && <NewSchemaDialog ownerRole={ownerRole} onClose={() => setNewSchema(false)}
+        onOpen={(text, name) => { if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />}
       <WriteCheckDialog state={writeCheck} label={database.label} step={gateStep} databaseId={database.id} canBackup={level === 'owner' || level === 'dba'}
         onClose={() => { setWriteCheck(null); answerGate({ go: false }) }}
         onBackups={() => { setWriteCheck(null); answerGate({ go: false }); setView('query'); setPanel('backups') }}
@@ -1575,7 +1580,10 @@ function LeftBar({ database, schema, onPick, onRun, history, onOpenSaved, orgAdm
       {tab === 'saved' && <SavedQueriesList databaseId={database.id} onOpen={onOpenSaved} admin={orgAdmin} />}
       {tab === 'objects' && (
         <Box>
-          <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={4} py={4} style={{ letterSpacing: '.06em' }}>Schemas</Text>
+          <Group gap={2} wrap="nowrap" justify="space-between" pr={2}>
+            <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={4} py={4} style={{ letterSpacing: '.06em' }}>Schemas</Text>
+            <NewSchemaButton />
+          </Group>
           {schemas === null && <Loader size={14} ml="sm" />}
           {schemas?.length === 0 && <Text size={FS.meta} c="dimmed" px="xs">Nothing your access can see.</Text>}
           {schemas?.map((s) => (

@@ -5,7 +5,7 @@ import {
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconDatabase, IconPlus, IconRefresh, IconSearch, IconTable } from '@tabler/icons-react'
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { EmptyState, SectionCard } from '~/components/page'
 import { discoverDatabases, isConfigured } from '~/lib/live'
@@ -27,6 +27,9 @@ import type { Asset, DBAssignment, DBEngine, DBLabel } from '~/types/domain'
  * authentication, Redis's own redis.conf, rabbitmqctl. No password is ever
  * typed in.
  */
+// Create new is its own chunk: only an admin creating something pays for it.
+const CreateOnServer = lazy(() => import('~/components/CreateOnServer').then((m) => ({ default: m.CreateOnServer })))
+
 export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   const { data } = useQuery(databasesOnAssetQuery(asset.id))
   const { data: access } = useQuery({ ...assetDBAccessQuery(asset.id), enabled: canEdit && isConfigured() })
@@ -145,10 +148,15 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
  * `initialEngine`, `initialPort` and `initialPoolerPort` come from what the agent found
  * running, when it is opened from there.
  */
-export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath }: {
+export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath, initialMode, onlyEngines }: {
   asset: Asset; opened: boolean; onClose: () => void; initialEngine?: DBEngine; initialPort?: number; initialPoolerPort?: number
   initialConfigPath?: string
+  /** Open on Create new instead of Already on this server. */
+  initialMode?: 'existing' | 'create'
+  /** The engines offered: brokers on the Brokers page, for one. */
+  onlyEngines?: DBEngine[]
 }) {
+  const [mode, setMode] = useState<'existing' | 'create'>(initialMode ?? 'existing')
   const create = useCreateDatabase()
   const narrow = useMediaQuery('(max-width: 48em)')
   const [engine, setEngine] = useState<DBEngine>(initialEngine ?? 'postgres')
@@ -239,10 +247,19 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
 
   return (
     <Modal opened={opened} onClose={onClose} title={`Add to ${asset.hostname.split('.')[0]}`} centered={!narrow}
-      fullScreen={narrow} size="lg">
+      fullScreen={narrow} size={mode === 'create' ? 'xl' : 'lg'}>
       <Stack gap="sm">
         <SegmentedControl value={engine} onChange={(v) => pick(v as DBEngine)} fullWidth
-          data={(Object.keys(ENGINES) as DBEngine[]).map((e) => ({ label: ENGINES[e].label, value: e }))} />
+          data={(onlyEngines ?? (Object.keys(ENGINES) as DBEngine[])).map((e) => ({ label: ENGINES[e].label, value: e }))} />
+        <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)} size="xs"
+          data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
+
+        {mode === 'create' ? (
+          <Suspense fallback={<Loader size="sm" />}>
+            <CreateOnServer key={engine} asset={asset} engine={engine} onClose={onClose}
+              onAddExisting={(n) => { setMode('existing'); setManual(true); setTyped(n) }} />
+          </Suspense>
+        ) : (<>
 
         {!manual && !scoped && (
           <Stack gap={6}>
@@ -395,6 +412,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             {listing && names.length > 1 ? `Add ${names.length} ${info.noun}s` : 'Add'}
           </Button>
         </Group>
+        </>)}
       </Stack>
     </Modal>
   )

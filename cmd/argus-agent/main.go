@@ -394,6 +394,12 @@ func runDaemon(args []string) int {
 			Verifier: &tunnel.GrantVerifier{Host: hostname},
 			Log:      log,
 		})
+		// Making a new database, vhost or topic, for the console's Create
+		// new; never over one that is there. See internal/agent/dbcreate.go.
+		services[agent.CreateDBService] = agent.CreateDatabases(agent.CreateDBConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Log:      log,
+		})
 		// What is installed here, what the repositories offer, and what a
 		// change would do; the change itself is a package run on the
 		// heartbeat. See internal/agent/software.go.

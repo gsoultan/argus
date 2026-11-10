@@ -287,3 +287,6 @@ dialog: the count before UPDATE/DELETE/MERGE/INSERT…SELECT, and the guard's
 reason, size and `pg_depend` dependents before a DROP/TRUNCATE. An agent
 without `check` answers "unknown operation"; the console then runs as before
 and the agent's guard (if any) still applies.
+
+- The Owner level role is granted `CREATE ON DATABASE` (pgEnsureLevels), so an
+  Owner session can create schemas owned by the level. See database-create.md.

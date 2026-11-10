@@ -4,6 +4,7 @@ import {
 } from '@mantine/core'
 import { IconCode, IconDots, IconFileImport, IconPlus, IconTableOptions, IconX, IconAdjustmentsHorizontal } from '@tabler/icons-react'
 import { FS } from '~/theme'
+import { ident } from '~/lib/resultView'
 import {
   COMMON_TYPES, DML_LABEL, alterTable, blankColumn, createTable, designProblems, type Design, type DesignColumn, type DmlKind,
 } from '~/lib/sqlGen'
@@ -18,11 +19,18 @@ the tab; nothing here runs anything.
 export type GenAction =
   | { what: 'ddl' | DmlKind | 'design' | 'import' | 'build'; kind: string; schema: string; name: string }
   | { what: 'new-table'; schema: string }
+  | { what: 'new-schema' }
 
 export interface GenContext {
   act: (a: GenAction) => void
   /** The person may change the database: the designer is offered. */
   canWrite: boolean
+  /**
+   * Argus's Owner level role here, when the person is at Owner or above: it
+   * may create schemas (CREATE on the database), and a new schema is made
+   * owned by it so it outlives the person's session role.
+   */
+  ownerRole?: string
 }
 
 export const GenerateContext = createContext<GenContext | null>(null)
@@ -68,6 +76,55 @@ export function NewTableButton({ schema }: { schema: string }) {
         <IconPlus size={11} />
       </ActionIcon>
     </Tooltip>
+  )
+}
+
+/** New schema, beside the Schemas heading; only at Owner and above. */
+export function NewSchemaButton() {
+  const g = useContext(GenerateContext)
+  if (!g?.ownerRole) return null
+  return (
+    <Tooltip label="New schema" withArrow>
+      <ActionIcon size="xs" variant="subtle" aria-label="New schema" onClick={() => g.act({ what: 'new-schema' })}>
+        <IconPlus size={11} />
+      </ActionIcon>
+    </Tooltip>
+  )
+}
+
+/** CREATE SCHEMA for a name, owned by Argus's Owner level (or the role given). */
+export function createSchema(name: string, owner: string, comment: string): string {
+  const lines = [`CREATE SCHEMA ${ident(name)} AUTHORIZATION ${ident(owner)};`]
+  if (comment.trim()) lines.push(`COMMENT ON SCHEMA ${ident(name)} IS '${comment.trim().replace(/'/g, "''")}';`)
+  return lines.join('\n')
+}
+
+/** Asks for the name; the statement then opens in a new tab, to be read and run there. */
+export function NewSchemaDialog({ ownerRole, onClose, onOpen }: {
+  ownerRole: string; onClose: () => void; onOpen: (sql: string, name: string) => void
+}) {
+  const [name, setName] = useState('')
+  const [comment, setComment] = useState('')
+  const n = name.trim()
+  const bad = n.length > 63 ? 'At most 63 characters.' : /^pg_/i.test(n) ? 'Names starting pg_ are Postgres’s own.' : ''
+  const sql = n && !bad ? createSchema(n, ownerRole, comment) : ''
+  return (
+    <Modal opened onClose={onClose} title="New schema" centered>
+      <Stack gap="sm">
+        <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} data-autofocus ff="monospace"
+          error={bad || undefined} description="Lowercase letters, digits and _ need no quoting in SQL." />
+        <TextInput label="Comment" value={comment} onChange={(e) => setComment(e.currentTarget.value)} placeholder="Optional" />
+        {sql && <Code block>{sql}</Code>}
+        <Text size={FS.micro} c="dimmed">
+          Owned by Argus’s Owner level ({ownerRole}), so whoever is given Owner here can create tables in it, and it stays when your session ends.
+          It opens in a new tab to run.
+        </Text>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button disabled={!sql} onClick={() => { onOpen(sql, `create schema ${n}`); onClose() }}>Open in a tab</Button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }
 

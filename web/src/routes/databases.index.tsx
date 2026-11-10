@@ -8,6 +8,7 @@ import { IconDatabase, IconInfoCircle, IconPlus, IconSearch } from '@tabler/icon
 import { Fragment, useMemo, useState } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
+import { NewOnServer } from '~/components/NewOnServer'
 import { LastBackupCell } from '~/components/DatabaseBackups'
 import { LevelBadge } from '~/components/LevelBadge'
 import { relTime } from '~/components/primitives'
@@ -132,9 +133,9 @@ function Databases() {
         description="Open a Postgres database or a Redis you've been given. Argus signs you in for this session only and records every statement and command. Message brokers are under Brokers."
         actions={
           admin ? (
-            <ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>
+            <Group gap="xs"><NewOnServer label="New database" engines={['postgres', 'mysql', 'mongodb', 'redis']} /><ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>
               Add from a server's page
-            </ButtonLink>
+            </ButtonLink></Group>
           ) : undefined
         }
       />
