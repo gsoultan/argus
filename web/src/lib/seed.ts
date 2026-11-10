@@ -119,6 +119,17 @@ function makeAssets(): Asset[] {
         credentialRotatedAt: isCa ? null : ago(between(200, 190_000)),
         rotationIntervalDays: isCa ? null : pick([30, 60, 90]),
       })
+      // What the agent reports, derived rather than rolled so the rest of the
+      // fixture is unchanged: the private address on eth0, a public one on
+      // every third host, and Docker's bridge on every fourth.
+      const last = out[out.length - 1]!
+      if (agentState !== 'absent') {
+        last.addresses = [
+          ...(i % 3 === 0 ? [{ address: `203.0.113.${(i * 7) % 250 + 2}`, family: 'ipv4' as const, public: true, interface: 'eth0' }] : []),
+          { address: last.address, family: 'ipv4', public: false, interface: 'eth0' },
+          ...(i % 4 === 0 ? [{ address: '172.17.0.1', family: 'ipv4' as const, public: false, interface: 'docker0' }] : []),
+        ]
+      }
       group.assetCount++
     }
   }
@@ -153,6 +164,7 @@ const win01: Asset = {
   unmanagedKeyCount: 0,
   credentialRotatedAt: ago(4_000),
   rotationIntervalDays: 30,
+  addresses: undefined,
 }
 
 /**
@@ -168,6 +180,7 @@ const pixel01: Asset = {
   id: '5c1e1a0e-7b7e-4c7a-9c4e-2d6f3a8b1e42',
   hostname: 'rina-pixel-8',
   address: '10.44.9.31',
+  addresses: [{ address: '10.44.9.31', family: 'ipv4', public: false, interface: 'wlan0' }],
   port: 0,
   os: 'Android 15',
   tags: ['field', 'phones'],

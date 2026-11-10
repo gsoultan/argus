@@ -10,6 +10,7 @@ import {
   IconAppWindow, IconBrandWindows, IconChevronDown, IconClock, IconDeviceDesktop, IconDeviceLaptop, IconDeviceMobile, IconFolder,
   IconLock, IconSearch, IconServer2, IconServerOff, IconSettings, IconTerminal2,
 } from '@tabler/icons-react'
+import { AssetAddresses } from '~/components/AssetAddresses'
 import { DownloadSshConfigButton } from '~/components/ssh/OwnTerminal'
 import { shortCommand } from '~/lib/sshConfig'
 import { notifyOk } from '~/lib/notify'
@@ -140,6 +141,7 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
               <Text size={FS.meta} c="dimmed" truncate>
                 {type === 'workstation' ? 'Workstation · ' : ''}{a.os} · {kind === 'android' ? 'Android device' : rdp ? 'Remote Desktop' : 'Terminal (SSH)'}
               </Text>
+              <AssetAddresses asset={a} />
             </Box>
           </Group>
           <ReachBadge reach={reach} />
@@ -453,7 +455,7 @@ export function ServerCards() {
       (assets ?? [])
         .filter((a) => {
           if (needle) {
-            const hay = `${a.hostname} ${a.address} ${a.os} ${a.tags.join(' ')} ${a.principals.join(' ')}`
+            const hay = `${a.hostname} ${a.address} ${(a.addresses ?? []).map((x) => x.address).join(' ')} ${a.os} ${a.tags.join(' ')} ${a.principals.join(' ')}`
             if (!hay.toLowerCase().includes(needle)) return false
           }
           const up = isUp(reachOf(a))
@@ -527,7 +529,7 @@ export function ServerCards() {
         <TextInput
           w={260}
           aria-label="Find a server"
-          placeholder="Find by name, address or tag"
+          placeholder="Find by name, IP or tag"
           leftSection={<IconSearch size={14} />}
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}

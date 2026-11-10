@@ -68,6 +68,17 @@ func (a *API) getAssets(w http.ResponseWriter, r *http.Request) {
 	)
 	if seesWholeFleet(sess.Role) {
 		assets, err = a.store.Assets(r.Context())
+		if err == nil {
+			// The addresses are a convenience on the list: a failure to read
+			// them leaves them out rather than failing the whole inventory.
+			if addrs, aerr := a.store.AgentAddresses(r.Context()); aerr != nil {
+				a.log.Warn("asset addresses", "err", aerr)
+			} else {
+				for i := range assets {
+					assets[i].Addresses = addrs[assets[i].ID]
+				}
+			}
+		}
 	} else {
 		assets, err = a.store.AssetsForUser(r.Context(), sess.Email)
 		for i := range assets {

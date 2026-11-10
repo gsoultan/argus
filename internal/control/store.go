@@ -690,6 +690,11 @@ type Asset struct {
 	// TunnelConnected is whether this host's agent holds a live tunnel, by
 	// the database's clock, so the console can open sessions through it.
 	TunnelConnected bool `json:"tunnelConnected"`
+	// Addresses is what the server's agent last said its interfaces hold,
+	// each with its interface and whether it is public. Only for those who
+	// see the whole fleet, by the same rule as the System card; nil for
+	// everyone else and for a server whose agent has reported none.
+	Addresses []AssetAddress `json:"addresses,omitempty"`
 }
 
 // Assets lists the inventory an administrator sees: every live asset.

@@ -510,3 +510,67 @@ func (a *API) getSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// AssetAddress is one address a server's agent reported, for the assets list.
+type AssetAddress struct {
+	Address string `json:"address"`
+	Family  string `json:"family"`
+	Public  bool   `json:"public"`
+	// Interface is "" for an older agent's flat list.
+	Interface string `json:"interface,omitempty"`
+}
+
+// flatAddresses is systemNetwork as one list, each address once.
+func flatAddresses(ifs []SystemInterface) []AssetAddress {
+	var out []AssetAddress
+	seen := map[string]bool{}
+	for _, i := range ifs {
+		for _, a := range i.Addresses {
+			if seen[a.Address] {
+				continue
+			}
+			seen[a.Address] = true
+			out = append(out, AssetAddress{Address: a.Address, Family: a.Family, Public: a.Public, Interface: i.Name})
+		}
+	}
+	return out
+}
+
+// AgentAddresses is every live asset's reported addresses, keyed by asset
+// id, in one query: the agent matched the way SystemFor matches it.
+func (s *Store) AgentAddresses(ctx context.Context) (map[string][]AssetAddress, error) {
+	rows, err := s.db(ctx).Query(ctx, `
+		SELECT a.id::text, ag.system->'interfaces', ag.addresses
+		  FROM assets a
+		  JOIN LATERAL (
+		       SELECT system, addresses FROM agents g
+		        WHERE g.hostname = a.hostname OR g.hostname = a.agent_hostname
+		           OR g.hostname = split_part(a.hostname, '.', 1)
+		        ORDER BY g.last_seen_at DESC NULLS LAST
+		        LIMIT 1) ag ON TRUE
+		 WHERE a.archived_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]AssetAddress{}
+	for rows.Next() {
+		var (
+			id   string
+			raw  []byte
+			flat []string
+			ifs  []HostInterface
+		)
+		if err := rows.Scan(&id, &raw, &flat); err != nil {
+			return nil, err
+		}
+		if len(raw) > 0 && string(raw) != "null" {
+			// A malformed report reads as none and falls back to the flat list.
+			_ = json.Unmarshal(raw, &ifs)
+		}
+		if addrs := flatAddresses(systemNetwork(ifs, flat)); len(addrs) > 0 {
+			out[id] = addrs
+		}
+	}
+	return out, rows.Err()
+}
