@@ -210,6 +210,61 @@ func TestScreenSendsMotionAsVideoThenSharpensIt(t *testing.T) {
 	}
 }
 
+// A picture of changes too scattered to name one by one covers one
+// rectangle around them all, so tiles that did not change are drawn from
+// the video too, and those must come again exactly as well.
+func TestScreenSharpensEveryTileAPictureCovered(t *testing.T) {
+	screen := newFakeScreen(2048, 1024, 0)
+	v := &fakeVideo{}
+	h, stop := startVideoHelper(t, screen, v)
+	defer stop()
+	readSize(t, h)
+	h.next() // every tile, exactly
+
+	// A key frame first: it shows everything and is sharpened everywhere.
+	screen.fill(0, 0, 2048, 1024, 0x80)
+	if f := h.next(); len(f.videos) != 1 || !f.videos[0].key {
+		t.Fatalf("the first motion went as %+v", f)
+	}
+	// Reads exact tiles until all have come, or for a few seconds: a
+	// change in the last corner then ends the wait, since a still screen
+	// with nothing left to sharpen sends nothing at all.
+	drain := func() map[image.Rectangle]bool {
+		exact := map[image.Rectangle]bool{}
+		deadline := time.Now().Add(3 * time.Second)
+		poke := time.AfterFunc(3*time.Second, func() { screen.paint(2047, 1023, 0x01) })
+		defer poke.Stop()
+		for time.Now().Before(deadline) {
+			f := h.next()
+			for _, r := range f.tiles {
+				exact[r] = true
+			}
+			if len(exact) == 512 {
+				break
+			}
+		}
+		return exact
+	}
+	if got := drain(); len(got) != 512 {
+		t.Fatalf("%d of 512 tiles came again after the key frame", len(got))
+	}
+
+	// A checkerboard of changes: 256 tiles, none beside another, past
+	// screenMaxRegions, so the picture covers the whole screen.
+	for ty := 0; ty < 16; ty++ {
+		for tx := (ty % 2); tx < 32; tx += 2 {
+			screen.fill(tx*screenTile, ty*screenTile, (tx+1)*screenTile, (ty+1)*screenTile, 0x20)
+		}
+	}
+	f := h.next()
+	if len(f.videos) != 1 || f.videos[0].key || len(f.videos[0].regions) != 1 {
+		t.Fatalf("the checkerboard went as %+v, want one picture of one rectangle", f.videos)
+	}
+	if got := drain(); len(got) != 512 {
+		t.Fatalf("%d of the 512 tiles the picture covered came again exactly", len(got))
+	}
+}
+
 // A helper with no encoder says why, and sends motion exactly.
 func TestScreenWithoutAnEncoderSendsExactTiles(t *testing.T) {
 	screen := newFakeScreen(512, 256, 0)

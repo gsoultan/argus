@@ -303,13 +303,18 @@ func (d *duplicator) next(wait time.Duration, dst []byte, stride int, all bool) 
 	}
 	d.context.call(vtContextCopy, uintptr(unsafe.Pointer(d.staging)), uintptr(unsafe.Pointer(tex)))
 	tex.release()
-	releaseFrame()
 
+	// The frame is held until the copy is done, which Map waits for. The
+	// copy is only queued above: released before it ran, the frame's
+	// surface could take the next frame first, and the staging copy would
+	// hold part of a later screen while the dirty rectangles describe this
+	// one, leaving pieces of other frames on screen.
 	var m d3dMapped
 	if hr := d.context.call(vtContextMap, uintptr(unsafe.Pointer(d.staging)), 0, d3d11MapRead, 0,
 		uintptr(unsafe.Pointer(&m))); failed(hr) || m.Data == nil {
 		return nil, false, hresult("Map", hr)
 	}
+	releaseFrame()
 	defer d.context.call(vtContextUnmap, uintptr(unsafe.Pointer(d.staging)), 0)
 	pitch := int(m.RowPitch)
 	if pitch < d.width*4 {

@@ -68,9 +68,21 @@ func TestUsageHistoryFoldsSamplesAndKeepsGaps(t *testing.T) {
 		t.Errorf("second point at %v", m.Points[1].At)
 	}
 
-	// A wider range folds the buckets into wider steps, keeping peaks.
-	if m := get("30d"); len(m.Points) == 0 || m.StepSeconds != 7200 || *m.Points[len(m.Points)-1].CPUMax < 60 {
+	// A wider range folds the buckets into wider steps, keeping peaks. The
+	// samples fall in one two-hour step or straddle two, by the time of day
+	// the test runs, so the peak is looked for in any of them.
+	if m := get("30d"); len(m.Points) == 0 || m.StepSeconds != 7200 {
 		t.Errorf("30d = %+v", m)
+	} else {
+		peak := 0.0
+		for _, p := range m.Points {
+			if p.CPUMax != nil {
+				peak = max(peak, *p.CPUMax)
+			}
+		}
+		if peak < 60 {
+			t.Errorf("30d kept a peak of %v, want 60: %+v", peak, m)
+		}
 	}
 
 	if w := do(t, h, http.MethodGet, "/api/v1/assets/"+asset.ID+"/metrics?range=1y", "admin-token", ""); w.Code != http.StatusBadRequest {

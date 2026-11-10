@@ -66,6 +66,7 @@ var (
 	codecAPIGOPSize         = windows.GUID{Data1: 0x95f31b26, Data2: 0x95a4, Data3: 0x41aa, Data4: [8]byte{0x93, 0x03, 0x24, 0x6a, 0x7f, 0xc6, 0xee, 0xf1}}
 	codecAPIBPictures       = windows.GUID{Data1: 0x8d390aac, Data2: 0xdc5c, Data3: 0x4200, Data4: [8]byte{0xb5, 0x7f, 0x81, 0x4d, 0x04, 0xba, 0xba, 0xb2}}
 	codecAPIMeanBitRate     = windows.GUID{Data1: 0xf7222374, Data2: 0x2144, Data3: 0x4815, Data4: [8]byte{0xb5, 0x50, 0xa3, 0x7f, 0x8e, 0x12, 0xee, 0x52}}
+	codecAPIMaxBitRate      = windows.GUID{Data1: 0x9651eae4, Data2: 0x39b9, Data3: 0x4ebf, Data4: [8]byte{0x85, 0xef, 0xd7, 0xf4, 0x44, 0xec, 0x74, 0x65}}
 	codecAPIForceKeyFrame   = windows.GUID{Data1: 0x398c1b98, Data2: 0x8353, Data3: 0x475a, Data4: [8]byte{0x9e, 0xf2, 0x8f, 0x26, 0x5d, 0x26, 0x03, 0x45}}
 )
 
@@ -127,21 +128,32 @@ const (
 	vtUI4  = 19
 	vtBool = 11
 
-	rateControlCBR  = 0
-	h264ProfileBase = 66
+	// rateControlPeakVBR spends what a picture needs, around the mean and
+	// never past the peak: a small motion costs little, a busy one gets
+	// room, where constant rate spent the same on both.
+	rateControlPeakVBR = 1
+	h264ProfileHigh    = 100
+	h264ProfileMain    = 77
+	h264ProfileBase    = 66
 
 	// screenVideoRate is the frame rate the encoder plans its bits for; the
-	// timestamps say when pictures really were.
-	screenVideoRate = 60
+	// timestamps say when pictures really were. Motion arrives at about
+	// thirty a second once the browser's acknowledgements pace it, and a
+	// plan for sixty gave each picture half the bits it could have had.
+	screenVideoRate = 30
 
-	// screenVideoBits is what motion costs at most, in bits a second for
-	// each pixel of the screen: 0.8 Mbit/s at 1024x768, 2 Mbit/s at full
-	// HD. Motion is a little soft for it; it is sent again exactly a
-	// quarter of a second after it stops, and the recording is kept small:
-	// H.264 is already compressed, so the recording's own compression takes
-	// nothing more off it.
-	screenVideoBits = 1
+	// screenVideoBits is what motion costs on average, in bits a second for
+	// each pixel of the screen: 1.6 Mbit/s at 1024x768, 4 Mbit/s at full
+	// HD, and twice that at the peak. One bit was too soft to read text
+	// while it moved. It is still sent again exactly a quarter of a second
+	// after it stops, and H.264 takes nothing more from the recording's own
+	// compression, so a recording of a lot of motion is larger for it.
+	screenVideoBits = 2
 )
+
+// screenVideoProfiles are tried in turn: High compresses a screen best,
+// and an encoder that refuses it still takes Baseline.
+var screenVideoProfiles = []uint32{h264ProfileHigh, h264ProfileMain, h264ProfileBase}
 
 // variant is a VARIANT: its type, three reserved words, and the value.
 type variant struct {
@@ -215,8 +227,9 @@ func (e *mfEncoder) open() error {
 	if c, err := e.mft.query(&iidICodecAPI); err == nil {
 		e.codec = c
 		e.setValue(&codecAPILowLatency, vtBool, 0xFFFF) // VARIANT_TRUE
-		e.setValue(&codecAPIRateControlMode, vtUI4, rateControlCBR)
+		e.setValue(&codecAPIRateControlMode, vtUI4, rateControlPeakVBR)
 		e.setValue(&codecAPIMeanBitRate, vtUI4, uint64(e.bitrate()))
+		e.setValue(&codecAPIMaxBitRate, vtUI4, uint64(e.bitrate())*2)
 		e.setValue(&codecAPIBPictures, vtUI4, 0)
 		// No key frame but those asked for: the stream is reliable, and a
 		// key frame is the most expensive picture there is.
@@ -227,27 +240,35 @@ func (e *mfEncoder) open() error {
 	rate := uint64(screenVideoRate)<<32 | 1
 	bitrate := e.bitrate()
 
-	out, err := newMediaType()
-	if err != nil {
-		return err
+	var refused uint32
+	for _, profile := range screenVideoProfiles {
+		out, err := newMediaType()
+		if err != nil {
+			return err
+		}
+		sets := []error{
+			setGUID(out, &mfMTMajorType, &mfMediaTypeVideo),
+			setGUID(out, &mfMTSubtype, &mfVideoFormatH264),
+			setUINT32(out, &mfMTAvgBitrate, bitrate),
+			setUINT64(out, &mfMTFrameSize, size),
+			setUINT64(out, &mfMTFrameRate, rate),
+			setUINT64(out, &mfMTPixelAspect, 1<<32|1),
+			setUINT32(out, &mfMTInterlaceMode, 2), // progressive
+			setUINT32(out, &mfMTMpeg2Profile, profile),
+		}
+		if err := errors.Join(sets...); err != nil {
+			out.release()
+			return err
+		}
+		colour(out)
+		refused = e.mft.call(vtMFTSetOutputType, 0, uintptr(unsafe.Pointer(out)), 0)
+		out.release()
+		if !failed(refused) {
+			break
+		}
 	}
-	defer out.release()
-	sets := []error{
-		setGUID(out, &mfMTMajorType, &mfMediaTypeVideo),
-		setGUID(out, &mfMTSubtype, &mfVideoFormatH264),
-		setUINT32(out, &mfMTAvgBitrate, bitrate),
-		setUINT64(out, &mfMTFrameSize, size),
-		setUINT64(out, &mfMTFrameRate, rate),
-		setUINT64(out, &mfMTPixelAspect, 1<<32|1),
-		setUINT32(out, &mfMTInterlaceMode, 2), // progressive
-		setUINT32(out, &mfMTMpeg2Profile, h264ProfileBase),
-	}
-	if err := errors.Join(sets...); err != nil {
-		return err
-	}
-	colour(out)
-	if hr := e.mft.call(vtMFTSetOutputType, 0, uintptr(unsafe.Pointer(out)), 0); failed(hr) {
-		return hresult("the encoder refused H.264 at this size", hr)
+	if failed(refused) {
+		return hresult("the encoder refused H.264 at this size", refused)
 	}
 
 	in, err := newMediaType()
@@ -255,7 +276,7 @@ func (e *mfEncoder) open() error {
 		return err
 	}
 	defer in.release()
-	sets = []error{
+	sets := []error{
 		setGUID(in, &mfMTMajorType, &mfMediaTypeVideo),
 		setGUID(in, &mfMTSubtype, &mfVideoFormatNV12),
 		setUINT64(in, &mfMTFrameSize, size),
@@ -298,7 +319,7 @@ func (e *mfEncoder) setValue(api *windows.GUID, vt uint16, v uint64) {
 
 // bitrate is what motion on this screen may cost, in bits a second.
 func (e *mfEncoder) bitrate() uint32 {
-	return uint32(min(max(int64(e.width)*int64(e.height)*screenVideoBits, 500_000), 8_000_000))
+	return uint32(min(max(int64(e.width)*int64(e.height)*screenVideoBits, 1_000_000), 16_000_000))
 }
 
 // sequenceHeader reads the SPS and PPS the encoder put on its output type.
