@@ -1,21 +1,22 @@
 import '../ssh/ssh.css'
 import './connect.css'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
-import { ActionIcon, Box, Button, Center, Group, Loader, Menu, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { ActionIcon, Box, Button, Center, Group, Loader, Menu, PasswordInput, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
-  IconArrowLeft, IconCheck, IconChevronDown, IconCircleCheck, IconClipboard, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
+  IconAdjustments, IconArrowLeft, IconCheck, IconChevronDown, IconCircleCheck, IconClipboard, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
   IconLayoutColumns, IconMaximize, IconMinimize, IconPin, IconPinFilled, IconPlugConnectedX, IconPlus,
   IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import type { FilesState } from '~/components/FileBrowser'
 import type { TerminalState } from '~/components/LiveTerminal'
-import type { ClipboardNote, RDPControls, RDPStats } from '~/components/RDPScreen'
+import type { ClipboardNote, RDPControls, RDPState, RDPStats } from '~/components/RDPScreen'
 import type { ClipboardRule } from '~/lib/clipboard'
 import { StateCard } from '~/components/connect/ConnectPanel'
 import { chord, isMac, loadKeyboardPrefs, saveKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
+import { loadPicture, savePicture, SIZE_LABEL, type PicturePrefs, type PictureSize } from '~/lib/picture'
 import { assetsQuery, meQuery } from '~/lib/queries'
 import { desktopEndpoint, filesEndpoint, terminalEndpoint } from '~/lib/live'
 import { seesWholeFleet } from '~/lib/roles'
@@ -194,18 +195,78 @@ function SessionPane({ session, active, rootRef, onState, registerEnd, onClose }
     })
   }
 
-  const again = async () => {
+  const again = async (password?: string) => {
     setReopening(true)
     setReopenError(undefined)
-    const res = await reopen(session.id)
+    const res = await reopen(session.id, password)
     setReopening(false)
     if (res.error) {
       setReopenError(res.error)
-      return
+      return false
     }
     setTermState('connecting')
     setFilesState('connecting')
+    return true
   }
+
+  // Reconnect grace. A screen that drops by itself (the network, a laptop
+  // lid) is tried again for a couple of minutes, sooner when the browser
+  // says it is back online; the server's desktop waits meanwhile. A Remote
+  // Desktop sign-in needs the Windows password again, which Argus does not
+  // keep, so that one asks instead of retrying.
+  const autoReconnect = desktop && session.way !== 'desktop'
+  const graceUntil = useRef<number | null>(null)
+  const tries = useRef(0)
+  const retryTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(retryTimer.current), [])
+  const tryAgain = useCallback(async () => {
+    window.clearTimeout(retryTimer.current)
+    retryTimer.current = undefined
+    const ok = await again()
+    if (!ok) scheduleRef.current()
+    // again and the schedule are read as they are now, through the ref.
+  }, [])
+  const schedule = () => {
+    if (graceUntil.current === null) graceUntil.current = Date.now() + RECONNECT_GRACE_MS
+    if (Date.now() >= graceUntil.current) {
+      graceUntil.current = null
+      tries.current = 0
+      setTermState('lost')
+      setTermDetail(`It did not come back within ${RECONNECT_GRACE_MS / 60_000} minutes.`)
+      return
+    }
+    setTermState('reconnecting')
+    setTermDetail('the connection dropped')
+    const delay = Math.min(1000 * 2 ** tries.current, 15_000)
+    tries.current++
+    window.clearTimeout(retryTimer.current)
+    retryTimer.current = window.setTimeout(() => void tryAgain(), delay)
+  }
+  const scheduleRef = useRef(schedule)
+  scheduleRef.current = schedule
+  useEffect(() => {
+    const online = () => {
+      if (retryTimer.current !== undefined) void tryAgain()
+    }
+    window.addEventListener('online', online)
+    return () => window.removeEventListener('online', online)
+  }, [tryAgain])
+
+  const onDesktopState = (s: RDPState, d?: string) => {
+    if (s === 'live') {
+      graceUntil.current = null
+      tries.current = 0
+    }
+    const retrying = graceUntil.current !== null
+    if (autoReconnect && (s === 'lost' || (retrying && (s === 'closed' || s === 'error')))) {
+      schedule()
+      return
+    }
+    if (retrying && s === 'connecting') return
+    setTermState(s)
+    setTermDetail(d)
+  }
+  const [password, setPassword] = useState('')
 
   const ended = state === 'closed' || state === 'lost' || state === 'error'
   const whole = seesWholeFleet(me?.role)
@@ -221,10 +282,7 @@ function SessionPane({ session, active, rootRef, onState, registerEnd, onClose }
             <DesktopView session={session} active={active} rootRef={rootRef}
               getTicket={getTicket} takePassword={() => takePassword(session.id)}
               onEnd={onClose}
-              onState={(s, d) => {
-                setTermState(s === 'live' ? 'live' : s === 'error' ? 'error' : s === 'connecting' ? 'connecting' : 'closed')
-                setTermDetail(d)
-              }} />
+              onState={onDesktopState} onReconnect={autoReconnect ? () => void again() : undefined} />
           ) : (
             <div className={view === 'split' ? 'argus-session-split' : 'argus-session-pane'}>
               {opened.has('terminal') && (
@@ -250,7 +308,38 @@ function SessionPane({ session, active, rootRef, onState, registerEnd, onClose }
             </div>
           )}
         </Suspense>
-        {ended && (
+        {desktop && state === 'reconnecting' && (
+          <div className="argus-ws-over">
+            <StateCard icon={<Loader size={24} color="amber" />} tone="amber" title={`Reconnecting to ${short(session.target)}`}
+              body={`The connection dropped. The screen there keeps running, and Argus keeps trying for up to ${RECONNECT_GRACE_MS / 60_000} minutes.`}>
+              <Button variant="default" onClick={() => void tryAgain()}>Try now</Button>
+              <Button variant="default" onClick={onClose}>Close tab</Button>
+            </StateCard>
+          </div>
+        )}
+        {ended && desktop && state === 'lost' && session.way === 'desktop' && (
+          <div className="argus-ws-over">
+            <StateCard icon={<IconPlugConnectedX size={26} />} tone="amber" title="Connection lost"
+              body={reopenError ?? `Your desktop on ${short(session.target)} is still signed in. Sign in again to pick up where you left off.`}>
+              <Box component="form" w="100%" onSubmit={(e) => {
+                e.preventDefault()
+                const p = password
+                setPassword('')
+                void again(p)
+              }}>
+                <Stack gap="sm">
+                  <PasswordInput label={`Windows password for ${session.principal}`} autoComplete="current-password"
+                    autoFocus value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
+                  <Group justify="center" gap="sm">
+                    <Button type="submit" loading={reopening} disabled={!password}>Reconnect</Button>
+                    <Button variant="default" onClick={onClose}>Close tab</Button>
+                  </Group>
+                </Stack>
+              </Box>
+            </StateCard>
+          </div>
+        )}
+        {ended && !(desktop && state === 'lost' && session.way === 'desktop') && (
           <div className="argus-ws-over">
             {state === 'closed' ? (
               <StateCard icon={<IconCircleCheck size={26} />} tone="teal" title="Session ended"
@@ -281,6 +370,9 @@ function SessionPane({ session, active, rootRef, onState, registerEnd, onClose }
     </Box>
   )
 }
+
+/** How long a dropped screen is tried again before Argus gives up. */
+export const RECONNECT_GRACE_MS = 2 * 60_000
 
 const STATE_WORD: Record<PaneState, string> = {
   connecting: 'Connecting', live: 'Live · recorded', reconnecting: 'Reconnecting', lost: 'Connection lost',
@@ -319,14 +411,16 @@ function TerminalStrip({ view, show, phone, onEnd }: {
 }
 
 /** A desktop, a shared screen or a device, with the floating toolbar. */
-function DesktopView({ session, active, rootRef, getTicket, takePassword, onState, onEnd }: {
+function DesktopView({ session, active, rootRef, getTicket, takePassword, onState, onEnd, onReconnect }: {
   session: OpenSession
   active: boolean
   rootRef: React.RefObject<HTMLDivElement | null>
   getTicket: () => Promise<string | null>
   takePassword: () => string
-  onState: (s: 'connecting' | 'live' | 'closed' | 'error', d?: string) => void
+  onState: (s: RDPState, d?: string) => void
   onEnd: () => void
+  /** Opens the screen again, where that needs nothing from the person. */
+  onReconnect?: () => void
 }) {
   const device = session.way === 'device'
   const readOnly = device && session.principal === 'view'
@@ -394,6 +488,17 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
     controls.current?.focus()
   }
   const send = (keys: KeyOut[]) => controls.current?.sendKeys(keys)
+
+  // Size and motion are agreed when the screen opens: a change reconnects
+  // where that is free, and otherwise waits for the next sign-in.
+  const [picture, setPicture] = useState<PicturePrefs>(loadPicture)
+  const choosePicture = (p: Partial<PicturePrefs>) => {
+    const next = { ...picture, ...p }
+    if (next.size === picture.size && next.motion === picture.motion) return
+    setPicture(next)
+    savePicture(next)
+    onReconnect?.()
+  }
 
   // The clipboard's rule for this server, and a few words when something
   // crossed, shown on the toolbar for a moment.
@@ -524,6 +629,46 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
             </Menu.Dropdown>
           </Menu>
         )}
+        {!device && (
+          <Menu withinPortal={false} position="bottom" shadow="md" width={260}
+            onOpen={() => setMenuOpen(true)} onClose={() => { setMenuOpen(false); wake() }}>
+            <Menu.Target>
+              <UnstyledButton className="argus-ws-tb" aria-label="Picture">
+                <IconAdjustments size={15} />Picture<IconChevronDown size={12} />
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Size</Menu.Label>
+              {(Object.keys(SIZE_LABEL) as PictureSize[]).map((sz) => (
+                <Menu.Item key={sz} role="menuitemradio" aria-checked={picture.size === sz}
+                  rightSection={picture.size === sz ? <IconCheck size={14} /> : null}
+                  onClick={() => choosePicture({ size: sz })}>
+                  {SIZE_LABEL[sz]}
+                </Menu.Item>
+              ))}
+              {session.way === 'screen' && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Label>What moves</Menu.Label>
+                  <Menu.Item role="menuitemradio" aria-checked={picture.motion === 'video'}
+                    rightSection={picture.motion === 'video' ? <IconCheck size={14} /> : null}
+                    onClick={() => choosePicture({ motion: 'video' })}>
+                    Smooth video
+                  </Menu.Item>
+                  <Menu.Item role="menuitemradio" aria-checked={picture.motion === 'exact'}
+                    rightSection={picture.motion === 'exact' ? <IconCheck size={14} /> : null}
+                    onClick={() => choosePicture({ motion: 'exact' })}>
+                    Exact pixels, for sharp text
+                  </Menu.Item>
+                </>
+              )}
+              <Text size="xs" c="dimmed" px="sm" py={6}>
+                {onReconnect ? 'A change reconnects the screen; what is open on it stays open.'
+                  : 'A change applies the next time you sign in.'}
+              </Text>
+            </Menu.Dropdown>
+          </Menu>
+        )}
         {filesAllowed && (
           <UnstyledButton className="argus-ws-tb" aria-pressed={filesOpen} data-on={filesOpen || undefined}
             onClick={toggleFiles}>
@@ -554,6 +699,7 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
         takePassword={takePassword}
         controls={controls}
         keyboard={keyboard}
+        picture={picture}
         onClipboard={onClipboard}
         clipboardSync={session.way !== 'screen'}
         onStats={setStats}

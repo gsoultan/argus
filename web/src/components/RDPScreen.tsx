@@ -10,9 +10,15 @@ import {
   writeClipboard, type ClipboardRule,
 } from '~/lib/clipboard'
 import { chord, isMac, KeyMapper, loadKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
+import { pictureSize, type PicturePrefs } from '~/lib/picture'
 import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
-export type RDPState = 'connecting' | 'live' | 'closed' | 'error'
+/**
+ * `lost` is a live screen whose connection went with nobody ending it: the
+ * network, a laptop lid, the control plane restarting. The server's desktop
+ * is still there, and a new connection picks it up.
+ */
+export type RDPState = 'connecting' | 'live' | 'lost' | 'closed' | 'error'
 
 export interface RDPScreenProps {
   /** The WebSocket endpoint as an http(s) URL: desktopEndpoint, or watchEndpoint. */
@@ -57,6 +63,8 @@ export interface RDPScreenProps {
    * characters. Read at each key, so a change applies at once.
    */
   keyboard?: KeyboardPrefs
+  /** Size and motion to open at; read when the screen connects. */
+  picture?: PicturePrefs
   /** What the clipboard did: the rule on ready, a copy from the server, a paste sent. */
   onClipboard?: (e: ClipboardNote) => void
   /**
@@ -168,6 +176,7 @@ export function RDPScreen({
   onStats,
   controls,
   keyboard,
+  picture,
   onClipboard,
   clipboardSync = true,
 }: RDPScreenProps) {
@@ -186,6 +195,8 @@ export function RDPScreen({
   // to the next key without rebinding anything.
   const keyboardRef = useRef<KeyboardPrefs>(keyboard ?? loadKeyboardPrefs())
   if (keyboard) keyboardRef.current = keyboard
+  const pictureRef = useRef(picture)
+  pictureRef.current = picture
   // The clipboard: the rule the control plane sent, what came from the
   // server last (not sent back), what went to it last (not sent twice), and
   // a copy waiting for this tab to have focus to be written.
@@ -391,7 +402,7 @@ export function RDPScreen({
       const graphics = !shadowSessionId && (await wantsGraphics())
       // Screen sharing sends motion as H.264 to a browser that decodes it,
       // and exact pixels once still; Remote Desktop ignores this.
-      const video = !shadowSessionId && (await canDecodeH264())
+      const video = !shadowSessionId && pictureRef.current?.motion !== 'exact' && (await canDecodeH264())
       if (disposed) return
 
       const url = new URL(endpoint, window.location.href)
@@ -418,7 +429,7 @@ export function RDPScreen({
               password: takePassword?.() ?? '',
               graphics,
               video,
-              ...wantedSize(),
+              ...pictureSize(pictureRef.current?.size ?? 'fit', wantedSize()),
             }),
           )
         }
@@ -451,11 +462,15 @@ export function RDPScreen({
           // Not something this console sends or understands.
         }
       }
-      ws.onerror = () => setStatus('error', 'connection failed')
+      // A live screen's socket failing is a lost connection, which the close
+      // after it reports; only one that never opened failed.
+      ws.onerror = () => {
+        if (!disposed && stateRef.current === 'connecting') setStatus('error', 'connection failed')
+      }
       ws.onclose = () => {
-        if (stateRef.current === 'live' || stateRef.current === 'connecting') {
-          setStatus('closed')
-        }
+        if (disposed) return
+        if (stateRef.current === 'live') setStatus('lost', 'the connection dropped')
+        else if (stateRef.current === 'connecting') setStatus('closed')
       }
     })()
 

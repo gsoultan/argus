@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Box, Group, Modal, ScrollArea, Text, TextInput, UnstyledButton } from '@mantine/core'
 import { useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { IconCornerDownLeft, IconSearch } from '@tabler/icons-react'
+import { IconCornerDownLeft, IconPlug, IconPlugConnected, IconSearch } from '@tabler/icons-react'
 import type { IconProps } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 import { assetsQuery, databasesQuery, meQuery, sessionsQuery, usersQuery } from '~/lib/queries'
@@ -28,16 +28,20 @@ interface Item {
   id: string
   label: string
   hint?: string
-  kind: 'Page' | 'Host' | 'Database' | 'Broker' | 'Session' | 'User'
+  kind: 'Open now' | 'Connect' | 'Page' | 'Host' | 'Database' | 'Broker' | 'Session' | 'User'
   icon?: ComponentType<IconProps>
   go: () => void
 }
 
 const PER_GROUP = 5
 
+const WAY_WORD: Record<string, string> = {
+  terminal: 'Terminal', files: 'Files', split: 'Terminal and files', desktop: 'Desktop', screen: 'Screen sharing', device: 'Phone',
+}
+
 export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const navigate = useNavigate()
-  const { ask } = useSessions()
+  const { ask, sessions: open, focus } = useSessions()
   const [q, setQ] = useState('')
   const [cursor, setCursor] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -55,6 +59,52 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
   const items = useMemo<Item[]>(() => {
     const needle = q.trim().toLowerCase()
     const out: Item[] = []
+
+    // The sessions already open come first, so Ctrl K is also how to get
+    // back to one from anywhere in the console.
+    for (const s of open) {
+      const host = s.target.split('.')[0]
+      if (needle && !`${s.principal}@${s.target} ${s.way}`.toLowerCase().includes(needle)) continue
+      out.push({
+        id: `open:${s.id}`,
+        label: `${s.principal}@${host}`,
+        hint: WAY_WORD[s.way],
+        kind: 'Open now',
+        icon: IconPlugConnected,
+        go: () => {
+          focus(s.id)
+          void navigate({ to: '/connect', search: {} })
+        },
+      })
+    }
+
+    // Typing a server's name offers to connect to it straight away; its
+    // administration page is still under Hosts below.
+    if (needle) {
+      // Ranked by the server's own name, so "win" finds win-01 before every
+      // host under northwind.id.
+      const rank = (a: { hostname: string; address: string }) => {
+        const name = a.hostname.split('.')[0]!.toLowerCase()
+        if (name.startsWith(needle)) return 0
+        if (name.includes(needle)) return 1
+        return `${a.hostname} ${a.address}`.toLowerCase().includes(needle) ? 2 : -1
+      }
+      const reachable = (assets ?? []).slice(0, 400)
+        .map((a) => ({ a, r: rank(a) }))
+        .filter((x) => x.r >= 0)
+        .sort((x, y) => x.r - y.r)
+        .slice(0, PER_GROUP)
+      for (const { a } of reachable) {
+        out.push({
+          id: `connect:${a.id}`,
+          label: `Connect to ${a.hostname.split('.')[0]}`,
+          hint: a.hostname,
+          kind: 'Connect',
+          icon: IconPlug,
+          go: () => ask(a.hostname),
+        })
+      }
+    }
 
     for (const p of pagesFor(me?.role)) {
       if (needle && !p.label.toLowerCase().includes(needle)) continue
@@ -129,7 +179,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
     }
 
     return out
-  }, [q, assets, dbs, sessions, users, navigate, me?.role, whole])
+  }, [q, assets, dbs, sessions, users, navigate, me?.role, whole, open, focus, ask])
 
   // The highlighted row must never point past the end of a list that just got
   // shorter because another character was typed.
@@ -183,7 +233,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
         autoFocus
         size="md"
         variant="unstyled"
-        placeholder="Search pages, hosts, sessions and people…"
+        placeholder="Connect to a server, or search pages, sessions and people…"
         leftSection={<IconSearch size={16} />}
         value={q}
         onChange={(e) => setQ(e.currentTarget.value)}

@@ -300,12 +300,13 @@ describe('command palette', () => {
     await renderRoute('/assets')
     fireEvent.keyDown(document, { key: 'k', metaKey: true })
 
-    const input = await screen.findByPlaceholderText(/search pages, hosts/i)
+    const input = await screen.findByPlaceholderText(/connect to a server/i)
     fireEvent.change(input, { target: { value: 'db-01' } })
 
-    // Within the palette: the Servers page lists the same name.
+    // Within the palette: a way to connect to it first, and its page below.
     const palette = await screen.findByRole('dialog')
-    expect(await within(palette).findByText('db-01.data.northwind.id')).toBeInTheDocument()
+    expect(await within(palette).findByText('Connect to db-01')).toBeInTheDocument()
+    expect(await within(palette).findAllByText('db-01.data.northwind.id')).toHaveLength(2)
   })
 })
 

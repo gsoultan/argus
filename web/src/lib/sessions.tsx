@@ -48,7 +48,7 @@ interface SessionsValue {
   /** Asks for a ticket and, if allowed, opens the session as a new tab. */
   open: (req: OpenRequest) => Promise<{ error?: string }>
   /** Starts the session again in its tab, on a new ticket. */
-  reopen: (id: string) => Promise<{ error?: string }>
+  reopen: (id: string, password?: string) => Promise<{ error?: string }>
   close: (id: string) => void
   focus: (id: string) => void
   /** The held ticket, once; then a fresh one each call. */
@@ -107,12 +107,13 @@ export function SessionsProvider({ children }: { children: React.ReactNode }) {
     return {}
   }, [navigate])
 
-  const reopen = useCallback(async (id: string) => {
+  const reopen = useCallback(async (id: string, password?: string) => {
     const s = byId.current.get(id)
     if (!s) return { error: 'This session is no longer open.' }
     const res = await terminalTicket(s.target, s.principal)
     if ('error' in res) return { error: res.error }
     tickets.current.set(id, res.ticket)
+    if (password) passwords.current.set(id, password)
     const next = { ...s, attempt: s.attempt + 1 }
     byId.current.set(id, next)
     setSessions((list) => list.map((x) => (x.id === id ? next : x)))
