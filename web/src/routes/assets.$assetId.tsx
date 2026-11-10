@@ -1,4 +1,5 @@
 import { Suspense, lazy, useState } from 'react'
+import { MetricsTab } from '~/components/server/MetricsTab'
 import { Badge, Box, Button, Card, Group, Tabs, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -34,11 +35,6 @@ import { guard } from '~/lib/guard'
 import { SP } from '~/theme'
 
 /** Opened only by an administrator, so their chunks are fetched only for one. */
-/** The metrics page and its charts load only when the tab is opened. */
-const MetricsTab = lazy(() =>
-  import('~/components/server/MetricsTab').then((m) => ({ default: m.MetricsTab })),
-)
-
 const AssetForm = lazy(() =>
   import('~/components/AssetForm').then((m) => ({ default: m.AssetForm })),
 )
@@ -212,7 +208,7 @@ function AssetDetail() {
         <HostKeyChanged asset={asset} />
         {tab === 'overview' && <OverviewTab asset={asset} sessions={sessions} onTab={setTab} canFreeSpace={seesUpdates && isConfigured()} />}
         {tab === 'metrics' && seesUpdates && (
-          <Suspense fallback={null}><MetricsTab asset={asset} /></Suspense>
+          <MetricsTab asset={asset} />
         )}
         {tab === 'access' && <AccessTab asset={asset} canEdit={canEdit} />}
         {tab === 'sessions' && <SessionsTab asset={asset} sessions={sessions} />}

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Box, Card, Group, SegmentedControl, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
 import { useElementSize } from '@mantine/hooks'
-import { keepPreviousData, queryOptions, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { absTime, now as clockNow } from '~/components/primitives'
 import { LowStrip, bitRate, diskFull, systemQuery } from '~/components/server/SystemCard'
 import { get, live } from '~/lib/live'
@@ -51,8 +51,10 @@ const RANGES: { value: MetricsRange; label: string; span: number; step: number }
   { value: '30d', label: '30 days', span: 30 * 86400, step: 7200 },
 ]
 
+// A plain options object rather than queryOptions(): importing that here
+// splits TanStack's shared chunk and adds a file to every page's first load.
 export const metricsQuery = (asset: Asset, range: MetricsRange) =>
-  queryOptions({
+  ({
     queryKey: ['asset', asset.id, 'metrics', range] as const,
     queryFn: () => live.orFallback(
       () => get<AssetMetrics>(`/api/v1/assets/${encodeURIComponent(asset.id)}/metrics?range=${range}`),
@@ -60,7 +62,7 @@ export const metricsQuery = (asset: Asset, range: MetricsRange) =>
     ),
     refetchInterval: 60_000,
     retry: false,
-    placeholderData: keepPreviousData,
+    placeholderData: (prev: AssetMetrics | undefined) => prev,
   })
 
 /** Sample history: a working day's rhythm, a disk filling, and an outage. */
