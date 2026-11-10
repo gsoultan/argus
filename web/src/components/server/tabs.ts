@@ -4,7 +4,7 @@
  * shown empty (see TABS_BY_TYPE in tabsByType.ts, kept apart so the route's
  * search check, which is in the shell, does not pull in the type labels).
  */
-export const SERVER_TABS = ['overview', 'access', 'sessions', 'apps', 'updates', 'disks', 'logs', 'agent', 'settings'] as const
+export const SERVER_TABS = ['overview', 'metrics', 'access', 'sessions', 'apps', 'updates', 'disks', 'logs', 'agent', 'settings'] as const
 export type ServerTab = (typeof SERVER_TABS)[number]
 
 /** A tab named in the address, or none for the default. */

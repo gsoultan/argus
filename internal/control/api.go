@@ -391,6 +391,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerLogonsRoutes(mux)
 	a.registerConnectRuleRoutes(mux)
 	a.registerUpdatesWaitingRoutes(mux)
+	a.registerResourcesRoutes(mux)
 	a.registerScriptRoutes(mux)
 	a.registerSoftwareFileRoutes(mux)
 	a.registerLogCleanupRoutes(mux)

@@ -39,3 +39,34 @@ swap, each real disk). Code: `internal/agent/sysinfo*.go`,
   column, shown unnamed. When no interface holds a public address the card
   says so and why (NAT / cloud public IPs are not on the machine); the agent
   never asks an outside service for its public IP.
+- **Windows reports usage too** (2026-11, `internal/agent/sysinfo_windows.go`):
+  RtlGetVersion, the registry's processor name, GlobalMemoryStatusEx,
+  GetSystemTimes deltas, fixed drives only (GetDriveType), GetIfTable2Ex. No
+  load average (`load` is omitted, the console says so instead of 0.00) and
+  no swap (the page file is not swap). macOS still reports only the basics.
+- **Traffic** rides usage as `net`: per interface that is up and not
+  loopback, bytes/s in and out since the previous sample and the stated link
+  speed. A counter that went backwards gives no rate (null), never a huge
+  one. Linux reads /proc/net/dev and sysfs; Windows drops filter-layer rows.
+- **What is "low" is decided once**, `LowResources` in
+  `internal/control/resources.go`: disk ≥90% low / ≥95% critical (df-style),
+  memory ≤10% / ≤5% left, swap ≥90% used, CPU ≥90% busy. The card gets it as
+  `warnings`, the assets list from `GET /api/v1/resources-low` (fleet roles,
+  usage under 5 minutes old only), the header pill from the card's query.
+  The bell (`resources` kind, migration 074) raises disk and memory only,
+  once per asset, resource, level and day, at most 25 per sweep, every 5 min.
+  Design: `/mnt/project-files/plans/resource-metrics/`.
+- `UsageSampler.Sample` and the system facts recover from a panic in a
+  platform reader: a figure is never worth the heartbeat.
+
+## Metrics tab and history (part 2)
+
+- Table `usage_history` (migration 075): one row per hostname per 5-minute
+  bucket, folded in by `recordUsageHistory` inside the heartbeat transaction
+  (only on beats that carry usage). Pruned to 30 days hourly from
+  RunResourceWatch. Model `rmodel.UsageHistory` (listed in All()).
+- `GET /api/v1/assets/{id}/metrics?range=6h|24h|7d|30d` (fleet roles):
+  5m/5m/30m/2h steps; empty buckets are absent, never zero.
+- Console: `components/server/MetricsTab.tsx` (lazy), tab 'metrics' on
+  servers and workstations only. Hand-drawn SVG charts; a gap of more than two
+  steps breaks the line and is shaded "no reports".

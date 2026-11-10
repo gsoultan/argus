@@ -61,14 +61,26 @@ type HostInterface struct {
 
 // HostUsage mirrors agent.Usage, in the agent's spelling.
 type HostUsage struct {
-	At           time.Time  `json:"at"`
-	Load         [3]float64 `json:"load"`
-	CPUBusy      *float64   `json:"cpu_busy,omitempty"`
-	MemTotal     uint64     `json:"mem_total"`
-	MemAvailable uint64     `json:"mem_available"`
-	SwapTotal    uint64     `json:"swap_total"`
-	SwapFree     uint64     `json:"swap_free"`
-	Disks        []HostDisk `json:"disks"`
+	At time.Time `json:"at"`
+	// Load is nil where the system keeps no load average (Windows).
+	Load         *[3]float64 `json:"load,omitempty"`
+	CPUBusy      *float64    `json:"cpu_busy,omitempty"`
+	MemTotal     uint64      `json:"mem_total"`
+	MemAvailable uint64      `json:"mem_available"`
+	SwapTotal    uint64      `json:"swap_total"`
+	SwapFree     uint64      `json:"swap_free"`
+	Disks        []HostDisk  `json:"disks"`
+	// Net is each interface's traffic since the agent's previous sample;
+	// nil from an agent older than traffic reporting.
+	Net []HostNetRate `json:"net,omitempty"`
+}
+
+// HostNetRate mirrors agent.NetRate.
+type HostNetRate struct {
+	Name      string   `json:"name"`
+	RxBps     *float64 `json:"rx_bps,omitempty"`
+	TxBps     *float64 `json:"tx_bps,omitempty"`
+	SpeedMbps uint64   `json:"speed_mbps,omitempty"`
 }
 
 // HostDisk is one filesystem in a usage report.
@@ -86,6 +98,12 @@ const (
 	maxMountText   = 512
 	maxInterfaces  = 32
 	maxIfaceAddrs  = 16
+	maxNetRates    = 32
+	// maxRateBps is 1 Tbit/s in bytes: no interface carries more, so a
+	// larger rate is a broken counter, not traffic.
+	maxRateBps = 125e9
+	// maxLinkMbps is 1.6 Tbit/s, past the fastest Ethernet there is.
+	maxLinkMbps = 1_600_000
 )
 
 // bounded cuts what an agent sent to sizes the console can show, and
@@ -162,10 +180,14 @@ func (u *HostUsage) bounded() *HostUsage {
 		return nil
 	}
 	c := *u
-	for i, l := range c.Load {
-		if math.IsNaN(l) || math.IsInf(l, 0) || l < 0 || l > 1e6 {
-			c.Load[i] = 0
+	if c.Load != nil {
+		l := *c.Load
+		for i, v := range l {
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1e6 {
+				l[i] = 0
+			}
 		}
+		c.Load = &l
 	}
 	if c.CPUBusy != nil && (math.IsNaN(*c.CPUBusy) || *c.CPUBusy < 0 || *c.CPUBusy > 100) {
 		c.CPUBusy = nil
@@ -188,7 +210,39 @@ func (u *HostUsage) bounded() *HostUsage {
 		disks = append(disks, d)
 	}
 	c.Disks = disks
+	c.Net = boundedNetRates(c.Net)
 	return &c
+}
+
+// boundedNetRates keeps at most maxNetRates named interfaces, dropping a
+// rate that cannot be traffic and a link speed no link has.
+func boundedNetRates(in []HostNetRate) []HostNetRate {
+	if in == nil {
+		return nil
+	}
+	rate := func(p *float64) *float64 {
+		if p == nil || math.IsNaN(*p) || math.IsInf(*p, 0) || *p < 0 || *p > maxRateBps {
+			return nil
+		}
+		v := *p
+		return &v
+	}
+	out := make([]HostNetRate, 0, min(len(in), maxNetRates))
+	for _, n := range in {
+		if len(out) == maxNetRates {
+			break
+		}
+		name := clipText(n.Name, 64)
+		if name == "" {
+			continue
+		}
+		speed := n.SpeedMbps
+		if speed > maxLinkMbps {
+			speed = 0
+		}
+		out = append(out, HostNetRate{Name: name, RxBps: rate(n.RxBps), TxBps: rate(n.TxBps), SpeedMbps: speed})
+	}
+	return out
 }
 
 func clipText(s string, n int) string {
@@ -213,6 +267,9 @@ type ServerSystem struct {
 	Usage  *SystemUsage `json:"usage"`
 	// UsageAt is when Usage was sampled; nil when no usage was reported.
 	UsageAt *time.Time `json:"usageAt"`
+	// Warnings is each resource running low in Usage, by the one rule in
+	// resources.go. Empty when nothing is low or nothing was reported.
+	Warnings []ResourceWarning `json:"warnings"`
 	// Network is the addresses the server's interfaces hold. From an agent
 	// older than per-interface reporting it is one entry with no name,
 	// holding the flat list that agent sends. Empty when none reported.
@@ -340,13 +397,27 @@ type SystemFacts struct {
 
 // SystemUsage is HostUsage as the console spells it.
 type SystemUsage struct {
-	Load         [3]float64   `json:"load"`
+	// Load is null where the system keeps no load average (Windows).
+	Load         *[3]float64  `json:"load"`
 	CPUBusy      *float64     `json:"cpuBusy"`
 	MemTotal     uint64       `json:"memTotal"`
 	MemAvailable uint64       `json:"memAvailable"`
 	SwapTotal    uint64       `json:"swapTotal"`
 	SwapFree     uint64       `json:"swapFree"`
 	Disks        []SystemDisk `json:"disks"`
+	// Net is each interface's traffic over the last sample; empty from an
+	// agent that does not report it.
+	Net []SystemNetRate `json:"net"`
+}
+
+// SystemNetRate is one interface's traffic on the System card.
+type SystemNetRate struct {
+	Name string `json:"name"`
+	// RxBps and TxBps are bytes per second; null when the agent had no
+	// earlier reading to measure against.
+	RxBps     *float64 `json:"rxBps"`
+	TxBps     *float64 `json:"txBps"`
+	SpeedMbps uint64   `json:"speedMbps"`
 }
 
 // SystemDisk is one filesystem on the System card.
@@ -383,7 +454,7 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 	if err != nil {
 		return ServerSystem{}, err
 	}
-	out := ServerSystem{Network: []SystemInterface{}}
+	out := ServerSystem{Network: []SystemInterface{}, Warnings: []ResourceWarning{}}
 	if osName != nil {
 		out.OS = *osName
 	}
@@ -405,11 +476,16 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 		for _, d := range hu.Disks {
 			disks = append(disks, SystemDisk(d))
 		}
+		net := make([]SystemNetRate, 0, len(hu.Net))
+		for _, n := range hu.Net {
+			net = append(net, SystemNetRate{Name: n.Name, RxBps: n.RxBps, TxBps: n.TxBps, SpeedMbps: n.SpeedMbps})
+		}
 		out.Usage = &SystemUsage{
 			Load: hu.Load, CPUBusy: hu.CPUBusy, MemTotal: hu.MemTotal, MemAvailable: hu.MemAvailable,
-			SwapTotal: hu.SwapTotal, SwapFree: hu.SwapFree, Disks: disks,
+			SwapTotal: hu.SwapTotal, SwapFree: hu.SwapFree, Disks: disks, Net: net,
 		}
 		out.UsageAt = usageAt
+		out.Warnings = LowResources(hu)
 	}
 	return out, nil
 }

@@ -25,6 +25,9 @@ export const ALERT_KINDS: { kind: AlertKind; label: string; description: string;
   { kind: 'updates', label: 'Updates',
     description: 'Once a day: security fixes waiting, a new agent release with how many assets are behind, and assets that need a restart to finish updating.',
     who: 'Admins, auditors' },
+  { kind: 'resources', label: 'Running low',
+    description: 'An asset is running low on disk (90% full, critical at 95%) or memory (10% left, critical at 5%). Once a day per asset and resource.',
+    who: 'Admins, auditors' },
 ]
 
 /* ── Fixture ─────────────────────────────────────────────────────────────── */

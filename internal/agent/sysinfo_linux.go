@@ -30,6 +30,7 @@ func platformSystem() SystemInfo { return readSystem(liveRoots) }
 func (u *UsageSampler) platformSample() (Usage, bool) {
 	out, now := readUsage(liveRoots, u.prev)
 	u.prev = now
+	out.Net = u.netRates(readNetDev(liveRoots), out.At)
 	return out, true
 }
 
@@ -105,19 +106,6 @@ func readCPUInfo(path string) (model string, cpus int, hypervisor bool) {
 		}
 	}
 	return cleanCPUModel(model), cpus, hypervisor
-}
-
-// cleanCPUModel drops the trademark noise and runs of spaces vendors pad
-// model names with.
-func cleanCPUModel(s string) string {
-	if i := strings.Index(s, "@"); i > 0 {
-		s = s[:i] // the clock speed, which is the base, not what it runs at
-	}
-	for _, junk := range []string{"(R)", "(r)", "(TM)", "(tm)"} {
-		s = strings.ReplaceAll(s, junk, " ")
-	}
-	s = strings.Join(strings.Fields(s), " ")
-	return strings.TrimSpace(strings.TrimSuffix(s, " CPU"))
 }
 
 // readMeminfo reads /proc/meminfo into bytes.
@@ -208,8 +196,12 @@ func readUsage(r sysRoots, prev cpuTimes) (Usage, cpuTimes) {
 	u := Usage{At: time.Now().UTC(), Disks: []Disk{}}
 	if b, err := os.ReadFile(filepath.Join(r.proc, "loadavg")); err == nil {
 		fields := strings.Fields(string(b))
-		for i := 0; i < 3 && i < len(fields); i++ {
-			u.Load[i], _ = strconv.ParseFloat(fields[i], 64)
+		if len(fields) >= 3 {
+			var load [3]float64
+			for i := range load {
+				load[i], _ = strconv.ParseFloat(fields[i], 64)
+			}
+			u.Load = &load
 		}
 	}
 	now := readCPUTimes(filepath.Join(r.proc, "stat"))
@@ -227,6 +219,61 @@ func readUsage(r sysRoots, prev cpuTimes) (Usage, cpuTimes) {
 	u.SwapTotal, u.SwapFree = mem["SwapTotal"], mem["SwapFree"]
 	u.Disks = readDisks(r)
 	return u, now
+}
+
+// readNetDev reads each interface's byte counters from /proc/net/dev, for
+// the interfaces that are up and not loopback, with the link speed sysfs
+// states. A virtual interface states none, or -1, which is reported as 0.
+func readNetDev(r sysRoots) []netCounters {
+	f, err := os.Open(filepath.Join(r.proc, "net/dev"))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []netCounters
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		// "  eth0: rxbytes rxpackets ... (8 rx fields) txbytes ..."
+		name, rest, ok := strings.Cut(sc.Text(), ":")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		fields := strings.Fields(rest)
+		// The name goes into a sysfs path; the kernel never writes one with a
+		// slash, and one that did would not be read.
+		if name == "" || name == "lo" || name == "." || name == ".." || strings.Contains(name, "/") || len(fields) < 9 {
+			continue
+		}
+		if !netUp(r, name) {
+			continue
+		}
+		rx, err1 := strconv.ParseUint(fields[0], 10, 64)
+		tx, err2 := strconv.ParseUint(fields[8], 10, 64)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		c := netCounters{name: name, rx: rx, tx: tx}
+		if v, err := strconv.ParseInt(fileFirstLine(filepath.Join(r.sys, "class/net", name, "speed")), 10, 64); err == nil && v > 0 {
+			c.speedMbps = uint64(v)
+		}
+		out = append(out, c)
+		if len(out) == maxNet {
+			break
+		}
+	}
+	return out
+}
+
+// netUp is whether sysfs says the interface is up. "unknown" counts as up:
+// tunnels and some virtual NICs never report anything else while carrying
+// traffic. No sysfs entry at all (a test tree, an odd kernel) counts too.
+func netUp(r sysRoots, name string) bool {
+	switch fileFirstLine(filepath.Join(r.sys, "class/net", name, "operstate")) {
+	case "down", "lowerlayerdown", "notpresent", "dormant":
+		return false
+	}
+	return true
 }
 
 // realFS are filesystem types that hold data on a device. Everything else in
