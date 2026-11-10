@@ -50,6 +50,7 @@ import {
   controlStatus,
   requestControlUpdate as liveRequestControlUpdate,
   cancelControlUpdate as liveCancelControlUpdate,
+  checkControlUpdate as liveCheckControlUpdate,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -162,6 +163,15 @@ export function useRequestControlUpdate() {
   return useMutation({
     mutationFn: liveRequestControlUpdate,
     onSettled: () => void qc.invalidateQueries({ queryKey: controlUpdateKey }),
+  })
+}
+
+/** Looks for a newer release now, and shows the page as that answer leaves it. */
+export function useCheckControlUpdate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: liveCheckControlUpdate,
+    onSuccess: (v) => qc.setQueryData(controlUpdateKey, v),
   })
 }
 

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -239,5 +241,108 @@ func TestControlUpdateRoutes(t *testing.T) {
 	if strings.Join(actions, ",") != "control.updated,control.update_requested" &&
 		strings.Join(actions, ",") != "control.update_requested,control.updated" {
 		t.Errorf("audit %v", actions)
+	}
+}
+
+// controlReleases serves a GitHub-shaped release list with control plane
+// packages for version, and counts how often it is asked.
+func controlReleases(t *testing.T, version string, asked *atomic.Int32) *httptest.Server {
+	t.Helper()
+	list := []map[string]any{{"tag_name": "v" + version, "html_url": "https://example/" + version,
+		"assets": []map[string]string{{"name": "checksums.txt"},
+			{"name": "argus-agent_" + version + "_linux_amd64.deb"},
+			{"name": "argus-control_" + version + "_linux_amd64.deb"}}}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked.Add(1)
+		_ = json.NewEncoder(w).Encode(list)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// Checking from the console asks for the releases once for a burst of
+// clicks, and again once the last answer is no longer fresh.
+func TestReleaseCheckNowAsksOnceForABurst(t *testing.T) {
+	var asked atomic.Int32
+	w := &ReleaseWatcher{API: controlReleases(t, "0.9.1", &asked).URL}
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := w.CheckNow(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := asked.Load(); n != 1 {
+		t.Fatalf("asked %d times for five clicks, want 1", n)
+	}
+	if c := w.LatestControl(); c == nil || c.Version != "0.9.1" {
+		t.Fatalf("newest control release %+v, want 0.9.1", c)
+	}
+	w.mu.Lock()
+	w.checked = time.Now().Add(-manualCheckGap - time.Second)
+	w.mu.Unlock()
+	if err := w.CheckNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := asked.Load(); n != 2 {
+		t.Fatalf("asked %d times after the last answer went stale, want 2", n)
+	}
+}
+
+// A failed check reports its failure, and the one reused within the gap says
+// the same.
+func TestReleaseCheckNowReportsAFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "rate limited", http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	w := &ReleaseWatcher{API: srv.URL}
+	if err := w.CheckNow(context.Background()); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("first check = %v, want the 403", err)
+	}
+	if err := w.CheckNow(context.Background()); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("reused check = %v, want the same 403", err)
+	}
+}
+
+func TestControlUpdateCheckRoute(t *testing.T) {
+	h := newTenantHarness(t)
+	updatesAPI(t, h.api, manifestServer(t).URL)
+	var asked atomic.Int32
+	h.api.Releases.API = controlReleases(t, "0.9.0", &asked).URL
+	h.api.Releases.control = nil
+	ownerEmail, ownerPw := newAccount(t, h.store, "owner")
+	opEmail, opPw := newAccount(t, h.store, "operator")
+
+	inOp := h.signIn(t, "", opEmail, opPw)
+	if code, _ := h.call(t, inOp, "", http.MethodPost, "/api/v1/platform/update/check", ""); code != http.StatusNotFound {
+		t.Errorf("an operator checking = %d, want 404", code)
+	}
+	if asked.Load() != 0 {
+		t.Fatal("an operator's check reached the releases")
+	}
+
+	in := h.signIn(t, "", ownerEmail, ownerPw)
+	code, body := h.call(t, in, "", http.MethodPost, "/api/v1/platform/update/check", "")
+	if code != http.StatusOK {
+		t.Fatalf("check = %d: %s", code, body)
+	}
+	var v ControlUpdateView
+	_ = json.Unmarshal([]byte(body), &v)
+	if asked.Load() != 1 || !v.Newer || v.Newest == nil || v.Newest.Version != "0.9.0" || v.CheckedAt == nil ||
+		!v.ReleaseChecks {
+		t.Fatalf("after checking: asked %d, view %s", asked.Load(), body)
+	}
+
+	// With release checks off there is nothing to ask, and the console is
+	// told why.
+	h.api.Releases = nil
+	if code, body := h.call(t, in, "", http.MethodPost, "/api/v1/platform/update/check", ""); code != http.StatusConflict ||
+		!strings.Contains(body, "release checks are off") {
+		t.Errorf("checks off = %d %s", code, body)
 	}
 }
