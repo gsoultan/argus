@@ -240,14 +240,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   // a table, a filter or the replay player.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (whole && e.key === 'k' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault()
-        palette.toggle()
-      }
+      // A remote screen or terminal that took the key keeps it: Ctrl K means
+      // something to the server's own programs.
+      if (e.defaultPrevented || e.key.toLowerCase() !== 'k' || !(e.metaKey || e.ctrlKey) || e.altKey) return
+      e.preventDefault()
+      // Someone given only servers gets the connect panel, which is their
+      // whole console; the palette is for those who see the fleet.
+      if (whole) palette.toggle()
+      else live.ask('')
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [palette, whole])
+  }, [palette, whole, live])
 
   // Closing the drawer on navigation: on a phone the overlay otherwise stays up
   // over the page it just took you to.
@@ -337,7 +341,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             )}
 
             {whole && (
-              <Tooltip label="Find a server, session or person (⌘K)">
+              <Tooltip label={`Connect to a server, or find a session or person (${/mac|iphone|ipad/i.test(navigator.platform) ? '⌘K' : 'Ctrl K'})`}>
                 <ActionIcon
                   variant="subtle"
                   color="slate"
