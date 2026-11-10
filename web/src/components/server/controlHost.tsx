@@ -1,5 +1,4 @@
 import { Alert, Badge, Text } from '@mantine/core'
-import { IconServerBolt } from '@tabler/icons-react'
 import { FS } from '~/theme'
 
 /**
@@ -19,10 +18,14 @@ export function ControlHostBadge() {
   )
 }
 
-/** Why this server has no Remove button, in its place. */
+/**
+ * Why this server has no Remove button, in its place. No icon: the one that
+ * fits (IconServerBolt) is Home's, and sharing it split it into a chunk of
+ * its own that the overview then fetched (e2e/weight.spec.ts).
+ */
 export function ControlHostRemove() {
   return (
-    <Alert variant="light" color="slate" icon={<IconServerBolt size={16} />} data-testid="control-host-remove">
+    <Alert variant="light" color="slate" data-testid="control-host-remove">
       <Text size={FS.meta}>
         argus-control runs on this server and looks after it through the helper its package installs, so it cannot be
         removed from Argus here. To stop managing it from the console, set <code>control_host: false</code> in
