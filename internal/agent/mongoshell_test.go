@@ -103,3 +103,26 @@ func TestClassifyMongo(t *testing.T) {
 		}
 	}
 }
+
+// The lines the console's New collection and New index forms write
+// (web/src/components/mongo/MongoNew.tsx) parse to the commands meant.
+func TestParseMongoLineFromTheNewForms(t *testing.T) {
+	for line, want := range map[string]string{
+		`db.createCollection("events", { timeseries: { timeField: "ts", metaField: "sensor", granularity: "minutes" }, expireAfterSeconds: 2592000 })`: `{"create": "events","timeseries": {"timeField": "ts","metaField": "sensor","granularity": "minutes"},"expireAfterSeconds": {"$numberInt":"2592000"}}`,
+		`db.createCollection("log", { capped: true, size: 104857600, max: 1000 })`:                                                                     `{"create": "log","capped": true,"size": {"$numberInt":"104857600"},"max": {"$numberInt":"1000"}}`,
+		`db.createCollection("users", { validator: {"$jsonSchema":{"required":["email"]}} })`:                                                          `{"create": "users","validator": {"$jsonSchema": {"required": ["email"]}}}`,
+		`db.getCollection("order items").createIndex({ "email": 1, "at": -1 }, { unique: true })`:                                                      `{"createIndexes": "order items","indexes": [{"key": {"email": {"$numberInt":"1"},"at": {"$numberInt":"-1"}},"name": "email_1_at_-1","unique": true}]}`,
+		`db.orders.createIndex({ "body": "text" })`:                                                                                                    `{"createIndexes": "orders","indexes": [{"key": {"body": "text"},"name": "body_text"}]}`,
+	} {
+		c, err := parseMongoLine(line)
+		if err != nil {
+			t.Fatalf("%s: %v", line, err)
+		}
+		got, _ := bson.MarshalExtJSON(c.Cmd, true, false)
+		if norm(string(got)) != norm(want) {
+			t.Errorf("%s:\n got %s\nwant %s", line, got, want)
+		}
+	}
+}
+
+func norm(s string) string { return strings.NewReplacer(" ", "", "\n", "").Replace(s) }

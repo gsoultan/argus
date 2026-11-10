@@ -11,6 +11,7 @@ import { ApprovalBadge, EnvBadge } from '~/components/ChangeImpact'
 import { ApprovalsCard, GiveAccess } from '~/components/DatabaseApprovals'
 import { writesNeedApproval } from '~/lib/changeApproval'
 import { BackupSettings } from '~/components/DatabaseBackups'
+import { DatabaseOwner } from '~/components/DatabaseOwner'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { notifyError, notifyOk } from '~/lib/notify'
@@ -241,6 +242,7 @@ function Connection({ db }: { db: Database }) {
       <SectionCard title="Postgres" description="The agent on the server opens it here. Provisioning of roles always goes this way, as the postgres account over the local socket.">
         <Text size={FS.body} ff="monospace">{db.host}:{db.port}/{db.dbname}</Text>
       </SectionCard>
+      <DatabaseOwner db={db} />
       <SectionCard title="PgBouncer" description="If applications on this server connect through PgBouncer, sessions from Argus can too. Transaction pooling is fine: every statement carries its own role and limits.">
         <Stack gap="sm">
           <Checkbox label="Sessions go through PgBouncer" checked={enabled} onChange={(e) => setEnabled(e.currentTarget.checked)} />

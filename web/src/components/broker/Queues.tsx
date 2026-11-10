@@ -1,4 +1,4 @@
-import { Badge, Box, Button, Card, Checkbox, Group, Modal, SegmentedControl, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
+import { Autocomplete, Badge, Box, Button, Card, Checkbox, Group, Modal, NumberInput, SegmentedControl, SimpleGrid, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { IconPlus, IconSearch } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import {
@@ -166,21 +166,80 @@ export function Queues() {
 }
 
 function NewQueue({ opened, onClose }: { opened: boolean; onClose: () => void }) {
-  const { act, database, openQueue } = useBroker()
+  const { act, database, openQueue, exchanges } = useBroker()
   const [name, setName] = useState('')
+  const [type, setType] = useState<'classic' | 'quorum' | 'stream'>('classic')
   const [durable, setDurable] = useState(true)
-  const create = async () => {
-    const n = name.trim()
-    const a = await act({ op: 'declare_queue', name: n, durable }, `Created queue ${n} in ${database.dbname}.`)
-    if (a.type === 'result') { onClose(); setName(''); openQueue(n) }
+  const [maxLength, setMaxLength] = useState<number | string>('')
+  const [ttlS, setTtlS] = useState<number | string>('')
+  const [dlx, setDlx] = useState('')
+  const [deliveryLimit, setDeliveryLimit] = useState<number | string>('')
+  const [keepDays, setKeepDays] = useState<number | string>(7)
+  const [maxGB, setMaxGB] = useState<number | string>('')
+  const [segmentMB, setSegmentMB] = useState<number | string>('')
+  const [bindTo, setBindTo] = useState('')
+  const [bindKey, setBindKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const n = name.trim()
+  const num = (v: number | string) => (Number(v) > 0 ? Number(v) : undefined)
+  const queue = {
+    type,
+    ...(type !== 'stream' ? { maxLength: num(maxLength), messageTtlMs: num(ttlS) ? Math.round(Number(ttlS) * 1000) : undefined, deadLetterExchange: dlx.trim() || undefined } : {}),
+    ...(type === 'quorum' ? { deliveryLimit: num(deliveryLimit) } : {}),
+    ...(type === 'stream' ? {
+      maxAgeS: num(keepDays) ? Math.round(Number(keepDays) * 86400) : undefined,
+      maxLengthBytes: num(maxGB) ? Math.round(Number(maxGB) * 1024 ** 3) : undefined,
+      segmentBytes: num(segmentMB) ? Math.round(Number(segmentMB) * 1024 ** 2) : undefined,
+    } : {}),
+    ...(bindTo.trim() ? { bindExchange: bindTo.trim(), bindRoutingKey: bindKey.trim() } : {}),
   }
+  const create = async () => {
+    setBusy(true)
+    try {
+      const a = await act({ op: 'declare_queue', name: n, durable: type !== 'classic' || durable, queue },
+        `Created ${type === 'classic' ? 'queue' : type === 'quorum' ? 'quorum queue' : 'stream'} ${n} in ${database.dbname}${bindTo.trim() ? `, bound to ${bindTo.trim()}` : ''}.`)
+      if (a.type === 'result') { onClose(); setName(''); setBindTo(''); setBindKey(''); openQueue(n) }
+    } finally {
+      setBusy(false)
+    }
+  }
+  const exNames = exchanges.map((e) => e.name).filter((e) => e && !e.startsWith('amq.'))
   return (
-    <Modal opened={opened} onClose={onClose} title="New queue" centered>
+    <Modal opened={opened} onClose={onClose} title="New queue" centered size="lg">
       <Stack gap="sm">
         <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} data-autofocus styles={MONO} />
-        <Checkbox label="Durable: survives a broker restart" checked={durable} onChange={(e) => setDurable(e.currentTarget.checked)} />
-        <Text size={FS.micro} c="dimmed">A classic queue. Quorum queues and arguments are set by your applications or by policy.</Text>
-        <Box><Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button disabled={!name.trim()} onClick={() => void create()}>Create</Button></Group></Box>
+        <Stack gap={4}>
+          <Text size={FS.meta} fw={500}>Type</Text>
+          <SegmentedControl value={type} onChange={(v) => setType(v as typeof type)} fullWidth
+            data={[{ label: 'Classic', value: 'classic' }, { label: 'Quorum', value: 'quorum' }, { label: 'Stream', value: 'stream' }]} />
+          <Text size={FS.micro} c="dimmed">
+            {type === 'classic' ? 'One copy, on one node. Fine for work that can be redone.'
+              : type === 'quorum' ? 'Kept on a majority of nodes, so a node going down loses nothing. Always durable.'
+              : 'An append-only log: consumers read from any point, and messages stay until they age out or the size is reached. Always durable; read it with a consumer group from your application, or browse it here.'}
+          </Text>
+        </Stack>
+        {type === 'classic' && (
+          <Checkbox label="Durable: survives a broker restart" checked={durable} onChange={(e) => setDurable(e.currentTarget.checked)} />
+        )}
+        {type !== 'stream' ? (
+          <SimpleGrid cols={{ base: 1, sm: type === 'quorum' ? 4 : 3 }}>
+            <NumberInput label="Most messages" value={maxLength} onChange={setMaxLength} min={1} placeholder="No limit" />
+            <NumberInput label="Message TTL (s)" value={ttlS} onChange={setTtlS} min={1} placeholder="For ever" />
+            <TextInput label="Dead-letter exchange" value={dlx} onChange={(e) => setDlx(e.currentTarget.value)} placeholder="None" styles={MONO} />
+            {type === 'quorum' && <NumberInput label="Delivery limit" value={deliveryLimit} onChange={setDeliveryLimit} min={1} placeholder="Default" />}
+          </SimpleGrid>
+        ) : (
+          <SimpleGrid cols={{ base: 1, sm: 3 }}>
+            <NumberInput label="Keep for (days)" value={keepDays} onChange={setKeepDays} min={0} decimalScale={3} placeholder="For ever" />
+            <NumberInput label="Largest size (GB)" value={maxGB} onChange={setMaxGB} min={0} decimalScale={2} placeholder="No limit" />
+            <NumberInput label="Segment size (MB)" value={segmentMB} onChange={setSegmentMB} min={1} placeholder="500 (default)" />
+          </SimpleGrid>
+        )}
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <Autocomplete label="Bind to exchange" value={bindTo} onChange={setBindTo} data={exNames} placeholder="Optional" styles={MONO} />
+          <TextInput label="Routing key" value={bindKey} onChange={(e) => setBindKey(e.currentTarget.value)} disabled={!bindTo.trim()} styles={MONO} />
+        </SimpleGrid>
+        <Box><Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button disabled={!n} loading={busy} onClick={() => void create()}>Create</Button></Group></Box>
       </Stack>
     </Modal>
   )

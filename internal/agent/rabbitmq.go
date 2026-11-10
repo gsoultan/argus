@@ -497,9 +497,30 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 		res, err = s.move(ctx, req.Name, req.Target, req.Count)
 		data, items, tag = res, int64(res.Moved), "MOVE "+strconv.Itoa(res.Moved)
 	case "declare_queue":
+		var spec tunnel.RabbitQueue
+		if req.Queue != nil {
+			spec = *req.Queue
+		}
+		args, mustDurable, aerr := spec.Arguments()
+		if aerr != nil {
+			err = aerr
+			break
+		}
 		_, err = s.call(ctx, http.MethodPut, "/api/queues/"+s.v()+"/"+esc(req.Name),
-			map[string]any{"durable": req.Durable, "auto_delete": false, "arguments": map[string]any{}}, nil)
+			map[string]any{"durable": req.Durable || mustDurable, "auto_delete": false, "arguments": args}, nil)
 		tag = "DECLARE QUEUE"
+		if spec.Type == "quorum" || spec.Type == "stream" {
+			tag = "DECLARE " + strings.ToUpper(spec.Type)
+		}
+		if err == nil && spec.BindExchange != "" {
+			_, err = s.call(ctx, http.MethodPost, "/api/bindings/"+s.v()+"/e/"+esc(spec.BindExchange)+"/q/"+esc(req.Name),
+				map[string]any{"routing_key": spec.BindRoutingKey, "arguments": map[string]any{}}, nil)
+			if err != nil {
+				err = fmt.Errorf("the queue was made, but binding it to %s failed: %w", spec.BindExchange, err)
+			} else {
+				tag += " + BIND"
+			}
+		}
 	case "delete_queue":
 		_, err = s.call(ctx, http.MethodDelete, "/api/queues/"+s.v()+"/"+esc(req.Name), nil, nil)
 		tag = "DELETE QUEUE"
@@ -779,6 +800,21 @@ func rabbitText(req tunnel.StoreRequest) string {
 		args = append(args, "exchange", req.Exchange, "queue", req.Name, "routing_key", req.RoutingKey)
 	case "declare_queue":
 		args = append(args, req.Name, "durable", strconv.FormatBool(req.Durable))
+		if q := req.Queue; q != nil {
+			if a, _, err := q.Arguments(); err == nil {
+				keys := make([]string, 0, len(a))
+				for k := range a {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					args = append(args, k, fmt.Sprint(a[k]))
+				}
+			}
+			if q.BindExchange != "" {
+				args = append(args, "bind", q.BindExchange, "routing_key", q.BindRoutingKey)
+			}
+		}
 	case "declare_exchange":
 		args = append(args, req.Name, "type", req.Kind, "durable", strconv.FormatBool(req.Durable))
 	case "move":

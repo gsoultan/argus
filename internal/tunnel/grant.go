@@ -63,6 +63,8 @@ type Grant struct {
 	Backup *GrantBackup `json:"backup,omitempty"`
 	// Discover is what a discover grant may list; nil for every other service.
 	Discover *GrantDiscover `json:"discover,omitempty"`
+	// Create is what a create grant may make; nil for every other service.
+	Create *GrantCreate `json:"create,omitempty"`
 	// Software is what a software grant may ask; nil for every other
 	// service.
 	Software *GrantSoftware `json:"software,omitempty"`

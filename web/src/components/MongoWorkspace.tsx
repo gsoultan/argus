@@ -3,7 +3,8 @@ import {
   ActionIcon, Badge, Box, Button, Drawer, Group, Loader, ScrollArea, Stack, Text, TextInput, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
-import { IconLeaf, IconMenu2, IconPlayerStop, IconRefresh, IconSearch } from '@tabler/icons-react'
+import { IconLeaf, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
+import { NewCollection, NewIndex } from '~/components/mongo/MongoNew'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { JsonView } from '~/components/JsonView'
@@ -130,9 +131,9 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
   const [confirming, setConfirming] = useState<{ cmd: string; why: string } | null>(null)
   const outRef = useRef<HTMLDivElement | null>(null)
 
-  const runCmd = useCallback(async (text: string, confirm?: string) => {
+  const runCmd = useCallback(async (text: string, confirm?: string): Promise<boolean> => {
     const c = text.trim()
-    if (!c) return
+    if (!c) return false
     const a = s.ask({ op: 'run', command: c, ...(confirm ? { confirm } : {}) })
     const id = s.lastId()
     setRunning(id)
@@ -140,11 +141,18 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
     setRunning(null)
     if (ans.needsConfirm) {
       setConfirming({ cmd: c, why: ans.error ?? '' })
-      return
+      return false
     }
     setLines((l) => [...l, { id, cmd: c, out: formatMongo(ans), error: ans.type !== 'result', ms: ans.ms, tag: ans.tag }].slice(-200))
     requestAnimationFrame(() => { const el = outRef.current; if (el) el.scrollTop = el.scrollHeight })
+    return ans.type === 'result'
   }, [s])
+  const [making, setMaking] = useState<null | 'collection' | 'index'>(null)
+  const make = useCallback(async (line: string) => {
+    const ok = await runCmd(line)
+    if (ok) void list()
+    return ok
+  }, [runCmd, list])
 
   const submit = () => {
     const c = cmd.trim()
@@ -177,6 +185,12 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
           <IconRefresh size={14} />
         </ActionIcon>
       </Group>
+      {s.status === 'ready' && level !== 'read' && (
+        <Group gap={6}>
+          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('collection')}>Collection</Button>
+          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('index')} disabled={!colls.length}>Index</Button>
+        </Group>
+      )}
       <Text size={FS.micro} c="dimmed">
         {colls.length ? `${colls.length} collection${colls.length === 1 ? '' : 's'} you can see in ${database.dbname}` : 'Collections'}
       </Text>
@@ -252,6 +266,9 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
           </Group>
         </Box>
       </Box>
+      <NewCollection opened={making === 'collection'} onClose={() => setMaking(null)} onRun={make} />
+      <NewIndex opened={making === 'index'} onClose={() => setMaking(null)} onRun={make}
+        collections={colls.filter((c) => c.type === 'collection').map((c) => c.name)} initial={selected?.name} />
       <ConfirmByName opened={confirming !== null} hostname={database.hostname}
         what={confirming ? `${confirming.cmd} on ${database.hostname}.` : ''}
         onCancel={() => {

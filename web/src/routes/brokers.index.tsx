@@ -7,6 +7,7 @@ import { IconInfoCircle, IconPlus, IconSearch, IconStack2 } from '@tabler/icons-
 import { useMemo, useState } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, Toolbar } from '~/components/page'
 import { ButtonLink } from '~/components/links'
+import { NewOnServer } from '~/components/NewOnServer'
 import { databasesQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import { canSee } from '~/lib/roles'
@@ -75,7 +76,7 @@ function Brokers() {
         title="Message brokers"
         description={description}
         actions={admin ? (
-          <ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>Add from a server's page</ButtonLink>
+          <Group gap="xs"><NewOnServer label="New broker" engines={['rabbitmq', 'kafka']} /><ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>Add from a server's page</ButtonLink></Group>
         ) : undefined}
       />
       <PageBody>

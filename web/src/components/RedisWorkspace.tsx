@@ -4,7 +4,8 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
-import { IconBolt, IconMenu2, IconPlayerStop, IconRefresh, IconSearch } from '@tabler/icons-react'
+import { IconBolt, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
+import { NewKey, redisArg } from '~/components/redis/RedisNewKey'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { useCompletion } from '~/components/Autocomplete'
@@ -100,9 +101,9 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
   const [confirming, setConfirming] = useState<{ cmd: string; why: string } | null>(null)
   const outRef = useRef<HTMLDivElement | null>(null)
 
-  const runCmd = useCallback(async (text: string, confirm?: string) => {
+  const runCmd = useCallback(async (text: string, confirm?: string): Promise<boolean> => {
     const c = text.trim()
-    if (!c) return
+    if (!c) return false
     const a = s.ask({ op: 'run', command: c, ...(confirm ? { confirm } : {}) })
     const id = s.lastId()
     setRunning(id)
@@ -110,11 +111,18 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
     setRunning(null)
     if (ans.needsConfirm) {
       setConfirming({ cmd: c, why: ans.error ?? '' })
-      return
+      return false
     }
     const out = ans.type === 'result' ? formatRedis(ans.value) : `(refused) ${ans.error ?? 'failed'}`
-    setLines((l) => [...l, { id, cmd: c, out, error: ans.type !== 'result' || ans.value?.t === 'e', ms: ans.ms }].slice(-200))
+    const bad = ans.type !== 'result' || ans.value?.t === 'e'
+    setLines((l) => [...l, { id, cmd: c, out, error: bad, ms: ans.ms }].slice(-200))
     requestAnimationFrame(() => { const el = outRef.current; if (el) el.scrollTop = el.scrollHeight })
+    return !bad
+  }, [s])
+  const [making, setMaking] = useState(false)
+  const keyExists = useCallback(async (k: string) => {
+    const a = await s.ask({ op: 'run', command: `EXISTS ${redisArg(k)}` })
+    return a.type === 'result' && a.value?.t === 'i' && (a.value.i ?? 0) > 0
   }, [s])
 
   const submit = () => {
@@ -159,8 +167,13 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           <IconRefresh size={14} />
         </ActionIcon>
       </Group>
-      <Select size="xs" placeholder="Every type" clearable value={type} onChange={setType} aria-label="Key type"
-        data={['string', 'hash', 'list', 'set', 'zset', 'stream']} />
+      <Group gap={6} wrap="nowrap">
+        <Select size="xs" placeholder="Every type" clearable value={type} onChange={setType} aria-label="Key type" style={{ flex: 1 }}
+          data={['string', 'hash', 'list', 'set', 'zset', 'stream']} />
+        {s.status === 'ready' && level !== 'read' && (
+          <Button size="xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking(true)}>Key</Button>
+        )}
+      </Group>
       <Text size={FS.micro} c="dimmed">
         {total !== undefined ? `${total.toLocaleString()} keys in db ${database.dbname}` : 'Keys'} · found with SCAN, so Redis never stops for it
       </Text>
@@ -236,6 +249,7 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           </Group>
         </Box>
       </Box>
+      <NewKey opened={making} onClose={() => { setMaking(false); void scan('0', false) }} exists={keyExists} onRun={(l) => runCmd(l)} />
       <ConfirmByName opened={confirming !== null} hostname={database.hostname}
         what={confirming ? `${confirming.cmd} on ${database.hostname}.` : ''}
         onCancel={() => {

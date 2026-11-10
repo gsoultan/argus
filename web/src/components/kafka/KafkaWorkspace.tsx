@@ -1,5 +1,5 @@
 import {
-  ActionIcon, Alert, Badge, Box, Button, Card, Code, Drawer, Group, Modal, NumberInput, SimpleGrid, Stack, Table, Tabs, Text,
+  ActionIcon, Alert, Badge, Box, Button, Card, Code, Drawer, Group, Modal, NumberInput, SegmentedControl, SimpleGrid, Stack, Table, Tabs, Text,
   TextInput, Textarea,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
@@ -169,9 +169,9 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
       {publishing !== null && (
         <PublishDrawer topics={topics} initial={publishing} narrow={narrow} ask={s.ask} onClose={() => setPublishing(null)} onDone={() => void reload()} />
       )}
-      <NewTopic opened={creating} scope={scope} onClose={() => setCreating(false)}
-        onCreate={async (name, partitions) => {
-          const a = await act({ op: 'create_topic', name, count: partitions }, `Created topic ${name}.`)
+      <NewTopic opened={creating} scope={scope} brokers={overview?.brokers?.length ?? 0} onClose={() => setCreating(false)}
+        onCreate={async (name, partitions, properties) => {
+          const a = await act({ op: 'create_topic', name, count: partitions, properties }, `Created topic ${name}.`)
           if (a.type === 'result') { setCreating(false); openTopic(name) }
         }} />
     </Box>
@@ -578,25 +578,49 @@ function PublishDrawer({ topics, initial, narrow, ask, onClose, onDone }: {
   )
 }
 
-function NewTopic({ opened, scope, onClose, onCreate }: {
-  opened: boolean; scope: string; onClose: () => void; onCreate: (name: string, partitions: number) => Promise<void>
+function NewTopic({ opened, scope, brokers, onClose, onCreate }: {
+  opened: boolean; scope: string; brokers: number; onClose: () => void
+  onCreate: (name: string, partitions: number, properties: Record<string, string>) => Promise<void>
 }) {
   const prefix = scope === '*' ? '' : scope
   const [name, setName] = useState(prefix)
   const [partitions, setPartitions] = useState<number | string>(3)
-  useEffect(() => { if (opened) { setName(prefix); setPartitions(3) } }, [opened, prefix])
+  const [replicas, setReplicas] = useState<number | string>('')
+  const [keepDays, setKeepDays] = useState<number | string>('')
+  const [cleanup, setCleanup] = useState<'' | 'delete' | 'compact'>('')
+  useEffect(() => {
+    if (opened) { setName(prefix); setPartitions(3); setReplicas(''); setKeepDays(''); setCleanup('') }
+  }, [opened, prefix])
   const ok = /^[A-Za-z0-9._-]{1,249}$/.test(name) && name.startsWith(prefix) && name !== prefix
+    && (replicas === '' || brokers === 0 || Number(replicas) <= brokers)
+  const properties: Record<string, string> = {
+    ...(Number(replicas) > 0 ? { replication: String(Number(replicas)) } : {}),
+    ...(keepDays !== '' ? { retention: String(Number(keepDays) < 0 ? -1 : Math.round(Number(keepDays) * 86_400_000)) } : {}),
+    ...(cleanup ? { cleanup } : {}),
+  }
   return (
-    <Modal opened={opened} onClose={onClose} title="New topic" centered>
+    <Modal opened={opened} onClose={onClose} title="New topic" centered size="lg">
       <Stack gap="sm">
         <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} data-autofocus styles={MONO}
           description={prefix ? `In this entry's scope, so it starts with ${prefix}` : 'Letters, digits, . _ and -'} />
-        <NumberInput label="Partitions" value={partitions} onChange={setPartitions} min={1} max={1000}
-          description="More partitions let more consumers read in parallel. They can be added later, never removed." />
-        <Text size={FS.micro} c="dimmed">Replication and retention are the cluster's defaults. Creating it is recorded.</Text>
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <NumberInput label="Partitions" value={partitions} onChange={setPartitions} min={1} max={1000}
+            description="Can be added later, never removed." />
+          <NumberInput label="Replicas" value={replicas} onChange={setReplicas} min={1} max={brokers || 16} placeholder="Cluster default"
+            description={brokers ? `Copies of each partition, of ${brokers} broker${brokers === 1 ? '' : 's'}.` : 'Copies of each partition.'} />
+          <NumberInput label="Keep messages for (days)" value={keepDays} onChange={setKeepDays} min={-1} decimalScale={3}
+            placeholder="Broker default" description="-1 keeps them for ever." />
+          <Stack gap={4}>
+            <Text size={FS.meta} fw={500}>Clean-up</Text>
+            <SegmentedControl value={cleanup} onChange={(v) => setCleanup(v as typeof cleanup)} fullWidth
+              data={[{ label: 'Default', value: '' }, { label: 'Delete old', value: 'delete' }, { label: 'Compact', value: 'compact' }]} />
+            <Text size={FS.micro} c="dimmed">Compact keeps the latest message for each key.</Text>
+          </Stack>
+        </SimpleGrid>
+        <Text size={FS.micro} c="dimmed">Creating it is recorded with these settings.</Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button disabled={!ok} onClick={() => void onCreate(name, Number(partitions) || 1)}>Create</Button>
+          <Button disabled={!ok} onClick={() => void onCreate(name, Number(partitions) || 1, properties)}>Create</Button>
         </Group>
       </Stack>
     </Modal>

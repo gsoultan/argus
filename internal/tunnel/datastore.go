@@ -119,6 +119,9 @@ type StoreRequest struct {
 	Properties map[string]string `json:"properties,omitempty"`
 	// Declare a queue or an exchange: durable or not.
 	Durable bool `json:"durable,omitempty"`
+	// Queue is a declared queue's type, arguments and binding; nil is a
+	// classic queue with none.
+	Queue *RabbitQueue `json:"queue,omitempty"`
 	// Move: the queue messages go to (Name is where they come from).
 	Target string `json:"target,omitempty"`
 	// Declare an exchange: direct, topic, fanout or headers.

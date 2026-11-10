@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,7 +44,7 @@ A role Argus did not create is never touched: it is reported as taken.
 
 // PGAdminRequest is one provisioning operation.
 type PGAdminRequest struct {
-	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases, discover-databases, database-size, create-test, drop-test, test-checks, run-checks
+	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases, discover-databases, database-size, create-test, drop-test, test-checks, run-checks, create-database, prepare-new-database, create-options, set-owner
 	// Database to connect to and grant in. The replace operations connect
 	// to the maintenance database and act on Target, since a database
 	// cannot be renamed from inside itself.
@@ -76,6 +75,9 @@ type PGAdminRequest struct {
 	// Checks are a test restore's custom checks, for test-checks and
 	// run-checks.
 	Checks []tunnel.TestCheck `json:"checks,omitempty"`
+	// Create is what create-database, prepare-new-database, create-options
+	// and set-owner act on; see postgres_create.go.
+	Create *tunnel.GrantCreate `json:"create,omitempty"`
 }
 
 // PGAdminResult is the answer.
@@ -98,6 +100,11 @@ type PGAdminResult struct {
 	// Found is what discover-databases found, with owners and sizes.
 	Found     []tunnel.Discovered `json:"found,omitempty"`
 	Truncated bool                `json:"truncated,omitempty"`
+	// For the create operations: whether the name was taken, each step
+	// taken, and what the dialog may offer.
+	Exists  bool                  `json:"exists,omitempty"`
+	Steps   []tunnel.CreateStep   `json:"steps,omitempty"`
+	Options *tunnel.CreateOptions `json:"options,omitempty"`
 	// Bytes and DataDir are what database-size found.
 	Bytes   int64  `json:"bytes,omitempty"`
 	DataDir string `json:"dataDir,omitempty"`
@@ -126,30 +133,7 @@ var (
 // levelRole names the group role for a level in a database: argus_read_orders.
 // Always a plain identifier; a database name that would not fit is shortened
 // and given a hash so two databases cannot share a role.
-func levelRole(level, database string) string {
-	b := make([]byte, 0, len(database))
-	for i := 0; i < len(database); i++ {
-		c := database[i]
-		switch {
-		case c >= 'A' && c <= 'Z':
-			b = append(b, c+32)
-		case (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_':
-			b = append(b, c)
-		default:
-			b = append(b, '_')
-		}
-	}
-	name := "argus_" + level + "_" + string(b)
-	if len(name) > 63 || string(b) != database {
-		sum := sha256.Sum256([]byte(database))
-		short := name
-		if len(short) > 54 {
-			short = short[:54]
-		}
-		name = short + "_" + hex.EncodeToString(sum[:4])
-	}
-	return name
-}
+func levelRole(level, database string) string { return tunnel.PGLevelRole(level, database) }
 
 // levels lists the levels up to and including level, least first.
 func levelsUpTo(level string) []string {
@@ -165,6 +149,8 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return pgReplaceOp(ctx, conn, req)
 	case "discover-databases":
 		return pgDiscover(ctx, conn)
+	case "create-database", "prepare-new-database", "create-options", "set-owner":
+		return pgCreateOp(ctx, conn, req)
 	case "database-size", "create-test", "drop-test", "test-checks", "run-checks":
 		return pgTestOp(ctx, conn, req)
 	}
@@ -314,6 +300,9 @@ func pgEnsureLevels(ctx context.Context, conn *pgconn.PgConn, database, level st
 	}
 	if o, ok := names[tunnel.LevelOwner]; ok {
 		fmt.Fprintf(&b, "GRANT %s TO %s;\n", pgx(names[tunnel.LevelWrite]), pgx(o))
+		// Owner builds the schema, so it may add schemas too (New schema in
+		// the console), not only tables in the ones that are there.
+		fmt.Fprintf(&b, "EXECUTE format('GRANT CREATE ON DATABASE %%I TO %s', current_database());\n", pgx(o))
 	}
 	if d, ok := names[tunnel.LevelDBA]; ok {
 		// A DBA holds every level with ADMIN OPTION, so they can give an

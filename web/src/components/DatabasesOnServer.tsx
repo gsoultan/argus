@@ -13,6 +13,7 @@ import { bytes } from '~/components/primitives'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { databasesOnAssetQuery, useCreateDatabase, usersQuery } from '~/lib/queries'
 import { assetDBAccessQuery } from '~/lib/dbAccessQueries'
+import { CreateOnServer } from '~/components/CreateOnServer'
 import { GiveAccessMany, RemoveAccessMany, SelectionBar, TickAll, WhoHasWhat, whoHasIt } from '~/components/BulkDBAccess'
 import { targetName } from '~/lib/dbTarget'
 import { FS } from '~/theme'
@@ -145,10 +146,15 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
  * `initialEngine`, `initialPort` and `initialPoolerPort` come from what the agent found
  * running, when it is opened from there.
  */
-export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath }: {
+export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath, initialMode, onlyEngines }: {
   asset: Asset; opened: boolean; onClose: () => void; initialEngine?: DBEngine; initialPort?: number; initialPoolerPort?: number
   initialConfigPath?: string
+  /** Open on Create new instead of Already on this server. */
+  initialMode?: 'existing' | 'create'
+  /** The engines offered: brokers on the Brokers page, for one. */
+  onlyEngines?: DBEngine[]
 }) {
+  const [mode, setMode] = useState<'existing' | 'create'>(initialMode ?? 'existing')
   const create = useCreateDatabase()
   const narrow = useMediaQuery('(max-width: 48em)')
   const [engine, setEngine] = useState<DBEngine>(initialEngine ?? 'postgres')
@@ -239,10 +245,17 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
 
   return (
     <Modal opened={opened} onClose={onClose} title={`Add to ${asset.hostname.split('.')[0]}`} centered={!narrow}
-      fullScreen={narrow} size="lg">
+      fullScreen={narrow} size={mode === 'create' ? 'xl' : 'lg'}>
       <Stack gap="sm">
         <SegmentedControl value={engine} onChange={(v) => pick(v as DBEngine)} fullWidth
-          data={(Object.keys(ENGINES) as DBEngine[]).map((e) => ({ label: ENGINES[e].label, value: e }))} />
+          data={(onlyEngines ?? (Object.keys(ENGINES) as DBEngine[])).map((e) => ({ label: ENGINES[e].label, value: e }))} />
+        <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)} size="xs"
+          data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
+
+        {mode === 'create' ? (
+          <CreateOnServer key={engine} asset={asset} engine={engine} onClose={onClose}
+            onAddExisting={(n) => { setMode('existing'); setManual(true); setTyped(n) }} />
+        ) : (<>
 
         {!manual && !scoped && (
           <Stack gap={6}>
@@ -395,6 +408,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             {listing && names.length > 1 ? `Add ${names.length} ${info.noun}s` : 'Add'}
           </Button>
         </Group>
+        </>)}
       </Stack>
     </Modal>
   )

@@ -854,15 +854,37 @@ func (s *kafkaSession) createTopic(ctx context.Context, req tunnel.StoreRequest,
 		}
 		repl = int16(n)
 	}
+	// How long messages are kept and how old ones go, the same settings
+	// as creating a topic from the server's page (tunnel.KafkaCreate).
+	spec := tunnel.KafkaCreate{Partitions: int(parts), Cleanup: req.Properties["cleanup"]}
+	if v := req.Properties["retention"]; v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return tunnel.StoreAnswer{Type: "error", Error: "keep for is not a number of milliseconds"}, nil
+		}
+		spec.RetentionMS = n
+	}
+	if err := spec.Validate(); err != nil {
+		return tunnel.StoreAnswer{Type: "error", Error: err.Error()}, nil
+	}
 	text := fmt.Sprintf("create topic %s partitions %d", req.Name, parts)
 	if repl > 0 {
 		text += fmt.Sprintf(" replication %d", repl)
+	}
+	if spec.RetentionMS != 0 {
+		text += fmt.Sprintf(" retention.ms %d", spec.RetentionMS)
+	}
+	if spec.Cleanup != "" {
+		text += " cleanup.policy " + spec.Cleanup
 	}
 	if err := rec.stmt(req.ID, text); err != nil {
 		return tunnel.StoreAnswer{}, err
 	}
 	start := time.Now()
-	_, err := s.adm.CreateTopic(ctx, parts, repl, nil, req.Name)
+	r, err := s.adm.CreateTopic(ctx, parts, repl, spec.Configs(), req.Name)
+	if err == nil {
+		err = r.Err
+	}
 	return s.finish(req.ID, rec, start, err, "CREATE TOPIC")
 }
 
