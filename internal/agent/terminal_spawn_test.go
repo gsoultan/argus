@@ -88,3 +88,29 @@ func TestADirectShellForAnotherAccountStarts(t *testing.T) {
 		t.Fatal("the shell never ran")
 	}
 }
+
+// A login unit started as Type=exec never finished starting on Ubuntu's
+// systemd with PAMName and a TTY: its start job timed out after the default
+// 90 seconds and systemd killed the shell, so every session ended at 1m30s
+// with exit 129. The unit must not wait on a start it cannot confirm.
+func TestASessionUnitIsNotKilledBySystemdsStartTimeout(t *testing.T) {
+	args := sessionUnitArgs("argus-session-1.service", loginAccount{name: "ana", shell: "/bin/bash"},
+		"/dev/pts/3", "ana@example.com", "/run/argus/sessions/1")
+	has := func(want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+	if has("--service-type=exec") || !has("--service-type=simple") {
+		t.Errorf("the unit must start as Type=simple: %q", args)
+	}
+	if !has("TimeoutStartSec=infinity") {
+		t.Errorf("the unit must not inherit DefaultTimeoutStartSec: %q", args)
+	}
+	if args[len(args)-1] != "/run/argus/sessions/1" || !has("PAMName=login") || !has("TTYPath=/dev/pts/3") {
+		t.Errorf("the login unit lost its shape: %q", args)
+	}
+}
