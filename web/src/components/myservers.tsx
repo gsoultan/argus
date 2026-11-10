@@ -19,13 +19,13 @@ import { now, relTime } from '~/components/primitives'
 import { assetsQuery, meQuery, myServersQuery, requestsQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
 import type { Asset, MyServer } from '~/types/domain'
-import { kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
+import { isUp, kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
 import { ASSET_TYPES, ASSET_TYPE_LABEL, assetTypeOf, type AssetType } from '~/lib/assetType'
 import { needsUpdates, updatesWaitingQuery, type UpdatesWaitingRow } from '~/lib/updatesWaiting'
 import { isConfigured } from '~/lib/live'
 
 // Re-exported: every page that shows a server's status imports them from here.
-export { kindOf, reachOf, shortName, type Reach }
+export { isUp, kindOf, reachOf, shortName, type Reach }
 import { FS, SP, INK } from '~/theme'
 
 type Show = 'all' | 'online' | 'offline'
@@ -42,7 +42,7 @@ const REACH: Record<Reach, { label: string; color: string; hint: string }> = {
   online: {
     label: 'Online',
     color: 'teal',
-    hint: 'Answered at the last check.',
+    hint: 'Its Argus agent is checking in.',
   },
   slow: {
     label: 'Slow',
@@ -52,7 +52,12 @@ const REACH: Record<Reach, { label: string; color: string; hint: string }> = {
   offline: {
     label: 'Offline',
     color: 'rose',
-    hint: 'Did not answer at the last check. You can still try; it may be back.',
+    hint: 'Its Argus agent has stopped checking in. You can still try; it may be back.',
+  },
+  unknown: {
+    label: 'Unknown',
+    color: 'slate',
+    hint: 'No Argus agent reports from it, so Argus cannot tell whether it is up. You can still try.',
   },
   blocked: {
     label: 'Blocked',
@@ -422,8 +427,7 @@ export function ServerCards() {
     if (!assets) return undefined
     let online = 0
     for (const a of assets) {
-      const r = reachOf(a)
-      if (r === 'online' || r === 'slow') online++
+      if (isUp(reachOf(a))) online++
     }
     return { all: assets.length, online, offline: assets.length - online }
   }, [assets])
@@ -437,9 +441,9 @@ export function ServerCards() {
             const hay = `${a.hostname} ${a.address} ${a.os} ${a.tags.join(' ')} ${a.principals.join(' ')}`
             if (!hay.toLowerCase().includes(needle)) return false
           }
-          const r = reachOf(a)
-          if (show === 'online' && r !== 'online' && r !== 'slow') return false
-          if (show === 'offline' && (r === 'online' || r === 'slow')) return false
+          const up = isUp(reachOf(a))
+          if (show === 'online' && !up) return false
+          if (show === 'offline' && up) return false
           if (kind !== 'all' && kindOf(a) !== kind) return false
           if (type !== 'all' && assetTypeOf(a) !== type) return false
           if (needs && !needsUpdates(waitingBy.get(a.id))) return false

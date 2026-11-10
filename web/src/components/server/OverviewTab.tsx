@@ -224,7 +224,7 @@ export function connectsBy(a: Asset): string {
 }
 
 function reachLabel(a: Asset): string {
-  return { online: 'Online', slow: 'Slow', offline: 'Offline', blocked: 'Blocked' }[reachOf(a)]
+  return { online: 'Online', slow: 'Slow', offline: 'Offline', blocked: 'Blocked', unknown: 'Unknown' }[reachOf(a)]
 }
 
 export function agentStateLabel(a: Asset): string {

@@ -15,17 +15,30 @@ import type { Asset } from '~/types/domain'
  * connect -- the card says when that check was. Only `blocked` stops the
  * Connect button, because it is the one case Argus itself refuses: SSH to a
  * server whose host key no longer matches the pin.
+ *
+ * Online needs a live signal from the host: its agent's tunnel, or a heartbeat
+ * the control plane has not yet marked stale. `health` alone is not one: it is
+ * written as "reachable" when an asset is added and nothing probes it after,
+ * so trusting it showed every server online, including ones switched off. A
+ * host with no agent has nothing that reports on it, so it is `unknown`
+ * rather than a guess either way.
  */
-export type Reach = 'online' | 'slow' | 'offline' | 'blocked'
+export type Reach = 'online' | 'slow' | 'offline' | 'blocked' | 'unknown'
 
 export function reachOf(a: Asset): Reach {
   if (a.protocol !== 'rdp' && a.hostKeyState === 'changed') return 'blocked'
   // A connected agent tunnel is how every session opens, terminal or desktop,
   // so it counts as reachable on its own.
   if (a.tunnelConnected === true) return 'online'
-  if (a.health === 'reachable') return 'online'
-  if (a.health === 'degraded') return 'slow'
-  return 'offline'
+  if (a.health === 'unreachable') return 'offline'
+  if (a.agentState === 'healthy') return a.health === 'degraded' ? 'slow' : 'online'
+  if (a.agentState === 'stale') return 'offline'
+  return 'unknown'
+}
+
+/** Whether a reach counts toward "Online" in the filters and counts. */
+export function isUp(r: Reach): boolean {
+  return r === 'online' || r === 'slow'
 }
 
 /**

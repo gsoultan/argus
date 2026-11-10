@@ -372,14 +372,14 @@ export function FleetHealth() {
       ) : (
         <Box className="argus-health" data-testid="fleet-health">
           <Box>
-            <Box className="argus-stack" role="img" aria-label={`${servers.answering} answering, ${servers.quiet} quiet, ${servers.down} not answering`}>
+            <Box className="argus-stack" role="img" aria-label={`${servers.answering} answering, ${servers.quiet} with no agent, ${servers.down} not answering`}>
               <i data-tone="calm" style={{ width: `${(servers.answering / total) * 100}%` }} />
               <i data-tone="pending" style={{ width: `${(servers.quiet / total) * 100}%` }} />
               <i data-tone="denied" style={{ width: `${(servers.down / total) * 100}%` }} />
             </Box>
             <Group gap="md" mt={8}>
               <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.answering}</Text> answering</Text>
-              {servers.quiet > 0 && <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.quiet}</Text> quiet</Text>}
+              {servers.quiet > 0 && <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.quiet}</Text> no agent</Text>}
               {servers.down > 0 && <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.down}</Text> not answering</Text>}
             </Group>
           </Box>
