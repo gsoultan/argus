@@ -54,6 +54,17 @@ jobs:
         # source, so ./... pulls a JavaScript dependency into the Go build.
         run: go vet $(go list ./... | grep -v '/node_modules/')
 
+      - name: Known vulnerabilities in the agent
+        # The agent runs as root on every managed host, so a known-vulnerable
+        # standard library or dependency it calls is a finding on the fleet.
+        # Each OS is checked: the call graph differs by build tags.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          for os in linux windows darwin; do
+            echo "== $os"
+            GOOS=$os "$(go env GOPATH)/bin/govulncheck" ./cmd/argus-agent/
+          done
+
       - name: Test
         env:
           ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable

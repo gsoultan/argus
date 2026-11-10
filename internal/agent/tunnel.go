@@ -88,12 +88,17 @@ type TunnelConfig struct {
 const quicRetryAfter = 10 * time.Minute
 
 // RunTunnel holds the agent's connection to the control plane until ctx ends,
-// reconnecting with backoff.
+// reconnecting with backoff. A panic outside any one stream reconnects too,
+// rather than leaving the host unreachable from the console until a restart.
 func RunTunnel(ctx context.Context, cfg TunnelConfig) {
 	log := cfg.Log
 	if log == nil {
 		log = slog.Default()
 	}
+	Supervise(ctx, log, "tunnel", func(ctx context.Context) { runTunnel(ctx, cfg, log) })
+}
+
+func runTunnel(ctx context.Context, cfg TunnelConfig, log *slog.Logger) {
 	if cfg.MaxStreams <= 0 {
 		cfg.MaxStreams = 64
 	}
@@ -217,6 +222,7 @@ func hold(ctx context.Context, sess tunnel.Session, cfg TunnelConfig, log *slog.
 	if sess.Transport() == tunnel.TransportUpgrade && quicPort > 0 &&
 		time.Since(quicFailed) > quicRetryAfter {
 		go func() {
+			defer Recover(log, "tunnel: trying QUIC")
 			dctx, cancel := context.WithTimeout(tryCtx, 5*time.Second)
 			defer cancel()
 			q, err := tunnel.DialQUIC(dctx, cfg.Dial, quicPort)
@@ -288,6 +294,23 @@ func serveTunnel(ctx context.Context, sess tunnel.Session, cfg TunnelConfig, log
 func handleStream(ctx context.Context, call *Call, cfg TunnelConfig, log *slog.Logger) {
 	services := cfg.Services
 	st := call.Stream
+	// Deferred first so it runs last, after the service's own defers: a
+	// panic in one service fails that one stream, not every session on the
+	// host. The control plane is told, rather than left waiting.
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		logPanic(log, "tunnel service "+call.Header.Service, r)
+		if !call.answered {
+			_ = st.SetDeadline(time.Now().Add(tunnel.HeaderTimeout))
+			_ = Protect(log, "tunnel refusal", func() {
+				call.Refuse("the agent hit an internal error opening this session; it has been logged on the server")
+			})
+		}
+		_ = st.Close()
+	}()
 	_ = st.SetDeadline(time.Now().Add(tunnel.HeaderTimeout))
 	if err := tunnel.ReadJSON(st, &call.Header); err != nil {
 		_ = st.Close()

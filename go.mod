@@ -1,6 +1,6 @@
 module github.com/gsoultan/argus
 
-go 1.27.1
+go 1.27.3
 
 // CVE-2026-98432: the only known exploit of this Linux TCP use-after-free
 // needs an MPTCP listener, and Go listens with MPTCP by default. Argus gains
@@ -27,13 +27,13 @@ require (
 	github.com/gsoultan/storm v1.4.0
 	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/klauspost/compress v1.19.2
+	github.com/klauspost/compress v1.20.4
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/quic-go/quic-go v0.64.1
 	github.com/twmb/franz-go v1.20.5
 	github.com/twmb/franz-go/pkg/kadm v1.17.1
 	github.com/twmb/franz-go/pkg/kmsg v1.12.0
-	go.mongodb.org/mongo-driver/v2 v2.3.0
+	go.mongodb.org/mongo-driver/v2 v2.4.4
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/mobile v0.0.0-20261011034528-197770444867
@@ -43,7 +43,7 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.1.0 // indirect
+	filippo.io/edwards25519 v1.1.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.8 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.11 // indirect
@@ -80,7 +80,7 @@ require (
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect

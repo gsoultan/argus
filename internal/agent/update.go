@@ -461,7 +461,8 @@ func (u *Updater) run(ctx context.Context, req UpdateRequest) {
 	}
 
 	planPath := filepath.Join(u.StateDir, updateDir, "plan.json")
-	if err := writeFileAtomic(planPath, mustJSON(plan), 0o600); err == nil {
+	err = writeFileAtomic(planPath, mustJSON(plan), 0o600)
+	if err == nil {
 		err = u.platform.launch(context.WithoutCancel(ctx), planPath)
 	}
 	if err != nil {
