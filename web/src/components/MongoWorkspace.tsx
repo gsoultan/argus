@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon, Badge, Box, Button, Drawer, Group, Loader, ScrollArea, Stack, Text, TextInput, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { IconLeaf, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
-import { NewCollection, NewIndex } from '~/components/mongo/MongoNew'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { JsonView } from '~/components/JsonView'
@@ -22,6 +21,9 @@ their level do, and a refusal is MongoDB's own, shown as it came. The console
 adds only the confirm before a command that wipes a collection or the
 database, which the agent will run only with the server's name typed.
 */
+
+const NewCollection = lazy(() => import('~/components/mongo/MongoNew').then((m) => ({ default: m.NewCollection })))
+const NewIndex = lazy(() => import('~/components/mongo/MongoNew').then((m) => ({ default: m.NewIndex })))
 
 export interface MongoWorkspaceProps {
   database: Database
@@ -266,9 +268,13 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
           </Group>
         </Box>
       </Box>
-      <NewCollection opened={making === 'collection'} onClose={() => setMaking(null)} onRun={make} />
-      <NewIndex opened={making === 'index'} onClose={() => setMaking(null)} onRun={make}
-        collections={colls.filter((c) => c.type === 'collection').map((c) => c.name)} initial={selected?.name} />
+      {making && (
+        <Suspense fallback={null}>
+          <NewCollection opened={making === 'collection'} onClose={() => setMaking(null)} onRun={make} />
+          <NewIndex opened={making === 'index'} onClose={() => setMaking(null)} onRun={make}
+            collections={colls.filter((c) => c.type === 'collection').map((c) => c.name)} initial={selected?.name} />
+        </Suspense>
+      )}
       <ConfirmByName opened={confirming !== null} hostname={database.hostname}
         what={confirming ? `${confirming.cmd} on ${database.hostname}.` : ''}
         onCancel={() => {

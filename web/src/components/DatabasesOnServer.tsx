@@ -5,7 +5,7 @@ import {
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconDatabase, IconPlus, IconRefresh, IconSearch, IconTable } from '@tabler/icons-react'
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { EmptyState, SectionCard } from '~/components/page'
 import { discoverDatabases, isConfigured } from '~/lib/live'
@@ -13,7 +13,6 @@ import { bytes } from '~/components/primitives'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { databasesOnAssetQuery, useCreateDatabase, usersQuery } from '~/lib/queries'
 import { assetDBAccessQuery } from '~/lib/dbAccessQueries'
-import { CreateOnServer } from '~/components/CreateOnServer'
 import { GiveAccessMany, RemoveAccessMany, SelectionBar, TickAll, WhoHasWhat, whoHasIt } from '~/components/BulkDBAccess'
 import { targetName } from '~/lib/dbTarget'
 import { FS } from '~/theme'
@@ -28,6 +27,9 @@ import type { Asset, DBAssignment, DBEngine, DBLabel } from '~/types/domain'
  * authentication, Redis's own redis.conf, rabbitmqctl. No password is ever
  * typed in.
  */
+// Create new is its own chunk: only an admin creating something pays for it.
+const CreateOnServer = lazy(() => import('~/components/CreateOnServer').then((m) => ({ default: m.CreateOnServer })))
+
 export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   const { data } = useQuery(databasesOnAssetQuery(asset.id))
   const { data: access } = useQuery({ ...assetDBAccessQuery(asset.id), enabled: canEdit && isConfigured() })
@@ -253,8 +255,10 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
 
         {mode === 'create' ? (
-          <CreateOnServer key={engine} asset={asset} engine={engine} onClose={onClose}
-            onAddExisting={(n) => { setMode('existing'); setManual(true); setTyped(n) }} />
+          <Suspense fallback={<Loader size="sm" />}>
+            <CreateOnServer key={engine} asset={asset} engine={engine} onClose={onClose}
+              onAddExisting={(n) => { setMode('existing'); setManual(true); setTyped(n) }} />
+          </Suspense>
         ) : (<>
 
         {!manual && !scoped && (

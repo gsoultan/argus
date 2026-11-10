@@ -6,12 +6,11 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { Navigate, useNavigate } from '@tanstack/react-router'
 import { IconCheck, IconCopy, IconInfoCircle, IconPlus, IconTrash, IconUser, IconUsersGroup } from '@tabler/icons-react'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { ApprovalBadge, EnvBadge } from '~/components/ChangeImpact'
 import { ApprovalsCard, GiveAccess } from '~/components/DatabaseApprovals'
 import { writesNeedApproval } from '~/lib/changeApproval'
 import { BackupSettings } from '~/components/DatabaseBackups'
-import { DatabaseOwner } from '~/components/DatabaseOwner'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { notifyError, notifyOk } from '~/lib/notify'
@@ -41,6 +40,8 @@ type NumKey = 'statementTimeoutS' | 'idleTxTimeoutS' | 'maxRows' | 'idleTimeoutS
 const LEVELS_ALL: DBLevel[] = ['read', 'write', 'owner', 'dba']
 
 /** The levels, with what each one means on this engine. */
+const DatabaseOwner = lazy(() => import('~/components/DatabaseOwner').then((m) => ({ default: m.DatabaseOwner })))
+
 function levelsFor(db: Database): { value: DBLevel; label: string; blurb: string }[] {
   const info = engineOf(db.engine)
   return LEVELS_ALL.map((l) => ({ value: l, label: levelName(l, db.engine), blurb: info.levels[l] }))
@@ -242,7 +243,7 @@ function Connection({ db }: { db: Database }) {
       <SectionCard title="Postgres" description="The agent on the server opens it here. Provisioning of roles always goes this way, as the postgres account over the local socket.">
         <Text size={FS.body} ff="monospace">{db.host}:{db.port}/{db.dbname}</Text>
       </SectionCard>
-      <DatabaseOwner db={db} />
+      <Suspense fallback={null}><DatabaseOwner db={db} /></Suspense>
       <SectionCard title="PgBouncer" description="If applications on this server connect through PgBouncer, sessions from Argus can too. Transaction pooling is fine: every statement carries its own role and limits.">
         <Stack gap="sm">
           <Checkbox label="Sessions go through PgBouncer" checked={enabled} onChange={(e) => setEnabled(e.currentTarget.checked)} />

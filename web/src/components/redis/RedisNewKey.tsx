@@ -1,6 +1,7 @@
 import { Button, Code, Group, Modal, NumberInput, SegmentedControl, Stack, Text, TextInput, Textarea } from '@mantine/core'
 import { useEffect, useState } from 'react'
 import { FS } from '~/theme'
+import { redisArg } from '~/lib/redisArg'
 
 /*
 New key, as a form that writes the Redis commands it runs: one per line,
@@ -10,11 +11,7 @@ the person's ACL user decides. A key that is there is never written over.
 
 export type KeyType = 'string' | 'hash' | 'list' | 'set' | 'zset' | 'stream'
 
-/** One argument, quoted the way SplitRedisCommand (tunnel) reads it back. */
-export function redisArg(s: string): string {
-  if (s !== '' && /^[A-Za-z0-9:_.\-*@/{}]+$/.test(s)) return s
-  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')}"`
-}
+export { redisArg }
 
 /** Pairs from "field value" lines; the first space splits them. */
 function pairs(text: string): [string, string][] {

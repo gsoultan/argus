@@ -2,11 +2,12 @@ import { Button, Modal, Select, Stack, Text } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { IconPlus } from '@tabler/icons-react'
-import { useState } from 'react'
-import { AddDatabase } from '~/components/DatabasesOnServer'
+import { lazy, Suspense, useState } from 'react'
 import { assetsQuery } from '~/lib/queries'
 import { FS } from '~/theme'
 import type { DBEngine } from '~/types/domain'
+
+const AddDatabase = lazy(() => import('~/components/DatabasesOnServer').then((m) => ({ default: m.AddDatabase })))
 
 /**
  * New database (or broker) from the list pages: which server first, then the
@@ -36,8 +37,10 @@ export function NewOnServer({ label, engines }: { label: string; engines: DBEngi
         </Stack>
       </Modal>
       {asset && open && (
-        <AddDatabase asset={asset} opened onClose={() => setOpen(false)} initialMode="create"
-          initialEngine={engines[0]} onlyEngines={engines} />
+        <Suspense fallback={null}>
+          <AddDatabase asset={asset} opened onClose={() => setOpen(false)} initialMode="create"
+            initialEngine={engines[0]} onlyEngines={engines} />
+        </Suspense>
       )}
     </>
   )

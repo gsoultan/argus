@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon, Badge, Box, Button, Drawer, Group, Loader, ScrollArea, Select, Stack, Table, Text, TextInput,
   UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { IconBolt, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
-import { NewKey, redisArg } from '~/components/redis/RedisNewKey'
+import { redisArg } from '~/lib/redisArg'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { useCompletion } from '~/components/Autocomplete'
@@ -22,6 +22,8 @@ does, and a refusal is Redis's own NOPERM, shown as it came. The one thing the
 console adds is asking for the server's name before a command the agent will
 only run confirmed.
 */
+
+const NewKey = lazy(() => import('~/components/redis/RedisNewKey').then((m) => ({ default: m.NewKey })))
 
 export interface RedisWorkspaceProps {
   database: Database
@@ -249,7 +251,11 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           </Group>
         </Box>
       </Box>
-      <NewKey opened={making} onClose={() => { setMaking(false); void scan('0', false) }} exists={keyExists} onRun={(l) => runCmd(l)} />
+      {making && (
+        <Suspense fallback={null}>
+          <NewKey opened onClose={() => { setMaking(false); void scan('0', false) }} exists={keyExists} onRun={(l) => runCmd(l)} />
+        </Suspense>
+      )}
       <ConfirmByName opened={confirming !== null} hostname={database.hostname}
         what={confirming ? `${confirming.cmd} on ${database.hostname}.` : ''}
         onCancel={() => {

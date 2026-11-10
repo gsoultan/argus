@@ -1,5 +1,5 @@
 import {
-  Alert, Anchor, Badge, Box, Button, Checkbox, Code, Collapse, Group, Loader, MultiSelect, NumberInput, SegmentedControl,
+  Alert, Anchor, Badge, Box, Button, Checkbox, Code, Group, Loader, MultiSelect, NumberInput, SegmentedControl,
   Select, SimpleGrid, Stack, Text, TextInput,
 } from '@mantine/core'
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks'
@@ -8,10 +8,10 @@ import { IconAlertTriangle, IconCheck, IconCircleDashed, IconX } from '@tabler/i
 import { useEffect, useMemo, useState } from 'react'
 import { GiveAccessMany } from '~/components/BulkDBAccess'
 import { ButtonLink } from '~/components/links'
+import { isConfigured } from '~/lib/live'
 import {
-  createOnServer, createOptions, isConfigured,
-  type CreateAnswer, type CreateFields, type CreateRequest, type CreateStep,
-} from '~/lib/live'
+  createOnServer, createOptions, type CreateAnswer, type CreateFields, type CreateRequest, type CreateStep,
+} from '~/lib/createApi'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { databasesOnAssetQuery, dbqk } from '~/lib/queries'
 import { ENGINES, isBroker } from '~/lib/engines'
@@ -266,12 +266,12 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
               {encoding || locale ? `${encoding || o?.encoding || 'server default'} · ${locale || o?.locale || 'server default'}` : `${o?.encoding ?? 'UTF8'} · ${o?.locale ?? 'the server’s locale'} · from template0`}
               {' '}· {moreOpen ? 'Hide' : 'Change'}
             </Anchor>
-            <Collapse expanded={moreOpen}>
+            {moreOpen && (<>
               <SimpleGrid cols={2} mt={6}>
                 <TextInput label="Encoding" placeholder={o?.encoding ?? 'UTF8'} value={encoding} onChange={(e) => setEncoding(e.currentTarget.value)} />
                 <TextInput label="Locale" placeholder={o?.locale ?? 'en_US.UTF-8'} value={locale} onChange={(e) => setLocale(e.currentTarget.value)} />
               </SimpleGrid>
-            </Collapse>
+            </>)}
           </Box>
         </>
       )}
@@ -365,7 +365,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
           Where: {addr || info.defaults.host}:{port || info.defaults.port}{configPath ? ` · ${configPath}` : ''}{engine === 'postgres' && Number(poolerPort) ? ` · PgBouncer ${poolerPort}` : ''}
           {like ? ', like the others here' : ''} · {where ? 'Hide' : 'Change'}
         </Anchor>
-        <Collapse expanded={where}>
+        {where && (<>
           <SimpleGrid cols={2} mt={6}>
             <TextInput label="Address" placeholder={info.defaults.host} value={addr} onChange={(e) => setAddr(e.currentTarget.value)} />
             <NumberInput label={engine === 'rabbitmq' ? 'Management port' : 'Port'} placeholder={String(info.defaults.port)} value={port} onChange={setPort} min={1} max={65535} />
@@ -377,7 +377,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
                 value={configPath} onChange={(e) => setConfigPath(e.currentTarget.value)} />
             )}
           </SimpleGrid>
-        </Collapse>
+        </>)}
       </Box>
     </Stack>
   )
