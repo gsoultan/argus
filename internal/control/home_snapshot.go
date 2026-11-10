@@ -39,8 +39,12 @@ type HomeSnapshot struct {
 
 // HomeServers counts every server in the inventory by whether it answers.
 //
-// Down is unreachable. Quiet answers but its agent has gone stale, so what it
-// reports cannot be believed as current. Answering is the rest.
+// Answering needs a live signal: the agent's tunnel, or a heartbeat not yet
+// marked stale. Down is a server whose agent has gone silent, or that was
+// recorded unreachable. Quiet has no agent at all, so nothing reports on it
+// and Argus cannot say either way. The asset's health column is not a signal
+// on its own: it is written "reachable" when the asset is added and nothing
+// probes it after, so counting it made every switched-off server answer.
 type HomeServers struct {
 	Total     int `json:"total"`
 	Answering int `json:"answering"`
@@ -153,17 +157,24 @@ func (s *Store) homeFast(ctx context.Context, h *HomeSnapshot) error {
 	var held int
 	var heldAt *time.Time
 	err := s.db(ctx).QueryRow(ctx, `
+		WITH fleet AS (
+		  SELECT a.health, a.agent_state,
+		         EXISTS (SELECT 1 FROM agent_credentials c
+		                  WHERE lower(c.hostname) = lower(a.hostname) AND c.revoked_at IS NULL
+		                    AND c.tunnel_seen_at > now() - $2::interval) AS tunnel
+		    FROM assets a WHERE a.archived_at IS NULL
+		)
 		SELECT
-		  (SELECT count(*) FROM assets WHERE archived_at IS NULL),
-		  (SELECT count(*) FROM assets WHERE archived_at IS NULL AND health = 'unreachable'),
-		  (SELECT count(*) FROM assets WHERE archived_at IS NULL AND health <> 'unreachable' AND agent_state = 'stale'),
+		  (SELECT count(*) FROM fleet),
+		  (SELECT count(*) FROM fleet WHERE NOT tunnel AND (health = 'unreachable' OR agent_state = 'stale')),
+		  (SELECT count(*) FROM fleet WHERE NOT tunnel AND health <> 'unreachable' AND agent_state = 'absent'),
 		  (SELECT count(*) FROM sessions WHERE state = 'active' AND last_reported_at <= now() - $1::interval),
 		  (SELECT count(*) FROM access_requests WHERE state = 'pending'),
 		  (SELECT min(created_at) FROM access_requests WHERE state = 'pending'),
 		  (SELECT count(*) FROM direct_login_requests WHERE state = 'pending' AND expires_at > now()),
 		  (SELECT min(created_at) FROM direct_login_requests WHERE state = 'pending' AND expires_at > now()),
 		  (SELECT count(*) FROM agents WHERE matched_asset = false AND enrollment_state = 'unreviewed')`,
-		silence).Scan(&h.Servers.Total, &h.Servers.Down, &h.Servers.Quiet, &h.Live.Silent,
+		silence, fmt.Sprintf("%d seconds", int(tunnelFreshFor.Seconds()))).Scan(&h.Servers.Total, &h.Servers.Down, &h.Servers.Quiet, &h.Live.Silent,
 		&h.Waiting.Count, &h.Waiting.OldestAt, &held, &heldAt, &h.Unreviewed)
 	if err != nil {
 		return err

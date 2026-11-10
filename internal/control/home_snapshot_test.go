@@ -99,3 +99,43 @@ func TestHomeLeavesOutStaleUsage(t *testing.T) {
 		t.Fatalf("a ten-minute-old report is among the busiest now: %+v", got.Processor.Busiest)
 	}
 }
+
+// A server counts as answering only on a live signal from its agent. The
+// health column is "reachable" from the moment an asset is added and nothing
+// probes it after, so a switched-off server must not answer through it.
+func TestHomeCountsOnlineFromTheAgentNotTheDefaultHealth(t *testing.T) {
+	s, _, _ := reportAPI(t)
+	ctx := context.Background()
+	before := homeNow(t, s)
+
+	add := func(state string) {
+		t.Helper()
+		a, err := s.CreateAsset(ctx, AssetInput{
+			Hostname: unique("reach") + ".example", Address: "192.0.2.20",
+			Principals: []string{"ops"}, CredentialRef: "injected",
+		})
+		if err != nil {
+			t.Fatalf("CreateAsset: %v", err)
+		}
+		if a.Health != "reachable" {
+			t.Fatalf("a new asset's health is %q; this test is about the default", a.Health)
+		}
+		if _, err := s.db(ctx).Exec(ctx, `UPDATE assets SET agent_state = $2 WHERE id = $1`, a.ID, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("healthy")
+	add("stale")
+	add("absent")
+
+	after := homeNow(t, s)
+	if after.Servers.Answering != before.Servers.Answering+1 {
+		t.Errorf("answering %d, before %d: only the heartbeating server answers", after.Servers.Answering, before.Servers.Answering)
+	}
+	if after.Servers.Down != before.Servers.Down+1 {
+		t.Errorf("down %d, before %d: the stale agent's server is down", after.Servers.Down, before.Servers.Down)
+	}
+	if after.Servers.Quiet != before.Servers.Quiet+1 {
+		t.Errorf("quiet %d, before %d: the agentless server cannot be told either way", after.Servers.Quiet, before.Servers.Quiet)
+	}
+}

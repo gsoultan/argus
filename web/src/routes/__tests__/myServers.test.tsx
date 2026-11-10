@@ -22,6 +22,7 @@ const host = (name: string, o: Partial<Asset> = {}): Asset => ({
   hostname: `${name}.prod.northwind.id`,
   health: 'reachable',
   hostKeyState: 'pinned',
+  agentState: 'healthy',
   tunnelConnected: false,
   principals: ['ops', 'deploy'],
   ...o,
@@ -253,5 +254,30 @@ describe('reachOf', () => {
   })
   it('does not apply SSH host keys to Remote Desktop', () => {
     expect(reachOf(host('x', { protocol: 'rdp', hostKeyState: 'changed' }))).toBe('online')
+  })
+  // health is written "reachable" when an asset is added and nothing probes
+  // it after, so it must never make a silent server look online.
+  it('calls a server offline once its agent stops checking in, whatever health says', () => {
+    expect(reachOf(host('x', { agentState: 'stale', health: 'reachable' }))).toBe('offline')
+  })
+  it('does not guess for a server with no agent', () => {
+    expect(reachOf(host('x', { agentState: 'absent', health: 'reachable' }))).toBe('unknown')
+  })
+  it('counts a heartbeating agent as online, and slow when it was seen degraded', () => {
+    expect(reachOf(host('x', { agentState: 'healthy' }))).toBe('online')
+    expect(reachOf(host('x', { agentState: 'healthy', health: 'degraded' }))).toBe('slow')
+  })
+  it('lists stale and agentless servers under Offline, not Online', async () => {
+    signedInAs('operator', [
+      host('up-01'),
+      host('gone-02', { agentState: 'stale' }),
+      host('bare-03', { agentState: 'absent' }),
+    ])
+    await renderRoute('/mine')
+    await screen.findByRole('heading', { name: 'up-01' })
+    fireEvent.click(screen.getByText(/^Online \(/))
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['up-01']),
+    )
   })
 })

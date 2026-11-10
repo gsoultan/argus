@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { IconBrandWindows, IconDeviceMobile, IconSearch, IconTerminal2 } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
-import { ReachBadge, kindOf, reachOf, shortName } from '~/components/myservers'
+import { ReachBadge, isUp, kindOf, reachOf, shortName } from '~/components/myservers'
 import { assetsQuery } from '~/lib/queries'
 import { FS } from '~/theme'
 
@@ -28,13 +28,12 @@ export function ServerList({ currentId }: { currentId: string }) {
       .filter((a) => !needle || a.hostname.toLowerCase().includes(needle) || a.tags.some((t) => t.toLowerCase().includes(needle)))
       .filter((a) => {
         if (show === 'all') return true
-        const r = reachOf(a)
-        return show === 'online' ? r === 'online' || r === 'slow' : r === 'offline' || r === 'blocked'
+        return show === 'online' ? isUp(reachOf(a)) : !isUp(reachOf(a))
       })
       .sort((a, b) => a.hostname.localeCompare(b.hostname))
   }, [assets, q, show])
 
-  const online = (assets ?? []).filter((a) => ['online', 'slow'].includes(reachOf(a))).length
+  const online = (assets ?? []).filter((a) => isUp(reachOf(a))).length
   const total = assets?.length ?? 0
 
   return (
