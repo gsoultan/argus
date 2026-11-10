@@ -368,6 +368,14 @@ func (c *Collector) Listen(path string) error {
 		go func() {
 			defer c.wg.Done()
 			defer c.untrackConn(conn)
+			// The socket is open to every local user. One shim's bad
+			// message must not take every other session's recording down.
+			defer func() {
+				if r := recover(); r != nil {
+					logPanic(c.log, "collector connection", r)
+					_ = conn.Close()
+				}
+			}()
 			c.handle(conn)
 		}()
 	}

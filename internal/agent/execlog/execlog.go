@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -191,9 +193,22 @@ func (t *Tracer) run() {
 			if !open {
 				return
 			}
-			t.dispatch(e)
+			t.safeDispatch(e)
 		}
 	}
+}
+
+// safeDispatch hands one event to its session. A sink that panics loses that
+// one event, said in the log, rather than ending the process -- and with it
+// kernel tracing and every recording on the host.
+func (t *Tracer) safeDispatch(e Exec) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Default().Error("execlog: recovered from a panic delivering an execution event",
+				"session", e.SessionID, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+		}
+	}()
+	t.dispatch(e)
 }
 
 func (t *Tracer) dispatch(e Exec) {

@@ -558,7 +558,9 @@ func runDaemon(args []string) int {
 	if rep.Enabled() {
 		uploads = agent.NewUploads(*stateDir, rep, log)
 		uploads.Keep = *keepShipped
-		go uploads.Run(ctx, time.Minute)
+		go agent.Supervise(ctx, log, "recording uploads", func(ctx context.Context) {
+			uploads.Run(ctx, time.Minute)
+		})
 	}
 	// Removing this server in the console asks, on a heartbeat, for the agent
 	// to take itself off; see selfUninstall.
@@ -605,12 +607,12 @@ func runDaemon(args []string) int {
 	// in full; the heartbeat reuses that answer while nothing the scan read
 	// has changed, which it checks file by file on every beat.
 	posture := agent.NewPostureCache(agent.DefaultScanConfig(*shimPath), *scanEvery)
-	go loop(time.Minute, stop, func() {
+	go loop(log, "active sessions report", time.Minute, stop, func() {
 		for _, rec := range col.ActiveTunnelRecords() {
 			rep.Session(ctx, agent.SessionReport(rec))
 		}
 	})
-	go loop(*scanEvery, stop, func() {
+	go loop(log, "posture scan", *scanEvery, stop, func() {
 		p, err := posture.Rescan()
 		if err != nil {
 			log.Error("posture scan failed", "error", err)
@@ -842,21 +844,21 @@ func runDaemon(args []string) int {
 			heartbeat()
 		}
 	}
-	go loop(*beatEvery, stop, heartbeat)
-	go updater.Watch(ctx)
-	go pkgs.Watch(ctx)
+	go loop(log, "heartbeat", *beatEvery, stop, heartbeat)
+	go agent.Supervise(ctx, log, "agent updates", updater.Watch)
+	go agent.Supervise(ctx, log, "package updates", pkgs.Watch)
 	logs.Changed = func() {
 		if rep.Enabled() {
 			heartbeat()
 		}
 	}
-	go logs.Watch(ctx)
+	go agent.Supervise(ctx, log, "log cleanup", logs.Watch)
 	disks.Changed = func() {
 		if rep.Enabled() {
 			heartbeat()
 		}
 	}
-	go disks.Watch(ctx)
+	go agent.Supervise(ctx, log, "disks", disks.Watch)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what
@@ -870,7 +872,7 @@ func runDaemon(args []string) int {
 		lastFacts []byte
 		lastSent  time.Time
 	)
-	go loop(10*time.Minute, stop, func() {
+	go loop(log, "host facts", 10*time.Minute, stop, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
 		apps := agent.DiscoverApps(ctx)
 		sys := agent.DiscoverSystem()
@@ -1176,14 +1178,18 @@ ExposeAuthInfo yes
 	return 0
 }
 
-func loop(every time.Duration, stop <-chan struct{}, fn func()) {
-	fn() // run once immediately so state exists before the first tick
+// loop runs fn now and then every interval until stop closes. A panic in one
+// pass is logged and the next pass still runs: a heartbeat that stopped for
+// good over one bad scan would make a healthy host look killed.
+func loop(log *slog.Logger, what string, every time.Duration, stop <-chan struct{}, fn func()) {
+	pass := func() { _ = agent.Protect(log, what, fn) }
+	pass() // run once immediately so state exists before the first tick
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
 		case <-t.C:
-			fn()
+			pass()
 		case <-stop:
 			return
 		}

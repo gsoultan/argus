@@ -1212,7 +1212,6 @@ func (s *mysqlSession) schema(ctx context.Context, req tunnel.PGRequest) error {
 			case "schemas":
 				err = rows.Scan(&a, &d)
 				out = append(out, tunnel.PGObject{Name: a, Kind: "schema", Count: d})
-				continue
 			case "completion":
 				err = rows.Scan(&a, &b, &c)
 				out = append(out, tunnel.PGObject{Name: a, Kind: b, Schema: name})
