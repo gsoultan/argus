@@ -138,6 +138,33 @@ type DesktopOpen struct {
 	// Graphics asks for RDP's graphics pipeline, passed through to a browser
 	// that decodes it (H.264), instead of bitmap updates.
 	Graphics bool `json:"graphics,omitempty"`
+	// Clipboard is which way text may cross between the console and the
+	// desktop's clipboard: ClipboardBoth, ClipboardToAsset,
+	// ClipboardFromAsset, or empty (ClipboardOff) for neither. An agent that
+	// predates it opens no clipboard, which is the safe reading.
+	Clipboard string `json:"clipboard,omitempty"`
+}
+
+// Clipboard directions, as the asset type's rule sets them.
+const (
+	ClipboardOff       = "off"
+	ClipboardBoth      = "both"
+	ClipboardToAsset   = "to"   // paste into the asset only
+	ClipboardFromAsset = "from" // copy out of the asset only
+)
+
+// ClipboardAllows says whether a rule lets text cross toward the asset
+// (toAsset) or out of it.
+func ClipboardAllows(rule string, toAsset bool) bool {
+	switch rule {
+	case ClipboardBoth:
+		return true
+	case ClipboardToAsset:
+		return toAsset
+	case ClipboardFromAsset:
+		return !toAsset
+	}
+	return false
 }
 
 // Answer is the agent's reply to a Header, before any service bytes.

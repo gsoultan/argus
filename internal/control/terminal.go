@@ -111,6 +111,9 @@ type terminalMessage struct {
 	// one that was already running, and the output that follows starts with
 	// the recent screen rather than a fresh prompt.
 	Resumed bool `json:"resumed,omitempty"`
+	// Clipboard is a desktop's clipboard rule, on its ready: which way text
+	// may cross, so the console offers only what will work.
+	Clipboard string `json:"clipboard,omitempty"`
 	// Kind says what a "notice" is about: "agent-reconnecting",
 	// "agent-back", "restarting" (the agent is stopping, EndsInS from now),
 	// "control-restarting", "output-missed".

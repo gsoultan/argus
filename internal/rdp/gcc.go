@@ -42,6 +42,8 @@ type ClientInfo struct {
 	// Name appears in the server's session list, so it says what opened the
 	// session rather than leaving an operator guessing.
 	Name string
+	// Clipboard asks for the clipboard channel. See cliprdr.go.
+	Clipboard bool
 	// Graphics asks for the graphics pipeline: 32-bit colour, and the
 	// drdynvc channel it runs on. See gfx.go.
 	Graphics bool
@@ -64,7 +66,7 @@ func GCCRequest(info ClientInfo) []byte {
 
 	blocks := clientCoreData(info)
 	blocks = append(blocks, clientSecurityData()...)
-	blocks = append(blocks, clientNetworkData(info.Graphics)...)
+	blocks = append(blocks, clientNetworkData(info.Graphics, info.Clipboard)...)
 
 	// The T.124 Conference Create Request wrapper. These bytes are fixed for
 	// RDP: the object identifier, the conference name "Duca", and the flags no
@@ -153,24 +155,35 @@ func clientSecurityData() []byte {
 	return block(blockClientSecurity, b)
 }
 
-// clientNetworkData requests no virtual channels, or only drdynvc for the
-// graphics pipeline.
+// clientNetworkData requests the virtual channels a session uses: drdynvc for
+// the graphics pipeline, and cliprdr for the clipboard, in that order.
 //
-// Clipboard and drive redirection ride on virtual channels. Not requesting them
-// is a deliberate default: they are the two features that turn a recorded
-// session into an unrecorded file transfer, and enabling one should be a policy
-// decision on the asset rather than something the gateway does because it can.
-// drdynvc could carry them too, as dynamic channels; dvc.go accepts the
-// graphics channel on it and refuses every other.
-func clientNetworkData(graphics bool) []byte {
-	if !graphics {
-		return block(blockClientNetwork, make([]byte, 4)) // channelCount = 0
+// Clipboard and drive redirection ride on virtual channels. Neither is
+// requested by default: they are the two features that turn a recorded
+// session into an unrecorded transfer, so the clipboard opens only when the
+// asset type's rule allows it (see control's ConnectRule.Clipboard), and drive
+// redirection never: files cross through the Files drawer, where each is
+// recorded. drdynvc could carry them too, as dynamic channels; dvc.go accepts
+// the graphics channel on it and refuses every other.
+func clientNetworkData(graphics, clipboard bool) []byte {
+	type def struct {
+		name    string
+		options uint32
 	}
-	b := binary.LittleEndian.AppendUint32(nil, 1)
-	name := make([]byte, 8) // eight bytes, NUL terminated
-	copy(name, drdynvcName)
-	b = append(b, name...)
-	b = binary.LittleEndian.AppendUint32(b, drdynvcOptions)
+	var defs []def
+	if graphics {
+		defs = append(defs, def{drdynvcName, drdynvcOptions})
+	}
+	if clipboard {
+		defs = append(defs, def{cliprdrName, cliprdrOptions})
+	}
+	b := binary.LittleEndian.AppendUint32(nil, uint32(len(defs)))
+	for _, d := range defs {
+		name := make([]byte, 8) // eight bytes, NUL terminated
+		copy(name, d.name)
+		b = append(b, name...)
+		b = binary.LittleEndian.AppendUint32(b, d.options)
+	}
 	return block(blockClientNetwork, b)
 }
 

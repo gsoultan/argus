@@ -44,6 +44,19 @@ describe('AssetTypeSettings', () => {
       { ...rules, server: { ...rules.server, desktop: 'tell' } }))
   })
 
+  it('limits the clipboard for a type', async () => {
+    live.get.mockResolvedValue(rules)
+    live.send.mockImplementation((_m: string, _p: string, body: ConnectRules) => Promise.resolve(body))
+    renderIt(true)
+    const clip = await screen.findByRole('combobox', { name: 'Servers: clipboard' })
+    // A control plane that predates the rule shows its default.
+    expect((clip as HTMLSelectElement).value).toBe('both')
+    fireEvent.change(clip, { target: { value: 'to' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(live.send).toHaveBeenCalledWith('PUT', '/api/v1/settings/asset-types',
+      { ...rules, server: { ...rules.server, clipboard: 'to' } }))
+  })
+
   it('shows an auditor the rules without a way to change them', async () => {
     live.get.mockResolvedValue(rules)
     renderIt(false)
