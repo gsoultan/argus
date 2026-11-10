@@ -1286,6 +1286,38 @@ export interface ControlSettings {
     accountFailuresPerHour: number
     accountCodeFailuresPerHour: number
   }
+  /**
+   * Who argus-control is to each cloud before it assumes a role in a
+   * connected account. One for the whole platform; absent outside the
+   * default organization and from an older control plane.
+   */
+  cloud?: { aws: AWSIdentity }
+}
+
+/** Where argus-control's AWS identity comes from. The secret is write-only. */
+export interface AWSIdentity {
+  /** default: what the host gives it (instance profile, AWS_ variables). key: entered here. file: a profile or credentials file. */
+  source: 'default' | 'key' | 'file'
+  accessKeyId: string
+  secretAccessKeySet: boolean
+  secretAccessKey?: string
+  profile: string
+  credentialsFile: string
+  homeRegion: string
+}
+
+/** Who a cloud says an identity is. */
+export interface CloudIdentityCheck {
+  provider: string
+  arn: string
+  /** What an account's trust policy names for it. */
+  principal: string
+  source: string
+}
+
+/** Asks AWS who the identity on the form is, unsaved. A secret left out is the one configured. */
+export async function testCloudIdentity(provider: 'aws', c: { aws: AWSIdentity }): Promise<CloudIdentityCheck> {
+  return post<CloudIdentityCheck>(`/api/v1/settings/test-cloud/${provider}`, c)
 }
 
 export async function controlSettings(): Promise<ControlSettings> {

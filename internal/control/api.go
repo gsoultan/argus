@@ -432,6 +432,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
 	mux.HandleFunc("POST /api/v1/settings/test-email", a.postTestEmail)
+	mux.HandleFunc("POST /api/v1/settings/test-cloud/{provider}", a.postTestCloud)
 	mux.HandleFunc("GET /api/v1/assets/{id}/assignments", a.getAssignments)
 	mux.HandleFunc("GET /api/v1/assets/{id}/login-accounts", a.getLoginAccounts)
 	mux.HandleFunc("GET /api/v1/assets/{id}/server-logins", a.getServerLogins)

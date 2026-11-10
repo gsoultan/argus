@@ -138,3 +138,21 @@ log_level: "info"
 #     credentials_file: "/etc/argus/fcm-service-account.json"
 #     topic: "argus-sessions"
 #     # tokens: ["<device registration token>"]
+
+# Cloud. argus-control's own identity for each cloud, before it assumes the
+# role in a connected account. Settings > Cloud identities writes this; with
+# nothing here, AWS uses whatever the host gives it (an EC2 instance profile,
+# a container task role, AWS_ environment variables). Off AWS, give it an IAM
+# user that may only assume the Argus roles:
+#   {"Effect":"Allow","Action":["sts:AssumeRole","sts:SetSourceIdentity",
+#    "sts:TagSession"],"Resource":"arn:aws:iam::*:role/Argus*"}
+#
+# cloud:
+#   aws:
+#     access_key_id: "AKIA..."
+#     secret_access_key: "${file:/var/lib/argus-control/secrets/aws-secret-access-key}"
+#     # Or a named profile (IAM Roles Anywhere through credential_process),
+#     # or a shared credentials file only the argus user can read:
+#     # profile: "argus"
+#     # credentials_file: "/var/lib/argus-control/aws-credentials"
+#     # home_region: "us-east-1"

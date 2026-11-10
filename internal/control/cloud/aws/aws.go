@@ -1,10 +1,12 @@
 // Package aws is the AWS adapter under the neutral cloud layer.
 //
-// There are no access keys in Argus. The control plane has one base
-// identity, found by the SDK's usual chain on the control host (an instance
-// profile, a container role, IAM Roles Anywhere through a credential_process
-// profile, environment variables, or a credentials file named in the config
-// and mode-checked like a private key). Every account is reached by assuming
+// Argus never holds a key for a connected account. The control plane has one
+// base identity: an access key an administrator entered under Settings ›
+// Cloud identities (kept in an owner-only file, like every other secret in
+// the config), or else whatever the SDK's usual chain finds on the control
+// host (an instance profile, a container role, IAM Roles Anywhere through a
+// credential_process profile, environment variables, or a credentials file
+// named in the config and mode-checked like a private key). Every account is reached by assuming
 // a role in it that trusts only that identity, requires an external id the
 // control plane derives, and requires a source identity, so CloudTrail names
 // the Argus user a call ran for.
@@ -20,6 +22,7 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -28,9 +31,14 @@ import (
 	"github.com/gsoultan/argus/internal/secrets"
 )
 
-// Options say where the base identity comes from. Both empty is the SDK's
+// Options say where the base identity comes from. All empty is the SDK's
 // default chain.
 type Options struct {
+	// AccessKeyID and SecretAccessKey are a long-lived IAM user key, entered
+	// in Settings for a control plane that is not on AWS. When set they are
+	// the identity, ahead of the profile, the file and the default chain.
+	AccessKeyID     string
+	SecretAccessKey string
 	// Profile is a named profile in the shared config, for example one whose
 	// credential_process is IAM Roles Anywhere's signing helper.
 	Profile string
@@ -81,6 +89,14 @@ func (p *Provider) base(ctx context.Context) (awssdk.Config, error) {
 	p.once.Do(func() {
 		var lo []func(*config.LoadOptions) error
 		lo = append(lo, config.WithRegion(p.opts.HomeRegion))
+		if id := p.opts.AccessKeyID; id != "" {
+			if p.opts.SecretAccessKey == "" {
+				p.cfgErr = errors.New("an access key id is set without its secret access key")
+				return
+			}
+			lo = append(lo, config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider(id, p.opts.SecretAccessKey, "")))
+		}
 		if p.opts.Profile != "" {
 			lo = append(lo, config.WithSharedConfigProfile(p.opts.Profile))
 		}
@@ -138,6 +154,8 @@ func describeSource(src string) string {
 		return "the instance profile of the EC2 instance argus-control runs on"
 	case strings.Contains(src, "Endpoint"), strings.Contains(src, "ContainerCredentials"):
 		return "the container's task role"
+	case strings.HasPrefix(src, credentials.StaticCredentialsName):
+		return "the access key in Settings › Cloud identities"
 	case strings.HasPrefix(src, "EnvConfigCredentials"):
 		return "AWS_ environment variables of argus-control"
 	case strings.HasPrefix(src, "ProcessProvider"):
