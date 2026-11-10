@@ -60,7 +60,7 @@ beforeEach(() => {
         this.height = h
       }
       getContext() {
-        return { drawImage() {}, fillRect() {}, putImageData() {} }
+        return { drawImage() {}, fillRect() {}, putImageData() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {} }
       }
     },
   )

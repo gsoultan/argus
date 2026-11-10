@@ -143,12 +143,14 @@ const (
 	screenVideoRate = 30
 
 	// screenVideoBits is what motion costs on average, in bits a second for
-	// each pixel of the screen: 1.6 Mbit/s at 1024x768, 4 Mbit/s at full
-	// HD, and twice that at the peak. One bit was too soft to read text
-	// while it moved. It is still sent again exactly a quarter of a second
+	// each pixel of the screen: 3 Mbit/s at 1024x768, 8 Mbit/s at full HD,
+	// and twice that at the peak. Two bits still smudged small text while
+	// it scrolled. It is still sent again exactly an eighth of a second
 	// after it stops, and H.264 takes nothing more from the recording's own
 	// compression, so a recording of a lot of motion is larger for it.
-	screenVideoBits = 2
+	screenVideoBits = 4
+	// screenVideoMaxBits caps the mean, for screens past full HD.
+	screenVideoMaxBits = 24_000_000
 )
 
 // screenVideoProfiles are tried in turn: High compresses a screen best,
@@ -319,7 +321,7 @@ func (e *mfEncoder) setValue(api *windows.GUID, vt uint16, v uint64) {
 
 // bitrate is what motion on this screen may cost, in bits a second.
 func (e *mfEncoder) bitrate() uint32 {
-	return uint32(min(max(int64(e.width)*int64(e.height)*screenVideoBits, 1_000_000), 16_000_000))
+	return uint32(min(max(int64(e.width)*int64(e.height)*screenVideoBits, 1_000_000), screenVideoMaxBits))
 }
 
 // sequenceHeader reads the SPS and PPS the encoder put on its output type.
