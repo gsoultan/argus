@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/gsoultan/argus/internal/agent/credssp"
 	"github.com/gsoultan/argus/internal/rdp"
@@ -421,6 +422,40 @@ type desktopInput struct {
 	Delta  int    `json:"delta"`
 	// Frame is the mark a browser acknowledges ("ack").
 	Frame uint32 `json:"frame"`
+	// Char is a character typed as itself ("char"), for a remote whose
+	// keyboard layout differs from the browser's.
+	Char string `json:"char"`
+	// Locks is the browser's Caps, Num and Scroll Lock ("sync").
+	Locks uint8 `json:"locks"`
+}
+
+// desktopEvents turns one browser input message into what the desktop plays.
+// A character becomes a press and release of each of its UTF-16 code units,
+// so one outside the BMP (an emoji) goes as its surrogate pair. ok is false
+// for a key this keyboard table does not know, which is dropped: scancode zero
+// is a real key.
+func desktopEvents(m desktopInput) (events []rdp.InputEvent, ok bool) {
+	switch m.Type {
+	case "char":
+		for _, u := range utf16.Encode([]rune(m.Char)) {
+			events = append(events,
+				rdp.InputEvent{Kind: "unicode", Unicode: u, Down: true},
+				rdp.InputEvent{Kind: "unicode", Unicode: u, Down: false})
+		}
+		return events, len(events) > 0
+	case "sync":
+		return []rdp.InputEvent{{Kind: "sync", Locks: m.Locks & 0x0F}}, true
+	}
+	e := rdp.InputEvent{Kind: m.Type, Down: m.Down, X: m.X, Y: m.Y,
+		Button: m.Button, WheelDelta: m.Delta}
+	if m.Type == "key" {
+		code, extended, found := rdp.ScancodeFor(m.Code)
+		if !found {
+			return nil, false
+		}
+		e.Scancode, e.Extended = code, extended
+	}
+	return []rdp.InputEvent{e}, true
 }
 
 // desktopFramer is a desktop whose frames are paced by the browser: a mark
@@ -482,18 +517,14 @@ func runDesktop(st tunnel.Stream, client DesktopClient, gfx *GraphicsSink, d *De
 					}
 					continue
 				}
-				e := rdp.InputEvent{Kind: m.Type, Down: m.Down, X: m.X, Y: m.Y,
-					Button: m.Button, WheelDelta: m.Delta}
-				if m.Type == "key" {
-					code, extended, ok := rdp.ScancodeFor(m.Code)
-					if !ok {
-						// Scancode zero is a real key; an unmapped one is dropped.
-						continue
-					}
-					e.Scancode, e.Extended = code, extended
+				events, ok := desktopEvents(m)
+				if !ok {
+					continue
 				}
-				if client.Send(e) != nil {
-					return
+				for _, e := range events {
+					if client.Send(e) != nil {
+						return
+					}
 				}
 			case tunnel.FrameRefresh:
 				if err := client.Refresh(); err != nil {

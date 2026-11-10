@@ -45,7 +45,7 @@ const (
 
 // InputEvent is one keyboard or pointer action from the browser.
 type InputEvent struct {
-	// Kind is "key", "mouse", "button" or "wheel".
+	// Kind is "key", "unicode", "mouse", "button", "wheel" or "sync".
 	Kind string
 	// Scancode is the PC/AT set 1 code for a key event.
 	Scancode uint8
@@ -61,7 +61,22 @@ type InputEvent struct {
 	Button int
 	// WheelDelta is positive for scrolling down, as the browser reports it.
 	WheelDelta int
+	// Unicode is one UTF-16 code unit for a "unicode" event: a character
+	// typed as itself, for a remote whose keyboard layout differs from the
+	// browser's. A character outside the BMP is two events, one per unit.
+	Unicode uint16
+	// Locks is the lock keys a "sync" event sets: LockScroll, LockNum and
+	// LockCaps, as the browser's keyboard has them.
+	Locks uint8
 }
+
+// Lock key bits for a sync event (TS_SYNC_SCROLL_LOCK and the rest).
+const (
+	LockScroll = 0x01
+	LockNum    = 0x02
+	LockCaps   = 0x04
+	LockKana   = 0x08
+)
 
 // EncodeInput builds a Fast-Path input PDU carrying one event.
 //
@@ -81,6 +96,14 @@ func EncodeInput(e InputEvent) ([]byte, error) {
 			flags |= keyExtended
 		}
 		body = []byte{eventHeader(inputEventScancode, flags), e.Scancode}
+
+	case "unicode":
+		// TS_FP_UNICODE_KEYBOARD_EVENT: the release flag, then the code unit.
+		flags := byte(0)
+		if !e.Down {
+			flags |= keyRelease
+		}
+		body = []byte{eventHeader(inputEventUnicode, flags), byte(e.Unicode), byte(e.Unicode >> 8)}
 
 	case "mouse":
 		body = pointerEvent(pointerMove, e.X, e.Y)
@@ -116,12 +139,13 @@ func EncodeInput(e InputEvent) ([]byte, error) {
 		body = pointerEvent(flags, e.X, e.Y)
 
 	case "sync":
-		// Sent when focus returns, so a modifier released while the window was
-		// in the background does not stay stuck down on the target.
-		// The toggle states ride in the header's flags, all clear here; the
-		// event is the header and nothing else. The four padding bytes this
-		// once carried were read by the server as the next event.
-		body = []byte{eventHeader(inputEventSync, 0)}
+		// Sets the target's Caps Lock, Num Lock and Scroll Lock to match the
+		// browser's, before the first key and whenever they change, so a
+		// password is not typed in capitals because the two disagreed.
+		// The lock states ride in the header's flags; the event is the header
+		// and nothing else. The four padding bytes this once carried were read
+		// by the server as the next event.
+		body = []byte{eventHeader(inputEventSync, e.Locks&0x0F)}
 
 	default:
 		return nil, fmt.Errorf("unknown input kind %q", e.Kind)
@@ -235,6 +259,17 @@ var scancodes = map[string]scancodeEntry{
 	"Numpad1":   {0x4F, false}, "Numpad2": {0x50, false}, "Numpad3": {0x51, false},
 	"Numpad0": {0x52, false}, "NumpadDecimal": {0x53, false},
 	"F11": {0x57, false}, "F12": {0x58, false},
+	"NumpadEqual": {0x59, false},
+	"F13":         {0x64, false}, "F14": {0x65, false}, "F15": {0x66, false}, "F16": {0x67, false},
+	"F17": {0x68, false}, "F18": {0x69, false}, "F19": {0x6A, false}, "F20": {0x6B, false},
+	"F21": {0x6C, false}, "F22": {0x6D, false}, "F23": {0x6E, false}, "F24": {0x76, false},
+
+	// The keys of national keyboards that a US one does not have: the extra
+	// key beside left Shift on ISO boards (< > on a German one, \ | on a UK
+	// one), and the Japanese, Brazilian and Korean keys.
+	"IntlBackslash": {0x56, false}, "IntlRo": {0x73, false}, "IntlYen": {0x7D, false},
+	"KanaMode": {0x70, false}, "Convert": {0x79, false}, "NonConvert": {0x7B, false},
+	"Lang1": {0x72, false}, "Lang2": {0x71, false}, "NumpadComma": {0x7E, false},
 
 	// Extended keys share their scancode with the keypad and are told apart
 	// only by the flag. Omitting it sends Home when the user pressed 7.
@@ -245,4 +280,10 @@ var scancodes = map[string]scancodeEntry{
 	"End": {0x4F, true}, "ArrowDown": {0x50, true}, "PageDown": {0x51, true},
 	"Insert": {0x52, true}, "Delete": {0x53, true},
 	"MetaLeft": {0x5B, true}, "MetaRight": {0x5C, true}, "ContextMenu": {0x5D, true},
+	// Older browsers name the Windows key OS.
+	"OSLeft": {0x5B, true}, "OSRight": {0x5C, true},
+	"PrintScreen":     {0x37, true},
+	"AudioVolumeMute": {0x20, true}, "AudioVolumeDown": {0x2E, true}, "AudioVolumeUp": {0x30, true},
+	"MediaTrackNext": {0x19, true}, "MediaTrackPrevious": {0x10, true},
+	"MediaPlayPause": {0x22, true}, "MediaStop": {0x24, true},
 }

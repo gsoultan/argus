@@ -1,12 +1,12 @@
 import '../ssh/ssh.css'
 import './connect.css'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
-import { ActionIcon, Box, Button, Center, Group, Loader, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { ActionIcon, Box, Button, Center, Group, Loader, Menu, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
-  IconArrowLeft, IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
+  IconArrowLeft, IconCheck, IconChevronDown, IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
   IconLayoutColumns, IconMaximize, IconMinimize, IconPin, IconPinFilled, IconPlugConnectedX, IconPlus,
   IconTerminal2, IconX,
 } from '@tabler/icons-react'
@@ -14,6 +14,7 @@ import type { FilesState } from '~/components/FileBrowser'
 import type { TerminalState } from '~/components/LiveTerminal'
 import type { RDPControls, RDPStats } from '~/components/RDPScreen'
 import { StateCard } from '~/components/connect/ConnectPanel'
+import { chord, isMac, loadKeyboardPrefs, saveKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
 import { assetsQuery, meQuery } from '~/lib/queries'
 import { desktopEndpoint, filesEndpoint, terminalEndpoint } from '~/lib/live'
 import { seesWholeFleet } from '~/lib/roles'
@@ -334,6 +335,7 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
   const [full, setFull] = useState(false)
   const [pinned, setPinned] = useState(false)
   const [visible, setVisible] = useState(true)
+  const [menuOpen, setMenuOpen] = useState(false)
   const hideTimer = useRef<number | undefined>(undefined)
 
   // The toolbar steps out of the way after a few seconds and comes back when
@@ -354,11 +356,31 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
     return () => document.removeEventListener('fullscreenchange', onFs)
   }, [rootRef])
 
+  // In full screen the keyboard is the remote's whole: Esc, Alt+Tab, the
+  // Windows key and ⌘Tab reach it instead of the browser, where the browser
+  // allows (Chrome and Edge). Holding Esc still leaves full screen.
   const toggleFull = () => {
-    if (document.fullscreenElement) void document.exitFullscreen()
-    else void rootRef.current?.requestFullscreen?.().catch(() => undefined)
+    const kb = (navigator as Navigator & { keyboard?: { lock?: () => Promise<void>; unlock?: () => void } }).keyboard
+    if (document.fullscreenElement) {
+      kb?.unlock?.()
+      void document.exitFullscreen()
+    } else {
+      void rootRef.current?.requestFullscreen?.()
+        .then(() => (!device && !readOnly ? kb?.lock?.() : undefined))
+        .catch(() => undefined)
+    }
     controls.current?.focus()
   }
+
+  const mac = isMac()
+  const [keyboard, setKeyboard] = useState<KeyboardPrefs>(loadKeyboardPrefs)
+  const setPref = (p: Partial<KeyboardPrefs>) => {
+    const next = { ...keyboard, ...p }
+    setKeyboard(next)
+    saveKeyboardPrefs(next)
+    controls.current?.focus()
+  }
+  const send = (keys: KeyOut[]) => controls.current?.sendKeys(keys)
 
   const rtt = stats?.rttMs
   const quality = rtt === undefined ? 'unknown' : rtt > 300 ? 'poor' : rtt > 150 ? 'fair' : 'good'
@@ -369,7 +391,7 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
         const top = (e.currentTarget as HTMLElement).getBoundingClientRect().top
         if (e.clientY - top < 72) wake()
       }}>
-      <div className="argus-ws-toolbar" data-hidden={(!visible && !pinned && live) || undefined}
+      <div className="argus-ws-toolbar" data-hidden={(!visible && !pinned && !menuOpen && live) || undefined}
         role="toolbar" aria-label="Session controls" onMouseEnter={wake}>
         <Tooltip label={stats ? `${stats.fps} fps · ${stats.mbit.toFixed(1)} Mbit/s · ${stats.video ? 'H.264' : 'exact pixels'}` : 'Measuring'}>
           <span className="argus-ws-signal" data-q={quality} data-testid="desktop-signal">
@@ -380,8 +402,48 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
         <span className="argus-ws-sep" />
         {!readOnly && !device && (
           <UnstyledButton className="argus-ws-tb" disabled={!live} onClick={() => controls.current?.ctrlAltDel()}>
-            <IconKeyboard size={15} />Ctrl+Alt+Del
+            Ctrl+Alt+Del
           </UnstyledButton>
+        )}
+        {!readOnly && !device && (
+          // Not in a portal: in full screen only the workspace is on screen.
+          <Menu withinPortal={false} position="bottom" shadow="md" width={250}
+            onOpen={() => setMenuOpen(true)} onClose={() => { setMenuOpen(false); wake() }}>
+            <Menu.Target>
+              <UnstyledButton className="argus-ws-tb" aria-label="Keys and keyboard">
+                <IconKeyboard size={15} />Keys<IconChevronDown size={12} />
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Send to the server</Menu.Label>
+              <Menu.Item disabled={!live} onClick={() => send(chord('MetaLeft'))}>Windows key</Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('AltLeft', 'Tab'))}>Alt+Tab</Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('ControlLeft', 'ShiftLeft', 'Escape'))}>
+                Task Manager (Ctrl+Shift+Esc)
+              </Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('PrintScreen'))}>Print Screen</Menu.Item>
+              <Menu.Item disabled={!live} onClick={() => send(chord('MetaLeft', 'KeyL'))}>Lock (Windows+L)</Menu.Item>
+              <Menu.Divider />
+              <Menu.Label>This keyboard</Menu.Label>
+              {mac && (
+                <Menu.Item closeMenuOnClick={false} role="menuitemcheckbox" aria-checked={keyboard.macShortcuts}
+                  rightSection={keyboard.macShortcuts ? <IconCheck size={14} /> : null}
+                  onClick={() => setPref({ macShortcuts: !keyboard.macShortcuts })}>
+                  Mac shortcuts (⌘C copies)
+                </Menu.Item>
+              )}
+              <Menu.Item closeMenuOnClick={false} role="menuitemcheckbox" aria-checked={keyboard.chars}
+                rightSection={keyboard.chars ? <IconCheck size={14} /> : null}
+                onClick={() => setPref({ chars: !keyboard.chars })}>
+                Type characters, not key positions
+              </Menu.Item>
+              <Text size="xs" c="dimmed" px="sm" pb={6}>
+                {keyboard.chars
+                  ? 'What is printed on your keys arrives, whatever layout the server has.'
+                  : 'Keys go by position, and the server\'s own layout applies, as on a PC there.'}
+              </Text>
+            </Menu.Dropdown>
+          </Menu>
         )}
         {readOnly && <span className="argus-ws-tb argus-ws-ro">Watch only</span>}
         <UnstyledButton className="argus-ws-tb" onClick={toggleFull}>
@@ -407,6 +469,7 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
         getTicket={getTicket}
         takePassword={takePassword}
         controls={controls}
+        keyboard={keyboard}
         onStats={setStats}
         onStateChange={(s, d) => {
           setLive(s === 'live')

@@ -5,6 +5,7 @@ import {
   IconVolume2,
 } from '@tabler/icons-react'
 import { canDecodeH264 } from '~/lib/gfx'
+import { chord, isMac, KeyMapper, loadKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
 import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
 export type RDPState = 'connecting' | 'live' | 'closed' | 'error'
@@ -47,6 +48,11 @@ export interface RDPScreenProps {
   onStats?: (stats: RDPStats) => void
   /** Filled with what the workspace's toolbar can do to this screen. */
   controls?: React.MutableRefObject<RDPControls | null>
+  /**
+   * How keys from this keyboard reach the remote: Mac shortcuts and typed
+   * characters. Read at each key, so a change applies at once.
+   */
+  keyboard?: KeyboardPrefs
 }
 
 export interface RDPStats { fps: number; rttMs: number; mbit: number; video: boolean }
@@ -54,6 +60,15 @@ export interface RDPStats { fps: number; rttMs: number; mbit: number; video: boo
 export interface RDPControls {
   ctrlAltDel: () => void
   focus: () => void
+  /** Keys no keyboard here can send: the Windows key, Print Screen and the like. */
+  sendKeys: (keys: KeyOut[]) => void
+}
+
+/** A key the mapper decided on, as the agent reads it. */
+function wire(k: KeyOut): object {
+  if (k.type === 'key') return { type: 'key', code: k.code, down: k.down }
+  if (k.type === 'char') return { type: 'char', char: k.char }
+  return { type: 'sync', locks: k.locks }
 }
 
 /** The device keys a phone has and a keyboard does not, as the agent names them. */
@@ -130,6 +145,7 @@ export function RDPScreen({
   bare = false,
   onStats,
   controls,
+  keyboard,
 }: RDPScreenProps) {
   // The canvas is made here rather than rendered by React. A canvas handed
   // to a worker can be handed over once and can no longer be resized from
@@ -142,6 +158,10 @@ export function RDPScreen({
   // The desktop's size, for pointing: the canvas's own width is not it once
   // the worker owns the canvas.
   const sizeRef = useRef({ width: 1024, height: 768 })
+  // Read at each key rather than captured, so a toggle in the toolbar applies
+  // to the next key without rebinding anything.
+  const keyboardRef = useRef<KeyboardPrefs>(keyboard ?? loadKeyboardPrefs())
+  if (keyboard) keyboardRef.current = keyboard
 
   const [state, setState] = useState<RDPState>('connecting')
   const stateRef = useRef<RDPState>('connecting')
@@ -462,12 +482,26 @@ export function RDPScreen({
       e.preventDefault()
       send({ type: 'wheel', delta: e.deltaY, ...toDesktop(e) })
     }
+    // A phone's screen takes keys by position, as it always has: Android
+    // maps them itself, and has no ⌘ or Windows key to translate.
+    const mapper = device ? null : new KeyMapper(isMac(), () => keyboardRef.current)
     const onKey = (e: KeyboardEvent, down: boolean) => {
-      // The browser's own shortcuts are left alone; capturing them would trap
-      // the user inside the canvas with no way to close the tab.
-      if (e.metaKey && !down) return
+      if (e.isComposing) return
+      if (!mapper) {
+        e.preventDefault()
+        send({ type: 'key', code: e.code, down })
+        return
+      }
       e.preventDefault()
-      send({ type: 'key', code: e.code, down })
+      for (const k of down ? mapper.down(e) : mapper.up(e)) send(wire(k))
+    }
+    // Focus leaving the screen, or the tab hidden, with a key still down
+    // would leave it down on the remote: Shift stuck, every letter a capital.
+    const letGo = () => {
+      for (const k of mapper?.releaseAll() ?? []) send(wire(k))
+    }
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') letGo()
     }
 
     const down = (e: MouseEvent) => onButton(e, true)
@@ -483,8 +517,13 @@ export function RDPScreen({
     canvas.addEventListener('contextmenu', noMenu)
     canvas.addEventListener('keydown', keyDown)
     canvas.addEventListener('keyup', keyUp)
+    canvas.addEventListener('blur', letGo)
+    document.addEventListener('visibilitychange', onHidden)
 
     return () => {
+      letGo()
+      canvas.removeEventListener('blur', letGo)
+      document.removeEventListener('visibilitychange', onHidden)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mousedown', down)
       canvas.removeEventListener('mouseup', up)
@@ -493,7 +532,7 @@ export function RDPScreen({
       canvas.removeEventListener('keydown', keyDown)
       canvas.removeEventListener('keyup', keyUp)
     }
-  }, [readOnly, canvas])
+  }, [readOnly, canvas, device])
 
   /**
    * Ctrl+Alt+Del, which no browser lets a page capture from the keyboard.
@@ -515,17 +554,16 @@ export function RDPScreen({
     canvasRef.current?.focus()
   }
 
-  const sendCtrlAltDel = () => {
+  const sendKeys = (keys: KeyOut[]) => {
     const ws = wsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    const codes = ['ControlLeft', 'AltLeft', 'Delete']
-    for (const code of codes) ws.send(JSON.stringify({ type: 'key', code, down: true }))
-    for (const code of [...codes].reverse()) ws.send(JSON.stringify({ type: 'key', code, down: false }))
+    if (!ws || ws.readyState !== WebSocket.OPEN || readOnly) return
+    for (const k of keys) ws.send(JSON.stringify(wire(k)))
     canvasRef.current?.focus()
   }
+  const sendCtrlAltDel = () => sendKeys(chord('ControlLeft', 'AltLeft', 'Delete'))
 
   if (controls) {
-    controls.current = { ctrlAltDel: sendCtrlAltDel, focus: () => canvasRef.current?.focus() }
+    controls.current = { ctrlAltDel: sendCtrlAltDel, focus: () => canvasRef.current?.focus(), sendKeys }
   }
 
   /**
