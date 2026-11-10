@@ -1,9 +1,11 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -93,8 +95,9 @@ func (a *API) handleDesktop(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 	// Input messages are small; the bound stops a browser making this side
-	// buffer on its say-so.
-	conn.SetReadLimit(64 << 10)
+	// buffer on its say-so. A paste is the exception, up to the clipboard's
+	// own limit, and is refused past it in relayDesktop.
+	conn.SetReadLimit(tunnel.MaxFrame)
 	a.relayDesktop(r.Context(), conn, t.Email, target, principal, a.clientAddr(r))
 }
 
@@ -162,6 +165,21 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 		fail("could not find the agent on " + host + ": " + err.Error())
 		return
 	}
+	// The asset type's rule says which way text may cross, and is held to
+	// here as well as by the agent. Remote Desktop has a clipboard channel
+	// (synced); screen sharing has none yet, and the console uses the rule
+	// there only to offer paste as typing. A device has neither.
+	clip, synced := tunnel.ClipboardOff, service == agentDesktopService
+	if service != agentAndroidService {
+		if clip, err = a.clipboardFor(ctx, host); err != nil {
+			fail("could not read this server's clipboard rule: " + err.Error())
+			return
+		}
+	}
+	openClip := tunnel.ClipboardOff
+	if synced {
+		openClip = clip
+	}
 	g := tunnel.NewGrant(email, agentHost, principal, client)
 	g.Service = service
 	// A workstation is someone's: by its type's rule, or its own, whoever
@@ -188,7 +206,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	st, answer, err := a.Tunnels.OpenWith(octx, agentHost, tunnel.Header{
 		Service: service, Grant: grant,
 		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height,
-			Graphics: logon.Graphics},
+			Graphics: logon.Graphics, Clipboard: openClip},
 	})
 	cancel()
 	logon.Password = ""
@@ -270,7 +288,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	go wskeep.Run(ctx, conn)
 	// The session's id, for the console's link to it; a console that does
 	// not know this message ignores it.
-	if sendText(terminalMessage{Type: "ready", Session: answer.Session}) != nil {
+	if sendText(terminalMessage{Type: "ready", Session: answer.Session, Clipboard: clip}) != nil {
 		return
 	}
 
@@ -284,6 +302,19 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 			}
 			if typ != websocket.MessageText {
 				continue
+			}
+			if bytes.Contains(data, []byte(`"clipboard"`)) {
+				var m struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(data, &m) == nil && m.Type == "clipboard" {
+					if !synced || !tunnel.ClipboardAllows(clip, true) || len(m.Text) > rdp.ClipboardMax ||
+						len(data) > tunnel.MaxFrame {
+						continue
+					}
+					a.auditClipboard(ctx, email, host, answer.Session, true, m.Text)
+				}
 			}
 			if writeStream(tunnel.FrameInput, data) != nil {
 				return
@@ -323,6 +354,15 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 			if send(websocket.MessageBinary, p) != nil {
 				return
 			}
+		case tunnel.FrameClipboard:
+			// Copied on the desktop. Not to watchers: it is the person's.
+			if !synced || !tunnel.ClipboardAllows(clip, false) || len(p) > rdp.ClipboardMax {
+				continue
+			}
+			a.auditClipboard(ctx, email, host, answer.Session, false, string(p))
+			if sendText(terminalMessage{Type: "clipboard", Data: string(p)}) != nil {
+				return
+			}
 		case tunnel.FrameExit:
 			finish()
 			stmu.Lock()
@@ -336,6 +376,24 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 			_ = conn.Close(websocket.StatusNormalClosure, "ended")
 			return
 		}
+	}
+}
+
+// auditClipboard records one crossing of a desktop's clipboard: who, which
+// way and how much. Not what: that stays between the person and the desktop,
+// as it would at the machine.
+func (a *API) auditClipboard(ctx context.Context, email, host, session string, toAsset bool, text string) {
+	detail := fmt.Sprintf("copied %d characters out of the desktop", len([]rune(text)))
+	if toAsset {
+		detail = fmt.Sprintf("pasted %d characters into the desktop", len([]rune(text)))
+	}
+	if session != "" {
+		detail += " (session " + session + ")"
+	}
+	if _, err := a.store.AppendAudit(ctx, AuditEvent{
+		Action: "desktop.clipboard", Severity: "info", ActorEmail: email, Target: host, Detail: detail,
+	}); err != nil {
+		a.log.Error("audit append failed", "error", err)
 	}
 }
 

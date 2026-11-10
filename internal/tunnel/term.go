@@ -49,6 +49,11 @@ const (
 	// that is not the shell's output, such as the agent restarting. JSON
 	// Notice. A control plane that does not know it ignores it.
 	FrameNotice byte = 'n'
+	// FrameClipboard carries a desktop's clipboard text, UTF-8, from the
+	// asset toward the console: something was copied there. The other way
+	// it rides in FrameInput as {"type":"clipboard","text":...}. Only sent
+	// on a desktop whose DesktopOpen.Clipboard lets it out.
+	FrameClipboard byte = 'b'
 )
 
 // Notice is a FrameNotice's payload.

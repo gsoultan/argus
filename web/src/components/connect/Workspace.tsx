@@ -6,13 +6,14 @@ import { useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
-  IconArrowLeft, IconCheck, IconChevronDown, IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
+  IconArrowLeft, IconCheck, IconChevronDown, IconCircleCheck, IconClipboard, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
   IconLayoutColumns, IconMaximize, IconMinimize, IconPin, IconPinFilled, IconPlugConnectedX, IconPlus,
   IconTerminal2, IconX,
 } from '@tabler/icons-react'
 import type { FilesState } from '~/components/FileBrowser'
 import type { TerminalState } from '~/components/LiveTerminal'
-import type { RDPControls, RDPStats } from '~/components/RDPScreen'
+import type { ClipboardNote, RDPControls, RDPStats } from '~/components/RDPScreen'
+import type { ClipboardRule } from '~/lib/clipboard'
 import { StateCard } from '~/components/connect/ConnectPanel'
 import { chord, isMac, loadKeyboardPrefs, saveKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
 import { assetsQuery, meQuery } from '~/lib/queries'
@@ -382,6 +383,36 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
   }
   const send = (keys: KeyOut[]) => controls.current?.sendKeys(keys)
 
+  // The clipboard's rule for this server, and a few words when something
+  // crossed, shown on the toolbar for a moment.
+  const [clipRule, setClipRule] = useState<ClipboardRule | null>(null)
+  const [clipSaid, setClipSaid] = useState<string | null>(null)
+  const clipTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(clipTimer.current), [])
+  const host = session.target.split('.')[0]
+  const onClipboard = (n: ClipboardNote) => {
+    if (n.kind === 'rule') {
+      setClipRule(n.rule)
+      return
+    }
+    const said = {
+      copied: n.kind === 'copied' && n.written ? `Copied from ${host}` : `Copied on ${host}: click the screen to take it`,
+      sent: `Clipboard sent to ${host}`,
+      'too-long': 'Too long to paste here; use Files',
+      unreadable: 'Allow clipboard access in the browser to paste',
+    }[n.kind]
+    setClipSaid(said)
+    wake()
+    window.clearTimeout(clipTimer.current)
+    clipTimer.current = window.setTimeout(() => setClipSaid(null), 3000)
+  }
+  const CLIP_LABEL: Record<ClipboardRule, string> = {
+    both: 'Copy and paste work both ways.',
+    to: 'You can paste into this server. What is copied there stays there.',
+    from: 'You can copy out of this server. Pasting into it is off.',
+    off: 'Copy and paste are off for this server.',
+  }
+
   const rtt = stats?.rttMs
   const quality = rtt === undefined ? 'unknown' : rtt > 300 ? 'poor' : rtt > 150 ? 'fair' : 'good'
 
@@ -446,6 +477,41 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
           </Menu>
         )}
         {readOnly && <span className="argus-ws-tb argus-ws-ro">Watch only</span>}
+        {!readOnly && !device && (
+          <Menu withinPortal={false} position="bottom" shadow="md" width={270}
+            onOpen={() => setMenuOpen(true)} onClose={() => { setMenuOpen(false); wake() }}>
+            <Menu.Target>
+              <UnstyledButton className="argus-ws-tb" aria-label="Clipboard">
+                <IconClipboard size={15} />{clipSaid ?? 'Clipboard'}<IconChevronDown size={12} />
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Text size="xs" c="dimmed" px="sm" py={6}>
+                {!clipRule ? 'Waiting for the server.'
+                  : session.way === 'screen' && clipRule !== 'off' && clipRule !== 'from'
+                    ? 'Screen sharing has no shared clipboard yet. Paste as typing types what you copied.'
+                    : session.way === 'screen' ? 'Pasting into this computer is off.' : CLIP_LABEL[clipRule]}
+              </Text>
+              {session.way !== 'screen' && (clipRule === 'both' || clipRule === 'to') && (
+                <Menu.Item disabled={!live} onClick={() => void controls.current?.sendClipboard()}>
+                  Send my clipboard to {host}
+                </Menu.Item>
+              )}
+              {(clipRule === 'both' || clipRule === 'to') && (
+                <Menu.Item disabled={!live} onClick={() => void controls.current?.pasteAsTyping()}>
+                  Paste as typing
+                </Menu.Item>
+              )}
+              {(clipRule === 'both' || clipRule === 'to') && (
+                <Text size="xs" c="dimmed" px="sm" pb={6}>
+                  {session.way === 'screen'
+                    ? 'For a sign-in box or anywhere paste does not work.'
+                    : `${mac ? '⌘V' : 'Ctrl+V'} on the screen pastes what you copied. Paste as typing is for boxes that refuse paste, such as the Windows sign-in.`}
+                </Text>
+              )}
+            </Menu.Dropdown>
+          </Menu>
+        )}
         <UnstyledButton className="argus-ws-tb" onClick={toggleFull}>
           {full ? <IconMinimize size={15} /> : <IconMaximize size={15} />}{full ? 'Exit full screen' : 'Full screen'}
         </UnstyledButton>
@@ -470,6 +536,8 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
         takePassword={takePassword}
         controls={controls}
         keyboard={keyboard}
+        onClipboard={onClipboard}
+        clipboardSync={session.way !== 'screen'}
         onStats={setStats}
         onStateChange={(s, d) => {
           setLive(s === 'live')

@@ -5,6 +5,10 @@ import {
   IconVolume2,
 } from '@tabler/icons-react'
 import { canDecodeH264 } from '~/lib/gfx'
+import {
+  canReadQuietly, CLIPBOARD_MAX, clipboardAllows, isPasteChord, readClipboard, typingFor, utf8Length,
+  writeClipboard, type ClipboardRule,
+} from '~/lib/clipboard'
 import { chord, isMac, KeyMapper, loadKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
 import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
@@ -53,7 +57,21 @@ export interface RDPScreenProps {
    * characters. Read at each key, so a change applies at once.
    */
   keyboard?: KeyboardPrefs
+  /** What the clipboard did: the rule on ready, a copy from the server, a paste sent. */
+  onClipboard?: (e: ClipboardNote) => void
+  /**
+   * Whether the remote has a clipboard to sync with: Remote Desktop does,
+   * screen sharing not yet, where only paste as typing is offered.
+   */
+  clipboardSync?: boolean
 }
+
+export type ClipboardNote =
+  | { kind: 'rule'; rule: ClipboardRule }
+  | { kind: 'copied'; chars: number; written: boolean }
+  | { kind: 'sent'; chars: number }
+  | { kind: 'too-long' }
+  | { kind: 'unreadable' }
 
 export interface RDPStats { fps: number; rttMs: number; mbit: number; video: boolean }
 
@@ -62,6 +80,10 @@ export interface RDPControls {
   focus: () => void
   /** Keys no keyboard here can send: the Windows key, Print Screen and the like. */
   sendKeys: (keys: KeyOut[]) => void
+  /** This browser's clipboard to the server's, now. */
+  sendClipboard: () => Promise<void>
+  /** This browser's clipboard typed out, for a box that refuses paste. */
+  pasteAsTyping: () => Promise<void>
 }
 
 /** A key the mapper decided on, as the agent reads it. */
@@ -146,6 +168,8 @@ export function RDPScreen({
   onStats,
   controls,
   keyboard,
+  onClipboard,
+  clipboardSync = true,
 }: RDPScreenProps) {
   // The canvas is made here rather than rendered by React. A canvas handed
   // to a worker can be handed over once and can no longer be resized from
@@ -162,6 +186,15 @@ export function RDPScreen({
   // to the next key without rebinding anything.
   const keyboardRef = useRef<KeyboardPrefs>(keyboard ?? loadKeyboardPrefs())
   if (keyboard) keyboardRef.current = keyboard
+  // The clipboard: the rule the control plane sent, what came from the
+  // server last (not sent back), what went to it last (not sent twice), and
+  // a copy waiting for this tab to have focus to be written.
+  const clipRule = useRef<ClipboardRule>('off')
+  const lastRemote = useRef<string | null>(null)
+  const lastSent = useRef<string | null>(null)
+  const pendingWrite = useRef<string | null>(null)
+  const onClipboardRef = useRef(onClipboard)
+  onClipboardRef.current = onClipboard
 
   const [state, setState] = useState<RDPState>('connecting')
   const stateRef = useRef<RDPState>('connecting')
@@ -399,8 +432,21 @@ export function RDPScreen({
         }
         // Text is the control plane saying why: a refusal, or who ended it.
         try {
-          const m = JSON.parse(ev.data as string) as { type?: string; data?: string }
+          const m = JSON.parse(ev.data as string) as { type?: string; data?: string; clipboard?: ClipboardRule }
           if (m.type === 'error' && m.data) setStatus('error', m.data)
+          if (m.type === 'ready') {
+            clipRule.current = m.clipboard ?? 'off'
+            onClipboardRef.current?.({ kind: 'rule', rule: clipRule.current })
+          }
+          if (m.type === 'clipboard' && typeof m.data === 'string' && clipboardAllows(clipRule.current, false)) {
+            // Copied on the server: onto this clipboard, now or at focus.
+            const text = m.data
+            lastRemote.current = text
+            void writeClipboard(text).then((written) => {
+              pendingWrite.current = written ? null : text
+              onClipboardRef.current?.({ kind: 'copied', chars: [...text].length, written })
+            })
+          }
         } catch {
           // Not something this console sends or understands.
         }
@@ -493,7 +539,31 @@ export function RDPScreen({
         return
       }
       e.preventDefault()
-      for (const k of down ? mapper.down(e) : mapper.up(e)) send(wire(k))
+      const outs = down ? mapper.down(e) : mapper.up(e)
+      // The paste shortcut reads this clipboard over first, so what was
+      // just copied here is what the server pastes; the keys wait for it,
+      // and every key after them waits in turn, so none overtakes.
+      if (down && !e.repeat && clipboardSync && isPasteChord(e, isMac()) && clipboardAllows(clipRule.current, true)) {
+        // Started here, inside the key event: Safari hands the clipboard
+        // over only while the gesture is being handled.
+        const read = pushClipboardRef.current(false)
+        keys = Promise.all([keys, read]).then(() => undefined, () => undefined)
+      }
+      keys = keys.then(() => {
+        for (const k of outs) send(wire(k))
+      })
+    }
+    let keys: Promise<void> = Promise.resolve()
+    // Focus coming back to the screen: whatever was copied meanwhile goes
+    // over, where the browser allows reading without asking.
+    const onFocus = () => {
+      void pushClipboardRef.current(true)
+      const waiting = pendingWrite.current
+      if (waiting !== null) {
+        void writeClipboard(waiting).then((ok) => {
+          if (ok) pendingWrite.current = null
+        })
+      }
     }
     // Focus leaving the screen, or the tab hidden, with a key still down
     // would leave it down on the remote: Shift stuck, every letter a capital.
@@ -518,11 +588,13 @@ export function RDPScreen({
     canvas.addEventListener('keydown', keyDown)
     canvas.addEventListener('keyup', keyUp)
     canvas.addEventListener('blur', letGo)
+    canvas.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onHidden)
 
     return () => {
       letGo()
       canvas.removeEventListener('blur', letGo)
+      canvas.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onHidden)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('mousedown', down)
@@ -532,7 +604,7 @@ export function RDPScreen({
       canvas.removeEventListener('keydown', keyDown)
       canvas.removeEventListener('keyup', keyUp)
     }
-  }, [readOnly, canvas, device])
+  }, [readOnly, canvas, device, clipboardSync])
 
   /**
    * Ctrl+Alt+Del, which no browser lets a page capture from the keyboard.
@@ -554,6 +626,43 @@ export function RDPScreen({
     canvasRef.current?.focus()
   }
 
+  /**
+   * This clipboard to the server's, if the rule allows, it is new, and it is
+   * not what the server itself just copied. quiet reads only where no prompt
+   * would show (at focus); otherwise the browser may ask.
+   */
+  const pushClipboard = async (quiet: boolean): Promise<void> => {
+    if (readOnly || device || !clipboardSync || !clipboardAllows(clipRule.current, true)) return
+    if (quiet && !(await canReadQuietly())) return
+    const text = await readClipboard()
+    if (text === null) {
+      if (!quiet) onClipboardRef.current?.({ kind: 'unreadable' })
+      return
+    }
+    if (!text || text === lastSent.current || text === lastRemote.current) return
+    if (utf8Length(text) > CLIPBOARD_MAX) {
+      onClipboardRef.current?.({ kind: 'too-long' })
+      return
+    }
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ type: 'clipboard', text }))
+    lastSent.current = text
+    onClipboardRef.current?.({ kind: 'sent', chars: [...text].length })
+  }
+  const pushClipboardRef = useRef(pushClipboard)
+  pushClipboardRef.current = pushClipboard
+
+  const pasteAsTyping = async () => {
+    if (readOnly || !clipboardAllows(clipRule.current, true)) return
+    const text = await readClipboard()
+    if (text === null) {
+      onClipboardRef.current?.({ kind: 'unreadable' })
+      return
+    }
+    sendKeys(typingFor(text))
+  }
+
   const sendKeys = (keys: KeyOut[]) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN || readOnly) return
@@ -563,7 +672,17 @@ export function RDPScreen({
   const sendCtrlAltDel = () => sendKeys(chord('ControlLeft', 'AltLeft', 'Delete'))
 
   if (controls) {
-    controls.current = { ctrlAltDel: sendCtrlAltDel, focus: () => canvasRef.current?.focus(), sendKeys }
+    controls.current = {
+      ctrlAltDel: sendCtrlAltDel, focus: () => canvasRef.current?.focus(), sendKeys,
+      sendClipboard: async () => {
+        // Asked for by name: send it even if it was sent before.
+        lastSent.current = null
+        lastRemote.current = null
+        await pushClipboard(false)
+        canvasRef.current?.focus()
+      },
+      pasteAsTyping,
+    }
   }
 
   /**

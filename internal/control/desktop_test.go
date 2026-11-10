@@ -42,13 +42,30 @@ type fakeDesktop struct {
 	closed   chan struct{}
 	once     sync.Once
 	password string
+	// The clipboard, when the session has one: copies stands for
+	// something copied on the desktop, pasted for what the console sent.
+	clip     *agent.ClipboardSink
+	clipRule string
+	copies   chan string
+	pasted   []string
+}
+
+func (f *fakeDesktop) SetClipboard(text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pasted = append(f.pasted, text)
+	return nil
 }
 
 func newFakeDesktop() *fakeDesktop {
-	return &fakeDesktop{frames: make(chan []rdp.Bitmap, 16), closed: make(chan struct{})}
+	return &fakeDesktop{frames: make(chan []rdp.Bitmap, 16), closed: make(chan struct{}),
+		copies: make(chan string, 4)}
 }
 
 func (f *fakeDesktop) NextBitmaps() ([]rdp.Bitmap, error) {
+	f.mu.Lock()
+	closed := f.closed
+	f.mu.Unlock()
 	select {
 	case b := <-f.frames:
 		f.mu.Lock()
@@ -58,7 +75,15 @@ func (f *fakeDesktop) NextBitmaps() ([]rdp.Bitmap, error) {
 			tap([]byte("pdu:" + string(b[0].Data)))
 		}
 		return b, nil
-	case <-f.closed:
+	case text := <-f.copies:
+		f.mu.Lock()
+		clip := f.clip
+		f.mu.Unlock()
+		if clip != nil {
+			clip.Set(text)
+		}
+		return nil, nil
+	case <-closed:
 		return nil, errors.New("closed")
 	}
 }
@@ -80,7 +105,23 @@ func (f *fakeDesktop) Refresh() error {
 
 func (f *fakeDesktop) Size() (int, int)       { return 1024, 768 }
 func (f *fakeDesktop) SetTap(fn func([]byte)) { f.mu.Lock(); f.tap = fn; f.mu.Unlock() }
-func (f *fakeDesktop) Close() error           { f.once.Do(func() { close(f.closed) }); return nil }
+func (f *fakeDesktop) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.once.Do(func() { close(f.closed) })
+	return nil
+}
+
+// reopen readies a closed fake for the next session, as a listener would be.
+func (f *fakeDesktop) reopen() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	select {
+	case <-f.closed:
+		f.closed, f.once = make(chan struct{}), sync.Once{}
+	default:
+	}
+}
 
 func (e *tunnelEnv) runDesktopAgent(t *testing.T, cred, host string, desk *fakeDesktop) *terminalHost {
 	t.Helper()
@@ -97,10 +138,21 @@ func (e *tunnelEnv) runDesktopAgent(t *testing.T, cred, host string, desk *fakeD
 			if open.Password != "correct horse" {
 				return nil, agent.DesktopInfo{}, errors.New("logon failure: wrong password")
 			}
+			desk.reopen()
+			info := agent.DesktopInfo{Protocol: rdp.ProtocolHybrid}
+			if tunnel.ClipboardAllows(open.Clipboard, true) || tunnel.ClipboardAllows(open.Clipboard, false) {
+				// As connectDesktop does: a sink only for what may leave.
+				info.Clipboard, info.ClipboardRule = &agent.ClipboardSink{}, open.Clipboard
+			}
 			desk.mu.Lock()
 			desk.password = open.Password
+			desk.clipRule = open.Clipboard
+			desk.clip = nil
+			if tunnel.ClipboardAllows(open.Clipboard, false) {
+				desk.clip = info.Clipboard
+			}
 			desk.mu.Unlock()
-			return desk, agent.DesktopInfo{Protocol: rdp.ProtocolHybrid}, nil
+			return desk, info, nil
 		},
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -289,6 +341,113 @@ func TestARemoteDesktopOpensThroughTheAgentAndCanBeWatchedAndEnded(t *testing.T)
 	}
 	if !strings.Contains(string(b), "cGR1OnBpeGVscyEh") { // base64 of "pdu:pixels!!"
 		t.Error("what was shown is not in the recording")
+	}
+}
+
+// Copy and paste cross a desktop's clipboard as the asset type's rule allows,
+// each crossing audited by size and never by content, and the control plane
+// holds to the rule even if the agent did not.
+func TestDesktopClipboardFollowsTheTypeRule(t *testing.T) {
+	e := newTunnelEnv(t)
+	signer := e.withTerminal(t)
+	host := unique("clip")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	desk := newFakeDesktop()
+	e.runDesktopAgent(t, cred, host, desk)
+	ctx := context.Background()
+	t.Cleanup(func() { _ = e.store.SetConnectRules(context.Background(), DefaultConnectRules(), "test") })
+
+	open := func() (*websocket.Conn, <-chan wsEvent, []terminalMessage) {
+		ticket, _ := signer.IssueTicket("ana@example.com", host, "ana", time.Minute)
+		c := e.openDesktop(t, host, "ana", ticket)
+		b, _ := json.Marshal(map[string]any{"type": "logon", "password": "correct horse", "width": 1024, "height": 768})
+		_ = c.Write(ctx, websocket.MessageText, b)
+		ev := pump(c)
+		var msgs []terminalMessage
+		if f := nextBinary(ev, &msgs, 10*time.Second); len(f) == 0 || f[0] != rdp.FrameReady {
+			t.Fatalf("not ready: %v %+v", f, msgs)
+		}
+		return c, ev, msgs
+	}
+	paste := func(c *websocket.Conn, text string) {
+		b, _ := json.Marshal(map[string]any{"type": "clipboard", "text": text})
+		_ = c.Write(ctx, websocket.MessageText, b)
+		// A key after it, to know the paste was handled before looking.
+		k, _ := json.Marshal(map[string]any{"type": "key", "code": "KeyV", "down": true})
+		_ = c.Write(ctx, websocket.MessageText, k)
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			desk.mu.Lock()
+			n := len(desk.inputs)
+			desk.mu.Unlock()
+			if n > 0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		desk.mu.Lock()
+		t.Fatalf("the key after the paste never arrived; pasted %q, rule %q", desk.pasted, desk.clipRule)
+	}
+	copied := func(ev <-chan wsEvent, text string) string {
+		desk.copies <- text
+		// A frame after it, so a clipboard message would have come first.
+		desk.frames <- []rdp.Bitmap{{Width: 4, Height: 1, BPP: 16, Data: []byte("after!!!")}}
+		var msgs []terminalMessage
+		nextBinary(ev, &msgs, 10*time.Second)
+		for _, m := range msgs {
+			if m.Type == "clipboard" {
+				return m.Data
+			}
+		}
+		return ""
+	}
+
+	// The default: both ways.
+	c, ev, msgs := open()
+	if len(msgs) == 0 || msgs[len(msgs)-1].Clipboard != tunnel.ClipboardBoth {
+		t.Errorf("ready said %+v; want the clipboard both ways", msgs)
+	}
+	paste(c, "into the desktop")
+	if got := copied(ev, "out of it"); got != "out of it" {
+		t.Errorf("a copy on the desktop reached the console as %q", got)
+	}
+	desk.mu.Lock()
+	if len(desk.pasted) != 1 || desk.pasted[0] != "into the desktop" {
+		t.Errorf("pasted %q", desk.pasted)
+	}
+	desk.pasted, desk.inputs = nil, nil
+	desk.mu.Unlock()
+	if n := auditCount(t, e.store, "desktop.clipboard", host); n != 2 {
+		t.Errorf("%d clipboard crossings audited, want 2", n)
+	}
+	c.CloseNow()
+
+	// Paste only: what is copied on the desktop stays there.
+	rules := DefaultConnectRules()
+	rules.Server.Clipboard = tunnel.ClipboardToAsset
+	if err := e.store.SetConnectRules(ctx, rules, "test"); err != nil {
+		t.Fatal(err)
+	}
+	c, ev, _ = open()
+	paste(c, "in again")
+	if got := copied(ev, "kept on the desktop"); got != "" {
+		t.Errorf("a copy left a paste-only desktop: %q", got)
+	}
+	c.CloseNow()
+
+	// Off: no clipboard is opened at all, and a paste is dropped here.
+	rules.Server.Clipboard = tunnel.ClipboardOff
+	_ = e.store.SetConnectRules(ctx, rules, "test")
+	c, _, _ = open()
+	defer c.CloseNow()
+	desk.mu.Lock()
+	desk.pasted, desk.inputs = nil, nil
+	desk.mu.Unlock()
+	paste(c, "not this")
+	desk.mu.Lock()
+	defer desk.mu.Unlock()
+	if desk.clipRule != tunnel.ClipboardOff || len(desk.pasted) != 0 {
+		t.Errorf("clipboard off: opened with %q, pasted %q", desk.clipRule, desk.pasted)
 	}
 }
 

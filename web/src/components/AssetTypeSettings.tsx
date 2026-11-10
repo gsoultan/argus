@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Box, Button, Group, NumberInput, SegmentedControl, Skeleton, Stack, Table, Text } from '@mantine/core'
+import { Alert, Box, Button, Group, NativeSelect, NumberInput, SegmentedControl, Skeleton, Stack, Table, Text } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { SectionCard } from '~/components/page'
 import { get, isConfigured, send } from '~/lib/live'
@@ -14,10 +14,15 @@ import { FS, SP } from '~/theme'
 
 export type ConnectMode = 'never' | 'ask' | 'tell'
 
+/** Which way text may cross a Remote Desktop's clipboard. */
+export type ClipboardRule = 'both' | 'to' | 'from' | 'off'
+
 export interface ConnectRule {
   desktop: ConnectMode
   terminal: Exclude<ConnectMode, 'ask'>
   seconds: number
+  /** Missing from a control plane that predates it, which opens none. */
+  clipboard?: ClipboardRule
 }
 
 export interface ConnectRules {
@@ -34,6 +39,12 @@ const DESKTOP = [
   { value: 'never', label: 'Never ask' },
   { value: 'ask', label: 'Ask first' },
   { value: 'tell', label: 'Tell them' },
+]
+const CLIPBOARD = [
+  { value: 'both', label: 'Both ways' },
+  { value: 'to', label: 'Paste in only' },
+  { value: 'from', label: 'Copy out only' },
+  { value: 'off', label: 'Off' },
 ]
 const TERMINAL = [
   { value: 'never', label: 'Nothing' },
@@ -83,6 +94,11 @@ export function AssetTypeSettings({ canEdit }: { canEdit: boolean }) {
           onChange={(v) => set(kind, { terminal: v as ConnectRule['terminal'] })} />
       </Table.Td>
       <Table.Td>
+        <NativeSelect size="xs" w={140} disabled={!canEdit} aria-label={`${label}: clipboard`}
+          value={r[kind].clipboard ?? 'both'} data={CLIPBOARD}
+          onChange={(e) => set(kind, { clipboard: e.currentTarget.value as ClipboardRule })} />
+      </Table.Td>
+      <Table.Td>
         <NumberInput size="xs" w={90} min={10} max={120} suffix=" s" disabled={!canEdit || r[kind].desktop !== 'ask'}
           aria-label={`${label}: seconds to answer`} value={r[kind].seconds}
           onChange={(v) => set(kind, { seconds: typeof v === 'number' ? v : Number(v) || 60 })} />
@@ -93,13 +109,14 @@ export function AssetTypeSettings({ canEdit }: { canEdit: boolean }) {
   return (
     <SectionCard title="Before connecting" description="Who is asked, or told, before a session opens on each type of asset. An asset can differ from its type on its own edit form.">
       <Stack gap={SP.cozy}>
-        <Table.ScrollContainer minWidth={620}>
+        <Table.ScrollContainer minWidth={780}>
           <Table verticalSpacing="sm">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Type</Table.Th>
                 <Table.Th>Remote Desktop or screen</Table.Th>
                 <Table.Th>Terminal</Table.Th>
+                <Table.Th>Clipboard</Table.Th>
                 <Table.Th>No answer after</Table.Th>
               </Table.Tr>
             </Table.Thead>
@@ -114,6 +131,10 @@ export function AssetTypeSettings({ canEdit }: { canEdit: boolean }) {
           no answer is a no. Tell them opens at once and shows a notice. Nobody signed in means nobody is asked.
           A terminal is never asked: it is a login of its own and takes nothing from the person at the screen.
           Devices follow their own control mode.
+        </Text>
+        <Text size={FS.meta} c="dimmed" lh={1.5}>
+          Clipboard is copy and paste of text in a Remote Desktop session. Each copy or paste is in the audit log
+          with who, which way and how much, never what. Files cross in the Files drawer, where each one is recorded.
         </Text>
         {canEdit && (
           <Box>

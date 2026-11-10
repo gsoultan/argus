@@ -64,6 +64,13 @@ type Client struct {
 	// reads it from another goroutine than the one reading the session.
 	gfxLive    atomic.Bool
 	gfxDecoded uint32
+
+	// The clipboard, when it was asked for.
+	onClip  func(string)
+	cliprdr uint16 // MCS channel of cliprdr
+	// clip is guarded by wmu: the browser sets it from the input
+	// goroutine, and the server's requests are answered from the reader.
+	clip clipboard
 }
 
 // ClientConfig configures a session.
@@ -93,6 +100,10 @@ type ClientConfig struct {
 	// commands as they arrive. Windows then stops sending bitmap updates, so
 	// NextBitmaps returns none and everything drawn comes through here.
 	Graphics func(GraphicsPDU)
+	// Clipboard, when set, opens the clipboard channel and receives the
+	// server's clipboard text each time something is copied there. It is
+	// called on the goroutine reading the session. See cliprdr.go.
+	Clipboard func(text string)
 }
 
 // Connect runs the sequence on an established, authenticated connection.
@@ -124,6 +135,7 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 		readTimeout: cfg.ReadTimeout,
 		keepIdle:    cfg.KeepIdle,
 		graphics:    cfg.Graphics,
+		onClip:      cfg.Clipboard,
 	}
 	if c.graphics != nil {
 		c.depth = 32
@@ -165,6 +177,7 @@ func (c *Client) mcsConnect(cfg ClientConfig) error {
 	gcc := GCCRequest(ClientInfo{
 		Width: cfg.Width, Height: cfg.Height, Depth: c.depth,
 		SelectedProtocol: cfg.SelectedProtocol, Graphics: c.graphics != nil,
+		Clipboard: c.onClip != nil,
 	})
 	if _, err := c.conn.Write(x224Data(ConnectInitial(gcc))); err != nil {
 		return fmt.Errorf("send mcs connect initial: %w", err)
@@ -189,6 +202,20 @@ func (c *Client) mcsConnect(cfg ClientConfig) error {
 		}
 		c.dynvc = channels.Extra[0]
 		c.log.Info("rdp graphics: drdynvc opened", "channel", c.dynvc)
+	}
+	if c.onClip != nil {
+		// Requested after drdynvc, so it is the next one along. A server
+		// that refuses it (a policy that turns off clipboard redirection)
+		// answers zero, and the session goes on without one.
+		at := 0
+		if c.graphics != nil {
+			at = 1
+		}
+		if len(channels.Extra) > at && channels.Extra[at] != 0 {
+			c.cliprdr = channels.Extra[at]
+		} else {
+			c.log.Info("rdp clipboard: the server did not open cliprdr; its policy may turn clipboard redirection off")
+		}
 	}
 	return nil
 }
@@ -215,6 +242,9 @@ func (c *Client) mcsAttach() error {
 	join := []uint16{c.userID, c.channel}
 	if c.dynvc != 0 {
 		join = append(join, c.dynvc)
+	}
+	if c.cliprdr != 0 {
+		join = append(join, c.cliprdr)
 	}
 	for _, ch := range join {
 		if _, err := c.conn.Write(ChannelJoinRequest(c.userID, ch)); err != nil {
@@ -386,6 +416,13 @@ func (c *Client) NextBitmaps() ([]Bitmap, error) {
 		return nil, err
 	}
 	c.probed = false
+	// The clipboard is not recorded: what was copied is not kept anywhere,
+	// and the audit log has the direction and size of each crossing.
+	if c.cliprdr != 0 && frame[0]&actionMask == actionX224 {
+		if ch, payload, err := ParseSendDataIndication(frame); err == nil && ch == c.cliprdr {
+			return nil, c.clipboardIn(payload)
+		}
+	}
 	if c.tap != nil {
 		c.tap(frame)
 	}
@@ -434,6 +471,59 @@ func (c *Client) virtual(pdu []byte) error {
 			c.gfxDecoded++
 			if err := c.writeGraphics(gfxFrameAcknowledge(p.FrameID, c.gfxDecoded)); err != nil {
 				return err
+			}
+		}
+	}
+	return nil
+}
+
+// clipboardIn follows the clipboard channel, answering the server and handing
+// copied text to the caller.
+func (c *Client) clipboardIn(pdu []byte) error {
+	c.wmu.Lock()
+	msg, err := c.clip.in.feed(pdu)
+	if err != nil || msg == nil {
+		c.wmu.Unlock()
+		return err
+	}
+	ev, err := c.clip.feed(msg)
+	if err == nil {
+		err = c.writeClipboardLocked(ev.replies...)
+	}
+	c.wmu.Unlock()
+	if err != nil {
+		return err
+	}
+	if ev.gotIt {
+		c.onClip(ev.text)
+	}
+	return nil
+}
+
+// SetClipboard puts text on this side of the clipboard, for the server to
+// paste. Without a clipboard channel it does nothing and says so.
+func (c *Client) SetClipboard(text string) error {
+	if c.cliprdr == 0 {
+		return ErrNoClipboard
+	}
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	msg, err := c.clip.set(text)
+	if err != nil || msg == nil {
+		return err
+	}
+	return c.writeClipboardLocked(msg)
+}
+
+// ErrNoClipboard is SetClipboard on a session without a clipboard channel.
+var ErrNoClipboard = errors.New("rdp: this session has no clipboard")
+
+// writeClipboardLocked sends clipboard messages; wmu is held.
+func (c *Client) writeClipboardLocked(msgs ...[]byte) error {
+	for _, m := range msgs {
+		for _, pdu := range channelPDUs(m) {
+			if _, err := c.conn.Write(SendDataRequest(c.userID, c.cliprdr, pdu)); err != nil {
+				return fmt.Errorf("send on cliprdr: %w", err)
 			}
 		}
 	}
