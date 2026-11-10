@@ -183,6 +183,14 @@ intact, so a backup never silently preserves a broken chain. The last 14 are
 kept; set `ARGUS_BACKUP_KEEP` and `ARGUS_BACKUP_DIR` in `/etc/argus/backup.env`
 to change that.
 
+**Settings › Control plane › Backups** in the console shows the same thing
+without a shell: how the last backup went (and its error, if it failed),
+whether the nightly timer is on, every backup on disk, and which ones the next
+run removes. **Back up now** starts `argus-backup.service` through
+`argus-backup-now.path`, which the package enables, and **How many to keep**
+sets the count from there. A count saved in the console wins over
+`ARGUS_BACKUP_KEEP`.
+
 **A backup you have not restored is a hope.** Prove it against a scratch
 database (never the live one, which it refuses):
 

@@ -2181,6 +2181,58 @@ export async function controlUpdateBanner(): Promise<{ active: boolean; state?: 
   return get('/api/v1/control-update')
 }
 
+/* ── The control plane's own backups ───────────────────────────────────── */
+
+/** One backup under the backup directory; `complete` is false for a run that stopped. */
+export interface ControlBackupRun {
+  name: string
+  complete: boolean
+  at: string
+  databaseBytes: number
+  recordings: number
+  chainEvents: number
+  version?: string
+}
+
+/** Settings › Control plane › Backups, as GET /api/v1/platform/backups returns it. */
+export interface ControlBackupsView {
+  installed: boolean
+  reason?: string
+  canRunNow: boolean
+  runNowReason?: string
+  timerOn: boolean
+  dir: string
+  keep: number
+  keepSetHere: boolean
+  keepSetBy?: string
+  last?: {
+    startedAt: string
+    finishedAt?: string
+    ok: boolean
+    error?: string
+    run?: string
+    pruned?: number
+    keep?: number
+  }
+  running: boolean
+  requested?: { by: string; at: string }
+  late?: boolean
+  runs: ControlBackupRun[]
+  readFailure?: string
+}
+
+export async function controlBackups(): Promise<ControlBackupsView> {
+  return get<ControlBackupsView>('/api/v1/platform/backups')
+}
+
+export async function setControlBackupKeep(keep: number): Promise<ControlBackupsView> {
+  return send<ControlBackupsView>('PUT', '/api/v1/platform/backups/settings', { keep })
+}
+
+export async function runControlBackup(): Promise<ControlBackupsView> {
+  return send<ControlBackupsView>('POST', '/api/v1/platform/backups/run')
+}
+
 /* ── Console alerts (the bell) ──────────────────────────────────────────── */
 
 export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server' | 'backup' | 'data' | 'updates' | 'resources'
