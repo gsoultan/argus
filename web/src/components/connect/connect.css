@@ -81,6 +81,19 @@
 .argus-ws-tb { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 8px; color: #e2e8f0; font-size: 12.5px; white-space: nowrap; }
 .argus-ws-tb:hover:not(:disabled) { background: #1e293b; }
 .argus-ws-tb:disabled { opacity: .5; }
+.argus-ws-tb[data-on] { background: #1e3a5f; }
+.argus-ws-files {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 4; width: min(440px, 100%);
+  display: flex; flex-direction: column; background: var(--mantine-color-body); color: var(--mantine-color-text);
+  border-left: 1px solid var(--mantine-color-default-border); box-shadow: -12px 0 30px #0006;
+}
+.argus-ws-files[hidden] { display: none; }
+/* With files open the toolbar centres over the screen that is left. */
+@media (min-width: 900px) {
+  .argus-ws-desktop[data-files] .argus-ws-toolbar { left: calc((100% - 440px) / 2); max-width: calc(100% - 464px); }
+}
+.argus-ws-files-head { border-bottom: 1px solid var(--mantine-color-default-border); padding-right: 8px; }
+.argus-ws-files-body { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .argus-ws-end { background: #d92d20; color: #fff; font-weight: 600; }
 .argus-ws-end:hover:not(:disabled) { background: #b42318; }
 .argus-ws-ro { color: #fbbf24; }

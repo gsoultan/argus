@@ -70,7 +70,9 @@ export function protocolOf(way: Way): 'ssh' | 'rdp' {
 /** The ways an asset can be opened by, first the one to suggest. */
 export function waysFor(asset: Asset): Way[] {
   if (asset.kind === 'android') return ['device']
-  if (asset.protocol === 'rdp') return [asset.desktopMode === 'screen' ? 'screen' : 'desktop']
+  // A Windows server: its desktop first, and the agent's terminal and files
+  // as well, which need no Windows password.
+  if (asset.protocol === 'rdp') return [asset.desktopMode === 'screen' ? 'screen' : 'desktop', 'terminal', 'files', 'split']
   return ['terminal', 'files', 'split']
 }
 

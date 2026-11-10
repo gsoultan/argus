@@ -337,6 +337,18 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
   const [pinned, setPinned] = useState(false)
   const [visible, setVisible] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
+  // Files slides in beside the screen and stays mounted once opened, so a
+  // transfer keeps going while it is closed.
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [filesMounted, setFilesMounted] = useState(false)
+  const filesAllowed = !readOnly && !device
+  const toggleFiles = () => {
+    setFilesMounted(true)
+    setFilesOpen((o) => {
+      if (o) controls.current?.focus()
+      return !o
+    })
+  }
   const hideTimer = useRef<number | undefined>(undefined)
 
   // The toolbar steps out of the way after a few seconds and comes back when
@@ -417,7 +429,7 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
   const quality = rtt === undefined ? 'unknown' : rtt > 300 ? 'poor' : rtt > 150 ? 'fair' : 'good'
 
   return (
-    <Box className="argus-ws-desktop"
+    <Box className="argus-ws-desktop" data-files={filesOpen || undefined}
       onMouseMove={(e) => {
         const top = (e.currentTarget as HTMLElement).getBoundingClientRect().top
         if (e.clientY - top < 72) wake()
@@ -512,6 +524,12 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
             </Menu.Dropdown>
           </Menu>
         )}
+        {filesAllowed && (
+          <UnstyledButton className="argus-ws-tb" aria-pressed={filesOpen} data-on={filesOpen || undefined}
+            onClick={toggleFiles}>
+            <IconFolders size={15} />Files
+          </UnstyledButton>
+        )}
         <UnstyledButton className="argus-ws-tb" onClick={toggleFull}>
           {full ? <IconMinimize size={15} /> : <IconMaximize size={15} />}{full ? 'Exit full screen' : 'Full screen'}
         </UnstyledButton>
@@ -544,8 +562,24 @@ function DesktopView({ session, active, rootRef, getTicket, takePassword, onStat
           onState(s, d)
         }}
       />
+      {filesMounted && (
+        <aside className="argus-ws-files" hidden={!filesOpen} aria-label={`Files on ${host}`}>
+          <Group justify="space-between" px="sm" py={6} className="argus-ws-files-head">
+            <Text size={FS.meta} fw={600}>Files on {host}</Text>
+            <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close files" onClick={toggleFiles}>
+              <IconX size={14} />
+            </ActionIcon>
+          </Group>
+          <Box className="argus-ws-files-body">
+            <Suspense fallback={<Loading />}>
+              <FileBrowser endpoint={filesEndpoint()} getTicket={getTicket} target={session.target}
+                principal={session.principal} compact />
+            </Suspense>
+          </Box>
+        </aside>
+      )}
       {/* Only the tab in front takes the keyboard. */}
-      {active && <FocusOnShow controls={controls} />}
+      {active && !filesOpen && <FocusOnShow controls={controls} />}
     </Box>
   )
 }
