@@ -58,3 +58,15 @@ swap, each real disk). Code: `internal/agent/sysinfo*.go`,
   Design: `/mnt/project-files/plans/resource-metrics/`.
 - `UsageSampler.Sample` and the system facts recover from a panic in a
   platform reader: a figure is never worth the heartbeat.
+
+## Metrics tab and history (part 2)
+
+- Table `usage_history` (migration 075): one row per hostname per 5-minute
+  bucket, folded in by `recordUsageHistory` inside the heartbeat transaction
+  (only on beats that carry usage). Pruned to 30 days hourly from
+  RunResourceWatch. Model `rmodel.UsageHistory` (listed in All()).
+- `GET /api/v1/assets/{id}/metrics?range=6h|24h|7d|30d` (fleet roles):
+  5m/5m/30m/2h steps; empty buckets are absent, never zero.
+- Console: `components/server/MetricsTab.tsx` (lazy), tab 'metrics' on
+  servers and workstations only. Hand-drawn SVG charts; a gap of more than two
+  steps breaks the line and is shaded "no reports".

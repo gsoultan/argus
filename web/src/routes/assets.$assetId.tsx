@@ -34,6 +34,11 @@ import { guard } from '~/lib/guard'
 import { SP } from '~/theme'
 
 /** Opened only by an administrator, so their chunks are fetched only for one. */
+/** The metrics page and its charts load only when the tab is opened. */
+const MetricsTab = lazy(() =>
+  import('~/components/server/MetricsTab').then((m) => ({ default: m.MetricsTab })),
+)
+
 const AssetForm = lazy(() =>
   import('~/components/AssetForm').then((m) => ({ default: m.AssetForm })),
 )
@@ -167,7 +172,7 @@ function AssetDetail() {
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
               {TABS_BY_TYPE[assetTypeOf(asset)].filter((t) => {
                 // Updates, disks and logs are for those who may act on them, or audit.
-                return (t !== 'updates' && t !== 'disks' && t !== 'logs') || seesUpdates
+                return (t !== 'updates' && t !== 'disks' && t !== 'logs' && t !== 'metrics') || seesUpdates
               }).map((t) => (
                 <Tabs.Tab
                   key={t}
@@ -206,6 +211,9 @@ function AssetDetail() {
       <PageBody>
         <HostKeyChanged asset={asset} />
         {tab === 'overview' && <OverviewTab asset={asset} sessions={sessions} onTab={setTab} canFreeSpace={seesUpdates && isConfigured()} />}
+        {tab === 'metrics' && seesUpdates && (
+          <Suspense fallback={null}><MetricsTab asset={asset} /></Suspense>
+        )}
         {tab === 'access' && <AccessTab asset={asset} canEdit={canEdit} />}
         {tab === 'sessions' && <SessionsTab asset={asset} sessions={sessions} />}
         {tab === 'apps' && <AppsTab asset={asset} canEdit={canEdit} />}

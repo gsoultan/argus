@@ -10,12 +10,12 @@ import { assetTypeOf } from '~/lib/assetType'
 describe('tabs by type', () => {
   it('gives a server every tab, with the agent out of Settings', () => {
     expect(TABS_BY_TYPE.server.map((t) => tabLabel(t, 'server'))).toEqual(
-      ['Overview', 'Access', 'Sessions', 'Apps', 'Packages', 'Disks', 'Logs', 'Agent', 'Settings'])
+      ['Overview', 'Metrics', 'Access', 'Sessions', 'Apps', 'Packages', 'Disks', 'Logs', 'Agent', 'Settings'])
   })
 
   it('gives a workstation updates but no log cleanup or disk growing', () => {
     expect(TABS_BY_TYPE.workstation.map((t) => tabLabel(t, 'workstation'))).toEqual(
-      ['Overview', 'Access', 'Sessions', 'Apps', 'Updates', 'Agent', 'Settings'])
+      ['Overview', 'Metrics', 'Access', 'Sessions', 'Apps', 'Updates', 'Agent', 'Settings'])
   })
 
   it('gives a device its app, and nothing Android does for itself', () => {

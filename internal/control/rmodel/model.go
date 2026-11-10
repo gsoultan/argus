@@ -1225,6 +1225,7 @@ func All() []any {
 		&ConsoleAlertRead{},
 		&Team{},
 		&TeamMember{},
+		&UsageHistory{},
 		&User{},
 	}
 }
@@ -2037,4 +2038,35 @@ func (m *CloudResource) Schema(t *storm.Table) {
 	t.Col(&m.Account).ConstraintName("cloud_resources_account_id_fkey")
 	t.Col(&m.FirstSeen).Default("now()")
 	t.Index(&m.Kind, &m.Account).Where("gone_at IS NULL").Named("cloud_resources_present")
+}
+
+// UsageHistory is table usage_history: one agent's resource usage folded
+// into 5-minute buckets, kept 30 days, for the Metrics tab (migration 075).
+type UsageHistory struct {
+	Hostname string
+	Bucket   time.Time
+	Samples  int32
+	CpuSum   float64
+	CpuN     int32
+	CpuMax   *float32
+	MemPct   *float32
+	SwapPct  *float32
+	Disks    *storm.JSON
+	RxSum    float64
+	TxSum    float64
+	NetN     int32
+	RxMax    *float64
+	TxMax    *float64
+}
+
+func (m *UsageHistory) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Hostname, &m.Bucket)
+	t.Name("usage_history")
+	t.Col(&m.Samples).Default("0")
+	t.Col(&m.CpuSum).Default("0")
+	t.Col(&m.CpuN).Default("0")
+	t.Col(&m.RxSum).Default("0")
+	t.Col(&m.TxSum).Default("0")
+	t.Col(&m.NetN).Default("0")
+	t.Index(&m.Bucket).Named("usage_history_bucket")
 }

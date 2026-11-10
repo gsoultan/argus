@@ -195,7 +195,7 @@ const RESOURCE_NAME: Record<ResourceWarning['resource'], string> = { memory: 'me
  * What is running low, said first: a card full of meters makes the reader
  * find the coloured one, and a phone shows only the top of it.
  */
-function LowStrip({ warnings, faded }: { warnings: ResourceWarning[]; faded: boolean }) {
+export function LowStrip({ warnings, faded }: { warnings: ResourceWarning[]; faded: boolean }) {
   if (warnings.length === 0) return null
   const tone = warnings.some((w) => w.level === 'critical') ? 'rose' : 'amber'
   const kinds = [...new Set(warnings.map((w) => w.resource))]

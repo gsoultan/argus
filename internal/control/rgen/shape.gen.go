@@ -1142,6 +1142,28 @@ func _assertTeamMemberShape(m m0.TeamMember) {
 	}
 }
 
+// _assertUsageHistoryShape fails to compile if m0.UsageHistory gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertUsageHistoryShape(m m0.UsageHistory) {
+	type shape m0.UsageHistory
+	_ = shape{
+		m.Hostname,
+		m.Bucket,
+		m.Samples,
+		m.CpuSum,
+		m.CpuN,
+		m.CpuMax,
+		m.MemPct,
+		m.SwapPct,
+		m.Disks,
+		m.RxSum,
+		m.TxSum,
+		m.NetN,
+		m.RxMax,
+		m.TxMax,
+	}
+}
+
 // _assertUserShape fails to compile if m0.User gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertUserShape(m m0.User) {

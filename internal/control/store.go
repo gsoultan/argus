@@ -741,7 +741,8 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 	// must not present an hour-old sample as current.
 	var usageJSON []byte
 	var usageAt *time.Time
-	if u := usage.bounded(); u != nil {
+	u := usage.bounded()
+	if u != nil {
 		b, err := json.Marshal(u)
 		if err != nil {
 			return err
@@ -821,6 +822,12 @@ func (s *Store) Heartbeat(ctx context.Context, hostname, version string,
 		hostname, version, activeSessions, postureJSON, execTracing, execReason, matched,
 		usageJSON, usageAt); err != nil {
 		return err
+	}
+	// The same sample, folded into its five minutes of history (usage_history.go).
+	if u != nil {
+		if err := recordUsageHistory(ctx, tx, hostname, *usageAt, u); err != nil {
+			return err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

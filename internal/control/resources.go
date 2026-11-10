@@ -192,6 +192,7 @@ func (s *Store) ResourcesLow(ctx context.Context, now time.Time) (ResourcesLow, 
 
 func (a *API) registerResourcesRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/resources-low", a.getResourcesLow)
+	mux.HandleFunc("GET /api/v1/assets/{id}/metrics", a.getMetrics)
 }
 
 // getResourcesLow serves the fleet's warnings. Fleet roles only, like the
@@ -229,15 +230,26 @@ const maxResourceAlertsPerSweep = 25
 func (a *API) RunResourceWatch(ctx context.Context, interval time.Duration) {
 	t := time.NewTimer(3 * time.Minute)
 	defer t.Stop()
+	var pruned time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
+		now := time.Now().UTC()
+		prune := now.Sub(pruned) >= time.Hour
 		err := a.store.ForEachTenant(ctx, func(tctx context.Context, _ *Tenant) {
-			a.watchResources(tctx, time.Now().UTC())
+			a.watchResources(tctx, now)
+			if prune {
+				if err := a.store.pruneUsageHistory(tctx, now); err != nil {
+					a.log.Error("usage history prune", "error", err)
+				}
+			}
 		})
+		if prune {
+			pruned = now
+		}
 		if err != nil {
 			a.log.Error("resource watch", "error", err)
 		}
