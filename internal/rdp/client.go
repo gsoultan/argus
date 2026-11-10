@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -44,6 +45,12 @@ type Client struct {
 	// hung session looks like, so it is also the case an operator most needs
 	// reported rather than absorbed.
 	readTimeout time.Duration
+	// keepIdle, when set, treats a read timeout with nothing read as a quiet
+	// screen rather than a dead server: it asks the server to repaint and
+	// reads again, and only a second silent timeout in a row ends the
+	// session. probed records that the repaint was asked for.
+	keepIdle bool
+	probed   bool
 
 	// wmu orders writes: input comes from one goroutine, and the replies the
 	// graphics pipeline needs from the one reading.
@@ -75,7 +82,13 @@ type ClientConfig struct {
 	// two minutes, which is longer than any legitimate gap between updates on
 	// an idle desktop and short enough to notice a wedged server.
 	ReadTimeout time.Duration
-	Log         *slog.Logger
+	// KeepIdle stops a desktop nobody is moving on from ending at the first
+	// ReadTimeout. Windows sends nothing while the screen does not change, so
+	// a person reading a document for two minutes looked exactly like a hung
+	// server. With KeepIdle a silent ReadTimeout asks for a repaint, which a
+	// live server answers, and only a second silent one in a row is an error.
+	KeepIdle bool
+	Log      *slog.Logger
 	// Graphics, when set, asks for the graphics pipeline and receives its
 	// commands as they arrive. Windows then stops sending bitmap updates, so
 	// NextBitmaps returns none and everything drawn comes through here.
@@ -109,6 +122,7 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 		conn: conn, log: cfg.Log, rea: NewReassembler(),
 		width: cfg.Width, height: cfg.Height, depth: cfg.Depth,
 		readTimeout: cfg.ReadTimeout,
+		keepIdle:    cfg.KeepIdle,
 		graphics:    cfg.Graphics,
 	}
 	if c.graphics != nil {
@@ -355,10 +369,23 @@ func (c *Client) NextBitmaps() ([]Bitmap, error) {
 	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
 		return nil, err
 	}
-	frame, err := ReadPDU(c.conn)
+	r := countingReader{r: c.conn}
+	frame, err := ReadPDU(&r)
 	if err != nil {
+		// Only a timeout before the first byte of a PDU is a quiet screen; one
+		// part-way through would leave the stream out of step, so it ends the
+		// session as before.
+		var ne net.Error
+		if c.keepIdle && !c.probed && r.n == 0 && errors.As(err, &ne) && ne.Timeout() {
+			c.probed = true
+			if perr := c.Refresh(); perr != nil {
+				return nil, perr
+			}
+			return nil, nil
+		}
 		return nil, err
 	}
+	c.probed = false
 	if c.tap != nil {
 		c.tap(frame)
 	}
@@ -557,4 +584,17 @@ func (c *Client) Refresh() error {
 	pdu := RefreshRectPDU(c.shareID, c.userID, c.width, c.height)
 	_, err := c.conn.Write(SendDataRequest(c.userID, c.channel, pdu))
 	return err
+}
+
+// countingReader reports how many bytes a read consumed, so a timeout can be
+// told apart from one part-way through a PDU.
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
 }
