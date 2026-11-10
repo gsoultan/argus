@@ -3,8 +3,13 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 import { Mono, absTime, now as clockNow, relTime } from '~/components/primitives'
 import type { ServerTab } from '~/components/server/tabs'
 import { live } from '~/lib/live'
+import { bytes, trim, warningText, warningTone } from '~/lib/resourcesLow'
 import { FS, INK } from '~/theme'
-import type { Asset, ServerDisk, ServerInterface, ServerSystem, ServerSystemFacts, ServerUsage } from '~/types/domain'
+import type {
+  Asset, ResourceWarning, ServerDisk, ServerInterface, ServerNetRate, ServerSystem, ServerSystemFacts, ServerUsage,
+} from '~/types/domain'
+
+export { bytes }
 
 /**
  * Here rather than in lib/queries and lib/api, so the card's fixture and
@@ -57,8 +62,14 @@ function fixtureSystem(a: Asset): ServerSystem {
         { mount: '/', fs: 'ext4', total: 100 * GB, used: 47 * GB, avail: 48 * GB },
         { mount: '/var/lib/postgresql', fs: 'xfs', total: 500 * GB, used: 455 * GB, avail: 45 * GB },
       ],
+      net: [
+        { name: 'eth0', rxBps: 4_775_000, txBps: 14_000_000, speedMbps: 1000 },
+        { name: 'eth1', rxBps: 512_500, txBps: 112_500, speedMbps: 10_000 },
+        { name: 'docker0', rxBps: 0, txBps: 0, speedMbps: 0 },
+      ],
     },
     usageAt: at,
+    warnings: [{ resource: 'disk', level: 'low', mount: '/var/lib/postgresql', percent: 91, left: 45 * GB, total: 500 * GB }],
     network: [
       {
         name: 'eth0', mac: '52:54:00:3a:91:c4', addresses: [
@@ -80,7 +91,9 @@ const QUIET_AFTER = 3 * 60 * 1000
  *
  * Every figure is the agent's, so the card always says how old they are, and
  * fades them once the agent goes quiet rather than present a stale sample as
- * the present. Only a filling disk is coloured: amber from 90%, rose from 95%.
+ * the present. What is running low is decided by the control plane
+ * (resources.go) and arrives as `warnings`: the card names each at the top
+ * and colours its meter, amber when low and rose when critical.
  *
  * Fleet roles only, like what runs on a server; anyone else sees no card.
  */
@@ -138,7 +151,7 @@ export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false }
             </>
           )}
         </Box>
-        <Network ifaces={data.network ?? []} />
+        <Network ifaces={data.network ?? []} net={[]} />
       </Card>
     )
   }
@@ -159,19 +172,48 @@ export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false }
           </Alert>
         </Box>
       )}
+      {data.usage && <LowStrip warnings={data.warnings ?? []} faded={quiet} />}
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing={0} style={{ opacity: quiet ? 0.6 : 1 }}>
         <Facts rows={factRows(os, data.system, now)} />
         <Box className="system-usage">
           {data.usage
-            ? <UsageMeters usage={data.usage} cpus={data.system?.cpus ?? 0}
+            ? <UsageMeters usage={data.usage} cpus={data.system?.cpus ?? 0} warnings={data.warnings}
                 onFree={canFreeSpace ? () => onTab('logs') : undefined} />
             : <Text size={FS.meta} c="dimmed" p="md">Waiting for the agent&apos;s first report of how busy this server is.</Text>}
         </Box>
       </SimpleGrid>
       <Box style={{ opacity: quiet ? 0.6 : 1 }}>
-        <Network ifaces={data.network ?? []} />
+        <Network ifaces={data.network ?? []} net={data.usage?.net ?? []} />
       </Box>
     </Card>
+  )
+}
+
+const RESOURCE_NAME: Record<ResourceWarning['resource'], string> = { memory: 'memory', disk: 'disk', swap: 'swap', cpu: 'processor' }
+
+/**
+ * What is running low, said first: a card full of meters makes the reader
+ * find the coloured one, and a phone shows only the top of it.
+ */
+function LowStrip({ warnings, faded }: { warnings: ResourceWarning[]; faded: boolean }) {
+  if (warnings.length === 0) return null
+  const tone = warnings.some((w) => w.level === 'critical') ? 'rose' : 'amber'
+  const kinds = [...new Set(warnings.map((w) => w.resource))]
+  const title = kinds.length === 1
+    ? `Running low on ${RESOURCE_NAME[kinds[0]!]}`
+    : `Running low on ${warnings.length} resources`
+  return (
+    <Box px="md" pt="md" style={{ opacity: faded ? 0.6 : 1 }}>
+      <Alert color={tone} variant="light" p="xs" title={title} data-testid="system-low" data-tone={tone}>
+        {warnings.length === 1
+          ? <Text size={FS.meta}>{warningText(warnings[0]!)}.</Text>
+          : (
+            <Stack gap={2}>
+              {warnings.map((w) => <Text key={w.resource + (w.mount ?? '')} size={FS.meta}>{warningText(w)}</Text>)}
+            </Stack>
+          )}
+      </Alert>
+    </Box>
   )
 }
 
@@ -231,9 +273,14 @@ function Facts({ rows }: { rows: Row[] }) {
  * behind NAT has a public address no interface holds, and the card must not
  * read as "this server has no public address".
  */
-function Network({ ifaces }: { ifaces: ServerInterface[] }) {
-  if (ifaces.length === 0) return null
+function Network({ ifaces, net }: { ifaces: ServerInterface[]; net: ServerNetRate[] }) {
+  if (ifaces.length === 0 && net.length === 0) return null
   const anyPublic = ifaces.some((i) => i.addresses.some((a) => a.public))
+  const byName = new Map(net.map((n) => [n.name, n]))
+  const named = new Set(ifaces.map((i) => i.name))
+  // Traffic on an interface that holds no address (a bridge member, a
+  // tunnel) still counts; it is listed after the ones that do.
+  const trafficOnly = net.filter((n) => !named.has(n.name))
   return (
     <Stack gap="sm" p="md" style={{ borderTop: '1px solid var(--color-line)' }} data-testid="system-network">
       <Text size={FS.micro} c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.05em' }}>Network</Text>
@@ -253,10 +300,22 @@ function Network({ ifaces }: { ifaces: ServerInterface[] }) {
                 <Text size={FS.micro} c="dimmed" style={{ flexShrink: 0 }}>{a.public ? 'public' : 'private'}</Text>
               </Group>
             ))}
+            {i.name && byName.has(i.name) && <Traffic rate={byName.get(i.name)!} />}
           </Stack>
         </Group>
       ))}
-      {!anyPublic && (
+      {trafficOnly.map((n) => (
+        <Group key={n.name} gap="sm" wrap="nowrap" align="flex-start" data-testid={`iface-${n.name}`}>
+          <Text size={FS.meta} ff="monospace" w={120} style={{ flexShrink: 0, overflowWrap: 'anywhere' }}>{n.name}</Text>
+          <Traffic rate={n} />
+        </Group>
+      ))}
+      {net.length > 0 && (
+        <Text size={FS.micro} c="dimmed" lh={1.5}>
+          Traffic is the average over the agent&apos;s last minute, from each interface&apos;s own counters.
+        </Text>
+      )}
+      {ifaces.length > 0 && !anyPublic && (
         <Text size={FS.micro} c="dimmed" lh={1.5}>
           No interface on this server holds a public address. If it reaches the internet through NAT or a cloud
           provider&apos;s public IP, that address is not on the machine and the agent does not report it.
@@ -266,26 +325,60 @@ function Network({ ifaces }: { ifaces: ServerInterface[] }) {
   )
 }
 
-function UsageMeters({ usage: u, cpus, onFree }: { usage: ServerUsage; cpus: number; onFree?: () => void }) {
+/** One interface's traffic: in, out, and the link it is on. */
+function Traffic({ rate: n }: { rate: ServerNetRate }) {
+  return (
+    <Group gap={4} style={{ columnGap: 12 }} wrap="wrap" data-testid={`traffic-${n.name}`}>
+      <Text size={FS.meta}><Text span inherit c="dimmed">↓ In</Text> <b>{n.rxBps === null ? '—' : bitRate(n.rxBps)}</b></Text>
+      <Text size={FS.meta}><Text span inherit c="dimmed">↑ Out</Text> <b>{n.txBps === null ? '—' : bitRate(n.txBps)}</b></Text>
+      {n.speedMbps > 0 && <Text size={FS.meta} c="dimmed">of {linkSpeed(n.speedMbps)} link</Text>}
+    </Group>
+  )
+}
+
+function UsageMeters({ usage: u, cpus, warnings, onFree }: {
+  usage: ServerUsage
+  cpus: number
+  /** Undefined from a control plane older than warnings; disks then keep their own colours. */
+  warnings?: ResourceWarning[]
+  onFree?: () => void
+}) {
+  const warn = (r: ResourceWarning['resource']) => warnings?.find((w) => w.resource === r)
   const memUsed = u.memTotal - u.memAvailable
-  const loadLine = `Load ${u.load[0].toFixed(2)} now · ${u.load[1].toFixed(2)} over 5 min · ${u.load[2].toFixed(2)} over 15 min${cpus ? `, on ${plural(cpus, 'CPU')}` : ''}`
-  const cpuPct = u.cpuBusy ?? (cpus ? Math.min(100, (u.load[0] / cpus) * 100) : null)
+  const load = u.load
+  const loadLine = load
+    ? `Load ${load[0].toFixed(2)} now · ${load[1].toFixed(2)} over 5 min · ${load[2].toFixed(2)} over 15 min${cpus ? `, on ${plural(cpus, 'CPU')}` : ''}`
+    : `This system keeps no load average, so this is how busy the processor was over the last minute${cpus ? `, on ${plural(cpus, 'CPU')}` : ''}.`
+  const cpuPct = u.cpuBusy ?? (cpus && load ? Math.min(100, (load[0] / cpus) * 100) : null)
+  const cpuTone = warningTone(warn('cpu'))
+  const memTone = warningTone(warn('memory'))
+  const swapTone = warningTone(warn('swap'))
   return (
     <Stack gap="md" p="md">
       {cpuPct !== null && (
         <Meter
           label="Processor"
-          value={u.cpuBusy !== null ? <><b>{Math.round(u.cpuBusy)}%</b> busy</> : <>load <b>{u.load[0].toFixed(2)}</b></>}
+          value={u.cpuBusy !== null
+            ? cpuTone
+              ? <Text span inherit c={`${cpuTone}.6`} fw={600}>{Math.round(u.cpuBusy)}% busy</Text>
+              : <><b>{Math.round(u.cpuBusy)}%</b> busy</>
+            : <>load <b>{load![0].toFixed(2)}</b></>}
           pct={cpuPct}
+          tone={cpuTone}
           sub={loadLine}
+          testId="meter-cpu"
         />
       )}
       {u.memTotal > 0 && (
         <Meter
           label="Memory"
-          value={<><b>{gb(memUsed)}</b> of {bytes(u.memTotal)} used</>}
+          value={memTone
+            ? <><Text span inherit c={`${memTone}.6`} fw={600}>{Math.round((memUsed / u.memTotal) * 100)}% used</Text> · {gb(memUsed)} of {bytes(u.memTotal)}</>
+            : <><b>{gb(memUsed)}</b> of {bytes(u.memTotal)} used</>}
           pct={(memUsed / u.memTotal) * 100}
-          sub={`${bytes(u.memAvailable)} available`}
+          tone={memTone}
+          sub={<Text span inherit c={memTone ? `${memTone}.6` : undefined}>{bytes(u.memAvailable)} available</Text>}
+          testId="meter-memory"
         />
       )}
       {u.swapTotal > 0 && (
@@ -293,12 +386,16 @@ function UsageMeters({ usage: u, cpus, onFree }: { usage: ServerUsage; cpus: num
           label="Swap"
           value={<><b>{gb(u.swapTotal - u.swapFree)}</b> of {bytes(u.swapTotal)} used</>}
           pct={((u.swapTotal - u.swapFree) / u.swapTotal) * 100}
+          tone={swapTone}
+          testId="meter-swap"
         />
       )}
       {u.disks.length > 0 && (
         <Text size={FS.micro} c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.05em' }}>Disks</Text>
       )}
-      {u.disks.map((d) => <DiskMeter key={d.mount} disk={d} onFree={onFree} />)}
+      {u.disks.map((d) => (
+        <DiskMeter key={d.mount} disk={d} onFree={onFree} warnings={warnings} />
+      ))}
     </Stack>
   )
 }
@@ -313,9 +410,16 @@ export function diskTone(pct: number): 'rose' | 'amber' | undefined {
   return pct >= 95 ? 'rose' : pct >= 90 ? 'amber' : undefined
 }
 
-function DiskMeter({ disk: d, onFree }: { disk: ServerDisk; onFree?: () => void }) {
+function DiskMeter({ disk: d, onFree, warnings }: {
+  disk: ServerDisk
+  onFree?: () => void
+  /** The control plane's warnings; undefined from one older than them. */
+  warnings?: ResourceWarning[]
+}) {
   const pct = diskFull(d)
-  const tone = diskTone(pct)
+  const tone = warnings
+    ? warningTone(warnings.find((w) => w.resource === 'disk' && w.mount === d.mount))
+    : diskTone(pct)
   return (
     <Meter
       label={<Mono>{d.mount}</Mono>}
@@ -372,17 +476,21 @@ function gb(n: number): string {
   return v >= 100 ? String(Math.round(v)) : trim(v.toFixed(1))
 }
 
-/** A size with its unit. */
-export function bytes(n: number): string {
-  const v = n / GiB
-  if (v >= 1024) return `${trim((v / 1024).toFixed(1))} TB`
-  if (v >= 1) return `${v >= 100 ? Math.round(v) : trim(v.toFixed(1))} GB`
-  return `${Math.round(n / 1024 ** 2)} MB`
+/** Bytes per second as a network speed: bits, the way links are sold. */
+export function bitRate(bytesPerSec: number): string {
+  const b = bytesPerSec * 8
+  const fmt = (v: number) => (v >= 100 ? String(Math.round(v)) : trim(v.toFixed(1)))
+  if (b >= 1e9) return `${fmt(b / 1e9)} Gbit/s`
+  if (b >= 1e6) return `${fmt(b / 1e6)} Mbit/s`
+  if (b >= 1e3) return `${fmt(b / 1e3)} kbit/s`
+  return `${Math.round(b)} bit/s`
 }
 
-function trim(s: string): string {
-  return s.endsWith('.0') ? s.slice(0, -2) : s
+/** A link speed in megabits as the card writes it: "1 Gbit/s", "866 Mbit/s". */
+export function linkSpeed(mbps: number): string {
+  return mbps >= 1000 ? `${trim((mbps / 1000).toFixed(1))} Gbit/s` : `${mbps} Mbit/s`
 }
+
 
 function plural(n: number, one: string): string {
   return `${n} ${one}${n === 1 ? '' : 's'}`

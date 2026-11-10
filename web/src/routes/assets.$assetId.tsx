@@ -18,8 +18,11 @@ import { UpdatesTab } from '~/components/server/UpdatesTab'
 import { cleanable, diskFilling, LogsTab } from '~/components/server/LogsTab'
 import { DisksTab, growable, stuck } from '~/components/server/DisksTab'
 import { assetDisksQuery } from '~/lib/diskQueries'
+import { LOW_FRESH_MS, warningText } from '~/lib/resourcesLow'
+import { now } from '~/components/primitives'
+import type { Asset } from '~/types/domain'
 import { assetLogsQuery } from '~/lib/logQueries'
-import { bytes } from '~/components/server/SystemCard'
+import { bytes, systemQuery } from '~/components/server/SystemCard'
 import { parseServerTab, type ServerTab } from '~/components/server/tabs'
 import { TABS_BY_TYPE, tabLabel } from '~/components/server/tabsByType'
 import { ASSET_TYPE_LABEL, assetTypeOf } from '~/lib/assetType'
@@ -71,6 +74,13 @@ function AssetDetail() {
   const filling = logs ? diskFilling(logs) : false
   const { data: disks } = useQuery({ ...assetDisksQuery(assetId), enabled: isConfigured() && seesUpdates && asset?.kind !== 'android' })
   const growRoom = disks ? growable(disks) : 0
+  // Same query as the System card, so the header's word and the card's strip
+  // are one answer, fetched once.
+  // Old figures never warn: like the assets list, only a recent report
+  // from an agent that is still healthy counts.
+  const { data: sys } = useQuery({ ...systemQuery(asset ?? ({ id: assetId } as Asset)), enabled: !!asset && seesUpdates })
+  const lowWarnings = sys?.usage && sys.usageAt && asset?.agentState === 'healthy' &&
+    now() - Date.parse(sys.usageAt) <= LOW_FRESH_MS ? (sys.warnings ?? []) : []
   const diskStuck = disks ? stuck(disks) : false
   const [editing, setEditing] = useState(false)
 
@@ -107,7 +117,18 @@ function AssetDetail() {
           { label: asset.hostname.split('.')[0] ?? asset.hostname },
         ]}
         title={asset.hostname}
-        status={<ReachBadge reach={reachOf(asset)} />}
+        status={
+          <Group gap={SP.snug} wrap="nowrap">
+            <ReachBadge reach={reachOf(asset)} />
+            {lowWarnings.length > 0 && (
+              <Badge size="sm" variant="light" radius="sm" tt="none" data-testid="header-low"
+                color={lowWarnings.some((w) => w.level === 'critical') ? 'rose' : 'amber'}
+                title={lowWarnings.map(warningText).join('\n')}>
+                Running low
+              </Badge>
+            )}
+          </Group>
+        }
         description={
           <Group gap={SP.snug} wrap="wrap">
             <Text span size="sm" c="dimmed">

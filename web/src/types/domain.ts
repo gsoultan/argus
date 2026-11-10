@@ -486,7 +486,8 @@ export interface ServerDisk {
 
 /** How busy a server was at usageAt. */
 export interface ServerUsage {
-  load: [number, number, number]
+  /** Null where the system keeps no load average (Windows). */
+  load: [number, number, number] | null
   /** Percent of processor time not idle; null on an agent's first sample. */
   cpuBusy: number | null
   memTotal: number
@@ -494,6 +495,31 @@ export interface ServerUsage {
   swapTotal: number
   swapFree: number
   disks: ServerDisk[]
+  /** Each interface's traffic over the last sample. Missing from an older control plane. */
+  net?: ServerNetRate[]
+}
+
+/** One interface's traffic, averaged over the agent's last sample (about a minute). */
+export interface ServerNetRate {
+  name: string
+  /** Bytes per second; null when the agent had no earlier reading to measure against. */
+  rxBps: number | null
+  txBps: number | null
+  /** The link speed the machine states, 0 when it states none. */
+  speedMbps: number
+}
+
+/** A resource running low, decided by the control plane's one rule. */
+export interface ResourceWarning {
+  resource: 'disk' | 'memory' | 'swap' | 'cpu'
+  level: 'low' | 'critical'
+  /** The disk's mount point or drive; absent for the others. */
+  mount?: string
+  /** How full (disk, swap), how busy (cpu), or for memory how much is left. */
+  percent: number
+  /** Bytes left and in all; 0 for the processor. */
+  left: number
+  total: number
 }
 
 /** A server's System card. */
@@ -504,6 +530,8 @@ export interface ServerSystem {
   system: ServerSystemFacts | null
   usage: ServerUsage | null
   usageAt: ISOTime | null
+  /** Each resource running low in usage. Missing from an older control plane. */
+  warnings?: ResourceWarning[]
   /**
    * The addresses the server's network interfaces hold. An agent older than
    * per-interface reporting gives one entry with no name. Missing from a

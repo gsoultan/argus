@@ -133,7 +133,7 @@ func TestReadUsage(t *testing.T) {
 	if u.CPUBusy != nil {
 		t.Errorf("first sample claims %v%% busy with nothing to compare", *u.CPUBusy)
 	}
-	if u.Load != [3]float64{1.42, 1.30, 1.18} {
+	if u.Load == nil || *u.Load != [3]float64{1.42, 1.30, 1.18} {
 		t.Errorf("load = %v", u.Load)
 	}
 	if u.MemTotal != 1000*1024 || u.MemAvailable != 400*1024 || u.SwapFree != 90*1024 {
@@ -156,6 +156,33 @@ func TestReadUsage(t *testing.T) {
 	u2, _ := readUsage(r2, first)
 	if u2.CPUBusy == nil || *u2.CPUBusy != 75 {
 		t.Errorf("busy = %v, want 75", u2.CPUBusy)
+	}
+}
+
+func TestReadNetDev(t *testing.T) {
+	dev := "Inter-|   Receive                                                |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		"    lo: 9000 10 0 0 0 0 0 0 9000 10 0 0 0 0 0 0\n" +
+		"  eth0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n" +
+		"  eth1: 50 1 0 0 0 0 0 0 60 1 0 0 0 0 0 0\n" +
+		"  wg0: 7 1 0 0 0 0 0 0 8 1 0 0 0 0 0 0\n"
+	r := fixtureRoots(t, map[string]string{
+		"proc/net/dev":                 dev,
+		"sys/class/net/eth0/operstate": "up\n",
+		"sys/class/net/eth0/speed":     "1000\n",
+		"sys/class/net/eth1/operstate": "down\n",
+		"sys/class/net/wg0/operstate":  "unknown\n",
+		"sys/class/net/wg0/speed":      "-1\n",
+	}, nil)
+	got := readNetDev(r)
+	if len(got) != 2 || got[0].name != "eth0" || got[1].name != "wg0" {
+		t.Fatalf("interfaces = %+v, want eth0 and wg0 (lo and the down eth1 left out)", got)
+	}
+	if got[0].rx != 1000 || got[0].tx != 2000 || got[0].speedMbps != 1000 {
+		t.Errorf("eth0 = %+v", got[0])
+	}
+	if got[1].speedMbps != 0 {
+		t.Errorf("wg0 speed = %d, want 0 for a link that states none", got[1].speedMbps)
 	}
 }
 

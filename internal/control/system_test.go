@@ -3,6 +3,7 @@ package control
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -139,12 +140,20 @@ func TestSystemReportIsBounded(t *testing.T) {
 		t.Errorf("system = %+v", sys)
 	}
 	busy := 140.0
-	u := &HostUsage{CPUBusy: &busy, MemTotal: 10, MemAvailable: 20, Load: [3]float64{-1, 2, 3}}
+	nan, huge := math.NaN(), 1e15
+	u := &HostUsage{CPUBusy: &busy, MemTotal: 10, MemAvailable: 20, Load: &[3]float64{-1, 2, 3}}
+	for i := 0; i < maxNetRates+5; i++ {
+		u.Net = append(u.Net, HostNetRate{Name: fmt.Sprint("eth", i), RxBps: &nan, TxBps: &huge, SpeedMbps: 1 << 40})
+	}
+	u.Net[0].Name = ""
 	for i := 0; i < maxSystemDisks+10; i++ {
 		u.Disks = append(u.Disks, HostDisk{Mount: strings.Repeat("/x", 1000), Total: 10, Used: 5, Avail: 5})
 	}
 	b := u.bounded()
-	if b.CPUBusy != nil || b.MemAvailable != 10 || b.Load[0] != 0 || len(b.Disks) != maxSystemDisks ||
+	if len(b.Net) != maxNetRates || b.Net[0].Name != "eth1" || b.Net[0].RxBps != nil || b.Net[0].TxBps != nil || b.Net[0].SpeedMbps != 0 {
+		t.Errorf("net = %+v, want bounded, unnamed dropped, impossible rates and speeds dropped", b.Net[0])
+	}
+	if b.CPUBusy != nil || b.MemAvailable != 10 || b.Load == nil || b.Load[0] != 0 || len(b.Disks) != maxSystemDisks ||
 		len(b.Disks[0].Mount) != maxMountText {
 		t.Errorf("usage = %+v", b)
 	}

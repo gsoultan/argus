@@ -37,10 +37,12 @@ const (
 	AlertBackup   = "backup"
 	// AlertUpdates is the daily digest of what is waiting to be updated.
 	AlertUpdates = "updates"
+	// AlertResources is an asset running low on disk or memory (resources.go).
+	AlertResources = "resources"
 )
 
 // AlertKinds is every kind, in the order Settings lists them.
-var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData, AlertUpdates}
+var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData, AlertUpdates, AlertResources}
 
 // Alert audiences.
 const (

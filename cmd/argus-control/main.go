@@ -611,6 +611,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	go api.RunCloudCosts(ctx, 30*time.Minute)
 	// The bell's daily digest of what is waiting to be updated.
 	go api.RunUpdateDigest(ctx, control.UpdateDigestInterval)
+	go api.RunResourceWatch(ctx, control.ResourceWatchInterval)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process
 	// only ever sees plain HTTP.

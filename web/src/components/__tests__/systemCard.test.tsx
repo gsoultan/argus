@@ -1,6 +1,6 @@
 import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { SystemCardBody, diskFull, diskTone, uptime, utcOffset } from '~/components/server/SystemCard'
+import { SystemCardBody, bitRate, diskFull, diskTone, linkSpeed, uptime, utcOffset } from '~/components/server/SystemCard'
 import { assets } from '~/lib/seed'
 import { renderWithProviders } from '~/test/render'
 import type { Asset, ServerSystem } from '~/types/domain'
@@ -45,6 +45,69 @@ function show(asset: Asset, data: ServerSystem, onTab = vi.fn()) {
 }
 
 describe('SystemCard', () => {
+  it('names what is running low first and colours those meters, by the control plane’s answer', () => {
+    show(linux(), report({
+      usage: { ...report().usage!, cpuBusy: 93, memAvailable: 1.25 * GB },
+      warnings: [
+        { resource: 'memory', level: 'critical', percent: 3, left: 1.25 * GB, total: 32 * GB },
+        { resource: 'disk', level: 'critical', mount: '/backup', percent: 98, left: 2 * GB, total: 100 * GB },
+        { resource: 'cpu', level: 'low', percent: 93, left: 0, total: 0 },
+      ],
+    }))
+    const strip = screen.getByTestId('system-low')
+    expect(strip.getAttribute('data-tone')).toBe('rose')
+    expect(strip.textContent).toContain('Running low on 3 resources')
+    expect(strip.textContent).toContain('Memory: 1.3 GB of 32 GB left (3%)')
+    expect(strip.textContent).toContain('Disk /backup is 98% full, 2 GB left')
+    expect(screen.getByTestId('meter-memory').getAttribute('data-tone')).toBe('rose')
+    expect(screen.getByTestId('meter-cpu').getAttribute('data-tone')).toBe('amber')
+    expect(screen.getByTestId('disk-/backup').getAttribute('data-tone')).toBe('rose')
+    // With the control plane's warnings, a disk it did not warn about is not coloured.
+    expect(screen.getByTestId('disk-/var/lib/postgresql').getAttribute('data-tone')).toBeNull()
+  })
+
+  it('says nothing is low by saying nothing', () => {
+    show(linux(), report({ warnings: [] }))
+    expect(screen.queryByTestId('system-low')).toBeNull()
+    expect(screen.getByTestId('meter-memory').getAttribute('data-tone')).toBeNull()
+  })
+
+  it('shows a Windows machine’s figures without inventing a load average, and traffic per interface', () => {
+    show(linux({ protocol: 'rdp' }), report({
+      os: 'Windows 11 Pro',
+      usage: {
+        load: null, cpuBusy: 22, memTotal: 16 * GB, memAvailable: 6 * GB, swapTotal: 0, swapFree: 0,
+        disks: [{ mount: 'C:', fs: 'ntfs', total: 476 * GB, used: 437 * GB, avail: 39 * GB }],
+        net: [
+          { name: 'Ethernet', rxBps: 300_000, txBps: 38_750, speedMbps: 1000 },
+          { name: 'vEthernet', rxBps: null, txBps: null, speedMbps: 0 },
+        ],
+      },
+      network: [{ name: 'Ethernet', mac: '00:1a:2b:3c:4d:5e', addresses: [{ address: '192.168.1.42', prefix: 24, family: 'ipv4', public: false }] }],
+      warnings: [{ resource: 'disk', level: 'low', mount: 'C:', percent: 92, left: 39 * GB, total: 476 * GB }],
+    }))
+    expect(screen.getByText(/keeps no load average/)).toBeTruthy()
+    expect(screen.queryByText(/Load 0\.00/)).toBeNull()
+    expect(screen.getByTestId('system-low').textContent).toContain('Running low on disk')
+    const eth = screen.getByTestId('traffic-Ethernet').textContent
+    expect(eth).toContain('2.4 Mbit/s')
+    expect(eth).toContain('310 kbit/s')
+    expect(eth).toContain('of 1 Gbit/s link')
+    // Traffic on an interface holding no address is still shown, and an
+    // interface with no earlier reading has no rate rather than zero.
+    expect(screen.getByTestId('traffic-vEthernet').textContent).toContain('—')
+  })
+
+  it('writes traffic in bits, the way links are sold', () => {
+    expect(bitRate(0)).toBe('0 bit/s')
+    expect(bitRate(100)).toBe('800 bit/s')
+    expect(bitRate(125_000)).toBe('1 Mbit/s')
+    expect(bitRate(14_000_000)).toBe('112 Mbit/s')
+    expect(bitRate(1.25e9)).toBe('10 Gbit/s')
+    expect(linkSpeed(866)).toBe('866 Mbit/s')
+    expect(linkSpeed(2500)).toBe('2.5 Gbit/s')
+  })
+
   it('shows what the machine is and how busy it is, colouring only filling disks', () => {
     show(linux(), report())
     expect(screen.getByText('6.8.0-45-generic')).toBeTruthy()
