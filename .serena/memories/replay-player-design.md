@@ -146,6 +146,28 @@ as length-prefixed binary compresses to 9.6 MB); hex does not help. Removing
 it means a binary recording format, which touches the line-based chain, the
 live tap and replay -- left for its own change.
 
-Replay still buffers the decompressed recording up to 256 MB in memory, so a
-desktop recording longer than a few minutes is cut off and then reported as
-failing verification. Compression does not change that bound.
+## Desktop recordings are packed, and replay streams (2026-11)
+
+**Packed** (`internal/recorder/packed.go`): inside the zstd frame, every line
+that is exactly `[t,"s"|"c","<canonical base64>"]` is stored as its time,
+stream and raw bytes; every other line as it is. Unpacking gives back the
+same bytes, so the chain and every verifier are untouched. Only a recording
+whose first 4 MB holds such a line is packed: terminal and database
+recordings stay plain zstd that the stock `zstd` tool reads. On the 5-minute
+1080p synthetic desktop (226 MB plain): Hot 34.1 -> 10.6 MB, Archive
+18.5 -> 8.9 MB, encode 2.5x faster. xz -9 on the packed stream reached
+5.3 MB at 2 MB/s and is not used.
+
+Negotiated like zstd itself: the heartbeat lists `zstd-packed`, and an agent
+ships a packed file as it is only to a control plane that lists it; to one
+that lists only `zstd` it ships it plain. Recordings already stored unpacked
+get packed when the archive pass recompresses them. Presigned bulk exports
+hand out the stored object: read it with `argus-verify --cat`, not `zstd -d`.
+
+**Replay streams.** It used to read the decompressed recording into memory,
+cut off at 256 MB, so a long desktop recording was served short and reported
+as failing verification. `recordingSpool` (`internal/control/recording_spool.go`)
+copies the stored, compressed object to a temp file, verifies by reading
+through it, then serves by reading through it again; the RDP replay decodes
+its frames to a temp file, not a buffer. A 260 MB recording: peak heap during
+replay 614 MB before, 75 MB after (the zstd window, not the recording).

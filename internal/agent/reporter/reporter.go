@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gsoultan/argus/internal/recorder"
 )
 
 // Client posts records to argus-control.
@@ -53,6 +55,10 @@ type Client struct {
 	// control plane would verify the compressed bytes as lines, find they
 	// do not match, and refuse the evidence for good.
 	shipZstd atomic.Bool
+	// shipPacked is whether it also reads a packed one (recorder's
+	// packed.go). Until it has, a packed recording is sent decompressed, for
+	// the same reason.
+	shipPacked atomic.Bool
 
 	// failures counts consecutive delivery failures, and firstFailure is when
 	// the run started. A single warning per report is indistinguishable from
@@ -160,6 +166,17 @@ type HeartbeatReply struct {
 	// shipped recording in. Absent from a control plane older than them,
 	// which is then sent every recording plain.
 	RecordingEncodings []string `json:"recording_encodings"`
+}
+
+// AcceptsPacked reports whether the reply says a packed zstd recording may
+// be shipped as it is.
+func (r HeartbeatReply) AcceptsPacked() bool {
+	for _, e := range r.RecordingEncodings {
+		if e == recorder.EncodingPacked {
+			return true
+		}
+	}
+	return false
 }
 
 // AcceptsZstd reports whether the reply says recordings may be shipped as

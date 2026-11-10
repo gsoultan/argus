@@ -256,14 +256,21 @@ a killed agent still leaves a replayable prefix. When the session ends it is
 compressed with zstd (`<id>.cast.zst`, `<id>.argusrdp.zst`): the compressed
 copy is read back to the same bytes before the plain one is removed, and the
 hash chain covers the recording's lines rather than the file, so it verifies
-to the same chain head (`argus-verify` reads `.zst` and `.gz` files
-directly; `zstd -dc` gives back the exact recording). It ships compressed and
-the control plane stores it compressed; a recording from an older agent that
-arrives plain is compressed by the control plane before it is stored.
+to the same chain head. It ships compressed and the control plane stores it
+compressed; a recording from an older agent that arrives plain is compressed
+by the control plane before it is stored.
 
-Measured: a 1080p desktop session shrinks about 18 times, a terminal session
-about 5 times. gzip, which older agents used on their own copies, managed 4
-and 3.
+A desktop recording is also *packed* inside the zstd: the base64 its screen
+updates are written in is turned back into the bytes it encodes, which
+compress about three times better, and turned back into the same base64 when
+it is read. Read recordings with `argus-verify --cat` (it reads `.zst` and
+`.gz` files, packed or not, and gives back the exact recording). `zstd -dc`
+still gives back a terminal or database recording exactly, but not a packed
+desktop one.
+
+Measured: a 1080p desktop session shrinks about 21 times, a terminal session
+about 5 times. gzip, which older agents used on their own copies, managed 3
+to 4.
 
 Once the control plane holds a verified copy, the server's copy is a second
 copy and is deleted after 7 days. Change how long for the whole fleet in the
@@ -282,8 +289,8 @@ under Settings → Recordings → "Archive recordings older than", or
 the control plane recompresses it at zstd's strongest setting with a 128 MB
 window, verifies the new copy against the session's chain head, stores it
 under `archive/` and only then moves the session to it and deletes the old
-object. A desktop recording comes out about 30 times smaller than it was
-recorded. Each move is an audit entry (`recording.archived`); a stored
+object. A desktop recording comes out about 25 times smaller than it was
+recorded, and one stored before packing is packed as it is archived. Each move is an audit entry (`recording.archived`); a stored
 recording that no longer verifies is never archived and is reported as
 `recording.unarchivable` instead.
 

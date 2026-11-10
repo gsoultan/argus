@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"time"
@@ -83,40 +82,44 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 	}
 	defer obj.Close()
 
-	// Buffered so the chain can be verified before a single byte is served.
-	// Handing over a recording and only then discovering it was altered would
-	// be exactly backwards.
-	// Stored compressed, and archived recordings more so; the chain covers
-	// the lines, so it is checked on what comes out. The bound is on the
-	// recording, not the object, as it always was.
-	plain, err := recorder.Open(obj)
+	// Spooled, as stored, so the chain can be verified before a single byte
+	// is served: handing over a recording and only then discovering it was
+	// altered would be exactly backwards. The spool is the stored object --
+	// compressed, a fraction of the recording -- on disk, and the recording
+	// is read through it twice, once to verify and once to serve. Nothing
+	// the size of the recording is ever held in memory, so a recording of
+	// any length replays whole.
+	spool, err := spoolRecording(obj)
 	if err != nil {
-		a.fail(w, "open recording", err)
+		a.fail(w, "fetch recording", err)
 		return
 	}
-	defer plain.Close()
-	body, err := io.ReadAll(io.LimitReader(plain, 256<<20))
-	if err != nil {
-		a.fail(w, "read recording", err)
-		return
-	}
+	defer spool.Close()
 
 	// A database session's recording is statements, not terminal output, with
 	// its own chain; the file says which it is, and the session agrees.
-	isDB := sess.Protocol == "postgres" || tunnel.IsPGRecording(body[:min(len(body), 16)])
+	isDB := sess.Protocol == "postgres"
+	if !isDB {
+		head, err := spool.Head(16)
+		if err != nil {
+			a.fail(w, "open recording", err)
+			return
+		}
+		isDB = tunnel.IsPGRecording(head)
+	}
 	verdict := "unverified"
 	if sess.ChainHead != nil && *sess.ChainHead != "" {
 		var ok bool
-		var verr error
-		if isDB {
-			var v tunnel.PGVerification
-			v, verr = tunnel.VerifyPGRecording(bytes.NewReader(body), *sess.ChainHead)
+		verr := spool.Read(func(plain io.Reader) error {
+			if isDB {
+				v, err := tunnel.VerifyPGRecording(plain, *sess.ChainHead)
+				ok = v.OK
+				return err
+			}
+			v, err := recorder.Verify(plain, *sess.ChainHead)
 			ok = v.OK
-		} else {
-			var v recorder.Verification
-			v, verr = recorder.Verify(bytes.NewReader(body), *sess.ChainHead)
-			ok = v.OK
-		}
+			return err
+		})
 		switch {
 		case verr != nil:
 			verdict = "error"
@@ -161,7 +164,13 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 	w.Header().Set("X-Argus-Chain-Verified", verdict)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	if err := spool.Read(func(plain io.Reader) error {
+		_, err := io.Copy(w, plain)
+		return err
+	}); err != nil {
+		// The status is sent; all that is left is to say so here.
+		a.log.Warn("serving a recording stopped part way", "session", id, "error", err)
+	}
 }
 
 // presignRecording is available for bulk export, where proxying gigabytes

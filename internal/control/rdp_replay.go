@@ -1,10 +1,11 @@
 package control
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 
 	"github.com/gsoultan/argus/internal/rdp"
 	"github.com/gsoultan/argus/internal/recorder"
@@ -63,24 +64,25 @@ func (a *API) getRDPReplay(w http.ResponseWriter, r *http.Request, actor string)
 	}
 	defer obj.Close()
 
-	// Stored compressed, and archived recordings more so; the chain covers
-	// the lines, so it is checked on what comes out. The bound is on the
-	// recording, not the object, as it always was.
-	plain, err := recorder.Open(obj)
+	// Spooled as stored and read through twice, verified and then decoded;
+	// see spoolRecording. The old way held the whole recording in memory,
+	// cut off at 256 MB, and a desktop session longer than a few minutes
+	// then failed verification for being cut short, not for being altered.
+	spool, err := spoolRecording(obj)
 	if err != nil {
-		a.fail(w, "open recording", err)
+		a.fail(w, "fetch recording", err)
 		return
 	}
-	defer plain.Close()
-	body, err := io.ReadAll(io.LimitReader(plain, 256<<20))
-	if err != nil {
-		a.fail(w, "read recording", err)
-		return
-	}
+	defer spool.Close()
 
 	verdict := "unverified"
 	if sess.ChainHead != nil && *sess.ChainHead != "" {
-		v, verr := recorder.Verify(bytes.NewReader(body), *sess.ChainHead)
+		var v recorder.Verification
+		verr := spool.Read(func(plain io.Reader) error {
+			var err error
+			v, err = recorder.Verify(plain, *sess.ChainHead)
+			return err
+		})
 		switch {
 		case verr != nil:
 			verdict = "error"
@@ -96,11 +98,30 @@ func (a *API) getRDPReplay(w http.ResponseWriter, r *http.Request, actor string)
 		}
 	}
 
-	// Decoded to a buffer rather than streamed, so a decode failure produces an
+	// Decoded to a file rather than streamed, so a decode failure produces an
 	// error rather than a truncated body the browser would render as a session
-	// that simply stopped.
-	var frames bytes.Buffer
-	info, err := rdp.DecodeRecording(bytes.NewReader(body), &frames)
+	// that simply stopped -- and to a file rather than memory, so its length
+	// is not bounded by the control plane's.
+	frames, err := os.CreateTemp("", "argus-replay-frames-*")
+	if err != nil {
+		a.fail(w, "decode recording", err)
+		return
+	}
+	defer os.Remove(frames.Name())
+	defer frames.Close()
+	var info rdp.ReplayInfo
+	if err := spool.Read(func(plain io.Reader) error {
+		var err error
+		info, err = rdp.DecodeRecording(plain, frames)
+		return err
+	}); err != nil {
+		a.fail(w, "decode recording", err)
+		return
+	}
+	size, err := frames.Seek(0, io.SeekCurrent)
+	if err == nil {
+		_, err = frames.Seek(0, io.SeekStart)
+	}
 	if err != nil {
 		a.fail(w, "decode recording", err)
 		return
@@ -118,9 +139,12 @@ func (a *API) getRDPReplay(w http.ResponseWriter, r *http.Request, actor string)
 	// worker can walk without first parsing a prefix of a different shape.
 	w.Header().Set("X-Argus-Replay-Info", string(meta))
 	w.Header().Set("Cache-Control", "private, no-store")
-	_, _ = w.Write(frames.Bytes())
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	if _, err := io.Copy(w, frames); err != nil {
+		a.log.Warn("serving a Remote Desktop replay stopped part way", "session", id, "error", err)
+	}
 
 	a.log.Info("rdp replay served",
 		"session", id, "actor", actor, "verified", verdict,
-		"bytes", frames.Len(), "duration_ms", info.DurationMS)
+		"bytes", size, "duration_ms", info.DurationMS)
 }
