@@ -103,6 +103,8 @@ export interface LiveTerminalProps {
    * simply never followed.
    */
   onCwd?: (path: string) => void
+  /** Leaves out the status row, for the session workspace, which has its own. */
+  bare?: boolean
 }
 
 interface ServerMessage {
@@ -127,6 +129,7 @@ export function LiveTerminal({
   onSession,
   endRef,
   onCwd,
+  bare = false,
 }: LiveTerminalProps) {
   // Read through a ref so a new callback does not reconnect the shell.
   const onCwdRef = useRef(onCwd)
@@ -480,7 +483,7 @@ export function LiveTerminal({
 
   return (
     <Stack gap={0} h="100%">
-      <Group
+      {!bare && <Group
         justify="space-between"
         px="sm"
         py={6}
@@ -500,7 +503,7 @@ export function LiveTerminal({
             recording {sessionId.slice(0, 12)}…
           </Text>
         )}
-      </Group>
+      </Group>}
 
       <Box style={{ flex: 1, minHeight: 0, background: '#05080c', padding: 8 }}>
         <div ref={hostRef} style={{ width: '100%', height: '100%' }} />

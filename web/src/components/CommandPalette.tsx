@@ -7,6 +7,7 @@ import type { IconProps } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 import { assetsQuery, databasesQuery, meQuery, sessionsQuery, usersQuery } from '~/lib/queries'
 import { seesWholeFleet } from '~/lib/roles'
+import { useSessions } from '~/lib/sessions'
 import { FS, SP } from '~/theme'
 import { pagesFor } from '~/components/nav'
 import { isBroker } from '~/lib/engines'
@@ -36,6 +37,7 @@ const PER_GROUP = 5
 
 export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const navigate = useNavigate()
+  const { ask } = useSessions()
   const [q, setQ] = useState('')
   const [cursor, setCursor] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -80,7 +82,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
           go: () =>
             whole
               ? navigate({ to: '/assets/$assetId', params: { assetId: a.id } })
-              : navigate({ to: '/connect', search: { host: a.hostname } }),
+              : ask(a.hostname),
         })
       }
 

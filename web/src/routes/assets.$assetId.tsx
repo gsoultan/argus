@@ -1,14 +1,14 @@
 import { Suspense, lazy, useState } from 'react'
 import { MetricsTab } from '~/components/server/MetricsTab'
+import { ConnectButton } from '~/components/connect/ConnectButton'
 import { Badge, Box, Button, Card, Group, Tabs, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconPencil, IconPlugConnected, IconServer2 } from '@tabler/icons-react'
+import { IconPencil, IconServer2 } from '@tabler/icons-react'
 import { ReachBadge, reachOf } from '~/components/myservers'
 import { ServerList } from '~/components/ServerList'
 import { SplitView } from '~/components/SplitView'
 import { EmptyState, PageBody, PageHeader } from '~/components/page'
-import { ButtonLink } from '~/components/links'
 import { AccessTab } from '~/components/server/AccessTab'
 import { AppsTab } from '~/components/server/AppsTab'
 import { HostKeyChanged } from '~/components/server/hostKey'
@@ -152,15 +152,7 @@ function AssetDetail() {
                 Edit
               </Button>
             )}
-            <ButtonLink
-              size="sm"
-              to="/connect"
-              search={{ host: asset.hostname }}
-              leftSection={<IconPlugConnected size={18} />}
-              disabled={asset.principals.length === 0}
-            >
-              Connect
-            </ButtonLink>
+            <ConnectButton asset={asset} />
           </>
         }
         tabs={

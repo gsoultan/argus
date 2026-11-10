@@ -1,0 +1,102 @@
+/* The Connect panel and the session workspace. See plans/connect-experience. */
+
+/* ---------- Connect panel ---------- */
+.argus-ways-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 36em) { .argus-ways-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.argus-way-tile {
+  position: relative; display: block; padding: 11px 12px; border: 1px solid var(--color-line);
+  border-radius: 10px; background: var(--color-surface); text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+.argus-way-tile:hover { border-color: var(--color-brand-edge); }
+.argus-way-tile[data-on] { border-color: var(--color-brand); background: var(--color-brand-wash); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand) 15%, transparent); }
+.argus-way-tile:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.argus-way-key { position: absolute; top: 8px; right: 10px; }
+.argus-acct {
+  display: inline-flex; align-items: center; padding: 6px 12px; border: 1px solid var(--color-line);
+  border-radius: 8px; background: var(--color-surface); font-size: 13px;
+}
+.argus-acct[data-mono] { font-family: var(--mantine-font-family-monospace); font-size: 12.5px; }
+.argus-acct:hover { border-color: var(--color-brand-edge); }
+.argus-acct[data-on] { border-color: var(--color-brand); background: var(--color-brand-wash); color: var(--color-brand); font-weight: 600; }
+.argus-acct:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.argus-what { display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; border-radius: 10px; background: var(--color-raised); }
+
+/* ---------- Session workspace ----------
+   Fixed over the whole console while a session is in front. Always dark:
+   it frames the server's own screen, like the terminal and the replay. */
+.argus-workspace {
+  position: fixed; inset: 0; z-index: 300; display: flex; flex-direction: column;
+  background: #151d2e; color: #e2e8f0;
+}
+.argus-workspace[hidden] { display: none; }
+.argus-ws-bar { flex: 0 0 46px; display: flex; align-items: stretch; gap: 4px; padding: 0 10px; background: #0b1220; border-bottom: 1px solid #1e293b; min-width: 0; }
+.argus-ws-back { display: flex; align-items: center; gap: 6px; padding: 0 12px 0 4px; margin-right: 4px; color: #cbd5e1; font-size: 13px; font-weight: 600; border-right: 1px solid #1e293b; }
+.argus-ws-back:hover { color: #fff; }
+.argus-ws-tabs { display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; flex: 1; }
+.argus-ws-tabs > .mantine-ActionIcon-root { align-self: center; color: #94a3b8; }
+.argus-ws-tab { display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 6px 0 2px; border-radius: 8px 8px 0 0; color: #94a3b8; flex-shrink: 0; }
+.argus-ws-tab[data-on] { background: #151d2e; color: #f1f5f9; }
+.argus-ws-tab .mantine-ActionIcon-root { color: #64748b; }
+.argus-ws-tabmain { display: flex; align-items: center; gap: 7px; height: 100%; padding: 0 8px; font-size: 12.5px; color: inherit; max-width: 260px; white-space: nowrap; }
+.argus-ws-tabmain b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.argus-ws-tabway { color: #94a3b8; }
+.argus-ws-acct { font-family: var(--mantine-font-family-monospace); font-size: 11px; color: #64748b; }
+.argus-ws-dot { width: 7px; height: 7px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
+.argus-ws-dot[data-state='live'] { background: #f04438; box-shadow: 0 0 0 3px #f0443833; }
+.argus-ws-dot[data-state='connecting'], .argus-ws-dot[data-state='reconnecting'] { background: #fdb022; }
+.argus-ws-dot[data-state='lost'], .argus-ws-dot[data-state='error'] { background: #f97066; }
+.argus-ws-rec { align-items: center; color: #fca5a5; padding-left: 10px; }
+.argus-ws-recdot { width: 7px; height: 7px; border-radius: 50%; background: #f04438; }
+.argus-ws-stage { flex: 1; min-height: 0; position: relative; }
+.argus-ws-pane { position: absolute; inset: 0; }
+.argus-ws-pane[hidden] { display: none; }
+.argus-ws-session { height: 100%; display: flex; flex-direction: column; }
+.argus-ws-body { flex: 1; min-height: 0; position: relative; }
+.argus-ws-session:not([data-desktop]) .argus-ws-body { background: var(--color-surface); color: var(--color-ink); }
+.argus-ws-over { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: #0f172acc; z-index: 4; color: var(--color-ink); }
+
+/* Terminal strip and status line */
+.argus-ws-strip { flex: 0 0 40px; display: flex; align-items: center; gap: 4px; padding: 0 12px; background: #111827; border-bottom: 1px solid #1e293b; }
+.argus-ws-view { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 0; border-radius: 7px; background: none; color: #cbd5e1; font: inherit; font-size: 12.5px; cursor: pointer; }
+.argus-ws-view:hover { color: #fff; }
+.argus-ws-view[aria-selected='true'] { background: #1e293b; color: #fff; }
+.argus-ws-status { flex: 0 0 28px; display: flex; align-items: center; gap: 16px; padding: 0 14px; background: #0b1220; border-top: 1px solid #1e293b; color: #94a3b8; font-size: 11.5px; white-space: nowrap; overflow: hidden; }
+.argus-ws-status [data-state='live'] { color: #34d399; }
+.argus-ws-status [data-state='connecting'], .argus-ws-status [data-state='reconnecting'] { color: #fbbf24; }
+.argus-ws-status [data-state='lost'], .argus-ws-status [data-state='error'] { color: #f87171; }
+.argus-ws-status-r { margin-left: auto; }
+@media (max-width: 36em) { .argus-ws-hide-phone { display: none; } }
+
+/* Desktop and the floating toolbar */
+.argus-ws-desktop { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 0; }
+.argus-ws-desktop > .mantine-Stack-root { flex: 1; min-height: 0; }
+.argus-ws-toolbar {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 2px; padding: 5px; max-width: calc(100% - 24px);
+  background: #0f172aee; border: 1px solid #334155; border-radius: 12px; box-shadow: 0 10px 30px #0008;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+.argus-ws-toolbar[data-hidden] { transform: translate(-50%, -140%); opacity: 0; }
+.argus-ws-tb { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 8px; color: #e2e8f0; font-size: 12.5px; white-space: nowrap; }
+.argus-ws-tb:hover:not(:disabled) { background: #1e293b; }
+.argus-ws-tb:disabled { opacity: .5; }
+.argus-ws-end { background: #d92d20; color: #fff; font-weight: 600; }
+.argus-ws-end:hover:not(:disabled) { background: #b42318; }
+.argus-ws-ro { color: #fbbf24; }
+.argus-ws-sep { width: 1px; height: 22px; background: #334155; margin: 0 4px; }
+.argus-ws-signal { display: inline-flex; align-items: flex-end; gap: 2px; padding: 7px 10px; font-size: 12px; color: #a7f3d0; white-space: nowrap; }
+.argus-ws-signal i { width: 3px; border-radius: 1px; background: #475569; }
+.argus-ws-signal i:nth-child(1) { height: 4px; } .argus-ws-signal i:nth-child(2) { height: 7px; }
+.argus-ws-signal i:nth-child(3) { height: 10px; } .argus-ws-signal i:nth-child(4) { height: 12px; margin-right: 6px; }
+.argus-ws-signal[data-q='good'] i { background: #34d399; }
+.argus-ws-signal[data-q='fair'] { color: #fde68a; }
+.argus-ws-signal[data-q='fair'] i:nth-child(-n+3) { background: #fbbf24; }
+.argus-ws-signal[data-q='poor'] { color: #fecaca; }
+.argus-ws-signal[data-q='poor'] i:nth-child(-n+2) { background: #f87171; }
+@media (max-width: 36em) {
+  .argus-ws-back span { display: none; }
+  .argus-ws-tabway, .argus-ws-acct { display: none; }
+  .argus-ws-toolbar { top: auto; bottom: 10px; }
+  .argus-ws-toolbar[data-hidden] { transform: translate(-50%, 140%); }
+}

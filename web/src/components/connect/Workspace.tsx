@@ -1,0 +1,438 @@
+import '../ssh/ssh.css'
+import './connect.css'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
+import { ActionIcon, Box, Button, Center, Group, Loader, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
+import { useQuery } from '@tanstack/react-query'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
+import {
+  IconArrowLeft, IconCircleCheck, IconDeviceDesktop, IconDeviceMobile, IconEye, IconFolders, IconKeyboard,
+  IconLayoutColumns, IconMaximize, IconMinimize, IconPin, IconPinFilled, IconPlugConnectedX, IconPlus,
+  IconTerminal2, IconX,
+} from '@tabler/icons-react'
+import type { FilesState } from '~/components/FileBrowser'
+import type { TerminalState } from '~/components/LiveTerminal'
+import type { RDPControls, RDPStats } from '~/components/RDPScreen'
+import { StateCard } from '~/components/connect/ConnectPanel'
+import { assetsQuery, meQuery } from '~/lib/queries'
+import { desktopEndpoint, filesEndpoint, terminalEndpoint } from '~/lib/live'
+import { seesWholeFleet } from '~/lib/roles'
+import { useSessions, type OpenSession, type SessionView } from '~/lib/sessions'
+import { FS } from '~/theme'
+
+const LiveTerminal = lazy(() => import('~/components/LiveTerminal').then((m) => ({ default: m.LiveTerminal })))
+const RDPScreen = lazy(() => import('~/components/RDPScreen').then((m) => ({ default: m.RDPScreen })))
+const FileBrowser = lazy(() => import('~/components/FileBrowser').then((m) => ({ default: m.FileBrowser })))
+
+/** One state for a whole session, whichever view reported it. */
+export type PaneState = TerminalState
+
+const WAY_ICON = {
+  terminal: IconTerminal2, files: IconFolders, split: IconLayoutColumns,
+  desktop: IconDeviceDesktop, screen: IconEye, device: IconDeviceMobile,
+} as const
+
+const WAY_LABEL = {
+  terminal: 'Terminal', files: 'Files', split: 'Terminal', desktop: 'Desktop', screen: 'Screen', device: 'Device',
+} as const
+
+/**
+ * Every open session, as tabs, over the whole window.
+ *
+ * Mounted by the shell for as long as any session is open, and shown only on
+ * /connect: on any other page it is still there, hidden, so a desktop keeps
+ * its connection and a terminal its shell while you look something up. The
+ * console's own header and page chrome give way to a slim tab bar while it is
+ * in front, so the remote screen gets the window.
+ */
+export function Workspace() {
+  const { sessions, activeId, focus, close, ask } = useSessions()
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const navigate = useNavigate()
+  const [states, setStates] = useState<Record<string, PaneState>>({})
+  const ends = useRef(new Map<string, () => void>())
+  const rootRef = useRef<HTMLDivElement>(null)
+  const shown = pathname === '/connect' && sessions.length > 0
+
+  const report = useCallback((id: string, s: PaneState) => {
+    setStates((m) => (m[id] === s ? m : { ...m, [id]: s }))
+  }, [])
+
+  // The console's page scroll would otherwise sit under the workspace.
+  useEffect(() => {
+    if (!shown) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [shown])
+
+  const endTab = (s: OpenSession) => {
+    const st = states[s.id]
+    const running = st === 'live' || st === 'reconnecting'
+    if (running && !window.confirm(
+      `End the session on ${short(s.target)}? Anything still running in it is stopped. To keep it running, switch to another tab or page instead.`,
+    )) return
+    ends.current.get(s.id)?.()
+    ends.current.delete(s.id)
+    close(s.id)
+  }
+
+  if (sessions.length === 0) return null
+  return (
+    <div ref={rootRef} className="argus-workspace" hidden={!shown} data-testid="session-workspace">
+      <div className="argus-ws-bar" role="tablist" aria-label="Open sessions">
+        <UnstyledButton className="argus-ws-back" onClick={() => void navigate({ to: '/assets' })}
+          aria-label="Back to assets, sessions keep running">
+          <IconArrowLeft size={15} />
+          <span>Assets</span>
+        </UnstyledButton>
+        <div className="argus-ws-tabs">
+          {sessions.map((s) => {
+            const st = states[s.id] ?? 'connecting'
+            const Icon = WAY_ICON[s.way]
+            return (
+              <div key={s.id} className="argus-ws-tab" data-on={s.id === activeId || undefined}>
+                <UnstyledButton role="tab" aria-selected={s.id === activeId} className="argus-ws-tabmain"
+                  onClick={() => focus(s.id)} title={`${s.principal} on ${s.target}`}>
+                  <span className="argus-ws-dot" data-state={st} />
+                  <Icon size={14} />
+                  <b>{short(s.target)}</b>
+                  <span className="argus-ws-tabway">{WAY_LABEL[s.way]}</span>
+                  {s.protocol === 'ssh' && <span className="argus-ws-acct">{s.principal}</span>}
+                </UnstyledButton>
+                <ActionIcon variant="subtle" color="gray" size="sm" aria-label={`End session on ${short(s.target)}`}
+                  onClick={() => endTab(s)}>
+                  <IconX size={13} />
+                </ActionIcon>
+              </div>
+            )
+          })}
+          <Tooltip label="Connect to another">
+            <ActionIcon variant="subtle" color="gray" aria-label="New connection" onClick={() => ask()}>
+              <IconPlus size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </div>
+        <Group gap={6} wrap="nowrap" className="argus-ws-rec" visibleFrom="xs">
+          <span className="argus-ws-recdot" />
+          <Text size={FS.meta}>Recording</Text>
+        </Group>
+      </div>
+      <div className="argus-ws-stage">
+        {sessions.map((s) => (
+          <div key={s.id} className="argus-ws-pane" hidden={s.id !== activeId}>
+            <SessionPane session={s} active={shown && s.id === activeId} rootRef={rootRef}
+              onState={(st) => report(s.id, st)}
+              registerEnd={(fn) => {
+                if (fn) ends.current.set(s.id, fn)
+                else ends.current.delete(s.id)
+              }}
+              onClose={() => endTab(s)} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function short(host: string) {
+  return host.split('.')[0] ?? host
+}
+
+/** One session: its views, and what to do when it ends or drops. */
+function SessionPane({ session, active, rootRef, onState, registerEnd, onClose }: {
+  session: OpenSession
+  active: boolean
+  rootRef: React.RefObject<HTMLDivElement | null>
+  onState: (s: PaneState) => void
+  registerEnd: (fn: (() => void) | null) => void
+  onClose: () => void
+}) {
+  const { ticketFor, takePassword, reopen } = useSessions()
+  const { data: assets } = useQuery(assetsQuery({}))
+  const { data: me } = useQuery(meQuery())
+  const asset = assets?.find((a) => a.hostname === session.target)
+  const phone = useMediaQuery('(max-width: 36em)') ?? false
+  const first: SessionView = session.way === 'files' ? 'files' : session.way === 'split' && !phone ? 'split' : 'terminal'
+  const [view, setView] = useState<SessionView>(first)
+  const [opened, setOpened] = useState<Set<'terminal' | 'files'>>(
+    () => new Set(first === 'split' ? ['terminal', 'files'] : [first === 'files' ? 'files' : 'terminal']),
+  )
+  const [cwd, setCwd] = useState<string | null>(null)
+  const [termState, setTermState] = useState<TerminalState>('connecting')
+  const [termDetail, setTermDetail] = useState<string>()
+  const [filesState, setFilesState] = useState<FilesState>('connecting')
+  const [filesDetail, setFilesDetail] = useState<string>()
+  const [reopenError, setReopenError] = useState<string>()
+  const [reopening, setReopening] = useState(false)
+  const endTerminal = useRef<(() => void) | null>(null)
+
+  const desktop = session.protocol === 'rdp'
+  const filesFront = !desktop && view === 'files'
+  const state: PaneState = filesFront ? filesState : termState
+  const detail = filesFront ? filesDetail : termDetail
+
+  useEffect(() => onState(state), [state, onState])
+  useEffect(() => {
+    registerEnd(() => endTerminal.current?.())
+    return () => registerEnd(null)
+  }, [registerEnd])
+
+  const getTicket = useCallback(() => ticketFor(session.id), [ticketFor, session.id])
+
+  const show = (v: SessionView) => {
+    setView(v)
+    setOpened((o) => {
+      const next = new Set(o)
+      if (v !== 'files') next.add('terminal')
+      if (v !== 'terminal') next.add('files')
+      return next.size === o.size ? o : next
+    })
+  }
+
+  const again = async () => {
+    setReopening(true)
+    setReopenError(undefined)
+    const res = await reopen(session.id)
+    setReopening(false)
+    if (res.error) {
+      setReopenError(res.error)
+      return
+    }
+    setTermState('connecting')
+    setFilesState('connecting')
+  }
+
+  const ended = state === 'closed' || state === 'lost' || state === 'error'
+  const whole = seesWholeFleet(me?.role)
+
+  return (
+    <Box className="argus-ws-session" data-desktop={desktop || undefined}>
+      {!desktop && (
+        <TerminalStrip view={view} show={show} phone={phone} onEnd={onClose} />
+      )}
+      <Box className="argus-ws-body" key={session.attempt}>
+        <Suspense fallback={<Loading />}>
+          {desktop ? (
+            <DesktopView session={session} active={active} rootRef={rootRef}
+              getTicket={getTicket} takePassword={() => takePassword(session.id)}
+              onEnd={onClose}
+              onState={(s, d) => {
+                setTermState(s === 'live' ? 'live' : s === 'error' ? 'error' : s === 'connecting' ? 'connecting' : 'closed')
+                setTermDetail(d)
+              }} />
+          ) : (
+            <div className={view === 'split' ? 'argus-session-split' : 'argus-session-pane'}>
+              {opened.has('terminal') && (
+                <div className="argus-session-pane" hidden={view === 'files'}>
+                  <LiveTerminal bare endRef={endTerminal} endpoint={terminalEndpoint()} getTicket={getTicket}
+                    target={session.target} principal={session.principal} onCwd={setCwd}
+                    onStateChange={(s, d) => {
+                      setTermState(s)
+                      setTermDetail(d)
+                    }} />
+                </div>
+              )}
+              {opened.has('files') && (
+                <div className="argus-session-pane" hidden={view === 'terminal'}>
+                  <FileBrowser endpoint={filesEndpoint()} getTicket={getTicket} target={session.target}
+                    principal={session.principal} compact={view === 'split'} follow={view === 'split' ? cwd : null}
+                    onStateChange={(s, d) => {
+                      setFilesState(s)
+                      setFilesDetail(d)
+                    }} />
+                </div>
+              )}
+            </div>
+          )}
+        </Suspense>
+        {ended && (
+          <div className="argus-ws-over">
+            {state === 'closed' ? (
+              <StateCard icon={<IconCircleCheck size={26} />} tone="teal" title="Session ended"
+                body={`It was recorded. You can find it under ${whole ? 'Activity' : 'My activity'}.`}>
+                <Button loading={reopening} onClick={() => void again()}>Connect again</Button>
+                <Button variant="default" onClick={onClose}>Close tab</Button>
+              </StateCard>
+            ) : (
+              <StateCard icon={state === 'lost' ? <IconPlugConnectedX size={26} /> : <IconX size={26} />}
+                tone={state === 'lost' ? 'amber' : 'rose'}
+                title={state === 'lost' ? 'Connection lost' : 'It could not open'}
+                body={reopenError ?? `${detail ?? (state === 'lost' ? 'The connection to the server dropped.' : 'The session did not start.')}${state === 'lost' ? ' What ran until then was recorded.' : ''}`}>
+                <Button loading={reopening} onClick={() => void again()}>Connect again</Button>
+                <Button variant="default" onClick={onClose}>Close tab</Button>
+              </StateCard>
+            )}
+          </div>
+        )}
+      </Box>
+      {!desktop && (
+        <div className="argus-ws-status">
+          <span data-state={state}>{STATE_WORD[state]}{state !== 'live' && detail ? ` · ${detail}` : ''}</span>
+          <span>{session.principal}@{short(session.target)}</span>
+          {asset?.os && <span className="argus-ws-hide-phone">{asset.os}</span>}
+          <span className="argus-ws-status-r"><Since at={session.openedAt} /></span>
+        </div>
+      )}
+    </Box>
+  )
+}
+
+const STATE_WORD: Record<PaneState, string> = {
+  connecting: 'Connecting', live: 'Live · recorded', reconnecting: 'Reconnecting', lost: 'Connection lost',
+  closed: 'Ended', error: 'Failed',
+}
+
+function Since({ at }: { at: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(t)
+  }, [])
+  const m = Math.max(0, Math.floor((now - at) / 60_000))
+  return <>{m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`}</>
+}
+
+function TerminalStrip({ view, show, phone, onEnd }: {
+  view: SessionView
+  show: (v: SessionView) => void
+  phone: boolean
+  onEnd: () => void
+}) {
+  const tab = (v: SessionView, label: string, Icon: typeof IconTerminal2) => (
+    <button type="button" role="tab" className="argus-ws-view" aria-selected={view === v} onClick={() => show(v)}>
+      <Icon size={15} />{label}
+    </button>
+  )
+  return (
+    <div className="argus-ws-strip" role="tablist" aria-label="Session view">
+      {tab('terminal', 'Terminal', IconTerminal2)}
+      {tab('files', 'Files', IconFolders)}
+      {!phone && tab('split', 'Both', IconLayoutColumns)}
+      <Button size="compact-sm" color="rose" ml="auto" leftSection={<IconX size={13} />} onClick={onEnd}>End</Button>
+    </div>
+  )
+}
+
+/** A desktop, a shared screen or a device, with the floating toolbar. */
+function DesktopView({ session, active, rootRef, getTicket, takePassword, onState, onEnd }: {
+  session: OpenSession
+  active: boolean
+  rootRef: React.RefObject<HTMLDivElement | null>
+  getTicket: () => Promise<string | null>
+  takePassword: () => string
+  onState: (s: 'connecting' | 'live' | 'closed' | 'error', d?: string) => void
+  onEnd: () => void
+}) {
+  const device = session.way === 'device'
+  const readOnly = device && session.principal === 'view'
+  const controls = useRef<RDPControls | null>(null)
+  const [stats, setStats] = useState<RDPStats | null>(null)
+  const [live, setLive] = useState(false)
+  const [full, setFull] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const [visible, setVisible] = useState(true)
+  const hideTimer = useRef<number | undefined>(undefined)
+
+  // The toolbar steps out of the way after a few seconds and comes back when
+  // the pointer goes near the top, as in a desktop remote-control app.
+  const wake = useCallback(() => {
+    setVisible(true)
+    window.clearTimeout(hideTimer.current)
+    hideTimer.current = window.setTimeout(() => setVisible(false), 3000)
+  }, [])
+  useEffect(() => {
+    wake()
+    return () => window.clearTimeout(hideTimer.current)
+  }, [wake])
+
+  useEffect(() => {
+    const onFs = () => setFull(document.fullscreenElement === rootRef.current && !!rootRef.current)
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [rootRef])
+
+  const toggleFull = () => {
+    if (document.fullscreenElement) void document.exitFullscreen()
+    else void rootRef.current?.requestFullscreen?.().catch(() => undefined)
+    controls.current?.focus()
+  }
+
+  const rtt = stats?.rttMs
+  const quality = rtt === undefined ? 'unknown' : rtt > 300 ? 'poor' : rtt > 150 ? 'fair' : 'good'
+
+  return (
+    <Box className="argus-ws-desktop"
+      onMouseMove={(e) => {
+        const top = (e.currentTarget as HTMLElement).getBoundingClientRect().top
+        if (e.clientY - top < 72) wake()
+      }}>
+      <div className="argus-ws-toolbar" data-hidden={(!visible && !pinned && live) || undefined}
+        role="toolbar" aria-label="Session controls" onMouseEnter={wake}>
+        <Tooltip label={stats ? `${stats.fps} fps · ${stats.mbit.toFixed(1)} Mbit/s · ${stats.video ? 'H.264' : 'exact pixels'}` : 'Measuring'}>
+          <span className="argus-ws-signal" data-q={quality} data-testid="desktop-signal">
+            <i /><i /><i /><i />
+            {rtt !== undefined ? `${rtt} ms` : live ? 'Live' : 'Connecting'}
+          </span>
+        </Tooltip>
+        <span className="argus-ws-sep" />
+        {!readOnly && !device && (
+          <UnstyledButton className="argus-ws-tb" disabled={!live} onClick={() => controls.current?.ctrlAltDel()}>
+            <IconKeyboard size={15} />Ctrl+Alt+Del
+          </UnstyledButton>
+        )}
+        {readOnly && <span className="argus-ws-tb argus-ws-ro">Watch only</span>}
+        <UnstyledButton className="argus-ws-tb" onClick={toggleFull}>
+          {full ? <IconMinimize size={15} /> : <IconMaximize size={15} />}{full ? 'Exit full screen' : 'Full screen'}
+        </UnstyledButton>
+        <UnstyledButton className="argus-ws-tb argus-ws-end" onClick={onEnd}>
+          <IconX size={14} />End
+        </UnstyledButton>
+        <Tooltip label={pinned ? 'Let it hide' : 'Keep it showing'}>
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label={pinned ? 'Unpin toolbar' : 'Pin toolbar'}
+            aria-pressed={pinned} onClick={() => setPinned((p) => !p)}>
+            {pinned ? <IconPinFilled size={14} /> : <IconPin size={14} />}
+          </ActionIcon>
+        </Tooltip>
+      </div>
+      <RDPScreen
+        bare
+        endpoint={desktopEndpoint()}
+        target={session.target}
+        principal={session.principal}
+        device={device}
+        readOnly={readOnly}
+        getTicket={getTicket}
+        takePassword={takePassword}
+        controls={controls}
+        onStats={setStats}
+        onStateChange={(s, d) => {
+          setLive(s === 'live')
+          onState(s, d)
+        }}
+      />
+      {/* Only the tab in front takes the keyboard. */}
+      {active && <FocusOnShow controls={controls} />}
+    </Box>
+  )
+}
+
+function FocusOnShow({ controls }: { controls: React.RefObject<RDPControls | null> }) {
+  useEffect(() => {
+    controls.current?.focus()
+  }, [controls])
+  return null
+}
+
+function Loading() {
+  return (
+    <Center h="100%" mih={220}>
+      <Stack align="center" gap="xs">
+        <Loader size="sm" color="azure" />
+        <Text size={FS.meta} c="dimmed">Loading…</Text>
+      </Stack>
+    </Center>
+  )
+}
