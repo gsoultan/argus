@@ -139,12 +139,16 @@ type AgentEnrollmentToken struct {
 	ExpiresAt  time.Time
 	UsedAt     *time.Time
 	UsedByHost *string
+	// ControlHost marks a token argus-control minted for the helper on its
+	// own server (migration 076).
+	ControlHost bool
 }
 
 func (m *AgentEnrollmentToken) Schema(t *storm.Table) {
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.Hostname).Default("''::text")
 	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.ControlHost).Default("false")
 	t.UniqueNamed("agent_enrollment_tokens_token_hash_key", &m.TokenHash)
 }
 
@@ -177,10 +181,13 @@ type AgentCredential struct {
 
 	// FirstConnectedAt is when the agent first opened its tunnel.
 	FirstConnectedAt *time.Time
+	// ControlHost is the helper on argus-control's own server (migration 076).
+	ControlHost bool
 }
 
 func (m *AgentCredential) Schema(t *storm.Table) {
 	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.ControlHost).Default("false")
 	t.Col(&m.Token).ConstraintName("agent_credentials_token_id_fkey")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.UniqueNamed("agent_credentials_secret_hash_key", &m.SecretHash)
@@ -242,6 +249,8 @@ type Asset struct {
 	// ConnectAsk is nil to follow the type's connect rule, or never, ask or
 	// tell (migration 066).
 	ConnectAsk *string
+	// ControlHost marks the server argus-control runs on (migration 076).
+	ControlHost bool
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -280,6 +289,7 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.CheckNamed("assets_control_mode_check",
 		"control_mode = ANY (ARRAY['attended'::text, 'unattended'::text])")
 	t.Col(&m.ControlNeedsApproval).Default("false")
+	t.Col(&m.ControlHost).Default("false")
 	t.CheckNamed("assets_connect_ask_check",
 		"(connect_ask IS NULL) OR (connect_ask = ANY (ARRAY['never'::text, 'ask'::text, 'tell'::text]))")
 }

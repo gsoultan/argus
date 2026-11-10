@@ -1,0 +1,111 @@
+[Unit]
+Description=Argus control plane: the helper on its own server
+Documentation=https://github.com/gsoultan/argus/blob/main/docs/install.md#the-control-servers-own-helper
+After=network.target argus-control.service
+
+# The agent, shipped in the argus-control package as argus-control-host, so
+# the console can clean this server's logs, update its packages, grow its
+# disks and open a terminal on it without anyone installing an agent here.
+# argus-control leaves it a single-use token in
+# /var/lib/argus-control/host/enroll.json (argus-control-host-enroll.path
+# starts this unit when it does), and ExecStartPre exchanges it once.
+#
+# It never hooks sshd: plain SSH to the control server is how anyone gets
+# back in when Argus itself is what is broken. See
+# internal/control/control_host.go.
+#
+# Where the argus-agent package is installed, it looks after this server
+# itself, with the same state directory and so the same enrollment, and this
+# stands down.
+ConditionPathExists=!/lib/systemd/system/argus-agent.service
+ConditionPathExists=!/usr/lib/systemd/system/argus-agent.service
+# Enrolled already, or asked to enroll; otherwise there is nothing to do yet.
+ConditionPathExists=|/var/lib/argus/enrollment.json
+ConditionPathExists=|/var/lib/argus-control/host/enroll.json
+
+[Service]
+Type=exec
+ExecStartPre=/usr/bin/argus-control-host enroll-local \
+    --request /var/lib/argus-control/host/enroll.json \
+    --state /var/lib/argus
+ExecStart=/usr/bin/argus-control-host daemon \
+    --shim /usr/bin/argus-control-host \
+    --socket /run/argus/collector.sock \
+    --recordings /var/lib/argus/recordings \
+    --state /var/lib/argus
+Restart=always
+# A refused enrollment tries again every half minute rather than every two
+# seconds; argus-control writes a fresh token within five minutes.
+RestartSec=30s
+
+# Longer than the collector's own drain (30s) plus its seal grace (10s), so
+# systemd never SIGKILLs it part-way through shutting down.
+#
+# The agent seals recordings on exit. A SIGKILL here leaves every recording
+# that was still open with no chain head, unverifiable -- and on a fleet an
+# upgrade would do that to every host with someone logged in.
+TimeoutStopSec=75s
+
+EnvironmentFile=-/etc/argus/agent.env
+
+# ── Runs as root, deliberately ───────────────────────────────────────────────
+# The shim runs as whoever connected. If the daemon were not root, the recorded
+# user could read or edit the record of their own session and the whole thing
+# would be theatre. Root ownership of the recording is the security argument for
+# splitting the agent in two.
+#
+# So instead of dropping privilege, it drops everything root does not need.
+User=root
+Group=root
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+# NOT ProtectHome=yes: the posture scan reads /home/*/.ssh/authorized_keys to
+# find standing credentials that could bypass Argus. Read-only is exactly
+# the access it needs and no more.
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=no
+
+# Reporting to the control plane, plus the local unix socket the shim uses.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Reading another user's authorized_keys needs DAC_READ_SEARCH. Loading the
+# exec probe (kernel-observed commands) needs BPF and PERFMON, on kernels 5.8
+# and later; an older kernel refuses it and the agent records at PTY fidelity
+# and says so. Nothing else is retained.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON
+
+# bpf and perf_event_open are outside @system-service, and the probe needs both:
+# without them the kernel killed the agent at its first bpf() call, before it
+# ever reported. A syscall the filter still refuses fails with EPERM instead of
+# killing the process -- a dead agent is not a safer agent, it is one that makes
+# sshd refuse every login on the host.
+SystemCallFilter=@system-service bpf perf_event_open
+SystemCallFilter=~@swap @reboot @obsolete
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+RuntimeDirectory=argus
+RuntimeDirectoryMode=0755
+# Kept across a restart: an update leaves a marker here that tells SSH logins
+# arriving mid-restart to wait for the new agent rather than be refused.
+RuntimeDirectoryPreserve=restart
+StateDirectory=argus
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/argus /run/argus
+
+[Install]
+WantedBy=multi-user.target

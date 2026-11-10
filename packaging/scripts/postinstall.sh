@@ -60,6 +60,31 @@ if [ -x /usr/bin/argus-control ] && command -v systemctl >/dev/null 2>&1 &&
     systemctl enable --now argus-backup-now.path >/dev/null 2>&1 || true
 fi
 
+# The helper that lets the console look after this server (argus-control-host,
+# see internal/control/control_host.go). Its watcher is on from install, like
+# the update's: nothing starts until argus-control, once set up, asks it to
+# enroll. Where the argus-agent package is installed too, the agent looks
+# after this server with the same enrollment and the helper stands down.
+if [ -x /usr/bin/argus-control-host ] && command -v systemctl >/dev/null 2>&1 &&
+   systemctl cat argus-control-host.service >/dev/null 2>&1; then
+    if [ -x /usr/bin/argus-agent ]; then
+        systemctl disable --now argus-control-host-enroll.path argus-control-host.service \
+            >/dev/null 2>&1 || true
+    else
+        systemctl enable --now argus-control-host-enroll.path >/dev/null 2>&1 || true
+        systemctl enable argus-control-host.service >/dev/null 2>&1 || true
+        # An enrolled helper runs the new binary after an upgrade, a few
+        # seconds later for the same reason as the agent below: a terminal
+        # on this server runs through it.
+        if [ -f /var/lib/argus/enrollment.json ]; then
+            if ! systemd-run --quiet --on-active=10s --unit="argus-control-host-upgrade-$$" \
+                    systemctl restart argus-control-host >/dev/null 2>&1; then
+                systemctl restart --no-block argus-control-host >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+fi
+
 # An enrolled agent is one somebody set up, so after an upgrade it runs again,
 # on the new binary. Packages before this stopped and disabled it on every
 # upgrade, which left every SSH login refused while the sshd hook was in
@@ -132,7 +157,10 @@ On the control plane, start it and finish setup in the browser:
   systemctl enable --now argus-backup.timer
 
 Everything else is under Settings in the console. Every server people log
-in to needs argus-agent: enroll it from Servers > Add a server.
+in to needs argus-agent: enroll it from Servers > Add a server. The control
+plane's own server needs nothing more: once argus-control is running it
+appears under Servers by itself, and its logs, updates, disks and terminal
+are looked after from the console (control_host: false turns that off).
 
 The agent additionally needs sshd configured to record sessions:
 

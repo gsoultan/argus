@@ -44,6 +44,7 @@ const softwareQueryTimeout = 3 * time.Minute
 // protectedPackages are never removed from the console, by name or glob.
 var protectedPackages = map[string]string{
 	"argus-agent":     "it is the Argus agent itself",
+	"argus-control":   "it is the Argus control plane, and the helper this server is looked after through",
 	"apt":             "it is the package manager",
 	"dpkg":            "it is the package manager",
 	"dnf":             "it is the package manager",

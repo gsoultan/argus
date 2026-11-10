@@ -37,7 +37,7 @@ const assetSelect = `
 	       a.unmanaged_key_count, a.agent_console_only,
 	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts, a.direct_ssh_accounts,
 	       a.desktop_mode, a.kind, a.control_mode, a.control_needs_approval, a.connect_ask,
-	       COALESCE(a.agent_hostname, ''),
+	       COALESCE(a.agent_hostname, ''), a.control_host,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) IN (lower(a.hostname), lower(a.agent_hostname))
 	                  AND c.revoked_at IS NULL
@@ -54,7 +54,7 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
 		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts, &a.DirectSSHAccounts,
 		&a.DesktopMode, &a.Kind, &a.ControlMode, &a.ControlNeedsApproval, &a.ConnectAsk, &a.AgentHostname,
-		&a.TunnelConnected)
+		&a.ControlHost, &a.TunnelConnected)
 	return a, err
 }
 

@@ -116,6 +116,11 @@ type config struct {
 	// Default on; false leaves `argus-control users add` as the only way to
 	// make the first one.
 	WebSetup *bool `yaml:"web_setup,omitempty"`
+	// ControlHost is whether argus-control looks after its own server
+	// through the helper its package ships (argus-control-host): cleaning
+	// its logs, updating its packages, growing its disks and opening a
+	// terminal on it from the console. On unless set to false.
+	ControlHost *bool `yaml:"control_host,omitempty"`
 	// SetupTokenFile is where the one-time setup token is written. Empty
 	// means /var/lib/argus-control/setup-token when that directory exists, which the
 	// packaged unit can write, and beside the config file otherwise.
@@ -837,6 +842,18 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			if api.Enroll.CAPEM, err = os.ReadFile(cfg.TLS.ClientCAFile); err != nil {
 				return fmt.Errorf("read client_ca_file: %w", err)
 			}
+		}
+	}
+
+	// The server this process runs on, looked after through the helper the
+	// package ships. Started before the listeners: it only writes a file the
+	// helper waits for, and the helper retries until something answers.
+	if cfg.ControlHost == nil || *cfg.ControlHost {
+		opts, why := controlHostOptions(cfg, loc, api)
+		if why != "" {
+			log.Info("the console cannot look after this server", "reason", why)
+		} else {
+			go api.RunControlHost(ctx, opts)
 		}
 	}
 

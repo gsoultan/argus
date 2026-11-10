@@ -71,6 +71,14 @@ builds:
       - -X main.date={{.CommitDate}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
+  # The agent again, under the name the argus-control package installs it
+  # by: the helper on the control plane's own server, which argus-control
+  # enrolls itself (internal/control/control_host.go). Its own name, so it
+  # never collides with the argus-agent package on a host that has both.
+  - <<: *agent
+    id: argus-control-host
+    binary: argus-control-host
+
   - &verify
     id: argus-verify
     main: ./cmd/argus-verify
@@ -217,7 +225,7 @@ nfpms:
   # ── Control plane ──────────────────────────────────────────────────────────
   - id: argus-control
     package_name: argus-control
-    ids: [argus-control]
+    ids: [argus-control, argus-control-host]
     vendor: Argus
     homepage: https://github.com/gsoultan/argus
     maintainer: Argus Maintainers <noreply@example.com>
@@ -259,6 +267,13 @@ nfpms:
         dst: /lib/systemd/system/argus-control-update.path
       - src: packaging/systemd/argus-control-update.service
         dst: /lib/systemd/system/argus-control-update.service
+      # Looking after this server from the console: argus-control asks, the
+      # path unit starts the helper, which enrolls itself once. See
+      # internal/control/control_host.go.
+      - src: packaging/systemd/argus-control-host.service
+        dst: /lib/systemd/system/argus-control-host.service
+      - src: packaging/systemd/argus-control-host-enroll.path
+        dst: /lib/systemd/system/argus-control-host-enroll.path
       - src: packaging/config/control.yaml
         dst: /etc/argus/control.yaml
         type: config|noreplace

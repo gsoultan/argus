@@ -111,6 +111,14 @@ func hashSecret(secret string) string {
 // host that may use it.
 func (s *Store) CreateEnrollToken(ctx context.Context, createdBy, hostname string,
 	ttl time.Duration) (EnrollToken, error) {
+	return s.createEnrollToken(ctx, createdBy, hostname, ttl, false)
+}
+
+// createEnrollToken is CreateEnrollToken, saying whether the token is the
+// control server's own (see control_host.go). Nothing a person sends reaches
+// controlHost: only argus-control's own loop mints one.
+func (s *Store) createEnrollToken(ctx context.Context, createdBy, hostname string,
+	ttl time.Duration, controlHost bool) (EnrollToken, error) {
 	if ttl <= 0 {
 		ttl = DefaultEnrollTokenTTL
 	}
@@ -125,10 +133,10 @@ func (s *Store) CreateEnrollToken(ctx context.Context, createdBy, hostname strin
 	}
 	out := EnrollToken{Token: secret, Hostname: strings.TrimSpace(hostname), CreatedBy: createdBy}
 	err = s.db(ctx).QueryRow(ctx, `
-		INSERT INTO agent_enrollment_tokens (token_hash, hostname, created_by, expires_at)
-		VALUES ($1, $2, $3, now() + make_interval(secs => $4))
+		INSERT INTO agent_enrollment_tokens (token_hash, hostname, created_by, expires_at, control_host)
+		VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5)
 		RETURNING id::text, expires_at`,
-		hashSecret(secret), out.Hostname, createdBy, ttl.Seconds()).Scan(&out.ID, &out.ExpiresAt)
+		hashSecret(secret), out.Hostname, createdBy, ttl.Seconds(), controlHost).Scan(&out.ID, &out.ExpiresAt)
 	if err != nil {
 		return EnrollToken{}, fmt.Errorf("create enrollment token: %w", err)
 	}
@@ -142,6 +150,9 @@ type Enrollment struct {
 	// TokenID and TokenCreatedBy say who authorised it, for the audit entry.
 	TokenID        string
 	TokenCreatedBy string
+	// ControlHost says the token was argus-control's own, for the helper
+	// on its own server; the credential carries it on.
+	ControlHost bool
 }
 
 // Enroll exchanges a token for a credential bound to hostname.
@@ -172,8 +183,8 @@ func (s *Store) Enroll(ctx context.Context, token, hostname string) (Enrollment,
 		   AND used_at IS NULL
 		   AND expires_at > now()
 		   AND (hostname = '' OR lower(hostname) = lower($2))
-		RETURNING id::text, created_by`, hashSecret(token), hostname).
-		Scan(&out.TokenID, &out.TokenCreatedBy)
+		RETURNING id::text, created_by, control_host`, hashSecret(token), hostname).
+		Scan(&out.TokenID, &out.TokenCreatedBy, &out.ControlHost)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Asked on this transaction's own connection. Taking a second one from
 		// the pool while holding this one deadlocks as soon as enough agents
@@ -190,9 +201,9 @@ func (s *Store) Enroll(ctx context.Context, token, hostname string) (Enrollment,
 		return Enrollment{}, err
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO agent_credentials (hostname, secret_hash, token_id)
-		VALUES ($1, $2, $3::uuid)
-		RETURNING id::text`, hostname, hashSecret(out.Credential), out.TokenID).
+		INSERT INTO agent_credentials (hostname, secret_hash, token_id, control_host)
+		VALUES ($1, $2, $3::uuid, $4)
+		RETURNING id::text`, hostname, hashSecret(out.Credential), out.TokenID, out.ControlHost).
 		Scan(&out.CredentialID)
 	if err != nil {
 		if isUniqueViolation(err) {

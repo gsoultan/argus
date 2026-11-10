@@ -144,6 +144,10 @@ func main() {
 		os.Exit(runUninstall(os.Args[2:]))
 	case "enroll", "enrol":
 		os.Exit(runEnroll(os.Args[2:]))
+	case "enroll-local":
+		// Run as root by argus-control-host.service on argus-control's own
+		// server, with the token argus-control left for it.
+		os.Exit(runEnrollLocal(os.Args[2:]))
 	case "service":
 		os.Exit(runService(os.Args[2:]))
 	case "--version", "version":

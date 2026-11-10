@@ -316,7 +316,7 @@ func TestPreviewInstallThatRemovesIsBlocked(t *testing.T) {
 
 func TestPreviewRemoveProtected(t *testing.T) {
 	r := &scriptedRun{}
-	for _, name := range []string{"openssh-server", "argus-agent", "sudo", "systemd-resolved"} {
+	for _, name := range []string{"openssh-server", "argus-agent", "argus-control", "sudo", "systemd-resolved"} {
 		pv, _, err := previewSoftware(context.Background(), r.run, aptManager{}, tunnel.SoftwareRemove,
 			[]tunnel.SoftwareItem{{Name: name}}, false)
 		if err != nil {

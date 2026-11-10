@@ -41,6 +41,7 @@ type Row struct {
 	UpdateRequestedAt    runtime.Null[time.Time]
 	UpdateRequestedBy    runtime.Null[string]
 	FirstConnectedAt     runtime.Null[time.Time]
+	ControlHost          bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -79,7 +80,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 21
+const nCols = 22
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -341,6 +342,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.FirstConnectedAt.V
 		q.ntm++
+	case 21:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.ControlHost
+		q.nbo++
 	}
 }
 
@@ -530,6 +538,7 @@ var (
 	UpdateRequestedAt    = NullTimeCol{18}
 	UpdateRequestedBy    = NullTextCol{19}
 	FirstConnectedAt     = NullTimeCol{20}
+	ControlHost          = BoolCol{21}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1074,6 +1083,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 21:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1290,8 +1306,10 @@ func (q Query) FirstConnectedAtLt(v time.Time) Query    { return q.Where(FirstCo
 func (q Query) FirstConnectedAtLte(v time.Time) Query   { return q.Where(FirstConnectedAt.Lte(v)) }
 func (q Query) FirstConnectedAtIsNull() Query           { return q.Where(FirstConnectedAt.IsNull()) }
 func (q Query) FirstConnectedAtIsNotNull() Query        { return q.Where(FirstConnectedAt.IsNotNull()) }
+func (q Query) ControlHostEq(v bool) Query              { return q.Where(ControlHost.Eq(v)) }
+func (q Query) ControlHostNotEq(v bool) Query           { return q.Where(ControlHost.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_restart", "update_requested_at", "update_requested_by", "first_connected_at" FROM "agent_credentials"`
+const selectPrefix = `SELECT "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_restart", "update_requested_at", "update_requested_by", "first_connected_at", "control_host" FROM "agent_credentials"`
 const countPrefix = `SELECT count(*) FROM "agent_credentials"`
 const existsPrefix = `SELECT 1 FROM "agent_credentials"`
 const existsSuffix = ` LIMIT 1`
@@ -1454,6 +1472,12 @@ var orderTable = [nCols][4]string{
 		"\"first_connected_at\" ASC NULLS FIRST",
 		"\"first_connected_at\" DESC NULLS LAST",
 	},
+	{ // control_host
+		"\"control_host\"",
+		"\"control_host\" DESC",
+		"\"control_host\" ASC NULLS FIRST",
+		"\"control_host\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1480,6 +1504,7 @@ var identTable = [nCols]string{
 	"\"update_requested_at\"",
 	"\"update_requested_by\"",
 	"\"first_connected_at\"",
+	"\"control_host\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1512,7 +1537,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [21][28]runtime.Frag{
+var fragTable = [22][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2143,6 +2168,36 @@ var fragTable = [21][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // control_host
+		{}, // opNone
+		{A: "\"control_host\" = $", B: ""},
+		{A: "\"control_host\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2320,6 +2375,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.UpdateRequestedAt = runtime.Nullable(rv[18], runtime.Timestamptz)
 	r.UpdateRequestedBy = runtime.NullText(rv[19], sl)
 	r.FirstConnectedAt = runtime.Nullable(rv[20], runtime.Timestamptz)
+	r.ControlHost = runtime.Bool(rv[21])
 	return nil
 }
 
@@ -2526,6 +2582,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 21:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -2663,7 +2723,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_restart", "update_requested_at", "update_requested_by", "first_connected_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_restart", "update_requested_at", "update_requested_by", "first_connected_at"`
+const insertSQL = `INSERT INTO "agent_credentials" ("id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_restart", "update_requested_at", "update_requested_by", "first_connected_at", "control_host") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING "id", "hostname", "secret_hash", "token_id", "created_at", "revoked_at", "revoked_by", "tunnel_transport", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tunnel_rtt_us", "uninstall_requested_at", "uninstall_requested_by", "update_id", "update_version", "update_now", "update_restart", "update_requested_at", "update_requested_by", "first_connected_at", "control_host"`
 
 const updatePrefix = `UPDATE "agent_credentials" SET `
 const deletePrefix = `DELETE FROM "agent_credentials"`
@@ -2691,9 +2751,10 @@ const (
 	dUpdateRequestedAt    uint64 = 1 << 17
 	dUpdateRequestedBy    uint64 = 1 << 18
 	dFirstConnectedAt     uint64 = 1 << 19
+	dControlHost          uint64 = 1 << 20
 )
 
-const nUpdatable = 20
+const nUpdatable = 21
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2717,6 +2778,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"update_requested_at\" = $", B: ""},    // update_requested_at
 	{A: "\"update_requested_by\" = $", B: ""},    // update_requested_by
 	{A: "\"first_connected_at\" = $", B: ""},     // first_connected_at
+	{A: "\"control_host\" = $", B: ""},           // control_host
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2743,6 +2805,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"update_requested_at\" = now()", B: ""}, // update_requested_at = the database's clock
 	{}, // update_requested_by has no server-side form
 	{A: "\"first_connected_at\" = now()", B: ""}, // first_connected_at = the database's clock
+	{}, // control_host has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2775,9 +2838,10 @@ const (
 	iUpdateRequestedAt    uint64 = 1 << 18
 	iUpdateRequestedBy    uint64 = 1 << 19
 	iFirstConnectedAt     uint64 = 1 << 20
+	iControlHost          uint64 = 1 << 21
 )
 
-const nInsertable = 21
+const nInsertable = 22
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2802,6 +2866,7 @@ var insCols = [nInsertable]string{
 	"\"update_requested_at\"",
 	"\"update_requested_by\"",
 	"\"first_connected_at\"",
+	"\"control_host\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2810,7 +2875,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"agent_credentials\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\", \"update_id\", \"update_version\", \"update_now\", \"update_restart\", \"update_requested_at\", \"update_requested_by\", \"first_connected_at\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\", \"update_id\", \"update_version\", \"update_now\", \"update_restart\", \"update_requested_at\", \"update_requested_by\", \"first_connected_at\", \"control_host\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2829,7 +2894,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\", \"update_id\", \"update_version\", \"update_now\", \"update_restart\", \"update_requested_at\", \"update_requested_by\", \"first_connected_at\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"secret_hash\", \"token_id\", \"created_at\", \"revoked_at\", \"revoked_by\", \"tunnel_transport\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tunnel_rtt_us\", \"uninstall_requested_at\", \"uninstall_requested_by\", \"update_id\", \"update_version\", \"update_now\", \"update_restart\", \"update_requested_at\", \"update_requested_by\", \"first_connected_at\", \"control_host\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3196,6 +3261,12 @@ func (m *Mut) SetFirstConnectedAtNull() {
 	m.expr &^= dFirstConnectedAt
 }
 
+func (m *Mut) SetControlHost(v bool) {
+	m.row.ControlHost = v
+	m.dirty |= dControlHost
+	m.expr &^= dControlHost
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -3424,6 +3495,11 @@ func (n *Ins) SetFirstConnectedAtNull() {
 	n.set |= iFirstConnectedAt
 }
 
+func (n *Ins) SetControlHost(v bool) {
+	n.row.ControlHost = v
+	n.set |= iControlHost
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3471,7 +3547,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 20)
+	set := make([]string, 0, 21)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -3534,6 +3610,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<20) != 0 {
 			set = append(set, "first_connected_at")
 		}
+		if mask&(1<<21) != 0 {
+			set = append(set, "control_host")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -3591,6 +3670,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<20) != 0 {
 			set = append(set, "first_connected_at")
+		}
+		if mask&(1<<21) != 0 {
+			set = append(set, "control_host")
 		}
 	case 2:
 		if mask&(1<<1) != 0 {
@@ -3652,6 +3734,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<20) != 0 {
 			set = append(set, "first_connected_at")
+		}
+		if mask&(1<<21) != 0 {
+			set = append(set, "control_host")
 		}
 	}
 	return set
@@ -3741,6 +3826,7 @@ var assignFor = map[string]string{
 	"update_requested_at":    "\"update_requested_at\" = EXCLUDED.\"update_requested_at\"",
 	"update_requested_by":    "\"update_requested_by\" = EXCLUDED.\"update_requested_by\"",
 	"first_connected_at":     "\"first_connected_at\" = EXCLUDED.\"first_connected_at\"",
+	"control_host":           "\"control_host\" = EXCLUDED.\"control_host\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3826,6 +3912,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.UpdateRequestedBy.Arg())
 		case 20:
 			args = append(args, n.row.FirstConnectedAt.Arg())
+		case 21:
+			args = append(args, n.row.ControlHost)
 		}
 	}
 	var out Row
@@ -3863,7 +3951,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 21)
+	args := make([]any, 0, 22)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -3885,6 +3973,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.UpdateRequestedAt.Arg())
 	args = append(args, r.UpdateRequestedBy.Arg())
 	args = append(args, r.FirstConnectedAt.Arg())
+	args = append(args, r.ControlHost)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3932,13 +4021,14 @@ var copyCols = []string{
 	"update_requested_at",
 	"update_requested_by",
 	"first_connected_at",
+	"control_host",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [21]any
+	buf  [22]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3977,6 +4067,7 @@ func (s *rowSource) Values() []any {
 	s.buf[18] = r.UpdateRequestedAt.Ptr()
 	s.buf[19] = r.UpdateRequestedBy.Ptr()
 	s.buf[20] = r.FirstConnectedAt.Ptr()
+	s.buf[21] = &r.ControlHost
 	return s.buf[:]
 }
 
@@ -4028,8 +4119,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 18
 	mask |= 1 << 19
 	mask |= 1 << 20
+	mask |= 1 << 21
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 21)
+	args := make([]any, 0, 22)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.SecretHash)
@@ -4051,6 +4143,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.UpdateRequestedAt.Arg())
 	args = append(args, r.UpdateRequestedBy.Arg())
 	args = append(args, r.FirstConnectedAt.Arg())
+	args = append(args, r.ControlHost)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4126,6 +4219,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.UpdateRequestedBy.Arg())
 		case 20:
 			args = append(args, n.row.FirstConnectedAt.Arg())
+		case 21:
+			args = append(args, n.row.ControlHost)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4212,6 +4307,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.UpdateRequestedBy.Arg())
 		case 19:
 			args = append(args, m.row.FirstConnectedAt.Arg())
+		case 20:
+			args = append(args, m.row.ControlHost)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4334,6 +4431,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.UpdateRequestedBy.Arg())
 		case 19:
 			args = append(args, m.row.FirstConnectedAt.Arg())
+		case 20:
+			args = append(args, m.row.ControlHost)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4522,6 +4621,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.UpdateRequestedBy.Arg())
 		case 19:
 			args = append(args, m.row.FirstConnectedAt.Arg())
+		case 20:
+			args = append(args, m.row.ControlHost)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

@@ -165,6 +165,34 @@ The commands on the host still work and need no environment to load:
 `sudo argus-control users list`, `users add`, `users disable`, `audit verify`
 and `backup run|verify` all read `/var/lib/argus-control/control.yaml`.
 
+### The control server's own helper
+
+The server argus-control runs on is looked after from the console too, with
+nothing to install: the argus-control package carries the agent as
+`argus-control-host`, and once argus-control is running it enrolls it for its
+own hostname. Within a few minutes the server appears under Servers, marked
+**argus-control's server**, with the same Updates, Logs, Disks and Terminal
+tabs as any other. Choose who may open a terminal there on its Access tab.
+
+- argus-control writes a single-use token to
+  `/var/lib/argus-control/host/enroll.json` (readable by the `argus` account
+  and root only); `argus-control-host-enroll.path` starts
+  `argus-control-host.service`, which exchanges it once and removes nothing
+  else. The token, the enrollment and every action afterwards are in the
+  audit log, the token and enrollment with `argus-control` as the actor.
+- Plain SSH to this server is never hooked, gated or recorded by Argus. That
+  is deliberate: it is how you get back in when Argus itself is broken.
+  Sessions opened from the console are recorded as on any server.
+- The helper updates and restarts with argus-control (below), never from the
+  server's Agent tab, and the server cannot be removed from Argus.
+- It needs argus-control to serve TLS itself, without `tls.client_ca_file`.
+  Otherwise argus-control logs why at start and leaves the server alone.
+- Where the `argus-agent` package is installed on the same server, the agent
+  takes over with the same enrollment and the helper stands down.
+- To turn it off: `control_host: false` in the configuration, then
+  `systemctl disable --now argus-control-host argus-control-host-enroll.path`
+  and revoke its agent under Settings.
+
 ## 4. Backups
 
 Do this before anyone records anything you would miss.

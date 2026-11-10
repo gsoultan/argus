@@ -188,6 +188,9 @@ func TestHeldAndProtected(t *testing.T) {
 	for svc, want := range map[string]bool{
 		"argus-agent.service": true, "user@1000.service": true, "dbus.service": true,
 		"nginx.service": false, "ssh.service": false, "systemd-logind.service": true,
+		// On argus-control's own server: the control plane and the helper
+		// running this very update.
+		"argus-control.service": true, "argus-control-host.service": true,
 	} {
 		if got := protectedService(svc); got != want {
 			t.Errorf("protectedService(%q) = %v", svc, got)
