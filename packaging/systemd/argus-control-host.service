@@ -14,11 +14,11 @@ After=network.target argus-control.service
 # back in when Argus itself is what is broken. See
 # internal/control/control_host.go.
 #
-# Where the argus-agent package is installed, it looks after this server
-# itself, with the same state directory and so the same enrollment, and this
-# stands down.
-ConditionPathExists=!/lib/systemd/system/argus-agent.service
-ConditionPathExists=!/usr/lib/systemd/system/argus-agent.service
+# Where argus-agent is enabled on this server, it looks after it itself, with
+# the same state directory and so the same enrollment, and the package
+# disables this. An argus-agent package that is only installed, not enabled,
+# does not count. The two never run at once.
+Conflicts=argus-agent.service
 # Enrolled already, or asked to enroll; otherwise there is nothing to do yet.
 ConditionPathExists=|/var/lib/argus/enrollment.json
 ConditionPathExists=|/var/lib/argus-control/host/enroll.json

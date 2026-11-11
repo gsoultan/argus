@@ -1286,10 +1286,16 @@ jobs:
           # the agent must make it and open a session as it. Making it needs
           # useradd, a home and a sudoers drop-in, none of which the agent's
           # unit can write, so this fails if the pass ran inside the sandbox.
-          asset=$($c -X POST "https://localhost:8080/api/v1/discovered/$(hostname)/enrol" \
+          # The helper that argus-control ships has usually put this server
+          # in the inventory already; only where it has not is it enrolled
+          # from Discovered.
+          asset=$($c https://localhost:8080/api/v1/assets | jq -r --arg h "$(hostname)" \
+            '[.[] | select((.hostname | ascii_downcase | split(".")[0]) == ($h | ascii_downcase | split(".")[0]))][0].id // empty')
+          [ -n "$asset" ] || asset=$($c -X POST "https://localhost:8080/api/v1/discovered/$(hostname)/enrol" \
             -d '{"principals":["argusdrill"],"people":["admin@ci.example"]}' | jq -r .assetId)
+          [ -n "$asset" ] && [ "$asset" != null ] || { echo "::error::this server is not in the inventory"; exit 1; }
           $c -X PUT "https://localhost:8080/api/v1/assets/$asset/assignments" \
-            -d '{"email":"admin@ci.example","principals":["argusdrill"],"personalAccounts":true,"sudo":true}' >/dev/null
+            -d '{"email":"admin@ci.example","principals":[],"personalAccounts":true,"sudo":true}' >/dev/null
           own=$($c https://localhost:8080/api/v1/me/server-account | jq -r .loginName)
           [ -n "$own" ] || { echo "::error::the admin was given no login name of their own"; exit 1; }
           for i in $(seq 1 60); do

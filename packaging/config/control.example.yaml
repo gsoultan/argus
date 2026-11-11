@@ -49,8 +49,11 @@ console_url: ""
 # appears under Servers and its logs, operating system updates, disks and a
 # recorded terminal are looked after from the console like any other. It
 # never hooks sshd: plain SSH here stays the way in when Argus is down.
-# Needs TLS served by this process. false turns it off.
+# false turns it off. Where this process does not serve and pin its own
+# certificate (behind a proxy or tunnel, plain HTTP, or tls.client_ca_file),
+# the helper reaches it on a loopback-only TLS listener of its own:
 # control_host: true
+# control_host_listen: "127.0.0.1:8449"
 
 # The web console. The package installs it; the control plane serves it on the
 # same address people sign in to, so the session cookie stays same-origin.

@@ -62,6 +62,13 @@ type Enrollment struct {
 	// kept only when the CA the control plane sent could not verify it.
 	CAFile string `json:"caFile,omitempty"`
 	Pin    string `json:"pin,omitempty"`
+	// ControlHost marks the enrollment of argus-control-host, the helper on
+	// argus-control's own server. An ordinary enrollment may replace it
+	// without --force (see Enroll).
+	ControlHost bool `json:"controlHost,omitempty"`
+	// Replaced says this enrollment replaced the helper's on this server.
+	// Not stored.
+	Replaced bool `json:"-"`
 }
 
 // EnrollOptions is what the person at the terminal supplied.
@@ -78,6 +85,9 @@ type EnrollOptions struct {
 	// Force replaces an existing enrollment. Without it, enrolling twice is
 	// refused: the first credential would be lost while still live.
 	Force bool
+	// ControlHost marks the enrollment as argus-control-host's, the helper
+	// on argus-control's own server (enroll-local).
+	ControlHost bool
 	// Transport overrides the HTTP transport, for tests. Its TLS is still
 	// built from the options above.
 	Transport *http.Transport
@@ -103,9 +113,18 @@ func Enroll(ctx context.Context, opts EnrollOptions) (Enrollment, error) {
 		}
 	}
 	path := filepath.Join(opts.StateDir, EnrollmentFile)
+	// The helper on argus-control's own server holds an enrollment
+	// argus-agent takes over: the request carries the helper's credential,
+	// which proves this is that server, and argus-control revokes it in the
+	// same step. Anything else already here is refused without --force.
+	var replaces string
 	if _, err := os.Stat(path); err == nil && !opts.Force {
-		return Enrollment{}, fmt.Errorf("%s already exists: this host is enrolled. "+
-			"Revoke it in the console and pass --force to enroll again", path)
+		old, lerr := LoadEnrollment(opts.StateDir)
+		if lerr != nil || old == nil || !old.ControlHost || opts.ControlHost {
+			return Enrollment{}, fmt.Errorf("%s already exists: this host is enrolled. "+
+				"Revoke it in the console and pass --force to enroll again", path)
+		}
+		replaces = old.Credential
 	}
 
 	var tlsCfg *tls.Config
@@ -134,7 +153,11 @@ func Enroll(ctx context.Context, opts EnrollOptions) (Enrollment, error) {
 	// rather than left idle with a goroutine each.
 	defer client.CloseIdleConnections()
 
-	body, _ := json.Marshal(map[string]string{"token": opts.Token, "hostname": opts.Hostname})
+	fields := map[string]string{"token": opts.Token, "hostname": opts.Hostname}
+	if replaces != "" {
+		fields["replaces"] = replaces
+	}
+	body, _ := json.Marshal(fields)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(opts.ControlURL, "/")+"/api/v1/agents/enroll", bytes.NewReader(body))
 	if err != nil {
@@ -166,10 +189,12 @@ func Enroll(ctx context.Context, opts EnrollOptions) (Enrollment, error) {
 	}
 
 	enr := Enrollment{
-		ControlURL: strings.TrimRight(opts.ControlURL, "/"),
-		Hostname:   out.Hostname,
-		Credential: out.Credential,
-		EnrolledAt: time.Now().UTC(),
+		ControlHost: opts.ControlHost,
+		Replaced:    replaces != "",
+		ControlURL:  strings.TrimRight(opts.ControlURL, "/"),
+		Hostname:    out.Hostname,
+		Credential:  out.Credential,
+		EnrolledAt:  time.Now().UTC(),
 	}
 	if err := ProtectStateDir(opts.StateDir); err != nil {
 		return Enrollment{}, err

@@ -185,10 +185,21 @@ tabs as any other. Choose who may open a terminal there on its Access tab.
   Sessions opened from the console are recorded as on any server.
 - The helper updates and restarts with argus-control (below), never from the
   server's Agent tab, and the server cannot be removed from Argus.
-- It needs argus-control to serve TLS itself, without `tls.client_ca_file`.
-  Otherwise argus-control logs why at start and leaves the server alone.
-- Where the `argus-agent` package is installed on the same server, the agent
-  takes over with the same enrollment and the helper stands down.
+- The helper reaches argus-control on this server only. Where argus-control
+  serves and pins its own certificate, that is the main listener. Behind a
+  proxy or a Cloudflare Tunnel (`behind_tls_proxy`), on plain HTTP, or with
+  `tls.client_ca_file`, argus-control opens a loopback-only TLS listener for
+  it, `127.0.0.1:8449` (`control_host_listen`), with a key of its own in
+  `/var/lib/argus-control/host/tls/` that the helper pins. Nothing off this
+  server can reach it.
+- If it cannot run, argus-control logs `the console cannot look after this
+  server` with the reason at start: `journalctl -u argus-control | grep "look after"`.
+- To have argus-agent look after this server instead (to gate SSH here too),
+  install it and run `argus-agent enroll` as on any server. It takes over
+  from the helper without `--force`, proving it is this server with the
+  helper's credential, which argus-control then revokes, and turns the helper
+  off. An `argus-agent` package that is installed but not enabled does not
+  stop the helper.
 - To turn it off: `control_host: false` in the configuration, then
   `systemctl disable --now argus-control-host argus-control-host-enroll.path`
   and revoke its agent under Settings.
