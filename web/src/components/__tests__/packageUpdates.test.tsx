@@ -315,6 +315,21 @@ describe('Release upgrade', () => {
     expect((screen.getByRole('button', { name: 'Upgrade to Ubuntu 24.04.1 LTS…' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('installs what is waiting for the current release from the blocker itself', async () => {
+    live.assetPackages.mockResolvedValue(view({
+      report: { checked_at: new Date().toISOString(), manager: 'apt', supported: true, utc_offset_minutes: 0,
+        updates: [{ name: 'libssl3t64', installed: '3.0.13-0ubuntu3.5', available: '3.0.13-0ubuntu3.6', origin: 'Ubuntu:24.04/noble-updates' }],
+        release: { ...jammy, blockers: ['install the 1 update waiting for the current release first'] } },
+    }))
+    live.startPackageRun.mockResolvedValue(runOf({ mode: 'all' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Install it now' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Install/ }))
+    await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1',
+      expect.objectContaining({ mode: 'all' })))
+  })
+
   it('asks to update an agent too old to upgrade, with no button', async () => {
     live.assetPackages.mockResolvedValue(ready({}, { canUpgradeRelease: false }))
     renderWith(<UpdatesTab asset={asset} canEdit />)

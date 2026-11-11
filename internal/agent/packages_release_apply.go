@@ -31,7 +31,11 @@ RemoveObsoletes=no
 // releaseEnv is aptEnv plus keeping a configuration file managed by ucf, as
 // dpkg's --force-confold keeps one dpkg manages: sshd_config, with the
 // ForceCommand that sends logins through Argus, is one of those.
-var releaseEnv = append(append([]string{}, aptEnv...), "UCF_FORCE_CONFFOLD=1", "RELEASE_UPGRADER_NO_SCREEN=1")
+// PYTHONUNBUFFERED makes do-release-upgrade and leapp, both Python, print
+// each line as it happens rather than in blocks once a pipe's buffer fills,
+// which on a quiet upgrade can be many minutes.
+var releaseEnv = append(append([]string{}, aptEnv...), "UCF_FORCE_CONFFOLD=1", "RELEASE_UPGRADER_NO_SCREEN=1",
+	"PYTHONUNBUFFERED=1")
 
 // applyRelease moves the server to the release the run was approved for,
 // then reboots into it. The agent that comes back checks it got there.
@@ -65,6 +69,11 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 			"changed. Look for updates again and ask again", info.Next, a.Plan.Expect))
 	case len(info.Blockers) > 0:
 		return a.fail("not upgraded, nothing was changed: " + strings.Join(info.Blockers, "; "))
+	}
+	if info.Tool == releaseToolUbuntu || info.Tool == releaseToolDebian {
+		if err := a.answerGrub(ctx); err != nil {
+			return a.fail(err.Error())
+		}
 	}
 	change := &ReleaseChange{Distro: info.Distro, From: info.Version, FromName: info.Current, To: info.Next,
 		ToName: info.NextName, Tool: info.Tool}
@@ -124,11 +133,24 @@ func orUnknown(s string) string {
 	return s
 }
 
-// partWay is what to say when the upgrade itself failed: by then the
-// server may be on neither release.
-func partWay(tool string, code int, out []byte, log string) error {
-	return fmt.Errorf("%s failed (exit %d), so the server may be part way between releases: look at %s "+
-		"before anything else. %s", tool, code, log, tail(out, 400))
+// aptPartWay is what to say when an apt upgrade itself failed, after trying to finish what dpkg
+// left half done: whether that worked, and what a person does next. The
+// server is not rebooted: a boot loader left unconfigured may not boot.
+func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, out []byte, log string) error {
+	fmt.Fprintln(a.lw, "argus: the upgrade stopped part way; finishing what dpkg left half done")
+	repaired := aptManager{}.repair(ctx, a.Run, a.lw) == nil
+	a.lw.Flush()
+	next := "Argus tried to finish configuring the packages and could not. Do not reboot until " +
+		"`sudo dpkg --configure -a` and `sudo apt-get -f install` finish without errors (if grub-pc is what " +
+		"fails, `sudo dpkg-reconfigure grub-pc` and tick the disk the server boots from), then run " +
+		"`sudo apt full-upgrade` to finish the release, and only then reboot."
+	if repaired {
+		next = "Argus then finished configuring the packages (dpkg --configure -a, apt-get -f install). Do not " +
+			"reboot yet: run `sudo apt full-upgrade` to finish the release, check /etc/os-release names it, " +
+			"and only then reboot."
+	}
+	return fmt.Errorf("%s failed (exit %d), so the server is part way between releases. %s Its log is %s. %s",
+		tool, code, next, log, tail(out, 400))
 }
 
 func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
@@ -141,13 +163,15 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
 	}
 	defer os.Remove(cfg)
 	var b bytes.Buffer
+	stop := a.follow(ctx, "upgrading", ubuntuUpgradeLogs)
 	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "do-release-upgrade",
 		"-f", "DistUpgradeViewNonInteractive")
+	stop()
 	if err != nil {
 		return err
 	}
 	if code != 0 {
-		return partWay("do-release-upgrade", code, b.Bytes(), "/var/log/dist-upgrade/main.log")
+		return a.aptPartWay(ctx, "do-release-upgrade", code, b.Bytes(), "/var/log/dist-upgrade/main.log")
 	}
 	return nil
 }
@@ -188,12 +212,14 @@ func (a *PackageApplier) upgradeDebian(ctx context.Context, m pkgManager, info *
 		"-o", "Dpkg::Options::=--force-confold", "-o", "Dpkg::Use-Pty=0")
 	for _, step := range [][]string{{"upgrade", "--without-new-pkgs"}, {"full-upgrade"}} {
 		var b bytes.Buffer
+		stop := a.follow(ctx, "apt-get "+step[0], nil)
 		code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "apt-get", append(append([]string{}, opts...), step...)...)
+		stop()
 		if err != nil {
 			return err
 		}
 		if code != 0 {
-			return partWay("apt-get "+step[0], code, b.Bytes(), "/var/log/apt/term.log")
+			return a.aptPartWay(ctx, "apt-get "+step[0], code, b.Bytes(), "/var/log/apt/term.log")
 		}
 	}
 	return nil
@@ -204,7 +230,9 @@ func (a *PackageApplier) upgradeLeapp(ctx context.Context) error {
 		s.Message = "leapp is checking the server (preupgrade); this can take twenty minutes"
 	})
 	var b bytes.Buffer
-	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), nil, "leapp", "preupgrade")
+	stop := a.follow(ctx, "leapp preupgrade", leappUpgradeLogs[:1])
+	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "leapp", "preupgrade")
+	stop()
 	if err != nil {
 		return err
 	}
@@ -221,7 +249,9 @@ func (a *PackageApplier) upgradeLeapp(ctx context.Context) error {
 		s.Message = "leapp is downloading the new release and preparing its upgrade boot"
 	})
 	b.Reset()
-	code, err = a.Run(ctx, io.MultiWriter(&b, a.lw), nil, "leapp", "upgrade")
+	stop = a.follow(ctx, "leapp upgrade", leappUpgradeLogs[1:])
+	code, err = a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "leapp", "upgrade")
+	stop()
 	if err != nil {
 		return err
 	}

@@ -219,8 +219,12 @@ func newReleaseHost(t *testing.T, osr string) *releaseHost {
 	h.sources = filepath.Join(h.dir, "apt")
 	h.setOS(t, osr)
 	old := []any{osReleaseFiles, ubuntuUpgradeOverrides, aptSourcesRoot, leappReportFile, argusControlBinary, releaseFree,
-		toolGlob}
+		toolGlob, ubuntuUpgradeLogs, leappUpgradeLogs, efiFirmwareDir, deviceExists}
 	toolGlob = func(string) ([]string, error) { return nil, nil }
+	efiFirmwareDir = filepath.Join(h.dir, "no-efi")
+	deviceExists = func(string) bool { return false }
+	ubuntuUpgradeLogs = []string{filepath.Join(h.dir, "main.log"), filepath.Join(h.dir, "apt-term.log")}
+	leappUpgradeLogs = []string{filepath.Join(h.dir, "leapp-preupgrade.log"), filepath.Join(h.dir, "leapp-upgrade.log")}
 	osReleaseFiles = []string{h.osr}
 	ubuntuUpgradeOverrides = filepath.Join(h.dir, "release-upgrades.d")
 	aptSourcesRoot = h.sources
@@ -235,6 +239,10 @@ func newReleaseHost(t *testing.T, osr string) *releaseHost {
 		argusControlBinary = old[4].(string)
 		releaseFree = old[5].(func(string) int64)
 		toolGlob = old[6].(func(string) ([]string, error))
+		ubuntuUpgradeLogs = old[7].([]string)
+		leappUpgradeLogs = old[8].([]string)
+		efiFirmwareDir = old[9].(string)
+		deviceExists = old[10].(func(string) bool)
 	})
 	return h
 }
@@ -493,8 +501,11 @@ func TestApplyReleaseUbuntuFails(t *testing.T) {
 	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
 	st := a.Apply(context.Background())
 	if st.State != RunFailed || *rebooted || !strings.Contains(st.Message, "part way between releases") ||
-		!strings.Contains(st.Message, "/var/log/dist-upgrade/main.log") {
+		!strings.Contains(st.Message, "/var/log/dist-upgrade/main.log") || !strings.Contains(st.Message, "Do not reboot") {
 		t.Fatalf("run = %+v", st)
+	}
+	if !sr.ran("dpkg --force-confdef --force-confold --configure -a") {
+		t.Error("what dpkg left half done was not finished")
 	}
 }
 
@@ -773,5 +784,177 @@ func TestDaemonReleaseUpgradeInterrupted(t *testing.T) {
 	if st == nil || st.State != RunInterrupted || !strings.Contains(st.Message, "part way between releases") ||
 		fp.repairs != 1 {
 		t.Fatalf("run = %+v", st)
+	}
+}
+
+// The upgrader writes to its own logs, not to its output: the console sees
+// them while it runs, and the step says the newest line.
+func TestApplyReleaseFollowsTheUpgradersLogs(t *testing.T) {
+	h := newReleaseHost(t, jammy)
+	oldEvery := followEvery
+	followEvery = 10 * time.Millisecond
+	t.Cleanup(func() { followEvery = oldEvery })
+	if err := os.WriteFile(ubuntuUpgradeLogs[0], []byte("from an upgrade last year\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var during PackageRunStatus
+	var env []string
+	var a *PackageApplier
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f DistUpgradeViewNonInteractive": func(w io.Writer, e []string) int {
+			env = e
+			f, err := os.OpenFile(ubuntuUpgradeLogs[1], os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintln(f, "Unpacking libc6:amd64 (2.39-0ubuntu8) over (2.35-0ubuntu3.8) ...")
+			f.Close()
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				during = readRunFile(t, a.Plan.StateDir)
+				if strings.Contains(during.Message, "Unpacking libc6") {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			h.setOS(t, noble)
+			return 0
+		},
+	}}
+	a, _ = releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunRebooting {
+		t.Fatalf("run = %+v", st)
+	}
+	if during.Message != "upgrading: Unpacking libc6:amd64 (2.39-0ubuntu8) over (2.35-0ubuntu3.8) ..." {
+		t.Errorf("while upgrading the step said %q", during.Message)
+	}
+	if !strings.Contains(during.Log, "Unpacking libc6") || strings.Contains(st.Log, "last year") {
+		t.Errorf("log while upgrading %q, at the end %q", during.Log, st.Log)
+	}
+	if !strings.Contains(strings.Join(env, " "), "PYTHONUNBUFFERED=1") {
+		t.Errorf("do-release-upgrade's output is block-buffered: env %v", env)
+	}
+}
+
+func TestRunLogLastLine(t *testing.T) {
+	l := &runLog{limit: 1 << 10}
+	fmt.Fprint(l, "first\nprogress 10%\rprogress 55%\r\n\n")
+	if got := l.lastLine(); got != "progress 55%" {
+		t.Errorf("lastLine = %q", got)
+	}
+	l = &runLog{limit: 1 << 10}
+	fmt.Fprint(l, strings.Repeat("x", 300))
+	if got := l.lastLine(); len(got) > maxStatusLine+len("…") {
+		t.Errorf("lastLine is %d long", len(got))
+	}
+}
+
+func TestParseGrubDevices(t *testing.T) {
+	b := []byte("  grub-pc/timeout: 0\n* grub-pc/install_devices: /dev/disk/by-id/ata-QEMU_HARDDISK_QM00001, /dev/sdb\n" +
+		"  grub-pc/install_devices_empty: false\n")
+	if got := parseGrubDevices(b); strings.Join(got, "|") != "/dev/disk/by-id/ata-QEMU_HARDDISK_QM00001|/dev/sdb" {
+		t.Errorf("devices = %q", got)
+	}
+	if got := parseGrubDevices([]byte("* grub-pc/install_devices:\n")); len(got) != 0 {
+		t.Errorf("empty answer read as %q", got)
+	}
+}
+
+// grubHost is a BIOS server with grub-pc whose disk on record is gone, as on
+// a cloud image: / on an LVM volume on vda2.
+func grubHost(t *testing.T, onRecord string, lsblk map[string]string) (*scriptRun, *string) {
+	t.Helper()
+	newReleaseHost(t, noble)
+	var answered string
+	on := map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '26.04.1 LTS' available.")
+			return 0
+		},
+		"dpkg-query -W -f=${Status} grub-pc": func(w io.Writer, _ []string) int {
+			fmt.Fprint(w, "install ok installed")
+			return 0
+		},
+		"debconf-show grub-pc": func(w io.Writer, _ []string) int {
+			fmt.Fprintf(w, "* grub-pc/install_devices: %s\n", onRecord)
+			return 0
+		},
+		"findmnt -n -o SOURCE /boot": func(io.Writer, []string) int { return 1 },
+		"findmnt -n -o SOURCE /": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "/dev/mapper/ubuntu--vg-ubuntu--lv")
+			return 0
+		},
+		"debconf-set-selections": func(io.Writer, []string) int { return 0 },
+	}
+	for dev, parents := range lsblk {
+		on["lsblk -n -o PKNAME "+dev] = func(w io.Writer, _ []string) int {
+			fmt.Fprint(w, parents)
+			return 0
+		}
+	}
+	sr := &scriptRun{on: on}
+	sr.on["debconf-set-selections"] = func(io.Writer, []string) int {
+		sr.mu.Lock()
+		last := sr.calls[len(sr.calls)-1]
+		sr.mu.Unlock()
+		b, _ := os.ReadFile(strings.TrimPrefix(last, "debconf-set-selections "))
+		answered = string(b)
+		return 0
+	}
+	return sr, &answered
+}
+
+func TestApplyReleaseAnswersGrubsDiskFirst(t *testing.T) {
+	sr, answered := grubHost(t, "/dev/disk/by-id/ata-gone", map[string]string{
+		"/dev/mapper/ubuntu--vg-ubuntu--lv": "vda3\n",
+		"/dev/vda3":                         "vda\n",
+		"/dev/vda":                          "\n",
+	})
+	upgraded := false
+	sr.on["do-release-upgrade -f DistUpgradeViewNonInteractive"] = func(io.Writer, []string) int {
+		upgraded = *answered != ""
+		return 1
+	}
+	a, _ := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "26.04")
+	a.Apply(context.Background())
+	if *answered != "grub-pc grub-pc/install_devices multiselect /dev/vda\n" {
+		t.Errorf("GRUB was told %q", *answered)
+	}
+	if !upgraded {
+		t.Error("the upgrade ran before GRUB had its disk")
+	}
+}
+
+func TestApplyReleaseStopsWhenGrubsDiskCannotBeTold(t *testing.T) {
+	sr, answered := grubHost(t, "", map[string]string{
+		"/dev/mapper/ubuntu--vg-ubuntu--lv": "md0\n",
+		"/dev/md0":                          "sda2\nsdb2\n",
+	})
+	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "26.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || *rebooted || !strings.Contains(st.Message, "dpkg-reconfigure grub-pc") ||
+		!strings.Contains(st.Message, "nothing was changed") {
+		t.Fatalf("run = %+v", st)
+	}
+	if sr.ran("do-release-upgrade -f") || *answered != "" {
+		t.Error("the upgrade started without a disk for GRUB")
+	}
+}
+
+func TestApplyReleaseKeepsGrubsDiskWhenStillThere(t *testing.T) {
+	sr, answered := grubHost(t, "/dev/disk/by-id/ata-here", nil)
+	deviceExists = func(p string) bool { return p == "/dev/disk/by-id/ata-here" }
+	a, _ := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "26.04")
+	a.Apply(context.Background())
+	if *answered != "" || sr.ran("findmnt") {
+		t.Errorf("a disk still there was replaced: %q", *answered)
+	}
+	if !sr.ran("do-release-upgrade -f") {
+		t.Error("the upgrade did not run")
 	}
 }

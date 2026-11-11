@@ -26,8 +26,8 @@ Linux).
 
 The button stays off until the server is ready, and the card says why not:
 
-- updates are waiting for the current release (install them first; Ubuntu's
-  upgrader refuses otherwise);
+- updates are waiting for the current release (install them first, with
+  **Install it now** on the card; Ubuntu's upgrader refuses otherwise);
 - an installed update waits for a reboot (reboot from the same tab);
 - `/` or `/var` has less than 3 GB free;
 - `argus-control` is installed on the server (see below).
@@ -46,6 +46,13 @@ the agent, so it goes on if the agent restarts or loses the control plane.
 1. **Check.** It refreshes the package lists and works the release out again.
    If the server now offers a different release from the one approved, or is
    no longer ready, it stops without changing anything.
+   On a server that boots with BIOS GRUB (`grub-pc`), it also makes sure
+   GRUB knows which disk to install the boot loader on. If the disk on record
+   is gone, as on a cloud image built elsewhere, nobody would answer the new
+   release's question about it, and `grub-pc` would be left unconfigured part
+   way through. The helper sets the disk `/boot` (or `/`) is on. If it cannot
+   tell, for example with RAID across disks, it stops and asks for
+   `sudo dpkg-reconfigure grub-pc` first.
 2. **Snapshot.** It records which programs the agent uses on the server are
    present, and the package each came from: `sshd` and its `sftp-server`,
    and the PostgreSQL, MySQL/MariaDB and MongoDB clients.
@@ -79,6 +86,19 @@ the agent, so it goes on if the agent restarts or loses the control plane.
    `postgresql-client`), removes Argus's upgrade setting, and looks for the new
    release's updates. The run's message says what was put back, what is still
    missing, and which third-party sources to turn back on.
+
+While it runs, the run's card on the **Updates** tab shows the step it is
+on, the newest line the upgrader wrote, and its output as it comes. The agent
+follows the upgrader's own logs for this (`/var/log/dist-upgrade/main.log` and
+`apt-term.log`, or leapp's logs), since `do-release-upgrade` and leapp print
+little themselves. Expect long stretches on one package; nothing is stuck
+while the newest line still changes.
+
+If the upgrade tool fails part way, the server is **not** rebooted. The
+helper runs `dpkg --configure -a` and `apt-get -f install` to finish what can
+be finished, and the run's message says what to do next. Do not reboot until
+`sudo dpkg --configure -a` and `sudo apt-get -f install` finish cleanly and
+`sudo apt full-upgrade` has completed the release.
 
 A run cut off part way (power, a person stopping the unit) is marked
 interrupted, says the server may be between releases, and the package

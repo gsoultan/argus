@@ -1,6 +1,6 @@
 module github.com/gsoultan/argus
 
-go 1.27.3
+go 1.27.4
 
 // CVE-2026-98432: the only known exploit of this Linux TCP use-after-free
 // needs an MPTCP listener, and Go listens with MPTCP by default. Argus gains
