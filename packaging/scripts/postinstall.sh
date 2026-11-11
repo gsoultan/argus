@@ -63,11 +63,13 @@ fi
 # The helper that lets the console look after this server (argus-control-host,
 # see internal/control/control_host.go). Its watcher is on from install, like
 # the update's: nothing starts until argus-control, once set up, asks it to
-# enroll. Where the argus-agent package is installed too, the agent looks
-# after this server with the same enrollment and the helper stands down.
+# enroll. Where argus-agent is enabled on this server, the agent looks after
+# it with the same enrollment and the helper stands down. An argus-agent
+# package that is installed but not enabled does not count: that left the
+# server looked after by nothing.
 if [ -x /usr/bin/argus-control-host ] && command -v systemctl >/dev/null 2>&1 &&
    systemctl cat argus-control-host.service >/dev/null 2>&1; then
-    if [ -x /usr/bin/argus-agent ]; then
+    if [ -x /usr/bin/argus-agent ] && systemctl is-enabled --quiet argus-agent 2>/dev/null; then
         systemctl disable --now argus-control-host-enroll.path argus-control-host.service \
             >/dev/null 2>&1 || true
     else
@@ -93,8 +95,12 @@ fi
 # A few seconds later, not now: an upgrade run from a console session goes
 # through this agent, and restarting it ends that session -- and the package
 # manager running in it -- before it has finished.
+#
+# Not where the enrollment is the control server's helper's (enabled above):
+# that is argus-control-host's, and argus-agent would take it over.
 if [ -x /usr/bin/argus-agent ] && [ -f /var/lib/argus/enrollment.json ] &&
-   command -v systemctl >/dev/null 2>&1 && systemctl cat argus-agent >/dev/null 2>&1; then
+   command -v systemctl >/dev/null 2>&1 && systemctl cat argus-agent >/dev/null 2>&1 &&
+   ! systemctl is-enabled --quiet argus-control-host 2>/dev/null; then
     systemctl enable argus-agent >/dev/null 2>&1 || true
 fi
 # An update the console asked for restarts the agent itself, once nothing is
@@ -103,7 +109,8 @@ fi
 if [ -n "${ARGUS_AGENT_UPDATING:-}" ]; then
     :
 elif [ -x /usr/bin/argus-agent ] && [ -f /var/lib/argus/enrollment.json ] &&
-   command -v systemctl >/dev/null 2>&1 && systemctl cat argus-agent >/dev/null 2>&1; then
+   command -v systemctl >/dev/null 2>&1 && systemctl cat argus-agent >/dev/null 2>&1 &&
+   ! systemctl is-enabled --quiet argus-control-host 2>/dev/null; then
     if ! systemd-run --quiet --on-active=10s --unit="argus-agent-upgrade-$$" \
             systemctl restart argus-agent >/dev/null 2>&1; then
         systemctl restart --no-block argus-agent >/dev/null 2>&1 || true

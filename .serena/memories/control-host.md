@@ -54,9 +54,12 @@ or enrolled by hand, which is what that meant.
   a unit that is not there. It moves with argus-control.
 - `DELETE /api/v1/assets/{id}` refuses it (409, `ErrControlHostAsset`).
   `control_host: false` turns the loop off.
-- If the argus-agent package is installed too, the unit stands down
-  (`ConditionPathExists=!.../argus-agent.service`) and the agent takes over
-  the same `/var/lib/argus` enrollment. Known gap: that credential stays
+- If argus-agent is enabled too, postinstall disables the helper and the
+  agent takes over (`Conflicts=argus-agent.service` keeps them apart). An
+  installed but disabled argus-agent does not count (v1.2.23 got this wrong:
+  it stood down for the bare binary, leaving the server looked after by
+  nothing). postinstall never enables/restarts argus-agent while the helper
+  is enabled. The agent takes over the same `/var/lib/argus` enrollment. Known gap: that credential stays
   marked control_host, so its updates are still refused from the console.
 
 Major OS release upgrades for this server come through the same helper once the

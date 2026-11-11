@@ -54,9 +54,10 @@ where it differs:
   - It is not removed from the inventory: the package would only enroll it
     again. Turning it off is `control_host: false` in the configuration.
 
-A host that already runs argus-agent is left alone: the unit stands down when
-argus-agent.service is installed, and the token is never minted while the
-hostname has a live credential, whoever's it is.
+A host that already runs argus-agent is left alone: the package disables the
+unit where argus-agent is enabled (an installed but disabled argus-agent does
+not count), the unit conflicts with argus-agent.service, and the token is
+never minted while the hostname has a live credential, whoever's it is.
 */
 
 // ControlHostRequestFile is the file argus-control writes for the helper, in
