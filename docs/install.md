@@ -183,6 +183,14 @@ intact, so a backup never silently preserves a broken chain. The last 14 are
 kept; set `ARGUS_BACKUP_KEEP` and `ARGUS_BACKUP_DIR` in `/etc/argus/backup.env`
 to change that.
 
+**Settings › Control plane › Backups** in the console shows the same thing
+without a shell: how the last backup went (and its error, if it failed),
+whether the nightly timer is on, every backup on disk, and which ones the next
+run removes. **Back up now** starts `argus-backup.service` through
+`argus-backup-now.path`, which the package enables, and **How many to keep**
+sets the count from there. A count saved in the console wins over
+`ARGUS_BACKUP_KEEP`.
+
 **A backup you have not restored is a hope.** Prove it against a scratch
 database (never the live one, which it refuses):
 
@@ -913,7 +921,12 @@ starts `argus-control-update.service` as root, which:
 1. downloads the release's package from GitHub, or from the mirror in
    `ARGUS_CONTROL_RELEASES_URL` in `/etc/argus/control-update.env`, and checks
    it against the release's `checksums.txt`;
-2. runs `argus-backup.service`, and changes nothing if the backup fails;
+2. runs `argus-backup.service`, and changes nothing if the backup fails. If
+   `pg_dump` is missing it first installs the distribution's PostgreSQL client
+   (`postgresql-client`, or `postgresql` on RHEL); if that client is older
+   than your database server, the backup fails with a version mismatch and
+   you install the matching one, e.g. `postgresql-client-16` from the
+   PostgreSQL repository;
 3. installs the package and restarts `argus-control`;
 4. waits up to 90 seconds for the new version to say it is listening with its
    database, and if it does not, or it exits three times, reinstalls the

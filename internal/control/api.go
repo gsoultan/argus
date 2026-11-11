@@ -159,6 +159,9 @@ type API struct {
 	// Updates is this control plane updating itself from the console; nil
 	// says it is not set up. See control_update.go.
 	Updates *ControlUpdater
+	// Backups is the control plane's own backups in the console; nil says
+	// they are not set up. See control_backups.go.
+	Backups *ControlBackups
 
 	// Settings reads and writes the configuration file for the console's
 	// Settings page. Nil leaves the page read-only; see settings_routes.go.
@@ -491,6 +494,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/platform/update/check", a.postControlUpdateCheck)
 	mux.HandleFunc("DELETE /api/v1/platform/update", a.deleteControlUpdate)
 	mux.HandleFunc("GET /api/v1/control-update", a.getControlUpdateBanner)
+	mux.HandleFunc("GET /api/v1/platform/backups", a.getControlBackups)
+	mux.HandleFunc("PUT /api/v1/platform/backups/settings", a.putControlBackupSettings)
+	mux.HandleFunc("POST /api/v1/platform/backups/run", a.postControlBackupRun)
 	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
 	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
 	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/name", a.postTenantName)

@@ -1380,6 +1380,8 @@ jobs:
           systemctl is-enabled --quiet argus-control || { echo "::error::a hand upgrade disabled argus-control"; exit 1; }
           systemctl is-enabled --quiet argus-control-update.path
           sudo systemd-analyze verify /lib/systemd/system/argus-control-update.path /lib/systemd/system/argus-control-update.service
+          systemctl is-enabled --quiet argus-backup-now.path
+          sudo systemd-analyze verify /lib/systemd/system/argus-backup-now.path /lib/systemd/system/argus-backup.service
           # The package restarts the control plane about 10 seconds after a
           # hand install; let that happen before asking for an update, so it
           # does not land in the middle of one.

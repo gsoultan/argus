@@ -228,6 +228,15 @@ nfpms:
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
+    # Backups (and so updates from the console, which take one first) run
+    # pg_dump. Recommended rather than required: the database may be on
+    # another host, and the client has to be at the server's major version or
+    # newer, which the distribution's default may not be.
+    overrides:
+      deb:
+        recommends: [postgresql-client]
+      rpm:
+        recommends: [postgresql]
     contents:
       - src: packaging/systemd/argus-control.service
         dst: /lib/systemd/system/argus-control.service
@@ -240,6 +249,10 @@ nfpms:
         dst: /lib/systemd/system/argus-backup.service
       - src: packaging/systemd/argus-backup.timer
         dst: /lib/systemd/system/argus-backup.timer
+      # "Back up now" from the console: starts argus-backup.service when the
+      # control plane writes its request. Enabled by postinstall.
+      - src: packaging/systemd/argus-backup-now.path
+        dst: /lib/systemd/system/argus-backup-now.path
       # Updating from the console: the path unit watches for the console's
       # request and starts the root helper. See internal/controlupdate.
       - src: packaging/systemd/argus-control-update.path

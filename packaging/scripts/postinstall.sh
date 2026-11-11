@@ -52,6 +52,13 @@ if [ -x /usr/bin/argus-control ] && command -v systemctl >/dev/null 2>&1 &&
    systemctl cat argus-control-update.path >/dev/null 2>&1; then
     systemctl enable --now argus-control-update.path >/dev/null 2>&1 || true
 fi
+# The same for "Back up now" in the console: it only starts the backup unit
+# when the control plane writes a request.
+if [ -x /usr/bin/argus-control ] && command -v systemctl >/dev/null 2>&1 &&
+   systemctl cat argus-backup-now.path >/dev/null 2>&1; then
+    install -d -o argus -g argus -m 0700 /var/lib/argus-control/backup
+    systemctl enable --now argus-backup-now.path >/dev/null 2>&1 || true
+fi
 
 # An enrolled agent is one somebody set up, so after an upgrade it runs again,
 # on the new binary. Packages before this stopped and disabled it on every

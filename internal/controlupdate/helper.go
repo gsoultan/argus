@@ -65,6 +65,8 @@ type Helper struct {
 	ReadyWait, SteadyFor time.Duration
 	// Arch is the package architecture; empty is this machine's.
 	Arch string
+	// LookPath finds a command; nil is exec.LookPath. Replaced in tests.
+	LookPath func(string) (string, error)
 
 	status Status
 }
@@ -161,6 +163,7 @@ func (h *Helper) Apply(ctx context.Context) string {
 	h.step(StateDownloading, req.Version+" downloaded; it matches the release's checksums")
 
 	if h.unitExists(h.BackupUnit) {
+		h.ensurePgDump(format)
 		h.step(StateBackingUp, "taking a backup")
 		if err := h.run("systemctl", "start", h.BackupUnit); err != nil {
 			why := h.backupFailure()
@@ -290,6 +293,46 @@ func (h *Helper) format() string {
 // FileName is the release's name for the control plane's package.
 func FileName(version, arch, format string) string {
 	return fmt.Sprintf("argus-control_%s_linux_%s.%s", version, arch, format)
+}
+
+// pgClientPackage is the package that brings pg_dump on each system.
+var pgClientPackage = map[string][]string{
+	"deb": {"apt-get", "install", "-y", "--no-install-recommends", "postgresql-client"},
+	"rpm": {"dnf", "install", "-y", "postgresql"},
+	"apk": {"apk", "add", "postgresql-client"},
+}
+
+// ensurePgDump installs the PostgreSQL client when the backup is about to
+// need it and it is not there. Without it every update stops at the backup
+// with "pg_dump is not installed", which a person then has to fix by hand on
+// the server before trying again. The helper already runs as root and is
+// about to install a package, so it installs this one first. A failure here
+// is not the update's: the backup goes on and says what is missing.
+func (h *Helper) ensurePgDump(format string) {
+	look := h.LookPath
+	if look == nil {
+		look = exec.LookPath
+	}
+	if _, err := look("pg_dump"); err == nil {
+		return
+	}
+	cmd, ok := pgClientPackage[format]
+	if !ok {
+		return
+	}
+	if format == "rpm" {
+		if _, err := look("dnf"); err != nil {
+			cmd = append([]string{"yum"}, cmd[1:]...)
+		}
+	}
+	h.step(StateBackingUp, "pg_dump is not installed; installing the PostgreSQL client for the backup")
+	if format == "deb" {
+		// A stale package list is the usual reason apt cannot find it.
+		_ = h.run("apt-get", "update")
+	}
+	if err := h.run(cmd[0], cmd[1:]...); err != nil {
+		h.Log.Warn("update: could not install the PostgreSQL client", "error", err)
+	}
 }
 
 // backupFailure is why the backup unit's last run failed, in its own words.

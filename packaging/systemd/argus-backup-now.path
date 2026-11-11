@@ -1,0 +1,13 @@
+[Unit]
+Description=Argus backup: watch for a backup asked from the console
+Documentation=https://github.com/gsoultan/argus/blob/main/docs/install.md#backups
+
+# Settings > Control plane > Backups > Back up now writes this file; the
+# control plane cannot start a unit itself. A start while a backup is already
+# running joins that run rather than starting a second.
+[Path]
+PathChanged=/var/lib/argus-control/backup/request.json
+Unit=argus-backup.service
+
+[Install]
+WantedBy=multi-user.target

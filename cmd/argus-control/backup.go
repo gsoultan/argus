@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control"
+	"github.com/gsoultan/argus/internal/controlbackup"
 	"github.com/gsoultan/argus/internal/recorder"
 	"github.com/gsoultan/argus/internal/storage"
 )
@@ -49,17 +50,14 @@ the recordings. A session sealed in between is a recording with no row -- a
 harmless orphan. The reverse would be a row whose recording was never copied.
 */
 
-const backupManifest = "manifest.json"
+const backupManifest = controlbackup.ManifestFile
 
-type manifest struct {
-	CreatedAt    time.Time `json:"createdAt"`
-	ChainHead    string    `json:"chainHead"`
-	ChainEvents  int64     `json:"chainEvents"`
-	Database     string    `json:"database"`
-	DatabaseSHA  string    `json:"databaseSha256"`
-	Recordings   int       `json:"recordings"`
-	ArgusVersion string    `json:"argusVersion"`
-}
+type manifest = controlbackup.Manifest
+
+// backupStateDir is where the console keeps what it set for backups
+// (controlbackup): beside the managed configuration, whatever --config the
+// command was given resolves to. Set by run.
+var backupStateDir string
 
 func runBackup(configPath string, args []string) error {
 	if len(args) > 0 && args[0] == "verify" {
@@ -69,10 +67,39 @@ func runBackup(configPath string, args []string) error {
 		args = args[1:]
 	}
 	fs := flag.NewFlagSet("backup run", flag.ExitOnError)
-	out := fs.String("out", "/var/backups/argus", "backup root; one directory per run beneath it")
-	keep := fs.Int("keep", 14, "database dumps to keep; recordings are never pruned")
+	out := fs.String("out", controlbackup.DefaultDir, "backup root; one directory per run beneath it")
+	keep := fs.Int("keep", 14, "database dumps to keep; recordings are never pruned. "+
+		"How many to keep set in the console, under Settings › Control plane › Backups, wins")
 	_ = fs.Parse(args)
 
+	// What the console set wins over the unit's -keep: it is what people see.
+	if backupStateDir != "" {
+		if st, ok, err := controlbackup.ReadSettings(backupStateDir); err == nil && ok &&
+			st.Keep >= controlbackup.MinKeep && st.Keep <= controlbackup.MaxKeep {
+			*keep = st.Keep
+		}
+	}
+
+	// The console reads how this run went from last-run.json: this process
+	// may write only under -out, and the console reads it from there.
+	if err := os.MkdirAll(*out, 0o700); err != nil {
+		return err
+	}
+	last := controlbackup.LastRun{StartedAt: time.Now().UTC(), Keep: *keep}
+	_ = controlbackup.WriteLastRun(*out, last)
+	err := backupRun(configPath, *out, *keep, &last)
+	last.FinishedAt, last.OK = time.Now().UTC(), err == nil
+	if err != nil {
+		last.Error = err.Error()
+	}
+	if werr := controlbackup.WriteLastRun(*out, last); werr != nil {
+		fmt.Fprintf(os.Stderr, "argus-control: could not record this run for the console: %v\n", werr)
+	}
+	return err
+}
+
+// backupRun is one backup: chain head, dump, recordings, manifest, prune.
+func backupRun(configPath, out string, keep int, last *controlbackup.LastRun) error {
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
@@ -109,15 +136,13 @@ func runBackup(configPath string, args []string) error {
 		return err
 	}
 
-	dir := filepath.Join(*out, time.Now().UTC().Format("20060102T150405Z"))
-	if err := os.MkdirAll(*out, 0o700); err != nil {
-		return err
-	}
+	dir := filepath.Join(out, time.Now().UTC().Format(controlbackup.RunLayout))
 	// Mkdir, not MkdirAll: two runs in the same second must not share a
 	// directory, or the second silently replaces the first's dump.
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return fmt.Errorf("backup directory: %w", err)
 	}
+	last.Run = filepath.Base(dir)
 	fmt.Printf("backing up to %s\n  chain    %d events, head %s\n", dir, v.Checked, short(v.Head))
 
 	// 2. The database.
@@ -143,14 +168,14 @@ func runBackup(configPath string, args []string) error {
 		if err != nil {
 			return fmt.Errorf("object storage: %w", err)
 		}
-		added, total, err := mirrorRecordings(ctx, sc, filepath.Join(*out, "recordings"))
+		added, total, err := mirrorRecordings(ctx, sc, filepath.Join(out, "recordings"))
 		if err != nil {
 			return err
 		}
 		recordings = total
 		fmt.Printf("  recordings %d (%d new)\n", total, added)
 	} else if d, ok := localRecordings(cfg, configPath); ok {
-		added, total, err := mirrorRecordings(ctx, d, filepath.Join(*out, "recordings"))
+		added, total, err := mirrorRecordings(ctx, d, filepath.Join(out, "recordings"))
 		if err != nil {
 			return err
 		}
@@ -169,12 +194,13 @@ func runBackup(configPath string, args []string) error {
 		return err
 	}
 
-	pruned, err := pruneBackups(*out, *keep)
+	pruned, err := pruneBackups(out, keep)
 	if err != nil {
 		return fmt.Errorf("prune: %w", err)
 	}
+	last.Pruned = pruned
 	if pruned > 0 {
-		fmt.Printf("  pruned %d older dump(s), keeping %d\n", pruned, *keep)
+		fmt.Printf("  pruned %d older dump(s), keeping %d\n", pruned, keep)
 	}
 	fmt.Printf("done. Prove it restores: argus-control -config %s backup verify -scratch-db <url> %s\n",
 		configPath, dir)
@@ -260,7 +286,7 @@ func pruneBackups(root string, keep int) (int, error) {
 		if !e.IsDir() || e.Name() == "recordings" {
 			continue
 		}
-		if _, err := time.Parse("20060102T150405Z", e.Name()); err != nil {
+		if _, err := time.Parse(controlbackup.RunLayout, e.Name()); err != nil {
 			continue // not ours; never delete what we did not make
 		}
 		if _, err := os.Stat(filepath.Join(root, e.Name(), backupManifest)); err != nil {

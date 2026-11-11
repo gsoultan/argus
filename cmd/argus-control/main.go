@@ -282,6 +282,7 @@ func run() error {
 	}
 
 	if flag.NArg() > 0 {
+		backupStateDir = filepath.Join(filepath.Dir(configPath), "backup")
 		path, err := commandConfig(configPath)
 		if err != nil {
 			return err
@@ -568,6 +569,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		api.Releases = &control.ReleaseWatcher{API: cfg.AgentReleasesAPI, Log: log}
 		go api.Releases.Run(ctx)
 	}
+	api.Backups = &control.ControlBackups{StateDir: filepath.Join(loc.dataDir(), "backup")}
 	api.Updates = &control.ControlUpdater{
 		Dir: updateDir(loc), ReleasesURL: cfg.AgentReleasesURL, Log: log,
 		Unsupported: control.ControlUpdateSupport(updateDir(loc)),

@@ -1,5 +1,5 @@
 import type {
-  AccessRequest, Asset, AssetGroup, AuditAction, AuditEvent, AuditSeverity,
+  AccessRequest, Asset, AssetAddress, AssetGroup, AuditAction, AuditEvent, AuditSeverity,
   RiskFlag, Session, User,
 } from '~/types/domain'
 
@@ -57,6 +57,11 @@ export const groups: AssetGroup[] = [
 ]
 
 const OS = ['Ubuntu 24.04 LTS', 'Debian 12', 'Rocky Linux 9', 'Amazon Linux 2023', 'RHEL 9.4']
+
+/** An IPv4 address an agent reported, for the fixture. */
+function v4(address: string, isPublic = false, iface = 'eth0'): AssetAddress {
+  return { address, family: 'ipv4', public: isPublic, interface: iface }
+}
 
 function makeAssets(): Asset[] {
   const out: Asset[] = []
@@ -125,9 +130,9 @@ function makeAssets(): Asset[] {
       const last = out[out.length - 1]!
       if (agentState !== 'absent') {
         last.addresses = [
-          ...(i % 3 === 0 ? [{ address: `203.0.113.${(i * 7) % 250 + 2}`, family: 'ipv4' as const, public: true, interface: 'eth0' }] : []),
-          { address: last.address, family: 'ipv4', public: false, interface: 'eth0' },
-          ...(i % 4 === 0 ? [{ address: '172.17.0.1', family: 'ipv4' as const, public: false, interface: 'docker0' }] : []),
+          ...(i % 3 === 0 ? [v4(`203.0.113.${(i * 7) % 250 + 2}`, true)] : []),
+          v4(last.address),
+          ...(i % 4 === 0 ? [v4('172.17.0.1', false, 'docker0')] : []),
         ]
       }
       group.assetCount++
@@ -164,7 +169,6 @@ const win01: Asset = {
   unmanagedKeyCount: 0,
   credentialRotatedAt: ago(4_000),
   rotationIntervalDays: 30,
-  addresses: undefined,
 }
 
 /**
@@ -180,7 +184,7 @@ const pixel01: Asset = {
   id: '5c1e1a0e-7b7e-4c7a-9c4e-2d6f3a8b1e42',
   hostname: 'rina-pixel-8',
   address: '10.44.9.31',
-  addresses: [{ address: '10.44.9.31', family: 'ipv4', public: false, interface: 'wlan0' }],
+  addresses: [v4('10.44.9.31', false, 'wlan0')],
   port: 0,
   os: 'Android 15',
   tags: ['field', 'phones'],
