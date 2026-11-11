@@ -100,6 +100,12 @@ be finished, and the run's message says what to do next. Do not reboot until
 `sudo dpkg --configure -a` and `sudo apt-get -f install` finish cleanly and
 `sudo apt full-upgrade` has completed the release.
 
+If apt later refuses sources because their mirror "no longer has a Release
+file", the **Updates** tab says which case it is. Either the sources still name
+the old release after an upgrade (point them at the new codename), or the
+mirror stopped serving the server's own release (switch to `archive.ubuntu.com`
+or `deb.debian.org`).
+
 A run cut off part way (power, a person stopping the unit) is marked
 interrupted, says the server may be between releases, and the package
 manager is repaired as for any interrupted update. A run that goes quiet for

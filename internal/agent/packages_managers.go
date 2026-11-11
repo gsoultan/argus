@@ -139,9 +139,67 @@ func (aptManager) refresh(ctx context.Context, run cmdRunner, log io.Writer) err
 		return err
 	}
 	if code != 0 {
+		if why := aptMissingRelease(b.Bytes(), osRelease()); why != "" {
+			return errors.New(why)
+		}
 		return fmt.Errorf("apt-get update failed (exit %d): %s", code, tail(b.Bytes(), 400))
 	}
 	return aptFetchFailed(b.Bytes())
+}
+
+// reAptNoRelease reads apt's refusal of a source whose mirror no longer has
+// the release it names:
+//
+//	E: The repository 'http://id.archive.ubuntu.com/ubuntu noble-updates Release' no longer has a Release file.
+//	E: The repository 'http://deb.debian.org/debian buster Release' does not have a Release file.
+var reAptNoRelease = regexp.MustCompile(`^E: The repository '(\S+) (\S+) Release' (?:no longer has|does not have) a Release file`)
+
+// aptMissingRelease says, in words a person can act on, why apt refused
+// sources whose release the mirror does not serve: sources a release upgrade
+// left on the old release, or a mirror that dropped or lost it. "" when
+// apt's output is not that.
+func aptMissingRelease(out []byte, osr map[string]string) string {
+	var uris, suites []string
+	for _, line := range strings.Split(string(out), "\n") {
+		m := reAptNoRelease.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue
+		}
+		if !hasString(uris, m[1]) {
+			uris = append(uris, m[1])
+		}
+		suites = append(suites, m[2])
+	}
+	if len(suites) == 0 {
+		return ""
+	}
+	base := func(suite string) string {
+		suite, _, _ = strings.Cut(suite, "/")
+		suite, _, _ = strings.Cut(suite, "-")
+		return suite
+	}
+	codename := osr["VERSION_CODENAME"]
+	name := osr["PRETTY_NAME"]
+	if name == "" {
+		name = codename
+	}
+	behind := codename != ""
+	for _, s := range suites {
+		if base(s) == codename {
+			behind = false
+		}
+	}
+	where := strings.Join(uris, ", ")
+	if behind {
+		return fmt.Sprintf("apt's sources still name %s (%s from %s), but the server runs %s: a release upgrade "+
+			"left them behind, and the mirror no longer serves %s to it. Point those entries in /etc/apt/sources.list "+
+			"and /etc/apt/sources.list.d/ at %s, then look for updates again",
+			base(suites[0]), strings.Join(suites, ", "), where, name, base(suites[0]), codename)
+	}
+	return fmt.Sprintf("the mirror %s no longer serves %s (%s), which is the release this server runs. "+
+		"The mirror is likely broken or out of date: point those entries in /etc/apt/sources.list and "+
+		"/etc/apt/sources.list.d/ at the distribution's main archive (archive.ubuntu.com or deb.debian.org), "+
+		"then look for updates again", where, base(suites[0]), strings.Join(suites, ", "))
 }
 
 // aptFetchFailed reads apt-get update's output for lists it could not
