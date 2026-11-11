@@ -98,6 +98,9 @@ type PackageReport struct {
 	// RebootRequired is the server asking for a reboot now, for what is
 	// already installed.
 	RebootRequired bool `json:"reboot_required,omitempty"`
+	// Release is the operating system's own release and the next one it
+	// can be upgraded to, when the agent can tell (packages_release.go).
+	Release *ReleaseInfo `json:"release,omitempty"`
 	// UTCOffsetMinutes is the server's clock against UTC, so a maintenance
 	// window is the server's own 02:00.
 	UTCOffsetMinutes int `json:"utc_offset_minutes"`
@@ -137,6 +140,10 @@ const (
 	// PackagesReboot installs nothing and reboots: for a server that says
 	// it needs a reboot once the updates are in.
 	PackagesReboot = "reboot"
+	// PackagesRelease upgrades the operating system to its next major
+	// release (packages_release.go): Expect names the release a person
+	// said yes to, and the run stops if the server now offers another.
+	PackagesRelease = "release_upgrade"
 )
 
 // PackageRunRequest is an install the console asked for.
@@ -206,6 +213,10 @@ type PackageRunStatus struct {
 	// ended without one.
 	RebootRequired bool `json:"reboot_required,omitempty"`
 	Rebooted       bool `json:"rebooted,omitempty"`
+	// Release is the upgrade a release_upgrade run is making: from which
+	// release to which. The agent that comes back after the reboot checks
+	// the server is on To before it calls the run done.
+	Release *ReleaseChange `json:"release,omitempty"`
 	// Log is the end of what the package manager printed.
 	Log        string    `json:"log,omitempty"`
 	Unit       string    `json:"unit,omitempty"`
@@ -375,6 +386,10 @@ type PackageBeat struct {
 	// Reboot says this agent does a reboot-only run, so the console offers
 	// one. An older agent leaves it out and is never sent one.
 	Reboot bool `json:"reboot,omitempty"`
+	// ReleaseUpgrade says this agent upgrades the operating system to its
+	// next release, so the console offers it. An older agent leaves it out
+	// and is never sent one.
+	ReleaseUpgrade bool `json:"release_upgrade,omitempty"`
 }
 
 // installer is a platform that installs software though it does not update
@@ -414,6 +429,7 @@ func (p *Packages) Beat() PackageBeat {
 		b.Installs = in.installs()
 	}
 	b.Reboot = b.Supported
+	b.ReleaseUpgrade = b.Supported
 	if p.report != nil && p.report.CheckedAt.After(p.sent) {
 		r := *p.report
 		b.Report = &r
@@ -487,6 +503,11 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 	}
 	switch req.Mode {
 	case PackagesAll, PackagesSecurity, PackagesReboot:
+	case PackagesRelease:
+		if !reOSVersion.MatchString(req.Expect) {
+			fail("the run does not say which release it was approved for")
+			return
+		}
 	case PackagesSelected:
 		if len(req.Packages) == 0 {
 			fail("no packages were named")
@@ -694,6 +715,12 @@ func (p *Packages) settle(ctx context.Context, st PackageRunStatus) PackageRunSt
 	st.At, st.FinishedAt = now, now
 	rebooted := st.BootID != "" && st.BootID != p.platform.bootID()
 	switch {
+	case st.State == RunRebooting && rebooted && st.Release != nil:
+		p.settleRelease(ctx, &st)
+		p.askCheckAfter(st.ID)
+	case st.State == RunRebooting && st.Release != nil:
+		st.State, st.Step, st.RebootRequired = RunDone, "", true
+		st.Message = st.Release.notRebooted()
 	case st.State == RunRebooting && rebooted:
 		st.State, st.Rebooted, st.RebootRequired, st.Step = RunDone, true, false, ""
 		st.Message = "installed, and the server rebooted"
@@ -715,6 +742,14 @@ func (p *Packages) settle(ctx context.Context, st PackageRunStatus) PackageRunSt
 		why := "the update stopped before it finished"
 		if rebooted {
 			why = "the server restarted while it was updating"
+		}
+		if st.Release != nil {
+			why = "the upgrade to " + st.Release.ToName + " stopped before it finished, so the server may be part way " +
+				"between releases; look at " + st.Release.logFile() + " before anything else"
+			if rebooted {
+				why = "the server restarted during the upgrade to " + st.Release.ToName + ", so it may be part way " +
+					"between releases; look at " + st.Release.logFile() + " before anything else"
+			}
 		}
 		if err := p.platform.repair(ctx); err != nil {
 			st.Message = why + "; finishing what the package manager left half done failed: " + err.Error() +

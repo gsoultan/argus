@@ -26,7 +26,12 @@ export async function checkPackages(assetId: string): Promise<{ checkId: string 
 
 export async function startPackageRun(
   assetId: string,
-  body: { mode: 'all' | 'security' | 'selected' | 'reboot'; packages?: string[]; reboot: PackageReboot },
+  body: {
+    mode: 'all' | 'security' | 'selected' | 'reboot' | 'release_upgrade'
+    packages?: string[]
+    reboot: PackageReboot
+    release?: string
+  },
 ): Promise<PackageRun> {
   return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/packages/runs`, body)
 }

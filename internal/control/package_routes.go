@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -191,6 +192,10 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	if r.Mode == PackagesReboot {
 		detail = fmt.Sprintf("The reboot of %s (%s) %s", r.AssetHostname, who, strings.ReplaceAll(r.State, "_", " "))
 	}
+	if r.Mode == PackagesRelease {
+		detail = fmt.Sprintf("The release upgrade of %s to %s (%s) %s", r.AssetHostname, r.Release, who,
+			strings.ReplaceAll(r.State, "_", " "))
+	}
 	if len(r.Started) > 0 {
 		detail += ", started " + strings.Join(r.Started, ", ")
 	}
@@ -213,7 +218,8 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	switch {
 	case r.State == RunFailed || r.State == RunInterrupted:
 		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from ",
-			PackagesScript: "A script on ", PackagesFileInstall: "Installing on ", PackagesReboot: "Rebooting "}[r.Mode]
+			PackagesScript: "A script on ", PackagesFileInstall: "Installing on ", PackagesReboot: "Rebooting ",
+			PackagesRelease: "Upgrading the release of "}[r.Mode]
 		if verb == "" {
 			verb = "Updating "
 		}
@@ -250,6 +256,8 @@ func describeMode(r PackageRun) string {
 		return "security updates"
 	case PackagesReboot:
 		return "a reboot"
+	case PackagesRelease:
+		return "release " + r.Release
 	case PackagesInstall, PackagesRemove:
 		return describeSoftware(r.Mode, r.Items, r.Purge)
 	case PackagesScript:
@@ -290,6 +298,8 @@ func runPhrase(r PackageRun) string {
 		return "restoring " + describeMode(r)
 	case PackagesReboot:
 		return "rebooting the server"
+	case PackagesRelease:
+		return "upgrading the server to release " + r.Release
 	}
 	return "installing " + describeMode(r)
 }
@@ -313,6 +323,8 @@ func runNoun(r PackageRun) string {
 		return "app change"
 	case PackagesReboot:
 		return "reboot"
+	case PackagesRelease:
+		return "release upgrade"
 	}
 	return "update run"
 }
@@ -387,6 +399,7 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 	if st != nil {
 		v.Reported, v.Supported, v.Reason, v.Checking, v.Installs = true, st.Supported, st.Reason, st.Checking, st.Installs
 		v.CanReboot = st.Reboot
+		v.CanUpgradeRelease = st.Release
 	}
 	v.Report = report
 	policy, err := a.store.PackagePolicy(ctx)
@@ -417,6 +430,37 @@ func rebootReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
 		return false
 	}
 	return true
+}
+
+// releaseReady refuses a release upgrade the server is not ready for, or
+// that is not the one it offers: the agent would only refuse it later.
+func releaseReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
+	if in.Mode != PackagesRelease {
+		return true
+	}
+	var rel *ReleaseInfo
+	if t.view.Report != nil {
+		rel = t.view.Report.Release
+	}
+	switch {
+	case !t.view.CanUpgradeRelease:
+		writeErr(w, http.StatusConflict, "this server's agent is too old to upgrade the operating system from "+
+			"the console; update the agent from its Settings tab first")
+	case rel == nil || rel.Reason != "" || rel.Next == "":
+		why := "the server does not offer a newer release"
+		if rel != nil && rel.Reason != "" {
+			why = rel.Reason
+		}
+		writeErr(w, http.StatusConflict, "no release upgrade is offered for this server: "+why)
+	case rel.Next != in.Release:
+		writeErr(w, http.StatusConflict, fmt.Sprintf("the server offers %s, not %s; look for updates again", rel.Next,
+			in.Release))
+	case len(rel.Blockers) > 0:
+		writeErr(w, http.StatusConflict, "the server is not ready for "+rel.NextName+": "+strings.Join(rel.Blockers, "; "))
+	default:
+		return true
+	}
+	return false
 }
 
 // packagesReady says whether a run can be asked of t now, answering the
@@ -505,7 +549,13 @@ type runRequest struct {
 	Mode     string   `json:"mode"`
 	Packages []string `json:"packages"`
 	Reboot   string   `json:"reboot"`
+	// Release is the version a release upgrade goes to, as the console
+	// showed it.
+	Release string `json:"release"`
 }
+
+// reRelease is a VERSION_ID: 24.04, 13, 9.
+var reRelease = regexp.MustCompile(`^[0-9]{1,3}(\.[0-9]{1,3})?$`)
 
 func (in *runRequest) validate() error {
 	switch in.Mode {
@@ -513,6 +563,13 @@ func (in *runRequest) validate() error {
 		in.Packages = nil
 	case PackagesReboot:
 		// A reboot is the whole run: whatever was said about rebooting.
+		in.Packages, in.Reboot, in.Release = nil, "if_needed", ""
+		return nil
+	case PackagesRelease:
+		// A new release always ends in a reboot into it.
+		if !reRelease.MatchString(in.Release) {
+			return errors.New("say which release to upgrade to, as the server offers it")
+		}
 		in.Packages, in.Reboot = nil, "if_needed"
 		return nil
 	case "selected":
@@ -529,8 +586,9 @@ func (in *runRequest) validate() error {
 		}
 		in.Packages = dedupe(in.Packages)
 	default:
-		return errors.New("say what to do: all, security, selected or reboot")
+		return errors.New("say what to do: all, security, selected, reboot or release_upgrade")
 	}
+	in.Release = ""
 	switch in.Reboot {
 	case "", "never":
 		in.Reboot = "never"
@@ -550,6 +608,11 @@ func (a *API) newManualRun(t packageTarget, in runRequest, by string) newRun {
 	// "all" and "security", not out of a pick made by hand.
 	if in.Mode == "selected" {
 		n.Holds = []string{}
+	}
+	// A new release replaces every package: holds cannot keep one back,
+	// and the console says so before anyone asks.
+	if in.Mode == PackagesRelease {
+		n.Holds, n.Expect = []string{}, in.Release
 	}
 	if t.view.Rule.NeedsApproval {
 		n.State = RunAwaitingApproval
@@ -585,7 +648,7 @@ func (a *API) postAssetPackageRun(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "package updates", err)
 		return
 	}
-	if !packagesReady(w, t) || !rebootReady(w, t, in) {
+	if !packagesReady(w, t) || !rebootReady(w, t, in) || !releaseReady(w, t, in) {
 		return
 	}
 	runs, err := a.store.CreatePackageRuns(r.Context(), []newRun{a.newManualRun(t, in, sess.Email)})
@@ -623,6 +686,10 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 	req := runRequest{Mode: in.Mode, Reboot: in.Reboot}
 	if in.Mode == "selected" {
 		writeErr(w, http.StatusBadRequest, "pick packages on one server at a time; for several, install all or security updates")
+		return
+	}
+	if in.Mode == PackagesRelease {
+		writeErr(w, http.StatusBadRequest, "upgrade the release of one server at a time, from its Updates tab")
 		return
 	}
 	if err := req.validate(); err != nil {
@@ -709,6 +776,12 @@ func (a *API) packageRunsAsked(r *http.Request, by string, runs []PackageRun, li
 			order = strings.Replace(order, "updated", "rebooted", 1)
 			detail = fmt.Sprintf("Asked to reboot %s%s%s.", run.AssetHostname, order, waits)
 			title, ask = by+" asks to reboot "+run.AssetHostname, "Reboot it"
+		}
+		if run.Mode == PackagesRelease {
+			detail = fmt.Sprintf("Asked to upgrade %s to release %s and reboot into it%s.", run.AssetHostname,
+				run.Release, waits)
+			title = by + " asks to upgrade " + run.AssetHostname + " to release " + run.Release
+			ask = "Upgrade the operating system to release " + run.Release + " and reboot"
 		}
 		a.auditAsset(r, AuditEvent{
 			Action: "packages.run_requested", Severity: "notice", ActorEmail: by, Target: run.AssetHostname,

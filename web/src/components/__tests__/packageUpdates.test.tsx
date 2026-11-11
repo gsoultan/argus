@@ -48,7 +48,8 @@ const rule = {
 }
 
 const view = (over: Partial<PackagesView> = {}): PackagesView => ({
-  hostname: 'web-01', enrolled: true, reported: true, supported: true, canReboot: true, checking: false, checkAsked: false,
+  hostname: 'web-01', enrolled: true, reported: true, supported: true, canReboot: true, canUpgradeRelease: true,
+  checking: false, checkAsked: false,
   report: {
     checked_at: new Date().toISOString(), manager: 'apt', supported: true, utc_offset_minutes: 0,
     updates: [
@@ -273,6 +274,72 @@ describe('Reboot', () => {
     expect(screen.getAllByText('Rebooting').length).toBeGreaterThan(0)
     expect(screen.queryByText('This server needs a reboot')).toBeNull()
     expect(screen.queryByText('Refresh package lists')).toBeNull()
+  })
+})
+
+describe('Release upgrade', () => {
+  const jammy = { distro: 'ubuntu', current: 'Ubuntu 22.04.5 LTS', version: '22.04', next: '24.04',
+    next_name: 'Ubuntu 24.04.1 LTS', tool: 'do-release-upgrade' }
+  const ready = (release: object, over: Partial<PackagesView> = {}) => view({
+    report: { checked_at: new Date().toISOString(), manager: 'apt', supported: true, utc_offset_minutes: 0, updates: [],
+      release: { ...jammy, ...release } },
+    ...over,
+  })
+
+  it('offers the next release and upgrades only after the server name is typed', async () => {
+    live.assetPackages.mockResolvedValue(ready({}))
+    live.startPackageRun.mockResolvedValue(runOf({ mode: 'release_upgrade', release: '24.04' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('New release available')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Upgrade to Ubuntu 24.04.1 LTS…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/Holds do not apply/)).toBeTruthy()
+    const go = within(dialog).getByRole('button', { name: 'Upgrade to Ubuntu 24.04.1 LTS' }) as HTMLButtonElement
+    expect(go.disabled).toBe(true)
+    fireEvent.change(within(dialog).getByLabelText('Type the server name to confirm'), { target: { value: 'web-01' } })
+    expect(go.disabled).toBe(false)
+    fireEvent.click(go)
+    await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1',
+      { mode: 'release_upgrade', release: '24.04', reboot: 'if_needed' }))
+  })
+
+  it('says what stands in the way, with no way to start', async () => {
+    live.assetPackages.mockResolvedValue(ready({
+      blockers: ['reboot it first: an update already installed waits for a reboot',
+        'argus-control runs on this server, and upgrading it from the console would take the console down part way through; upgrade it by hand, as docs/os-upgrades.md describes'],
+    }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('Not ready yet')).toBeTruthy()
+    expect(screen.getByText(/Reboot it first/)).toBeTruthy()
+    expect(screen.getByText(/docs\/os-upgrades.md/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Upgrade to Ubuntu 24.04.1 LTS…' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('asks to update an agent too old to upgrade, with no button', async () => {
+    live.assetPackages.mockResolvedValue(ready({}, { canUpgradeRelease: false }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/too old to upgrade the operating system/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Upgrade to/ })).toBeNull()
+  })
+
+  it('says why a supported server is not offered one, and nothing for one Argus does not upgrade', async () => {
+    live.assetPackages.mockResolvedValue(ready({ next: undefined, next_name: undefined,
+      reason: 'do-release-upgrade is not installed; install ubuntu-release-upgrader-core' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/install ubuntu-release-upgrader-core/)).toBeTruthy()
+  })
+
+  it('follows a release upgrade going in place of the offer', async () => {
+    live.assetPackages.mockResolvedValue(ready({}, {
+      runs: [runOf({ mode: 'release_upgrade', release: '24.04', state: 'running', step: 'upgrade',
+        message: 'upgrading to Ubuntu 24.04.1 LTS; this takes a while, and the server reboots at the end',
+        sentAt: new Date().toISOString() })],
+    }))
+    live.packageRun.mockResolvedValue(runOf({ mode: 'release_upgrade', state: 'running', log: '' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('Release upgrade')).toBeTruthy()
+    expect(screen.getByText(/upgrading to Ubuntu 24.04.1 LTS; this takes a while/)).toBeTruthy()
+    expect(screen.queryByText('New release available')).toBeNull()
   })
 })
 

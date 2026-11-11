@@ -39,6 +39,21 @@ fixture.
   the agent's beat says `reboot: true`; the "needs a reboot" alert has subject
   `package-reboot:<agent>` and is closed by a run that rebooted.
 
+- A release upgrade is a run with mode `release_upgrade`
+  (`internal/agent/packages_release*.go`, migration 076, docs/os-upgrades.md).
+  The check reports `release` (current, next, tool, reason, blockers); the
+  run's `expect` is the version approved, and the helper stops if the server
+  offers another. Ubuntu: do-release-upgrade with `RemoveObsoletes=no` in
+  release-upgrades.d/argus.cfg for the run. Debian: rewrite Debian entries to
+  the new codename, turn off third-party ones naming the old, put sources back
+  if the new lists fail, then upgrade --without-new-pkgs and full-upgrade.
+  RHEL family: leapp preupgrade (inhibitors stop it), leapp upgrade. Always
+  reboots; the agent on the new boot reads /etc/os-release and calls it done
+  only on the approved version, then `packages-release-finish` repairs the
+  package manager and reinstalls the agent's tools (sshd, sftp-server, DB
+  clients) that the upgrade removed. Refused where argus-control is installed;
+  one server at a time; stale after 8 h, not 3.
+
 ## Rules
 
 - One rule per tag, first match by position wins, plus exactly one rule with

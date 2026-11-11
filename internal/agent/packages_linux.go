@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type linuxPackages struct {
@@ -88,3 +89,24 @@ func (p *linuxPackages) repair(ctx context.Context) error {
 }
 
 func (p *linuxPackages) bootID() string { return readBootID() }
+
+// finishRelease runs `argus-agent packages-release-finish` outside the
+// agent's sandbox, after the reboot that ends a release upgrade, and reads
+// what it found.
+func (p *linuxPackages) finishRelease(ctx context.Context) (ReleaseFinish, error) {
+	cctx, cancel := context.WithTimeout(ctx, 50*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "systemd-run", "--pipe", "--wait", "--quiet", "--collect",
+		"--service-type=exec", "--description=Argus release upgrade check", p.executable,
+		"packages-release-finish", "--state", p.stateDir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return ReleaseFinish{}, fmt.Errorf("%v: %s", err, tail(stderr.Bytes(), 300))
+	}
+	var res ReleaseFinish
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
+		return ReleaseFinish{}, fmt.Errorf("cannot read what it found: %w", err)
+	}
+	return res, nil
+}
