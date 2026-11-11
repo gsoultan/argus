@@ -687,6 +687,11 @@ type Asset struct {
 	// credential, its grants and its tunnel all stay under that name, so a
 	// rename keeps the same machine. Empty when the agent uses the hostname.
 	AgentHostname string `json:"agentHostname,omitempty"`
+	// ControlHost marks the server argus-control itself runs on, managed
+	// through the helper the argus-control package ships (control_host.go)
+	// rather than an agent someone installed. It updates with argus-control
+	// and is not removed from the inventory; plain SSH to it is never gated.
+	ControlHost bool `json:"controlHost"`
 	// TunnelConnected is whether this host's agent holds a live tunnel, by
 	// the database's clock, so the console can open sessions through it.
 	TunnelConnected bool `json:"tunnelConnected"`

@@ -750,10 +750,11 @@ func held(name string, holds []string) bool {
 }
 
 // protectedService is a service the helper never restarts on its own: the
-// agent (which a restart would cut off mid-report), and what people's
-// sessions run in.
+// agent (which a restart would cut off mid-report), argus-control and its
+// helper on the control plane's own server (the same, and the console with
+// it), and what people's sessions run in.
 func protectedService(svc string) bool {
-	for _, p := range []string{"argus-agent", "user@", "getty@", "serial-getty@", "systemd-", "dbus",
+	for _, p := range []string{"argus-agent", "argus-control", "user@", "getty@", "serial-getty@", "systemd-", "dbus",
 		"display-manager", "gdm", "lightdm", "sddm", "network", "NetworkManager", "wpa_supplicant"} {
 		if strings.HasPrefix(svc, p) {
 			return true

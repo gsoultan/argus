@@ -278,9 +278,12 @@ func TestProtectedLinux(t *testing.T) {
 		"/var/log/audit/audit.log": true,
 		"/var/log/sudo-io/00/01":   true,
 		"/var/lib/argus/x":         true,
-		"/opt/argus-state/a":       true,
-		"/var/log/syslog.1":        false,
-		"/var/log/authority.log":   false,
+		// argus-control's own server: its data and backups are the evidence.
+		"/var/lib/argus-control/recordings/a.log": true,
+		"/var/backups/argus/argus-2026.log":       true,
+		"/opt/argus-state/a":                      true,
+		"/var/log/syslog.1":                       false,
+		"/var/log/authority.log":                  false,
 	} {
 		got := protectedLinux(p, "/opt/argus-state", nil) != ""
 		if p == "/var/log/authority.log" {

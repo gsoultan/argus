@@ -6,6 +6,7 @@ import { Digest, HostKeyBadge, Mono, absTime, relTime } from '~/components/primi
 import { usePin } from '~/components/server/hostKey'
 import { SettingsSection, SettingsSections } from '~/components/server/layout'
 import { connectsBy } from '~/components/server/OverviewTab'
+import { CONTROL_HOST_SSH, ControlHostRemove } from '~/components/server/controlHost'
 import { run } from '~/lib/notify'
 import { useArchiveAsset } from '~/lib/queries'
 import { FS, SP } from '~/theme'
@@ -36,6 +37,12 @@ export function SettingsTab({ asset, canEdit, onEdit }: {
               <Detail label="Agent name">
                 <Mono>{asset.agentHostname}</Mono>
                 <Text size={FS.micro} c="dimmed">The name its agent was installed under. Sessions reach it by this name.</Text>
+              </Detail>
+            )}
+            {asset.controlHost && (
+              <Detail label="Role">
+                <Text size={FS.meta}>argus-control runs on this server. Its logs, updates, disks and terminal are looked after from here, through the helper the argus-control package installs.</Text>
+                <Text size={FS.micro} c="dimmed">{CONTROL_HOST_SSH}</Text>
               </Detail>
             )}
             <Detail label={device ? 'Connects by' : 'Protocol'}>
@@ -82,7 +89,7 @@ export function SettingsTab({ asset, canEdit, onEdit }: {
 
       {canEdit && (
         <SettingsSection title={`Remove ${assetNoun(asset)}`} description="Its recordings and activity are kept." danger>
-          <RemoveServer asset={asset} />
+          {asset.controlHost ? <ControlHostRemove /> : <RemoveServer asset={asset} />}
         </SettingsSection>
       )}
     </SettingsSections>

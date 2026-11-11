@@ -105,6 +105,7 @@ func _assertAgentCredentialShape(m m0.AgentCredential) {
 		m.UpdateRequestedAt,
 		m.UpdateRequestedBy,
 		m.FirstConnectedAt,
+		m.ControlHost,
 	}
 }
 
@@ -121,6 +122,7 @@ func _assertAgentEnrollmentTokenShape(m m0.AgentEnrollmentToken) {
 		m.ExpiresAt,
 		m.UsedAt,
 		m.UsedByHost,
+		m.ControlHost,
 	}
 }
 
@@ -166,6 +168,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.ControlMode,
 		m.ControlNeedsApproval,
 		m.ConnectAsk,
+		m.ControlHost,
 	}
 }
 

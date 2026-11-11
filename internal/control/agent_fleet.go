@@ -77,7 +77,7 @@ func (s *Store) AgentFleet(ctx context.Context) ([]AgentFleetRow, error) {
 		SELECT a.id, h.name, COALESCE(g.version, ''), g.last_seen_at,
 		       COALESCE(g.active_sessions, 0), g.update_status,
 		       c.update_id, c.update_version, c.update_now, c.update_requested_at,
-		       c.update_requested_by, c.update_restart
+		       c.update_requested_by, c.update_restart, c.control_host
 		  FROM assets a
 		  -- The agent's own name: a server added from discovery is named by
 		  -- its FQDN and its agent by agent_hostname (see AgentHostname).
@@ -99,9 +99,10 @@ func (s *Store) AgentFleet(ctx context.Context) ([]AgentFleetRow, error) {
 			reqNow, reqRestart *bool
 			reqAt              *time.Time
 			reqBy              *string
+			controlHost        bool
 		)
 		if err := rows.Scan(&f.AssetID, &f.Hostname, &f.AgentVersion, &f.AgentLastSeen,
-			&f.ActiveSessions, &status, &reqID, &reqVersion, &reqNow, &reqAt, &reqBy, &reqRestart); err != nil {
+			&f.ActiveSessions, &status, &reqID, &reqVersion, &reqNow, &reqAt, &reqBy, &reqRestart, &controlHost); err != nil {
 			return nil, err
 		}
 		if len(status) > 0 {
@@ -124,6 +125,9 @@ func (s *Store) AgentFleet(ctx context.Context) ([]AgentFleetRow, error) {
 			if reqRestart != nil {
 				f.Request.Restart = *reqRestart
 			}
+		}
+		if controlHost {
+			f.Status = controlHostUpdateStatus(f.Status)
 		}
 		out = append(out, f)
 	}
@@ -393,7 +397,7 @@ func (a *API) autoUpdate(ctx context.Context, hostname, running string,
 		return nil
 	}
 	req, err := a.store.RequestAgentUpdate(ctx, hostname, target, false, autoUpdater)
-	if errors.Is(err, ErrNoLiveAgent) {
+	if errors.Is(err, ErrNoLiveAgent) || errors.Is(err, ErrControlHostAgent) {
 		return nil
 	}
 	if err != nil {

@@ -224,6 +224,12 @@ func (a *API) deleteAsset(w http.ResponseWriter, r *http.Request) {
 		a.failAsset(w, "asset", err)
 		return
 	}
+	if asset.ControlHost {
+		// The package would only enroll it again, and taking its helper
+		// off would leave the evidence's own server unlooked-after.
+		writeErr(w, http.StatusConflict, ErrControlHostAsset.Error())
+		return
+	}
 	if err := a.store.ArchiveAsset(r.Context(), id); err != nil {
 		a.failAsset(w, "archive asset", err)
 		return

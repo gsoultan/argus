@@ -16,7 +16,8 @@ esac
 # or, for an update asked for from the console, the update helper, which checks
 # the new version came up and goes back if not.
 if [ "$removing" = 1 ] && command -v systemctl >/dev/null 2>&1; then
-    for svc in argus-agent argus-control argus-control-update.path argus-backup-now.path; do
+    for svc in argus-agent argus-control argus-control-update.path argus-backup-now.path \
+               argus-control-host-enroll.path argus-control-host; do
         systemctl stop "$svc" >/dev/null 2>&1 || true
         systemctl disable "$svc" >/dev/null 2>&1 || true
     done

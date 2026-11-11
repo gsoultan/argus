@@ -20,14 +20,15 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID         [16]byte
-	TokenHash  string
-	Hostname   string
-	CreatedBy  string
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
-	UsedAt     runtime.Null[time.Time]
-	UsedByHost runtime.Null[string]
+	ID          [16]byte
+	TokenHash   string
+	Hostname    string
+	CreatedBy   string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+	UsedAt      runtime.Null[time.Time]
+	UsedByHost  runtime.Null[string]
+	ControlHost bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -66,7 +67,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 8
+const nCols = 9
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -76,10 +77,11 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs        [6]string
-	raws        [4][16]byte
-	tims        [4]time.Time
-	ns, nr, ntm uint8
+	strs             [6]string
+	raws             [4][16]byte
+	tims             [4]time.Time
+	bools            [4]bool
+	ns, nr, ntm, nbo uint8
 
 	anyRaw   [3][][16]byte
 	anyStr   [3][]string
@@ -234,6 +236,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.UsedByHost.V
 		q.ns++
+	case 8:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.ControlHost
+		q.nbo++
 	}
 }
 
@@ -384,21 +393,31 @@ type Pred struct {
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
+}
+
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID         = UUIDCol{0}
-	TokenHash  = TextCol{1}
-	Hostname   = TextCol{2}
-	CreatedBy  = TextCol{3}
-	CreatedAt  = TimeCol{4}
-	ExpiresAt  = TimeCol{5}
-	UsedAt     = NullTimeCol{6}
-	UsedByHost = NullTextCol{7}
+	ID          = UUIDCol{0}
+	TokenHash   = TextCol{1}
+	Hostname    = TextCol{2}
+	CreatedBy   = TextCol{3}
+	CreatedAt   = TimeCol{4}
+	ExpiresAt   = TimeCol{5}
+	UsedAt      = NullTimeCol{6}
+	UsedByHost  = NullTextCol{7}
+	ControlHost = BoolCol{8}
 )
 
 // UUIDCol addresses a uuid column.
@@ -519,6 +538,21 @@ func (h NullTextCol) In(v ...string) Pred   { return Pred{col: h.c, op: opIn, an
 func (h NullTextCol) NotIn(v ...string) Pred { return Pred{col: h.c, op: opNotIn, anyStr: v} }
 func (h NullTextCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTextCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// BoolCol addresses a bool column.
+type BoolCol struct{ c uint8 }
+
+func (h BoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h BoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h BoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h BoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -761,6 +795,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 8:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -836,8 +877,10 @@ func (q Query) UsedByHostIn(v ...string) Query    { return q.Where(UsedByHost.In
 func (q Query) UsedByHostNotIn(v ...string) Query { return q.Where(UsedByHost.NotIn(v...)) }
 func (q Query) UsedByHostIsNull() Query           { return q.Where(UsedByHost.IsNull()) }
 func (q Query) UsedByHostIsNotNull() Query        { return q.Where(UsedByHost.IsNotNull()) }
+func (q Query) ControlHostEq(v bool) Query        { return q.Where(ControlHost.Eq(v)) }
+func (q Query) ControlHostNotEq(v bool) Query     { return q.Where(ControlHost.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host" FROM "agent_enrollment_tokens"`
+const selectPrefix = `SELECT "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host" FROM "agent_enrollment_tokens"`
 const countPrefix = `SELECT count(*) FROM "agent_enrollment_tokens"`
 const existsPrefix = `SELECT 1 FROM "agent_enrollment_tokens"`
 const existsSuffix = ` LIMIT 1`
@@ -922,6 +965,12 @@ var orderTable = [nCols][4]string{
 		"\"used_by_host\" ASC NULLS FIRST",
 		"\"used_by_host\" DESC NULLS LAST",
 	},
+	{ // control_host
+		"\"control_host\"",
+		"\"control_host\" DESC",
+		"\"control_host\" ASC NULLS FIRST",
+		"\"control_host\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -935,6 +984,7 @@ var identTable = [nCols]string{
 	"\"expires_at\"",
 	"\"used_at\"",
 	"\"used_by_host\"",
+	"\"control_host\"",
 }
 
 var lowering = runtime.Lowering{
@@ -967,7 +1017,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [8][28]runtime.Frag{
+var fragTable = [9][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1208,6 +1258,36 @@ var fragTable = [8][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // control_host
+		{}, // opNone
+		{A: "\"control_host\" = $", B: ""},
+		{A: "\"control_host\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1372,6 +1452,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ExpiresAt = runtime.Timestamptz(rv[5])
 	r.UsedAt = runtime.Nullable(rv[6], runtime.Timestamptz)
 	r.UsedByHost = runtime.NullText(rv[7], sl)
+	r.ControlHost = runtime.Bool(rv[8])
 	return nil
 }
 
@@ -1380,6 +1461,7 @@ type binder struct {
 	strs   [6]string
 	raws   [4][16]byte
 	tims   [4]time.Time
+	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	limit  int64
@@ -1420,7 +1502,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nr, ntm, nar, nas uint8
+	var ns, nr, ntm, nbo, nar, nas uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1492,6 +1574,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 8:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -1629,7 +1715,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "agent_enrollment_tokens" ("id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host") VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host"`
+const insertSQL = `INSERT INTO "agent_enrollment_tokens" ("id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host"`
 
 const updatePrefix = `UPDATE "agent_enrollment_tokens" SET `
 const deletePrefix = `DELETE FROM "agent_enrollment_tokens"`
@@ -1637,16 +1723,17 @@ const deletePrefix = `DELETE FROM "agent_enrollment_tokens"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dTokenHash  uint64 = 1 << 0
-	dHostname   uint64 = 1 << 1
-	dCreatedBy  uint64 = 1 << 2
-	dCreatedAt  uint64 = 1 << 3
-	dExpiresAt  uint64 = 1 << 4
-	dUsedAt     uint64 = 1 << 5
-	dUsedByHost uint64 = 1 << 6
+	dTokenHash   uint64 = 1 << 0
+	dHostname    uint64 = 1 << 1
+	dCreatedBy   uint64 = 1 << 2
+	dCreatedAt   uint64 = 1 << 3
+	dExpiresAt   uint64 = 1 << 4
+	dUsedAt      uint64 = 1 << 5
+	dUsedByHost  uint64 = 1 << 6
+	dControlHost uint64 = 1 << 7
 )
 
-const nUpdatable = 7
+const nUpdatable = 8
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1657,6 +1744,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"expires_at\" = $", B: ""},   // expires_at
 	{A: "\"used_at\" = $", B: ""},      // used_at
 	{A: "\"used_by_host\" = $", B: ""}, // used_by_host
+	{A: "\"control_host\" = $", B: ""}, // control_host
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1670,6 +1758,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"expires_at\" = now()", B: ""}, // expires_at = the database's clock
 	{A: "\"used_at\" = now()", B: ""},    // used_at = the database's clock
 	{},                                   // used_by_host has no server-side form
+	{},                                   // control_host has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1681,17 +1770,18 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID         uint64 = 1 << 0
-	iTokenHash  uint64 = 1 << 1
-	iHostname   uint64 = 1 << 2
-	iCreatedBy  uint64 = 1 << 3
-	iCreatedAt  uint64 = 1 << 4
-	iExpiresAt  uint64 = 1 << 5
-	iUsedAt     uint64 = 1 << 6
-	iUsedByHost uint64 = 1 << 7
+	iID          uint64 = 1 << 0
+	iTokenHash   uint64 = 1 << 1
+	iHostname    uint64 = 1 << 2
+	iCreatedBy   uint64 = 1 << 3
+	iCreatedAt   uint64 = 1 << 4
+	iExpiresAt   uint64 = 1 << 5
+	iUsedAt      uint64 = 1 << 6
+	iUsedByHost  uint64 = 1 << 7
+	iControlHost uint64 = 1 << 8
 )
 
-const nInsertable = 8
+const nInsertable = 9
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1703,6 +1793,7 @@ var insCols = [nInsertable]string{
 	"\"expires_at\"",
 	"\"used_at\"",
 	"\"used_by_host\"",
+	"\"control_host\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1711,7 +1802,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"agent_enrollment_tokens\""
-const insReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\""
+const insReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\", \"control_host\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1730,7 +1821,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\""
+const updReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\", \"control_host\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -1869,6 +1960,12 @@ func (m *Mut) SetUsedByHostNull() {
 	m.expr &^= dUsedByHost
 }
 
+func (m *Mut) SetControlHost(v bool) {
+	m.row.ControlHost = v
+	m.dirty |= dControlHost
+	m.expr &^= dControlHost
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -1948,6 +2045,11 @@ func (n *Ins) SetUsedByHostNull() {
 	n.set |= iUsedByHost
 }
 
+func (n *Ins) SetControlHost(v bool) {
+	n.row.ControlHost = v
+	n.set |= iControlHost
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -1994,7 +2096,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 7)
+	set := make([]string, 0, 8)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2018,6 +2120,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<7) != 0 {
 			set = append(set, "used_by_host")
 		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "control_host")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "hostname")
@@ -2036,6 +2141,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<7) != 0 {
 			set = append(set, "used_by_host")
+		}
+		if mask&(1<<8) != 0 {
+			set = append(set, "control_host")
 		}
 	}
 	return set
@@ -2102,6 +2210,7 @@ var assignFor = map[string]string{
 	"expires_at":   "\"expires_at\" = EXCLUDED.\"expires_at\"",
 	"used_at":      "\"used_at\" = EXCLUDED.\"used_at\"",
 	"used_by_host": "\"used_by_host\" = EXCLUDED.\"used_by_host\"",
+	"control_host": "\"control_host\" = EXCLUDED.\"control_host\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2161,6 +2270,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.UsedAt.Arg())
 		case 7:
 			args = append(args, n.row.UsedByHost.Arg())
+		case 8:
+			args = append(args, n.row.ControlHost)
 		}
 	}
 	var out Row
@@ -2198,7 +2309,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 8)
+	args := make([]any, 0, 9)
 	args = append(args, r.ID)
 	args = append(args, r.TokenHash)
 	args = append(args, r.Hostname)
@@ -2207,6 +2318,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ExpiresAt)
 	args = append(args, r.UsedAt.Arg())
 	args = append(args, r.UsedByHost.Arg())
+	args = append(args, r.ControlHost)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2241,13 +2353,14 @@ var copyCols = []string{
 	"expires_at",
 	"used_at",
 	"used_by_host",
+	"control_host",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [8]any
+	buf  [9]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2273,6 +2386,7 @@ func (s *rowSource) Values() []any {
 	s.buf[5] = &r.ExpiresAt
 	s.buf[6] = r.UsedAt.Ptr()
 	s.buf[7] = r.UsedByHost.Ptr()
+	s.buf[8] = &r.ControlHost
 	return s.buf[:]
 }
 
@@ -2311,8 +2425,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 5
 	mask |= 1 << 6
 	mask |= 1 << 7
+	mask |= 1 << 8
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 8)
+	args := make([]any, 0, 9)
 	args = append(args, r.ID)
 	args = append(args, r.TokenHash)
 	args = append(args, r.Hostname)
@@ -2321,6 +2436,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ExpiresAt)
 	args = append(args, r.UsedAt.Arg())
 	args = append(args, r.UsedByHost.Arg())
+	args = append(args, r.ControlHost)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2370,6 +2486,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.UsedAt.Arg())
 		case 7:
 			args = append(args, n.row.UsedByHost.Arg())
+		case 8:
+			args = append(args, n.row.ControlHost)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2430,6 +2548,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.UsedAt.Arg())
 		case 6:
 			args = append(args, m.row.UsedByHost.Arg())
+		case 7:
+			args = append(args, m.row.ControlHost)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2526,6 +2646,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.UsedAt.Arg())
 		case 6:
 			args = append(args, m.row.UsedByHost.Arg())
+		case 7:
+			args = append(args, m.row.ControlHost)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2688,6 +2810,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.UsedAt.Arg())
 		case 6:
 			args = append(args, m.row.UsedByHost.Arg())
+		case 7:
+			args = append(args, m.row.ControlHost)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

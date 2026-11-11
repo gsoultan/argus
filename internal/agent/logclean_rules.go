@@ -29,6 +29,11 @@ var linuxProtected = []struct{ prefix, group string }{
 	{"/var/log/argus", "argus"},
 	{"/var/lib/argus/", "argus"},
 	{"/run/argus/", "argus"},
+	// On argus-control's own server: its configuration, recordings and
+	// audit log's backups are the evidence itself.
+	{"/var/lib/argus-control/", "argus"},
+	{"/var/lib/argus-control-update/", "argus"},
+	{"/var/backups/argus/", "argus"},
 }
 
 // protectedLinux says why p must not be cleaned, or "" when it may be.

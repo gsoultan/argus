@@ -1,0 +1,13 @@
+[Unit]
+Description=Argus control plane: watch for the request to look after its own server
+Documentation=https://github.com/gsoultan/argus/blob/main/docs/install.md#the-control-servers-own-helper
+
+# argus-control writes a single-use enrollment token here for its own
+# hostname while that host has no enrolled agent; argus-control-host.service
+# takes it and enrolls. Nothing is started while the file is not there.
+[Path]
+PathChanged=/var/lib/argus-control/host/enroll.json
+Unit=argus-control-host.service
+
+[Install]
+WantedBy=multi-user.target

@@ -257,6 +257,14 @@ export interface Asset {
    */
   agentHostname?: string
   /**
+   * The server argus-control itself runs on, looked after through the helper
+   * its package ships rather than an agent someone installed. It updates with
+   * argus-control, cannot be removed from Argus, and plain SSH to it is never
+   * gated: that is the way back in when Argus is down. Absent from an older
+   * control plane.
+   */
+  controlHost?: boolean
+  /**
    * Whether the agent said, at its last check-in, that it refuses logins that
    * did not come through Argus. Null until it says: unconfirmed, never applied.
    */

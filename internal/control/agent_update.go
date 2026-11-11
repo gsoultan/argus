@@ -107,6 +107,9 @@ type AgentUpdateView struct {
 	// old to update itself.
 	Status  *AgentUpdateStatus  `json:"status"`
 	Request *AgentUpdateRequest `json:"request"`
+	// ControlHost is the helper on argus-control's own server, which moves
+	// with argus-control rather than from this card.
+	ControlHost bool `json:"controlHost"`
 }
 
 // AgentUpdateView reads the agent card for hostname.
@@ -126,12 +129,13 @@ func (s *Store) AgentUpdateView(ctx context.Context, hostname string) (AgentUpda
 	err := s.db(ctx).QueryRow(ctx, `
 		SELECT g.version, g.last_seen_at, g.active_sessions, g.update_status,
 		       c.update_id, c.update_version, c.update_now, c.update_requested_at,
-		       c.update_requested_by, c.update_restart, c.id IS NOT NULL
+		       c.update_requested_by, c.update_restart, c.id IS NOT NULL,
+		       COALESCE(c.control_host, false)
 		  FROM (SELECT 1) one
 		  LEFT JOIN agents g ON lower(g.hostname) = lower($1)
 		  LEFT JOIN agent_credentials c ON lower(c.hostname) = lower($1) AND c.revoked_at IS NULL`,
 		hostname).Scan(&version, &seen, &sessions, &status, &reqID, &reqVersion, &reqNow,
-		&reqAt, &reqBy, &reqRestart, &enrolled)
+		&reqAt, &reqBy, &reqRestart, &enrolled, &v.ControlHost)
 	if err != nil {
 		return v, err
 	}
@@ -164,7 +168,26 @@ func (s *Store) AgentUpdateView(ctx context.Context, hostname string) (AgentUpda
 			v.Request.Restart = *reqRestart
 		}
 	}
+	if v.ControlHost {
+		v.Status = controlHostUpdateStatus(v.Status)
+	}
 	return v, nil
+}
+
+// controlHostUpdateStatus is what the agent card says of the helper on
+// argus-control's own server, whatever the helper itself reported: it does
+// not update or restart from the console, so every path that reads the
+// status refuses, and the console says where it moves instead.
+func controlHostUpdateStatus(st *AgentUpdateStatus) *AgentUpdateStatus {
+	out := AgentUpdateStatus{}
+	if st != nil {
+		out = *st
+	}
+	out.Supported = false
+	out.Reason = controlHostUpdateReason
+	out.Restartable = false
+	out.RestartReason = controlHostUpdateReason
+	return &out
 }
 
 // ErrNoLiveAgent is an update asked of a server with no enrolled agent.
@@ -192,7 +215,25 @@ func (s *Store) RequestAgentRestart(ctx context.Context, hostname, version strin
 func (s *Store) requestAgent(ctx context.Context, hostname, version string, now, restart bool,
 	by string) (AgentUpdateRequest, error) {
 	var r AgentUpdateRequest
+	// The helper on argus-control's own server is the agent binary the
+	// argus-control package ships under another name and unit: an update
+	// from here would install the argus-agent package beside it, and a
+	// restart would restart a unit that is not there. It moves with
+	// argus-control (Settings, Control plane, Updates) instead.
+	var controlHost bool
 	err := s.db(ctx).QueryRow(ctx, `
+		SELECT control_host FROM agent_credentials
+		 WHERE lower(hostname) = lower($1) AND revoked_at IS NULL`, hostname).Scan(&controlHost)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return r, ErrNoLiveAgent
+	}
+	if err != nil {
+		return r, err
+	}
+	if controlHost {
+		return r, ErrControlHostAgent
+	}
+	err = s.db(ctx).QueryRow(ctx, `
 		UPDATE agent_credentials SET
 		       update_id = CASE WHEN update_id IS NOT NULL AND update_version = $2 AND update_restart = $5
 		                        THEN update_id ELSE gen_random_uuid()::text END,
@@ -430,7 +471,7 @@ func (a *API) postAssetAgentUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req, err := a.store.RequestAgentUpdate(r.Context(), agentHost, version, in.Now, sess.Email)
-	if errors.Is(err, ErrNoLiveAgent) {
+	if errors.Is(err, ErrNoLiveAgent) || errors.Is(err, ErrControlHostAgent) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -508,7 +549,7 @@ func (a *API) postAssetAgentRestart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req, err := a.store.RequestAgentRestart(r.Context(), agentHost, view.AgentVersion, in.Now, sess.Email)
-	if errors.Is(err, ErrNoLiveAgent) {
+	if errors.Is(err, ErrNoLiveAgent) || errors.Is(err, ErrControlHostAgent) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}

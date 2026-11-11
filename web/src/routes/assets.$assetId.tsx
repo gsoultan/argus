@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconPencil, IconServer2 } from '@tabler/icons-react'
 import { ReachBadge, reachOf } from '~/components/myservers'
+import { ControlHostBadge } from '~/components/server/controlHost'
 import { AssetAddresses } from '~/components/AssetAddresses'
 import { ServerList } from '~/components/ServerList'
 import { SplitView } from '~/components/SplitView'
@@ -122,6 +123,7 @@ function AssetDetail() {
         status={
           <Group gap={SP.snug} wrap="nowrap">
             <ReachBadge reach={reachOf(asset)} />
+            {asset.controlHost && <ControlHostBadge />}
             {lowWarnings.length > 0 && (
               <Badge size="sm" variant="light" radius="sm" tt="none" data-testid="header-low"
                 color={lowWarnings.some((w) => w.level === 'critical') ? 'rose' : 'amber'}

@@ -293,6 +293,27 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	a.RecordAuthSuccess(r)
 
+	if enr.ControlHost {
+		a.controlHostEnrolled(r, in.Hostname, enr)
+	} else {
+		a.agentEnrolled(r, in.Hostname, enr)
+	}
+	a.log.Info("agent enrolled", "hostname", in.Hostname, "credential", enr.CredentialID)
+
+	out := map[string]any{
+		"credential":   enr.Credential,
+		"credentialId": enr.CredentialID,
+		"hostname":     in.Hostname,
+	}
+	if len(a.Enroll.CAPEM) > 0 {
+		out["caPem"] = string(a.Enroll.CAPEM)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// agentEnrolled is the audit entry and alert for an agent someone enrolled.
+func (a *API) agentEnrolled(r *http.Request, hostname string, enr Enrollment) {
+	in := struct{ Hostname string }{hostname}
 	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
 		Action:     "agent.enrolled",
 		Severity:   "info",
@@ -307,17 +328,6 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	a.alertServer(r.Context(), "", in.Hostname+" joined Argus",
 		"Its agent enrolled with a token made by "+enr.TokenCreatedBy+".")
-	a.log.Info("agent enrolled", "hostname", in.Hostname, "credential", enr.CredentialID)
-
-	out := map[string]any{
-		"credential":   enr.Credential,
-		"credentialId": enr.CredentialID,
-		"hostname":     in.Hostname,
-	}
-	if len(a.Enroll.CAPEM) > 0 {
-		out["caPem"] = string(a.Enroll.CAPEM)
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 // postDeregister is an agent being uninstalled: it revokes its own credential

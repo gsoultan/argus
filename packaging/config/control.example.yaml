@@ -44,6 +44,14 @@ console_url: ""
 # web_setup: true
 # setup_token_file: "/var/lib/argus-control/setup-token"
 
+# This server itself. The package installs a helper, argus-control-host,
+# which argus-control enrolls for its own hostname, so the server it runs on
+# appears under Servers and its logs, operating system updates, disks and a
+# recorded terminal are looked after from the console like any other. It
+# never hooks sshd: plain SSH here stays the way in when Argus is down.
+# Needs TLS served by this process. false turns it off.
+# control_host: true
+
 # The web console. The package installs it; the control plane serves it on the
 # same address people sign in to, so the session cookie stays same-origin.
 # Terminals, desktops and live viewing open through this control plane and the

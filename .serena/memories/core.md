@@ -44,6 +44,7 @@ enforces all of it and CI runs it by name.
 | [server-system](server-system.md) | The System card: OS, processor, memory, disks, load, and how fresh they are |
 | [console-alerts](console-alerts.md) | The bell in the header: who sees which alert, the SSE stream, per-person settings |
 | [multi-tenant](multi-tenant.md) | Organizations sharing one control plane: schema per organization, `scope`, per-organization keys, what is still platform-wide |
+| [control-host](control-host.md) | argus-control looking after its own server: the argus-control-host helper, its self-enrollment, what it may not do |
 | [control-status](control-status.md) | Settings › Status: argus-control's own health, where each number comes from, what counts as a problem |
 | [home-page](home-page.md) | Home at `/`: what each role sees, where each card's numbers come from |
 | [package-updates](package-updates.md) | Operating system updates: the agent's helper, runs on the heartbeat, rules and windows, what survives a restart |
