@@ -1334,6 +1334,11 @@ func runEnroll(args []string) int {
 		return 1
 	}
 	fmt.Printf("enrolled as %s with %s\n", enr.Hostname, enr.ControlURL)
+	if enr.Replaced {
+		fmt.Println("took over from argus-control-host, the helper argus-control runs on its own " +
+			"server; its credential is revoked")
+		standDownControlHost()
+	}
 	switch {
 	case enr.CAFile != "":
 		fmt.Printf("trusting the control plane through %s\n", enr.CAFile)

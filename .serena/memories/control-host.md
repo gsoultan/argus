@@ -54,6 +54,14 @@ or enrolled by hand, which is what that meant.
   a unit that is not there. It moves with argus-control.
 - `DELETE /api/v1/assets/{id}` refuses it (409, `ErrControlHostAsset`).
   `control_host: false` turns the loop off.
+- Takeover: the helper's enrollment.json carries `controlHost: true`.
+  `argus-agent enroll` over it needs no --force: it sends the helper's
+  credential as `replaces`, `Store.EnrollReplacing` revokes that live
+  control_host credential for the same hostname in the enroll transaction
+  (a token alone or another credential still gets 409), the route audits
+  `agent.revoked`, and the CLI runs `systemctl disable --now` on the helper
+  units. CI's packaging job relies on this (it enrolls argus-agent on the
+  control server after the helper has).
 - If argus-agent is enabled too, postinstall disables the helper and the
   agent takes over (`Conflicts=argus-agent.service` keeps them apart). An
   installed but disabled argus-agent does not count (v1.2.23 got this wrong:

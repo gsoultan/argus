@@ -2,9 +2,10 @@ package control
 
 import (
 	"context"
-
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -250,4 +251,43 @@ func TestTheControlHostLoopWorksOnAStrictStore(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// argus-agent installed on argus-control's own server takes over from the
+// helper by presenting the helper's credential. A token alone never
+// displaces it, and neither does someone else's credential.
+func TestArgusAgentTakesOverTheControlHostWithItsCredential(t *testing.T) {
+	a, s, h, opts := controlHostFixture(t)
+	if err := a.controlHostTick(context.Background(), opts, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	w := enroll(t, h, readRequest(t, opts).Token, opts.Hostname)
+	if w.Code != http.StatusOK {
+		t.Fatalf("helper: %d %s", w.Code, w.Body)
+	}
+	var helper struct{ Credential, CredentialID string }
+	_ = json.Unmarshal(w.Body.Bytes(), &helper)
+
+	take := func(replaces string) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(map[string]string{"token": mint(t, h, ""), "hostname": opts.Hostname, "replaces": replaces})
+		return do(t, h, http.MethodPost, "/api/v1/agents/enroll", "", string(b))
+	}
+	if w := take(""); w.Code != http.StatusConflict {
+		t.Fatalf("a token alone displaced the helper: %d %s", w.Code, w.Body)
+	}
+	if w := take("argus-agent-not-the-helpers"); w.Code != http.StatusConflict {
+		t.Fatalf("a wrong credential displaced the helper: %d %s", w.Code, w.Body)
+	}
+	if w := take(helper.Credential); w.Code != http.StatusOK {
+		t.Fatalf("argus-agent could not take over: %d %s", w.Code, w.Body)
+	}
+	var revoked bool
+	if err := s.pool.QueryRow(context.Background(),
+		`SELECT revoked_at IS NOT NULL FROM agent_credentials WHERE id::text = $1`, helper.CredentialID).
+		Scan(&revoked); err != nil || !revoked {
+		t.Fatalf("the helper's credential is still live: %v %v", revoked, err)
+	}
+	if e := lastAuditOn(t, s, opts.Hostname); e.Action != "agent.enrolled" {
+		t.Errorf("last entry %s", e.Action)
+	}
 }

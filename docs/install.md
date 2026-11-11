@@ -194,9 +194,12 @@ tabs as any other. Choose who may open a terminal there on its Access tab.
   server can reach it.
 - If it cannot run, argus-control logs `the console cannot look after this
   server` with the reason at start: `journalctl -u argus-control | grep "look after"`.
-- Where argus-agent is enabled on the same server, the agent takes over with
-  the same enrollment and the helper stands down. An `argus-agent` package
-  that is installed but not enabled does not count.
+- To have argus-agent look after this server instead (to gate SSH here too),
+  install it and run `argus-agent enroll` as on any server. It takes over
+  from the helper without `--force`, proving it is this server with the
+  helper's credential, which argus-control then revokes, and turns the helper
+  off. An `argus-agent` package that is installed but not enabled does not
+  stop the helper.
 - To turn it off: `control_host: false` in the configuration, then
   `systemctl disable --now argus-control-host argus-control-host-enroll.path`
   and revoke its agent under Settings.

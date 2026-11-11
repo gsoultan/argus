@@ -22,6 +22,9 @@ import (
 	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
+// lastReplaces is the credential the last enrollment said it replaces.
+var lastReplaces string
+
 // fakeControl answers the enrollment route the way argus-control does, handing
 // back caPEM as the CA to keep.
 func fakeControl(t *testing.T, caPEM func(*httptest.Server) string) (*httptest.Server, *int) {
@@ -34,8 +37,9 @@ func fakeControl(t *testing.T, caPEM func(*httptest.Server) string) (*httptest.S
 			http.NotFound(w, r)
 			return
 		}
-		var in struct{ Token, Hostname string }
+		var in struct{ Token, Hostname, Replaces string }
 		_ = json.NewDecoder(r.Body).Decode(&in)
+		lastReplaces = in.Replaces
 		if in.Token != "argus-enrol-good" {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"enrollment token not recognised"}`))
@@ -173,6 +177,45 @@ func TestEnrollingTwiceNeedsForce(t *testing.T) {
 	opts.Force = true
 	if _, err := Enroll(context.Background(), opts); err != nil {
 		t.Fatalf("with --force: %v", err)
+	}
+}
+
+// argus-agent on argus-control's own server takes over the helper's
+// enrollment without --force, proving it with the helper's credential; the
+// helper itself never replaces anything.
+func TestAnAgentTakesOverTheControlHostHelper(t *testing.T) {
+	srv, _ := fakeControl(t, selfCA)
+	dir := t.TempDir()
+	helper := EnrollOptions{
+		ControlURL: srv.URL, Token: "argus-enrol-good", Pin: tlsconfig.Pin(srv.Certificate()),
+		Hostname: "ctl-01", StateDir: dir, ControlHost: true,
+	}
+	if _, err := Enroll(context.Background(), helper); err != nil {
+		t.Fatalf("helper: %v", err)
+	}
+	if e, _ := LoadEnrollment(dir); e == nil || !e.ControlHost {
+		t.Fatalf("the helper's enrollment is not marked: %+v", e)
+	}
+	if _, err := Enroll(context.Background(), helper); err == nil {
+		t.Fatal("the helper replaced an enrollment")
+	}
+
+	lastReplaces = ""
+	agent := helper
+	agent.ControlHost = false
+	enr, err := Enroll(context.Background(), agent)
+	if err != nil {
+		t.Fatalf("argus-agent could not take over: %v", err)
+	}
+	if !enr.Replaced || lastReplaces != "argus-agent-secret" {
+		t.Fatalf("replaced %v, sent %q: the helper's credential must go with the request", enr.Replaced, lastReplaces)
+	}
+	if e, _ := LoadEnrollment(dir); e == nil || e.ControlHost {
+		t.Fatalf("argus-agent's enrollment is marked as the helper's: %+v", e)
+	}
+	// Now an ordinary enrollment: a second one needs --force again.
+	if _, err := Enroll(context.Background(), agent); err == nil {
+		t.Fatal("an ordinary enrollment was replaced without --force")
 	}
 }
 

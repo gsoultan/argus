@@ -153,6 +153,9 @@ type Enrollment struct {
 	// ControlHost says the token was argus-control's own, for the helper
 	// on its own server; the credential carries it on.
 	ControlHost bool
+	// ReplacedID is the helper's credential this enrollment took over from
+	// and revoked: argus-agent enrolled on argus-control's own server.
+	ReplacedID string
 }
 
 // Enroll exchanges a token for a credential bound to hostname.
@@ -162,6 +165,16 @@ type Enrollment struct {
 // (the host already has one) rolls the consumption back so the token can still
 // be used once the old credential is revoked.
 func (s *Store) Enroll(ctx context.Context, token, hostname string) (Enrollment, error) {
+	return s.EnrollReplacing(ctx, token, hostname, "")
+}
+
+// EnrollReplacing is Enroll for argus-agent on argus-control's own server,
+// taking over from the helper there: replaces is the helper's credential,
+// read from the enrollment it left, and is revoked in the same transaction.
+// Only a live control_host credential for this hostname is replaced, and
+// only by an ordinary token: holding that credential is the proof that this
+// is the server, so a token alone never displaces a live agent.
+func (s *Store) EnrollReplacing(ctx context.Context, token, hostname, replaces string) (Enrollment, error) {
 	hostname = strings.TrimSpace(hostname)
 	if hostname == "" {
 		return Enrollment{}, errors.New("hostname is required")
@@ -194,6 +207,17 @@ func (s *Store) Enroll(ctx context.Context, token, hostname string) (Enrollment,
 	}
 	if err != nil {
 		return Enrollment{}, fmt.Errorf("consume enrollment token: %w", err)
+	}
+
+	if replaces != "" && !out.ControlHost {
+		err = tx.QueryRow(ctx, `
+			UPDATE agent_credentials SET revoked_at = now(), revoked_by = $3
+			 WHERE secret_hash = $1 AND lower(hostname) = lower($2)
+			   AND control_host AND revoked_at IS NULL
+			RETURNING id::text`, hashSecret(replaces), hostname, out.TokenCreatedBy).Scan(&out.ReplacedID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Enrollment{}, fmt.Errorf("replace the helper's credential: %w", err)
+		}
 	}
 
 	out.Credential, err = newSecret(agentCredentialPrefix + secretPrefixFor(tenantIDOf(ctx)))

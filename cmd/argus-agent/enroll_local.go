@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -84,7 +86,7 @@ func runEnrollLocal(args []string) int {
 	defer cancel()
 	enr, err := agent.Enroll(ctx, agent.EnrollOptions{
 		ControlURL: req.ControlURL, Token: req.Token, Pin: req.Pin,
-		Hostname: host, StateDir: *stateDir,
+		Hostname: host, StateDir: *stateDir, ControlHost: true,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "enroll-local: %v\n", err)
@@ -129,4 +131,24 @@ func readControlHostRequest(path string) (controlHostRequest, error) {
 		return r, fmt.Errorf("%s: no token or hostname in it", path)
 	}
 	return r, nil
+}
+
+// standDownControlHost turns off argus-control-host once argus-agent has
+// taken over its enrollment, so the two never both start at boot. Best
+// effort: the units exist only where the argus-control package is installed.
+func standDownControlHost() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	systemctl, err := exec.LookPath("systemctl")
+	if err != nil {
+		return
+	}
+	out, err := exec.Command(systemctl, "disable", "--now",
+		"argus-control-host-enroll.path", "argus-control-host.service").CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not turn off argus-control-host (%v): %s\n"+
+			"run: systemctl disable --now argus-control-host-enroll.path argus-control-host\n",
+			err, strings.TrimSpace(string(out)))
+	}
 }

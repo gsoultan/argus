@@ -356,3 +356,27 @@ func ControlHostSupport() string {
 	return "the helper for argus-control's own server is not installed: argus-control was not " +
 		"installed from its package, or from one older than this version"
 }
+
+// controlHostReplaced records argus-agent taking over argus-control's own
+// server from the helper: the helper's credential is revoked, and argus-agent
+// reports for the server from now on.
+func (a *API) controlHostReplaced(r *http.Request, hostname string, enr Enrollment) {
+	a.agentCreds.forget(enr.ReplacedID)
+	if a.Tunnels != nil {
+		a.Tunnels.Revoked(r.Context(), enr.ReplacedID)
+	}
+	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action:     "agent.revoked",
+		Severity:   "notice",
+		ActorEmail: enr.TokenCreatedBy,
+		Target:     hostname,
+		Detail: "argus-agent enrolled on argus-control's own server, " + hostname + ", with a token " +
+			enr.TokenCreatedBy + " made (token " + enr.TokenID + "), and took over from the helper " +
+			"the argus-control package ships: the helper's credential (" + enr.ReplacedID + ") is " +
+			"revoked, proven by the agent presenting it. argus-agent reports for this server from now on.",
+	}); aerr != nil {
+		a.log.Error("audit append failed", "error", aerr)
+	}
+	a.log.Info("control host: argus-agent took over from the helper",
+		"hostname", hostname, "replaced", enr.ReplacedID)
+}

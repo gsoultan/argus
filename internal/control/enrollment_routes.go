@@ -243,6 +243,9 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Token    string `json:"token"`
 		Hostname string `json:"hostname"`
+		// Replaces is the credential of argus-control-host, when argus-agent
+		// takes over argus-control's own server from it.
+		Replaces string `json:"replaces"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -268,7 +271,7 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(ctx)
-	enr, err := a.store.Enroll(r.Context(), in.Token, in.Hostname)
+	enr, err := a.store.EnrollReplacing(r.Context(), in.Token, in.Hostname, in.Replaces)
 	switch {
 	case errors.Is(err, ErrHostAlreadyEnrolled):
 		// Not charged as a failure: the token was good, and someone
@@ -292,6 +295,9 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.RecordAuthSuccess(r)
+	if enr.ReplacedID != "" {
+		a.controlHostReplaced(r, in.Hostname, enr)
+	}
 
 	if enr.ControlHost {
 		a.controlHostEnrolled(r, in.Hostname, enr)
