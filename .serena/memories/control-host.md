@@ -32,9 +32,16 @@ or enrolled by hand, which is what that meant.
   and `MarkControlHostAsset` marks the matching asset (by hostname or
   agent_hostname, archived ones revived) or adds one (127.0.0.1, no
   principals, group `argus`).
-- URL: loopback for a wildcard `listen`, the bound address otherwise. Needs
-  TLS served by this process with a pin, and no `client_ca_file`; any other
-  layout logs the reason at start and does nothing.
+- URL (`cmd/argus-control/control_host.go`): the main listener (loopback for
+  a wildcard `listen`) when this process serves TLS with a pin and no
+  `client_ca_file`. Otherwise (plain HTTP, `behind_tls_proxy` as behind
+  cloudflared, or `client_ca_file`) a loopback-only TLS listener,
+  `control_host_listen` (default 127.0.0.1:8449), serving the fleet handler
+  with `servertls.LoopbackCert` (key kept in `<data>/host/tls/`, so the pin
+  survives restarts). A taken port only costs the helper, never startup.
+- `RunControlHost` scopes itself with `PlatformContext`: production stores are
+  `Strict` and refuse an unscoped query (v1.2.23 shipped without this, so the
+  loop never wrote a request).
 
 ## What differs from an ordinary server
 

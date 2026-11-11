@@ -193,6 +193,10 @@ func (a *API) RunControlHost(ctx context.Context, opts ControlHostOptions) {
 		a.log.Error("control host: cannot make the request directory", "dir", opts.Dir, "error", err)
 		return
 	}
+	// The server argus-control runs on is the install's, so its asset,
+	// token and audit entries are the default organization's. Without this
+	// a strict store refuses every query the loop makes.
+	ctx = PlatformContext(ctx)
 	t := time.NewTicker(opts.Every)
 	defer t.Stop()
 	for {

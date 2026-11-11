@@ -225,3 +225,29 @@ func assetNamed(t *testing.T, s *Store, hostname string) Asset {
 	t.Fatalf("%s is not in the inventory", hostname)
 	return Asset{}
 }
+
+// The loop runs from main with a context that names no organization. A
+// production store refuses those, so the loop must scope itself.
+func TestTheControlHostLoopWorksOnAStrictStore(t *testing.T) {
+	a, s, _, opts := controlHostFixture(t)
+	s.Strict = true
+	t.Cleanup(func() { s.Strict = false })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.RunControlHost(ctx, opts); close(done) }()
+	path := filepath.Join(opts.Dir, ControlHostRequestFile)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("the loop wrote no request on a strict store")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+}

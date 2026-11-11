@@ -121,6 +121,11 @@ type config struct {
 	// its logs, updating its packages, growing its disks and opening a
 	// terminal on it from the console. On unless set to false.
 	ControlHost *bool `yaml:"control_host,omitempty"`
+	// ControlHostListen is the loopback address the helper reaches
+	// argus-control on when argus-control does not serve its own TLS (behind
+	// a proxy or a tunnel such as cloudflared, or plain HTTP). Only this
+	// server can connect to it. Default 127.0.0.1:8449.
+	ControlHostListen string `yaml:"control_host_listen,omitempty"`
 	// SetupTokenFile is where the one-time setup token is written. Empty
 	// means /var/lib/argus-control/setup-token when that directory exists, which the
 	// packaged unit can write, and beside the config file otherwise.
@@ -849,11 +854,29 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// package ships. Started before the listeners: it only writes a file the
 	// helper waits for, and the helper retries until something answers.
 	if cfg.ControlHost == nil || *cfg.ControlHost {
-		opts, why := controlHostOptions(cfg, loc, api)
+		plan, why := controlHostOptions(cfg, loc, api)
+		if why == "" && plan.Listen != "" {
+			// The helper's own listener, on loopback, serving what agents
+			// reach, with the certificate it pins.
+			h := api.Handler()
+			if cfg.ConsoleListen != "" {
+				h = api.FleetHandler()
+			}
+			srv := newServer(plan.Listen, h)
+			if srv.TLSConfig, err = servertls.Server(servertls.ServerOptions{
+				CertFile: plan.CertFile, KeyFile: plan.KeyFile, Log: log,
+			}); err != nil {
+				why = "the helper's own listener cannot serve TLS: " + err.Error()
+			} else {
+				srv.RegisterOnShutdown(api.StopAlertStreams)
+				srv.RegisterOnShutdown(api.WarnTerminalsRestarting)
+				listeners = append(listeners, listener{"control-host", srv})
+			}
+		}
 		if why != "" {
-			log.Info("the console cannot look after this server", "reason", why)
+			log.Warn("the console cannot look after this server", "reason", why)
 		} else {
-			go api.RunControlHost(ctx, opts)
+			go api.RunControlHost(ctx, plan.opts)
 		}
 	}
 
@@ -894,13 +917,23 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			}
 		}
 	}()
+	kept := listeners[:0]
 	for _, l := range listeners {
 		ln, err := net.Listen("tcp", l.srv.Addr)
+		if err != nil && l.name == "control-host" {
+			// Only the helper on this server needs it, so a taken port costs
+			// that and not the control plane.
+			log.Warn("the console cannot look after this server", "reason",
+				fmt.Sprintf("control_host_listen %s: %v", l.srv.Addr, err))
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("listen on %s (%s): %w", l.srv.Addr, l.name, err)
 		}
 		bound = append(bound, ln)
+		kept = append(kept, l)
 	}
+	listeners = kept
 
 	// Shutdown runs where it can be waited for, not in a goroutine.
 	//
@@ -923,16 +956,16 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	api.ControlUpdateStarted(ctx)
 	for i, l := range listeners {
 		l, ln := l, bound[i]
-		if cfg.TLS != nil {
+		if l.srv.TLSConfig != nil {
 			log.Info("argus-control listening (TLS)",
 				"version", version, "surface", l.name, "addr", l.srv.Addr,
-				"mtls", cfg.TLS.ClientCAFile != "")
+				"mtls", cfg.TLS != nil && cfg.TLS.ClientCAFile != "" && l.name != "control-host")
 		} else {
 			log.Info("argus-control listening",
 				"version", version, "surface", l.name, "addr", l.srv.Addr)
 		}
 		go func() {
-			if cfg.TLS != nil {
+			if l.srv.TLSConfig != nil {
 				served <- l.srv.ServeTLS(ln, "", "")
 				return
 			}
