@@ -28,7 +28,7 @@ import { assetLogsQuery } from '~/lib/logQueries'
 import { bytes, systemQuery } from '~/components/server/SystemCard'
 import { parseServerTab, type ServerTab } from '~/components/server/tabs'
 import { TABS_BY_TYPE, tabLabel } from '~/components/server/tabsByType'
-import { ASSET_TYPE_LABEL, assetTypeOf } from '~/lib/assetType'
+import { ASSET_TYPE_LABEL, assetHostnameAside, assetName, assetShortName, assetTypeOf } from '~/lib/assetType'
 import { AgentTab } from '~/components/server/AgentTab'
 import { assetQuery, meQuery, sessionsQuery } from '~/lib/queries'
 import { assetPackagesQuery } from '~/lib/packageQueries'
@@ -117,9 +117,9 @@ function AssetDetail() {
       <PageHeader
         crumbs={[
           { label: 'Assets', to: '/assets' },
-          { label: asset.hostname.split('.')[0] ?? asset.hostname },
+          { label: assetShortName(asset) },
         ]}
-        title={asset.hostname}
+        title={assetName(asset)}
         status={
           <Group gap={SP.snug} wrap="nowrap">
             <ReachBadge reach={reachOf(asset)} />
@@ -135,6 +135,11 @@ function AssetDetail() {
         }
         description={
           <Group gap={SP.snug} wrap="wrap">
+            {assetHostnameAside(asset) && (
+              <Text span size="sm" ff="monospace" data-testid="asset-hostname" title="Hostname">
+                {asset.hostname}
+              </Text>
+            )}
             <Text span size="sm" c="dimmed">
               {ASSET_TYPE_LABEL[assetTypeOf(asset)].one} · {asset.os || (asset.protocol === 'rdp' ? 'Windows' : 'Linux')}
             </Text>

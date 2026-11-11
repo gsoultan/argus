@@ -194,6 +194,16 @@ func (a *API) patchAsset(w http.ResponseWriter, r *http.Request) {
 			detail += fmt.Sprintf(" %d open access request(s) now name %s.", rename.Requests, asset.Hostname)
 		}
 	}
+	if before.Alias != asset.Alias {
+		switch {
+		case asset.Alias == "":
+			detail += " Removed its alias " + strconv.Quote(before.Alias) + "."
+		case before.Alias == "":
+			detail += " Its alias is now " + strconv.Quote(asset.Alias) + "."
+		default:
+			detail += " Its alias is now " + strconv.Quote(asset.Alias) + " (was " + strconv.Quote(before.Alias) + ")."
+		}
+	}
 	if before.Address != asset.Address || before.Port != asset.Port {
 		detail += " Its address is now " + asset.Address + ":" + strconv.Itoa(asset.Port) +
 			" (was " + before.Address + ":" + strconv.Itoa(before.Port) + ")."

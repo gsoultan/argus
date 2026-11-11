@@ -177,6 +177,12 @@ export interface Asset {
   protocol?: AssetProtocol
   id: UUID
   hostname: string
+  /**
+   * The name people know it by, shown in place of the hostname; empty or
+   * absent shows the hostname. A label only: sessions and the audit chain
+   * name the hostname. Read it through assetName().
+   */
+  alias?: string
   address: string
   port: number
   os: string
@@ -667,6 +673,8 @@ export interface Team {
  */
 export interface AssetInput {
   hostname: string
+  /** Free text shown in place of the hostname; empty for none. */
+  alias?: string
   address: string
   port?: number
   protocol?: AssetProtocol

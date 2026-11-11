@@ -1,7 +1,10 @@
 import { Drawer, Text } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { ConnectPanel } from '~/components/connect/ConnectPanel'
+import { useQuery } from '@tanstack/react-query'
 import { useSessions } from '~/lib/sessions'
+import { assetsQuery } from '~/lib/queries'
+import { assetShortName } from '~/lib/assetType'
 
 /**
  * The Connect drawer: opened by every Connect button, by the + in the session
@@ -12,7 +15,9 @@ export function ConnectDrawer() {
   const { drawerFor, closeDrawer } = useSessions()
   const phone = useMediaQuery('(max-width: 36em)') ?? false
   const host = drawerFor ?? ''
-  const name = host.split('.')[0] ?? host
+  const { data: assets } = useQuery({ ...assetsQuery({}), enabled: drawerFor !== null })
+  const asset = assets?.find((a) => a.hostname === host)
+  const name = asset ? assetShortName(asset) : host.split('.')[0] ?? host
   return (
     <Drawer
       opened={drawerFor !== null}

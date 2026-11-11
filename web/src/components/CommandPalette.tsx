@@ -11,6 +11,7 @@ import { useSessions } from '~/lib/sessions'
 import { FS, SP } from '~/theme'
 import { pagesFor } from '~/components/nav'
 import { isBroker } from '~/lib/engines'
+import { assetName, assetShortName } from '~/lib/assetType'
 
 /**
  * Jump to anything from anywhere.
@@ -83,10 +84,11 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
     if (needle) {
       // Ranked by the server's own name, so "win" finds win-01 before every
       // host under northwind.id.
-      const rank = (a: { hostname: string; address: string }) => {
+      const rank = (a: { hostname: string; address: string; alias?: string }) => {
         const name = a.hostname.split('.')[0]!.toLowerCase()
-        if (name.startsWith(needle)) return 0
-        if (name.includes(needle)) return 1
+        const alias = (a.alias ?? '').toLowerCase()
+        if (name.startsWith(needle) || (alias && alias.startsWith(needle))) return 0
+        if (name.includes(needle) || alias.includes(needle)) return 1
         return `${a.hostname} ${a.address}`.toLowerCase().includes(needle) ? 2 : -1
       }
       const reachable = (assets ?? []).slice(0, 400)
@@ -97,7 +99,7 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
       for (const { a } of reachable) {
         out.push({
           id: `connect:${a.id}`,
-          label: `Connect to ${a.hostname.split('.')[0]}`,
+          label: `Connect to ${assetShortName(a)}`,
           hint: a.hostname,
           kind: 'Connect',
           icon: IconPlug,
@@ -120,12 +122,12 @@ export function CommandPalette({ opened, onClose }: { opened: boolean; onClose: 
 
     if (needle) {
       for (const a of (assets ?? []).slice(0, 400)) {
-        if (!`${a.hostname} ${a.address} ${a.os}`.toLowerCase().includes(needle)) continue
+        if (!`${a.alias ?? ''} ${a.hostname} ${a.address} ${a.os}`.toLowerCase().includes(needle)) continue
         if (out.filter((i) => i.kind === 'Host').length >= PER_GROUP) break
         out.push({
           id: `asset:${a.id}`,
-          label: a.hostname,
-          hint: `${a.address}:${a.port} · ${a.os}`,
+          label: assetName(a),
+          hint: `${a.alias ? `${a.hostname} · ` : ''}${a.address}:${a.port} · ${a.os}`,
           kind: 'Host',
           // Someone who is only given servers wants a terminal, not the
           // administration page for the host.

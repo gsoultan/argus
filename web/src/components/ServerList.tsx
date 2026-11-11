@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { IconBrandWindows, IconDeviceMobile, IconSearch, IconTerminal2 } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
-import { ReachBadge, isUp, kindOf, reachOf, shortName } from '~/components/myservers'
+import { ReachBadge, isUp, kindOf, reachOf } from '~/components/myservers'
+import { assetHostnameAside, assetShortName } from '~/lib/assetType'
 import { addressesOf } from '~/lib/assetAddresses'
 import { assetsQuery } from '~/lib/queries'
 import { FS } from '~/theme'
@@ -26,13 +27,14 @@ export function ServerList({ currentId }: { currentId: string }) {
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return (assets ?? [])
-      .filter((a) => !needle || a.hostname.toLowerCase().includes(needle) || a.tags.some((t) => t.toLowerCase().includes(needle)) ||
+      .filter((a) => !needle || a.hostname.toLowerCase().includes(needle) ||
+        (a.alias ?? '').toLowerCase().includes(needle) || a.tags.some((t) => t.toLowerCase().includes(needle)) ||
         addressesOf(a).some((x) => x.address.toLowerCase().includes(needle)))
       .filter((a) => {
         if (show === 'all') return true
         return show === 'online' ? isUp(reachOf(a)) : !isUp(reachOf(a))
       })
-      .sort((a, b) => a.hostname.localeCompare(b.hostname))
+      .sort((a, b) => assetShortName(a).localeCompare(assetShortName(b)))
   }, [assets, q, show])
 
   const online = (assets ?? []).filter((a) => isUp(reachOf(a))).length
@@ -82,7 +84,7 @@ export function ServerList({ currentId }: { currentId: string }) {
                 : kindOf(a) === 'windows' ? <IconBrandWindows size={16} /> : <IconTerminal2 size={16} />}
             </Box>
             <Box style={{ minWidth: 0, flex: 1 }}>
-              <Text size="sm" fw={600} truncate>{shortName(a.hostname)}</Text>
+              <Text size="sm" fw={600} truncate title={assetHostnameAside(a)}>{assetShortName(a)}</Text>
               <Text size={FS.micro} c="dimmed" truncate>
                 {a.os || KIND_NAME[kindOf(a)]}
                 {addressesOf(a)[0] && <> · <Text span inherit ff="monospace">{addressesOf(a)[0]!.address}</Text></>}

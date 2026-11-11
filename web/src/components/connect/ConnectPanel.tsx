@@ -22,6 +22,7 @@ import {
   lastConnect, rememberConnect, useSessions, waysFor, type Way,
 } from '~/lib/sessions'
 import type { Asset } from '~/types/domain'
+import { assetShortName } from '~/lib/assetType'
 import { FS } from '~/theme'
 
 /** Each way in, said the way a person would pick it. */
@@ -89,7 +90,7 @@ export function ConnectPanel({ hostname, initialPrincipal, initialWay, autoOpen 
           nothingFoundMessage="You have nothing by that name"
           value={target}
           onChange={setTarget}
-          data={assets?.map((a) => ({ value: a.hostname, label: a.hostname })) ?? []}
+          data={assets?.map((a) => ({ value: a.hostname, label: a.alias ? `${a.alias} (${a.hostname})` : a.hostname })) ?? []}
         />
       )}
       {target && !asset && <Text size={FS.meta} c="dimmed">Loading your accounts…</Text>}
@@ -135,7 +136,7 @@ function Choose({ asset, initialPrincipal, initialWay, autoOpen, phone, inDrawer
   const device = asset.kind === 'android'
   const needsPassword = way === 'desktop'
   const elevated = isElevatedAccount(principal, asset)
-  const name = asset.hostname.split('.')[0] ?? asset.hostname
+  const name = assetShortName(asset)
   const noAccounts = principals.length === 0
   const askMode = asset.connectAsk ?? (asset.kind === 'workstation' ? 'ask' : 'never')
 
@@ -371,7 +372,7 @@ function NoAccess({ hostname }: { hostname: string }) {
 }
 
 function Offline({ asset, refetch, loading }: { asset: Asset; refetch: () => void; loading: boolean }) {
-  const name = asset.hostname.split('.')[0] ?? asset.hostname
+  const name = assetShortName(asset)
   const device = asset.kind === 'android'
   return (
     <StateCard icon={<IconPlugConnectedX size={26} />} tone="amber" title={`${name} is offline`}

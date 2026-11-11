@@ -22,6 +22,7 @@ import { desktopEndpoint, filesEndpoint, terminalEndpoint } from '~/lib/live'
 import { seesWholeFleet } from '~/lib/roles'
 import { useSessions, type OpenSession, type SessionView } from '~/lib/sessions'
 import { FS } from '~/theme'
+import { assetShortName } from '~/lib/assetType'
 
 const LiveTerminal = lazy(() => import('~/components/LiveTerminal').then((m) => ({ default: m.LiveTerminal })))
 const RDPScreen = lazy(() => import('~/components/RDPScreen').then((m) => ({ default: m.RDPScreen })))
@@ -50,6 +51,12 @@ const WAY_LABEL = {
  */
 export function Workspace() {
   const { sessions, activeId, focus, close, ask } = useSessions()
+  // A tab says the asset's alias when it has one; its hover says the hostname.
+  const { data: assets } = useQuery(assetsQuery({}))
+  const tabName = (host: string) => {
+    const a = assets?.find((x) => x.hostname === host)
+    return a ? assetShortName(a) : short(host)
+  }
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const navigate = useNavigate()
   const [states, setStates] = useState<Record<string, PaneState>>({})
@@ -101,7 +108,7 @@ export function Workspace() {
                   onClick={() => focus(s.id)} title={`${s.principal} on ${s.target}`}>
                   <span className="argus-ws-dot" data-state={st} />
                   <Icon size={14} />
-                  <b>{short(s.target)}</b>
+                  <b>{tabName(s.target)}</b>
                   <span className="argus-ws-tabway">{WAY_LABEL[s.way]}</span>
                   {s.protocol === 'ssh' && <span className="argus-ws-acct">{s.principal}</span>}
                 </UnstyledButton>
