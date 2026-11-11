@@ -70,6 +70,11 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 	case len(info.Blockers) > 0:
 		return a.fail("not upgraded, nothing was changed: " + strings.Join(info.Blockers, "; "))
 	}
+	if info.Tool == releaseToolUbuntu || info.Tool == releaseToolDebian {
+		if err := a.answerGrub(ctx); err != nil {
+			return a.fail(err.Error())
+		}
+	}
 	change := &ReleaseChange{Distro: info.Distro, From: info.Version, FromName: info.Current, To: info.Next,
 		ToName: info.NextName, Tool: info.Tool}
 	deps := snapshotDeps(ctx, a.Run, a.Look, managerFamily(m))
@@ -128,11 +133,24 @@ func orUnknown(s string) string {
 	return s
 }
 
-// partWay is what to say when the upgrade itself failed: by then the
-// server may be on neither release.
-func partWay(tool string, code int, out []byte, log string) error {
-	return fmt.Errorf("%s failed (exit %d), so the server may be part way between releases: look at %s "+
-		"before anything else. %s", tool, code, log, tail(out, 400))
+// aptPartWay is what to say when an apt upgrade itself failed, after trying to finish what dpkg
+// left half done: whether that worked, and what a person does next. The
+// server is not rebooted: a boot loader left unconfigured may not boot.
+func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, out []byte, log string) error {
+	fmt.Fprintln(a.lw, "argus: the upgrade stopped part way; finishing what dpkg left half done")
+	repaired := aptManager{}.repair(ctx, a.Run, a.lw) == nil
+	a.lw.Flush()
+	next := "Argus tried to finish configuring the packages and could not. Do not reboot until " +
+		"`sudo dpkg --configure -a` and `sudo apt-get -f install` finish without errors (if grub-pc is what " +
+		"fails, `sudo dpkg-reconfigure grub-pc` and tick the disk the server boots from), then run " +
+		"`sudo apt full-upgrade` to finish the release, and only then reboot."
+	if repaired {
+		next = "Argus then finished configuring the packages (dpkg --configure -a, apt-get -f install). Do not " +
+			"reboot yet: run `sudo apt full-upgrade` to finish the release, check /etc/os-release names it, " +
+			"and only then reboot."
+	}
+	return fmt.Errorf("%s failed (exit %d), so the server is part way between releases. %s Its log is %s. %s",
+		tool, code, next, log, tail(out, 400))
 }
 
 func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
@@ -153,7 +171,7 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
 		return err
 	}
 	if code != 0 {
-		return partWay("do-release-upgrade", code, b.Bytes(), "/var/log/dist-upgrade/main.log")
+		return a.aptPartWay(ctx, "do-release-upgrade", code, b.Bytes(), "/var/log/dist-upgrade/main.log")
 	}
 	return nil
 }
@@ -201,7 +219,7 @@ func (a *PackageApplier) upgradeDebian(ctx context.Context, m pkgManager, info *
 			return err
 		}
 		if code != 0 {
-			return partWay("apt-get "+step[0], code, b.Bytes(), "/var/log/apt/term.log")
+			return a.aptPartWay(ctx, "apt-get "+step[0], code, b.Bytes(), "/var/log/apt/term.log")
 		}
 	}
 	return nil
