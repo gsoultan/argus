@@ -219,8 +219,10 @@ func newReleaseHost(t *testing.T, osr string) *releaseHost {
 	h.sources = filepath.Join(h.dir, "apt")
 	h.setOS(t, osr)
 	old := []any{osReleaseFiles, ubuntuUpgradeOverrides, aptSourcesRoot, leappReportFile, argusControlBinary, releaseFree,
-		toolGlob}
+		toolGlob, ubuntuUpgradeLogs, leappUpgradeLogs}
 	toolGlob = func(string) ([]string, error) { return nil, nil }
+	ubuntuUpgradeLogs = []string{filepath.Join(h.dir, "main.log"), filepath.Join(h.dir, "apt-term.log")}
+	leappUpgradeLogs = []string{filepath.Join(h.dir, "leapp-preupgrade.log"), filepath.Join(h.dir, "leapp-upgrade.log")}
 	osReleaseFiles = []string{h.osr}
 	ubuntuUpgradeOverrides = filepath.Join(h.dir, "release-upgrades.d")
 	aptSourcesRoot = h.sources
@@ -235,6 +237,8 @@ func newReleaseHost(t *testing.T, osr string) *releaseHost {
 		argusControlBinary = old[4].(string)
 		releaseFree = old[5].(func(string) int64)
 		toolGlob = old[6].(func(string) ([]string, error))
+		ubuntuUpgradeLogs = old[7].([]string)
+		leappUpgradeLogs = old[8].([]string)
 	})
 	return h
 }
@@ -773,5 +777,72 @@ func TestDaemonReleaseUpgradeInterrupted(t *testing.T) {
 	if st == nil || st.State != RunInterrupted || !strings.Contains(st.Message, "part way between releases") ||
 		fp.repairs != 1 {
 		t.Fatalf("run = %+v", st)
+	}
+}
+
+// The upgrader writes to its own logs, not to its output: the console sees
+// them while it runs, and the step says the newest line.
+func TestApplyReleaseFollowsTheUpgradersLogs(t *testing.T) {
+	h := newReleaseHost(t, jammy)
+	oldEvery := followEvery
+	followEvery = 10 * time.Millisecond
+	t.Cleanup(func() { followEvery = oldEvery })
+	if err := os.WriteFile(ubuntuUpgradeLogs[0], []byte("from an upgrade last year\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var during PackageRunStatus
+	var env []string
+	var a *PackageApplier
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f DistUpgradeViewNonInteractive": func(w io.Writer, e []string) int {
+			env = e
+			f, err := os.OpenFile(ubuntuUpgradeLogs[1], os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintln(f, "Unpacking libc6:amd64 (2.39-0ubuntu8) over (2.35-0ubuntu3.8) ...")
+			f.Close()
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				during = readRunFile(t, a.Plan.StateDir)
+				if strings.Contains(during.Message, "Unpacking libc6") {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			h.setOS(t, noble)
+			return 0
+		},
+	}}
+	a, _ = releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunRebooting {
+		t.Fatalf("run = %+v", st)
+	}
+	if during.Message != "upgrading: Unpacking libc6:amd64 (2.39-0ubuntu8) over (2.35-0ubuntu3.8) ..." {
+		t.Errorf("while upgrading the step said %q", during.Message)
+	}
+	if !strings.Contains(during.Log, "Unpacking libc6") || strings.Contains(st.Log, "last year") {
+		t.Errorf("log while upgrading %q, at the end %q", during.Log, st.Log)
+	}
+	if !strings.Contains(strings.Join(env, " "), "PYTHONUNBUFFERED=1") {
+		t.Errorf("do-release-upgrade's output is block-buffered: env %v", env)
+	}
+}
+
+func TestRunLogLastLine(t *testing.T) {
+	l := &runLog{limit: 1 << 10}
+	fmt.Fprint(l, "first\nprogress 10%\rprogress 55%\r\n\n")
+	if got := l.lastLine(); got != "progress 55%" {
+		t.Errorf("lastLine = %q", got)
+	}
+	l = &runLog{limit: 1 << 10}
+	fmt.Fprint(l, strings.Repeat("x", 300))
+	if got := l.lastLine(); len(got) > maxStatusLine+len("…") {
+		t.Errorf("lastLine is %d long", len(got))
 	}
 }

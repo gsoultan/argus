@@ -26,8 +26,8 @@ Linux).
 
 The button stays off until the server is ready, and the card says why not:
 
-- updates are waiting for the current release (install them first; Ubuntu's
-  upgrader refuses otherwise);
+- updates are waiting for the current release (install them first, with
+  **Install it now** on the card; Ubuntu's upgrader refuses otherwise);
 - an installed update waits for a reboot (reboot from the same tab);
 - `/` or `/var` has less than 3 GB free;
 - `argus-control` is installed on the server (see below).
@@ -79,6 +79,13 @@ the agent, so it goes on if the agent restarts or loses the control plane.
    `postgresql-client`), removes Argus's upgrade setting, and looks for the new
    release's updates. The run's message says what was put back, what is still
    missing, and which third-party sources to turn back on.
+
+While it runs, the run's card on the **Updates** tab shows the step it is
+on, the newest line the upgrader wrote, and its output as it comes. The agent
+follows the upgrader's own logs for this (`/var/log/dist-upgrade/main.log` and
+`apt-term.log`, or leapp's logs), since `do-release-upgrade` and leapp print
+little themselves. Expect long stretches on one package; nothing is stuck
+while the newest line still changes.
 
 A run cut off part way (power, a person stopping the unit) is marked
 interrupted, says the server may be between releases, and the package

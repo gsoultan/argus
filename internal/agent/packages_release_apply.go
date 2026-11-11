@@ -31,7 +31,11 @@ RemoveObsoletes=no
 // releaseEnv is aptEnv plus keeping a configuration file managed by ucf, as
 // dpkg's --force-confold keeps one dpkg manages: sshd_config, with the
 // ForceCommand that sends logins through Argus, is one of those.
-var releaseEnv = append(append([]string{}, aptEnv...), "UCF_FORCE_CONFFOLD=1", "RELEASE_UPGRADER_NO_SCREEN=1")
+// PYTHONUNBUFFERED makes do-release-upgrade and leapp, both Python, print
+// each line as it happens rather than in blocks once a pipe's buffer fills,
+// which on a quiet upgrade can be many minutes.
+var releaseEnv = append(append([]string{}, aptEnv...), "UCF_FORCE_CONFFOLD=1", "RELEASE_UPGRADER_NO_SCREEN=1",
+	"PYTHONUNBUFFERED=1")
 
 // applyRelease moves the server to the release the run was approved for,
 // then reboots into it. The agent that comes back checks it got there.
@@ -141,8 +145,10 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
 	}
 	defer os.Remove(cfg)
 	var b bytes.Buffer
+	stop := a.follow(ctx, "upgrading", ubuntuUpgradeLogs)
 	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "do-release-upgrade",
 		"-f", "DistUpgradeViewNonInteractive")
+	stop()
 	if err != nil {
 		return err
 	}
@@ -188,7 +194,9 @@ func (a *PackageApplier) upgradeDebian(ctx context.Context, m pkgManager, info *
 		"-o", "Dpkg::Options::=--force-confold", "-o", "Dpkg::Use-Pty=0")
 	for _, step := range [][]string{{"upgrade", "--without-new-pkgs"}, {"full-upgrade"}} {
 		var b bytes.Buffer
+		stop := a.follow(ctx, "apt-get "+step[0], nil)
 		code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "apt-get", append(append([]string{}, opts...), step...)...)
+		stop()
 		if err != nil {
 			return err
 		}
@@ -204,7 +212,9 @@ func (a *PackageApplier) upgradeLeapp(ctx context.Context) error {
 		s.Message = "leapp is checking the server (preupgrade); this can take twenty minutes"
 	})
 	var b bytes.Buffer
-	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), nil, "leapp", "preupgrade")
+	stop := a.follow(ctx, "leapp preupgrade", leappUpgradeLogs[:1])
+	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "leapp", "preupgrade")
+	stop()
 	if err != nil {
 		return err
 	}
@@ -221,7 +231,9 @@ func (a *PackageApplier) upgradeLeapp(ctx context.Context) error {
 		s.Message = "leapp is downloading the new release and preparing its upgrade boot"
 	})
 	b.Reset()
-	code, err = a.Run(ctx, io.MultiWriter(&b, a.lw), nil, "leapp", "upgrade")
+	stop = a.follow(ctx, "leapp upgrade", leappUpgradeLogs[1:])
+	code, err = a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "leapp", "upgrade")
+	stop()
 	if err != nil {
 		return err
 	}

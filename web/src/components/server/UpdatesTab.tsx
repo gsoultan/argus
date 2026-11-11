@@ -240,6 +240,7 @@ function ReleaseUpgrade({ view: v, release: rel, assetId, canEdit, busy }: {
   busy: boolean
 }) {
   const [asking, setAsking] = useState(false)
+  const [installing, setInstalling] = useState(false)
   // A distribution Argus does not upgrade says nothing here; one it does,
   // without its tool or with upgrades turned off, says what to change.
   if (!rel.next) {
@@ -253,6 +254,10 @@ function ReleaseUpgrade({ view: v, release: rel, assetId, canEdit, busy }: {
     )
   }
   const blockers = rel.blockers ?? []
+  // What stands in the way and can be cleared from here: the updates waiting
+  // for the current release. Held ones too, or the blocker never clears.
+  const waiting = (v.report?.updates ?? []).map((u) => u.name)
+  const anyHeld = waiting.some((n) => heldBy(n, v.holds))
   const why = !canEdit ? 'An admin or owner can upgrade it from here.'
     : !v.canUpgradeRelease ? "This server's agent is too old to upgrade the operating system. Update the agent from the Settings tab first."
       : busy ? 'It can be upgraded once the run going now has ended.'
@@ -270,9 +275,22 @@ function ReleaseUpgrade({ view: v, release: rel, assetId, canEdit, busy }: {
       <Stack gap={SP.cozy}>
         {blockers.length > 0 ? (
           <Alert color="amber" p="xs" title="Not ready yet">
-            <List size="sm" spacing={4}>
-              {blockers.map((b) => <List.Item key={b}>{b[0]?.toUpperCase() + b.slice(1)}.</List.Item>)}
-            </List>
+            <Stack gap={SP.cozy}>
+              <List size="sm" spacing={4}>
+                {blockers.map((b) => <List.Item key={b}>{b[0]?.toUpperCase() + b.slice(1)}.</List.Item>)}
+              </List>
+              {canEdit && waiting.length > 0 && (
+                <Group gap={SP.cozy} wrap="wrap">
+                  <Button size="compact-sm" variant="white" color="amber" leftSection={<IconPackage size={14} />}
+                    disabled={busy} onClick={() => setInstalling(true)}>
+                    Install {waiting.length === 1 ? 'it' : `the ${waiting.length} updates`} now
+                  </Button>
+                  <Text size={FS.meta} c="dimmed">
+                    The agent looks again once they are in, and the upgrade button turns on when nothing else is in the way.
+                  </Text>
+                </Group>
+              )}
+            </Stack>
           </Alert>
         ) : (
           <Text size={FS.body} lh={1.5}>
@@ -283,6 +301,10 @@ function ReleaseUpgrade({ view: v, release: rel, assetId, canEdit, busy }: {
         {why && <Text size={FS.meta} c="dimmed">{why}</Text>}
       </Stack>
       {asking && <ConfirmRelease assetId={assetId} view={v} release={rel} onClose={() => setAsking(false)} />}
+      {installing && (
+        <ConfirmRun assetId={assetId} mode={anyHeld ? 'selected' : 'all'} names={waiting} view={v}
+          onClose={() => setInstalling(false)} />
+      )}
     </SectionCard>
   )
 }
