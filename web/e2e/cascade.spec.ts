@@ -37,7 +37,7 @@ const REFERENCE = 'http://localhost:5512'
 
 const ROUTES = [
   '/assets', '/assets/add', '/sessions', '/approvals', '/audit', '/teams', '/teams?tab=people',
-  '/settings', '/connect',
+  '/settings', '/connect?host=web-01.prod.northwind.id',
 ]
 
 /**

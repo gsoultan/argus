@@ -88,7 +88,7 @@ test('a refused password says so instead of doing nothing', async ({ page }) => 
  * - On `/` it is unreachable. The router's loader awaits `statsQuery`, so
  *   nothing renders — not even the shell — until that request has come back and
  *   already proved the control plane is there.
- * - `/connect` declares no loader, so the shell paints while the first data
+ * - `/connect?host=…` declares no loader, so the shell paints while the first data
  *   call is still in flight. That is the window, and it is a real one: an
  *   operator deep-linking to Connect against a slow control plane sees it.
  */
@@ -110,7 +110,7 @@ test.describe('the data-source badge', () => {
       await route.continue()
     })
 
-    await page.goto('/connect', { waitUntil: 'commit' })
+    await page.goto('/connect?host=web-01.prod.northwind.id', { waitUntil: 'commit' })
 
     // Scoped to the source line in the account menu: `getByText` matches
     // substrings, and the fallback banner's title carries the host too.

@@ -13,13 +13,16 @@ const ROUTES: Array<[string, string | RegExp]> = [
   ['/audit', 'Activity'],
   ['/teams', 'Teams'],
   ['/settings', 'Settings'],
-  ['/connect', 'Connect'],
+  // A link naming an asset opens its Connect panel.
+  ['/connect?host=web-01.prod.northwind.id', 'Connect'],
   ['/about', 'About Argus'],
   // Old addresses, kept working: My servers, Overview's Coverage, Requests, Users.
   ['/mine', 'Assets'],
   ['/coverage', 'Assets'],
   ['/requests', 'Approvals'],
   ['/users', 'Teams'],
+  // A bare /connect with no session open leads back to Assets.
+  ['/connect', 'Assets'],
 ]
 
 for (const [path, heading] of ROUTES) {
