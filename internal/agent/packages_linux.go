@@ -46,7 +46,7 @@ func (p *linuxPackages) check(ctx context.Context) (PackageReport, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return PackageReport{}, fmt.Errorf("checking for updates failed: %s", tail([]byte(msg), 400))
+		return PackageReport{}, fmt.Errorf("checking for updates failed: %s", tail([]byte(msg), 700))
 	}
 	var r PackageReport
 	if err := json.Unmarshal(stdout.Bytes(), &r); err != nil {
