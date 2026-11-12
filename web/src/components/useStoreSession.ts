@@ -45,6 +45,10 @@ export interface StoreAnswer {
   server?: string
   session?: string
   ops?: string[]
+  /** A Redis change that runs once someone else approves exactly this text. */
+  needsApproval?: { text: string; cap?: number }
+  /** Whether this database's changes wait for approval (bulk, config, users). */
+  changesNeedApproval?: boolean
 }
 
 export type StoreRequest = Record<string, unknown> & { op: string }

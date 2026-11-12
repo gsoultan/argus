@@ -128,6 +128,36 @@ type StoreRequest struct {
 	Kind string `json:"kind,omitempty"`
 	// Close a connection: why, as the client is told.
 	Reason string `json:"reason,omitempty"`
+
+	// Redis management; see redis_manage.go.
+	//
+	// Approval is the id of the approval a change runs under, where the
+	// entry's changes need one. The control plane checks it and the agent
+	// refuses such a change without one.
+	Approval string `json:"approval,omitempty"`
+	// Edits are the commands of an edit, each on the key, in order.
+	Edits [][]string `json:"edits,omitempty"`
+	// Undo asks for an undo copy (edit, bulk), or names one to put back.
+	Undo   bool   `json:"undo,omitempty"`
+	UndoID string `json:"undoId,omitempty"`
+	// Filter, Action (delete, expire, persist), Seconds (for expire) and Max
+	// (the most keys it may touch) make a bulk change.
+	Filter  RedisFilter `json:"filter,omitempty"`
+	Action  string      `json:"action,omitempty"`
+	Seconds int64       `json:"seconds,omitempty"`
+	Max     int64       `json:"max,omitempty"`
+	// Config is a configuration change; Rewrite also writes redis.conf.
+	Config  []RedisConfigItem `json:"config,omitempty"`
+	Rewrite bool              `json:"rewrite,omitempty"`
+	// User, State (on, off), password hashes to add and remove, and Rules
+	// (nil leaves them) change a server's ACL user; Create says it must not
+	// exist yet. For a dry run, Rules and Command.
+	User         string   `json:"user,omitempty"`
+	State        string   `json:"state,omitempty"`
+	AddHashes    []string `json:"addHashes,omitempty"`
+	RemoveHashes []string `json:"removeHashes,omitempty"`
+	Rules        []string `json:"rules,omitempty"`
+	Create       bool     `json:"create,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.
@@ -171,6 +201,11 @@ type StoreAnswer struct {
 	// Ops are the operations this level may ask for, so the console offers
 	// only those.
 	Ops []string `json:"ops,omitempty"`
+	// NeedsApproval says a Redis change was refused only because it waits
+	// for an approval, and what to ask for.
+	NeedsApproval *RedisApprovalNeed `json:"needsApproval,omitempty"`
+	// ChangesNeedApproval, on ready, says the entry's changes wait for one.
+	ChangesNeedApproval bool `json:"changesNeedApproval,omitempty"`
 }
 
 // RedisValue is a Redis reply, as JSON can carry it.

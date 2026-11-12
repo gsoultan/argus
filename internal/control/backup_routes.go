@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,11 @@ func (a *API) withDatabase(min string, next func(w http.ResponseWriter, r *http.
 // withPostgres is withDatabase for a feature named what, which only a
 // Postgres database has.
 func (a *API) withPostgres(what, min string, next func(w http.ResponseWriter, r *http.Request, email string, db Database, level string)) http.HandlerFunc {
+	return a.withEngines(what, min, []string{tunnel.EnginePostgres}, next)
+}
+
+// withEngines is withPostgres for a feature the given engines have.
+func (a *API) withEngines(what, min string, engines []string, next func(w http.ResponseWriter, r *http.Request, email string, db Database, level string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := a.authenticate(r)
 		if !ok {
@@ -45,8 +51,12 @@ func (a *API) withPostgres(what, min string, next func(w http.ResponseWriter, r 
 			a.dbErr(w, "database", err)
 			return
 		}
-		if db.Engine != tunnel.EnginePostgres {
-			writeErr(w, http.StatusBadRequest, what+" are for Postgres databases; "+db.Name+" is "+engineName(db.Engine))
+		if !slices.Contains(engines, db.Engine) {
+			names := make([]string, len(engines))
+			for i, e := range engines {
+				names[i] = engineName(e)
+			}
+			writeErr(w, http.StatusBadRequest, what+" are for "+strings.Join(names, " and ")+" databases; "+db.Name+" is "+engineName(db.Engine))
 			return
 		}
 		level := tunnel.LevelDBA

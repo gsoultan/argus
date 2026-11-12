@@ -9,7 +9,8 @@ describe('change approval', () => {
     expect(writesNeedApproval(db('staging'))).toBe(false)
     expect(writesNeedApproval(db('production', false))).toBe(false)
     expect(writesNeedApproval(db('staging', true))).toBe(true)
-    expect(writesNeedApproval({ engine: 'redis', label: 'production', policy: {} })).toBe(false)
+    expect(writesNeedApproval({ engine: 'redis', label: 'production', policy: {} })).toBe(true)
+    expect(writesNeedApproval({ engine: 'rabbitmq', label: 'production', policy: {} })).toBe(false)
   })
 
   it('adds up the dry runs, cascades included, and keeps at most 20 preview rows', () => {

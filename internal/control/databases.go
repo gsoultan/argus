@@ -81,6 +81,9 @@ type DBPolicy struct {
 	// the organization's admins and approvers, or "editors" to add anyone
 	// with Write or above on this database. See change_editors.go.
 	WriteApprovers string `json:"writeApprovers,omitempty"`
+	// RedisLevels are a Redis entry's own ACL rules per level, key patterns
+	// included, replacing Argus's (tunnel.RedisLevelRules) for that level.
+	RedisLevels map[string][]string `json:"redisLevels,omitempty"`
 }
 
 // WritesNeedApproval says whether a statement that changes d waits for
@@ -227,8 +230,27 @@ func (d *Database) validateCommon() error {
 		// Redis never shows a PgBouncer.
 		d.PoolerHost, d.PoolerPort, d.AdminUser = "", 0, ""
 	}
-	if !d.SQL() {
-		// Only SQL statements wait for approval; see statementGate.
+	if d.Engine == tunnel.EngineRedis {
+		for level, rules := range p.RedisLevels {
+			if tunnel.LevelRank(level) == 0 {
+				return ErrInvalidDatabase{"unknown level " + level + " in the Redis rules"}
+			}
+			if len(rules) == 0 {
+				return ErrInvalidDatabase{"the " + level + " level needs at least one rule; use Argus's default instead"}
+			}
+			if why := tunnel.ValidRedisRules(rules, level); why != "" {
+				return ErrInvalidDatabase{level + ": " + why}
+			}
+		}
+		if len(p.RedisLevels) == 0 {
+			p.RedisLevels = nil
+		}
+	} else {
+		p.RedisLevels = nil
+	}
+	if !d.SQL() && d.Engine != tunnel.EngineRedis {
+		// SQL statements, and a Redis's bulk, configuration and user changes,
+		// wait for approval; see statementGate and redisGate.
 		p.WriteApproval, p.WriteApprovers = nil, ""
 		if p.MaxRows > tunnel.MaxStoreItems {
 			p.MaxRows = tunnel.MaxStoreItems

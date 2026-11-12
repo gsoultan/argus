@@ -21,6 +21,8 @@ import {
 import { FS } from '~/theme'
 import { engineOf, isBroker, isSQLEngine, levelName } from '~/lib/engines'
 import type { SettingsTab } from '~/lib/settingsSearch'
+
+const RedisPermissions = lazy(() => import('~/components/redis/RedisPermissions').then((m) => ({ default: m.RedisPermissions })))
 import type { DBLabel, DBLevel, DBPolicy, Database } from '~/types/domain'
 
 /**
@@ -126,7 +128,7 @@ export function DatabaseSettings({ dbId, initialTab, section }: {
       <PageBody>
         <Stack gap="md">
           <SegmentedControl value={tab} onChange={(v) => setTab(v as Tab)}
-            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }, { label: 'Connection', value: 'connection' }, ...(db.engine === 'postgres' ? [{ label: 'Backups', value: 'backups' }] : [])]} w="fit-content" />
+            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }, ...(db.engine === 'redis' ? [{ label: 'Permissions', value: 'permissions' }] : []), { label: 'Connection', value: 'connection' }, ...(db.engine === 'postgres' ? [{ label: 'Backups', value: 'backups' }] : [])]} w="fit-content" />
 
           {tab === 'who' && (
             <Stack gap="md">
@@ -183,6 +185,7 @@ export function DatabaseSettings({ dbId, initialTab, section }: {
           )}
 
           {tab === 'safety' && <Safety db={db} assignments={assignments ?? []} onAccess={() => setTab('who')} />}
+          {tab === 'permissions' && db.engine === 'redis' && <Suspense fallback={null}><RedisPermissions db={db} /></Suspense>}
           {tab === 'connection' && (db.engine === 'postgres' ? <Connection db={db} /> : <StoreConnection db={db} />)}
           {tab === 'backups' && db.engine === 'postgres' && <BackupSettings db={db} />}
 
@@ -388,7 +391,7 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
         <SegmentedControl value={label} onChange={(v) => setLabel(v as DBLabel)}
           data={[{ label: 'Production', value: 'production' }, { label: 'Staging', value: 'staging' }, { label: 'Development', value: 'development' }]} />
       </SectionCard>
-      {isSQLEngine(db.engine) && (
+      {(isSQLEngine(db.engine) || db.engine === 'redis') && (
         <ApprovalsCard db={db} policy={policy} label={label} setPolicy={setPolicy} assignments={assignments} onAccess={onAccess} />
       )}
       <SectionCard title="Limits">

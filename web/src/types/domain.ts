@@ -1066,6 +1066,8 @@ export interface DBPolicy {
   writeApproval?: boolean
   /** Who decides those changes. Unset is 'approvers'. */
   writeApprovers?: ChangeApprovers
+  /** Redis: this entry's own ACL rules per level, key patterns included; unset levels use Argus's. */
+  redisLevels?: Partial<Record<DBLevel, string[]>>
 }
 
 /** Who decides a database's changes: the organization's admins and approvers, or also its editors. */

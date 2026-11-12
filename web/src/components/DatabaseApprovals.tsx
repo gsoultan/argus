@@ -188,7 +188,7 @@ export function ApprovalsCard({ db, policy, label, setPolicy, assignments, onAcc
   const sessions = assignments.filter((a) => a.needsApproval).length
   const toggle = (v: boolean) => {
     if (!v && label === 'production' && !window.confirm(
-      `Changes on ${db.dbname} will run as soon as someone with Write sends them. They are still recorded, and deleted rows can be put back from the trash. Turn approval off?`)) return
+      db.engine === 'redis' ? `Bulk, configuration and user changes on ${db.hostname} will run as soon as someone sends them. They are still recorded. Turn approval off?` : `Changes on ${db.dbname} will run as soon as someone with Write sends them. They are still recorded, and deleted rows can be put back from the trash. Turn approval off?`)) return
     setPolicy({ ...policy, writeApproval: v === labelDefault ? undefined : v })
   }
   return (
@@ -197,7 +197,9 @@ export function ApprovalsCard({ db, policy, label, setPolicy, assignments, onAcc
         <Group justify="space-between" wrap="nowrap" align="flex-start">
           <Box>
             <Text size={FS.body} fw={600}>Changes need a second person's approval</Text>
-            <Text size={FS.micro} c="dimmed">Every INSERT, UPDATE, DELETE or schema change waits, then runs once. Reading never waits.</Text>
+            <Text size={FS.micro} c="dimmed">{db.engine === 'redis'
+              ? 'Bulk changes of more than 100 keys, configuration changes and changes to the server’s users wait, then run once. Reading and single-key edits never wait.'
+              : 'Every INSERT, UPDATE, DELETE or schema change waits, then runs once. Reading never waits.'}</Text>
             <Text size={FS.micro} c="dimmed" mt={2}>
               Default for {label}: {labelDefault ? 'on' : 'off'}
               {policy.writeApproval !== undefined && (

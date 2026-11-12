@@ -13,9 +13,12 @@ the first rows each statement changes. It is stored with the ask, so the
 approver sees what the asker saw, and the run stops if it would change more.
 */
 
-/** Whether a statement that changes db waits for someone else's approval. */
+/**
+ * Whether a statement that changes db waits for someone else's approval. For
+ * a Redis: whether its bulk, configuration and user changes wait.
+ */
 export function writesNeedApproval(db: Pick<Database, 'engine' | 'label' | 'policy'>): boolean {
-  if (db.engine !== 'postgres' && db.engine !== 'mysql') return false
+  if (db.engine !== 'postgres' && db.engine !== 'mysql' && db.engine !== 'redis') return false
   return db.policy?.writeApproval ?? db.label === 'production'
 }
 
