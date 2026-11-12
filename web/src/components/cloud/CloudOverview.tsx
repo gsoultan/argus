@@ -17,7 +17,7 @@ import { EnvBadge } from './common'
 import { RoleSetup } from './RoleSetup'
 import type { CloudTab } from './tabs'
 
-export function CloudOverview({ accounts, bases, instances, firewalls, volumes, addresses, admin, onTab }: {
+export function CloudOverview({ accounts, bases, instances, firewalls, volumes, addresses, admin, platform = true, onTab }: {
   accounts: CloudAccount[]
   bases: CloudBase[]
   instances?: CloudItem[]
@@ -25,10 +25,12 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
   volumes?: CloudItem[]
   addresses?: CloudItem[]
   admin: boolean
+  /** The session is in the default organization, where the cloud identity is set. */
+  platform?: boolean
   onTab: (t: CloudTab) => void
 }) {
   const base = bases.find((b) => b.provider === 'aws')
-  if (accounts.length === 0) return <FirstAccount admin={admin} base={base} />
+  if (accounts.length === 0) return <FirstAccount admin={admin} platform={platform} base={base} />
 
   const running = instances?.filter((i) => i.resource.state === 'running').length
   const unmatched = instances?.filter((i) => !i.server)
@@ -289,7 +291,7 @@ function Disconnect({ a, opened, onClose }: { a: CloudAccount; opened: boolean; 
   )
 }
 
-function FirstAccount({ admin, base }: { admin: boolean; base?: CloudBase }) {
+function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boolean; base?: CloudBase }) {
   return (
     <Card padding="xl">
       <Stack align="center" gap="lg" maw={640} mx="auto" py="lg">
@@ -315,11 +317,12 @@ function FirstAccount({ admin, base }: { admin: boolean; base?: CloudBase }) {
         {base?.error && (
           <Alert color="amber" variant="light" w="100%" title="argus-control has no AWS identity yet">
             <Text size={FS.meta}>
-              It needs one to assume roles in your accounts. On EC2 it uses the instance profile; anywhere else, give it
-              an IAM user's access key under Settings › Cloud identities.
+              {platform
+                ? "It needs one to assume roles in your accounts. On EC2 it uses the instance profile; anywhere else, give it an IAM user's access key under Settings › Cloud identities."
+                : "It needs one to assume roles in your accounts. It is shared by every organization, so the platform's owner sets it from the default organization; ask them to."}
             </Text>
             <Text size={FS.micro} c="dimmed" mt={4}>{base.error}</Text>
-            {admin && (
+            {admin && platform && (
               <ButtonLink to="/settings" search={{ section: 'cloud' }} size="compact-sm" variant="light" mt="xs">
                 Set the AWS identity
               </ButtonLink>
