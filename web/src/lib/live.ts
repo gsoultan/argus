@@ -1259,14 +1259,26 @@ export interface ControlSettings {
   }
   /**
    * Who argus-control is to each cloud before it assumes a role in a
-   * connected account. One for the whole platform; absent outside the
-   * default organization and from an older control plane.
+   * connected account. Shared by the platform; absent outside the default
+   * organization and from an older control plane.
    */
-  cloud?: { aws: AWSIdentity }
+  cloud?: { aws: AWSCloudSettings }
 }
 
-/** Where argus-control's AWS identity comes from. The secret is write-only. */
+/** argus-control's AWS identities and the one new connections start with. */
+export interface AWSCloudSettings {
+  /** An id, or the name of one being added in the same save. */
+  default: string
+  identities: AWSIdentity[]
+}
+
+/** One of argus-control's AWS identities. The secret is write-only. */
 export interface AWSIdentity {
+  /** Empty for one being added; the control plane gives it one. */
+  id: string
+  name: string
+  /** Organizations that may use it, by id; empty for every organization. */
+  organizations: string[]
   /** default: what the host gives it (instance profile, AWS_ variables). key: entered here. file: a profile or credentials file. */
   source: 'default' | 'key' | 'file'
   accessKeyId: string
@@ -1286,9 +1298,29 @@ export interface CloudIdentityCheck {
   source: string
 }
 
-/** Asks AWS who the identity on the form is, unsaved. A secret left out is the one configured. */
-export async function testCloudIdentity(provider: 'aws', c: { aws: AWSIdentity }): Promise<CloudIdentityCheck> {
-  return post<CloudIdentityCheck>(`/api/v1/settings/test-cloud/${provider}`, c)
+/** Asks AWS who the identity on the form is, unsaved. A secret left out is the one configured for that id. */
+export async function testCloudIdentity(provider: 'aws', identity: AWSIdentity): Promise<CloudIdentityCheck> {
+  return post<CloudIdentityCheck>(`/api/v1/settings/test-cloud/${provider}`, identity)
+}
+
+/** How many accounts in one organization use an identity. */
+export interface CloudIdentityUse { organization: string; name: string; accounts: number }
+
+/** A running identity as the platform sees it: what the cloud says, and who uses it. */
+export interface CloudIdentityStatus {
+  provider: string
+  identity: string
+  name: string
+  default: boolean
+  principal?: string
+  source?: string
+  error?: string
+  use: CloudIdentityUse[]
+}
+
+/** Every running identity with its status and use, for the platform's settings page. */
+export async function cloudIdentityStatus(provider: 'aws'): Promise<CloudIdentityStatus[]> {
+  return get<CloudIdentityStatus[]>(`/api/v1/settings/cloud-identities/${provider}`)
 }
 
 export async function controlSettings(): Promise<ControlSettings> {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,31 +25,18 @@ and disconnects them. Assignments by level come with changes, which is
 where they decide something.
 */
 
-// SetCloudProvider makes a cloud available under Cloud. A provider is an
-// interface value, so a nil one is never stored.
-func (a *API) SetCloudProvider(p cloud.Provider) {
-	if p == nil {
-		return
-	}
-	a.cloud.mu.Lock()
-	defer a.cloud.mu.Unlock()
-	if a.cloud.providers == nil {
-		a.cloud.providers = map[string]cloud.Provider{}
-	}
-	a.cloud.providers[p.Kind()] = p
-}
-
 // cloudState is the API's cloud providers and the syncs in flight.
 type cloudState struct {
-	mu        sync.Mutex
-	providers map[string]cloud.Provider
+	mu sync.Mutex
+	// identities is each provider's identities, in the order the console
+	// lists them. At most MaxCloudIdentities each.
+	identities map[string][]CloudIdentity
 	// syncing holds the accounts being read now, so a "sync now" and the
 	// loop never read one account twice at once. Bounded by the number of
 	// connected accounts.
 	syncing map[string]bool
-	// bases caches each provider's answer about this host's identity for a
-	// few minutes: finding no identity can mean waiting on the instance
-	// metadata service, which is not something every page load should do.
+	// bases caches each identity's answer from its provider for a few
+	// minutes, by provider and identity id; bounded like identities.
 	bases map[string]cachedBase
 }
 
@@ -60,13 +48,6 @@ type cachedBase struct {
 // cloudBaseTTL is how long a provider's identity answer is reused.
 const cloudBaseTTL = 5 * time.Minute
 
-func (a *API) cloudProvider(kind string) (cloud.Provider, bool) {
-	a.cloud.mu.Lock()
-	defer a.cloud.mu.Unlock()
-	p, ok := a.cloud.providers[kind]
-	return p, ok
-}
-
 func (a *API) registerCloudRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cloud/accounts", a.getCloudAccounts)
 	mux.HandleFunc("POST /api/v1/cloud/accounts/prepare", a.postCloudPrepare)
@@ -77,6 +58,8 @@ func (a *API) registerCloudRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/cloud/accounts/{id}", a.deleteCloudAccount)
 	mux.HandleFunc("POST /api/v1/cloud/accounts/{id}/sync", a.postCloudSync)
 	mux.HandleFunc("PUT /api/v1/cloud/accounts/{id}/manage", a.putCloudManage)
+	mux.HandleFunc("POST /api/v1/cloud/accounts/{id}/identity/check", a.postCloudMoveCheck)
+	mux.HandleFunc("PUT /api/v1/cloud/accounts/{id}/identity", a.putCloudIdentity)
 	mux.HandleFunc("DELETE /api/v1/cloud/accounts/{id}/manage", a.deleteCloudManage)
 	mux.HandleFunc("GET /api/v1/cloud/resources", a.getCloudResources)
 }
@@ -123,10 +106,15 @@ func (a *API) cloudAdmin(w http.ResponseWriter, r *http.Request, what string) (s
 	return sess.Email, true
 }
 
-// CloudBase is what the console shows about this control plane's own
-// identity in a provider.
+// CloudBase is what the console shows about one of this control plane's
+// own identities in a provider.
 type CloudBase struct {
-	Provider  string `json:"provider"`
+	Provider string `json:"provider"`
+	// Identity is the identity's id, Name what people call it.
+	Identity string `json:"identity"`
+	Name     string `json:"name"`
+	// Default is the one a new connection starts with.
+	Default   bool   `json:"default"`
 	Principal string `json:"principal,omitempty"`
 	Source    string `json:"source,omitempty"`
 	Error     string `json:"error,omitempty"`
@@ -146,36 +134,16 @@ func (a *API) getCloudAccounts(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "cloud accounts", err)
 		return
 	}
-	out := cloudAccountsView{Accounts: list, Bases: []CloudBase{}}
-	if p, ok := a.cloudProvider("aws"); ok {
-		out.Bases = append(out.Bases, a.cloudBase(r.Context(), p))
+	// Only the identities this organization may use: an account on any
+	// other is shown as having lost its identity.
+	ids := a.cloudIdentitiesFor(r.Context(), "aws")
+	out := cloudAccountsView{Accounts: list, Bases: a.cloudBases(r.Context(), "aws", ids)}
+	for n := range out.Accounts {
+		c := &out.Accounts[n]
+		c.IdentityMissing = !slices.ContainsFunc(ids, func(i CloudIdentity) bool { return i.ID == c.Identity })
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (a *API) cloudBase(ctx context.Context, p cloud.Provider) CloudBase {
-	a.cloud.mu.Lock()
-	c, ok := a.cloud.bases[p.Kind()]
-	a.cloud.mu.Unlock()
-	if ok && time.Since(c.at) < cloudBaseTTL {
-		return c.base
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	out := CloudBase{Provider: p.Kind()}
-	if b, err := p.Base(ctx); err != nil {
-		out.Error = err.Error()
-	} else {
-		out.Principal, out.Source = b.Principal, b.Source
-	}
-	a.cloud.mu.Lock()
-	if a.cloud.bases == nil {
-		a.cloud.bases = map[string]cachedBase{}
-	}
-	a.cloud.bases[p.Kind()] = cachedBase{base: out, at: time.Now()}
-	a.cloud.mu.Unlock()
-	return out
 }
 
 type cloudPrepareIn struct {
@@ -183,6 +151,12 @@ type cloudPrepareIn struct {
 	AccountID string `json:"accountId"`
 	// Manage asks for the template that also makes the manage role.
 	Manage bool `json:"manage"`
+	// Identity is who the roles will trust. Empty is the identity the
+	// account already uses when it is connected, else the default.
+	Identity string `json:"identity"`
+	// Keep is an identity the roles go on trusting as well, while an
+	// account moves from it to Identity.
+	Keep string `json:"keep"`
 }
 
 // CloudPrepared is what the person needs to make the role in their
@@ -193,7 +167,12 @@ type CloudPrepared struct {
 	ExternalID string `json:"externalId"`
 	Principal  string `json:"principal"`
 	Source     string `json:"source"`
-	RoleName   string `json:"roleName"`
+	// Identity is the identity the roles trust, IdentityName its name.
+	Identity     string `json:"identity"`
+	IdentityName string `json:"identityName"`
+	// Kept is the principal the roles also go on trusting during a move.
+	Kept     string `json:"kept,omitempty"`
+	RoleName string `json:"roleName"`
 	// ManageRoleName is set when the template makes the manage role too.
 	ManageRoleName string `json:"manageRoleName,omitempty"`
 	// ReadRoleARN and ManageRoleARN are where the roles will be: their
@@ -212,32 +191,45 @@ func cloudRoleARN(accountID, name string) string {
 	return "arn:aws:iam::" + accountID + ":role/" + name
 }
 
-// noIdentityNextStep says who can give argus-control its identity. It is set
-// in the default organization only, so anywhere else the step is to ask the
-// platform's owner rather than look for a setting that is not there.
-func noIdentityNextStep(ctx context.Context) string {
-	if platformScope(ctx) {
-		return "Run it on EC2 with an instance profile, or give it an IAM user's access key under Settings › Cloud identities"
-	}
-	return "It is shared by every organization, so ask the platform's owner to set it under Settings › Cloud identities in the default organization"
-}
-
-// prepare works out the role an account needs, or says why it cannot.
-func (a *API) cloudPrepare(ctx context.Context, provider, accountID string, manage bool) (CloudPrepared, int, error) {
+// cloudPrepare works out the roles an account needs, or says why it cannot.
+func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepared, int, error) {
+	provider, accountID := in.Provider, in.AccountID
 	if provider != "aws" {
 		return CloudPrepared{}, http.StatusBadRequest, errors.New("only AWS can be connected so far")
 	}
 	if !reAWSAccount.MatchString(accountID) {
 		return CloudPrepared{}, http.StatusBadRequest, errors.New("an AWS account id is 12 digits")
 	}
-	p, ok := a.cloudProvider(provider)
-	if !ok {
-		return CloudPrepared{}, http.StatusNotImplemented, errors.New("this control plane was started without AWS support")
+	if in.Identity == "" {
+		// An account already connected keeps the identity it uses: its
+		// template, to allow changes or to update the roles, trusts that one.
+		if c, err := a.store.CloudAccountByAccountID(ctx, provider, accountID); err == nil {
+			in.Identity = c.Identity
+		} else if !errors.Is(err, ErrCloudAccountNotFound) {
+			return CloudPrepared{}, http.StatusInternalServerError, err
+		}
 	}
-	base := a.cloudBase(ctx, p)
+	ident, err := a.cloudIdentity(ctx, provider, in.Identity)
+	if err != nil {
+		return CloudPrepared{}, identityStatus(err), err
+	}
+	base := a.cloudBase(ctx, provider, ident)
 	if base.Error != "" {
-		return CloudPrepared{}, http.StatusConflict, errors.New("argus-control has no AWS identity of its own yet: " + base.Error +
-			". " + noIdentityNextStep(ctx))
+		return CloudPrepared{}, http.StatusConflict, errors.New("argus-control's identity " + ident.Name + " does not answer: " + base.Error +
+			". " + cloudIdentityNextStep(ctx))
+	}
+	principals := []string{base.Principal}
+	var kept string
+	if in.Keep != "" && in.Keep != ident.ID {
+		old, err := a.cloudIdentity(ctx, provider, in.Keep)
+		if err != nil {
+			return CloudPrepared{}, identityStatus(err), err
+		}
+		ob := a.cloudBase(ctx, provider, old)
+		if ob.Error == "" && ob.Principal != base.Principal {
+			kept = ob.Principal
+			principals = append(principals, kept)
+		}
 	}
 	ext, err := a.cloudExternalID(ctx, provider, accountID)
 	if err != nil {
@@ -245,17 +237,27 @@ func (a *API) cloudPrepare(ctx context.Context, provider, accountID string, mana
 	}
 	out := CloudPrepared{
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
+		Identity: ident.ID, IdentityName: ident.Name, Kept: kept,
 		RoleName: aws.ReadRoleName, ReadRoleARN: cloudRoleARN(accountID, aws.ReadRoleName),
-		Template: aws.Template(base.Principal, ext, manage), Command: aws.DeployCommand(base.Principal, ext, manage),
+		Template: aws.TemplateTrusting(principals, ext, in.Manage), Command: aws.DeployCommandTrusting(principals, ext, in.Manage),
 	}
-	if manage {
+	if in.Manage {
 		out.ManageRoleName = aws.ManageRoleName
 		out.ManageRoleARN = cloudRoleARN(accountID, aws.ManageRoleName)
 	}
-	if _, ok := p.(cloud.Deployer); ok && cloud.HomeAccount(base.Principal) == accountID {
+	if _, ok := ident.Provider.(cloud.Deployer); ok && cloud.HomeAccount(base.Principal) == accountID {
 		out.CanDeploy = true
 	}
 	return out, http.StatusOK, nil
+}
+
+// cloudIdentityNextStep is who fixes an identity that does not answer:
+// only the default organization edits the identities.
+func cloudIdentityNextStep(ctx context.Context) string {
+	if platformScope(ctx) {
+		return "Fix it under Settings › Cloud identities: run argus-control on EC2 with an instance profile, or give the identity an IAM user's access key"
+	}
+	return "The platform's owner fixes it under Settings › Cloud identities in the default organization"
 }
 
 func (a *API) postCloudPrepare(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +269,8 @@ func (a *API) postCloudPrepare(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	out, code, err := a.cloudPrepare(r.Context(), in.Provider, strings.TrimSpace(in.AccountID), in.Manage)
+	in.AccountID = strings.TrimSpace(in.AccountID)
+	out, code, err := a.cloudPrepare(r.Context(), in)
 	if err != nil {
 		writeErr(w, code, err.Error())
 		return
@@ -284,7 +287,9 @@ func (a *API) getCloudTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("accountId"))
 	manage := r.URL.Query().Get("manage") == "1"
-	out, code, err := a.cloudPrepare(r.Context(), "aws", id, manage)
+	q := r.URL.Query()
+	out, code, err := a.cloudPrepare(r.Context(), cloudPrepareIn{Provider: "aws", AccountID: id, Manage: manage,
+		Identity: q.Get("identity"), Keep: q.Get("keep")})
 	if err != nil {
 		writeErr(w, code, err.Error())
 		return
@@ -305,6 +310,8 @@ type cloudAccountIn struct {
 	// Manage without ManageRoleARN asks for the role the template makes.
 	Manage      bool   `json:"manage"`
 	Environment string `json:"environment"`
+	// Identity is who Argus connects as; empty is the default.
+	Identity string `json:"identity"`
 }
 
 func (in *cloudAccountIn) validate() error {
@@ -365,11 +372,13 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	p, ok := a.cloudProvider(in.Provider)
-	if !ok {
-		writeErr(w, http.StatusNotImplemented, "this control plane was started without AWS support")
+	ident, err := a.cloudIdentity(r.Context(), in.Provider, strings.TrimSpace(in.Identity))
+	if err != nil {
+		a.refuseCloudIdentity(r, actor, cloudTarget(in.Provider, in.AccountID, in.Name), in.Identity, err)
+		writeErr(w, identityStatus(err), err.Error())
 		return
 	}
+	p := ident.Provider
 	ext, err := a.cloudExternalID(r.Context(), in.Provider, in.AccountID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -406,7 +415,7 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := a.store.CreateCloudAccount(r.Context(), CloudAccount{
 		Provider: in.Provider, Name: in.Name, AccountID: in.AccountID, RoleARN: in.RoleARN, ManageRoleARN: in.ManageRoleARN,
-		Environment: in.Environment, IdentityARN: id.ARN, Regions: id.Regions, ConnectedBy: actor,
+		Environment: in.Environment, IdentityARN: id.ARN, Regions: id.Regions, ConnectedBy: actor, Identity: ident.ID,
 	})
 	if errors.Is(err, ErrCloudAccountExists) {
 		writeErr(w, http.StatusConflict, "account "+in.AccountID+" is already connected")
@@ -418,7 +427,7 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{Action: "cloud.account.connected", Severity: "notice", ActorEmail: actor,
 		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
-		Detail: "Connected " + access + ", reading through " + c.RoleARN + " as " + id.ARN + ", " + c.Environment + ", " +
+		Detail: "Connected " + access + " with the identity " + ident.Name + " (" + ident.ID + "), reading through " + c.RoleARN + " as " + id.ARN + ", " + c.Environment + ", " +
 			strconv.Itoa(len(id.Regions)) + " regions."})
 	a.syncCloudAccountSoon(r.Context(), c)
 	writeJSON(w, http.StatusCreated, c)
@@ -569,9 +578,9 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	p, ok := a.cloudProvider(c.Provider)
-	if !ok {
-		writeErr(w, http.StatusNotImplemented, "this control plane was started without AWS support")
+	p, err := a.cloudProviderFor(r.Context(), c)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	ext, err := a.cloudExternalID(r.Context(), c.Provider, c.AccountID)

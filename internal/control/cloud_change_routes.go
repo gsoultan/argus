@@ -91,6 +91,8 @@ type cloudManaged struct {
 	acct    CloudAccount
 	manager cloud.Manager
 	target  cloud.Account
+	// provider is the account's own identity's provider.
+	provider cloud.Provider
 }
 
 func (a *API) cloudManagedAccount(ctx context.Context, id string) (cloudManaged, int, error) {
@@ -104,9 +106,9 @@ func (a *API) cloudManagedAccount(ctx context.Context, id string) (cloudManaged,
 	if c.ManageRoleARN == "" {
 		return cloudManaged{}, http.StatusConflict, errors.New(c.Name + " is connected read only; allow changes on its row under Cloud first")
 	}
-	p, ok := a.cloudProvider(c.Provider)
-	if !ok {
-		return cloudManaged{}, http.StatusNotImplemented, errors.New("this control plane was started without " + c.Provider + " support")
+	p, err := a.cloudProviderFor(ctx, c)
+	if err != nil {
+		return cloudManaged{}, http.StatusConflict, err
 	}
 	m, ok := p.(cloud.Manager)
 	if !ok {
@@ -116,7 +118,7 @@ func (a *API) cloudManagedAccount(ctx context.Context, id string) (cloudManaged,
 	if err != nil {
 		return cloudManaged{}, http.StatusInternalServerError, err
 	}
-	return cloudManaged{acct: c, manager: m,
+	return cloudManaged{acct: c, manager: m, provider: p,
 		target: cloud.Account{Provider: c.Provider, AccountID: c.AccountID, RoleARN: c.ManageRoleARN, ExternalID: ext}}, http.StatusOK, nil
 }
 

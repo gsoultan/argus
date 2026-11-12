@@ -101,9 +101,9 @@ func (a *API) readDueCloudCosts(ctx context.Context, now time.Time) {
 // readCloudCosts reads one account's costs and stores the answer, or why
 // there was none.
 func (a *API) readCloudCosts(ctx context.Context, c CloudAccount, now time.Time) error {
-	p, ok := a.cloudProvider(c.Provider)
-	if !ok {
-		return errors.New("this control plane has no " + c.Provider + " provider")
+	p, err := a.cloudProviderFor(ctx, c)
+	if err != nil {
+		return err
 	}
 	cr, ok := p.(cloud.CostReader)
 	if !ok {

@@ -32,10 +32,19 @@ export interface CloudAccount {
   /** Permissions the manage role lacks, read from its policy at each sync. */
   manageMissing: string[]
   manageCheckedAt: string | null
+  /** The id of the identity argus-control connects as. */
+  identity: string
+  /** That identity is gone, or no longer available here: Argus does not reach the account until it is moved. */
+  identityMissing?: boolean
 }
 
+/** One of argus-control's identities this organization may use, and what the cloud says about it. */
 export interface CloudBase {
   provider: string
+  identity: string
+  name: string
+  /** New connections start with it. */
+  default: boolean
   principal?: string
   source?: string
   error?: string
@@ -89,6 +98,11 @@ export interface CloudPrepared {
   externalId: string
   principal: string
   source: string
+  /** The identity the roles trust, and its name. */
+  identity: string
+  identityName: string
+  /** During a move, the old identity's principal the roles go on trusting too. */
+  kept?: string
   roleName: string
   /** Set when the template makes the manage role too. */
   manageRoleName?: string
@@ -125,6 +139,8 @@ export interface CloudAccountInput {
   /** Read and change, through the template's manage role unless one is named. */
   manage?: boolean
   environment: CloudEnvironment
+  /** Who Argus connects as; empty for the default. */
+  identity?: string
 }
 
 const accountsKey = ['cloud', 'accounts'] as const
@@ -146,22 +162,45 @@ export const cloudItemsQuery = (kind: CloudKind) =>
     refetchInterval: 60_000,
   })
 
-export function prepareCloudAccount(accountId: string, manage = false): Promise<CloudPrepared> {
-  return send('POST', '/api/v1/cloud/accounts/prepare', { provider: 'aws', accountId, manage })
+/**
+ * The roles an account needs. With no identity, an account already
+ * connected gets its own identity's and a new one the default's; keep is an
+ * identity the roles go on trusting while the account moves off it.
+ */
+export function prepareCloudAccount(accountId: string, manage = false, identity = '', keep = ''): Promise<CloudPrepared> {
+  return send('POST', '/api/v1/cloud/accounts/prepare', { provider: 'aws', accountId, manage, identity, keep })
 }
 
 /** Whether the template's roles are there and let Argus in yet. Nothing is kept or recorded. */
-export function checkCloudAccount(accountId: string, manage: boolean): Promise<CloudCheck> {
-  return send('POST', '/api/v1/cloud/accounts/check', { provider: 'aws', accountId, manage })
+export function checkCloudAccount(accountId: string, manage: boolean, identity = ''): Promise<CloudCheck> {
+  return send('POST', '/api/v1/cloud/accounts/check', { provider: 'aws', accountId, manage, identity })
 }
 
 /** Asks Argus to make the stack with its own identity, in the account that identity is in. */
-export function deployCloudAccess(accountId: string, manage: boolean, name: string): Promise<CloudStackState> {
-  return send('POST', '/api/v1/cloud/accounts/deploy', { provider: 'aws', accountId, manage, name })
+export function deployCloudAccess(accountId: string, manage: boolean, name: string, identity = ''): Promise<CloudStackState> {
+  return send('POST', '/api/v1/cloud/accounts/deploy', { provider: 'aws', accountId, manage, name, identity })
 }
 
-export function templateURL(accountId: string): string {
-  return `/api/v1/cloud/accounts/template?accountId=${encodeURIComponent(accountId)}`
+export function templateURL(accountId: string, identity = '', keep = ''): string {
+  const q = new URLSearchParams({ accountId })
+  if (identity) q.set('identity', identity)
+  if (keep) q.set('keep', keep)
+  return `/api/v1/cloud/accounts/template?${q.toString()}`
+}
+
+/** Whether an account's roles let another identity in yet. Nothing is moved or recorded. */
+export function checkCloudMove(id: string, identity: string): Promise<CloudCheck> {
+  return send('POST', `/api/v1/cloud/accounts/${encodeURIComponent(id)}/identity/check`, { identity })
+}
+
+/** Moves an account to another identity; refused unless Argus gets in with it. */
+export function useMoveCloudAccount() {
+  const done = useInvalidate()
+  return useMutation({
+    mutationFn: ({ id, identity }: { id: string; identity: string }) =>
+      send<CloudAccount>('PUT', `/api/v1/cloud/accounts/${encodeURIComponent(id)}/identity`, { identity }),
+    onSettled: done,
+  })
 }
 
 function useInvalidate() {

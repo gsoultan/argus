@@ -239,11 +239,24 @@ const SETTINGS = {
   fcm: { enabled: false, credentialsSet: false, projectId: '', topic: '', tokens: [] },
   tls: { enabled: false, managed: false, canIssue: false, mutualTls: false },
   signInAlerts: { admins: true, person: true, when: 'new_device' },
-  // A control plane off AWS, as most self-hosted ones are: nothing from the
-  // host, so no AWS identity until one is entered.
-  cloud: { aws: { source: 'default', accessKeyId: '', secretAccessKeySet: false, profile: '',
-    credentialsFile: '', homeRegion: '' } },
+  // A control plane off AWS, as most self-hosted ones are: the host gives
+  // nothing, so its own identity has no answer; an IAM user's key does.
+  cloud: { aws: { default: 'northwind-iam-user', identities: [
+    { id: 'main', name: 'Main', organizations: [], source: 'default', accessKeyId: '', secretAccessKeySet: false,
+      profile: '', credentialsFile: '', homeRegion: '' },
+    { id: 'northwind-iam-user', name: 'Northwind IAM user', organizations: [], source: 'key',
+      accessKeyId: 'AKIAIOSFODNN7EXAMPLE', secretAccessKeySet: true, profile: '', credentialsFile: '', homeRegion: '' },
+  ] } },
 }
+
+const NO_IMDS = 'this control plane has no identity for the provider: no EC2 IMDS role found'
+const KEY_ARN = 'arn:aws:iam::123456789012:user/argus-control'
+/** What each running identity answers, and who uses it. */
+const IDENTITY_STATUS = [
+  { identity: 'main', name: 'Main', error: NO_IMDS, use: [] },
+  { identity: 'northwind-iam-user', name: 'Northwind IAM user', principal: KEY_ARN,
+    use: [{ organization: 'default', name: 'Northwind', accounts: 1 }] },
+]
 
 /**
  * @param {ServerResponse} res
@@ -373,16 +386,36 @@ const server = createServer(async (req, res) => {
     // Who AWS says the form's identity is: an IAM user for a well-formed key,
     // the instance metadata timeout for the host's own chain, as off EC2.
     if (path === '/api/v1/settings/test-cloud/aws' && req.method === 'POST') {
-      const aws = /** @type {any} */ (await readBody(req)).aws ?? {}
+      const aws = /** @type {any} */ (await readBody(req))
       if (aws.source === 'key' && /^AKIA[A-Z0-9]{16}$/.test(aws.accessKeyId ?? '')) {
-        const arn = 'arn:aws:iam::123456789012:user/argus-control'
+        const arn = aws.accessKeyId === 'AKIAIOSFODNN7EXAMPLE' ? KEY_ARN : 'arn:aws:iam::123456789012:user/argus-second'
         return json(res, 200, { provider: 'aws', arn, principal: arn, source: 'the access key in Settings › Cloud identities' })
       }
-      return json(res, 400, { error: 'AWS did not accept that identity: this control plane has no identity for the provider: no EC2 IMDS role found' })
+      return json(res, 400, { error: `AWS did not accept that identity: ${NO_IMDS}` })
+    }
+    // An account just connected: nothing read yet, nothing changed or asked for.
+    if (path === '/api/v1/cloud/resources' && req.method === 'GET') return json(res, 200, { items: [] })
+    if (path === '/api/v1/cloud/changes' && req.method === 'GET') return json(res, 200, { changes: [] })
+    if (path === '/api/v1/cloud/access' && req.method === 'GET') return json(res, 200, { grants: [], minutes: [30, 60] })
+    if (path === '/api/v1/cloud/schedules' && req.method === 'GET') return json(res, 200, { schedules: [], keepRunning: [] })
+    if (path === '/api/v1/cloud/idle' && req.method === 'GET') return json(res, 200, { items: [], monthly: 0 })
+    if (path === '/api/v1/settings/cloud-identities/aws' && req.method === 'GET') {
+      if (!orgOf(req).default) return json(res, 404, { error: 'not found' })
+      return json(res, 200, IDENTITY_STATUS)
     }
     if (path === '/api/v1/cloud/accounts' && req.method === 'GET') {
-      return json(res, 200, { accounts: [], bases: [{ provider: 'aws',
-        error: 'this control plane has no identity for the provider: no EC2 IMDS role found' }] })
+      const bases = [
+        { provider: 'aws', identity: 'northwind-iam-user', name: 'Northwind IAM user', default: true, principal: KEY_ARN,
+          source: 'the access key in Settings › Cloud identities' },
+        { provider: 'aws', identity: 'main', name: 'Main', default: false, error: NO_IMDS },
+      ]
+      if (!orgOf(req).default) return json(res, 200, { accounts: [], bases })
+      return json(res, 200, { accounts: [{
+        id: 'ca1', provider: 'aws', accountId: '412788931204', name: 'payments-prod', access: 'read', environment: 'production',
+        identity: 'northwind-iam-user', identityMissing: false, roleArn: 'arn:aws:iam::412788931204:role/ArgusRead',
+        identityArn: KEY_ARN, regions: ['us-east-1'], connectedBy: 'dev@northwind.id', connectedAt: '2026-11-01T08:00:00Z',
+        syncedAt: new Date(Date.now() - 120_000).toISOString(), syncErrors: {}, counts: {}, manageMissing: [], manageCheckedAt: null,
+      }], bases })
     }
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)

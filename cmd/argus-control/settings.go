@@ -576,6 +576,9 @@ func (b *settingsBackend) TestDatabase(ctx context.Context, d control.DatabaseSe
 // validateConfig checks what would otherwise only fail once the control
 // plane restarts on it.
 func validateConfig(c config) error {
+	if err := validateCloud(c.Cloud); err != nil {
+		return err
+	}
 	if c.ReporterToken == "" {
 		return errors.New("reporter_token is required")
 	}
@@ -727,6 +730,23 @@ func cloneConfig(c config) (config, error) {
 type secretStage struct {
 	dir     string
 	written map[string]string // base name -> new path
+	// dropped is files a saved configuration no longer refers to: the
+	// secret of an identity removed or given a new one.
+	dropped []string
+}
+
+// drop marks the file ref points at for deletion once the save has worked.
+// Only a file in the secrets directory: a reference a person typed by hand
+// to somewhere else is theirs.
+func (s *secretStage) drop(ref string) {
+	if s == nil || !strings.HasPrefix(ref, "${file:") || !strings.HasSuffix(ref, "}") {
+		return
+	}
+	path := filepath.Clean(strings.TrimSuffix(strings.TrimPrefix(ref, "${file:"), "}"))
+	if filepath.Dir(path) != filepath.Clean(s.dir) {
+		return
+	}
+	s.dropped = append(s.dropped, path)
 }
 
 func (s *secretStage) writeFile(name, value string) (string, error) {
@@ -761,6 +781,9 @@ func (s *secretStage) discard() {
 
 // prune removes the versions a saved configuration no longer refers to.
 func (s *secretStage) prune() {
+	for _, p := range s.dropped {
+		_ = os.Remove(p)
+	}
 	for name, keep := range s.written {
 		matches, _ := filepath.Glob(filepath.Join(s.dir, name+"*"))
 		for _, m := range matches {

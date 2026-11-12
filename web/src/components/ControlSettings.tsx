@@ -1,6 +1,6 @@
 import { useRef, useState, type ComponentType, type ReactNode } from 'react'
 import {
-  Alert, Badge, Button, Grid, Group, Modal, NumberInput, PasswordInput, Radio,
+  Alert, Badge, Button, Checkbox, Drawer, Grid, Group, Modal, MultiSelect, NumberInput, PasswordInput, Radio,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
@@ -13,9 +13,9 @@ import { SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
 import { PemField } from '~/components/Install'
 import {
-  controlSettings, saveControlSettings,
+  cloudIdentityStatus, controlSettings, organizations, saveControlSettings,
   testCloudIdentity, testDatabase, testEmail, waitForControlPlane, type AWSIdentity,
-  type CloudIdentityCheck, type ControlSettings as Settings,
+  type CloudIdentityCheck, type CloudIdentityStatus, type CloudIdentityUse, type ControlSettings as Settings,
 } from '~/lib/live'
 import { cloudAccountsQuery } from '~/lib/cloud'
 import { downloadText } from '~/lib/download'
@@ -886,144 +886,417 @@ const AWS_SOURCES: { value: AWSIdentity['source']; label: string; detail: string
     detail: 'A named profile on this host, for example IAM Roles Anywhere through credential_process, or a credentials file only argus-control can read.' },
 ]
 
+/** One identity's key in the draft: its id, or its name while it has none. */
+const identityKey = (i: AWSIdentity) => i.id || `new:${i.name}`
+
+/** Where an identity comes from, in a few words, with nothing secret. */
+function identitySource(i: AWSIdentity): string {
+  if (i.source === 'key') return i.accessKeyId ? `Access key ${i.accessKeyId.slice(0, 4)}…${i.accessKeyId.slice(-4)}` : 'Access key'
+  if (i.source === 'file') return [i.profile && `Profile ${i.profile}`, i.credentialsFile].filter(Boolean).join(' · ') || 'Profile'
+  return 'Where argus-control runs'
+}
+
+const BLANK_IDENTITY: AWSIdentity = {
+  id: '', name: '', organizations: [], source: 'key', accessKeyId: '', secretAccessKeySet: false,
+  profile: '', credentialsFile: '', homeRegion: '',
+}
+
 /**
- * Who argus-control is to each cloud. One identity per cloud for the whole
- * platform: every organization's accounts trust it, each only together with
- * an external id derived for that organization and account.
+ * Who argus-control is to each cloud: a list of identities, one of them the
+ * default a new connection starts with. Each connected account keeps the
+ * identity it was connected with until someone moves it, so changing the
+ * default moves nothing, and an identity accounts still use cannot be
+ * removed. Shared by the platform: only the default organization edits
+ * them; every other one sees the ones it may use, read only.
  */
 function CloudIdentities({ s, edit }: CardProps) {
-  const accounts = useQuery(cloudAccountsQuery())
+  const platform = Boolean(s.cloud)
+  const status = useQuery({
+    queryKey: ['cloud-identity-status', 'aws'], queryFn: () => cloudIdentityStatus('aws'), enabled: platform, retry: false,
+  })
+  const orgs = useQuery({ queryKey: ['organizations'], queryFn: organizations, enabled: platform, retry: false })
+  const [editing, setEditing] = useState<{ key: string | null; draft: AWSIdentity; makeDefault: boolean } | null>(null)
+  const [removing, setRemoving] = useState<AWSIdentity | null>(null)
+  const [checks, setChecks] = useState<Record<string, CloudIdentityCheck | Error | 'busy'>>({})
+  if (!s.cloud) return <SharedIdentities />
+
+  const aws = s.cloud.aws
+  const list = aws.identities
+  const orgName = (id: string) => orgs.data?.find((o) => o.id === id)?.name ?? (id === 'default' ? 'Default' : id)
+  const statusOf = (i: AWSIdentity) => (i.id ? status.data?.find((x) => x.identity === i.id) : undefined)
+  const usedBy = (i: AWSIdentity) => statusOf(i)?.use ?? []
+  const used = (i: AWSIdentity) => usedBy(i).reduce((n, u) => n + u.accounts, 0)
+  const isDefault = (i: AWSIdentity) => aws.default === i.id || (!i.id && aws.default === i.name)
+  const save = (identities: AWSIdentity[], def = aws.default) => edit({ cloud: { aws: { default: def, identities } } })
+
+  const test = async (i: AWSIdentity) => {
+    const k = identityKey(i)
+    setChecks((c) => ({ ...c, [k]: 'busy' }))
+    try {
+      const r = await testCloudIdentity('aws', i)
+      setChecks((c) => ({ ...c, [k]: r }))
+      return r
+    } catch (err) {
+      setChecks((c) => ({ ...c, [k]: err instanceof Error ? err : new Error(String(err)) }))
+      return null
+    }
+  }
+  const testAll = async () => {
+    // Four at a time, each bounded by the control plane's own timeout.
+    const queue = [...list]
+    const worker = async () => { for (let i = queue.shift(); i; i = queue.shift()) await test(i) }
+    await Promise.all([worker(), worker(), worker(), worker()])
+    notifyOk('Tested', `Asked AWS about ${list.length} identit${list.length === 1 ? 'y' : 'ies'}.`)
+  }
+  const done = (d: AWSIdentity, makeDefault: boolean, key: string | null) => {
+    const next = key === null ? [...list, d] : list.map((i) => (identityKey(i) === key ? d : i))
+    const def = makeDefault ? d.id || d.name : aws.default === key?.replace(/^new:/, '') && !d.id ? d.name : aws.default
+    save(next, def)
+    setEditing(null)
+  }
+  const hosts = list.filter((i) => i.source === 'default').length
+
+  return (
+    <SectionCard title="Cloud identities" icon={IconCloud}
+      description="Who argus-control is to AWS before it steps into the role in a connected account. Each account keeps the identity it was connected with until you move it. An organization's accounts trust an identity only together with an external id made for that organization and account, so sharing one never lets an organization reach another's accounts."
+      action={(
+        <Group gap={6}>
+          <Button size="xs" variant="default" onClick={() => void testAll()}>Test all</Button>
+          <Button size="xs" disabled={list.length >= 20}
+            onClick={() => setEditing({ key: null, makeDefault: false, draft: { ...BLANK_IDENTITY, source: hosts ? 'key' : 'default' } })}>
+            Add identity
+          </Button>
+        </Group>
+      )}>
+      <Stack gap="sm">
+        <Group gap="xs"><IconBrandAws size={18} /><Text fw={600} size={FS.body}>AWS</Text></Group>
+        <Table.ScrollContainer minWidth={760}>
+          <Table verticalSpacing="xs" fz={FS.meta}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Identity</Table.Th>
+                <Table.Th>Accounts' roles trust</Table.Th>
+                <Table.Th>Available to</Table.Th>
+                <Table.Th>Used by</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {list.map((i) => {
+                const k = identityKey(i)
+                const st = statusOf(i)
+                const chk = checks[k]
+                const principal = chk && chk !== 'busy' && !(chk instanceof Error) ? chk.principal : st?.principal
+                const n = used(i)
+                return (
+                  <Table.Tr key={k}>
+                    <Table.Td>
+                      <Group gap={6} wrap="nowrap">
+                        <Text fw={600} size={FS.body}>{i.name}</Text>
+                        {isDefault(i) && <Badge size="sm" variant="light" color="azure" tt="none">Default</Badge>}
+                        {!i.id && <Badge size="sm" variant="light" color="amber" tt="none">Not saved</Badge>}
+                      </Group>
+                      <Text size={FS.micro} c="dimmed">{identitySource(i)}{i.homeRegion ? ` · ${i.homeRegion}` : ''}</Text>
+                    </Table.Td>
+                    <Table.Td style={{ maxWidth: 300 }}>
+                      {principal ? <Text size={FS.micro} ff="monospace" style={{ overflowWrap: 'anywhere' }}>{principal}</Text>
+                        : <Text size={FS.micro} c="dimmed">Test to see</Text>}
+                      {chk instanceof Error ? <Text size={FS.micro} c={INK.denied}>{chk.message}</Text>
+                        : !chk && st?.error ? <Text size={FS.micro} c={INK.denied}>{st.error}</Text> : null}
+                    </Table.Td>
+                    <Table.Td>
+                      {i.organizations.length === 0 ? <Text size={FS.meta}>All organizations</Text> : (
+                        <Group gap={4}>
+                          {i.organizations.map((o) => <Badge key={o} size="sm" variant="default" tt="none" fw={500}>{orgName(o)}</Badge>)}
+                        </Group>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size={FS.meta}>
+                        {!i.id ? '—' : n === 0 ? 'Not used yet'
+                          : `${n} account${n === 1 ? '' : 's'} · ${usedBy(i).length === 1 ? usedBy(i)[0]?.name : `${usedBy(i).length} organizations`}`}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      {chk === 'busy' ? <Badge size="sm" variant="light" color="slate" tt="none">Asking…</Badge>
+                        : chk instanceof Error ? <Badge size="sm" variant="light" color="rose" tt="none">No answer</Badge>
+                          : chk ? <Badge size="sm" variant="light" color="teal" tt="none">Working</Badge>
+                            : !i.id ? <Badge size="sm" variant="light" color="slate" tt="none">Not checked yet</Badge>
+                              : st?.principal ? <Badge size="sm" variant="light" color="teal" tt="none">Working</Badge>
+                                : st?.error ? <Badge size="sm" variant="light" color="rose" tt="none">No answer</Badge>
+                                  : <Badge size="sm" variant="light" color="slate" tt="none">Not checked yet</Badge>}
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={2} wrap="nowrap" justify="flex-end">
+                        <Button size="compact-xs" variant="default" loading={chk === 'busy'} onClick={() => void test(i)}>Test</Button>
+                        <Button size="compact-xs" variant="subtle" onClick={() => setEditing({ key: k, draft: { ...i }, makeDefault: isDefault(i) })}>Edit</Button>
+                        <Button size="compact-xs" variant="subtle" color="rose" onClick={() => setRemoving(i)}>Remove</Button>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                )
+              })}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+        <Group gap="xs" align="center">
+          <Text size={FS.meta} c="dimmed">New connections start with</Text>
+          <Select size="xs" w={240} allowDeselect={false} value={aws.default}
+            data={list.map((i) => ({ value: i.id || i.name, label: i.name }))}
+            onChange={(v) => v && save(list, v)} aria-label="Default identity" />
+          <Text size={FS.meta} c="dimmed">Changing this never moves an account that is already connected.</Text>
+        </Group>
+        <Text size={FS.micro} c="dimmed">
+          Each access key's secret is its own owner-only file in the secrets directory. Saving restarts argus-control on the
+          identities. Only AWS can be connected so far.
+        </Text>
+      </Stack>
+      {editing && (
+        <IdentityDrawer key={editing.key ?? 'new'} start={editing.draft} makeDefault={editing.makeDefault} adding={editing.key === null}
+          others={list.filter((i) => identityKey(i) !== editing.key)} orgs={orgs.data ?? null}
+          used={editing.key ? used(list.find((i) => identityKey(i) === editing.key) ?? BLANK_IDENTITY) : 0}
+          running={editing.key ? statusOf(list.find((i) => identityKey(i) === editing.key) ?? BLANK_IDENTITY) : undefined}
+          onClose={() => setEditing(null)} onDone={(d, def) => done(d, def, editing.key)} />
+      )}
+      {removing && (
+        <RemoveIdentity identity={removing} isDefault={isDefault(removing)} use={usedBy(removing)}
+          onClose={() => setRemoving(null)}
+          onRemove={() => { save(list.filter((i) => identityKey(i) !== identityKey(removing))); setRemoving(null) }} />
+      )}
+    </SectionCard>
+  )
+}
+
+/** Adding or changing one identity. Nothing is saved until Save and apply. */
+function IdentityDrawer({ start, makeDefault, adding, others, orgs, used, running, onClose, onDone }: {
+  start: AWSIdentity
+  makeDefault: boolean
+  adding: boolean
+  others: AWSIdentity[]
+  orgs: { id: string; name: string }[] | null
+  used: number
+  running?: CloudIdentityStatus
+  onClose: () => void
+  onDone: (d: AWSIdentity, makeDefault: boolean) => void
+}) {
+  const [d, setD] = useState(start)
+  const [def, setDef] = useState(makeDefault)
+  const [only, setOnly] = useState(start.organizations.length > 0)
   const [busy, setBusy] = useState(false)
   const [checked, setChecked] = useState<CloudIdentityCheck | null>(null)
-  if (!s.cloud) {
-    return (
-      <SectionCard title="Cloud identities" icon={IconCloud}>
-        <Text size={FS.body} c="dimmed">
-          The identity argus-control uses for each cloud is shared by every organization, so it is set from the
-          default organization by the platform&apos;s owner.
-        </Text>
-      </SectionCard>
-    )
-  }
-  const a = s.cloud.aws
-  const set = (patch: Partial<AWSIdentity>) => {
-    setChecked(null)
-    edit({ cloud: { aws: { ...a, ...patch } } })
-  }
-  const base = accounts.data?.bases.find((b) => b.provider === 'aws')
-  const connected = accounts.data?.accounts.length ?? 0
-  const missing = a.source === 'key'
-    ? [!a.accessKeyId.trim() && 'access key id', !a.secretAccessKeySet && !a.secretAccessKey && 'secret access key']
-        .filter((m): m is string => Boolean(m))
-    : a.source === 'file' && !a.profile.trim() && !a.credentialsFile.trim() ? ['a profile or a credentials file'] : []
+  const set = (patch: Partial<AWSIdentity>) => { setChecked(null); setD((x) => ({ ...x, ...patch })) }
+  const hostTaken = others.some((i) => i.source === 'default')
+  const nameTaken = others.some((i) => i.name.trim().toLowerCase() === d.name.trim().toLowerCase())
+  const missing = [
+    !d.name.trim() && 'a name',
+    nameTaken && 'a name no other identity has',
+    d.source === 'key' && !d.accessKeyId.trim() && 'access key id',
+    d.source === 'key' && !d.secretAccessKeySet && !d.secretAccessKey && 'secret access key',
+    d.source === 'file' && !d.profile.trim() && !d.credentialsFile.trim() && 'a profile or a credentials file',
+    d.source === 'default' && hostTaken && 'another source: the host already gives one identity',
+    only && d.organizations.length === 0 && 'at least one organization',
+  ].filter((m): m is string => Boolean(m))
   const test = async () => {
     setBusy(true)
     setChecked(null)
     try {
-      const r = await testCloudIdentity('aws', { aws: a })
+      const r = await testCloudIdentity('aws', d)
       setChecked(r)
-      notifyOk('AWS answered', `As ${r.arn}.`)
     } catch (err) {
       notifyError('AWS did not accept it', err)
     } finally {
       setBusy(false)
     }
   }
-  // A new principal is one the connected accounts' roles do not trust yet.
-  const moves = Boolean(checked && base?.principal && checked.principal !== base.principal && connected > 0)
+  // A new principal is one the accounts on this identity do not trust yet.
+  const moves = Boolean(checked && running?.principal && checked.principal !== running.principal && used > 0)
   return (
-    <SectionCard title="Cloud identities" icon={IconCloud}
-      description="Who argus-control is to each cloud, before it steps into the role in a connected account. One per cloud for the whole platform: each organization's accounts trust it only together with an external id made for that organization and account, so one organization can never reach another's.">
+    <Drawer opened onClose={onClose} position="right" size="lg" title={<Text fw={700}>{adding ? 'Add an AWS identity' : `Change ${start.name}`}</Text>}>
       <Stack gap="sm">
-        <Group gap="xs" wrap="nowrap" align="flex-start">
-          <IconBrandAws size={20} style={{ flexShrink: 0, marginTop: 2 }} />
-          <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-            <Group gap="xs">
-              <Text fw={600} size={FS.body}>AWS</Text>
-              {accounts.isPending ? null : base?.principal ? (
-                <Badge size="sm" variant="light" color="teal">Working</Badge>
-              ) : (
-                <Badge size="sm" variant="light" color="amber">No identity</Badge>
-              )}
-            </Group>
-            {base?.principal ? (
-              <Text size={FS.meta} c="dimmed" style={{ overflowWrap: 'anywhere' }}>
-                Now <Mono>{base.principal}</Mono>, from {base.source}.
-                {connected > 0 && ` ${connected} connected account${connected === 1 ? '' : 's'} trust it.`}
-              </Text>
-            ) : base?.error ? (
-              <Text size={FS.meta} c="dimmed" style={{ overflowWrap: 'anywhere' }}>{base.error}</Text>
-            ) : null}
-          </Stack>
-        </Group>
-        <Radio.Group value={a.source} onChange={(v) => set({ source: v as AWSIdentity['source'] })}>
-          <Stack gap="xs">
+        <Text size={FS.meta} c="dimmed">Accounts connected with it will trust the principal AWS reports for it.</Text>
+        <TextInput size="xs" label="Name" withAsterisk description="Shown to every organization that may use it." maxLength={64}
+          value={d.name} onChange={(e) => set({ name: e.currentTarget.value })} error={nameTaken ? 'Another identity has this name' : undefined} data-autofocus />
+        <Radio.Group label="Where it comes from" value={d.source} onChange={(v) => set({ source: v as AWSIdentity['source'] })}>
+          <Stack gap="xs" mt={4}>
             {AWS_SOURCES.map((o) => (
-              <Radio key={o.value} size="xs" value={o.value} label={o.label} description={o.detail} />
+              <Radio key={o.value} size="xs" value={o.value} label={o.label}
+                disabled={o.value === 'default' && hostTaken}
+                description={o.value === 'default' && hostTaken ? 'Another identity already comes from the host; it has only one.' : o.detail} />
             ))}
           </Stack>
         </Radio.Group>
-        {a.source === 'key' && (
+        {d.source === 'key' && (
           <Grid gap="xs">
             <Grid.Col span={{ base: 12, sm: 6 }}>
               <TextInput size="xs" label="Access key id" placeholder="AKIA…" autoComplete="off" withAsterisk
-                value={a.accessKeyId} onChange={(e) => set({ accessKeyId: e.currentTarget.value })} />
+                value={d.accessKeyId} onChange={(e) => set({ accessKeyId: e.currentTarget.value })} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6 }}>
-              <SecretInput label="Secret access key" set={a.secretAccessKeySet} value={a.secretAccessKey} required
+              <SecretInput label="Secret access key" set={d.secretAccessKeySet} value={d.secretAccessKey} required
                 onChange={(v) => set({ secretAccessKey: v })} />
             </Grid.Col>
             <Grid.Col span={12}>
               <Text size={FS.meta} c="dimmed" mb={4}>
-                The IAM user needs this policy and nothing more. Each account&apos;s argus-access stack decides what the
-                role can do there.
+                The IAM user needs this policy and nothing more. Each account&apos;s argus-access stack decides what the role can do there.
               </Text>
               <Textarea size="xs" readOnly autosize minRows={4} value={AWS_BASE_POLICY}
                 styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
             </Grid.Col>
           </Grid>
         )}
-        {a.source === 'file' && (
+        {d.source === 'file' && (
           <Grid gap="xs">
             <Grid.Col span={{ base: 12, sm: 6 }}>
-              <TextInput size="xs" label="Profile" placeholder="argus" value={a.profile}
+              <TextInput size="xs" label="Profile" placeholder="argus" value={d.profile}
                 onChange={(e) => set({ profile: e.currentTarget.value })} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6 }}>
               <TextInput size="xs" label="Credentials file" placeholder="/var/lib/argus-control/aws-credentials"
-                description="Mode 600, owned by the argus user." value={a.credentialsFile}
+                description="Mode 600, owned by the argus user." value={d.credentialsFile}
                 onChange={(e) => set({ credentialsFile: e.currentTarget.value })} />
             </Grid.Col>
           </Grid>
         )}
-        <Grid gap="xs">
-          <Grid.Col span={{ base: 12, sm: 6 }}>
-            <TextInput size="xs" label="Home region" placeholder="us-east-1"
-              description="Where STS is asked. Change it only for another partition, such as GovCloud."
-              value={a.homeRegion} onChange={(e) => set({ homeRegion: e.currentTarget.value })} />
-          </Grid.Col>
-        </Grid>
+        <TextInput size="xs" label="Home region" placeholder="us-east-1" w={{ base: '100%', sm: '50%' }}
+          description="Where STS is asked. Change it only for another partition, such as GovCloud."
+          value={d.homeRegion} onChange={(e) => set({ homeRegion: e.currentTarget.value })} />
+        <Radio.Group label="Available to" value={only ? 'only' : 'all'}
+          onChange={(v) => { setOnly(v === 'only'); if (v === 'all') set({ organizations: [] }) }}>
+          <Stack gap="xs" mt={4}>
+            <Radio size="xs" value="all" label="All organizations" />
+            <Radio size="xs" value="only" label="Only these organizations" />
+          </Stack>
+        </Radio.Group>
+        {only && (orgs ? (
+          <MultiSelect size="xs" placeholder="Pick organizations" searchable value={d.organizations}
+            data={orgs.map((o) => ({ value: o.id, label: o.name }))} onChange={(v) => set({ organizations: v })} />
+        ) : (
+          <TagsInput size="xs" placeholder="Organization ids" description="Only the platform's owner can list organizations; type their ids."
+            value={d.organizations} onChange={(v) => set({ organizations: v })} />
+        ))}
+        <Checkbox size="xs" label="New connections start with it" checked={def} onChange={(e) => setDef(e.currentTarget.checked)} />
         {checked && (
           <Alert color={moves ? 'amber' : 'teal'} variant="light" p="xs"
             icon={moves ? <IconAlertTriangle size={16} /> : undefined}
-            title={moves ? 'The connected accounts do not trust this identity yet' : 'AWS knows this identity'}>
+            title={moves ? `The ${used} accounts on ${start.name} do not trust this yet` : 'AWS knows this identity'}>
             <Text size={FS.meta} style={{ overflowWrap: 'anywhere' }}>
               It answers as <Mono>{checked.arn}</Mono>, from {checked.source}.
               {moves
-                ? ` After saving, update each account's argus-access stack from its row on the Cloud overview, or Argus stops reaching those ${connected} accounts.`
-                : ' Accounts you connect will trust '}
-              {!moves && <Mono>{checked.principal}</Mono>}
-              {!moves && '.'}
+                ? ' After saving, Argus stops reaching them until their stacks trust it. To change without a gap, add this as a new identity and move the accounts to it one by one with Change identity under Cloud.'
+                : <> Accounts connected with it will trust <Mono>{checked.principal}</Mono>.</>}
             </Text>
           </Alert>
         )}
-        <Group justify="space-between" align="center">
-          <FormNote missing={missing}>Test asks AWS who this is without saving it. Saving restarts argus-control on it.</FormNote>
-          <Button size="xs" variant="light" loading={busy} disabled={missing.length > 0} onClick={() => void test()}>
-            Test
-          </Button>
+        <Group justify="space-between" align="center" mt="xs">
+          <FormNote missing={missing}>Test asks AWS who this is without saving it.</FormNote>
+          <Group gap="xs">
+            <Button size="xs" variant="default" loading={busy} disabled={missing.length > 0} onClick={() => void test()}>Test</Button>
+            <Button size="xs" disabled={missing.length > 0} onClick={() => onDone({ ...d, name: d.name.trim() }, def)}>{adding ? 'Add' : 'Done'}</Button>
+          </Group>
         </Group>
-        <Text size={FS.micro} c="dimmed">Only AWS can be connected so far.</Text>
+        <Text size={FS.micro} c="dimmed">{adding ? 'Add' : 'Done'} puts it in the list; Save and apply writes it and restarts argus-control.</Text>
+      </Stack>
+    </Drawer>
+  )
+}
+
+/** Removing an identity: refused while accounts use it or while it is the default. */
+function RemoveIdentity({ identity, isDefault, use, onClose, onRemove }: {
+  identity: AWSIdentity
+  isDefault: boolean
+  use: CloudIdentityUse[]
+  onClose: () => void
+  onRemove: () => void
+}) {
+  const n = use.reduce((s, u) => s + u.accounts, 0)
+  const blocked = n > 0 || isDefault
+  return (
+    <Modal opened onClose={onClose} centered size="lg"
+      title={<Text fw={700}>{n > 0 ? `${identity.name} is still used by ${n} account${n === 1 ? '' : 's'}` : `Remove ${identity.name}?`}</Text>}>
+      <Stack gap="md">
+        {n > 0 ? (
+          <>
+            <Text size={FS.body} lh={1.55}>
+              Argus would lose those accounts, so it cannot be removed yet. Move them to another identity first, with
+              <b> Change identity</b> on each account&apos;s row under Cloud in its organization. Argus moves an account only once it
+              gets in with the new identity, so nothing stops working.
+            </Text>
+            <Table fz={FS.meta} withTableBorder>
+              <Table.Thead><Table.Tr><Table.Th>Organization</Table.Th><Table.Th>Accounts on it</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>
+                {use.map((u) => <Table.Tr key={u.organization}><Table.Td>{u.name}</Table.Td><Table.Td>{u.accounts}</Table.Td></Table.Tr>)}
+              </Table.Tbody>
+            </Table>
+          </>
+        ) : isDefault ? (
+          <Text size={FS.body}>New connections start with it. Pick another default first.</Text>
+        ) : (
+          <Text size={FS.body} lh={1.55}>
+            No account uses it. Saving removes it{identity.source === 'key' ? ' and deletes its secret access key from this host' : ''}.
+          </Text>
+        )}
+        {n > 0 && isDefault && <Text size={FS.meta} c="dimmed">It is also the default: pick another default too.</Text>}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>{blocked ? 'Close' : 'Cancel'}</Button>
+          {!blocked && <Button color="rose" onClick={onRemove}>Remove</Button>}
+        </Group>
+      </Stack>
+    </Modal>
+  )
+}
+
+/**
+ * Outside the default organization: the identities this organization may
+ * use, read only, with nothing about where they come from.
+ */
+function SharedIdentities() {
+  const accounts = useQuery(cloudAccountsQuery())
+  const bases = accounts.data?.bases ?? []
+  const count = (id: string) => accounts.data?.accounts.filter((a) => a.identity === id).length ?? 0
+  return (
+    <SectionCard title="Cloud identities" icon={IconCloud}
+      description="The identities this organization's accounts can trust. The platform's owner adds and changes them from the default organization; their keys never leave the control host.">
+      <Stack gap="sm">
+        {accounts.isPending ? <Text size={FS.meta} c="dimmed">Loading…</Text> : bases.length === 0 ? (
+          <Text size={FS.body} c="dimmed">
+            No AWS identity is available to this organization yet. Ask the platform&apos;s owner to make one available from the
+            default organization&apos;s Settings › Cloud identities.
+          </Text>
+        ) : (
+          <Table.ScrollContainer minWidth={560}>
+            <Table verticalSpacing="xs" fz={FS.meta}>
+              <Table.Thead>
+                <Table.Tr><Table.Th>Identity</Table.Th><Table.Th>Your accounts' roles trust</Table.Th><Table.Th>Used by</Table.Th><Table.Th>Status</Table.Th></Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {bases.map((b) => {
+                  const n = count(b.identity)
+                  return (
+                    <Table.Tr key={b.identity}>
+                      <Table.Td>
+                        <Group gap={6} wrap="nowrap">
+                          <Text fw={600} size={FS.body}>{b.name}</Text>
+                          {b.default && <Badge size="sm" variant="light" color="azure" tt="none">Default</Badge>}
+                        </Group>
+                      </Table.Td>
+                      <Table.Td style={{ maxWidth: 320 }}>
+                        {b.principal ? <Text size={FS.micro} ff="monospace" style={{ overflowWrap: 'anywhere' }}>{b.principal}</Text>
+                          : <Text size={FS.micro} c={INK.denied}>{b.error}</Text>}
+                      </Table.Td>
+                      <Table.Td>{n === 0 ? 'Not used yet' : `${n} of your accounts`}</Table.Td>
+                      <Table.Td>
+                        {b.principal ? <Badge size="sm" variant="light" color="teal" tt="none">Working</Badge>
+                          : <Badge size="sm" variant="light" color="rose" tt="none">No answer</Badge>}
+                      </Table.Td>
+                    </Table.Tr>
+                  )
+                })}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+        <Text size={FS.meta} c="dimmed">To move one of your accounts to another identity, use Change identity on its row under Cloud.</Text>
       </Stack>
     </SectionCard>
   )

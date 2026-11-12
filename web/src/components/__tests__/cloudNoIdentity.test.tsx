@@ -14,7 +14,7 @@ vi.mock('~/components/links', () => ({
   ButtonLink: ({ children }: { children: React.ReactNode }) => <a href="/settings">{children}</a>,
 }))
 
-const bases = [{ provider: 'aws', error: 'no EC2 IMDS role found' }]
+const bases = [{ provider: 'aws' as const, identity: 'main', name: 'Main', default: true, error: 'no EC2 IMDS role found' }]
 
 describe('Cloud, before argus-control has an AWS identity', () => {
   it('in the default organization, sends an admin to the setting', async () => {

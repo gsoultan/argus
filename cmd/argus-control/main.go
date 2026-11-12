@@ -617,7 +617,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	// After the store is set: the archive reads and writes it.
 	go api.RunRecordingArchive(ctx, time.Hour)
-	api.SetCloudProvider(awscloud.New(cfg.Cloud.awsOptions()))
+	api.SetCloudIdentities("aws", cfg.Cloud.cloudIdentities())
 	go api.RunCloudSync(ctx, control.CloudSyncInterval)
 	go api.RunCloudSchedules(ctx, time.Minute)
 	go api.RunCloudCosts(ctx, 30*time.Minute)
@@ -1256,10 +1256,33 @@ type cloudConfig struct {
 	AWS awsCloudConfig `yaml:"aws"`
 }
 
-// awsCloudConfig is where AWS's base identity comes from. An access key
-// entered under Settings › Cloud identities wins over the rest; with none of
-// them set, the SDK's default chain decides.
+// awsCloudConfig is the identities argus-control can start from in AWS,
+// before it steps into the role in a connected account.
 type awsCloudConfig struct {
+	// Default is the identity a new connection starts with. Changing it
+	// never moves an account that is already connected.
+	Default string `yaml:"default,omitempty"`
+	// Identities is every identity, in the order the console lists them.
+	Identities []awsIdentityConfig `yaml:"identities,omitempty"`
+
+	// The fields below are the one identity a config had before there could
+	// be several. They are read as the identity "main", and a save from the
+	// console writes the list instead.
+	AccessKeyID     string `yaml:"access_key_id,omitempty"`
+	SecretAccessKey string `yaml:"secret_access_key,omitempty"`
+	Profile         string `yaml:"profile,omitempty"`
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
+	HomeRegion      string `yaml:"home_region,omitempty"`
+}
+
+// awsIdentityConfig is one identity. An access key entered under Settings ›
+// Cloud identities wins over the rest; with none of them set, the SDK's
+// default chain on this host decides.
+type awsIdentityConfig struct {
+	// ID is how a connected account names it. Stable: renaming changes
+	// Name only.
+	ID   string `yaml:"id"`
+	Name string `yaml:"name"`
 	// AccessKeyID and SecretAccessKey are an IAM user's key, for a control
 	// plane that is not on AWS. The secret is a ${file:...} reference to an
 	// owner-only file in the secrets directory, never the key itself.
@@ -1273,18 +1296,58 @@ type awsCloudConfig struct {
 	CredentialsFile string `yaml:"credentials_file,omitempty"`
 	// HomeRegion is where STS is asked; us-east-1 when empty.
 	HomeRegion string `yaml:"home_region,omitempty"`
+	// Organizations may use it, by id. Empty is every organization.
+	Organizations []string `yaml:"organizations,omitempty"`
 }
 
-// awsOptions is the AWS provider's options; a missing block is the SDK's
-// default chain.
-func (c *cloudConfig) awsOptions() awscloud.Options {
-	if c == nil {
-		return awscloud.Options{}
+// mainIdentity is the id the single identity from before becomes, and the
+// one every account connected before then is moved onto by migration 078.
+const mainIdentity = "main"
+
+// awsIdentities is the configured identities and the default. A config
+// with no cloud block is one identity, the host's own; one from before
+// there could be several is that identity, named Main.
+func (c *cloudConfig) awsIdentities() ([]awsIdentityConfig, string) {
+	if c == nil || len(c.AWS.Identities) == 0 {
+		m := awsIdentityConfig{ID: mainIdentity, Name: "Main"}
+		if c != nil {
+			a := c.AWS
+			m.AccessKeyID, m.SecretAccessKey, m.Profile, m.CredentialsFile, m.HomeRegion =
+				a.AccessKeyID, a.SecretAccessKey, a.Profile, a.CredentialsFile, a.HomeRegion
+		}
+		return []awsIdentityConfig{m}, mainIdentity
 	}
-	return c.AWS.options()
+	def := c.AWS.Default
+	if def == "" {
+		def = c.AWS.Identities[0].ID
+	}
+	return c.AWS.Identities, def
 }
 
-func (a awsCloudConfig) options() awscloud.Options {
+func (a awsIdentityConfig) options() awscloud.Options {
 	return awscloud.Options{AccessKeyID: a.AccessKeyID, SecretAccessKey: a.SecretAccessKey,
 		Profile: a.Profile, CredentialsFile: a.CredentialsFile, HomeRegion: a.HomeRegion}
+}
+
+// source is where the identity comes from, as the console names it.
+func (a awsIdentityConfig) source() string {
+	switch {
+	case a.AccessKeyID != "":
+		return control.IdentityKey
+	case a.Profile != "" || a.CredentialsFile != "":
+		return control.IdentityFile
+	}
+	return control.IdentityDefault
+}
+
+// cloudIdentities is the identities as the API registers them, each with
+// its own provider, so sessions and their cache never mix two identities.
+func (c *cloudConfig) cloudIdentities() []control.CloudIdentity {
+	list, def := c.awsIdentities()
+	out := make([]control.CloudIdentity, 0, len(list))
+	for _, i := range list {
+		out = append(out, control.CloudIdentity{ID: i.ID, Name: i.Name, Default: i.ID == def,
+			Organizations: i.Organizations, Provider: awscloud.New(i.options())})
+	}
+	return out
 }

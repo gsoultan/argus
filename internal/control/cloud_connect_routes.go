@@ -23,6 +23,8 @@ type cloudConnectIn struct {
 	Provider  string `json:"provider"`
 	AccountID string `json:"accountId"`
 	Manage    bool   `json:"manage"`
+	// Identity is who Argus would connect as; empty is the default.
+	Identity string `json:"identity"`
 	// Name is what the account will be called, for the audit log.
 	Name string `json:"name"`
 }
@@ -53,12 +55,14 @@ func (a *API) postCloudCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.AccountID = strings.TrimSpace(in.AccountID)
-	prep, code, err := a.cloudPrepare(r.Context(), in.Provider, in.AccountID, in.Manage)
+	prep, code, err := a.cloudPrepare(r.Context(), cloudPrepareIn{Provider: in.Provider, AccountID: in.AccountID,
+		Manage: in.Manage, Identity: in.Identity})
 	if err != nil {
 		writeErr(w, code, err.Error())
 		return
 	}
-	p, _ := a.cloudProvider(in.Provider)
+	ident, _ := a.cloudIdentity(r.Context(), in.Provider, prep.Identity)
+	p := ident.Provider
 	out := CloudCheck{}
 	if d, ok := p.(cloud.Deployer); ok && prep.CanDeploy {
 		sctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -104,13 +108,14 @@ func (a *API) postCloudDeploy(w http.ResponseWriter, r *http.Request) {
 	if len(in.Name) > 64 {
 		in.Name = in.Name[:64]
 	}
-	prep, code, err := a.cloudPrepare(r.Context(), in.Provider, in.AccountID, in.Manage)
+	prep, code, err := a.cloudPrepare(r.Context(), cloudPrepareIn{Provider: in.Provider, AccountID: in.AccountID,
+		Manage: in.Manage, Identity: in.Identity})
 	if err != nil {
 		writeErr(w, code, err.Error())
 		return
 	}
-	p, _ := a.cloudProvider(in.Provider)
-	d, ok := p.(cloud.Deployer)
+	ident, _ := a.cloudIdentity(r.Context(), in.Provider, prep.Identity)
+	d, ok := ident.Provider.(cloud.Deployer)
 	if !ok || !prep.CanDeploy {
 		writeErr(w, http.StatusConflict, "argus-control's own identity ("+prep.Principal+") is not in account "+in.AccountID+
 			", so it cannot make the roles there. Make them with the command or the template instead.")
