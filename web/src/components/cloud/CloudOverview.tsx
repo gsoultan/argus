@@ -207,7 +207,7 @@ function AccountRow({ a, admin, bases }: { a: CloudAccount; admin: boolean; base
 
 /**
  * Lets Argus change an account: the same stack, updated to add the manage
- * role, and that role pasted back. Argus assumes it before saving.
+ * role, which Argus finds by its name and assumes before saving.
  */
 function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolean; onClose: () => void }) {
   const prepared = useQuery({ queryKey: ['cloud', 'prepare-manage', a.accountId], queryFn: () => prepareCloudAccount(a.accountId, true), gcTime: 0 })
@@ -320,13 +320,12 @@ function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boo
           <Text fw={700} size="lg">Connect your first AWS account</Text>
           <Text size={FS.body} c="dimmed" mt={SP.tight} lh={1.6}>
             See every instance, disk and firewall across your accounts and regions, which ones have an Argus server, and what is
-            open to the internet. Argus never asks for access keys: it uses a role you create in the account with one click, read only unless you allow changes.
+            open to the internet. Argus never asks for access keys: it uses a role made in the account, read only unless you allow changes.
           </Text>
         </Box>
-        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm" w="100%">
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" w="100%">
           {[['1', 'Name the account', 'Its 12-digit id and whether it is production.'],
-            ['2', 'Create the role', 'One CloudFormation stack, free, made for this Argus.'],
-            ['3', 'Paste the role', 'Argus checks it and starts reading.']].map(([n, t, d]) => (
+            ['2', 'Create the role', 'One command in CloudShell, or Argus makes it itself. It connects as soon as the role works.']].map(([n, t, d]) => (
             <Box key={n} p="sm" style={{ border: '1px solid var(--color-line)', borderRadius: 10 }}>
               <Text size={FS.micro} c={INK.brand} fw={700}>STEP {n}</Text>
               <Text fw={600} size={FS.body} mt={2}>{t}</Text>
