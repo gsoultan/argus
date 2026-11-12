@@ -172,7 +172,7 @@ function Cloud() {
               loading={q.volume.isPending} names={names} filtered={filtered} />
           )}
           {tab === 'network' && (
-            <NetworkTables firewalls={narrow(q.firewall.data)} networks={narrow(q.network.data)} subnets={q.subnet.data}
+            <NetworkTables firewalls={narrow(q.firewall.data)} instances={q.instance.data} networks={narrow(q.network.data)} subnets={q.subnet.data}
               addresses={narrow(q.address.data)} balancers={narrow(q['load-balancer'].data)} targetGroups={narrow(q['target-group'].data)}
               loading={q.firewall.isPending} names={names} filtered={filtered} />
           )}

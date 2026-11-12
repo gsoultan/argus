@@ -290,9 +290,7 @@ func (p *Provider) PlanRemove(ctx context.Context, a cloud.Account, actor cloud.
 	inst := res.Reservations[0].Instances[0]
 	r := Instance(inst, region)
 	plan := cloud.RemovePlan{ID: id, Name: r.Name, State: r.State, Size: r.Size, PublicIP: r.PublicIP, Volumes: []cloud.Volume{}}
-	if s := r.Tags["aws:cloudformation:stack-name"]; s != "" {
-		plan.ManagedBy = "CloudFormation stack " + s
-	}
+	plan.ManagedBy = cloud.ManagedBy(r.Tags)
 	attr, err := c.DescribeInstanceAttribute(ctx, &ec2.DescribeInstanceAttributeInput{InstanceId: awssdk.String(id),
 		Attribute: types.InstanceAttributeNameDisableApiTermination})
 	if err != nil {

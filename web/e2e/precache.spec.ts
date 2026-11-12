@@ -55,9 +55,13 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 729.4 kB with session tabs: the sessions store and the header's "sessions
  * open" link in the entry, so sessions outlive the page they opened on. The
  * Connect drawer, the workspace and their stylesheet are not stored.
+ * 730.0 kB with returning to the asset when a session ends (main went over
+ * 730 by 0.01 kB with it): the session store remembers where a session was
+ * opened from. The security group map and origin badges add nothing stored;
+ * they are in the cloud page's chunks.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 730
+const MAX_KB = 731
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
