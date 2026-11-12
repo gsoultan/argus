@@ -25,7 +25,7 @@ describe('Cloud, before argus-control has an AWS identity', () => {
 
   it('in another organization, says the platform owner sets it and offers no button', async () => {
     renderWithProviders(<CloudOverview accounts={[]} bases={bases} admin platform={false} onTab={() => {}} />)
-    expect(await screen.findByText(/the platform's owner sets it from the default organization/)).toBeInTheDocument()
+    expect(await screen.findByText(/Ask the platform's owner: it is set from the default organization/)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Set the AWS identity' })).not.toBeInTheDocument()
   })
 })

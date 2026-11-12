@@ -317,9 +317,9 @@ function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boo
         {base?.error && (
           <Alert color="amber" variant="light" w="100%" title="argus-control has no AWS identity yet">
             <Text size={FS.meta}>
-              {platform
-                ? "It needs one to assume roles in your accounts. On EC2 it uses the instance profile; anywhere else, give it an IAM user's access key under Settings › Cloud identities."
-                : "It needs one to assume roles in your accounts. It is shared by every organization, so the platform's owner sets it from the default organization; ask them to."}
+              It needs one to assume roles in your accounts. {platform
+                ? "On EC2 it uses the instance profile; anywhere else, give it an IAM user's access key under Settings › Cloud identities."
+                : "Ask the platform's owner: it is set from the default organization."}
             </Text>
             <Text size={FS.micro} c="dimmed" mt={4}>{base.error}</Text>
             {admin && platform && (
