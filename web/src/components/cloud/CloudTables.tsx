@@ -5,7 +5,8 @@ import { DataTable, EmptyState } from '~/components/page'
 import { relTime, rowNav } from '~/components/primitives'
 import { openToInternet, scheduleOf, type CloudItem } from '~/lib/cloud'
 import { FS, INK } from '~/theme'
-import { NameCell, ResourceDrawer, ServerCell, StateBadge, WhereCell } from './common'
+import { NameCell, OriginBadge, ResourceDrawer, ServerCell, StateBadge, WhereCell } from './common'
+import { SecurityGroupMap } from './SecurityMap'
 
 interface TableProps {
   items?: CloudItem[]
@@ -171,8 +172,10 @@ type NetView = 'firewalls' | 'networks' | 'addresses' | 'balancers' | 'targets'
 
 const TG_COLOR: Record<string, string> = { healthy: 'teal', degraded: 'rose', empty: 'amber', unused: 'slate' }
 
-export function NetworkTables({ firewalls, networks, subnets, addresses, balancers, targetGroups, loading, names, filtered }: {
+export function NetworkTables({ firewalls, instances, networks, subnets, addresses, balancers, targetGroups, loading, names, filtered }: {
   firewalls?: CloudItem[]
+  /** For the map: which instances use which groups. */
+  instances?: CloudItem[]
   networks?: CloudItem[]
   subnets?: CloudItem[]
   addresses?: CloudItem[]
@@ -183,9 +186,11 @@ export function NetworkTables({ firewalls, networks, subnets, addresses, balance
   filtered: boolean
 }) {
   const [view, setView] = useState<NetView>('firewalls')
+  const [drawn, setDrawn] = useState<'list' | 'map'>('list')
   const { show, drawer } = useDrawer(names)
   return (
     <Stack gap="md">
+      <Group justify="space-between" gap="sm">
       <SegmentedControl value={view} onChange={(v) => setView(v as NetView)} w="fit-content"
         data={[
           { value: 'firewalls', label: `Firewalls${firewalls ? ` · ${firewalls.length}` : ''}` },
@@ -195,9 +200,17 @@ export function NetworkTables({ firewalls, networks, subnets, addresses, balance
           { value: 'targets', label: `Target groups${targetGroups ? ` · ${targetGroups.length}` : ''}` },
         ]} />
       {view === 'firewalls' && (
+        <SegmentedControl size="xs" value={drawn} onChange={(v) => setDrawn(v as 'list' | 'map')} aria-label="Show firewalls as"
+          data={[{ value: 'list', label: 'List' }, { value: 'map', label: 'Map' }]} />
+      )}
+      </Group>
+      {view === 'firewalls' && drawn === 'map' && (
+        <SecurityGroupMap firewalls={firewalls ?? []} instances={instances ?? []} onOpen={show} />
+      )}
+      {view === 'firewalls' && drawn === 'list' && (
         <DataTable minWidth={760} loading={loading} isEmpty={(firewalls?.length ?? 0) === 0}
           empty={<EmptyState icon={IconNetwork} title="No firewalls" description={emptyText(filtered, 'security groups')} />}
-          columns={['Security group', 'Account and region', 'Network', 'Rules', 'Exposure']}>
+          columns={['Security group', 'Where it came from', 'Account and region', 'Network', 'Rules', 'Exposure']}>
           {firewalls?.map((it) => {
             const r = it.resource
             const open = openToInternet(r)
@@ -205,6 +218,7 @@ export function NetworkTables({ firewalls, networks, subnets, addresses, balance
             return (
               <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
                 <Table.Td maw={260}><NameCell r={r} /></Table.Td>
+                <Table.Td><OriginBadge it={it} /></Table.Td>
                 <Table.Td><WhereCell it={it} /></Table.Td>
                 <Table.Td><Text size={FS.meta} ff="monospace">{names.get(r.network ?? '') ?? r.network ?? '—'}</Text></Table.Td>
                 <Table.Td><Text size={FS.meta}>{inbound} in · {(r.rules?.length ?? 0) - inbound} out</Text></Table.Td>

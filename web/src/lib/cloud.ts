@@ -79,6 +79,8 @@ export interface CloudItem {
   resource: CloudResource
   /** A match by address or name, not something the agent reported. */
   server?: { id: string; hostname: string; by: 'address' | 'name' }
+  /** Argus launched or created it, by its own record. Only these can be removed or deleted from Argus. */
+  madeByArgus?: boolean
 }
 
 export interface CloudPrepared {

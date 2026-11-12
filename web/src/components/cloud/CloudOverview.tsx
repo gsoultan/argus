@@ -1,6 +1,6 @@
-import { Alert, Badge, Box, Button, Card, Flex, Group, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Flex, Group, List, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core'
 import {
-  IconAlertTriangle, IconBrandAws, IconCircleCheck, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
+  IconAlertTriangle, IconBrandAws, IconCheck, IconCircleCheck, IconMinus, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -8,7 +8,7 @@ import { EmptyState, SectionCard } from '~/components/page'
 import { Stat, relTime } from '~/components/primitives'
 import { ButtonLink } from '~/components/links'
 import {
-  openToInternet, prepareCloudAccount, staleness, useAllowCloudChanges, useDisconnectCloudAccount, useMakeCloudReadOnly, useSyncCloudAccount,
+  SCHEDULE_TAG, openToInternet, prepareCloudAccount, staleness, useAllowCloudChanges, useDisconnectCloudAccount, useMakeCloudReadOnly, useSyncCloudAccount,
   type CloudAccount, type CloudBase, type CloudItem,
 } from '~/lib/cloud'
 import { run } from '~/lib/notify'
@@ -254,10 +254,26 @@ function Disconnect({ a, opened, onClose }: { a: CloudAccount; opened: boolean; 
   return (
     <Modal opened={opened} onClose={onClose} title={<Text fw={700}>Disconnect {a.name}?</Text>} centered>
       <Stack gap="md">
-        <Text size={FS.body}>
-          Argus stops reading this account and its resources leave these lists. Nothing in AWS changes, and the role
-          Argus used stays in the account until someone deletes its <Text span ff="monospace" size={FS.meta}>argus-access</Text> stack.
-        </Text>
+        <Text size={FS.body}>Disconnecting makes no call to AWS. Argus only forgets the account.</Text>
+        <Box>
+          <Text size={FS.meta} fw={700} mb={4}>Stays in AWS, untouched</Text>
+          <List fz={FS.meta} spacing={4} icon={<ThemeIcon size={16} radius="xl" variant="light" color="teal"><IconCheck size={11} /></ThemeIcon>}>
+            <List.Item>Every instance, disk, snapshot and image, as they are now</List.Item>
+            <List.Item>Security groups and every rule, including rules changed from Argus</List.Item>
+            <List.Item>Tags Argus wrote, like {SCHEDULE_TAG}; nothing reads them once disconnected</List.Item>
+            <List.Item>The roles Argus used, until someone deletes their <Text span ff="monospace" size={FS.meta}>argus-access</Text> stack</List.Item>
+            <List.Item>Argus agents on instances, until you uninstall them</List.Item>
+          </List>
+        </Box>
+        <Box>
+          <Text size={FS.meta} fw={700} mb={4}>Changes in Argus only</Text>
+          <List fz={FS.meta} spacing={4} icon={<ThemeIcon size={16} radius="xl" variant="light" color="gray"><IconMinus size={11} /></ThemeIcon>}>
+            <List.Item>Argus stops reading the account, and its resources leave these lists</List.Item>
+            <List.Item>Changes waiting for approval are cancelled</List.Item>
+            <List.Item>Schedules stop acting on its instances</List.Item>
+          </List>
+          <Text size={FS.micro} c="dimmed" mt={6}>Reconnect it any time. Instances still tagged for a schedule are picked up by that schedule again.</Text>
+        </Box>
         <TextInput label={<>Type <Text span ff="monospace" fw={700}>{a.name}</Text> to confirm</>} value={typed}
           onChange={(e) => setTyped(e.currentTarget.value)} data-autofocus />
         <Group justify="flex-end">

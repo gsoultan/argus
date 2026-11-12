@@ -140,7 +140,9 @@ export function FirewallActions({ it }: { it: CloudItem }) {
               <ActionIcon variant="default" size={30} aria-label="More actions" disabled={Boolean(waiting)}><IconDots size={15} /></ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('delete')}>Delete security group…</Menu.Item>
+              <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('delete')}>
+                {it.madeByArgus ? 'Delete security group…' : 'Why it cannot be deleted…'}
+              </Menu.Item>
             </Menu.Dropdown>
           </Menu>
         </Group>
@@ -245,7 +247,8 @@ function FirewallDelete({ it, env, users, account, onClose }: {
   const naming = (groups.data ?? []).find((g) => g.accountId === it.accountId && g.resource.id !== r.id &&
     (g.resource.rules ?? []).some((x) => x.source === r.id))
   const stack = r.tags?.['aws:cloudformation:stack-name']
-  const refusal = r.name === 'default' ? 'every network keeps its default group'
+  const refusal = !it.madeByArgus ? 'Argus did not make it. Argus only deletes security groups it made itself, so a group that was already in the account is never deleted from here; delete it in AWS if you mean to'
+    : r.name === 'default' ? 'every network keeps its default group'
     : users.length ? `${users.map((u) => u.resource.name).join(', ')} use${users.length === 1 ? 's' : ''} it; take it off them first`
       : naming ? `a rule in ${naming.resource.name} names it; remove that rule first`
         : stack ? `it belongs to CloudFormation stack ${stack}` : ''
